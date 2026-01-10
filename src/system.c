@@ -331,16 +331,28 @@ ssize_t wyn_sys_process_read_stdout(WynProcess* process, void* buffer, size_t si
 }
 
 ssize_t wyn_sys_process_read_stderr(WynProcess* process, void* buffer, size_t size) {
-    if (!process || process->stderr_fd < 0) return -1;
+    if (!process) return -1;
+#ifdef _WIN32
+    // Windows stub - not implemented
+    return -1;
+#else
+    if (process->stderr_fd < 0) return -1;
     return read(process->stderr_fd, buffer, size);
+#endif
 }
 
 WynSystemError wyn_sys_process_close_stdin(WynProcess* process) {
-    if (!process || process->stdin_fd < 0) return WYN_SYS_INVALID_ARGUMENT;
+    if (!process) return WYN_SYS_INVALID_ARGUMENT;
     
+#ifdef _WIN32
+    // Windows stub - not implemented
+    return WYN_SYS_NOT_SUPPORTED;
+#else
+    if (process->stdin_fd < 0) return WYN_SYS_INVALID_ARGUMENT;
     close(process->stdin_fd);
     process->stdin_fd = -1;
     return WYN_SYS_OK;
+#endif
 }
 
 // Signal handling
