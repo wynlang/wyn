@@ -296,22 +296,38 @@ WynSystemError wyn_sys_terminate_process(WynProcess* process) {
 void wyn_sys_free_process(WynProcess* process) {
     if (!process) return;
     
+#ifdef _WIN32
+    // Windows stub - process functions not implemented
+#else
     if (process->stdin_fd >= 0) close(process->stdin_fd);
     if (process->stdout_fd >= 0) close(process->stdout_fd);
     if (process->stderr_fd >= 0) close(process->stderr_fd);
+#endif
     
     free(process);
 }
 
 // Process I/O operations
 ssize_t wyn_sys_process_write_stdin(WynProcess* process, const void* data, size_t size) {
-    if (!process || process->stdin_fd < 0) return -1;
+    if (!process) return -1;
+#ifdef _WIN32
+    // Windows stub - not implemented
+    return -1;
+#else
+    if (process->stdin_fd < 0) return -1;
     return write(process->stdin_fd, data, size);
+#endif
 }
 
 ssize_t wyn_sys_process_read_stdout(WynProcess* process, void* buffer, size_t size) {
-    if (!process || process->stdout_fd < 0) return -1;
+    if (!process) return -1;
+#ifdef _WIN32
+    // Windows stub - not implemented
+    return -1;
+#else
+    if (process->stdout_fd < 0) return -1;
     return read(process->stdout_fd, buffer, size);
+#endif
 }
 
 ssize_t wyn_sys_process_read_stderr(WynProcess* process, void* buffer, size_t size) {
@@ -423,7 +439,12 @@ uint64_t wyn_sys_get_uptime_ms(void) {
 // File system utilities
 bool wyn_sys_file_exists(const char* path) {
     if (!path) return false;
+#ifdef _WIN32
+    DWORD attrs = GetFileAttributesA(path);
+    return (attrs != INVALID_FILE_ATTRIBUTES);
+#else
     return access(path, F_OK) == 0;
+#endif
 }
 
 bool wyn_sys_is_directory(const char* path) {

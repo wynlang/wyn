@@ -210,7 +210,12 @@ long wyn_file_tell(WynFile* file) {
 // File system operations
 bool wyn_file_exists(const char* path) {
     if (!path) return false;
+#ifdef _WIN32
+    DWORD attrs = GetFileAttributesA(path);
+    return (attrs != INVALID_FILE_ATTRIBUTES);
+#else
     return access(path, F_OK) == 0;
+#endif
 }
 
 bool wyn_is_directory(const char* path) {
