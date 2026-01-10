@@ -2,22 +2,26 @@ CC=gcc
 CFLAGS=-Wall -Wextra -std=c11 -g -fsanitize=address
 OPTFLAGS=-O2
 
-# LLVM Integration for Phase 2
+# LLVM Integration for Phase 2 (optional)
 LLVM_CONFIG ?= llvm-config
 LLVM_VERSION := $(shell $(LLVM_CONFIG) --version 2>/dev/null || echo "not-found")
 
 ifeq ($(LLVM_VERSION),not-found)
-$(error LLVM not found. Install LLVM 15+ and ensure llvm-config is in PATH)
-endif
-
+$(warning LLVM not found. LLVM features will be disabled. Install LLVM 15+ for full functionality)
+LLVM_AVAILABLE := 0
+else
 # Verify LLVM version is 15+
 LLVM_MAJOR := $(shell echo $(LLVM_VERSION) | cut -d. -f1)
 LLVM_VERSION_CHECK := $(shell [ $(LLVM_MAJOR) -ge 15 ] && echo "ok" || echo "fail")
-
 ifeq ($(LLVM_VERSION_CHECK),fail)
-$(error LLVM version $(LLVM_VERSION) is too old. Requires LLVM 15+)
+$(warning LLVM version $(LLVM_VERSION) found, but 15+ required. LLVM features disabled)
+LLVM_AVAILABLE := 0
+else
+LLVM_AVAILABLE := 1
+endif
 endif
 
+ifeq ($(LLVM_AVAILABLE),1)
 LLVM_CFLAGS := $(shell $(LLVM_CONFIG) --cflags)
 LLVM_LDFLAGS := $(shell $(LLVM_CONFIG) --ldflags)
 LLVM_LIBS := $(shell $(LLVM_CONFIG) --libs core executionengine mcjit native)
@@ -27,9 +31,13 @@ ifeq ($(OS),Windows_NT)
     LLVM_LIBS += -lole32 -luuid
 endif
 
-# Enhanced CFLAGS and LDFLAGS for LLVM
 CFLAGS_LLVM = $(CFLAGS) $(LLVM_CFLAGS) -DWITH_LLVM=1
 LDFLAGS_LLVM = $(LLVM_LDFLAGS) $(LLVM_LIBS)
+else
+# LLVM not available - use basic flags
+CFLAGS_LLVM = $(CFLAGS)
+LDFLAGS_LLVM = 
+endif
 
 all: wyn test
 
