@@ -43,7 +43,11 @@ all: wyn test
 
 # Original C-based compiler (Phase 1)
 wyn: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/type_inference.c src/generics.c src/traits.c src/patterns.c src/closures.c src/modules.c src/package.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c
+ifeq ($(OS),Windows_NT)
+	$(CC) $(CFLAGS) -I src -o $@ $^ -lws2_32
+else
 	$(CC) $(CFLAGS) -I src -o $@ $^
+endif
 
 # LLVM-based compiler (Phase 2) with Context Management, Target Configuration, Type Mapping, Runtime Functions, Expression Codegen, Statement Codegen, Function Codegen, and Array/String Operations
 wyn-llvm: src/main.c src/lexer.c src/parser.c src/checker.c src/llvm_codegen.c src/llvm_context.c src/target_config.c src/type_mapping.c src/runtime_functions.c src/llvm_expression_codegen.c src/llvm_statement_codegen.c src/llvm_function_codegen.c src/llvm_array_string_codegen.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c
