@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build Release Binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            artifact: wyn-linux-x64
+          - os: ubuntu-latest
+            target: linux-arm64
+            artifact: wyn-linux-arm64
+            arch: aarch64
+          - os: macos-latest
+            target: macos-x64
+            artifact: wyn-macos-x64
+          - os: macos-latest
+            target: macos-arm64
+            artifact: wyn-macos-arm64
+          - os: windows-latest
+            target: windows-x64
+            artifact: wyn-windows-x64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up cross-compilation (ARM)
+        if: matrix.arch == 'aarch64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build
+        run: |
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            CC=aarch64-linux-gnu-gcc make wyn
+          else
+            make wyn
+          fi
+        shell: bash
+
+      - name: Test
+        if: matrix.os != 'windows-latest'
+        run: make test
+      
+      - name: Test (Windows - unit tests only)
+        if: matrix.os == 'windows-latest'
+        run: make test_unit
+
+      - name: Rename binary
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            mv wyn.exe ${{ matrix.artifact }}
+          else
+            mv wyn ${{ matrix.artifact }}
+          fi
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            wyn-linux-x64/wyn-linux-x64
+            wyn-linux-arm64/wyn-linux-arm64
+            wyn-macos-x64/wyn-macos-x64
+            wyn-macos-arm64/wyn-macos-arm64
+            wyn-windows-x64.exe/wyn-windows-x64.exe
+          body_path: CHANGELOG.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}

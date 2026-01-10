@@ -1,0 +1,16 @@
+// utils.wyn - A module file
+// WITHOUT export - these are private to this file only
+fn private_helper(x: int) -> int {
+    return x * 2
+}
+
+// WITH export - these can be used by other files
+export fn double(x: int) -> int {
+    return private_helper(x)  // Can use private functions within same file
+}
+
+export fn triple(x: int) -> int {
+    return x * 3
+}
+
+export var MAX_SIZE = 100

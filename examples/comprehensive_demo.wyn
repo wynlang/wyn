@@ -1,0 +1,56 @@
+// Comprehensive Wyn Language Feature Demonstration
+
+struct Person {
+    name: string
+    age: int
+}
+
+enum Status {
+    Active,
+    Inactive
+}
+
+fn main() -> int {
+    print("=== Wyn Language Demo ===\n")
+    
+    // String interpolation
+    var name = "Alice"
+    var age = 25
+    print("Student: ${name}, Age: ${age}\n")
+    
+    // Struct usage
+    var person = Person { name: name, age: age }
+    print("Person: ")
+    print(person.name)
+    print(", ")
+    print(person.age)
+    print("\n")
+    
+    // Enum usage
+    var status = Active
+    print("Status: ")
+    print(status)
+    print("\n")
+    
+    // Array methods
+    var arr = [1, 2, 3]
+    arr.push(4)
+    print("Array: ")
+    print(arr)
+    print(", Length: ")
+    print(arr.length)
+    print("\n")
+    
+    // Error handling
+    try {
+        print("In try block\n")
+        throw "Test error"
+    } catch (e) {
+        print("Caught: ")
+        print(e)
+        print("\n")
+    }
+    
+    print("=== All features working! ===\n")
+    return 0
+}

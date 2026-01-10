@@ -1,0 +1,26 @@
+# Example Wyn Package Manifest
+[package]
+name = "my_web_app"
+version = "1.0.0"
+authors = ["Developer <dev@example.com>", "Team Lead <lead@example.com>"]
+description = "A sample web application built with Wyn"
+license = "MIT"
+repository = "https://github.com/user/my_web_app"
+homepage = "https://my-web-app.com"
+
+[dependencies]
+http_client = "^2.1.0"
+json = "1.0.0"
+math_utils = { git = "https://github.com/user/math_utils.git", tag = "v0.5.0" }
+local_lib = { path = "../shared/local_lib" }
+
+[dev_dependencies]
+test_framework = "^1.2.0"
+benchmark_tools = "~0.8.5"
+
+[build]
+optimization = "release"
+target = "native"
+debug_symbols = false
+strip_symbols = true
+features = ["ssl", "compression", "logging"]

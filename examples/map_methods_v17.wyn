@@ -1,0 +1,13 @@
+// Test map methods
+fn main() {
+    var users = map[string, int]{"alice": 25, "bob": 30}
+    
+    // Test basic map methods
+    users.size().print()
+    users.get("alice").print()
+    users.has("charlie").print()
+    
+    // Test modification methods
+    users.set("charlie", 35)
+    users.size().print()
+}

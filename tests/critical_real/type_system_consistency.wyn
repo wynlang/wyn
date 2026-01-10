@@ -1,0 +1,16 @@
+
+fn create_array() -> array {
+    return [1, 2, 3]
+}
+
+fn create_string() -> string {
+    return "hello"
+}
+
+fn main() -> int {
+    var arr = create_array()
+    var str = create_string()
+    print(arr[0])
+    print(str)
+    return 0
+}

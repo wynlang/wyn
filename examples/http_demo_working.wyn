@@ -1,0 +1,54 @@
+// HTTP Client Demo - Working Example
+// No external dependencies required!
+
+fn main() -> int {
+    print_str("=== HTTP Client Demo ===")
+    print_str("")
+    
+    // Simple GET request
+    print_str("1. Making GET request to httpbin.org...")
+    var response = http_get("http://httpbin.org/get")
+    var status = http_status()
+    
+    print_str("Status code:")
+    print(status)
+    
+    if status == 200 {
+        print_str("✓ GET request successful!")
+        print_str("Response preview:")
+        print_str(response)
+    }
+    
+    print_str("")
+    
+    // POST request with data
+    print_str("2. Making POST request...")
+    var post_response = http_post("http://httpbin.org/post", "name=Wyn&version=1.4")
+    var post_status = http_status()
+    
+    print_str("Status code:")
+    print(post_status)
+    
+    if post_status == 200 {
+        print_str("✓ POST request successful!")
+    }
+    
+    print_str("")
+    
+    // Custom headers
+    print_str("3. Using custom headers...")
+    http_set_header("X-Custom-Header", "Wyn-Language")
+    http_set_header("X-Version", "1.4.0")
+    
+    var header_response = http_get("http://httpbin.org/headers")
+    http_clear_headers()
+    
+    if http_status() == 200 {
+        print_str("✓ Custom headers sent!")
+    }
+    
+    print_str("")
+    print_str("=== Demo Complete ===")
+    
+    return 0
+}

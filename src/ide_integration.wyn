@@ -1,0 +1,548 @@
+// T5.3.1: IDE Integration Package for Wyn Language
+// Complete IDE integration with VS Code, Vim, Emacs support
+
+import "io"
+import "string"
+import "collections"
+import "json"
+import "lsp_advanced"
+
+// IDE Integration types
+enum IDEType {
+    VSCode,
+    Vim,
+    Emacs,
+    IntelliJ,
+    Sublime,
+    Atom
+}
+
+struct IDEConfig {
+    ide_type: IDEType,
+    name: String,
+    config_path: String,
+    extension_path: String,
+    language_server_command: String
+}
+
+struct IDEExtension {
+    name: String,
+    version: String,
+    description: String,
+    features: Vec<String>,
+    configuration: HashMap<String, String>
+}
+
+struct IDEIntegration {
+    supported_ides: Vec<IDEConfig>,
+    extensions: HashMap<IDEType, IDEExtension>,
+    lsp_server: LSPServer
+}
+
+// Initialize IDE integration system
+fn init_ide_integration() -> IDEIntegration {
+    let mut integration = IDEIntegration {
+        supported_ides: Vec::new(),
+        extensions: HashMap::new(),
+        lsp_server: init_lsp_server()
+    }
+    
+    // Configure supported IDEs
+    setup_vscode_integration(&mut integration)
+    setup_vim_integration(&mut integration)
+    setup_emacs_integration(&mut integration)
+    setup_intellij_integration(&mut integration)
+    
+    integration
+}
+
+// VS Code integration
+fn setup_vscode_integration(integration: &mut IDEIntegration) {
+    let vscode_config = IDEConfig {
+        ide_type: IDEType::VSCode,
+        name: "Visual Studio Code".to_string(),
+        config_path: ".vscode/settings.json".to_string(),
+        extension_path: "extensions/wyn-language".to_string(),
+        language_server_command: "wyn-lsp".to_string()
+    }
+    
+    let vscode_extension = IDEExtension {
+        name: "Wyn Language Support".to_string(),
+        version: "1.0.0".to_string(),
+        description: "Complete Wyn language support for VS Code".to_string(),
+        features: vec![
+            "Syntax highlighting".to_string(),
+            "IntelliSense completion".to_string(),
+            "Error diagnostics".to_string(),
+            "Go to definition".to_string(),
+            "Find references".to_string(),
+            "Code formatting".to_string(),
+            "Hover information".to_string(),
+            "Symbol search".to_string(),
+            "Debugging support".to_string(),
+            "Integrated terminal".to_string()
+        ],
+        configuration: create_vscode_config()
+    }
+    
+    integration.supported_ides.push(vscode_config)
+    integration.extensions.insert(IDEType::VSCode, vscode_extension)
+}
+
+fn create_vscode_config() -> HashMap<String, String> {
+    let mut config = HashMap::new()
+    
+    config.insert("wyn.languageServer.enabled".to_string(), "true".to_string())
+    config.insert("wyn.languageServer.path".to_string(), "wyn-lsp".to_string())
+    config.insert("wyn.formatting.enabled".to_string(), "true".to_string())
+    config.insert("wyn.diagnostics.enabled".to_string(), "true".to_string())
+    config.insert("wyn.completion.enabled".to_string(), "true".to_string())
+    config.insert("wyn.hover.enabled".to_string(), "true".to_string())
+    config.insert("wyn.definition.enabled".to_string(), "true".to_string())
+    config.insert("wyn.references.enabled".to_string(), "true".to_string())
+    config.insert("wyn.symbols.enabled".to_string(), "true".to_string())
+    config.insert("wyn.debugging.enabled".to_string(), "true".to_string())
+    
+    config
+}
+
+// Vim integration
+fn setup_vim_integration(integration: &mut IDEIntegration) {
+    let vim_config = IDEConfig {
+        ide_type: IDEType::Vim,
+        name: "Vim/Neovim".to_string(),
+        config_path: ".vimrc".to_string(),
+        extension_path: "pack/wyn/start/wyn-vim".to_string(),
+        language_server_command: "wyn-lsp".to_string()
+    }
+    
+    let vim_extension = IDEExtension {
+        name: "wyn-vim".to_string(),
+        version: "1.0.0".to_string(),
+        description: "Wyn language support for Vim/Neovim".to_string(),
+        features: vec![
+            "Syntax highlighting".to_string(),
+            "LSP integration".to_string(),
+            "Auto-completion".to_string(),
+            "Error highlighting".to_string(),
+            "Go to definition".to_string(),
+            "Code formatting".to_string(),
+            "File type detection".to_string(),
+            "Indentation rules".to_string()
+        ],
+        configuration: create_vim_config()
+    }
+    
+    integration.supported_ides.push(vim_config)
+    integration.extensions.insert(IDEType::Vim, vim_extension)
+}
+
+fn create_vim_config() -> HashMap<String, String> {
+    let mut config = HashMap::new()
+    
+    config.insert("filetype".to_string(), "wyn".to_string())
+    config.insert("syntax".to_string(), "wyn".to_string())
+    config.insert("lsp_server".to_string(), "wyn-lsp".to_string())
+    config.insert("auto_format".to_string(), "true".to_string())
+    config.insert("show_diagnostics".to_string(), "true".to_string())
+    
+    config
+}
+
+// Emacs integration
+fn setup_emacs_integration(integration: &mut IDEIntegration) {
+    let emacs_config = IDEConfig {
+        ide_type: IDEType::Emacs,
+        name: "GNU Emacs".to_string(),
+        config_path: ".emacs.d/init.el".to_string(),
+        extension_path: ".emacs.d/lisp/wyn-mode.el".to_string(),
+        language_server_command: "wyn-lsp".to_string()
+    }
+    
+    let emacs_extension = IDEExtension {
+        name: "wyn-mode".to_string(),
+        version: "1.0.0".to_string(),
+        description: "Wyn language major mode for Emacs".to_string(),
+        features: vec![
+            "Major mode for .wyn files".to_string(),
+            "Syntax highlighting".to_string(),
+            "LSP client integration".to_string(),
+            "Auto-completion".to_string(),
+            "Error flycheck".to_string(),
+            "Indentation support".to_string(),
+            "REPL integration".to_string()
+        ],
+        configuration: create_emacs_config()
+    }
+    
+    integration.supported_ides.push(emacs_config)
+    integration.extensions.insert(IDEType::Emacs, emacs_extension)
+}
+
+fn create_emacs_config() -> HashMap<String, String> {
+    let mut config = HashMap::new()
+    
+    config.insert("mode_name".to_string(), "wyn-mode".to_string())
+    config.insert("file_extension".to_string(), "\\.wyn\\'".to_string())
+    config.insert("lsp_server_command".to_string(), "wyn-lsp".to_string())
+    config.insert("auto_mode_alist".to_string(), "true".to_string())
+    
+    config
+}
+
+// IntelliJ integration
+fn setup_intellij_integration(integration: &mut IDEIntegration) {
+    let intellij_config = IDEConfig {
+        ide_type: IDEType::IntelliJ,
+        name: "IntelliJ IDEA".to_string(),
+        config_path: ".idea/wyn-plugin.xml".to_string(),
+        extension_path: "plugins/wyn-intellij".to_string(),
+        language_server_command: "wyn-lsp".to_string()
+    }
+    
+    let intellij_extension = IDEExtension {
+        name: "Wyn Language Plugin".to_string(),
+        version: "1.0.0".to_string(),
+        description: "Wyn language support for IntelliJ IDEA".to_string(),
+        features: vec![
+            "Syntax highlighting".to_string(),
+            "Code completion".to_string(),
+            "Error analysis".to_string(),
+            "Refactoring support".to_string(),
+            "Debugging integration".to_string(),
+            "Project templates".to_string(),
+            "Build integration".to_string()
+        ],
+        configuration: create_intellij_config()
+    }
+    
+    integration.supported_ides.push(intellij_config)
+    integration.extensions.insert(IDEType::IntelliJ, intellij_extension)
+}
+
+fn create_intellij_config() -> HashMap<String, String> {
+    let mut config = HashMap::new()
+    
+    config.insert("language_id".to_string(), "Wyn".to_string())
+    config.insert("file_type".to_string(), "wyn".to_string())
+    config.insert("lsp_enabled".to_string(), "true".to_string())
+    config.insert("build_system".to_string(), "make".to_string())
+    
+    config
+}
+
+// Generate IDE configuration files
+fn generate_ide_configs(integration: &IDEIntegration, output_dir: &str) -> Result<(), String> {
+    // Generate VS Code extension
+    generate_vscode_extension(integration, output_dir)?
+    
+    // Generate Vim plugin
+    generate_vim_plugin(integration, output_dir)?
+    
+    // Generate Emacs mode
+    generate_emacs_mode(integration, output_dir)?
+    
+    // Generate IntelliJ plugin
+    generate_intellij_plugin(integration, output_dir)?
+    
+    Ok(())
+}
+
+fn generate_vscode_extension(integration: &IDEIntegration, output_dir: &str) -> Result<(), String> {
+    let vscode_ext = integration.extensions.get(&IDEType::VSCode).unwrap()
+    
+    // Generate package.json
+    let package_json = json!({
+        "name": "wyn-language",
+        "displayName": vscode_ext.name,
+        "description": vscode_ext.description,
+        "version": vscode_ext.version,
+        "engines": {
+            "vscode": "^1.60.0"
+        },
+        "categories": ["Programming Languages"],
+        "contributes": {
+            "languages": [{
+                "id": "wyn",
+                "aliases": ["Wyn", "wyn"],
+                "extensions": [".wyn"],
+                "configuration": "./language-configuration.json"
+            }],
+            "grammars": [{
+                "language": "wyn",
+                "scopeName": "source.wyn",
+                "path": "./syntaxes/wyn.tmGrammar.json"
+            }],
+            "configuration": {
+                "type": "object",
+                "title": "Wyn Language Configuration",
+                "properties": generate_vscode_properties(&vscode_ext.configuration)
+            }
+        },
+        "activationEvents": [
+            "onLanguage:wyn"
+        ],
+        "main": "./out/extension.js"
+    })
+    
+    write_file(&format!("{}/vscode/package.json", output_dir), &package_json.to_string())?
+    
+    // Generate syntax highlighting
+    generate_vscode_syntax(&format!("{}/vscode/syntaxes", output_dir))?
+    
+    Ok(())
+}
+
+fn generate_vim_plugin(integration: &IDEIntegration, output_dir: &str) -> Result<(), String> {
+    let vim_ext = integration.extensions.get(&IDEType::Vim).unwrap()
+    
+    // Generate ftdetect/wyn.vim
+    let ftdetect = "au BufRead,BufNewFile *.wyn set filetype=wyn"
+    write_file(&format!("{}/vim/ftdetect/wyn.vim", output_dir), ftdetect)?
+    
+    // Generate syntax/wyn.vim
+    let syntax = generate_vim_syntax()
+    write_file(&format!("{}/vim/syntax/wyn.vim", output_dir), &syntax)?
+    
+    // Generate ftplugin/wyn.vim
+    let ftplugin = generate_vim_ftplugin()
+    write_file(&format!("{}/vim/ftplugin/wyn.vim", output_dir), &ftplugin)?
+    
+    Ok(())
+}
+
+fn generate_emacs_mode(integration: &IDEIntegration, output_dir: &str) -> Result<(), String> {
+    let emacs_ext = integration.extensions.get(&IDEType::Emacs).unwrap()
+    
+    let mode_content = generate_emacs_mode_content()
+    write_file(&format!("{}/emacs/wyn-mode.el", output_dir), &mode_content)?
+    
+    Ok(())
+}
+
+fn generate_intellij_plugin(integration: &IDEIntegration, output_dir: &str) -> Result<(), String> {
+    let intellij_ext = integration.extensions.get(&IDEType::IntelliJ).unwrap()
+    
+    // Generate plugin.xml
+    let plugin_xml = generate_intellij_plugin_xml(intellij_ext)
+    write_file(&format!("{}/intellij/META-INF/plugin.xml", output_dir), &plugin_xml)?
+    
+    Ok(())
+}
+
+// Helper functions for generating IDE-specific content
+fn generate_vscode_properties(config: &HashMap<String, String>) -> JsonValue {
+    let mut properties = json!({})
+    
+    for (key, value) in config {
+        properties[key] = json!({
+            "type": "boolean",
+            "default": value == "true",
+            "description": format!("Enable {}", key)
+        })
+    }
+    
+    properties
+}
+
+fn generate_vscode_syntax(output_dir: &str) -> Result<(), String> {
+    let syntax = json!({
+        "scopeName": "source.wyn",
+        "patterns": [
+            {
+                "include": "#keywords"
+            },
+            {
+                "include": "#strings"
+            },
+            {
+                "include": "#comments"
+            }
+        ],
+        "repository": {
+            "keywords": {
+                "patterns": [{
+                    "name": "keyword.control.wyn",
+                    "match": "\\b(fn|struct|enum|if|else|while|for|match|return|let|mut|const)\\b"
+                }]
+            },
+            "strings": {
+                "patterns": [{
+                    "name": "string.quoted.double.wyn",
+                    "begin": "\"",
+                    "end": "\"",
+                    "patterns": [{
+                        "name": "constant.character.escape.wyn",
+                        "match": "\\\\."
+                    }]
+                }]
+            },
+            "comments": {
+                "patterns": [{
+                    "name": "comment.line.double-slash.wyn",
+                    "match": "//.*$"
+                }]
+            }
+        }
+    })
+    
+    write_file(&format!("{}/wyn.tmGrammar.json", output_dir), &syntax.to_string())
+}
+
+fn generate_vim_syntax() -> String {
+    r#"
+" Vim syntax file for Wyn language
+if exists("b:current_syntax")
+  finish
+endif
+
+" Keywords
+syn keyword wynKeyword fn struct enum if else while for match return let mut const
+syn keyword wynType int float string bool void
+syn keyword wynBoolean true false
+
+" Strings
+syn region wynString start='"' end='"' contains=wynEscape
+syn match wynEscape '\\.' contained
+
+" Comments
+syn match wynComment '//.*$'
+
+" Numbers
+syn match wynNumber '\d\+'
+syn match wynFloat '\d\+\.\d\+'
+
+" Highlighting
+hi def link wynKeyword Keyword
+hi def link wynType Type
+hi def link wynBoolean Boolean
+hi def link wynString String
+hi def link wynComment Comment
+hi def link wynNumber Number
+hi def link wynFloat Float
+
+let b:current_syntax = "wyn"
+"#.to_string()
+}
+
+fn generate_vim_ftplugin() -> String {
+    r#"
+" Wyn filetype plugin
+if exists("b:did_ftplugin")
+  finish
+endif
+let b:did_ftplugin = 1
+
+" LSP setup
+if executable('wyn-lsp')
+  call lsp#register_server({
+    \ 'name': 'wyn-lsp',
+    \ 'cmd': {server_info->['wyn-lsp']},
+    \ 'allowlist': ['wyn'],
+    \ })
+endif
+
+" Indentation
+setlocal expandtab
+setlocal shiftwidth=4
+setlocal softtabstop=4
+setlocal autoindent
+
+" Comments
+setlocal commentstring=//\ %s
+"#.to_string()
+}
+
+fn generate_emacs_mode_content() -> String {
+    r#"
+;;; wyn-mode.el --- Major mode for Wyn language
+
+(defvar wyn-mode-keywords
+  '("fn" "struct" "enum" "if" "else" "while" "for" "match" "return" "let" "mut" "const"))
+
+(defvar wyn-mode-types
+  '("int" "float" "string" "bool" "void"))
+
+(defvar wyn-mode-font-lock-keywords
+  `((,(regexp-opt wyn-mode-keywords 'words) . font-lock-keyword-face)
+    (,(regexp-opt wyn-mode-types 'words) . font-lock-type-face)
+    ("\\b\\(true\\|false\\)\\b" . font-lock-constant-face)
+    ("//.*$" . font-lock-comment-face)))
+
+(define-derived-mode wyn-mode prog-mode "Wyn"
+  "Major mode for editing Wyn language files."
+  (setq font-lock-defaults '(wyn-mode-font-lock-keywords))
+  (setq comment-start "// ")
+  (setq comment-end ""))
+
+(add-to-list 'auto-mode-alist '("\\.wyn\\'" . wyn-mode))
+
+(provide 'wyn-mode)
+;;; wyn-mode.el ends here
+"#.to_string()
+}
+
+fn generate_intellij_plugin_xml(extension: &IDEExtension) -> String {
+    format!(r#"
+<idea-plugin>
+  <id>com.wyn.language</id>
+  <name>{}</name>
+  <version>{}</version>
+  <vendor>Wyn Language Team</vendor>
+  
+  <description><![CDATA[
+    {}
+  ]]></description>
+  
+  <depends>com.intellij.modules.platform</depends>
+  
+  <extensions defaultExtensionNs="com.intellij">
+    <fileType name="Wyn" implementationClass="com.wyn.WynFileType" 
+              fieldName="INSTANCE" language="Wyn" extensions="wyn"/>
+    <lang.parserDefinition language="Wyn" 
+                          implementationClass="com.wyn.WynParserDefinition"/>
+    <lang.syntaxHighlighterFactory language="Wyn" 
+                                  implementationClass="com.wyn.WynSyntaxHighlighterFactory"/>
+  </extensions>
+</idea-plugin>
+"#, extension.name, extension.version, extension.description)
+}
+
+fn write_file(path: &str, content: &str) -> Result<(), String> {
+    // Create directories if needed
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?
+    }
+    
+    std::fs::write(path, content).map_err(|e| e.to_string())
+}
+
+// C interface for IDE integration
+extern "C" {
+    fn wyn_ide_integration_init() -> *mut IDEIntegration
+    fn wyn_ide_generate_configs(integration: *mut IDEIntegration, output_dir: *const char) -> i32
+    fn wyn_ide_integration_cleanup(integration: *mut IDEIntegration)
+}
+
+fn wyn_ide_integration_init() -> *mut IDEIntegration {
+    let integration = Box::new(init_ide_integration())
+    Box::into_raw(integration)
+}
+
+fn wyn_ide_generate_configs(integration: *mut IDEIntegration, output_dir: *const char) -> i32 {
+    unsafe {
+        let integration_ref = &*integration
+        let output_dir_str = CStr::from_ptr(output_dir).to_string_lossy()
+        
+        match generate_ide_configs(integration_ref, &output_dir_str) {
+            Ok(()) => 0,
+            Err(_) => 1
+        }
+    }
+}
+
+fn wyn_ide_integration_cleanup(integration: *mut IDEIntegration) {
+    unsafe {
+        Box::from_raw(integration)
+    }
+}

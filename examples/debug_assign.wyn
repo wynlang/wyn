@@ -1,0 +1,5 @@
+// Debug: Test what gets parsed
+fn main() {
+    var users = map[string, int]{"alice": 25}
+    users["bob"] = 30  // This should be parsed as index assignment
+}

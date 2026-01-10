@@ -1,0 +1,68 @@
+// Method Syntax Demo - v1.5.0
+// Shows the preferred method-based approach
+
+fn main() -> int {
+    print("=== Method Syntax Demo ===")
+    print("")
+    
+    // String methods
+    var text = "hello world"
+    print("Original:")
+    print(text)
+    
+    print("Uppercase:")
+    print(text.upper())
+    
+    print("Length:")
+    print(text.length())
+    
+    print("")
+    
+    // Array methods
+    var numbers = [5, 2, 8, 1, 9]
+    print("Array:")
+    var i = 0
+    while i < 5 {
+        print(numbers[i])
+        i = i + 1
+    }
+    
+    print("Sum:")
+    print(numbers.sum())
+    
+    print("Max:")
+    print(numbers.max())
+    
+    print("Sorted:")
+    numbers.sort()
+    i = 0
+    while i < 5 {
+        print(numbers[i])
+        i = i + 1
+    }
+    
+    print("")
+    
+    // Integer methods
+    var num = -42
+    print("Number:")
+    print(num)
+    
+    print("Absolute:")
+    print(num.abs())
+    
+    print("Is even:")
+    print(num.isEven())
+    
+    print("")
+    
+    // Method chaining
+    print("Method chaining:")
+    var result = "  hello  ".trim().upper()
+    print(result)
+    
+    print("")
+    print("=== All Methods Work! ===")
+    
+    return 0
+}

@@ -1,0 +1,7 @@
+
+fn main() -> int {
+    var zero = 0
+    var result = 10 / zero
+    print(result)
+    return 0
+}

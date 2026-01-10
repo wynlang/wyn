@@ -1,0 +1,16 @@
+// main.wyn - Uses the utils module
+import utils
+
+fn main() {
+    // These work - they're exported from utils
+    var result1 = double(5)      // Can call directly after import
+    var result2 = triple(4)      // Can call directly after import
+    var max = MAX_SIZE           // Can access exported variables
+    
+    result1.print()  // 10
+    result2.print()  // 12
+    max.print()      // 100
+    
+    // This would NOT work - private_helper is not exported:
+    // var result3 = private_helper(3)  // ERROR: Undefined function
+}

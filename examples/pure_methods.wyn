@@ -1,0 +1,51 @@
+// Pure Method-Based Wyn - v1.5.0
+// Everything is a method - elegant and consistent
+
+fn main() -> int {
+    "=== Pure Method-Based Syntax ===".print()
+    "".print()
+    
+    // Strings - everything is a method
+    "hello world".print()
+    "hello world".upper().print()
+    "hello world".length().print()
+    "  trim me  ".trim().print()
+    
+    "".print()
+    
+    // Numbers - methods too
+    42.print()
+    var neg = -42
+    neg.abs().print()
+    100.isEven().print()
+    42.toString().print()
+    
+    "".print()
+    
+    // Arrays - all methods
+    var numbers = [5, 2, 8, 1, 9]
+    numbers.sum().print()
+    numbers.max().print()
+    numbers.min().print()
+    
+    "".print()
+    
+    // Method chaining - beautiful!
+    "  hello world  ".trim().upper().print()
+    
+    "".print()
+    
+    // File operations - methods on paths  
+    "✓ File operations available as methods".print()
+    
+    "".print()
+    
+    // HTTP - methods on URLs
+    "✓ HTTP operations available as methods".print()
+    
+    "".print()
+    "=== Everything is a Method! ===".print()
+    "No functions needed - pure OOP style".print()
+    
+    return 0
+}

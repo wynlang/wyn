@@ -1,0 +1,11 @@
+// Debug qualified import
+import math
+
+fn main() {
+    // Test if math is recognized
+    print("Testing math module")
+    
+    // Try direct call
+    var result = add(5, 3)
+    result.print()
+}

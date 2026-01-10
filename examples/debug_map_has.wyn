@@ -1,0 +1,6 @@
+// Test map has method (which should work)
+fn main() {
+    var scores = map[string, int]{"alice": 95}
+    print("Map has alice:")
+    scores.has("alice").print()
+}

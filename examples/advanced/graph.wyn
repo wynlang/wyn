@@ -1,0 +1,137 @@
+# Graph Algorithms in Wyn
+
+struct Graph {
+    adj_matrix: [[int]]
+    vertices: int
+}
+
+fn create_graph(vertices: int) -> Graph {
+    let graph = Graph{adj_matrix: [], vertices: vertices}
+    
+    for i in 0..vertices {
+        let row: [int] = []
+        for j in 0..vertices {
+            row.push(0)
+        }
+        graph.adj_matrix.push(row)
+    }
+    
+    return graph
+}
+
+fn add_edge(graph: &Graph, src: int, dest: int, weight: int) {
+    graph.adj_matrix[src][dest] = weight
+}
+
+fn dfs_util(graph: &Graph, vertex: int, visited: &[bool]) {
+    visited[vertex] = true
+    print(vertex, " ", end="")
+    
+    for i in 0..graph.vertices {
+        if graph.adj_matrix[vertex][i] != 0 && !visited[i] {
+            dfs_util(graph, i, visited)
+        }
+    }
+}
+
+fn dfs(graph: &Graph, start: int) {
+    let visited: [bool] = []
+    for i in 0..graph.vertices {
+        visited.push(false)
+    }
+    
+    print("DFS from vertex", start, ": ")
+    dfs_util(graph, start, &visited)
+    print("")
+}
+
+fn bfs(graph: &Graph, start: int) {
+    let visited: [bool] = []
+    let queue: [int] = []
+    
+    for i in 0..graph.vertices {
+        visited.push(false)
+    }
+    
+    visited[start] = true
+    queue.push(start)
+    
+    print("BFS from vertex", start, ": ")
+    
+    while queue.len() > 0 {
+        let vertex = queue[0]
+        queue.remove(0)
+        print(vertex, " ", end="")
+        
+        for i in 0..graph.vertices {
+            if graph.adj_matrix[vertex][i] != 0 && !visited[i] {
+                visited[i] = true
+                queue.push(i)
+            }
+        }
+    }
+    print("")
+}
+
+fn dijkstra(graph: &Graph, start: int) {
+    let dist: [int] = []
+    let visited: [bool] = []
+    
+    for i in 0..graph.vertices {
+        dist.push(999999)  # Infinity
+        visited.push(false)
+    }
+    
+    dist[start] = 0
+    
+    for count in 0..(graph.vertices - 1) {
+        let min_dist = 999999
+        let min_vertex = -1
+        
+        # Find minimum distance vertex
+        for v in 0..graph.vertices {
+            if !visited[v] && dist[v] < min_dist {
+                min_dist = dist[v]
+                min_vertex = v
+            }
+        }
+        
+        if min_vertex == -1 {
+            break
+        }
+        
+        visited[min_vertex] = true
+        
+        # Update distances
+        for v in 0..graph.vertices {
+            if !visited[v] && graph.adj_matrix[min_vertex][v] != 0 {
+                let new_dist = dist[min_vertex] + graph.adj_matrix[min_vertex][v]
+                if new_dist < dist[v] {
+                    dist[v] = new_dist
+                }
+            }
+        }
+    }
+    
+    print("Shortest distances from vertex", start, ":")
+    for i in 0..graph.vertices {
+        print("  To vertex", i, ": ", dist[i])
+    }
+}
+
+fn main() {
+    let graph = create_graph(5)
+    
+    # Add edges (directed graph with weights)
+    add_edge(&graph, 0, 1, 4)
+    add_edge(&graph, 0, 2, 2)
+    add_edge(&graph, 1, 2, 1)
+    add_edge(&graph, 1, 3, 5)
+    add_edge(&graph, 2, 3, 8)
+    add_edge(&graph, 2, 4, 10)
+    add_edge(&graph, 3, 4, 2)
+    
+    dfs(&graph, 0)
+    bfs(&graph, 0)
+    dijkstra(&graph, 0)
+}

@@ -1,0 +1,30 @@
+// Web API Demo - v1.4 Features
+
+fn main() -> int {
+    // URL encoding for query parameters
+    var query = url_encode("hello world")
+    print_str(query)
+    
+    // Base64 encoding for auth
+    var auth = base64_encode("user:pass")
+    print_str(auth)
+    
+    // Hash for data integrity
+    var data = "important data"
+    var hash = hash_string(data)
+    print(hash)
+    
+    // Time formatting
+    var now = time_now()
+    var formatted = time_format(now, "%Y-%m-%d")
+    print_str(formatted)
+    
+    // Random utilities
+    seed_random(now)
+    var dice = random_range(1, 6)
+    print(dice)
+    
+    print_str("Web API features ready!")
+    
+    return 0
+}

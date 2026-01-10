@@ -1,0 +1,8 @@
+// Main program using utils
+
+fn main() -> int {
+    print(square(5))
+    print(cube(3))
+    print(factorial(5))
+    return 0
+}

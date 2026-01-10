@@ -1,0 +1,15 @@
+// utils.wyn - Utility module with wildcard import example
+pub fn helper1() -> int {
+    return 42
+}
+
+pub fn helper2() -> string {
+    return "Hello from utils"
+}
+
+pub const MAX_SIZE: int = 1000
+
+pub struct Config {
+    pub name: string
+    pub version: int
+}

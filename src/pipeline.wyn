@@ -1,0 +1,356 @@
+// T7.3.2: Full Self-Compilation Pipeline
+// Complete Wyn-to-Wyn compilation pipeline
+
+import "io"
+import "string"
+import "collections"
+import "lexer"
+import "parser"
+import "checker"
+import "codegen"
+import "optimizer"
+
+// Compilation pipeline stages
+enum CompilationStage {
+    Lexing,
+    Parsing,
+    TypeChecking,
+    CodeGeneration,
+    Optimization,
+    Linking
+}
+
+// Compilation context
+struct CompilationContext {
+    source_file: String,
+    output_file: String,
+    optimization_level: OptimizationLevel,
+    target_triple: String,
+    include_paths: Vec<String>,
+    library_paths: Vec<String>,
+    debug_info: bool,
+    verbose: bool,
+    statistics: CompilationStats
+}
+
+struct CompilationStats {
+    lines_of_code: int,
+    tokens_processed: int,
+    ast_nodes_created: int,
+    type_checks_performed: int,
+    ir_instructions_generated: int,
+    optimizations_applied: int,
+    compilation_time_ms: int
+}
+
+// Main compilation pipeline
+fn compile_wyn_program(ctx: &mut CompilationContext) -> Result<(), CompilationError> {
+    println!("🚀 Starting Wyn self-compilation pipeline")
+    println!("Source: {}", ctx.source_file)
+    println!("Output: {}", ctx.output_file)
+    
+    let start_time = get_current_time_ms()
+    
+    // Stage 1: Lexical Analysis
+    println!("\n=== Stage 1: Lexical Analysis ===")
+    let tokens = match lex_source_file(&ctx.source_file) {
+        Ok(t) => t,
+        Err(e) => return Err(e)
+    }
+    ctx.statistics.tokens_processed = tokens.len()
+    println!("✅ Lexed {} tokens", tokens.len())
+    
+    // Stage 2: Parsing
+    println!("\n=== Stage 2: Parsing ===")
+    let ast = match parse_tokens(&tokens) {
+        Ok(a) => a,
+        Err(e) => return Err(e)
+    }
+    ctx.statistics.ast_nodes_created = count_ast_nodes(&ast)
+    println!("✅ Parsed {} AST nodes", ctx.statistics.ast_nodes_created)
+    
+    // Stage 3: Type Checking
+    println!("\n=== Stage 3: Type Checking ===")
+    let typed_ast = match type_check_ast(&ast) {
+        Ok(ta) => ta,
+        Err(e) => return Err(e)
+    }
+    ctx.statistics.type_checks_performed = count_type_checks(&typed_ast)
+    println!("✅ Performed {} type checks", ctx.statistics.type_checks_performed)
+    
+    // Stage 4: Code Generation
+    println!("\n=== Stage 4: Code Generation ===")
+    let mut ir_module = match generate_llvm_ir(&typed_ast) {
+        Ok(ir) => ir,
+        Err(e) => return Err(e)
+    }
+    ctx.statistics.ir_instructions_generated = ir_module.instruction_count()
+    println!("✅ Generated {} LLVM IR instructions", ctx.statistics.ir_instructions_generated)
+    
+    // Stage 5: Optimization
+    println!("\n=== Stage 5: Optimization ===")
+    let mut optimizer_ctx = init_optimizer(ctx.optimization_level)
+    optimize_module(&mut optimizer_ctx, &mut ir_module)
+    ctx.statistics.optimizations_applied = optimizer_ctx.statistics.total_optimizations()
+    println!("✅ Applied {} optimizations", ctx.statistics.optimizations_applied)
+    
+    // Stage 6: Output Generation
+    println!("\n=== Stage 6: Output Generation ===")
+    match write_output_file(&ir_module, &ctx.output_file) {
+        Ok(()) => {},
+        Err(e) => return Err(e)
+    }
+    println!("✅ Generated output file: {}", ctx.output_file)
+    
+    let end_time = get_current_time_ms()
+    ctx.statistics.compilation_time_ms = end_time - start_time
+    
+    print_compilation_summary(ctx)
+    
+    Ok(())
+}
+
+// Stage implementations using Wyn components
+fn lex_source_file(filename: &String) -> Result<Vec<Token>, CompilationError> {
+    let source_code = match read_file_to_string(filename) {
+        Ok(s) => s,
+        Err(_) => return Err(CompilationError::FileNotFound(filename.clone()))
+    }
+    let mut lexer_ctx = init_lexer(&source_code)
+    let tokens = match tokenize(&mut lexer_ctx) {
+        Ok(t) => t,
+        Err(e) => return Err(CompilationError::LexError(e))
+    }
+    
+    if tokens.is_empty() {
+        return Err(CompilationError::EmptySource)
+    }
+    
+    Ok(tokens)
+}
+
+fn parse_tokens(tokens: &Vec<Token>) -> Result<AST, CompilationError> {
+    let mut parser_ctx = init_parser(tokens)
+    let ast = match parse_program(&mut parser_ctx) {
+        Ok(a) => a,
+        Err(e) => return Err(CompilationError::ParseError(e))
+    }
+    
+    if ast.functions.is_empty() && ast.structs.is_empty() {
+        return Err(CompilationError::EmptyProgram)
+    }
+    
+    Ok(ast)
+}
+
+fn type_check_ast(ast: &AST) -> Result<TypedAST, CompilationError> {
+    let mut checker_ctx = init_type_checker()
+    let typed_ast = match check_program(&mut checker_ctx, ast) {
+        Ok(ta) => ta,
+        Err(e) => return Err(CompilationError::TypeErrors(vec![e]))
+    }
+    
+    if checker_ctx.has_errors() {
+        return Err(CompilationError::TypeErrors(checker_ctx.get_errors()))
+    }
+    
+    Ok(typed_ast)
+}
+
+fn generate_llvm_ir(typed_ast: &TypedAST) -> Result<IRModule, CompilationError> {
+    let output_file = match create_temp_file("wyn_ir", ".ll") {
+        Ok(f) => f,
+        Err(_) => return Err(CompilationError::CodegenError("Failed to create temp file".to_string()))
+    }
+    let mut codegen_ctx = init_codegen(output_file)
+    
+    codegen_program(&mut codegen_ctx, typed_ast)
+    
+    let ir_module = match load_ir_module_from_file(&codegen_ctx.output_file) {
+        Ok(ir) => ir,
+        Err(_) => return Err(CompilationError::CodegenError("Failed to load IR module".to_string()))
+    }
+    Ok(ir_module)
+}
+
+fn write_output_file(ir_module: &IRModule, output_file: &String) -> Result<(), CompilationError> {
+    let mut file = match create_file(output_file) {
+        Ok(f) => f,
+        Err(_) => return Err(CompilationError::OutputNotGenerated)
+    }
+    match ir_module.write_to_file(&mut file) {
+        Ok(()) => Ok(()),
+        Err(_) => Err(CompilationError::OutputNotGenerated)
+    }
+}
+
+// Bootstrap compilation - compile Wyn compiler with itself
+fn bootstrap_compile() -> Result<(), CompilationError> {
+    println!("🔄 Starting bootstrap compilation")
+    println!("Compiling Wyn compiler using Wyn compiler")
+    
+    let compiler_sources = vec![
+        "src/lexer.wyn".to_string(),
+        "src/parser.wyn".to_string(),
+        "src/checker.wyn".to_string(),
+        "src/codegen.wyn".to_string(),
+        "src/optimizer.wyn".to_string(),
+        "src/pipeline.wyn".to_string()
+    ]
+    
+    for source in compiler_sources {
+        println!("Compiling: {}", source)
+        
+        let mut ctx = CompilationContext {
+            source_file: source.clone(),
+            output_file: format!("{}.o", source),
+            optimization_level: OptimizationLevel::O2,
+            target_triple: "arm64-apple-macosx".to_string(),
+            include_paths: vec!["src/".to_string()],
+            library_paths: vec![],
+            debug_info: false,
+            verbose: true,
+            statistics: CompilationStats::new()
+        }
+        
+        compile_wyn_program(&mut ctx)?
+        println!("✅ Compiled {}", source)
+    }
+    
+    // Link all object files into final compiler
+    link_compiler_executable()?
+    
+    println!("🎉 Bootstrap compilation successful!")
+    println!("✅ Wyn compiler can now compile itself!")
+    
+    Ok(())
+}
+
+// Validation functions
+fn validate_self_hosting() -> Result<(), CompilationError> {
+    println!("🔍 Validating self-hosting capability")
+    
+    // Test 1: Compile a simple Wyn program
+    let test_program = r#"
+        fn main() -> int {
+            let x = 42
+            return x
+        }
+    "#
+    
+    write_string_to_file("test_program.wyn", test_program)?
+    
+    let mut ctx = CompilationContext {
+        source_file: "test_program.wyn".to_string(),
+        output_file: "test_program.ll".to_string(),
+        optimization_level: OptimizationLevel::O1,
+        target_triple: "arm64-apple-macosx".to_string(),
+        include_paths: vec![],
+        library_paths: vec![],
+        debug_info: false,
+        verbose: false,
+        statistics: CompilationStats::new()
+    }
+    
+    compile_wyn_program(&mut ctx)?
+    
+    // Verify output file exists and is valid
+    if !file_exists("test_program.ll") {
+        return Err(CompilationError::OutputNotGenerated)
+    }
+    
+    let output_content = read_file_to_string("test_program.ll")?
+    if !output_content.contains("define i32 @main") {
+        return Err(CompilationError::InvalidOutput)
+    }
+    
+    println!("✅ Self-hosting validation passed")
+    Ok(())
+}
+
+fn print_compilation_summary(ctx: &CompilationContext) {
+    println!("\n=== COMPILATION SUMMARY ===")
+    println!("Source file: {}", ctx.source_file)
+    println!("Output file: {}", ctx.output_file)
+    println!("Optimization level: {:?}", ctx.optimization_level)
+    println!("Target: {}", ctx.target_triple)
+    println!()
+    println!("Statistics:")
+    println!("  Lines of code: {}", ctx.statistics.lines_of_code)
+    println!("  Tokens processed: {}", ctx.statistics.tokens_processed)
+    println!("  AST nodes: {}", ctx.statistics.ast_nodes_created)
+    println!("  Type checks: {}", ctx.statistics.type_checks_performed)
+    println!("  IR instructions: {}", ctx.statistics.ir_instructions_generated)
+    println!("  Optimizations: {}", ctx.statistics.optimizations_applied)
+    println!("  Compilation time: {}ms", ctx.statistics.compilation_time_ms)
+    println!()
+    println!("🎉 Compilation completed successfully!")
+}
+
+// Error handling
+enum CompilationError {
+    FileNotFound(String),
+    EmptySource,
+    EmptyProgram,
+    LexError(String),
+    ParseError(String),
+    TypeErrors(Vec<String>),
+    CodegenError(String),
+    OptimizationError(String),
+    OutputNotGenerated,
+    InvalidOutput,
+    LinkError(String)
+}
+
+// C interface for integration
+extern "C" {
+    fn wyn_compile_file(source_file: *const char, output_file: *const char, opt_level: i32) -> i32
+    fn wyn_bootstrap_compile() -> i32
+    fn wyn_validate_self_hosting() -> i32
+}
+
+fn wyn_compile_file(source_file: *const char, output_file: *const char, opt_level: i32) -> i32 {
+    unsafe {
+        let source = CStr::from_ptr(source_file).to_string_lossy().to_string()
+        let output = CStr::from_ptr(output_file).to_string_lossy().to_string()
+        
+        let opt_level = match opt_level {
+            0 => OptimizationLevel::O0,
+            1 => OptimizationLevel::O1,
+            2 => OptimizationLevel::O2,
+            3 => OptimizationLevel::O3,
+            _ => OptimizationLevel::O2
+        }
+        
+        let mut ctx = CompilationContext {
+            source_file: source,
+            output_file: output,
+            optimization_level: opt_level,
+            target_triple: "arm64-apple-macosx".to_string(),
+            include_paths: vec![],
+            library_paths: vec![],
+            debug_info: false,
+            verbose: false,
+            statistics: CompilationStats::new()
+        }
+        
+        match compile_wyn_program(&mut ctx) {
+            Ok(()) => 0,
+            Err(_) => 1
+        }
+    }
+}
+
+fn wyn_bootstrap_compile() -> i32 {
+    match bootstrap_compile() {
+        Ok(()) => 0,
+        Err(_) => 1
+    }
+}
+
+fn wyn_validate_self_hosting() -> i32 {
+    match validate_self_hosting() {
+        Ok(()) => 0,
+        Err(_) => 1
+    }
+}

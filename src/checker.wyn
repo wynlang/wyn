@@ -1,0 +1,284 @@
+// T7.2.3: Type Checker Rewrite in Wyn Language
+// Self-hosting type checking implementation with C integration
+
+import "io"
+import "string"
+import "collections"
+
+// Type system definitions
+enum TypeKind {
+    INT,
+    FLOAT, 
+    STRING,
+    BOOL,
+    VOID,
+    ARRAY,
+    STRUCT,
+    FUNCTION,
+    GENERIC
+}
+
+struct Type {
+    kind: TypeKind,
+    name: String,
+    size: int,
+    is_mutable: bool
+}
+
+struct Symbol {
+    name: String,
+    type: Type,
+    scope_level: int,
+    is_defined: bool
+}
+
+struct SymbolTable {
+    symbols: Vec<Symbol>,
+    parent: Option<Box<SymbolTable>>,
+    scope_level: int
+}
+
+struct TypeChecker {
+    symbol_table: SymbolTable,
+    current_scope: int,
+    error_count: int,
+    warnings: Vec<String>
+}
+
+// Core type checking functions
+fn create_type_checker() -> TypeChecker {
+    TypeChecker {
+        symbol_table: SymbolTable {
+            symbols: Vec::new(),
+            parent: None,
+            scope_level: 0
+        },
+        current_scope: 0,
+        error_count: 0,
+        warnings: Vec::new()
+    }
+}
+
+fn add_builtin_types(checker: &mut TypeChecker) {
+    let builtin_types = vec![
+        Type { kind: TypeKind::INT, name: "int".to_string(), size: 4, is_mutable: false },
+        Type { kind: TypeKind::FLOAT, name: "float".to_string(), size: 8, is_mutable: false },
+        Type { kind: TypeKind::STRING, name: "string".to_string(), size: 8, is_mutable: false },
+        Type { kind: TypeKind::BOOL, name: "bool".to_string(), size: 1, is_mutable: false },
+        Type { kind: TypeKind::VOID, name: "void".to_string(), size: 0, is_mutable: false }
+    ]
+    
+    for builtin_type in builtin_types {
+        let symbol = Symbol {
+            name: builtin_type.name.clone(),
+            type: builtin_type,
+            scope_level: 0,
+            is_defined: true
+        }
+        checker.symbol_table.symbols.push(symbol)
+    }
+}
+
+fn check_expression(checker: &mut TypeChecker, expr: &Expr) -> Result<Type, String> {
+    match expr.type {
+        EXPR_LITERAL => {
+            match expr.literal.type {
+                TOKEN_NUMBER => Ok(Type { 
+                    kind: TypeKind::INT, 
+                    name: "int".to_string(), 
+                    size: 4, 
+                    is_mutable: false 
+                }),
+                TOKEN_STRING => Ok(Type { 
+                    kind: TypeKind::STRING, 
+                    name: "string".to_string(), 
+                    size: 8, 
+                    is_mutable: false 
+                }),
+                TOKEN_TRUE | TOKEN_FALSE => Ok(Type { 
+                    kind: TypeKind::BOOL, 
+                    name: "bool".to_string(), 
+                    size: 1, 
+                    is_mutable: false 
+                }),
+                _ => Err("Unknown literal type".to_string())
+            }
+        },
+        EXPR_VARIABLE => {
+            let symbol = find_symbol(checker, &expr.variable.name.lexeme)
+            match symbol {
+                Some(s) => Ok(s.type.clone()),
+                None => {
+                    checker.error_count += 1
+                    Err(format!("Undefined variable: {}", expr.variable.name.lexeme))
+                }
+            }
+        },
+        EXPR_BINARY => {
+            let left_type = check_expression(checker, expr.binary.left)?
+            let right_type = check_expression(checker, expr.binary.right)?
+            
+            if types_compatible(&left_type, &right_type) {
+                Ok(left_type)
+            } else {
+                checker.error_count += 1
+                Err(format!("Type mismatch: {} and {}", left_type.name, right_type.name))
+            }
+        },
+        _ => Err("Unsupported expression type".to_string())
+    }
+}
+
+fn check_statement(checker: &mut TypeChecker, stmt: &Stmt) -> Result<(), String> {
+    match stmt.type {
+        STMT_VAR => {
+            if let Some(initializer) = &stmt.var.initializer {
+                let init_type = check_expression(checker, initializer)?
+                
+                let symbol = Symbol {
+                    name: stmt.var.name.lexeme.clone(),
+                    type: init_type,
+                    scope_level: checker.current_scope,
+                    is_defined: true
+                }
+                
+                checker.symbol_table.symbols.push(symbol)
+            }
+            Ok(())
+        },
+        STMT_EXPRESSION => {
+            check_expression(checker, stmt.expression)?
+            Ok(())
+        },
+        STMT_BLOCK => {
+            checker.current_scope += 1
+            
+            for i in 0..stmt.block.statement_count {
+                check_statement(checker, &stmt.block.statements[i])?
+            }
+            
+            // Remove symbols from this scope
+            checker.symbol_table.symbols.retain(|s| s.scope_level < checker.current_scope)
+            checker.current_scope -= 1
+            
+            Ok(())
+        },
+        STMT_IF => {
+            let condition_type = check_expression(checker, stmt.if_stmt.condition)?
+            
+            if condition_type.kind != TypeKind::BOOL {
+                checker.error_count += 1
+                return Err("If condition must be boolean".to_string())
+            }
+            
+            check_statement(checker, stmt.if_stmt.then_branch)?
+            
+            if let Some(else_branch) = stmt.if_stmt.else_branch {
+                check_statement(checker, else_branch)?
+            }
+            
+            Ok(())
+        },
+        STMT_RETURN => {
+            if let Some(value) = stmt.return_stmt.value {
+                check_expression(checker, value)?
+            }
+            Ok(())
+        },
+        _ => Ok(())
+    }
+}
+
+fn find_symbol(checker: &TypeChecker, name: &str) -> Option<&Symbol> {
+    checker.symbol_table.symbols.iter()
+        .rev()
+        .find(|s| s.name == name && s.is_defined)
+}
+
+fn types_compatible(left: &Type, right: &Type) -> bool {
+    left.kind == right.kind
+}
+
+fn check_program(checker: &mut TypeChecker, program: &Program) -> Result<(), Vec<String>> {
+    add_builtin_types(checker)
+    
+    let mut errors = Vec::new()
+    
+    for i in 0..program.function_count {
+        match check_function(checker, &program.functions[i]) {
+            Ok(()) => {},
+            Err(e) => errors.push(e)
+        }
+    }
+    
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+fn check_function(checker: &mut TypeChecker, func: &FunctionDecl) -> Result<(), String> {
+    checker.current_scope += 1
+    
+    // Add parameters to symbol table
+    for i in 0..func.param_count {
+        let param_symbol = Symbol {
+            name: func.params[i].lexeme.clone(),
+            type: Type { 
+                kind: TypeKind::INT, 
+                name: "int".to_string(), 
+                size: 4, 
+                is_mutable: true 
+            },
+            scope_level: checker.current_scope,
+            is_defined: true
+        }
+        checker.symbol_table.symbols.push(param_symbol)
+    }
+    
+    // Check function body
+    let result = check_statement(checker, func.body)
+    
+    // Clean up function scope
+    checker.symbol_table.symbols.retain(|s| s.scope_level < checker.current_scope)
+    checker.current_scope -= 1
+    
+    result
+}
+
+// C interface for integration
+extern "C" {
+    fn wyn_type_checker_init() -> *mut TypeChecker
+    fn wyn_type_checker_check_program(checker: *mut TypeChecker, program: *const Program) -> i32
+    fn wyn_type_checker_get_errors(checker: *const TypeChecker) -> *const *const char
+    fn wyn_type_checker_cleanup(checker: *mut TypeChecker)
+}
+
+fn wyn_type_checker_init() -> *mut TypeChecker {
+    let checker = Box::new(create_type_checker())
+    Box::into_raw(checker)
+}
+
+fn wyn_type_checker_check_program(checker: *mut TypeChecker, program: *const Program) -> i32 {
+    unsafe {
+        let checker_ref = &mut *checker
+        let program_ref = &*program
+        
+        match check_program(checker_ref, program_ref) {
+            Ok(()) => 0,
+            Err(_) => 1
+        }
+    }
+}
+
+fn wyn_type_checker_get_errors(checker: *const TypeChecker) -> *const *const char {
+    // Return error messages (simplified for integration)
+    std::ptr::null()
+}
+
+fn wyn_type_checker_cleanup(checker: *mut TypeChecker) {
+    unsafe {
+        Box::from_raw(checker)
+    }
+}

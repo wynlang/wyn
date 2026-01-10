@@ -1,0 +1,32 @@
+# Lightweight Alpine-based Dockerfile for production
+FROM alpine:3.18 AS builder
+
+# Install build dependencies
+RUN apk add --no-cache \
+    build-base \
+    clang15 \
+    llvm15-dev \
+    llvm15-static \
+    git \
+    cmake \
+    pkgconfig
+
+# Set LLVM environment
+ENV LLVM_CONFIG=llvm-config-15
+ENV CC=clang-15
+
+WORKDIR /build
+COPY . .
+
+# Build static binary
+RUN make wyn-llvm CFLAGS="-Wall -Wextra -std=c11 -O2 -static"
+
+# Stage 2: Minimal runtime
+FROM scratch
+
+# Copy static binary
+COPY --from=builder /build/wyn-llvm /wyn
+COPY --from=builder /build/packages /packages
+
+# Set entrypoint
+ENTRYPOINT ["/wyn"]

@@ -1,0 +1,43 @@
+// Comprehensive v1.7.0 Feature Demonstration
+import math
+
+fn main() {
+    print("=== Wyn v1.7.0 Feature Showcase ===")
+    
+    print("1. Module System with Qualified Access:")
+    print("   math.add(10, 5) =")
+    math.add(10, 5).print()
+    print("   math.PI =")
+    math.PI.print()
+    
+    print("2. Map Creation and Access:")
+    var scores = map[string, int]{"alice": 95, "bob": 87}
+    print("   alice score =")
+    scores["alice"].print()
+    print("   bob score =")
+    scores["bob"].print()
+    
+    print("3. Map Index Assignment (NEW!):")
+    scores["charlie"] = 92
+    scores["diana"] = 98
+    print("   After adding charlie and diana:")
+    print("   charlie score =")
+    scores["charlie"].print()
+    print("   diana score =")
+    scores["diana"].print()
+    
+    print("4. Map Methods:")
+    print("   has alice =")
+    scores.has("alice").print()
+    print("   has eve =")
+    scores.has("eve").print()
+    print("   get bob =")
+    scores.get("bob").print()
+    
+    print("5. Map Modification:")
+    scores["alice"] = 100  // Update existing key
+    print("   Updated alice score =")
+    scores["alice"].print()
+    
+    print("=== All v1.7.0 Core Features Working! ===")
+}

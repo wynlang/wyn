@@ -45,10 +45,10 @@ TEST(string) {
 }
 
 TEST(keywords) {
-    const char* keywords[] = {"fn", "struct", "enum", "var", "if", "else", "return"};
-    TokenType types[] = {TOKEN_FN, TOKEN_STRUCT, TOKEN_ENUM, TOKEN_VAR, TOKEN_IF, TOKEN_ELSE, TOKEN_RETURN};
+    const char* keywords[] = {"fn", "struct", "enum", "var", "if", "else", "elseif", "return"};
+    TokenType types[] = {TOKEN_FN, TOKEN_STRUCT, TOKEN_ENUM, TOKEN_VAR, TOKEN_IF, TOKEN_ELSE, TOKEN_ELSEIF, TOKEN_RETURN};
     
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 8; i++) {
         init_lexer(keywords[i]);
         Token t = next_token();
         assert(t.type == types[i]);

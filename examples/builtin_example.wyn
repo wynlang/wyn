@@ -1,0 +1,19 @@
+// builtin_example.wyn - Shows builtin vs imported functions
+import math  // Need to import math module
+
+fn main() {
+    // BUILTINS - Always available, no import needed:
+    print("Hello")           // Built into the language
+    var arr = [1, 2, 3]
+    arr.length().print()     // Array methods are built-in
+    var str = "hello"
+    str.upper().print()      // String methods are built-in
+    
+    // IMPORTED - Need explicit import:
+    var sum = add(5, 3)      // From math module - needed 'import math'
+    sum.print()
+    
+    // MAPS - Built-in type, no import needed:
+    var users = map[string, int]{"alice": 25}
+    users.get("alice").print()  // Map methods are built-in
+}

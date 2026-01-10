@@ -1,0 +1,63 @@
+// T3.2.2: Trait Bounds and Constraints Test
+// Testing trait bounds in generic functions and structs
+
+// Define traits for constraints
+trait Display {
+    fn show(self) -> string;
+}
+
+trait Debug {
+    fn debug(self) -> string;
+}
+
+trait Clone {
+    fn clone(self) -> Self;
+}
+
+// Generic function with trait bounds
+fn print_item<T>(item: T) where T: Display + Debug {
+    let display_str = item.show();
+    let debug_str = item.debug();
+    return 0;
+}
+
+// Generic struct with trait bounds
+struct Container<T> where T: Clone + Display {
+    value: T
+}
+
+// Implement traits for a concrete type
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Display for Point {
+    fn show(self) -> string {
+        return "Point";
+    }
+}
+
+impl Debug for Point {
+    fn debug(self) -> string {
+        return "Point debug";
+    }
+}
+
+impl Clone for Point {
+    fn clone(self) -> Point {
+        return Point { x: self.x, y: self.y };
+    }
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 };
+    
+    // This should work - Point implements Display + Debug
+    print_item(p);
+    
+    // This should work - Point implements Clone + Display
+    let container = Container<Point> { value: p };
+    
+    return 0;
+}

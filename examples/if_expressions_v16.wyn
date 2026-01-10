@@ -1,0 +1,13 @@
+fn main() -> int {
+    var x = 5
+    
+    // Test if expression (simple)
+    var result = if x > 3 { 10 } else { 20 }
+    result.print()  // Should print 10
+    
+    // Test if expression without else
+    var result2 = if x < 3 { 100 }
+    result2.print()  // Should print 0 (default)
+    
+    return 0
+}

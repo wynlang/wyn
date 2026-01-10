@@ -1,0 +1,56 @@
+// T1.5.2: Default Parameters Example
+// Demonstrates the new default parameter functionality
+
+// Function with default parameters
+fn greet(name: string = "World", excited: bool = false) -> string {
+    if (excited) {
+        return "Hello, " + name + "!"
+    } else {
+        return "Hello, " + name + "."
+    }
+}
+
+// Function with mixed parameters (some with defaults, some without)
+fn calculate(base: int, multiplier: int = 2, offset: int = 0) -> int {
+    return base * multiplier + offset
+}
+
+// Function with all parameters having defaults
+fn config(debug: bool = false, verbose: bool = true, log_level: int = 1) -> int {
+    var level = log_level
+    if (debug) {
+        level = level + 1
+    }
+    if (verbose) {
+        level = level + 1
+    }
+    return level
+}
+
+fn main() -> int {
+    // Test default parameters
+    print("Testing default parameters:")
+    
+    // Call with no arguments (all defaults)
+    print(greet())  // Should use defaults: "World", false
+    
+    // Call with some arguments
+    print(greet("Alice"))  // Should use default for excited: false
+    
+    // Call with all arguments
+    print(greet("Bob", true))  // No defaults used
+    
+    // Test mixed parameters
+    print("Testing mixed parameters:")
+    print(calculate(10))        // Uses defaults: multiplier=2, offset=0 -> 20
+    print(calculate(10, 3))     // Uses default: offset=0 -> 30
+    print(calculate(10, 3, 5))  // No defaults -> 35
+    
+    // Test all defaults
+    print("Testing all defaults:")
+    print(config())             // All defaults -> should be 2 (1 + 1 for verbose)
+    print(config(true))         // debug=true -> should be 3 (1 + 1 + 1)
+    print(config(true, false))  // debug=true, verbose=false -> should be 2 (1 + 1)
+    
+    return 0
+}

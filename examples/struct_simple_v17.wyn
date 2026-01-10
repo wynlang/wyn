@@ -1,0 +1,9 @@
+// Test simple struct without literals first
+struct Point {
+    x: int
+    y: int
+}
+
+fn main() {
+    print("Struct defined successfully")
+}

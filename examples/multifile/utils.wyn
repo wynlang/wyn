@@ -1,0 +1,16 @@
+// Utility functions
+
+pub fn square(x: int) -> int {
+    return x * x
+}
+
+pub fn cube(x: int) -> int {
+    return x * x * x
+}
+
+pub fn factorial(n: int) -> int {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}

@@ -1,0 +1,6 @@
+// Debug map size method
+fn main() {
+    var scores = map[string, int]{"alice": 95}
+    print("Map size:")
+    scores.size().print()
+}

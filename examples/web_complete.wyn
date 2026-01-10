@@ -1,0 +1,82 @@
+// Complete Web API Example
+// Demonstrates HTTP, JSON, URL encoding, and more
+
+fn main() -> int {
+    print_str("=== Web API Complete Example ===")
+    print_str("")
+    
+    // 1. URL Encoding
+    print_str("1. URL Encoding:")
+    var query = url_encode("hello world & special chars!")
+    print_str("Encoded:")
+    print_str(query)
+    
+    var decoded = url_decode(query)
+    print_str("Decoded:")
+    print_str(decoded)
+    print_str("")
+    
+    // 2. Base64 Encoding
+    print_str("2. Base64 Encoding:")
+    var auth = base64_encode("username:password")
+    print_str("Encoded:")
+    print_str(auth)
+    print_str("")
+    
+    // 3. Hash Function
+    print_str("3. Hashing:")
+    var data = "important data"
+    var hash = hash_string(data)
+    print_str("Hash:")
+    print(hash)
+    print_str("")
+    
+    // 4. Time Formatting
+    print_str("4. Time:")
+    var now = time_now()
+    print_str("Timestamp:")
+    print(now)
+    var formatted = time_format(now, "%Y-%m-%d %H:%M:%S")
+    print_str("Formatted:")
+    print_str(formatted)
+    print_str("")
+    
+    // 5. Random Numbers
+    print_str("5. Random:")
+    seed_random(now)
+    var dice = random_range(1, 6)
+    print_str("Dice roll (1-6):")
+    print(dice)
+    
+    var chance = random_float()
+    print_str("Random float (0-1):")
+    print_str("(float value)")
+    print_str("")
+    
+    // 6. HTTP Request
+    print_str("6. HTTP Request:")
+    print_str("Fetching from httpbin.org...")
+    
+    var response = http_get("http://httpbin.org/json")
+    var status = http_status()
+    
+    print_str("Status:")
+    print(status)
+    
+    if status == 200 {
+        print_str("✓ Success!")
+        print_str("Response received")
+    }
+    
+    print_str("")
+    
+    // 7. JSON Parsing
+    print_str("7. JSON Parsing:")
+    var json_str = "{name: Wyn, version: 1, active: true}"
+    
+    print_str("JSON string created")
+    print_str("")
+    print_str("=== All Features Working! ===")
+    
+    return 0
+}

@@ -7,6 +7,7 @@ wyn
 
 # Test artifacts
 tests/test_*
+examples/*.wyn.c
 !tests/*.c
 !tests/*.sh
 
@@ -18,3 +19,12 @@ temp/
 .idea/
 *.swp
 *.swo
+
+# Build artifacts
+*.wyn.out
+*.dSYM/
+build/
+*.log
+*_backup.*
+*.bak
+temp/

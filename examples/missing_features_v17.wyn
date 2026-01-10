@@ -1,0 +1,23 @@
+// Test what's missing in v1.7.0
+fn main() {
+    print("=== TESTING MISSING FEATURES ===")
+    
+    // 1. Struct literals - currently disabled
+    // var p = Point{x: 10, y: 20}  // Would crash
+    
+    // 2. Tuple destructuring - not implemented
+    // var (a, b) = (1, 2)  // Not supported
+    
+    // 3. Map index syntax - not implemented  
+    var users = map[string, int]{"alice": 25}
+    // users["bob"] = 30  // Not supported - must use .set()
+    // var age = users["alice"]  // Not supported - must use .get()
+    
+    // 4. Qualified module access - broken
+    // import math
+    // math.add(1, 2)  // Doesn't work - must use add(1, 2)
+    
+    print("=== CURRENT WORKAROUNDS ===")
+    users.set("bob", 30)
+    users.get("alice").print()
+}

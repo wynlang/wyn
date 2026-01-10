@@ -1,0 +1,46 @@
+fn main() -> int {
+    print("=== Wyn v1.6.0 Extended Features ===")
+    
+    // Enhanced String Methods
+    print("Enhanced String Methods:")
+    var text = "hello"
+    var padded = text.padStart(10, "*")
+    padded.print()  // "*****hello"
+    
+    var padded_end = text.padEnd(8, "!")
+    padded_end.print()  // "hello!!!"
+    
+    // Enhanced Array Methods
+    print("Enhanced Array Methods:")
+    var arr = [1, 2, 3, 2, 4]
+    var has_two = arr.some(2)
+    has_two.print()  // 1 (true)
+    
+    var all_twos = arr.every(2)
+    all_twos.print()  // 0 (false)
+    
+    // Number Methods
+    print("Number Methods:")
+    var num = 5
+    var clamped = num.clamp(0, 10)
+    clamped.print()  // 5
+    
+    var powered = 2.pow(3)
+    powered.print()  // 8
+    
+    var sign_val = num.sign()
+    sign_val.print()  // 1
+    
+    // File System Methods (testing existence)
+    print("File System Methods:")
+    var exists = "README.md".exists()
+    exists.print()  // 1 if exists, 0 if not
+    
+    // If expressions with new methods
+    print("If expressions with new methods:")
+    var conditional = if "hello".length() > 3 { 1 } else { 0 }
+    conditional.print()  // 1
+    
+    print("=== All extended features working! ===")
+    return 0
+}

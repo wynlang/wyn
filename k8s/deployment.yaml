@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wyn-compiler
+  labels:
+    app: wyn-compiler
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: wyn-compiler
+  template:
+    metadata:
+      labels:
+        app: wyn-compiler
+    spec:
+      containers:
+      - name: wyn-compiler
+        image: wyn-lang/compiler:latest
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        env:
+        - name: WYN_LOG_LEVEL
+          value: "info"
+        - name: WYN_MAX_MEMORY
+          value: "256MB"
+        volumeMounts:
+        - name: wyn-packages
+          mountPath: /app/packages
+          readOnly: true
+      volumes:
+      - name: wyn-packages
+        configMap:
+          name: wyn-std-packages
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wyn-compiler-service
+spec:
+  selector:
+    app: wyn-compiler
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wyn-std-packages
+data:
+  std.wyn: |
+    // Standard library package configuration
+    package std {
+        version = "1.0.0"
+        description = "Wyn standard library"
+    }

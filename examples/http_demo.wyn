@@ -1,0 +1,21 @@
+// HTTP Client Demo
+// Note: Requires libcurl installed
+
+fn main() -> int {
+    // Simple GET request
+    print_str("Making HTTP request...")
+    
+    // This would work if libcurl is available
+    // var response = http_get("https://httpbin.org/get")
+    // if response != null {
+    //     print_str(response)
+    // }
+    
+    print_str("HTTP functions available:")
+    print_str("- http_get(url)")
+    print_str("- http_post(url, data)")
+    print_str("- http_put(url, data)")
+    print_str("- http_delete(url)")
+    
+    return 0
+}

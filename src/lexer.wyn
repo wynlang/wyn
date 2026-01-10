@@ -1,0 +1,422 @@
+// Wyn Language Lexer - Self-Hosting Implementation
+// T7.2.1: Lexer rewrite in Wyn
+
+package lexer
+
+import std.io
+import std.string
+import std.collections
+
+// Token types for Wyn language
+enum TokenType {
+    // Literals
+    INTEGER,
+    FLOAT,
+    STRING,
+    CHAR,
+    BOOLEAN,
+    
+    // Identifiers and keywords
+    IDENTIFIER,
+    KEYWORD,
+    
+    // Operators
+    PLUS,
+    MINUS,
+    MULTIPLY,
+    DIVIDE,
+    MODULO,
+    ASSIGN,
+    EQUALS,
+    NOT_EQUALS,
+    LESS_THAN,
+    GREATER_THAN,
+    LESS_EQUAL,
+    GREATER_EQUAL,
+    LOGICAL_AND,
+    LOGICAL_OR,
+    LOGICAL_NOT,
+    
+    // Delimiters
+    LEFT_PAREN,
+    RIGHT_PAREN,
+    LEFT_BRACE,
+    RIGHT_BRACE,
+    LEFT_BRACKET,
+    RIGHT_BRACKET,
+    SEMICOLON,
+    COMMA,
+    DOT,
+    COLON,
+    ARROW,
+    
+    // Special
+    NEWLINE,
+    EOF,
+    INVALID
+}
+
+// Token structure
+struct Token {
+    type: TokenType
+    value: string
+    line: int
+    column: int
+    position: int
+}
+
+// Lexer state
+struct Lexer {
+    input: string
+    position: int
+    line: int
+    column: int
+    current_char: char
+    keywords: Map<string, TokenType>
+}
+
+// Initialize lexer with input text
+fn lexer_init(input: string) -> Lexer {
+    let mut lexer = Lexer {
+        input: input,
+        position: 0,
+        line: 1,
+        column: 1,
+        current_char: if input.length() > 0 { input[0] } else { '\0' },
+        keywords: Map<string, TokenType>::new()
+    }
+    
+    // Initialize keywords
+    lexer.keywords.insert("fn", TokenType::KEYWORD)
+    lexer.keywords.insert("let", TokenType::KEYWORD)
+    lexer.keywords.insert("mut", TokenType::KEYWORD)
+    lexer.keywords.insert("if", TokenType::KEYWORD)
+    lexer.keywords.insert("else", TokenType::KEYWORD)
+    lexer.keywords.insert("while", TokenType::KEYWORD)
+    lexer.keywords.insert("for", TokenType::KEYWORD)
+    lexer.keywords.insert("match", TokenType::KEYWORD)
+    lexer.keywords.insert("struct", TokenType::KEYWORD)
+    lexer.keywords.insert("enum", TokenType::KEYWORD)
+    lexer.keywords.insert("trait", TokenType::KEYWORD)
+    lexer.keywords.insert("impl", TokenType::KEYWORD)
+    lexer.keywords.insert("return", TokenType::KEYWORD)
+    lexer.keywords.insert("break", TokenType::KEYWORD)
+    lexer.keywords.insert("continue", TokenType::KEYWORD)
+    lexer.keywords.insert("true", TokenType::BOOLEAN)
+    lexer.keywords.insert("false", TokenType::BOOLEAN)
+    lexer.keywords.insert("package", TokenType::KEYWORD)
+    lexer.keywords.insert("import", TokenType::KEYWORD)
+    lexer.keywords.insert("export", TokenType::KEYWORD)
+    
+    return lexer
+}
+
+// Advance to next character
+fn lexer_advance(lexer: &mut Lexer) {
+    if lexer.current_char == '\n' {
+        lexer.line += 1
+        lexer.column = 1
+    } else {
+        lexer.column += 1
+    }
+    
+    lexer.position += 1
+    if lexer.position >= lexer.input.length() {
+        lexer.current_char = '\0'
+    } else {
+        lexer.current_char = lexer.input[lexer.position]
+    }
+}
+
+// Peek at next character without advancing
+fn lexer_peek(lexer: &Lexer) -> char {
+    let peek_pos = lexer.position + 1
+    if peek_pos >= lexer.input.length() {
+        return '\0'
+    }
+    return lexer.input[peek_pos]
+}
+
+// Skip whitespace characters
+fn lexer_skip_whitespace(lexer: &mut Lexer) {
+    while lexer.current_char == ' ' || lexer.current_char == '\t' || lexer.current_char == '\r' {
+        lexer_advance(lexer)
+    }
+}
+
+// Skip single-line comments
+fn lexer_skip_comment(lexer: &mut Lexer) {
+    if lexer.current_char == '/' && lexer_peek(lexer) == '/' {
+        while lexer.current_char != '\n' && lexer.current_char != '\0' {
+            lexer_advance(lexer)
+        }
+    }
+}
+
+// Read number (integer or float)
+fn lexer_read_number(lexer: &mut Lexer) -> Token {
+    let start_line = lexer.line
+    let start_column = lexer.column
+    let start_position = lexer.position
+    let mut value = String::new()
+    let mut is_float = false
+    
+    while lexer.current_char.is_digit() {
+        value.push(lexer.current_char)
+        lexer_advance(lexer)
+    }
+    
+    // Check for decimal point
+    if lexer.current_char == '.' && lexer_peek(lexer).is_digit() {
+        is_float = true
+        value.push(lexer.current_char)
+        lexer_advance(lexer)
+        
+        while lexer.current_char.is_digit() {
+            value.push(lexer.current_char)
+            lexer_advance(lexer)
+        }
+    }
+    
+    return Token {
+        type: if is_float { TokenType::FLOAT } else { TokenType::INTEGER },
+        value: value,
+        line: start_line,
+        column: start_column,
+        position: start_position
+    }
+}
+
+// Read string literal
+fn lexer_read_string(lexer: &mut Lexer) -> Token {
+    let start_line = lexer.line
+    let start_column = lexer.column
+    let start_position = lexer.position
+    let mut value = String::new()
+    
+    lexer_advance(lexer) // Skip opening quote
+    
+    while lexer.current_char != '"' && lexer.current_char != '\0' {
+        if lexer.current_char == '\\' {
+            lexer_advance(lexer)
+            match lexer.current_char {
+                'n' => value.push('\n'),
+                't' => value.push('\t'),
+                'r' => value.push('\r'),
+                '\\' => value.push('\\'),
+                '"' => value.push('"'),
+                _ => {
+                    value.push('\\')
+                    value.push(lexer.current_char)
+                }
+            }
+        } else {
+            value.push(lexer.current_char)
+        }
+        lexer_advance(lexer)
+    }
+    
+    if lexer.current_char == '"' {
+        lexer_advance(lexer) // Skip closing quote
+    }
+    
+    return Token {
+        type: TokenType::STRING,
+        value: value,
+        line: start_line,
+        column: start_column,
+        position: start_position
+    }
+}
+
+// Read identifier or keyword
+fn lexer_read_identifier(lexer: &mut Lexer) -> Token {
+    let start_line = lexer.line
+    let start_column = lexer.column
+    let start_position = lexer.position
+    let mut value = String::new()
+    
+    while lexer.current_char.is_alphanumeric() || lexer.current_char == '_' {
+        value.push(lexer.current_char)
+        lexer_advance(lexer)
+    }
+    
+    let token_type = match lexer.keywords.get(&value) {
+        Some(keyword_type) => *keyword_type,
+        None => TokenType::IDENTIFIER
+    }
+    
+    return Token {
+        type: token_type,
+        value: value,
+        line: start_line,
+        column: start_column,
+        position: start_position
+    }
+}
+
+// Get next token from input
+fn lexer_next_token(lexer: &mut Lexer) -> Token {
+    while lexer.current_char != '\0' {
+        let start_line = lexer.line
+        let start_column = lexer.column
+        let start_position = lexer.position
+        
+        // Skip whitespace
+        if lexer.current_char == ' ' || lexer.current_char == '\t' || lexer.current_char == '\r' {
+            lexer_skip_whitespace(lexer)
+            continue
+        }
+        
+        // Handle newlines
+        if lexer.current_char == '\n' {
+            let token = Token {
+                type: TokenType::NEWLINE,
+                value: "\n".to_string(),
+                line: start_line,
+                column: start_column,
+                position: start_position
+            }
+            lexer_advance(lexer)
+            return token
+        }
+        
+        // Skip comments
+        if lexer.current_char == '/' && lexer_peek(lexer) == '/' {
+            lexer_skip_comment(lexer)
+            continue
+        }
+        
+        // Numbers
+        if lexer.current_char.is_digit() {
+            return lexer_read_number(lexer)
+        }
+        
+        // String literals
+        if lexer.current_char == '"' {
+            return lexer_read_string(lexer)
+        }
+        
+        // Identifiers and keywords
+        if lexer.current_char.is_alphabetic() || lexer.current_char == '_' {
+            return lexer_read_identifier(lexer)
+        }
+        
+        // Single character tokens
+        let token = match lexer.current_char {
+            '+' => Token { type: TokenType::PLUS, value: "+".to_string(), line: start_line, column: start_column, position: start_position },
+            '-' => {
+                if lexer_peek(lexer) == '>' {
+                    lexer_advance(lexer)
+                    lexer_advance(lexer)
+                    return Token { type: TokenType::ARROW, value: "->".to_string(), line: start_line, column: start_column, position: start_position }
+                }
+                Token { type: TokenType::MINUS, value: "-".to_string(), line: start_line, column: start_column, position: start_position }
+            },
+            '*' => Token { type: TokenType::MULTIPLY, value: "*".to_string(), line: start_line, column: start_column, position: start_position },
+            '/' => Token { type: TokenType::DIVIDE, value: "/".to_string(), line: start_line, column: start_column, position: start_position },
+            '%' => Token { type: TokenType::MODULO, value: "%".to_string(), line: start_line, column: start_column, position: start_position },
+            '=' => {
+                if lexer_peek(lexer) == '=' {
+                    lexer_advance(lexer)
+                    lexer_advance(lexer)
+                    return Token { type: TokenType::EQUALS, value: "==".to_string(), line: start_line, column: start_column, position: start_position }
+                }
+                Token { type: TokenType::ASSIGN, value: "=".to_string(), line: start_line, column: start_column, position: start_position }
+            },
+            '!' => {
+                if lexer_peek(lexer) == '=' {
+                    lexer_advance(lexer)
+                    lexer_advance(lexer)
+                    return Token { type: TokenType::NOT_EQUALS, value: "!=".to_string(), line: start_line, column: start_column, position: start_position }
+                }
+                Token { type: TokenType::LOGICAL_NOT, value: "!".to_string(), line: start_line, column: start_column, position: start_position }
+            },
+            '<' => {
+                if lexer_peek(lexer) == '=' {
+                    lexer_advance(lexer)
+                    lexer_advance(lexer)
+                    return Token { type: TokenType::LESS_EQUAL, value: "<=".to_string(), line: start_line, column: start_column, position: start_position }
+                }
+                Token { type: TokenType::LESS_THAN, value: "<".to_string(), line: start_line, column: start_column, position: start_position }
+            },
+            '>' => {
+                if lexer_peek(lexer) == '=' {
+                    lexer_advance(lexer)
+                    lexer_advance(lexer)
+                    return Token { type: TokenType::GREATER_EQUAL, value: ">=".to_string(), line: start_line, column: start_column, position: start_position }
+                }
+                Token { type: TokenType::GREATER_THAN, value: ">".to_string(), line: start_line, column: start_column, position: start_position }
+            },
+            '&' => {
+                if lexer_peek(lexer) == '&' {
+                    lexer_advance(lexer)
+                    lexer_advance(lexer)
+                    return Token { type: TokenType::LOGICAL_AND, value: "&&".to_string(), line: start_line, column: start_column, position: start_position }
+                }
+                Token { type: TokenType::INVALID, value: "&".to_string(), line: start_line, column: start_column, position: start_position }
+            },
+            '|' => {
+                if lexer_peek(lexer) == '|' {
+                    lexer_advance(lexer)
+                    lexer_advance(lexer)
+                    return Token { type: TokenType::LOGICAL_OR, value: "||".to_string(), line: start_line, column: start_column, position: start_position }
+                }
+                Token { type: TokenType::INVALID, value: "|".to_string(), line: start_line, column: start_column, position: start_position }
+            },
+            '(' => Token { type: TokenType::LEFT_PAREN, value: "(".to_string(), line: start_line, column: start_column, position: start_position },
+            ')' => Token { type: TokenType::RIGHT_PAREN, value: ")".to_string(), line: start_line, column: start_column, position: start_position },
+            '{' => Token { type: TokenType::LEFT_BRACE, value: "{".to_string(), line: start_line, column: start_column, position: start_position },
+            '}' => Token { type: TokenType::RIGHT_BRACE, value: "}".to_string(), line: start_line, column: start_column, position: start_position },
+            '[' => Token { type: TokenType::LEFT_BRACKET, value: "[".to_string(), line: start_line, column: start_column, position: start_position },
+            ']' => Token { type: TokenType::RIGHT_BRACKET, value: "]".to_string(), line: start_line, column: start_column, position: start_position },
+            ';' => Token { type: TokenType::SEMICOLON, value: ";".to_string(), line: start_line, column: start_column, position: start_position },
+            ',' => Token { type: TokenType::COMMA, value: ",".to_string(), line: start_line, column: start_column, position: start_position },
+            '.' => Token { type: TokenType::DOT, value: ".".to_string(), line: start_line, column: start_column, position: start_position },
+            ':' => Token { type: TokenType::COLON, value: ":".to_string(), line: start_line, column: start_column, position: start_position },
+            _ => Token { type: TokenType::INVALID, value: lexer.current_char.to_string(), line: start_line, column: start_column, position: start_position }
+        }
+        
+        lexer_advance(lexer)
+        return token
+    }
+    
+    // End of file
+    return Token {
+        type: TokenType::EOF,
+        value: "".to_string(),
+        line: lexer.line,
+        column: lexer.column,
+        position: lexer.position
+    }
+}
+
+// Tokenize entire input
+fn lexer_tokenize(input: string) -> Vec<Token> {
+    let mut lexer = lexer_init(input)
+    let mut tokens = Vec<Token>::new()
+    
+    loop {
+        let token = lexer_next_token(&mut lexer)
+        let is_eof = token.type == TokenType::EOF
+        tokens.push(token)
+        if is_eof {
+            break
+        }
+    }
+    
+    return tokens
+}
+
+// Public API functions
+export fn tokenize(input: string) -> Vec<Token> {
+    return lexer_tokenize(input)
+}
+
+export fn create_lexer(input: string) -> Lexer {
+    return lexer_init(input)
+}
+
+export fn next_token(lexer: &mut Lexer) -> Token {
+    return lexer_next_token(lexer)
+}

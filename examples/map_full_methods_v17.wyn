@@ -1,0 +1,19 @@
+// Test all map methods
+fn main() {
+    var users = map[string, int]{"alice": 25, "bob": 30}
+    
+    // Test get method
+    users.get("alice").print()
+    
+    // Test has method  
+    users.has("charlie").print()
+    
+    // Test set method (add new entry)
+    users.set("charlie", 35)
+    users.has("charlie").print()
+    users.get("charlie").print()
+    
+    // Test set method (update existing)
+    users.set("alice", 26)
+    users.get("alice").print()
+}

@@ -1,0 +1,15 @@
+// Test simple map methods without conflicts
+fn main() {
+    var users = map[string, int]{"alice": 25, "bob": 30}
+    
+    // Test map.count directly (not size method for now)
+    print("Map created with entries")
+    
+    // Test get method
+    var alice_age = users.get("alice")
+    alice_age.print()
+    
+    // Test has method  
+    var has_charlie = users.has("charlie")
+    has_charlie.print()
+}

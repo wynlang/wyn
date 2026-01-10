@@ -1,0 +1,21 @@
+fn main() -> int {
+    var text = "Hello, World!"
+    
+    // Test substring
+    var sub = text.substring(0, 5)
+    sub.print()  // Should print "Hello"
+    
+    // Test indexOf
+    var index = text.indexOf("World")
+    index.print()  // Should print 7
+    
+    // Test slice (alias for substring)
+    var slice = text.slice(7, 12)
+    slice.print()  // Should print "World"
+    
+    // Test indexOf with not found
+    var notFound = text.indexOf("xyz")
+    notFound.print()  // Should print -1
+    
+    return 0
+}

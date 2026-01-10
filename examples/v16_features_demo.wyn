@@ -1,0 +1,50 @@
+fn main() -> int {
+    print("=== Wyn v1.6 Features Demo ===")
+    
+    // 1. Enhanced String Methods
+    print("1. Enhanced String Methods:")
+    var text = "  Hello, World!  "
+    var sub = text.substring(2, 7)
+    sub.print()  // "Hello"
+    
+    var index = text.indexOf("World")
+    index.print()  // 9
+    
+    var slice = text.slice(9, 14)
+    slice.print()  // "World"
+    
+    // 2. If Expressions
+    print("2. If Expressions:")
+    var x = 10
+    var result = if x > 5 { 100 } else { 200 }
+    result.print()  // 100
+    
+    var small_or_large = if x < 5 { 1 } else { 2 }
+    small_or_large.print()  // 2 (means large)
+    
+    // 3. Pipeline Operator
+    print("3. Pipeline Operator:")
+    var processed = "  hello world  " |> str_upper |> str_trim
+    processed.print()  // "HELLO WORLD"
+    
+    var number_result = 5 |> abs_val
+    number_result.print()  // 5
+    
+    // 4. Array Methods (basic versions)
+    print("4. Array Methods:")
+    var arr = [1, 2, 3, 4, 5]
+    var filtered_count = arr.filter(3)  // Count of 3s
+    filtered_count.print()  // 1
+    
+    var sum = arr.reduce("+")  // Sum all elements
+    sum.print()  // 15
+    
+    // 5. Combined Features
+    print("5. Combined Features:")
+    var test_len = "test".length()
+    var final_result = if test_len > 3 { 1 } else { 0 }
+    final_result.print()  // 1 (means TEST would be chosen)
+    
+    print("=== All v1.6 features working! ===")
+    return 0
+}

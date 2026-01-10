@@ -4,6 +4,9 @@
 #include "common.h"
 #include "ast.h"
 #include "types.h"
+#include "memory.h"
+#include "security.h"
+#include "llvm_codegen.h"
 
 void init_lexer(const char* source);
 void init_parser();
@@ -15,6 +18,7 @@ bool checker_had_error();
 void free_program(Program* prog);
 void codegen_c_header();
 void codegen_program(Program* prog);
+int create_new_project(const char* project_name);
 
 static char* read_file(const char* path) {
     FILE* f = fopen(path, "r");
@@ -27,7 +31,7 @@ static char* read_file(const char* path) {
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
     
-    char* buffer = malloc(size + 1);
+    char* buffer = safe_malloc(size + 1);
     fread(buffer, 1, size, f);
     buffer[size] = '\0';
     fclose(f);
@@ -35,16 +39,34 @@ static char* read_file(const char* path) {
     return buffer;
 }
 
+static char* get_version() {
+    static char version[32] = {0};
+    if (version[0] == 0) {
+        FILE* f = fopen("VERSION", "r");
+        if (f) {
+            if (fgets(version, sizeof(version), f)) {
+                char* newline = strchr(version, '\n');
+                if (newline) *newline = 0;
+            }
+            fclose(f);
+        }
+        if (version[0] == 0) strcpy(version, "1.4.0");
+    }
+    return version;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "Wyn Compiler v1.0.0\n");
+        fprintf(stderr, "Wyn Compiler v%s\n", get_version());
         fprintf(stderr, "Usage:\n");
         fprintf(stderr, "  wyn <file.wyn>           Compile file\n");
         fprintf(stderr, "  wyn run <file.wyn>       Compile and run\n");
+        fprintf(stderr, "  wyn build <dir>          Build all .wyn files in directory\n");
         fprintf(stderr, "  wyn test                 Run tests\n");
         fprintf(stderr, "  wyn fmt <file.wyn>       Validate file\n");
         fprintf(stderr, "  wyn clean                Clean artifacts\n");
         fprintf(stderr, "  wyn cross <os> <file>    Cross-compile (linux/macos/windows)\n");
+        fprintf(stderr, "  wyn llvm <file.wyn>      Compile with LLVM backend\n");
         fprintf(stderr, "  wyn version              Show version\n");
         fprintf(stderr, "  wyn help                 Show this help\n");
         return 1;
@@ -53,19 +75,22 @@ int main(int argc, char** argv) {
     char* command = argv[1];
     
     if (strcmp(command, "version") == 0) {
-        printf("Wyn v1.0.0\n");
+        printf("Wyn v%s\n", get_version());
         return 0;
     }
     
     if (strcmp(command, "help") == 0) {
-        printf("Wyn Compiler v1.0.0\n\n");
+        printf("Wyn Compiler v%s\n\n", get_version());
         printf("Commands:\n");
         printf("  wyn <file.wyn>           Compile file\n");
         printf("  wyn run <file.wyn>       Compile and run\n");
+        printf("  wyn build <dir>          Build all .wyn files in directory\n");
+        printf("  wyn init [name]          Create new project\n");
         printf("  wyn test                 Run tests\n");
         printf("  wyn fmt <file.wyn>       Validate file\n");
         printf("  wyn clean                Clean artifacts\n");
         printf("  wyn cross <os> <file>    Cross-compile\n");
+        printf("  wyn llvm <file.wyn>      Compile with LLVM backend\n");
         printf("  wyn version              Show version\n");
         printf("  wyn help                 Show this help\n");
         printf("\nCross-compile targets:\n");
@@ -75,9 +100,124 @@ int main(int argc, char** argv) {
         return 0;
     }
     
+    if (strcmp(command, "init") == 0) {
+        static char input[256];  // Make it static to avoid stack issues
+        char* project_name;
+        
+        if (argc < 3) {
+            printf("Enter project name: ");
+            fflush(stdout);
+            if (fgets(input, sizeof(input), stdin)) {
+                // Remove newline
+                input[strcspn(input, "\n")] = 0;
+                if (strlen(input) == 0) {
+                    fprintf(stderr, "Error: Project name cannot be empty\n");
+                    return 1;
+                }
+                project_name = input;
+            } else {
+                fprintf(stderr, "Error: Failed to read project name\n");
+                return 1;
+            }
+        } else {
+            project_name = argv[2];
+        }
+        return create_new_project(project_name);
+    }
+    
+    if (strcmp(command, "build") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: wyn build <directory>\n");
+            return 1;
+        }
+        
+        char* dir = argv[2];
+        printf("Building project in %s...\n", dir);
+        
+        // Find all .wyn files and compile them together
+        char find_cmd[512];
+        snprintf(find_cmd, 512, "find %s -name '*.wyn' -type f > temp/files.txt", dir);
+        system(find_cmd);
+        
+        // Read file list and concatenate
+        FILE* files = fopen("temp/files.txt", "r");
+        if (!files) {
+            fprintf(stderr, "Error: No .wyn files found in %s\n", dir);
+            return 1;
+        }
+        
+        FILE* combined = fopen("temp/combined.wyn", "w");
+        char line[512];
+        while (fgets(line, 512, files)) {
+            line[strcspn(line, "\n")] = 0; // Remove newline
+            char* source = read_file(line);
+            fprintf(combined, "// From %s\n%s\n\n", line, source);
+            free(source);
+        }
+        fclose(files);
+        fclose(combined);
+        
+        // Compile the combined file
+        char* source = read_file("temp/combined.wyn");
+        init_lexer(source);
+        init_parser();
+        init_checker();
+        
+        Program* prog = parse_program();
+        if (!prog) {
+            fprintf(stderr, "Error: Failed to parse program\n");
+            free(source);
+            return 1;
+        }
+        
+        check_program(prog);
+        if (checker_had_error()) {
+            fprintf(stderr, "Compilation failed due to errors\n");
+            free(source);
+            return 1;
+        }
+        
+        char out_path[256];
+        snprintf(out_path, 256, "%s/main.c", dir);
+        FILE* out = fopen(out_path, "w");
+        init_codegen(out);
+        codegen_c_header();
+        codegen_program(prog);
+        fclose(out);
+        
+        char compile_cmd[512];
+        snprintf(compile_cmd, 512, "gcc -o %s/main %s/main.c -lm", dir, dir);
+        int result = system(compile_cmd);
+        
+        if (result == 0) {
+            printf("Build successful: %s/main\n", dir);
+            // Clean up intermediate files
+            char cleanup[256];
+            snprintf(cleanup, 256, "%s/main.c", dir);
+            remove(cleanup);
+            remove("temp/files.txt");
+            remove("temp/combined.wyn");
+        } else {
+            fprintf(stderr, "Build failed\n");
+        }
+        
+        free(source);
+        return result;
+    }
+    
     if (strcmp(command, "test") == 0) {
         printf("Running tests...\n");
-        return system("make test 2>&1 && ./tests/integration_tests.sh");
+        
+        // Check if we're in a project directory (has tests/ folder)
+        FILE* test_dir = fopen("tests", "r");
+        if (test_dir) {
+            fclose(test_dir);
+            // Simple approach: run each .wyn file in tests/
+            return system("for f in tests/*.wyn; do [ -f \"$f\" ] && wyn run \"$f\"; done");
+        } else {
+            // Fallback to build system tests
+            return system("make test 2>&1 && ./tests/integration_tests.sh");
+        }
     }
     
     if (strcmp(command, "clean") == 0) {
@@ -134,13 +274,13 @@ int main(int argc, char** argv) {
         char compile_cmd[512];
         if (strcmp(target, "linux") == 0) {
             // On macOS, just compile normally (user can transfer binary)
-            snprintf(compile_cmd, 512, "gcc -O2 -o %s.linux %s.c 2>&1", file, file);
+            snprintf(compile_cmd, 512, "gcc -O2 -o %s.linux %s.c -lm", file, file);
             printf("Compiling for Linux (native binary)...\n");
         } else if (strcmp(target, "macos") == 0) {
-            snprintf(compile_cmd, 512, "gcc -O2 -o %s.macos %s.c 2>&1", file, file);
+            snprintf(compile_cmd, 512, "gcc -O2 -o %s.macos %s.c -lm", file, file);
             printf("Compiling for macOS...\n");
         } else if (strcmp(target, "windows") == 0) {
-            snprintf(compile_cmd, 512, "x86_64-w64-mingw32-gcc -O2 -static -o %s.exe %s.c 2>&1", file, file);
+            snprintf(compile_cmd, 512, "x86_64-w64-mingw32-gcc -O2 -static -o %s.exe %s.c -lm", file, file);
             printf("Cross-compiling for Windows...\n");
         } else {
             fprintf(stderr, "Unknown target: %s\n", target);
@@ -175,6 +315,66 @@ int main(int argc, char** argv) {
             printf("❌ %s has errors\n", argv[2]);
             return 1;
         }
+    }
+    
+    if (strcmp(command, "llvm") == 0) {
+#ifdef WITH_LLVM
+        if (argc < 3) {
+            fprintf(stderr, "Usage: wyn llvm <file.wyn>\n");
+            return 1;
+        }
+        
+        char* file = argv[2];
+        char* source = read_file(file);
+        
+        init_lexer(source);
+        init_parser();
+        init_checker();
+        
+        Program* prog = parse_program();
+        if (!prog) {
+            fprintf(stderr, "Error: Failed to parse program\n");
+            free(source);
+            return 1;
+        }
+        
+        // Type check
+        check_program(prog);
+        
+        if (checker_had_error()) {
+            fprintf(stderr, "Compilation failed due to errors\n");
+            free(source);
+            return 1;
+        }
+        
+        // Generate LLVM IR
+        char out_path[256];
+        snprintf(out_path, 256, "%s.ll", file);
+        FILE* out = fopen(out_path, "w");
+        init_codegen(out);
+        codegen_c_header();
+        codegen_program(prog);
+        fclose(out);
+        
+        // Generate bitcode if possible
+        char bc_path[256];
+        snprintf(bc_path, 256, "%s.bc", file);
+        if (codegen_generate_bitcode(bc_path)) {
+            printf("Generated LLVM bitcode: %s\n", bc_path);
+        }
+        
+        printf("Generated LLVM IR: %s\n", out_path);
+        
+        // Cleanup
+        cleanup_codegen();
+        free_program(prog);
+        free(source);
+        return 0;
+#else
+        fprintf(stderr, "Error: LLVM backend not available in this build\n");
+        fprintf(stderr, "Rebuild with LLVM support: make wyn-llvm\n");
+        return 1;
+#endif
     }
     
     if (strcmp(command, "run") == 0) {
@@ -214,7 +414,7 @@ int main(int argc, char** argv) {
         fclose(out);
         
         char compile_cmd[512];
-        snprintf(compile_cmd, 512, "gcc -O2 -o %s.out %s.c 2>&1", file, file);
+        snprintf(compile_cmd, 512, "gcc -O2 -o %s.out %s.c -lm", file, file);
         int result = system(compile_cmd);
         
         if (result != 0) {
@@ -261,18 +461,78 @@ int main(int argc, char** argv) {
     fclose(out);
     
     // Free AST
-    // free_program(prog);  // TODO: Implement cleanup
+    free_program(prog);
     
     char compile_cmd[512];
-    snprintf(compile_cmd, 512, "gcc -O2 -o %s.out %s.c 2>&1", argv[1], argv[1]);
+    snprintf(compile_cmd, 512, "gcc -o %s.out %s.c -lm", argv[1], argv[1]);
     int result = system(compile_cmd);
     
-    if (result == 0) {
+    // Check if output file was actually created
+    char check_path[256];
+    snprintf(check_path, 256, "%s.out", argv[1]);
+    FILE* check = fopen(check_path, "r");
+    if (check) {
+        fclose(check);
         printf("Compiled successfully: %s.out\n", argv[1]);
+        // Clean up intermediate .c file
+        char c_file[256];
+        snprintf(c_file, 256, "%s.c", argv[1]);
+        remove(c_file);
     } else {
-        fprintf(stderr, "C compilation failed\n");
+        fprintf(stderr, "C compilation failed - output file not created\n");
+        fprintf(stderr, "Command: %s\n", compile_cmd);
+        fprintf(stderr, "GCC exit code: %d\n", result);
+        return 1;
     }
     
-    free(source);
+    safe_free(source);
     return result;
+}
+
+int create_new_project(const char* project_name) {
+    char path[512];
+    
+    // Create directories
+    snprintf(path, sizeof(path), "mkdir -p %s/src %s/tests", project_name, project_name);
+    if (system(path) != 0) {
+        fprintf(stderr, "Error: Failed to create project directories\n");
+        return 1;
+    }
+    
+    // Create main.wyn
+    snprintf(path, sizeof(path), "%s/src/main.wyn", project_name);
+    FILE* main_file = fopen(path, "w");
+    if (!main_file) {
+        fprintf(stderr, "Error: Failed to create main.wyn\n");
+        return 1;
+    }
+    fprintf(main_file, "fn main() -> int {\n    print(\"Hello from %s!\")\n    return 0\n}\n", project_name);
+    fclose(main_file);
+    
+    // Create test file
+    snprintf(path, sizeof(path), "%s/tests/test_main.wyn", project_name);
+    FILE* test_file = fopen(path, "w");
+    if (!test_file) {
+        fprintf(stderr, "Error: Failed to create test file\n");
+        return 1;
+    }
+    fprintf(test_file, "// Tests for %s\n\nfn test_basic() -> int {\n    // Add your tests here\n    return 0\n}\n\nfn main() -> int {\n    test_basic()\n    print(\"All tests passed!\")\n    return 0\n}\n", project_name);
+    fclose(test_file);
+    
+    // Create README.md
+    snprintf(path, sizeof(path), "%s/README.md", project_name);
+    FILE* readme_file = fopen(path, "w");
+    if (readme_file) {
+        fprintf(readme_file, "# %s\n\nA Wyn project.\n\n## Build\n\n```bash\nwyn run src/main.wyn\n```\n\n## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n", project_name);
+        fclose(readme_file);
+    }
+    
+    printf("Created new Wyn project: %s\n", project_name);
+    printf("  %s/src/main.wyn\n", project_name);
+    printf("  %s/tests/test_main.wyn\n", project_name);
+    printf("  %s/README.md\n", project_name);
+    printf("\nTo build and run:\n  cd %s\n  wyn run src/main.wyn\n", project_name);
+    printf("\nTo run tests:\n  wyn run tests/test_main.wyn\n");
+    
+    return 0;
 }

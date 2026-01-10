@@ -1,0 +1,24 @@
+// Critical missing features preventing Wyn from being a complete language
+
+// 1. STRING CONCATENATION - Most basic missing feature
+let name = "World";
+let greeting = "Hello " + name;  // BROKEN - no + operator for strings
+print(greeting);
+
+// 2. DYNAMIC ARRAYS - Essential data structure
+let arr = [];  // BROKEN - no dynamic array syntax
+arr.push(1);
+arr.push(2);
+print("Array:", arr);
+
+// 3. FOR-IN LOOPS - Already parsed but crashes
+for i in 0..3 {  // BROKEN - segfaults
+    print("i =", i);
+}
+
+// 4. PROPER ERROR HANDLING - No try/catch despite tokens existing
+try {
+    let x = 1 / 0;
+} catch (e) {
+    print("Error:", e);
+}

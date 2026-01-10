@@ -1,0 +1,22 @@
+fn double_val(x: int) -> int {
+    return x * 2
+}
+
+fn add_ten(x: int) -> int {
+    return x + 10
+}
+
+fn main() -> int {
+    var x = 5
+    
+    // Test pipeline operator
+    var result = x |> double_val |> add_ten
+    result.print()  // Should print 20 (5 * 2 + 10)
+    
+    // Test with method calls (simpler version)
+    var text = "hello"
+    var upper_text = text |> str_upper
+    upper_text.print()  // Should print "HELLO"
+    
+    return 0
+}

@@ -1,0 +1,12 @@
+struct Person {
+    name: string
+    age: int
+}
+
+fn main() -> int {
+    var person = Person { name: "Alice", age: 25 }
+    print("Name: ")
+    print(person.name)
+    print("\n")
+    return 0
+}

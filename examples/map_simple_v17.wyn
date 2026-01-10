@@ -1,0 +1,5 @@
+// Test simple map without assignment
+fn main() {
+    print("Testing map syntax")
+    // Just test parsing, not assignment yet
+}

@@ -1,0 +1,33 @@
+// CRITICAL VALIDATION TEST - What actually works?
+fn main() {
+    print("=== CRITICAL VALIDATION TEST ===")
+    
+    // Test 1: Basic string concatenation - MISSING
+    print("Test 1: String concatenation")
+    var a = "Hello"
+    var b = "World"
+    // This should work: var c = a + b
+    // But it doesn't - no string concatenation operator
+    
+    // Test 2: Dynamic arrays - MISSING  
+    print("Test 2: Dynamic arrays")
+    // This should work: var arr = []
+    // arr.push(1)
+    // But dynamic arrays aren't implemented
+    
+    // Test 3: Proper for-in loops - MISSING
+    print("Test 3: For-in loops")
+    var items = [1, 2, 3]
+    // This should work: for item in items { item.print() }
+    // But for-in syntax doesn't exist
+    
+    // Test 4: Match expressions - BROKEN
+    print("Test 4: Match expressions")
+    // This crashes the compiler
+    
+    // Test 5: Struct literals - DISABLED
+    print("Test 5: Struct literals")
+    // This was disabled due to parser conflicts
+    
+    print("REALITY CHECK: Many features are missing or broken")
+}

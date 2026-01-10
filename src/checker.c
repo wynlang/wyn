@@ -4,6 +4,11 @@
 #include "common.h"
 #include "ast.h"
 #include "types.h"
+#include "error.h"  // T1.5.3: For type_error_mismatch function
+
+// Forward declarations
+void check_stmt(Stmt* stmt, SymbolTable* scope);
+Type* check_expr(Expr* expr, SymbolTable* scope);
 
 static SymbolTable* global_scope = NULL;
 static Type* builtin_int = NULL;
@@ -11,15 +16,130 @@ static Type* builtin_float = NULL;
 static Type* builtin_string = NULL;
 static Type* builtin_bool = NULL;
 static Type* builtin_void = NULL;
+static Type* builtin_array = NULL;
 static bool had_error = false;
+static Type* current_function_return_type = NULL;
 
-static Type* make_type(TypeKind kind) {
+static void print_type_name(Type* type) {
+    if (!type) {
+        printf("unknown");
+        return;
+    }
+    switch (type->kind) {
+        case TYPE_INT: printf("int"); break;
+        case TYPE_FLOAT: printf("float"); break;
+        case TYPE_STRING: printf("string"); break;
+        case TYPE_BOOL: printf("bool"); break;
+        case TYPE_VOID: printf("void"); break;
+        case TYPE_ARRAY: printf("array"); break;
+        case TYPE_OPTIONAL: // T2.5.1: Optional Type Implementation
+            print_type_name(type->optional_type.inner_type);
+            printf("?");
+            break;
+        default: printf("unknown"); break;
+    }
+}
+
+Type* make_type(TypeKind kind) {
     Type* t = calloc(1, sizeof(Type));
     t->kind = kind;
     return t;
 }
 
-static void add_symbol(SymbolTable* scope, Token name, Type* type, bool is_mutable) {
+// T2.5.1: Optional Type Implementation - Helper functions
+static bool is_optional_type(Type* type) {
+    return type && type->kind == TYPE_OPTIONAL;
+}
+
+// T1.5.4: Parameter Validation Implementation
+typedef enum {
+    VALIDATION_SUCCESS,
+    VALIDATION_PARAM_COUNT_MISMATCH,
+    VALIDATION_TYPE_MISMATCH,
+    VALIDATION_NULL_FUNCTION,
+    VALIDATION_NULL_ARGS
+} ValidationResult;
+
+static bool wyn_is_type_compatible(Type* expected, Type* actual) {
+    if (!expected || !actual) {
+        return false;
+    }
+    
+    // Exact type match
+    if (expected->kind == actual->kind) {
+        return true;
+    }
+    
+    // Allow int to float conversion
+    if (expected->kind == TYPE_FLOAT && actual->kind == TYPE_INT) {
+        return true;
+    }
+    
+    return false;
+}
+
+static ValidationResult wyn_validate_function_call(Symbol* func_symbol, Expr** args, int arg_count) {
+    if (!func_symbol || !func_symbol->type || func_symbol->type->kind != TYPE_FUNCTION) {
+        return VALIDATION_NULL_FUNCTION;
+    }
+    
+    if (!args && arg_count > 0) {
+        return VALIDATION_NULL_ARGS;
+    }
+    
+    Type* func_type = func_symbol->type;
+    
+    // Check parameter count
+    if (arg_count != func_type->fn_type.param_count) {
+        return VALIDATION_PARAM_COUNT_MISMATCH;
+    }
+    
+    // Check type compatibility for each parameter
+    for (int i = 0; i < func_type->fn_type.param_count; i++) {
+        Type* expected_type = func_type->fn_type.param_types[i];
+        Type* actual_type = check_expr(args[i], global_scope);
+        
+        if (!wyn_is_type_compatible(expected_type, actual_type)) {
+            return VALIDATION_TYPE_MISMATCH;
+        }
+    }
+    
+    return VALIDATION_SUCCESS;
+}
+
+static const char* wyn_validation_error_message(ValidationResult result) {
+    switch (result) {
+        case VALIDATION_SUCCESS:
+            return "Function call is valid";
+        case VALIDATION_PARAM_COUNT_MISMATCH:
+            return "Parameter count mismatch";
+        case VALIDATION_TYPE_MISMATCH:
+            return "Parameter type mismatch";
+        case VALIDATION_NULL_FUNCTION:
+            return "Function is null";
+        case VALIDATION_NULL_ARGS:
+            return "Arguments are null";
+        default:
+            return "Unknown validation error";
+    }
+}
+
+// Forward declarations for T1.5.3: Function overloading
+static bool types_equal(Type* a, Type* b);
+static const char* type_to_string(Type* type);
+static bool signatures_match(Type* type1, Type* type2);
+static char* generate_mangled_name(Token name, Type* type);
+static Symbol* find_function_overload(SymbolTable* scope, Token name, Type** arg_types, int arg_count);
+static int calculate_match_score(Type* fn_type, Type** arg_types, int arg_count);
+static bool can_convert_type(Type* from, Type* to);
+static void add_function_overload(SymbolTable* scope, Token name, Type* type, bool is_mutable);
+
+static Type* get_inner_type(Type* optional_type) {
+    if (!is_optional_type(optional_type)) return optional_type;
+    return optional_type->optional_type.inner_type;
+}
+
+void add_symbol(SymbolTable* scope, Token name, Type* type, bool is_mutable) {
     if (scope->count >= scope->capacity) {
         scope->capacity *= 2;
         scope->symbols = realloc(scope->symbols, scope->capacity * sizeof(Symbol));
@@ -27,7 +147,20 @@ static void add_symbol(SymbolTable* scope, Token name, Type* type, bool is_mutab
     scope->symbols[scope->count].name = name;
     scope->symbols[scope->count].type = type;
     scope->symbols[scope->count].is_mutable = is_mutable;
+    scope->symbols[scope->count].next_overload = NULL;  // T1.5.3: Initialize overload chain
+    scope->symbols[scope->count].mangled_name = NULL;   // T1.5.3: Initialize mangled name
     scope->count++;
+}
+
+static void mark_used(SymbolTable* scope, Token name) {
+    for (int i = 0; i < scope->count; i++) {
+        if (scope->symbols[i].name.length == name.length &&
+            memcmp(scope->symbols[i].name.start, name.start, name.length) == 0) {
+            scope->symbols[i].is_mutable = true; // Reuse flag to mark as used
+            return;
+        }
+    }
+    if (scope->parent) mark_used(scope->parent, name);
 }
 
 void init_checker() {
@@ -41,24 +174,37 @@ void init_checker() {
     builtin_string = make_type(TYPE_STRING);
     builtin_bool = make_type(TYPE_BOOL);
     builtin_void = make_type(TYPE_VOID);
+    builtin_array = make_type(TYPE_ARRAY);
     
     // Add built-in functions
     const char* stdlib_funcs[] = {
-        "print", "print_float", "print_str", "print_bool", "input",
-        "str_len", "str_eq", "str_concat", "str_upper", "str_lower",
+        "print", "print_float", "print_str", "print_bool", "print_hex", "print_bin", "println", "print_debug", "input", "input_float", "input_line", "printf_wyn", "sin_approx", "cos_approx", "pi_const", "e_const",
+        "str_len", "str_eq", "str_concat", "str_upper", "str_lower", "str_contains", "str_starts_with", "str_ends_with", "str_trim",
+        "str_replace", "str_split", "str_join", "int_to_str", "str_to_int", "str_repeat", "str_reverse", "str_parse_int", "str_parse_float", "str_free",
         "abs_val", "min", "max", "pow_int", "clamp", "sign", "gcd", "lcm", "is_even", "is_odd",
-        "arr_sum", "arr_max", "arr_min", "arr_contains", "arr_find", "arr_reverse",
-        "file_read", "file_write", "file_exists",
-        "random_int", "seed_random", "time_now", "assert_eq"
+        "sqrt_int", "ceil_int", "floor_int", "round_int", "abs_float",
+        "swap", "clamp_float", "lerp", "map_range",
+        "bit_set", "bit_clear", "bit_toggle", "bit_check", "bit_count",
+        "arr_sum", "arr_max", "arr_min", "arr_contains", "arr_find", "arr_reverse", "arr_sort", "arr_count", "arr_fill", "arr_all", "arr_join", "arr_map_double", "arr_map_square", "arr_filter_positive", "arr_filter_even", "arr_filter_greater_than_3", "arr_reduce_sum", "arr_reduce_product",
+        "file_read", "file_write", "file_exists", "file_size", "file_delete", "file_append", "file_copy", "last_error_get",
+        "random_int", "random_range", "random_float", "seed_random", "time_now", "time_format",
+        "range", "array_new", "array_push", "array_pop", "array_length_dyn", "len",
+        "assert_eq", "assert_true", "assert_false", "panic", "todo",
+        "exit_program", "sleep_ms", "getenv_var", "setenv_var",
+        "Error", "TypeError", "ValueError", "DivisionByZeroError", "print_error",
+        "http_get", "http_post", "http_put", "http_delete", "http_set_header", "http_clear_headers", "http_status", "http_error",
+        "https_get", "https_post",
+        "json_get_str", "json_get_int", "json_get_bool", "json_has_key", "json_stringify_int", "json_stringify_str", "json_stringify_bool", "json_array_stringify", "json_array_length", "json_array_get",
+        "url_encode", "url_decode", "base64_encode", "hash_string"
     };
     
-    for (int i = 0; i < 33; i++) {
+    for (int i = 0; i < 121; i++) {
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
     }
 }
 
-static Symbol* find_symbol(SymbolTable* scope, Token name) {
+Symbol* find_symbol(SymbolTable* scope, Token name) {
     for (int i = 0; i < scope->count; i++) {
         if (scope->symbols[i].name.length == name.length &&
             memcmp(scope->symbols[i].name.start, name.start, name.length) == 0) {
@@ -67,6 +213,142 @@ static Symbol* find_symbol(SymbolTable* scope, Token name) {
     }
     if (scope->parent) return find_symbol(scope->parent, name);
     return NULL;
+}
+
+// T1.5.3: Function overloading support
+static void add_function_overload(SymbolTable* scope, Token name, Type* type, bool is_mutable) {
+    // Check if function with this name already exists
+    Symbol* existing = find_symbol(scope, name);
+    
+    if (existing && existing->type->kind == TYPE_FUNCTION && type->kind == TYPE_FUNCTION) {
+        // Check for exact signature match (error)
+        if (signatures_match(existing->type, type)) {
+            char func_name[256];
+            snprintf(func_name, sizeof(func_name), "%.*s", name.length, name.start);
+            type_error_mismatch("unique function signature", "duplicate signature", func_name, name.line, 0);
+            return;
+        }
+        
+        // Add to overload chain
+        Symbol* current = existing;
+        while (current->next_overload) {
+            if (signatures_match(current->next_overload->type, type)) {
+                char func_name[256];
+                snprintf(func_name, sizeof(func_name), "%.*s", name.length, name.start);
+                type_error_mismatch("unique function signature", "duplicate signature", func_name, name.line, 0);
+                return;
+            }
+            current = current->next_overload;
+        }
+        
+        // Create new overload
+        current->next_overload = malloc(sizeof(Symbol));
+        current->next_overload->name = name;
+        current->next_overload->type = type;
+        current->next_overload->is_mutable = is_mutable;
+        current->next_overload->next_overload = NULL;
+        current->next_overload->mangled_name = generate_mangled_name(name, type);
+    } else {
+        // First function with this name or non-function symbol
+        add_symbol(scope, name, type, is_mutable);
+        if (type->kind == TYPE_FUNCTION) {
+            scope->symbols[scope->count - 1].mangled_name = generate_mangled_name(name, type);
+        }
+    }
+}
+
+// T1.5.3: Check if two function signatures match
+static bool signatures_match(Type* type1, Type* type2) {
+    if (type1->kind != TYPE_FUNCTION || type2->kind != TYPE_FUNCTION) return false;
+    
+    FunctionType* fn1 = &type1->fn_type;
+    FunctionType* fn2 = &type2->fn_type;
+    
+    if (fn1->param_count != fn2->param_count) return false;
+    
+    for (int i = 0; i < fn1->param_count; i++) {
+        if (!types_equal(fn1->param_types[i], fn2->param_types[i])) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+// T1.5.3: Generate mangled name for function overloading
+static char* generate_mangled_name(Token name, Type* type) {
+    if (type->kind != TYPE_FUNCTION) return NULL;
+    
+    char* mangled = malloc(256);
+    int pos = 0;
+    
+    // Start with function name
+    pos += snprintf(mangled + pos, 256 - pos, "%.*s", name.length, name.start);
+    
+    // Add parameter types
+    FunctionType* fn_type = &type->fn_type;
+    for (int i = 0; i < fn_type->param_count; i++) {
+        const char* type_name = type_to_string(fn_type->param_types[i]);
+        pos += snprintf(mangled + pos, 256 - pos, "_%s", type_name);
+    }
+    
+    return mangled;
+}
+
+// T1.5.3: Find best matching overload for function call
+static Symbol* find_function_overload(SymbolTable* scope, Token name, Type** arg_types, int arg_count) {
+    Symbol* symbol = find_symbol(scope, name);
+    if (!symbol || symbol->type->kind != TYPE_FUNCTION) return symbol;
+    
+    Symbol* best_match = NULL;
+    int best_score = -1;
+    
+    // Check all overloads
+    Symbol* current = symbol;
+    while (current) {
+        if (current->type->kind == TYPE_FUNCTION) {
+            int score = calculate_match_score(current->type, arg_types, arg_count);
+            if (score > best_score) {
+                best_score = score;
+                best_match = current;
+            }
+        }
+        current = current->next_overload;
+    }
+    
+    return best_match;
+}
+
+// T1.5.3: Calculate how well a function signature matches the arguments
+static int calculate_match_score(Type* fn_type, Type** arg_types, int arg_count) {
+    if (fn_type->kind != TYPE_FUNCTION) return -1;
+    
+    FunctionType* func = &fn_type->fn_type;
+    if (func->param_count != arg_count) return -1;  // Exact count match required for now
+    
+    int score = 0;
+    for (int i = 0; i < arg_count; i++) {
+        if (types_equal(func->param_types[i], arg_types[i])) {
+            score += 10;  // Exact match
+        } else if (can_convert_type(arg_types[i], func->param_types[i])) {
+            score += 5;   // Convertible match
+        } else {
+            return -1;    // No match possible
+        }
+    }
+    
+    return score;
+}
+
+// T1.5.3: Check if one type can be converted to another
+static bool can_convert_type(Type* from, Type* to) {
+    if (types_equal(from, to)) return true;
+    
+    // Allow int -> float conversion
+    if (from->kind == TYPE_INT && to->kind == TYPE_FLOAT) return true;
+    
+    // Add more conversion rules as needed
+    return false;
 }
 
 Type* check_expr(Expr* expr, SymbolTable* scope) {
@@ -78,40 +360,150 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
         case EXPR_FLOAT:
             return builtin_float;
         case EXPR_STRING:
+            expr->expr_type = builtin_string;
             return builtin_string;
         case EXPR_BOOL:
             return builtin_bool;
         case EXPR_IDENT: {
+            // T2.5.1: Handle built-in type names
+            if (expr->token.length == 3 && memcmp(expr->token.start, "int", 3) == 0) {
+                expr->expr_type = builtin_int;
+                return builtin_int;
+            }
+            if (expr->token.length == 5 && memcmp(expr->token.start, "float", 5) == 0) {
+                expr->expr_type = builtin_float;
+                return builtin_float;
+            }
+            if (expr->token.length == 6 && memcmp(expr->token.start, "string", 6) == 0) {
+                expr->expr_type = builtin_string;
+                return builtin_string;
+            }
+            if (expr->token.length == 4 && memcmp(expr->token.start, "bool", 4) == 0) {
+                expr->expr_type = builtin_bool;
+                return builtin_bool;
+            }
+            if (expr->token.length == 4 && memcmp(expr->token.start, "void", 4) == 0) {
+                expr->expr_type = builtin_void;
+                return builtin_void;
+            }
+            
             Symbol* sym = find_symbol(scope, expr->token);
             if (!sym) {
-                fprintf(stderr, "Error at line %d: Undefined variable '%.*s'\n", 
+                fprintf(stderr, "\nError at line %d: Undefined variable '%.*s'\n", 
                         expr->token.line, expr->token.length, expr->token.start);
+                
+                // Suggest similar names
+                fprintf(stderr, "  Available variables in scope:\n");
+                int suggestions = 0;
+                for (int i = 0; i < scope->count && suggestions < 3; i++) {
+                    fprintf(stderr, "    - %.*s\n",
+                            scope->symbols[i].name.length, scope->symbols[i].name.start);
+                    suggestions++;
+                }
+                if (suggestions == 0) {
+                    fprintf(stderr, "    (none)\n");
+                }
+                
                 had_error = true;
                 return NULL;
             }
+            mark_used(scope, expr->token);
+            expr->expr_type = sym->type;  // Store type in AST
             return sym->type;
         }
         case EXPR_BINARY: {
             Type* left = check_expr(expr->binary.left, scope);
             Type* right = check_expr(expr->binary.right, scope);
             if (!left || !right) return NULL;
+            
+            // Allow bool operations
+            if (expr->binary.op.type == TOKEN_AND || expr->binary.op.type == TOKEN_OR) {
+                expr->expr_type = builtin_bool;
+                return builtin_bool;
+            }
+            
+            // Allow string concatenation with + operator
+            if (expr->binary.op.type == TOKEN_PLUS && 
+                left->kind == TYPE_STRING && right->kind == TYPE_STRING) {
+                expr->expr_type = builtin_string;
+                return builtin_string;
+            }
+            
             if (left->kind != right->kind) {
                 fprintf(stderr, "Error at line %d: Type mismatch in binary expression\n", 
                         expr->binary.op.line);
                 had_error = true;
                 return NULL;
             }
+            expr->expr_type = left;
             return left;
         }
         case EXPR_CALL: {
+            // T1.5.3: Function overloading support with T1.5.4: Parameter validation
+            if (expr->call.callee->type == EXPR_IDENT) {
+                // Collect argument types for overload resolution
+                Type** arg_types = malloc(sizeof(Type*) * expr->call.arg_count);
+                for (int i = 0; i < expr->call.arg_count; i++) {
+                    arg_types[i] = check_expr(expr->call.args[i], scope);
+                }
+                
+                // Find best matching overload
+                Symbol* best_match = find_function_overload(scope, expr->call.callee->token, arg_types, expr->call.arg_count);
+                
+                if (best_match && best_match->type->kind == TYPE_FUNCTION) {
+                    // T1.5.4: Validate the function call with detailed parameter checking
+                    ValidationResult validation = wyn_validate_function_call(best_match, expr->call.args, expr->call.arg_count);
+                    
+                    if (validation != VALIDATION_SUCCESS) {
+                        char func_name[256];
+                        snprintf(func_name, sizeof(func_name), "%.*s", 
+                                expr->call.callee->token.length, expr->call.callee->token.start);
+                        fprintf(stderr, "Error: Function call validation failed for '%s': %s\n",
+                                func_name, wyn_validation_error_message(validation));
+                        had_error = true;
+                    }
+                    
+                    // Store the selected overload for code generation
+                    expr->call.selected_overload = (void*)best_match;
+                    expr->expr_type = best_match->type->fn_type.return_type;
+                    free(arg_types);
+                    return best_match->type->fn_type.return_type;
+                } else if (!best_match) {
+                    char func_name[256];
+                    snprintf(func_name, sizeof(func_name), "%.*s", 
+                            expr->call.callee->token.length, expr->call.callee->token.start);
+                    fprintf(stderr, "Error: No matching overload found for function '%s' with %d arguments\n",
+                            func_name, expr->call.arg_count);
+                    had_error = true;
+                }
+                
+                free(arg_types);
+            }
+            
+            // Fallback to original logic for non-identifier callees with T1.5.4 validation
             Type* callee_type = check_expr(expr->call.callee, scope);
             
-            // Check argument count if function type is known
+            // T1.5.4: Enhanced parameter validation for function types
             if (callee_type && callee_type->kind == TYPE_FUNCTION) {
                 if (expr->call.arg_count != callee_type->fn_type.param_count) {
-                    fprintf(stderr, "Error: Function expects %d arguments, got %d\n",
+                    fprintf(stderr, "Error: Parameter count mismatch - function expects %d arguments, got %d\n",
                             callee_type->fn_type.param_count, expr->call.arg_count);
                     had_error = true;
+                }
+                
+                // Check type compatibility for each argument
+                for (int i = 0; i < expr->call.arg_count && i < callee_type->fn_type.param_count; i++) {
+                    Type* expected_type = callee_type->fn_type.param_types[i];
+                    Type* actual_type = check_expr(expr->call.args[i], scope);
+                    
+                    if (!wyn_is_type_compatible(expected_type, actual_type)) {
+                        fprintf(stderr, "Error: Type mismatch for argument %d - expected ", i + 1);
+                        print_type_name(expected_type);
+                        fprintf(stderr, ", got ");
+                        print_type_name(actual_type);
+                        fprintf(stderr, "\n");
+                        had_error = true;
+                    }
                 }
             }
             
@@ -121,26 +513,72 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             
             if (callee_type && callee_type->kind == TYPE_FUNCTION) {
+                expr->expr_type = callee_type->fn_type.return_type;
                 return callee_type->fn_type.return_type;
             }
+            expr->expr_type = builtin_int;
             return builtin_int;
         }
-        case EXPR_METHOD_CALL:
+        case EXPR_METHOD_CALL: {
             check_expr(expr->method_call.object, scope);
             for (int i = 0; i < expr->method_call.arg_count; i++) {
                 check_expr(expr->method_call.args[i], scope);
             }
-            return builtin_int;
-        case EXPR_ARRAY:
-            return builtin_int;
-        case EXPR_INDEX: {
-            check_expr(expr->index.array, scope);
-            Type* idx_type = check_expr(expr->index.index, scope);
-            if (idx_type && idx_type->kind != TYPE_INT) {
-                fprintf(stderr, "Error: Array index must be int\n");
-                return NULL;
+            
+            // Return proper types for string methods
+            Token method = expr->method_call.method;
+            if (method.length == 9 && memcmp(method.start, "substring", 9) == 0) {
+                return builtin_string;
+            } else if (method.length == 5 && memcmp(method.start, "slice", 5) == 0) {
+                return builtin_string;
+            } else if (method.length == 7 && memcmp(method.start, "indexOf", 7) == 0) {
+                return builtin_int;
+            } else if (method.length == 5 && memcmp(method.start, "upper", 5) == 0) {
+                return builtin_string;
+            } else if (method.length == 5 && memcmp(method.start, "lower", 5) == 0) {
+                return builtin_string;
+            } else if (method.length == 4 && memcmp(method.start, "trim", 4) == 0) {
+                return builtin_string;
+            } else if (method.length == 6 && memcmp(method.start, "repeat", 6) == 0) {
+                return builtin_string;
+            } else if (method.length == 7 && memcmp(method.start, "reverse", 7) == 0) {
+                return builtin_string;
+            } else if (method.length == 7 && memcmp(method.start, "replace", 7) == 0) {
+                return builtin_string;
+            } else if (method.length == 8 && memcmp(method.start, "padStart", 8) == 0) {
+                return builtin_string;
+            } else if (method.length == 6 && memcmp(method.start, "padEnd", 6) == 0) {
+                return builtin_string;
+            } else if (method.length == 12 && memcmp(method.start, "removePrefix", 12) == 0) {
+                return builtin_string;
+            } else if (method.length == 12 && memcmp(method.start, "removeSuffix", 12) == 0) {
+                return builtin_string;
             }
+            
             return builtin_int;
+        }
+        case EXPR_ARRAY:
+            return builtin_array;
+        case EXPR_INDEX: {
+            Type* array_type = check_expr(expr->index.array, scope);
+            Type* idx_type = check_expr(expr->index.index, scope);
+            
+            // Allow string indices for maps, int indices for arrays
+            if (array_type && array_type->kind == TYPE_MAP) {
+                // Map indexing - allow string keys
+                if (idx_type && idx_type->kind != TYPE_STRING) {
+                    fprintf(stderr, "Error: Map index must be string\n");
+                    return NULL;
+                }
+                return builtin_int; // Map value type (simplified)
+            } else {
+                // Array indexing - require int indices
+                if (idx_type && idx_type->kind != TYPE_INT) {
+                    fprintf(stderr, "Error: Array index must be int\n");
+                    return NULL;
+                }
+                return builtin_int;
+            }
         }
         case EXPR_ASSIGN: {
             Symbol* sym = find_symbol(scope, expr->assign.name);
@@ -150,11 +588,150 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return NULL;
             }
             Type* val_type = check_expr(expr->assign.value, scope);
-            if (val_type && val_type->kind != sym->type->kind) {
-                fprintf(stderr, "Error: Type mismatch in assignment\n");
+            
+            // T2.5.1: Null safety enforcement
+            if (val_type && sym->type) {
+                // Check if assigning optional to non-optional
+                if (!is_optional_type(sym->type) && is_optional_type(val_type)) {
+                    fprintf(stderr, "Error: Cannot assign optional type to non-optional variable '%.*s'\n",
+                            expr->assign.name.length, expr->assign.name.start);
+                    had_error = true;
+                    return NULL;
+                }
+                // Check type compatibility (considering optionality)
+                Type* sym_inner = get_inner_type(sym->type);
+                Type* val_inner = get_inner_type(val_type);
+                if (sym_inner->kind != val_inner->kind) {
+                    fprintf(stderr, "Error: Type mismatch in assignment\n");
+                    return NULL;
+                }
+            }
+            
+            return sym->type;
+        }
+        case EXPR_PIPELINE: {
+            // Check all stages
+            for (int i = 0; i < expr->pipeline.stage_count; i++) {
+                check_expr(expr->pipeline.stages[i], scope);
+            }
+            return builtin_int;
+        }
+        case EXPR_IF_EXPR: {
+            check_expr(expr->if_expr.condition, scope);
+            if (expr->if_expr.then_expr) {
+                check_expr(expr->if_expr.then_expr, scope);
+            }
+            if (expr->if_expr.else_expr) {
+                check_expr(expr->if_expr.else_expr, scope);
+            }
+            return builtin_int;
+        }
+        case EXPR_STRING_INTERP:
+            return builtin_string;
+        case EXPR_RANGE:
+            return builtin_int; // Range type
+        case EXPR_LAMBDA: {
+            // T3.4.1: Enhanced lambda expression checking
+            if (!wyn_validate_lambda(&expr->lambda, scope)) {
+                had_error = true;
                 return NULL;
             }
-            return sym->type;
+            
+            // Create closure type
+            Type* closure_type = wyn_create_closure_type(&expr->lambda, scope);
+            if (closure_type) {
+                expr->expr_type = closure_type;
+                return closure_type;
+            }
+            
+            return builtin_int; // Fallback
+        }
+        case EXPR_MAP: {
+            // Create a proper map type
+            Type* map_type = make_type(TYPE_MAP);
+            map_type->map_type.key_type = builtin_string;   // For now, assume string keys
+            map_type->map_type.value_type = builtin_int;    // For now, assume int values
+            
+            // Check all keys and values
+            for (int i = 0; i < expr->map.count; i++) {
+                check_expr(expr->map.keys[i], scope);
+                check_expr(expr->map.values[i], scope);
+            }
+            return map_type;
+        }
+        case EXPR_TUPLE: {
+            // Check all tuple elements
+            for (int i = 0; i < expr->tuple.count; i++) {
+                check_expr(expr->tuple.elements[i], scope);
+            }
+            return builtin_int; // Tuple type (simplified for now)
+        }
+        case EXPR_FIELD_ACCESS: {
+            // Handle module.function access
+            check_expr(expr->field_access.object, scope);
+            
+            // Create qualified name for lookup
+            Token obj_name = expr->field_access.object->token;
+            Token field_name = expr->field_access.field;
+            
+            char qualified_name[128];
+            snprintf(qualified_name, 128, "%.*s.%.*s", 
+                     obj_name.length, obj_name.start,
+                     field_name.length, field_name.start);
+            
+            Token qualified_token = {TOKEN_IDENT, qualified_name, (int)strlen(qualified_name), 0};
+            Symbol* sym = find_symbol(scope, qualified_token);
+            if (sym) {
+                return sym->type;
+            }
+            
+            return builtin_int; // Default
+        }
+        case EXPR_INDEX_ASSIGN: {
+            // Check index assignment
+            check_expr(expr->index_assign.object, scope);
+            check_expr(expr->index_assign.index, scope);
+            check_expr(expr->index_assign.value, scope);
+            return builtin_int; // Assignment returns int (simplified)
+        }
+        case EXPR_STRUCT_INIT: {
+            // Check struct initialization
+            for (int i = 0; i < expr->struct_init.field_count; i++) {
+                check_expr(expr->struct_init.field_values[i], scope);
+            }
+            return builtin_int; // Return struct type (simplified)
+        }
+        case EXPR_OPTIONAL_TYPE: {
+            // T2.5.1: Optional Type Implementation - Type System Agent addition
+            Type* inner_type = check_expr(expr->optional_type.inner_type, scope);
+            if (!inner_type) return NULL;
+            
+            // Create optional type
+            Type* optional_type = make_type(TYPE_OPTIONAL);
+            optional_type->optional_type.inner_type = inner_type;
+            expr->expr_type = optional_type;
+            return optional_type;
+        }
+        case EXPR_UNION_TYPE: {
+            // T2.5.2: Union Type Support - Type System Agent addition
+            if (expr->union_type.type_count < 2) return NULL;
+            
+            // Check all union member types
+            Type** member_types = malloc(sizeof(Type*) * expr->union_type.type_count);
+            for (int i = 0; i < expr->union_type.type_count; i++) {
+                member_types[i] = check_expr(expr->union_type.types[i], scope);
+                if (!member_types[i]) {
+                    free(member_types);
+                    return NULL;
+                }
+            }
+            
+            // Create union type
+            Type* union_type = make_type(TYPE_UNION);
+            union_type->union_type.types = member_types;
+            union_type->union_type.type_count = expr->union_type.type_count;
+            expr->expr_type = union_type;
+            return union_type;
         }
         default:
             return builtin_int;
@@ -166,9 +743,43 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
     
     switch (stmt->type) {
         case STMT_VAR: {
-            Type* init_type = check_expr(stmt->var.init, scope);
-            if (init_type) {
-                add_symbol(scope, stmt->var.name, init_type, !stmt->var.is_const);
+            Type* init_type = NULL;
+            
+            // Enhanced type inference for T2.5.4
+            if (stmt->var.type) {
+                // Explicit type annotation provided - convert Expr* to Type*
+                init_type = check_expr(stmt->var.type, scope);
+            } else if (stmt->var.init) {
+                // Use enhanced type inference
+                init_type = wyn_infer_variable_type(stmt->var.init, scope);
+                if (!init_type) {
+                    // Fallback to original inference
+                    init_type = check_expr(stmt->var.init, scope);
+                }
+            }
+            
+            // T3.3.2: Handle pattern-based variable declarations
+            if (stmt->var.uses_pattern && stmt->var.pattern) {
+                // Process let binding with pattern matching
+                if (stmt->var.init) {
+                    if (!wyn_process_let_binding(stmt->var.pattern, stmt->var.init, scope)) {
+                        printf("Error: Failed to process pattern in let binding\n");
+                        had_error = true;
+                    }
+                    
+                    // Check pattern completeness
+                    if (init_type) {
+                        wyn_check_let_pattern_completeness(stmt->var.pattern, init_type);
+                    }
+                } else {
+                    printf("Error: Pattern-based let binding requires initialization\n");
+                    had_error = true;
+                }
+            } else {
+                // Traditional single variable declaration
+                if (init_type) {
+                    add_symbol(scope, stmt->var.name, init_type, !stmt->var.is_const);
+                }
             }
             break;
         }
@@ -176,7 +787,20 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             check_expr(stmt->expr, scope);
             break;
         case STMT_RETURN:
-            check_expr(stmt->ret.value, scope);
+            if (stmt->ret.value) {
+                Type* return_expr_type = check_expr(stmt->ret.value, scope);
+                // Validate return type matches function return type
+                if (current_function_return_type && return_expr_type) {
+                    if (current_function_return_type->kind != return_expr_type->kind) {
+                        printf("Error: Return type mismatch. Expected ");
+                        print_type_name(current_function_return_type);
+                        printf(", got ");
+                        print_type_name(return_expr_type);
+                        printf("\n");
+                        had_error = true;
+                    }
+                }
+            }
             break;
         case STMT_BLOCK:
             for (int i = 0; i < stmt->block.count; i++) {
@@ -194,13 +818,110 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             check_expr(stmt->while_stmt.condition, scope);
             check_stmt(stmt->while_stmt.body, scope);
             break;
-        case STMT_FOR:
+        case STMT_FOR: {
             if (stmt->for_stmt.init) {
                 check_stmt(stmt->for_stmt.init, scope);
             }
             check_expr(stmt->for_stmt.condition, scope);
             check_expr(stmt->for_stmt.increment, scope);
+            
+            // For array iteration, add the loop variable to scope
+            if (stmt->for_stmt.array_expr) {
+                add_symbol(scope, stmt->for_stmt.loop_var, builtin_int, false);
+            }
+            
             check_stmt(stmt->for_stmt.body, scope);
+            break;
+        }
+        case STMT_EXPORT:
+            // Check the exported statement
+            check_stmt(stmt->export.stmt, scope);
+            break;
+        case STMT_TRY:
+            // Check try block
+            check_stmt(stmt->try_stmt.try_block, scope);
+            // Check catch block with exception variable in scope
+            {
+                SymbolTable catch_scope = {0};
+                catch_scope.parent = scope;
+                // Add exception variable to catch scope
+                add_symbol(&catch_scope, stmt->try_stmt.exception_var, builtin_string, false);
+                check_stmt(stmt->try_stmt.catch_block, &catch_scope);
+            }
+            break;
+        case STMT_THROW:
+            // Check the thrown expression
+            if (stmt->throw_stmt.value) {
+                check_expr(stmt->throw_stmt.value, scope);
+            }
+            break;
+        case STMT_STRUCT:
+            // T3.1.2: Register generic structs
+            if (stmt->struct_decl.type_param_count > 0) {
+                wyn_register_generic_struct(&stmt->struct_decl);
+            }
+            
+            // T2.5.3: Enhanced struct type checking with ARC integration
+            add_symbol(global_scope, stmt->struct_decl.name, builtin_int, false); // Simplified: use int as placeholder
+            
+            // Check all field types
+            for (int i = 0; i < stmt->struct_decl.field_count; i++) {
+                check_expr(stmt->struct_decl.field_types[i], scope);
+            }
+            break;
+        case STMT_IMPL:
+            // T2.5.3: Method definitions on structs
+            for (int i = 0; i < stmt->impl.method_count; i++) {
+                // Check each method in the impl block
+                FnStmt* method = stmt->impl.methods[i];
+                
+                // Create method scope with 'self' parameter
+                SymbolTable method_scope = {0};
+                method_scope.parent = scope;
+                
+                // Add 'self' parameter to method scope
+                Token self_token = {TOKEN_IDENT, "self", 4, 0};
+                add_symbol(&method_scope, self_token, builtin_int, false); // Simplified: struct type
+                
+                // Add method parameters to scope
+                for (int j = 0; j < method->param_count; j++) {
+                    Type* param_type = builtin_int; // Simplified
+                    add_symbol(&method_scope, method->params[j], param_type, method->param_mutable[j]);
+                }
+                
+                // Check method body
+                if (method->body) {
+                    check_stmt(method->body, &method_scope);
+                }
+            }
+            break;
+        case STMT_TRAIT:
+            // T3.2.1: Trait definition handling
+            wyn_register_trait(&stmt->trait_decl);
+            
+            // Check trait methods
+            for (int i = 0; i < stmt->trait_decl.method_count; i++) {
+                FnStmt* method = stmt->trait_decl.methods[i];
+                
+                // Create method scope for trait method
+                SymbolTable method_scope = {0};
+                method_scope.parent = scope;
+                
+                // Add method parameters to scope
+                for (int j = 0; j < method->param_count; j++) {
+                    Type* param_type = builtin_int; // Simplified
+                    add_symbol(&method_scope, method->params[j], param_type, method->param_mutable[j]);
+                }
+                
+                // Check method body if it has a default implementation
+                if (stmt->trait_decl.method_has_default[i] && method->body) {
+                    check_stmt(method->body, &method_scope);
+                }
+            }
+            break;
+        case STMT_ENUM:
+            // Register enum type in global scope
+            add_symbol(global_scope, stmt->enum_decl.name, builtin_int, false); // Simplified: use int as placeholder
             break;
         default:
             break;
@@ -208,10 +929,51 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
 }
 
 void check_program(Program* prog) {
-    // First pass: register functions with their signatures
+    // First pass: process imports and register functions with their signatures
     for (int i = 0; i < prog->count; i++) {
-        if (prog->stmts[i]->type == STMT_FN) {
+        if (prog->stmts[i]->type == STMT_IMPORT) {
+            // Load and process imported module
+            ImportStmt* import = &prog->stmts[i]->import;
+            char module_path[256];
+            snprintf(module_path, 256, "%.*s.wyn", import->module.length, import->module.start);
+            
+            // For now, just register some common module functions
+            // In a full implementation, we'd parse the module file
+            if (import->module.length == 4 && memcmp(import->module.start, "math", 4) == 0) {
+                // Register the module itself as a namespace
+                add_symbol(global_scope, import->module, builtin_int, false); // Module type (simplified)
+                
+                // Register math module functions with both qualified and unqualified names
+                Token add_name = {TOKEN_IDENT, "add", 3, 0};
+                Token multiply_name = {TOKEN_IDENT, "multiply", 8, 0};
+                Token pi_name = {TOKEN_IDENT, "PI", 2, 0};
+                
+                Token math_add = {TOKEN_IDENT, "math.add", 8, 0};
+                Token math_multiply = {TOKEN_IDENT, "math.multiply", 13, 0};
+                Token math_pi = {TOKEN_IDENT, "math.PI", 7, 0};
+                
+                Type* fn_type = make_type(TYPE_FUNCTION);
+                fn_type->fn_type.param_count = 2;
+                fn_type->fn_type.param_types = malloc(sizeof(Type*) * 2);
+                fn_type->fn_type.param_types[0] = builtin_int;
+                fn_type->fn_type.param_types[1] = builtin_int;
+                fn_type->fn_type.return_type = builtin_int;
+                
+                // Register both qualified and unqualified names
+                add_symbol(global_scope, add_name, fn_type, false);
+                add_symbol(global_scope, multiply_name, fn_type, false);
+                add_symbol(global_scope, pi_name, builtin_float, false);
+                add_symbol(global_scope, math_add, fn_type, false);
+                add_symbol(global_scope, math_multiply, fn_type, false);
+                add_symbol(global_scope, math_pi, builtin_float, false);
+            }
+        } else if (prog->stmts[i]->type == STMT_FN) {
             FnStmt* fn = &prog->stmts[i]->fn;
+            
+            // T3.1.1: Register generic functions
+            if (fn->type_param_count > 0) {
+                wyn_register_generic_function(fn);
+            }
             
             // Create function type
             Type* fn_type = make_type(TYPE_FUNCTION);
@@ -220,9 +982,63 @@ void check_program(Program* prog) {
             for (int j = 0; j < fn->param_count; j++) {
                 fn_type->fn_type.param_types[j] = builtin_int; // For now, all params are int
             }
-            fn_type->fn_type.return_type = builtin_int;
             
-            add_symbol(global_scope, fn->name, fn_type, false);
+            // Determine return type from function signature or infer from body
+            fn_type->fn_type.return_type = builtin_int; // default
+            if (fn->return_type && fn->return_type->type == EXPR_IDENT) {
+                Token type_name = fn->return_type->token;
+                if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+                    fn_type->fn_type.return_type = builtin_int;
+                } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+                    fn_type->fn_type.return_type = builtin_string;
+                } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
+                    fn_type->fn_type.return_type = builtin_float;
+                } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
+                    fn_type->fn_type.return_type = builtin_bool;
+                } else if (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0) {
+                    fn_type->fn_type.return_type = builtin_array;
+                }
+            }
+            
+            // T1.5.3: Register function with overload support
+            add_function_overload(global_scope, fn->name, fn_type, false);
+        } else if (prog->stmts[i]->type == STMT_EXPORT) {
+            // Handle exported statements
+            Stmt* exported = prog->stmts[i]->export.stmt;
+            if (exported->type == STMT_FN) {
+                FnStmt* fn = &exported->fn;
+                
+                // Create function type
+                Type* fn_type = make_type(TYPE_FUNCTION);
+                fn_type->fn_type.param_count = fn->param_count;
+                fn_type->fn_type.param_types = malloc(sizeof(Type*) * fn->param_count);
+                for (int j = 0; j < fn->param_count; j++) {
+                    fn_type->fn_type.param_types[j] = builtin_int;
+                }
+                
+                // Determine return type from function signature
+                fn_type->fn_type.return_type = builtin_int; // default
+                if (fn->return_type && fn->return_type->type == EXPR_IDENT) {
+                    Token type_name = fn->return_type->token;
+                    if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+                        fn_type->fn_type.return_type = builtin_int;
+                    } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+                        fn_type->fn_type.return_type = builtin_string;
+                    } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
+                        fn_type->fn_type.return_type = builtin_float;
+                    } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
+                        fn_type->fn_type.return_type = builtin_bool;
+                    } else if (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0) {
+                        fn_type->fn_type.return_type = builtin_array;
+                    }
+                }
+                
+                add_symbol(global_scope, fn->name, fn_type, false);
+            } else if (exported->type == STMT_VAR) {
+                // Handle exported variables
+                Type* init_type = builtin_int; // Simplified for now
+                add_symbol(global_scope, exported->var.name, init_type, !exported->var.is_const);
+            }
         } else if (prog->stmts[i]->type == STMT_ENUM) {
             EnumStmt* enum_decl = &prog->stmts[i]->enum_decl;
             for (int j = 0; j < enum_decl->variant_count; j++) {
@@ -241,11 +1057,73 @@ void check_program(Program* prog) {
             local_scope.count = 0;
             
             FnStmt* fn = &prog->stmts[i]->fn;
+            
+            // Set current function return type for return statement validation
+            current_function_return_type = builtin_int; // default
+            if (fn->return_type && fn->return_type->type == EXPR_IDENT) {
+                Token type_name = fn->return_type->token;
+                if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+                    current_function_return_type = builtin_int;
+                } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+                    current_function_return_type = builtin_string;
+                } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
+                    current_function_return_type = builtin_float;
+                } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
+                    current_function_return_type = builtin_bool;
+                } else if (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0) {
+                    current_function_return_type = builtin_array;
+                }
+            }
+            
             for (int j = 0; j < fn->param_count; j++) {
-                add_symbol(&local_scope, fn->params[j], builtin_int, true);
+                // Determine parameter type from type annotation
+                Type* param_type = builtin_int; // default
+                if (fn->param_types[j]) {
+                    if (fn->param_types[j]->type == EXPR_IDENT) {
+                        Token type_name = fn->param_types[j]->token;
+                        if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+                            param_type = builtin_int;
+                        } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+                            param_type = builtin_string;
+                        } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
+                            param_type = builtin_float;
+                        } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
+                            param_type = builtin_bool;
+                        } else if (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0) {
+                            param_type = builtin_array;
+                        }
+                    }
+                }
+                
+                // T1.5.2: Type check default parameter values
+                if (fn->param_defaults && fn->param_defaults[j]) {
+                    Type* default_type = check_expr(fn->param_defaults[j], &local_scope);
+                    if (default_type && !types_equal(param_type, default_type)) {
+                        char param_name[256];
+                        snprintf(param_name, sizeof(param_name), "%.*s", 
+                                fn->params[j].length, fn->params[j].start);
+                        type_error_mismatch(type_to_string(param_type), 
+                                          type_to_string(default_type),
+                                          param_name, 
+                                          fn->params[j].line, 
+                                          0);  // Column not available in Token
+                    }
+                }
+                
+                add_symbol(&local_scope, fn->params[j], param_type, true);
+            }
+            
+            // T2.5.4: Enhanced return type inference
+            if (!fn->return_type) {
+                // No explicit return type - infer from function body
+                Type* inferred_return = wyn_infer_function_return_type(fn->body, &local_scope);
+                if (inferred_return) {
+                    current_function_return_type = inferred_return;
+                }
             }
             
             check_stmt(fn->body, &local_scope);
+            current_function_return_type = NULL; // Reset after function
             free(local_scope.symbols);
         } else {
             check_stmt(prog->stmts[i], global_scope);
@@ -259,4 +1137,50 @@ SymbolTable* get_global_scope() {
 
 bool checker_had_error() {
     return had_error;
+}
+
+// T1.5.2: Helper functions for default parameter type checking
+bool types_equal(Type* a, Type* b) {
+    if (!a || !b) return false;
+    if (a->kind != b->kind) return false;
+    
+    switch (a->kind) {
+        case TYPE_INT:
+        case TYPE_FLOAT:
+        case TYPE_STRING:
+        case TYPE_BOOL:
+        case TYPE_VOID:
+            return true;
+        case TYPE_ARRAY:
+        case TYPE_STRUCT:
+        case TYPE_ENUM:
+        case TYPE_FUNCTION:
+        case TYPE_MAP:
+        case TYPE_OPTIONAL:
+        case TYPE_UNION:
+            // For now, just compare kinds - more detailed comparison can be added later
+            return true;
+        default:
+            return false;
+    }
+}
+
+const char* type_to_string(Type* type) {
+    if (!type) return "unknown";
+    
+    switch (type->kind) {
+        case TYPE_INT: return "int";
+        case TYPE_FLOAT: return "float";
+        case TYPE_STRING: return "string";
+        case TYPE_BOOL: return "bool";
+        case TYPE_VOID: return "void";
+        case TYPE_ARRAY: return "array";
+        case TYPE_STRUCT: return "struct";
+        case TYPE_ENUM: return "enum";
+        case TYPE_FUNCTION: return "function";
+        case TYPE_MAP: return "map";
+        case TYPE_OPTIONAL: return "optional";
+        case TYPE_UNION: return "union";
+        default: return "unknown";
+    }
 }

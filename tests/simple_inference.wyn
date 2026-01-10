@@ -1,0 +1,9 @@
+// Simple type inference test
+fn main() {
+    var x = 42;
+    var y = 3.14;
+    var name = "hello";
+    
+    print("Type inference test");
+    return 0;
+}

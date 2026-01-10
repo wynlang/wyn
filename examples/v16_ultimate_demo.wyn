@@ -1,0 +1,56 @@
+fn main() -> int {
+    print("=== Wyn v1.6.0 Ultimate Features Demo ===")
+    
+    // Core v1.6 features still work
+    print("1. Pipeline + If Expressions:")
+    var result = "  hello  " |> str_upper |> str_trim
+    var status = if result.length() > 3 { "long" } else { "short" }
+    result.print()
+    status.print()
+    
+    // Enhanced string methods
+    print("2. Enhanced String Methods:")
+    var text = "Hello, World!"
+    var hello = text.substring(0, 5)
+    hello.print()
+    
+    var pos = text.indexOf("World")
+    pos.print()
+    
+    var capitalized = "hello world".capitalize()
+    capitalized.print()
+    
+    // Enhanced array methods  
+    print("3. Enhanced Array Methods:")
+    var arr = [1, 2, 3, 2, 4]
+    var has_two = arr.some(2)
+    has_two.print()
+    
+    var sum = arr.reduce("+")
+    sum.print()
+    
+    // Number methods
+    print("4. Number Methods:")
+    var clamped = 15.clamp(0, 10)
+    clamped.print()
+    
+    var powered = 2.pow(3)
+    powered.print()
+    
+    // File operations
+    print("5. File Operations:")
+    var exists = "README.md".exists()
+    exists.print()
+    
+    // Combined modern syntax
+    print("6. Combined Modern Features:")
+    var final_result = if "test".length() > 2 { 
+        "test" |> str_upper |> str_capitalize
+    } else { 
+        "short" 
+    }
+    final_result.print()
+    
+    print("=== All v1.6.0 features working! ===")
+    return 0
+}

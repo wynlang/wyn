@@ -1,0 +1,35 @@
+// Flow Demo - v1.5.0
+// Code that reads naturally
+
+fn main() -> int {
+    "=== Wyn Flow Demo ===".print()
+    "".print()
+    
+    // Strings flow
+    "hello world".trim().upper().print()
+    "  data  ".trim().len().print()
+    
+    // Arrays flow
+    var arr = [1, 2, 3, 4, 5]
+    arr.sum().print()
+    arr.max().print()
+    arr.empty().print()
+    
+    // Conditions flow
+    var nums = [2, 4, 6, 8]
+    nums.all(2).print()
+    nums.any(6).print()
+    
+    // Numbers flow
+    var n = 42
+    n.abs().isEven().print()
+    
+    // Ranges flow
+    5.times().print()
+    1.upto(10).print()
+    
+    "".print()
+    "=== Everything Flows Naturally ===".print()
+    
+    return 0
+}

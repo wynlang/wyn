@@ -1,0 +1,42 @@
+// Automatic Memory Management Demo
+// Wyn automatically frees strings at scope exit!
+
+fn main() -> int {
+    print_str("=== Automatic Memory Management ===")
+    print_str("")
+    
+    // Strings are automatically freed
+    var i = 0
+    while i < 5 {
+        var s = str_upper("hello world")
+        print_str(s)
+        // No str_free needed - automatic!
+        i = i + 1
+    }
+    
+    print_str("")
+    print_str("✓ No memory leaks - all strings auto-freed!")
+    print_str("")
+    
+    // Works in if blocks too
+    if 1 == 1 {
+        var greeting = str_concat("Hello", " Wyn")
+        print_str(greeting)
+        // Automatically freed at end of if block
+    }
+    
+    print_str("✓ If block strings auto-freed!")
+    print_str("")
+    
+    // Multiple allocations
+    var s1 = str_concat("Part", " ")
+    var s2 = str_concat(s1, "One")
+    print_str(s2)
+    // Both s1 and s2 auto-freed at function end
+    
+    print_str("")
+    print_str("=== Memory Management is Automatic! ===")
+    print_str("Just like Python or JavaScript")
+    
+    return 0
+}

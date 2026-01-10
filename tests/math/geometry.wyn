@@ -1,0 +1,24 @@
+// math/geometry.wyn - A geometry module
+pub struct Point {
+    pub x: float
+    pub y: float
+}
+
+pub fn distance(p1: Point, p2: Point) -> float {
+    let dx = p1.x - p2.x
+    let dy = p1.y - p2.y
+    return sqrt(dx * dx + dy * dy)
+}
+
+pub fn midpoint(p1: Point, p2: Point) -> Point {
+    return Point {
+        x: (p1.x + p2.x) / 2.0,
+        y: (p1.y + p2.y) / 2.0
+    }
+}
+
+fn internal_helper() -> float {  // private function
+    return 3.14159
+}
+
+pub const PI: float = 3.14159

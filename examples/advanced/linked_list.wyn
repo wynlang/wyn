@@ -1,0 +1,107 @@
+# Linked List Simulation with Arrays in Wyn
+
+struct ListNode {
+    data: int
+    next: int  # index in array, -1 for null
+}
+
+struct LinkedList {
+    nodes: [ListNode]
+    head: int
+    free_list: int
+    capacity: int
+}
+
+fn create_list(capacity: int) -> LinkedList {
+    let list = LinkedList{
+        nodes: [],
+        head: -1,
+        free_list: 0,
+        capacity: capacity
+    }
+    
+    # Initialize node pool
+    for i in 0..capacity {
+        let node = ListNode{data: 0, next: i + 1}
+        list.nodes.push(node)
+    }
+    list.nodes[capacity - 1].next = -1
+    
+    return list
+}
+
+fn allocate_node(list: &LinkedList) -> int {
+    if list.free_list == -1 {
+        return -1  # No free nodes
+    }
+    
+    let index = list.free_list
+    list.free_list = list.nodes[index].next
+    return index
+}
+
+fn free_node(list: &LinkedList, index: int) {
+    list.nodes[index].next = list.free_list
+    list.free_list = index
+}
+
+fn push_front(list: &LinkedList, data: int) -> bool {
+    let new_node = allocate_node(list)
+    if new_node == -1 {
+        return false
+    }
+    
+    list.nodes[new_node].data = data
+    list.nodes[new_node].next = list.head
+    list.head = new_node
+    return true
+}
+
+fn pop_front(list: &LinkedList) -> int {
+    if list.head == -1 {
+        return -1
+    }
+    
+    let data = list.nodes[list.head].data
+    let old_head = list.head
+    list.head = list.nodes[list.head].next
+    free_node(list, old_head)
+    return data
+}
+
+fn find(list: &LinkedList, data: int) -> bool {
+    let current = list.head
+    while current != -1 {
+        if list.nodes[current].data == data {
+            return true
+        }
+        current = list.nodes[current].next
+    }
+    return false
+}
+
+fn print_list(list: &LinkedList) {
+    let current = list.head
+    print("List: ", end="")
+    while current != -1 {
+        print(list.nodes[current].data, " ", end="")
+        current = list.nodes[current].next
+    }
+    print("")
+}
+
+fn main() {
+    let list = create_list(10)
+    
+    push_front(&list, 10)
+    push_front(&list, 20)
+    push_front(&list, 30)
+    
+    print_list(&list)
+    
+    print("Find 20:", find(&list, 20))
+    print("Find 40:", find(&list, 40))
+    
+    print("Popped:", pop_front(&list))
+    print_list(&list)
+}

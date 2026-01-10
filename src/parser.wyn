@@ -1,0 +1,527 @@
+// Wyn Language Parser - Self-Hosting Implementation
+// T7.2.2: Parser rewrite in Wyn
+
+package parser
+
+import std.io
+import std.string
+import std.collections
+import lexer
+
+// AST Node Types
+enum NodeType {
+    PROGRAM,
+    FUNCTION_DEF,
+    VARIABLE_DEF,
+    STRUCT_DEF,
+    ENUM_DEF,
+    TRAIT_DEF,
+    IMPL_BLOCK,
+    
+    // Statements
+    EXPRESSION_STMT,
+    RETURN_STMT,
+    IF_STMT,
+    WHILE_STMT,
+    FOR_STMT,
+    MATCH_STMT,
+    BLOCK_STMT,
+    
+    // Expressions
+    BINARY_EXPR,
+    UNARY_EXPR,
+    CALL_EXPR,
+    INDEX_EXPR,
+    FIELD_EXPR,
+    LITERAL_EXPR,
+    IDENTIFIER_EXPR,
+    LAMBDA_EXPR,
+    
+    // Patterns
+    LITERAL_PATTERN,
+    IDENTIFIER_PATTERN,
+    STRUCT_PATTERN,
+    ENUM_PATTERN,
+    WILDCARD_PATTERN
+}
+
+// AST Node base structure
+struct ASTNode {
+    type: NodeType
+    line: int
+    column: int
+}
+
+// Expression nodes
+struct BinaryExpr {
+    base: ASTNode
+    left: &ASTNode
+    operator: Token
+    right: &ASTNode
+}
+
+struct UnaryExpr {
+    base: ASTNode
+    operator: Token
+    operand: &ASTNode
+}
+
+struct CallExpr {
+    base: ASTNode
+    function: &ASTNode
+    arguments: Vec<&ASTNode>
+}
+
+struct LiteralExpr {
+    base: ASTNode
+    value: Token
+}
+
+struct IdentifierExpr {
+    base: ASTNode
+    name: Token
+}
+
+// Statement nodes
+struct FunctionDef {
+    base: ASTNode
+    name: Token
+    parameters: Vec<Parameter>
+    return_type: &Type
+    body: &ASTNode
+    is_generic: bool
+    type_params: Vec<Token>
+}
+
+struct Parameter {
+    name: Token
+    param_type: &Type
+    default_value: &ASTNode?
+}
+
+struct VariableDef {
+    base: ASTNode
+    name: Token
+    var_type: &Type?
+    initializer: &ASTNode?
+    is_mutable: bool
+}
+
+struct ReturnStmt {
+    base: ASTNode
+    value: &ASTNode?
+}
+
+struct IfStmt {
+    base: ASTNode
+    condition: &ASTNode
+    then_branch: &ASTNode
+    else_branch: &ASTNode?
+}
+
+struct BlockStmt {
+    base: ASTNode
+    statements: Vec<&ASTNode>
+}
+
+// Parser state
+struct Parser {
+    tokens: Vec<Token>
+    current: int
+    errors: Vec<string>
+}
+
+// Initialize parser with tokens
+fn parser_init(tokens: Vec<Token>) -> Parser {
+    return Parser {
+        tokens: tokens,
+        current: 0,
+        errors: Vec<string>::new()
+    }
+}
+
+// Check if at end of tokens
+fn parser_is_at_end(parser: &Parser) -> bool {
+    return parser.current >= parser.tokens.length() || 
+           parser.tokens[parser.current].type == TokenType::EOF
+}
+
+// Get current token
+fn parser_peek(parser: &Parser) -> Token {
+    if parser_is_at_end(parser) {
+        return Token { type: TokenType::EOF, value: "", line: 0, column: 0, position: 0 }
+    }
+    return parser.tokens[parser.current]
+}
+
+// Get previous token
+fn parser_previous(parser: &Parser) -> Token {
+    if parser.current == 0 {
+        return Token { type: TokenType::EOF, value: "", line: 0, column: 0, position: 0 }
+    }
+    return parser.tokens[parser.current - 1]
+}
+
+// Advance to next token
+fn parser_advance(parser: &mut Parser) -> Token {
+    if !parser_is_at_end(parser) {
+        parser.current += 1
+    }
+    return parser_previous(parser)
+}
+
+// Check if current token matches type
+fn parser_check(parser: &Parser, token_type: TokenType) -> bool {
+    if parser_is_at_end(parser) {
+        return false
+    }
+    return parser_peek(parser).type == token_type
+}
+
+// Match and consume token if it matches
+fn parser_match(parser: &mut Parser, token_type: TokenType) -> bool {
+    if parser_check(parser, token_type) {
+        parser_advance(parser)
+        return true
+    }
+    return false
+}
+
+// Consume token or report error
+fn parser_consume(parser: &mut Parser, token_type: TokenType, message: string) -> Token {
+    if parser_check(parser, token_type) {
+        return parser_advance(parser)
+    }
+    
+    let current = parser_peek(parser)
+    let error_msg = format("Error at line {}: {}. Got '{}' instead.", 
+                          current.line, message, current.value)
+    parser.errors.push(error_msg)
+    
+    return current
+}
+
+// Parse program (top-level)
+fn parser_parse_program(parser: &mut Parser) -> &ASTNode {
+    let mut statements = Vec<&ASTNode>::new()
+    
+    while !parser_is_at_end(parser) {
+        if let Some(stmt) = parser_parse_declaration(parser) {
+            statements.push(stmt)
+        }
+    }
+    
+    return create_program_node(statements)
+}
+
+// Parse declarations
+fn parser_parse_declaration(parser: &mut Parser) -> &ASTNode? {
+    if parser_match(parser, TokenType::KEYWORD) {
+        let keyword = parser_previous(parser)
+        match keyword.value {
+            "fn" => return parser_parse_function(parser),
+            "let" => return parser_parse_variable(parser, false),
+            "mut" => {
+                parser_consume(parser, TokenType::KEYWORD, "Expected 'let' after 'mut'")
+                return parser_parse_variable(parser, true)
+            },
+            "struct" => return parser_parse_struct(parser),
+            "enum" => return parser_parse_enum(parser),
+            "trait" => return parser_parse_trait(parser),
+            "impl" => return parser_parse_impl(parser),
+            _ => {
+                // Put token back and parse as statement
+                parser.current -= 1
+                return parser_parse_statement(parser)
+            }
+        }
+    }
+    
+    return parser_parse_statement(parser)
+}
+
+// Parse function definition
+fn parser_parse_function(parser: &mut Parser) -> &ASTNode {
+    let name = parser_consume(parser, TokenType::IDENTIFIER, "Expected function name")
+    
+    // Parse generic parameters if present
+    let mut type_params = Vec<Token>::new()
+    let is_generic = parser_match(parser, TokenType::LESS_THAN)
+    if is_generic {
+        loop {
+            let type_param = parser_consume(parser, TokenType::IDENTIFIER, "Expected type parameter")
+            type_params.push(type_param)
+            
+            if !parser_match(parser, TokenType::COMMA) {
+                break
+            }
+        }
+        parser_consume(parser, TokenType::GREATER_THAN, "Expected '>' after type parameters")
+    }
+    
+    // Parse parameters
+    parser_consume(parser, TokenType::LEFT_PAREN, "Expected '(' after function name")
+    let mut parameters = Vec<Parameter>::new()
+    
+    if !parser_check(parser, TokenType::RIGHT_PAREN) {
+        loop {
+            let param_name = parser_consume(parser, TokenType::IDENTIFIER, "Expected parameter name")
+            parser_consume(parser, TokenType::COLON, "Expected ':' after parameter name")
+            let param_type = parser_parse_type(parser)
+            
+            // Check for default value
+            let mut default_value: &ASTNode? = None
+            if parser_match(parser, TokenType::ASSIGN) {
+                default_value = Some(parser_parse_expression(parser))
+            }
+            
+            parameters.push(Parameter {
+                name: param_name,
+                param_type: param_type,
+                default_value: default_value
+            })
+            
+            if !parser_match(parser, TokenType::COMMA) {
+                break
+            }
+        }
+    }
+    
+    parser_consume(parser, TokenType::RIGHT_PAREN, "Expected ')' after parameters")
+    
+    // Parse return type
+    let mut return_type: &Type? = None
+    if parser_match(parser, TokenType::ARROW) {
+        return_type = Some(parser_parse_type(parser))
+    }
+    
+    // Parse function body
+    let body = parser_parse_block_statement(parser)
+    
+    return create_function_node(name, parameters, return_type, body, is_generic, type_params)
+}
+
+// Parse variable definition
+fn parser_parse_variable(parser: &mut Parser, is_mutable: bool) -> &ASTNode {
+    let name = parser_consume(parser, TokenType::IDENTIFIER, "Expected variable name")
+    
+    // Parse optional type annotation
+    let mut var_type: &Type? = None
+    if parser_match(parser, TokenType::COLON) {
+        var_type = Some(parser_parse_type(parser))
+    }
+    
+    // Parse optional initializer
+    let mut initializer: &ASTNode? = None
+    if parser_match(parser, TokenType::ASSIGN) {
+        initializer = Some(parser_parse_expression(parser))
+    }
+    
+    parser_consume(parser, TokenType::SEMICOLON, "Expected ';' after variable declaration")
+    
+    return create_variable_node(name, var_type, initializer, is_mutable)
+}
+
+// Parse statements
+fn parser_parse_statement(parser: &mut Parser) -> &ASTNode {
+    if parser_match(parser, TokenType::KEYWORD) {
+        let keyword = parser_previous(parser)
+        match keyword.value {
+            "return" => return parser_parse_return_statement(parser),
+            "if" => return parser_parse_if_statement(parser),
+            "while" => return parser_parse_while_statement(parser),
+            "for" => return parser_parse_for_statement(parser),
+            "match" => return parser_parse_match_statement(parser),
+            _ => {
+                parser.current -= 1  // Put token back
+                return parser_parse_expression_statement(parser)
+            }
+        }
+    }
+    
+    if parser_check(parser, TokenType::LEFT_BRACE) {
+        return parser_parse_block_statement(parser)
+    }
+    
+    return parser_parse_expression_statement(parser)
+}
+
+// Parse block statement
+fn parser_parse_block_statement(parser: &mut Parser) -> &ASTNode {
+    parser_consume(parser, TokenType::LEFT_BRACE, "Expected '{'")
+    
+    let mut statements = Vec<&ASTNode>::new()
+    
+    while !parser_check(parser, TokenType::RIGHT_BRACE) && !parser_is_at_end(parser) {
+        if let Some(stmt) = parser_parse_declaration(parser) {
+            statements.push(stmt)
+        }
+    }
+    
+    parser_consume(parser, TokenType::RIGHT_BRACE, "Expected '}'")
+    
+    return create_block_node(statements)
+}
+
+// Parse expressions
+fn parser_parse_expression(parser: &mut Parser) -> &ASTNode {
+    return parser_parse_logical_or(parser)
+}
+
+// Parse logical OR expressions
+fn parser_parse_logical_or(parser: &mut Parser) -> &ASTNode {
+    let mut expr = parser_parse_logical_and(parser)
+    
+    while parser_match(parser, TokenType::LOGICAL_OR) {
+        let operator = parser_previous(parser)
+        let right = parser_parse_logical_and(parser)
+        expr = create_binary_node(expr, operator, right)
+    }
+    
+    return expr
+}
+
+// Parse logical AND expressions
+fn parser_parse_logical_and(parser: &mut Parser) -> &ASTNode {
+    let mut expr = parser_parse_equality(parser)
+    
+    while parser_match(parser, TokenType::LOGICAL_AND) {
+        let operator = parser_previous(parser)
+        let right = parser_parse_equality(parser)
+        expr = create_binary_node(expr, operator, right)
+    }
+    
+    return expr
+}
+
+// Parse equality expressions
+fn parser_parse_equality(parser: &mut Parser) -> &ASTNode {
+    let mut expr = parser_parse_comparison(parser)
+    
+    while parser_match(parser, TokenType::EQUALS) || parser_match(parser, TokenType::NOT_EQUALS) {
+        let operator = parser_previous(parser)
+        let right = parser_parse_comparison(parser)
+        expr = create_binary_node(expr, operator, right)
+    }
+    
+    return expr
+}
+
+// Parse comparison expressions
+fn parser_parse_comparison(parser: &mut Parser) -> &ASTNode {
+    let mut expr = parser_parse_term(parser)
+    
+    while parser_match(parser, TokenType::GREATER_THAN) || 
+          parser_match(parser, TokenType::GREATER_EQUAL) ||
+          parser_match(parser, TokenType::LESS_THAN) ||
+          parser_match(parser, TokenType::LESS_EQUAL) {
+        let operator = parser_previous(parser)
+        let right = parser_parse_term(parser)
+        expr = create_binary_node(expr, operator, right)
+    }
+    
+    return expr
+}
+
+// Parse term expressions (+ -)
+fn parser_parse_term(parser: &mut Parser) -> &ASTNode {
+    let mut expr = parser_parse_factor(parser)
+    
+    while parser_match(parser, TokenType::PLUS) || parser_match(parser, TokenType::MINUS) {
+        let operator = parser_previous(parser)
+        let right = parser_parse_factor(parser)
+        expr = create_binary_node(expr, operator, right)
+    }
+    
+    return expr
+}
+
+// Parse factor expressions (* / %)
+fn parser_parse_factor(parser: &mut Parser) -> &ASTNode {
+    let mut expr = parser_parse_unary(parser)
+    
+    while parser_match(parser, TokenType::MULTIPLY) || 
+          parser_match(parser, TokenType::DIVIDE) ||
+          parser_match(parser, TokenType::MODULO) {
+        let operator = parser_previous(parser)
+        let right = parser_parse_unary(parser)
+        expr = create_binary_node(expr, operator, right)
+    }
+    
+    return expr
+}
+
+// Parse unary expressions
+fn parser_parse_unary(parser: &mut Parser) -> &ASTNode {
+    if parser_match(parser, TokenType::LOGICAL_NOT) || parser_match(parser, TokenType::MINUS) {
+        let operator = parser_previous(parser)
+        let right = parser_parse_unary(parser)
+        return create_unary_node(operator, right)
+    }
+    
+    return parser_parse_call(parser)
+}
+
+// Parse call expressions
+fn parser_parse_call(parser: &mut Parser) -> &ASTNode {
+    let mut expr = parser_parse_primary(parser)
+    
+    loop {
+        if parser_match(parser, TokenType::LEFT_PAREN) {
+            expr = parser_finish_call(parser, expr)
+        } else if parser_match(parser, TokenType::DOT) {
+            let name = parser_consume(parser, TokenType::IDENTIFIER, "Expected property name after '.'")
+            expr = create_field_node(expr, name)
+        } else if parser_match(parser, TokenType::LEFT_BRACKET) {
+            let index = parser_parse_expression(parser)
+            parser_consume(parser, TokenType::RIGHT_BRACKET, "Expected ']' after array index")
+            expr = create_index_node(expr, index)
+        } else {
+            break
+        }
+    }
+    
+    return expr
+}
+
+// Parse primary expressions
+fn parser_parse_primary(parser: &mut Parser) -> &ASTNode {
+    if parser_match(parser, TokenType::BOOLEAN) ||
+       parser_match(parser, TokenType::INTEGER) ||
+       parser_match(parser, TokenType::FLOAT) ||
+       parser_match(parser, TokenType::STRING) {
+        return create_literal_node(parser_previous(parser))
+    }
+    
+    if parser_match(parser, TokenType::IDENTIFIER) {
+        return create_identifier_node(parser_previous(parser))
+    }
+    
+    if parser_match(parser, TokenType::LEFT_PAREN) {
+        let expr = parser_parse_expression(parser)
+        parser_consume(parser, TokenType::RIGHT_PAREN, "Expected ')' after expression")
+        return expr
+    }
+    
+    let current = parser_peek(parser)
+    let error_msg = format("Unexpected token '{}' at line {}", current.value, current.line)
+    parser.errors.push(error_msg)
+    
+    // Return dummy node to continue parsing
+    return create_identifier_node(current)
+}
+
+// Public API functions
+export fn parse(tokens: Vec<Token>) -> &ASTNode {
+    let mut parser = parser_init(tokens)
+    return parser_parse_program(&mut parser)
+}
+
+export fn parse_expression(tokens: Vec<Token>) -> &ASTNode {
+    let mut parser = parser_init(tokens)
+    return parser_parse_expression(&mut parser)
+}
+
+export fn get_parse_errors(parser: &Parser) -> Vec<string> {
+    return parser.errors
+}

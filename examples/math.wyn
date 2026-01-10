@@ -1,24 +1,10 @@
-fn is_even(n: int) -> int {
-    return n % 2 == 0
+// math.wyn - module to be imported
+export fn add(a: int, b: int) -> int {
+    return a + b
 }
 
-fn main() -> int {
-    // Modulo operator
-    print(10 % 3)
-    print(17 % 5)
-    
-    // Math functions
-    print(abs_val(-42))
-    print(min(10, 20))
-    print(max(10, 20))
-    print(pow_int(2, 10))
-    
-    // Even/odd check
-    for var i = 0; i < 5; i = i + 1 {
-        if is_even(i) {
-            print(i)
-        }
-    }
-    
-    return 0
+export fn multiply(a: int, b: int) -> int {
+    return a * b
 }
+
+export var PI = 3.14159

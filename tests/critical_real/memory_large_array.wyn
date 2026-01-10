@@ -1,0 +1,9 @@
+
+fn main() -> int {
+    var big_array = []
+    for (var i = 0; i < 1000; i = i + 1) {
+        big_array = [i, i+1, i+2]  // Should not leak memory
+    }
+    print("Memory test complete")
+    return 0
+}

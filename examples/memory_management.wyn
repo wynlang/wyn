@@ -1,0 +1,34 @@
+// Memory Management Example
+// Demonstrates manual string cleanup with str_free()
+
+fn main() -> int {
+    print_str("=== Memory Management Demo ===")
+    print_str("")
+    
+    // String operations allocate memory
+    var upper = str_upper("hello world")
+    print_str("Uppercase:")
+    print_str(upper)
+    
+    // Manually free when done
+    str_free(upper)
+    print_str("✓ String freed")
+    
+    print_str("")
+    
+    // Multiple operations
+    var s1 = str_concat("Hello", " ")
+    var s2 = str_concat(s1, "World")
+    print_str("Concatenated:")
+    print_str(s2)
+    
+    // Free in reverse order
+    str_free(s2)
+    str_free(s1)
+    print_str("✓ All strings freed")
+    
+    print_str("")
+    print_str("=== Demo Complete ===")
+    
+    return 0
+}

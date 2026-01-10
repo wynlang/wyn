@@ -1,0 +1,39 @@
+// Wyn v1.2 - Method Chaining Demo
+
+fn main() -> int {
+    // Array methods
+    var numbers = [5, 2, 8, 1, 9, 3]
+    
+    print(numbers.sum())
+    print(numbers.max())
+    print(numbers.min())
+    
+    numbers.sort()
+    print(numbers.first())
+    print(numbers.last())
+    
+    print(numbers.contains(5))
+    print(numbers.find(8))
+    
+    // String methods
+    var text = "  Hello World  "
+    var clean = text.trim().lower()
+    print_str(clean)
+    
+    print(str_contains(text, "World"))
+    print(str_starts_with(text, "  Hello"))
+    
+    // Int methods
+    var n = -16
+    print(n.abs())
+    print(n.abs().sqrt())
+    print(n.abs().isEven())
+    
+    // Complex chaining
+    var data = [10, 5, 15, 3, 20]
+    data.sort()
+    print(data.first())
+    print(data.last())
+    
+    return 0
+}

@@ -1,0 +1,282 @@
+// T7.2.4: Code Generator Rewrite in Wyn
+// Wyn language code generator - converts AST to LLVM IR
+
+import "io"
+import "string"
+import "collections"
+
+// Core codegen structures
+struct CodegenContext {
+    output: File,
+    scope_depth: int,
+    scopes: Vec<Scope>,
+    temp_counter: int,
+    label_counter: int
+}
+
+struct Scope {
+    vars: Vec<String>,
+    types: Vec<String>,
+    count: int
+}
+
+// Initialize code generator
+fn init_codegen(output: File) -> CodegenContext {
+    return CodegenContext {
+        output: output,
+        scope_depth: 0,
+        scopes: Vec::new(),
+        temp_counter: 0,
+        label_counter: 0
+    }
+}
+
+// Emit LLVM IR instruction
+fn emit(ctx: &mut CodegenContext, format: String, args: ...Any) {
+    let formatted = string::format(format, args)
+    ctx.output.write(formatted)
+}
+
+// Scope management
+fn push_scope(ctx: &mut CodegenContext) {
+    let new_scope = Scope {
+        vars: Vec::new(),
+        types: Vec::new(),
+        count: 0
+    }
+    ctx.scopes.push(new_scope)
+    ctx.scope_depth += 1
+}
+
+fn pop_scope(ctx: &mut CodegenContext) {
+    if ctx.scope_depth > 0 {
+        let scope = ctx.scopes.pop().unwrap()
+        ctx.scope_depth -= 1
+        
+        // Emit cleanup for this scope
+        for i in 0..scope.count {
+            emit(ctx, "    call void @wyn_cleanup_var(i8* %{}, i8* \"{}\")\n", 
+                 scope.vars[i], scope.types[i])
+        }
+    }
+}
+
+// Expression code generation
+fn codegen_expr(ctx: &mut CodegenContext, expr: &Expr) -> String {
+    match expr.type {
+        EXPR_LITERAL => {
+            match expr.literal.type {
+                TOKEN_NUMBER => {
+                    return string::format("i32 {}", expr.literal.lexeme)
+                },
+                TOKEN_STRING => {
+                    let temp = ctx.temp_counter
+                    ctx.temp_counter += 1
+                    emit(ctx, "    %str{} = call i8* @wyn_create_string(i8* \"{}\")\n", 
+                         temp, expr.literal.lexeme)
+                    return string::format("i8* %str{}", temp)
+                },
+                TOKEN_TRUE => "i1 true",
+                TOKEN_FALSE => "i1 false",
+                _ => "i32 0"
+            }
+        },
+        EXPR_VARIABLE => {
+            return string::format("i32 %{}", expr.variable.name.lexeme)
+        },
+        EXPR_BINARY => {
+            let left = codegen_expr(ctx, expr.binary.left)
+            let right = codegen_expr(ctx, expr.binary.right)
+            let temp = ctx.temp_counter
+            ctx.temp_counter += 1
+            
+            match expr.binary.operator.type {
+                TOKEN_PLUS => {
+                    emit(ctx, "    %temp{} = add i32 {}, {}\n", temp, left, right)
+                },
+                TOKEN_MINUS => {
+                    emit(ctx, "    %temp{} = sub i32 {}, {}\n", temp, left, right)
+                },
+                TOKEN_STAR => {
+                    emit(ctx, "    %temp{} = mul i32 {}, {}\n", temp, left, right)
+                },
+                TOKEN_SLASH => {
+                    emit(ctx, "    %temp{} = sdiv i32 {}, {}\n", temp, left, right)
+                },
+                _ => {
+                    emit(ctx, "    %temp{} = add i32 {}, {}\n", temp, left, right)
+                }
+            }
+            return string::format("i32 %temp{}", temp)
+        },
+        _ => "i32 0"
+    }
+}
+
+// Statement code generation
+fn codegen_stmt(ctx: &mut CodegenContext, stmt: &Stmt) {
+    match stmt.type {
+        STMT_EXPRESSION => {
+            codegen_expr(ctx, stmt.expression)
+        },
+        STMT_VAR => {
+            let init_value = if stmt.var.initializer != null {
+                codegen_expr(ctx, stmt.var.initializer)
+            } else {
+                "i32 0"
+            }
+            
+            emit(ctx, "    %{} = alloca i32\n", stmt.var.name.lexeme)
+            emit(ctx, "    store {} %{}\n", init_value, stmt.var.name.lexeme)
+            
+            // Track variable for cleanup
+            if ctx.scope_depth > 0 {
+                let scope_idx = ctx.scope_depth - 1
+                ctx.scopes[scope_idx].vars.push(stmt.var.name.lexeme.clone())
+                ctx.scopes[scope_idx].types.push("i32".to_string())
+                ctx.scopes[scope_idx].count += 1
+            }
+        },
+        STMT_BLOCK => {
+            push_scope(ctx)
+            for i in 0..stmt.block.statement_count {
+                codegen_stmt(ctx, &stmt.block.statements[i])
+            }
+            pop_scope(ctx)
+        },
+        STMT_IF => {
+            let condition = codegen_expr(ctx, stmt.if_stmt.condition)
+            let then_label = ctx.label_counter
+            let else_label = ctx.label_counter + 1
+            let end_label = ctx.label_counter + 2
+            ctx.label_counter += 3
+            
+            emit(ctx, "    br i1 {}, label %then{}, label %else{}\n", 
+                 condition, then_label, else_label)
+            
+            emit(ctx, "then{}:\n", then_label)
+            codegen_stmt(ctx, stmt.if_stmt.then_branch)
+            emit(ctx, "    br label %end{}\n", end_label)
+            
+            emit(ctx, "else{}:\n", else_label)
+            if stmt.if_stmt.else_branch != null {
+                codegen_stmt(ctx, stmt.if_stmt.else_branch)
+            }
+            emit(ctx, "    br label %end{}\n", end_label)
+            
+            emit(ctx, "end{}:\n", end_label)
+        },
+        STMT_WHILE => {
+            let loop_label = ctx.label_counter
+            let body_label = ctx.label_counter + 1
+            let end_label = ctx.label_counter + 2
+            ctx.label_counter += 3
+            
+            emit(ctx, "    br label %loop{}\n", loop_label)
+            emit(ctx, "loop{}:\n", loop_label)
+            
+            let condition = codegen_expr(ctx, stmt.while_stmt.condition)
+            emit(ctx, "    br i1 {}, label %body{}, label %end{}\n", 
+                 condition, body_label, end_label)
+            
+            emit(ctx, "body{}:\n", body_label)
+            codegen_stmt(ctx, stmt.while_stmt.body)
+            emit(ctx, "    br label %loop{}\n", loop_label)
+            
+            emit(ctx, "end{}:\n", end_label)
+        },
+        STMT_RETURN => {
+            if stmt.return_stmt.value != null {
+                let return_value = codegen_expr(ctx, stmt.return_stmt.value)
+                emit(ctx, "    ret {}\n", return_value)
+            } else {
+                emit(ctx, "    ret void\n")
+            }
+        },
+        _ => {
+            // Default case - emit comment
+            emit(ctx, "    ; Unhandled statement type\n")
+        }
+    }
+}
+// Function code generation
+fn codegen_function(ctx: &mut CodegenContext, func: &FunctionDecl) {
+    // Function signature
+    emit(ctx, "define i32 @{}(", func.name.lexeme)
+    
+    for i in 0..func.param_count {
+        if i > 0 {
+            emit(ctx, ", ")
+        }
+        emit(ctx, "i32 %{}", func.params[i].lexeme)
+    }
+    
+    emit(ctx, ") {\n")
+    emit(ctx, "entry:\n")
+    
+    // Allocate parameters
+    for i in 0..func.param_count {
+        emit(ctx, "    %{}.addr = alloca i32\n", func.params[i].lexeme)
+        emit(ctx, "    store i32 %{}, i32* %{}.addr\n", 
+             func.params[i].lexeme, func.params[i].lexeme)
+    }
+    
+    // Generate function body
+    push_scope(ctx)
+    codegen_stmt(ctx, func.body)
+    pop_scope(ctx)
+    
+    // Default return if no explicit return
+    emit(ctx, "    ret i32 0\n")
+    emit(ctx, "}\n\n")
+}
+
+// Main codegen entry point
+fn codegen_program(ctx: &mut CodegenContext, program: &Program) {
+    // Emit LLVM module header
+    emit(ctx, "; Wyn Language - Generated LLVM IR\n")
+    emit(ctx, "target triple = \"arm64-apple-macosx\"\n\n")
+    
+    // Emit runtime function declarations
+    emit(ctx, "declare i8* @wyn_create_string(i8*)\n")
+    emit(ctx, "declare void @wyn_cleanup_var(i8*, i8*)\n")
+    emit(ctx, "declare i32 @printf(i8*, ...)\n\n")
+    
+    // Generate code for all functions
+    for i in 0..program.function_count {
+        codegen_function(ctx, &program.functions[i])
+    }
+    
+    // Generate main function if not present
+    emit(ctx, "define i32 @main() {\n")
+    emit(ctx, "entry:\n")
+    emit(ctx, "    ret i32 0\n")
+    emit(ctx, "}\n")
+}
+
+// Public API for integration with C compiler
+extern "C" {
+    fn wyn_codegen_init(output_file: *mut FILE) -> *mut CodegenContext
+    fn wyn_codegen_program(ctx: *mut CodegenContext, program: *const Program)
+    fn wyn_codegen_cleanup(ctx: *mut CodegenContext)
+}
+
+// C interface implementations
+fn wyn_codegen_init(output_file: *mut FILE) -> *mut CodegenContext {
+    let ctx = Box::new(init_codegen(File::from_raw(output_file)))
+    Box::into_raw(ctx)
+}
+
+fn wyn_codegen_program(ctx: *mut CodegenContext, program: *const Program) {
+    unsafe {
+        let ctx_ref = &mut *ctx
+        let program_ref = &*program
+        codegen_program(ctx_ref, program_ref)
+    }
+}
+
+fn wyn_codegen_cleanup(ctx: *mut CodegenContext) {
+    unsafe {
+        Box::from_raw(ctx)
+    }
+}

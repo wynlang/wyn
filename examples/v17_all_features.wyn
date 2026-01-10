@@ -1,0 +1,26 @@
+// Test all v1.7.0 enhancements
+import math
+
+fn main() {
+    print("=== String Interpolation ===")
+    var name = "Alice"
+    var greeting = "Hello ${name}!"
+    greeting.print()
+    
+    print("=== Map Index Assignment ===")
+    var users = map[string, int]{"alice": 25}
+    users["bob"] = 30        // New assignment syntax
+    users["alice"].print()   // 25
+    users["bob"].print()     // 30
+    
+    print("=== More Map Methods ===")
+    users.size().print()     // 2
+    users.clear()
+    users.size().print()     // 0
+    
+    print("=== Qualified Module Access ===")
+    math.add(5, 3).print()   // 8
+    math.PI.print()          // 3.14159
+    
+    print("=== All v1.7.0 features working! ===")
+}

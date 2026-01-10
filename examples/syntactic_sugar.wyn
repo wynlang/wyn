@@ -1,0 +1,70 @@
+// Syntactic Sugar Showcase - v1.5.0
+// Everything is elegant and method-based
+
+fn main() -> int {
+    "=== Wyn v1.5.0 - Pure Elegance ===".print()
+    "".print()
+    
+    // 1. Unified print - works on everything
+    "1. Unified Print:".print()
+    42.print()
+    3.14.print()
+    "text".print()
+    true.print()
+    "".print()
+    
+    // 2. String methods - all elegant
+    "2. String Methods:".print()
+    "hello".upper().print()
+    "WORLD".lower().print()
+    "  trim  ".trim().print()
+    "hello".len().print()
+    "hello".size().print()
+    "".print()
+    
+    // 3. Method chaining - beautiful
+    "3. Method Chaining:".print()
+    "  hello world  ".trim().upper().print()
+    "".print()
+    
+    // 4. Array methods - consistent
+    "4. Array Methods:".print()
+    var arr = [1, 2, 3, 4, 5]
+    arr.sum().print()
+    arr.max().print()
+    arr.length().print()
+    arr.count().print()
+    arr.size().print()
+    "".print()
+    
+    // 5. Number methods - Ruby-style
+    "5. Number Methods:".print()
+    var num = -42
+    num.abs().print()
+    num.isEven().print()
+    42.toString().print()
+    "".print()
+    
+    // 6. Range methods - elegant iteration
+    "6. Range Methods:".print()
+    5.times().print()
+    1.upto(3).print()
+    10.downto(8).print()
+    "".print()
+    
+    // 7. Everything auto-freed
+    "7. Automatic Memory:".print()
+    var i = 0
+    while i < 3 {
+        var s = "iteration".upper()
+        s.print()
+        // Automatically freed!
+        i = i + 1
+    }
+    "✓ Zero memory leaks".print()
+    "".print()
+    
+    "=== Wyn: Python Elegance + C Power ===".print()
+    
+    return 0
+}

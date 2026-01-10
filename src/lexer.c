@@ -3,6 +3,7 @@
 #include <string.h>
 #include <ctype.h>
 #include "common.h"
+#include "error.h"
 
 typedef struct {
     const char* start;
@@ -88,17 +89,22 @@ static TokenType keyword_type(const char* start, int length) {
             if (length == 3 && memcmp(start, "and", 3) == 0) return TOKEN_AND;
             if (length == 2 && memcmp(start, "as", 2) == 0) return TOKEN_AS;
             if (length == 6 && memcmp(start, "assert", 6) == 0) return TOKEN_ASSERT;
+            if (length == 5 && memcmp(start, "async", 5) == 0) return TOKEN_ASYNC;
+            if (length == 5 && memcmp(start, "await", 5) == 0) return TOKEN_AWAIT;
             break;
         case 'b': if (length == 5 && memcmp(start, "break", 5) == 0) return TOKEN_BREAK; break;
         case 'c': 
             if (length == 5 && memcmp(start, "const", 5) == 0) return TOKEN_CONST;
             if (length == 8 && memcmp(start, "continue", 8) == 0) return TOKEN_CONTINUE;
             if (length == 7 && memcmp(start, "channel", 7) == 0) return TOKEN_CHANNEL;
+            if (length == 5 && memcmp(start, "catch", 5) == 0) return TOKEN_CATCH;
             break;
         case 'e':
             if (length == 4 && memcmp(start, "else", 4) == 0) return TOKEN_ELSE;
+            if (length == 6 && memcmp(start, "elseif", 6) == 0) return TOKEN_ELSEIF;
             if (length == 4 && memcmp(start, "enum", 4) == 0) return TOKEN_ENUM;
             if (length == 3 && memcmp(start, "err", 3) == 0) return TOKEN_ERR;
+            if (length == 6 && memcmp(start, "export", 6) == 0) return TOKEN_EXPORT;
             break;
         case 'f':
             if (length == 5 && memcmp(start, "false", 5) == 0) return TOKEN_FALSE;
@@ -115,10 +121,13 @@ static TokenType keyword_type(const char* start, int length) {
         case 'm':
             if (length == 5 && memcmp(start, "match", 5) == 0) return TOKEN_MATCH;
             if (length == 3 && memcmp(start, "mut", 3) == 0) return TOKEN_MUT;
+            if (length == 3 && memcmp(start, "map", 3) == 0) return TOKEN_MAP;
+            if (length == 6 && memcmp(start, "module", 6) == 0) return TOKEN_MODULE;
             break;
         case 'n': 
             if (length == 3 && memcmp(start, "not", 3) == 0) return TOKEN_NOT;
             if (length == 4 && memcmp(start, "none", 4) == 0) return TOKEN_NONE;
+            if (length == 4 && memcmp(start, "null", 4) == 0) return TOKEN_NULL;
             break;
         case 'o': 
             if (length == 2 && memcmp(start, "or", 2) == 0) return TOKEN_OR;
@@ -135,6 +144,9 @@ static TokenType keyword_type(const char* start, int length) {
             if (length == 4 && memcmp(start, "true", 4) == 0) return TOKEN_TRUE;
             if (length == 4 && memcmp(start, "type", 4) == 0) return TOKEN_TYPE;
             if (length == 4 && memcmp(start, "test", 4) == 0) return TOKEN_TEST;
+            if (length == 3 && memcmp(start, "try", 3) == 0) return TOKEN_TRY;
+            if (length == 5 && memcmp(start, "throw", 5) == 0) return TOKEN_THROW;
+            if (length == 5 && memcmp(start, "trait", 5) == 0) return TOKEN_TRAIT;
             break;
         case 'v': if (length == 3 && memcmp(start, "var", 3) == 0) return TOKEN_VAR; break;
         case 'w': if (length == 5 && memcmp(start, "while", 5) == 0) return TOKEN_WHILE; break;
@@ -150,6 +162,26 @@ static Token identifier() {
 }
 
 static Token string() {
+    // Check for multi-line string """
+    if (peek() == '"' && peek_next() == '"') {
+        advance(); // Skip second "
+        advance(); // Skip third "
+        
+        while (true) {
+            if (is_at_end()) return make_token(TOKEN_EOF);
+            if (peek() == '"' && peek_next() == '"' && *(lexer.current + 2) == '"') {
+                advance(); // Skip first "
+                advance(); // Skip second "
+                advance(); // Skip third "
+                break;
+            }
+            if (peek() == '\n') lexer.line++;
+            advance();
+        }
+        return make_token(TOKEN_STRING);
+    }
+    
+    // Regular string
     while (peek() != '"' && !is_at_end()) {
         if (peek() == '\\') {
             advance();
@@ -175,6 +207,14 @@ Token next_token() {
     if (isdigit(c)) return number();
     if (isalpha(c) || c == '_') return identifier();
     if (c == '"') return string();
+    if (c == '\'') {
+        // Character literal
+        advance(); // Skip opening '
+        if (peek() == '\\') advance(); // Handle escape
+        advance(); // The character
+        if (peek() == '\'') advance(); // Skip closing '
+        return make_token(TOKEN_CHAR);
+    }
     
     switch (c) {
         case '(': return make_token(TOKEN_LPAREN);
@@ -184,19 +224,31 @@ Token next_token() {
         case '[': return make_token(TOKEN_LBRACKET);
         case ']': return make_token(TOKEN_RBRACKET);
         case ',': return make_token(TOKEN_COMMA);
-        case '.': return match('.') ? make_token(TOKEN_DOTDOT) : make_token(TOKEN_DOT);
+        case '.': 
+            if (match('.')) {
+                if (match('.')) return make_token(TOKEN_DOTDOTDOT);
+                return make_token(TOKEN_DOTDOT);
+            }
+            return make_token(TOKEN_DOT);
         case ';': return make_token(TOKEN_SEMI);
         case ':': return make_token(TOKEN_COLON);
-        case '+': return match('=') ? make_token(TOKEN_PLUSEQ) : make_token(TOKEN_PLUS);
+        case '+': 
+            if (match('+')) return make_token(TOKEN_PLUSPLUS);
+            if (match('=')) return make_token(TOKEN_PLUSEQ);
+            return make_token(TOKEN_PLUS);
         case '-': 
+            if (match('-')) return make_token(TOKEN_MINUSMINUS);
             if (match('=')) return make_token(TOKEN_MINUSEQ);
             if (match('>')) return make_token(TOKEN_ARROW);
             return make_token(TOKEN_MINUS);
         case '*': return match('=') ? make_token(TOKEN_STAREQ) : make_token(TOKEN_STAR);
         case '/': return match('=') ? make_token(TOKEN_SLASHEQ) : make_token(TOKEN_SLASH);
         case '%': return make_token(TOKEN_PERCENT);
-        case '&': return make_token(TOKEN_AMP);
-        case '|': return make_token(TOKEN_PIPE);
+        case '&': return match('&') ? make_token(TOKEN_AMPAMP) : make_token(TOKEN_AMP);
+        case '|': 
+            if (match('|')) return make_token(TOKEN_PIPEPIPE);
+            if (match('>')) return make_token(TOKEN_PIPEGT);
+            return make_token(TOKEN_PIPE);
         case '^': return make_token(TOKEN_CARET);
         case '~': return make_token(TOKEN_TILDE);
         case '!': return match('=') ? make_token(TOKEN_BANGEQ) : make_token(TOKEN_BANG);
@@ -206,8 +258,13080 @@ Token next_token() {
             return make_token(TOKEN_EQ);
         case '<': return match('=') ? make_token(TOKEN_LTEQ) : make_token(TOKEN_LT);
         case '>': return match('=') ? make_token(TOKEN_GTEQ) : make_token(TOKEN_GT);
-        case '?': return make_token(TOKEN_QUESTION);
+        case '?': 
+            if (match('.')) return make_token(TOKEN_QUESTION_DOT);
+            return make_token(TOKEN_QUESTION);
     }
     
     return make_token(TOKEN_EOF);
 }
+
+/*
+// Error recovery functions - TODO: Implement properly in T1.2.x
+static void skip_invalid_character() {
+//     // report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//     //            "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     // report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//     //            "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         // report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//         //            "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     // report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//     //            "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+// 
+// // Error recovery functions
+// static void skip_invalid_character() {
+//     report_error(ERR_INVALID_CHARACTER, current_file, current_line, current_column, 
+//                 "Invalid character encountered");
+//     advance(); // Skip the invalid character
+// }
+// 
+// static Token handle_unterminated_string() {
+//     report_error(ERR_UNTERMINATED_STRING, current_file, current_line, current_column,
+//                 "Unterminated string literal");
+//     // Return error token but continue parsing
+//     return make_token(TOKEN_ERROR);
+// }
+// 
+// // Enhanced number scanning with error recovery
+// static Token scan_number_safe() {
+//     while (isdigit(peek())) advance();
+//     
+//     // Look for decimal point
+//     if (peek() == '.' && isdigit(peek_next())) {
+//         advance(); // Consume '.'
+//         while (isdigit(peek())) advance();
+//     }
+//     
+//     // Validate number format
+//     if (isalpha(peek())) {
+//         report_error(ERR_INVALID_NUMBER, current_file, current_line, current_column,
+//                     "Invalid number format");
+//         // Skip invalid characters
+//         while (isalnum(peek())) advance();
+//         return make_token(TOKEN_ERROR);
+//     }
+//     
+//     return make_token(TOKEN_NUMBER);
+// }
+*/
