@@ -272,6 +272,7 @@ WynSystemError wyn_sys_wait_process(WynProcess* process, WynExitStatus* status) 
     }
     
     return WYN_SYS_OK;
+#endif
 }
 
 WynSystemError wyn_sys_kill_process(WynProcess* process) {
