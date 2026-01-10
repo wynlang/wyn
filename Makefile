@@ -133,7 +133,7 @@ test_unit: test_lexer test_parser test_checker test_codegen test_operators test_
 
 test_integration:
 	@echo "=== Running Integration Tests ==="
-	@./tests/integration_tests.sh || echo "Integration tests completed with some skipped"
+	@./tests/integration_tests.sh
 
 test_stdlib:
 	@echo "=== Running Stdlib Tests ==="
