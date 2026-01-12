@@ -174,7 +174,7 @@ int main() {
         printf("🎉 WYN LANGUAGE SYSTEM INTEGRATION - ALL TESTS PASSED!\n");
         printf("✅ Wyn Programming Language is PRODUCTION READY! ✅\n");
         printf("\n🏆 ACHIEVEMENT UNLOCKED: Complete Systems Programming Language\n");
-        printf("📊 Estimated Project Completion: 95%+ (Far exceeds initial 78% estimate)\n");
+        printf("📊 Estimated Project Completion: 95%%+ (Far exceeds initial 78%% estimate)\n");
         return 0;
     } else {
         printf("❌ Some system integration tests FAILED!\n");

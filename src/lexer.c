@@ -52,6 +52,8 @@ static void skip_whitespace() {
             advance();
         } else if (c == '/' && peek_next() == '/') {
             while (peek() != '\n' && !is_at_end()) advance();
+        } else if (c == '#') {
+            while (peek() != '\n' && !is_at_end()) advance();
         } else {
             break;
         }

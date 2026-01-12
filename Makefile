@@ -414,7 +414,7 @@ clean:
 
 .PHONY: all test test_lexer test_parser test_checker test_codegen test_operators clean test_phase2_integration phase2-monitor phase2-gates phase2-status container-build container-test container-deploy container-all
 
-valgrind-test: wyn
-	valgrind --leak-check=full --error-exitcode=1 ./wyn tests/basic.wyn
+# valgrind-test defined earlier in file (line ~125)
+
 test_t2_3_1_validation: tests/test_t2_3_1_validation.c $(SOURCES)
 	$(CC) $(CFLAGS) -I src -o tests/test_t2_3_1_validation tests/test_t2_3_1_validation.c $(SOURCES) $(LDFLAGS)

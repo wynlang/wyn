@@ -110,6 +110,7 @@ bool wyn_check_constraints(Type* concrete_type, TypeConstraint* constraints) {
 
 // T3.2.2: Enhanced where clause constraint parsing with trait bounds
 TypeConstraint** wyn_parse_where_constraints(Token* type_params, int type_param_count) {
+    (void)type_params;  // Reserved for future use
     // Enhanced implementation for parsing "where T: Display + Debug" syntax
     TypeConstraint** constraints = malloc(sizeof(TypeConstraint*) * type_param_count);
     
@@ -172,9 +173,10 @@ void wyn_get_trait_bounds_string(TypeConstraint* constraints, char* buffer, size
             strncat(buffer, " + ", buffer_size - strlen(buffer) - 1);
         }
         
-        strncat(buffer, current->trait_name.start, 
-                (current->trait_name.length < buffer_size - strlen(buffer) - 1) ? 
-                current->trait_name.length : buffer_size - strlen(buffer) - 1);
+        size_t remaining = buffer_size - strlen(buffer) - 1;
+        size_t copy_len = (size_t)current->trait_name.length < remaining ? 
+                          (size_t)current->trait_name.length : remaining;
+        strncat(buffer, current->trait_name.start, copy_len);
         
         first = false;
         current = current->next;
@@ -384,6 +386,7 @@ bool wyn_validate_generic_struct(GenericStruct* generic_struct, Type** type_args
     return true;
 }
 void* wyn_monomorphize_struct(GenericStruct* generic_struct, Type** type_args, int type_arg_count) {
+    (void)type_arg_count;  // Reserved for validation
     if (!generic_struct || !type_args) {
         return NULL;
     }

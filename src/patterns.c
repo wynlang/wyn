@@ -288,6 +288,7 @@ void wyn_extract_pattern_bindings(Pattern* pattern, Expr* value, SymbolTable* sc
 
 // T3.3.1: Check if a pattern is exhaustive (covers all cases)
 bool wyn_is_pattern_exhaustive(Pattern** patterns, int pattern_count, Type* match_type) {
+    (void)match_type;  // Reserved for type-specific exhaustiveness checking
     if (!patterns || pattern_count == 0) return false;
     
     // Check for wildcard pattern (always exhaustive)

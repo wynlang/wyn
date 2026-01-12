@@ -104,6 +104,7 @@ typedef struct {
 typedef struct {
     Expr* object;
     Token field;
+    bool is_enum_access;  // True if this is enum member access (EnumName.MEMBER)
 } FieldAccessExpr;
 
 typedef struct {

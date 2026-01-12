@@ -102,6 +102,7 @@ void free_expr(Expr* expr) {
         case EXPR_NONE:
         case EXPR_DESTRUCTURE:
         case EXPR_SPREAD:
+        case EXPR_PATTERN:
             // No additional cleanup needed for these types
             break;
     }
@@ -200,6 +201,7 @@ void free_stmt(Stmt* stmt) {
         case STMT_BREAK:
         case STMT_CONTINUE:
         case STMT_ASYNC_FN:
+        case STMT_MODULE:
             // No additional cleanup needed
             break;
     }

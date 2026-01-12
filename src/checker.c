@@ -78,7 +78,7 @@ static bool wyn_is_type_compatible(Type* expected, Type* actual) {
     return false;
 }
 
-static ValidationResult wyn_validate_function_call(Symbol* func_symbol, Expr** args, int arg_count) {
+static ValidationResult wyn_validate_function_call(Symbol* func_symbol, Expr** args, int arg_count, SymbolTable* scope) {
     if (!func_symbol || !func_symbol->type || func_symbol->type->kind != TYPE_FUNCTION) {
         return VALIDATION_NULL_FUNCTION;
     }
@@ -97,7 +97,7 @@ static ValidationResult wyn_validate_function_call(Symbol* func_symbol, Expr** a
     // Check type compatibility for each parameter
     for (int i = 0; i < func_type->fn_type.param_count; i++) {
         Type* expected_type = func_type->fn_type.param_types[i];
-        Type* actual_type = check_expr(args[i], global_scope);
+        Type* actual_type = check_expr(args[i], scope);
         
         if (!wyn_is_type_compatible(expected_type, actual_type)) {
             return VALIDATION_TYPE_MISMATCH;
@@ -378,6 +378,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 expr->expr_type = builtin_string;
                 return builtin_string;
             }
+            if (expr->token.length == 3 && memcmp(expr->token.start, "str", 3) == 0) {
+                expr->expr_type = builtin_string;
+                return builtin_string;
+            }
             if (expr->token.length == 4 && memcmp(expr->token.start, "bool", 4) == 0) {
                 expr->expr_type = builtin_bool;
                 return builtin_bool;
@@ -422,6 +426,14 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return builtin_bool;
             }
             
+            // Comparison operators return bool
+            if (expr->binary.op.type == TOKEN_EQEQ || expr->binary.op.type == TOKEN_BANGEQ ||
+                expr->binary.op.type == TOKEN_LT || expr->binary.op.type == TOKEN_GT ||
+                expr->binary.op.type == TOKEN_LTEQ || expr->binary.op.type == TOKEN_GTEQ) {
+                expr->expr_type = builtin_bool;
+                return builtin_bool;
+            }
+            
             // Allow string concatenation with + operator
             if (expr->binary.op.type == TOKEN_PLUS && 
                 left->kind == TYPE_STRING && right->kind == TYPE_STRING) {
@@ -452,7 +464,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 
                 if (best_match && best_match->type->kind == TYPE_FUNCTION) {
                     // T1.5.4: Validate the function call with detailed parameter checking
-                    ValidationResult validation = wyn_validate_function_call(best_match, expr->call.args, expr->call.arg_count);
+                    ValidationResult validation = wyn_validate_function_call(best_match, expr->call.args, expr->call.arg_count, scope);
                     
                     if (validation != VALIDATION_SUCCESS) {
                         char func_name[256];
@@ -557,8 +569,28 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             
             return builtin_int;
         }
-        case EXPR_ARRAY:
+        case EXPR_ARRAY: {
+            // Check array elements and ensure type consistency
+            if (expr->array.count > 0) {
+                Type* element_type = check_expr(expr->array.elements[0], scope);
+                
+                // Check all elements have the same type
+                for (int i = 1; i < expr->array.count; i++) {
+                    Type* elem_type = check_expr(expr->array.elements[i], scope);
+                    if (elem_type && element_type && elem_type->kind != element_type->kind) {
+                        fprintf(stderr, "Error: Array elements must have consistent types\n");
+                        had_error = true;
+                        return NULL;
+                    }
+                }
+                
+                expr->expr_type = builtin_array;
+                return builtin_array;
+            }
+            
+            expr->expr_type = builtin_array;
             return builtin_array;
+        }
         case EXPR_INDEX: {
             Type* array_type = check_expr(expr->index.array, scope);
             Type* idx_type = check_expr(expr->index.index, scope);
@@ -667,10 +699,31 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int; // Tuple type (simplified for now)
         }
         case EXPR_FIELD_ACCESS: {
-            // Handle module.function access
-            check_expr(expr->field_access.object, scope);
+            // Handle enum member access and module.function access
+            (void)check_expr(expr->field_access.object, scope);  // Validate object
             
-            // Create qualified name for lookup
+            // Check if this is enum member access (EnumName.MEMBER)
+            if (expr->field_access.object->type == EXPR_IDENT) {
+                Token enum_name = expr->field_access.object->token;
+                Token member_name = expr->field_access.field;
+                
+                // Create qualified name to check if it exists in symbol table
+                char qualified_member[128];
+                snprintf(qualified_member, 128, "%.*s.%.*s",
+                        enum_name.length, enum_name.start,
+                        member_name.length, member_name.start);
+                
+                Token qualified_token = {TOKEN_IDENT, qualified_member, (int)strlen(qualified_member), 0};
+                Symbol* enum_member_symbol = find_symbol(global_scope, qualified_token);
+                
+                if (enum_member_symbol) {
+                    // This is a valid enum member access
+                    expr->field_access.is_enum_access = true;
+                    return builtin_int; // Enum values are integers
+                }
+            }
+            
+            // Create qualified name for module lookup
             Token obj_name = expr->field_access.object->token;
             Token field_name = expr->field_access.field;
             
@@ -922,6 +975,17 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
         case STMT_ENUM:
             // Register enum type in global scope
             add_symbol(global_scope, stmt->enum_decl.name, builtin_int, false); // Simplified: use int as placeholder
+            
+            // Register each enum member with qualified name (EnumName.MEMBER)
+            for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
+                char qualified_member[128];
+                snprintf(qualified_member, 128, "%.*s.%.*s",
+                        stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                        stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
+                
+                Token qualified_token = {TOKEN_IDENT, strdup(qualified_member), (int)strlen(qualified_member), 0};
+                add_symbol(global_scope, qualified_token, builtin_int, false);
+            }
             break;
         default:
             break;
@@ -980,7 +1044,29 @@ void check_program(Program* prog) {
             fn_type->fn_type.param_count = fn->param_count;
             fn_type->fn_type.param_types = malloc(sizeof(Type*) * fn->param_count);
             for (int j = 0; j < fn->param_count; j++) {
-                fn_type->fn_type.param_types[j] = builtin_int; // For now, all params are int
+                // Determine parameter type from type annotation
+                Type* param_type = builtin_int; // default
+                if (fn->param_types[j]) {
+                    if (fn->param_types[j]->type == EXPR_IDENT) {
+                        Token type_name = fn->param_types[j]->token;
+                        if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+                            param_type = builtin_int;
+                        } else if ((type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) ||
+                                   (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0)) {
+                            param_type = builtin_string;
+                        } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
+                            param_type = builtin_float;
+                        } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
+                            param_type = builtin_bool;
+                        } else if (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0) {
+                            param_type = builtin_array;
+                        }
+                    } else if (fn->param_types[j]->type == EXPR_ARRAY) {
+                        // Handle array types [type]
+                        param_type = builtin_array;
+                    }
+                }
+                fn_type->fn_type.param_types[j] = param_type;
             }
             
             // Determine return type from function signature or infer from body
@@ -1041,8 +1127,19 @@ void check_program(Program* prog) {
             }
         } else if (prog->stmts[i]->type == STMT_ENUM) {
             EnumStmt* enum_decl = &prog->stmts[i]->enum_decl;
+            
+            // Register enum type
+            add_symbol(global_scope, enum_decl->name, builtin_int, false);
+            
+            // Register each enum member with qualified name (EnumName.MEMBER)
             for (int j = 0; j < enum_decl->variant_count; j++) {
-                add_symbol(global_scope, enum_decl->variants[j], builtin_int, false);
+                char qualified_member[128];
+                snprintf(qualified_member, 128, "%.*s.%.*s",
+                        enum_decl->name.length, enum_decl->name.start,
+                        enum_decl->variants[j].length, enum_decl->variants[j].start);
+                
+                Token qualified_token = {TOKEN_IDENT, strdup(qualified_member), (int)strlen(qualified_member), 0};
+                add_symbol(global_scope, qualified_token, builtin_int, false);
             }
         }
     }
@@ -1083,7 +1180,8 @@ void check_program(Program* prog) {
                         Token type_name = fn->param_types[j]->token;
                         if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                             param_type = builtin_int;
-                        } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+                        } else if ((type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) ||
+                                   (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0)) {
                             param_type = builtin_string;
                         } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
                             param_type = builtin_float;
@@ -1092,6 +1190,9 @@ void check_program(Program* prog) {
                         } else if (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0) {
                             param_type = builtin_array;
                         }
+                    } else if (fn->param_types[j]->type == EXPR_ARRAY) {
+                        // Handle array types [type]
+                        param_type = builtin_array;
                     }
                 }
                 

@@ -103,6 +103,8 @@ void wyn_analyze_lambda_captures(LambdaExpr* lambda, Expr* body, SymbolTable* sc
 
 // T3.4.1: Determine capture mode for a variable
 CaptureMode wyn_determine_capture_mode(Token var_name, Type* var_type, Expr* usage_context) {
+    (void)var_name;       // Reserved for variable-specific analysis
+    (void)usage_context;  // Reserved for context-aware capture
     // Simplified capture mode determination
     if (!var_type) return CAPTURE_BY_REFERENCE;
     

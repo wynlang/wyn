@@ -42,7 +42,7 @@ static char* read_file(const char* path) {
 static char* get_version() {
     static char version[32] = {0};
     if (version[0] == 0) {
-        FILE* f = fopen("VERSION", "r");
+        FILE* f = fopen("../VERSION", "r");
         if (f) {
             if (fgets(version, sizeof(version), f)) {
                 char* newline = strchr(version, '\n');
@@ -50,7 +50,7 @@ static char* get_version() {
             }
             fclose(f);
         }
-        if (version[0] == 0) strcpy(version, "1.4.0");
+        if (version[0] == 0) strcpy(version, "1.0.0");
     }
     return version;
 }

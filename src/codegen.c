@@ -170,6 +170,86 @@ void codegen_expr(Expr* expr) {
                     emit("print(");
                     codegen_expr(expr->call.args[0]);
                     emit(")");
+                } else if (expr->call.arg_count >= 2 && 
+                           expr->call.args[0]->type == EXPR_STRING) {
+                    // Format string with {} placeholders: print("Value: {}", x)
+                    const char* fmt = expr->call.args[0]->token.start + 1; // Skip opening quote
+                    int fmt_len = expr->call.args[0]->token.length - 2; // Skip quotes
+                    
+                    emit("printf(\"");
+                    int arg_idx = 1;
+                    for (int i = 0; i < fmt_len; i++) {
+                        if (i < fmt_len - 1 && fmt[i] == '{' && fmt[i+1] == '}') {
+                            // Replace {} with appropriate format specifier
+                            if (arg_idx < expr->call.arg_count) {
+                                Expr* arg = expr->call.args[arg_idx];
+                                
+                                // Determine format specifier based on argument type
+                                if (arg->expr_type && arg->expr_type->kind == TYPE_STRING) {
+                                    emit("%%s");
+                                } else if (arg->expr_type && arg->expr_type->kind == TYPE_FLOAT) {
+                                    emit("%%f");
+                                } else if (arg->expr_type && arg->expr_type->kind == TYPE_BOOL) {
+                                    emit("%%s");  // Will use ternary for true/false
+                                } else if (arg->type == EXPR_STRING) {
+                                    // String literal
+                                    emit("%%s");
+                                } else if (arg->type == EXPR_IDENT) {
+                                    // Variable - need better type detection
+                                    // For now, check if it's likely a string parameter
+                                    // This is a heuristic - proper solution needs symbol table lookup
+                                    const char* var_name = arg->token.start;
+                                    int var_len = arg->token.length;
+                                    if ((var_len >= 4 && strncmp(var_name, "name", 4) == 0) ||
+                                        (var_len >= 3 && strncmp(var_name, "msg", 3) == 0) ||
+                                        (var_len >= 3 && strncmp(var_name, "str", 3) == 0) ||
+                                        (var_len >= 4 && strncmp(var_name, "text", 4) == 0)) {
+                                        emit("%%s");
+                                    } else {
+                                        emit("%%d");  // Default to int for other variables
+                                    }
+                                } else if (arg->type == EXPR_FIELD_ACCESS) {
+                                    // Struct field access - check field name for string hints
+                                    Token field_name = arg->field_access.field;
+                                    if ((field_name.length >= 4 && strncmp(field_name.start, "name", 4) == 0) ||
+                                        (field_name.length >= 3 && strncmp(field_name.start, "str", 3) == 0) ||
+                                        (field_name.length >= 4 && strncmp(field_name.start, "text", 4) == 0) ||
+                                        (field_name.length >= 5 && strncmp(field_name.start, "title", 5) == 0)) {
+                                        emit("%%s");
+                                    } else {
+                                        emit("%%d");  // Default to int for other fields
+                                    }
+                                } else {
+                                    // Default to int for backward compatibility
+                                    emit("%%d");
+                                }
+                            }
+                            i++; // Skip the }
+                            arg_idx++;
+                        } else if (fmt[i] == '%') {
+                            emit("%%%%"); // Escape %
+                        } else if (fmt[i] == '\\' && i < fmt_len - 1) {
+                            emit("\\%c", fmt[i+1]);
+                            i++;
+                        } else {
+                            emit("%c", fmt[i]);
+                        }
+                    }
+                    emit("\\n\"");
+                    // Add arguments
+                    for (int i = 1; i < expr->call.arg_count; i++) {
+                        emit(", ");
+                        Expr* arg = expr->call.args[i];
+                        // Handle boolean arguments that need string conversion
+                        if (arg->expr_type && arg->expr_type->kind == TYPE_BOOL) {
+                            emit("(");
+                            codegen_expr(arg);
+                            emit(" ? \"true\" : \"false\")");
+                        } else {
+                            codegen_expr(arg);
+                        }
+                    }
+                    emit(")");
                 } else {
                     // Multiple arguments - use individual print calls without newlines
                     emit("({ ");
@@ -210,10 +290,11 @@ void codegen_expr(Expr* expr) {
                                     expr->call.callee->token.length == 9 &&
                                     memcmp(expr->call.callee->token.start, "array_pop", 9) == 0);
                 
-                // T1.5.3: Use mangled name for overloaded functions
+                // T1.5.3: Use mangled name only for actually overloaded functions
                 if (expr->call.selected_overload) {
                     Symbol* overload = (Symbol*)expr->call.selected_overload;
-                    if (overload->mangled_name) {
+                    // Only use mangled name if there are multiple overloads
+                    if (overload->mangled_name && overload->next_overload) {
                         emit("%s", overload->mangled_name);
                     } else {
                         codegen_expr(expr->call.callee);
@@ -915,14 +996,19 @@ void codegen_expr(Expr* expr) {
                     emit("{ WynArray* __nested = malloc(sizeof(WynArray)); *__nested = ");
                     codegen_expr(expr->array.elements[i]);
                     emit("; array_push_array(&__arr, __nested); } ");
+                } else if (expr->array.elements[i]->type == EXPR_STRING) {
+                    // For strings, use array_push_str
+                    emit("array_push_str(&__arr, ");
+                    codegen_expr(expr->array.elements[i]);
+                    emit("); ");
                 } else {
-                    // For integers, use array_push_int
+                    // For integers and other types, use array_push_int
                     emit("array_push_int(&__arr, ");
                     codegen_expr(expr->array.elements[i]);
                     emit("); ");
                 }
             }
-            emit("__arr; })");
+            emit("__arr; })");;
             break;
         case EXPR_INDEX: {
             // Check if this is map indexing by looking at the object
@@ -985,9 +1071,22 @@ void codegen_expr(Expr* expr) {
             emit("}");
             break;
         case EXPR_FIELD_ACCESS: {
-            // Check if this is a module function access
+            // Check if this is enum member access by looking at the pattern
             Token obj_name = expr->field_access.object->token;
             Token field_name = expr->field_access.field;
+            
+            // Simple heuristic: if object is an identifier starting with uppercase
+            // and we're accessing a field that's all uppercase, it's likely enum access
+            if (expr->field_access.object->type == EXPR_IDENT &&
+                obj_name.length > 0 && obj_name.start[0] >= 'A' && obj_name.start[0] <= 'Z' &&
+                field_name.length > 0 && field_name.start[0] >= 'A' && field_name.start[0] <= 'Z') {
+                
+                // Generate the enum constant name (EnumName_MEMBER)
+                emit("%.*s_%.*s",
+                     obj_name.length, obj_name.start,
+                     field_name.length, field_name.start);
+                return;
+            }
             
             // Handle module.function calls
             if (obj_name.length == 4 && memcmp(obj_name.start, "math", 4) == 0) {
@@ -1264,6 +1363,15 @@ void codegen_c_header() {
     emit("    arr->data[arr->count].data.int_val = value;\n");
     emit("    arr->count++;\n");
     emit("}\n");
+    emit("void array_push_str(WynArray* arr, const char* value) {\n");
+    emit("    if (arr->count >= arr->capacity) {\n");
+    emit("        arr->capacity = arr->capacity == 0 ? 4 : arr->capacity * 2;\n");
+    emit("        arr->data = realloc(arr->data, sizeof(WynValue) * arr->capacity);\n");
+    emit("    }\n");
+    emit("    arr->data[arr->count].type = WYN_TYPE_STRING;\n");
+    emit("    arr->data[arr->count].data.string_val = value;\n");
+    emit("    arr->count++;\n");
+    emit("}\n");
     emit("void array_push_array(WynArray* arr, WynArray* nested) {\n");
     emit("    if (arr->count >= arr->capacity) {\n");
     emit("        arr->capacity = arr->capacity == 0 ? 4 : arr->capacity * 2;\n");
@@ -1277,6 +1385,11 @@ void codegen_c_header() {
     emit("    if (index < 0 || index >= arr.count) return 0;\n");
     emit("    if (arr.data[index].type == WYN_TYPE_INT) return arr.data[index].data.int_val;\n");
     emit("    return 0;\n");
+    emit("}\n");
+    emit("const char* array_get_str(WynArray arr, int index) {\n");
+    emit("    if (index < 0 || index >= arr.count) return \"\";\n");
+    emit("    if (arr.data[index].type == WYN_TYPE_STRING) return arr.data[index].data.string_val;\n");
+    emit("    return \"\";\n");
     emit("}\n");
     emit("WynArray* array_get_array(WynArray arr, int index) {\n");
     emit("    if (index < 0 || index >= arr.count) return NULL;\n");
@@ -2005,6 +2118,43 @@ void codegen_c_header() {
     emit("int bit_toggle(int x, int pos) { return x ^ (1 << pos); }\n");
     emit("int bit_check(int x, int pos) { return (x >> pos) & 1; }\n");
     emit("int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }\n\n");
+    
+    // ARC (Automatic Reference Counting) functions for struct lifecycle management
+    emit("// ARC Object Header\n");
+    emit("typedef struct WynObject {\n");
+    emit("    int ref_count;\n");
+    emit("    void (*destructor)(void*);\n");
+    emit("    char data[];\n");
+    emit("} WynObject;\n\n");
+    
+    emit("// ARC function implementations\n");
+    emit("WynObject* wyn_arc_alloc(size_t size) {\n");
+    emit("    WynObject* obj = malloc(sizeof(WynObject) + size);\n");
+    emit("    if (obj) {\n");
+    emit("        obj->ref_count = 1;\n");
+    emit("        obj->destructor = NULL;\n");
+    emit("    }\n");
+    emit("    return obj;\n");
+    emit("}\n\n");
+    
+    emit("WynObject* wyn_arc_retain(WynObject* obj) {\n");
+    emit("    if (obj) {\n");
+    emit("        obj->ref_count++;\n");
+    emit("    }\n");
+    emit("    return obj;\n");
+    emit("}\n\n");
+    
+    emit("void wyn_arc_release(WynObject* obj) {\n");
+    emit("    if (obj) {\n");
+    emit("        obj->ref_count--;\n");
+    emit("        if (obj->ref_count <= 0) {\n");
+    emit("            if (obj->destructor) {\n");
+    emit("                obj->destructor(obj->data);\n");
+    emit("            }\n");
+    emit("            free(obj);\n");
+    emit("        }\n");
+    emit("    }\n");
+    emit("}\n\n");
 }
 
 void codegen_stmt(Stmt* stmt) {
@@ -2204,6 +2354,8 @@ void codegen_stmt(Stmt* stmt) {
                         Token type_name = stmt->fn.param_types[i]->token;
                         if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                             param_type = "int";
+                        } else if (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0) {
+                            param_type = "const char*";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
                             param_type = "const char*";
                         } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
@@ -2211,8 +2363,11 @@ void codegen_stmt(Stmt* stmt) {
                         } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
                             param_type = "bool";
                         } else if (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0) {
-                            param_type = "WynArray";  // Keep as value type for now
+                            param_type = "WynArray";
                         }
+                    } else if (stmt->fn.param_types[i]->type == EXPR_ARRAY) {
+                        // Handle array types [type] - pass as WynArray
+                        param_type = "WynArray";
                     } else if (stmt->fn.param_types[i]->type == EXPR_OPTIONAL_TYPE) {
                         // T2.5.1: Handle optional types - for now, treat as the inner type
                         Expr* inner = stmt->fn.param_types[i]->optional_type.inner_type;
@@ -2220,6 +2375,8 @@ void codegen_stmt(Stmt* stmt) {
                             Token type_name = inner->token;
                             if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                                 param_type = "int";
+                            } else if (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0) {
+                                param_type = "const char*";
                             } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
                                 param_type = "const char*";
                             } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
@@ -2246,16 +2403,23 @@ void codegen_stmt(Stmt* stmt) {
             for (int i = 0; i < stmt->struct_decl.field_count; i++) {
                 // Convert Wyn type to C type
                 const char* c_type = "int"; // default
-                if (stmt->struct_decl.field_types[i] && stmt->struct_decl.field_types[i]->type == EXPR_IDENT) {
-                    Token type_name = stmt->struct_decl.field_types[i]->token;
-                    if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-                        c_type = "int";
-                    } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
-                        c_type = "float";
-                    } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
-                        c_type = stmt->struct_decl.field_arc_managed[i] ? "WynObject*" : "const char*";
-                    } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
-                        c_type = "bool";
+                if (stmt->struct_decl.field_types[i]) {
+                    if (stmt->struct_decl.field_types[i]->type == EXPR_IDENT) {
+                        Token type_name = stmt->struct_decl.field_types[i]->token;
+                        if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+                            c_type = "int";
+                        } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
+                            c_type = "float";
+                        } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+                            c_type = "const char*"; // Always use simple strings for now
+                        } else if (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0) {
+                            c_type = "const char*"; // Always use simple strings for now
+                        } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
+                            c_type = "bool";
+                        }
+                    } else if (stmt->struct_decl.field_types[i]->type == EXPR_ARRAY) {
+                        // Array field type
+                        c_type = "WynArray";
                     }
                 }
                 
@@ -2303,6 +2467,15 @@ void codegen_stmt(Stmt* stmt) {
             emit("} %.*s;\n\n", 
                  stmt->enum_decl.name.length,
                  stmt->enum_decl.name.start);
+            
+            // Generate qualified constants for EnumName.MEMBER access
+            for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
+                emit("#define %.*s_%.*s %d\n",
+                     stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                     stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
+                     i);
+            }
+            emit("\n");
             
             // Generate toString function for enum
             emit("const char* %.*s_toString(%.*s val) {\n",
@@ -2373,30 +2546,57 @@ void codegen_stmt(Stmt* stmt) {
             emit("    }\n");
             break;
         case STMT_FOR:
-            emit("for (");
-            if (stmt->for_stmt.init) {
-                emit("int %.*s = ", stmt->for_stmt.init->var.name.length, stmt->for_stmt.init->var.name.start);
-                codegen_expr(stmt->for_stmt.init->var.init);
-            }
-            emit("; ");
-            codegen_expr(stmt->for_stmt.condition);
-            emit("; ");
-            codegen_expr(stmt->for_stmt.increment);
-            emit(") {\n");
-            push_scope();
-            
-            // If this is array iteration, inject loop variable declaration
+            // Check if this is a for-in loop (array iteration)
             if (stmt->for_stmt.array_expr) {
-                emit("        int %.*s = (int)(intptr_t)(", 
-                     stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
+                // Generate for-in loop: for item in array
+                emit("{\n");
+                push_scope();
+                emit("    WynArray __iter_array = ");
                 codegen_expr(stmt->for_stmt.array_expr);
-                emit(").data[%.*s];\n", 
-                     stmt->for_stmt.init->var.name.length, stmt->for_stmt.init->var.name.start);
+                emit(";\n");
+                emit("    for (int __i = 0; __i < __iter_array.count; __i++) {\n");
+                // Use a generic approach - check element type at runtime
+                emit("        WynValue __elem = __iter_array.data[__i];\n");
+                emit("        ");
+                // Determine variable type based on heuristics
+                const char* var_name = stmt->for_stmt.loop_var.start;
+                int var_len = stmt->for_stmt.loop_var.length;
+                if ((var_len >= 4 && strncmp(var_name, "name", 4) == 0) ||
+                    (var_len >= 3 && strncmp(var_name, "str", 3) == 0) ||
+                    (var_len >= 4 && strncmp(var_name, "text", 4) == 0)) {
+                    // Likely a string variable
+                    emit("const char* %.*s = (__elem.type == WYN_TYPE_STRING) ? __elem.data.string_val : \"\";\n",
+                         stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
+                } else {
+                    // Default to int
+                    emit("int %.*s = (__elem.type == WYN_TYPE_INT) ? __elem.data.int_val : 0;\n",
+                         stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
+                }
+                codegen_stmt(stmt->for_stmt.body);
+                emit("    }\n");
+                pop_scope();
+                emit("}\n");
+            } else {
+                // Regular for loop
+                emit("for (");
+                if (stmt->for_stmt.init) {
+                    emit("int %.*s = ", stmt->for_stmt.init->var.name.length, stmt->for_stmt.init->var.name.start);
+                    codegen_expr(stmt->for_stmt.init->var.init);
+                }
+                emit("; ");
+                if (stmt->for_stmt.condition) {
+                    codegen_expr(stmt->for_stmt.condition);
+                }
+                emit("; ");
+                if (stmt->for_stmt.increment) {
+                    codegen_expr(stmt->for_stmt.increment);
+                }
+                emit(") {\n");
+                push_scope();
+                codegen_stmt(stmt->for_stmt.body);
+                pop_scope();
+                emit("    }\n");
             }
-            
-            codegen_stmt(stmt->for_stmt.body);
-            pop_scope();
-            emit("    }\n");
             break;
         case STMT_EXPORT:
             // For now, just generate the exported statement normally
@@ -2534,6 +2734,8 @@ void codegen_program(Program* prog) {
                         Token type_name = fn->param_types[j]->token;
                         if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                             param_type = "int";
+                        } else if (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0) {
+                            param_type = "const char*";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
                             param_type = "const char*";
                         } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
@@ -2543,6 +2745,9 @@ void codegen_program(Program* prog) {
                         } else if (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0) {
                             param_type = "WynArray";
                         }
+                    } else if (fn->param_types[j]->type == EXPR_ARRAY) {
+                        // Handle array types [type] - pass as WynArray
+                        param_type = "WynArray";
                     } else if (fn->param_types[j]->type == EXPR_OPTIONAL_TYPE) {
                         // T2.5.1: Handle optional types - for now, treat as the inner type
                         Expr* inner = fn->param_types[j]->optional_type.inner_type;
@@ -2550,6 +2755,8 @@ void codegen_program(Program* prog) {
                             Token type_name = inner->token;
                             if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                                 param_type = "int";
+                            } else if (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0) {
+                                param_type = "const char*";
                             } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
                                 param_type = "const char*";
                             } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {

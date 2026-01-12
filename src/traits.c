@@ -261,7 +261,7 @@ bool wyn_is_standard_trait(Token trait_name) {
     
     for (int i = 0; i < num_standard_traits; i++) {
         size_t len = strlen(standard_traits[i]);
-        if (trait_name.length == len && 
+        if ((size_t)trait_name.length == len && 
             memcmp(trait_name.start, standard_traits[i], len) == 0) {
             return true;
         }

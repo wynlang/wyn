@@ -57,9 +57,20 @@ Type* wyn_infer_variable_type(Expr* init_expr, SymbolTable* scope) {
         case EXPR_BOOL:
             inferred_type = make_type(TYPE_BOOL);
             break;
-        case EXPR_ARRAY:
-            inferred_type = make_type(TYPE_ARRAY);
+        case EXPR_ARRAY: {
+            // Infer array element type from first element
+            if (init_expr->array.count > 0) {
+                Type* element_type = check_expr(init_expr->array.elements[0], scope);
+                if (element_type) {
+                    inferred_type = make_type(TYPE_ARRAY);
+                    // Store element type (simplified - in full implementation would use proper array type structure)
+                    inferred_type->name = (Token){TOKEN_IDENT, "array", 5, 0};
+                }
+            } else {
+                inferred_type = make_type(TYPE_ARRAY);
+            }
             break;
+        }
         case EXPR_STRUCT_INIT:
             inferred_type = make_type(TYPE_STRUCT);
             break;
