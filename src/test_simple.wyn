@@ -1,0 +1,1 @@
+fn main() -> int { let s = "Hello World"; print(s); return 0; }

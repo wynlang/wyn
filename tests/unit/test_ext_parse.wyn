@@ -1,0 +1,3 @@
+struct Point { x: int, y: int }
+fn Point.distance(p: Point) -> int { return p.x + p.y; }
+fn main() -> int { return 0; }

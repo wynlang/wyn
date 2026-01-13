@@ -101,24 +101,31 @@ static TokenType keyword_type(const char* start, int length) {
             if (length == 7 && memcmp(start, "channel", 7) == 0) return TOKEN_CHANNEL;
             if (length == 5 && memcmp(start, "catch", 5) == 0) return TOKEN_CATCH;
             break;
+        case 'E':
+            if (length == 3 && memcmp(start, "Err", 3) == 0) return TOKEN_ERR;
+            break;
         case 'e':
             if (length == 4 && memcmp(start, "else", 4) == 0) return TOKEN_ELSE;
             if (length == 6 && memcmp(start, "elseif", 6) == 0) return TOKEN_ELSEIF;
             if (length == 4 && memcmp(start, "enum", 4) == 0) return TOKEN_ENUM;
-            if (length == 3 && memcmp(start, "err", 3) == 0) return TOKEN_ERR;
             if (length == 6 && memcmp(start, "export", 6) == 0) return TOKEN_EXPORT;
+            if (length == 3 && memcmp(start, "err", 3) == 0) return TOKEN_ERR;
             break;
         case 'f':
             if (length == 5 && memcmp(start, "false", 5) == 0) return TOKEN_FALSE;
             if (length == 2 && memcmp(start, "fn", 2) == 0) return TOKEN_FN;
             if (length == 3 && memcmp(start, "for", 3) == 0) return TOKEN_FOR;
             if (length == 4 && memcmp(start, "from", 4) == 0) return TOKEN_FROM;
+            if (length == 7 && memcmp(start, "finally", 7) == 0) return TOKEN_FINALLY;
             break;
         case 'i':
             if (length == 2 && memcmp(start, "if", 2) == 0) return TOKEN_IF;
             if (length == 4 && memcmp(start, "impl", 4) == 0) return TOKEN_IMPL;
             if (length == 2 && memcmp(start, "in", 2) == 0) return TOKEN_IN;
             if (length == 6 && memcmp(start, "import", 6) == 0) return TOKEN_IMPORT;
+            break;
+        case 'l':
+            if (length == 3 && memcmp(start, "let", 3) == 0) return TOKEN_LET;
             break;
         case 'm':
             if (length == 5 && memcmp(start, "match", 5) == 0) return TOKEN_MATCH;
@@ -131,6 +138,12 @@ static TokenType keyword_type(const char* start, int length) {
             if (length == 4 && memcmp(start, "none", 4) == 0) return TOKEN_NONE;
             if (length == 4 && memcmp(start, "null", 4) == 0) return TOKEN_NULL;
             break;
+        case 'N':
+            if (length == 4 && memcmp(start, "None", 4) == 0) return TOKEN_NONE;
+            break;
+        case 'O':
+            if (length == 2 && memcmp(start, "Ok", 2) == 0) return TOKEN_OK;
+            break;
         case 'o': 
             if (length == 2 && memcmp(start, "or", 2) == 0) return TOKEN_OR;
             if (length == 2 && memcmp(start, "ok", 2) == 0) return TOKEN_OK;
@@ -141,6 +154,9 @@ static TokenType keyword_type(const char* start, int length) {
             if (length == 6 && memcmp(start, "struct", 6) == 0) return TOKEN_STRUCT;
             if (length == 4 && memcmp(start, "some", 4) == 0) return TOKEN_SOME;
             if (length == 5 && memcmp(start, "spawn", 5) == 0) return TOKEN_SPAWN;
+            break;
+        case 'S':
+            if (length == 4 && memcmp(start, "Some", 4) == 0) return TOKEN_SOME;
             break;
         case 't':
             if (length == 4 && memcmp(start, "true", 4) == 0) return TOKEN_TRUE;
@@ -207,7 +223,15 @@ Token next_token() {
     char c = advance();
     
     if (isdigit(c)) return number();
-    if (isalpha(c) || c == '_') return identifier();
+    if (isalpha(c)) return identifier();
+    if (c == '_') {
+        // Check if it's a standalone underscore or part of an identifier
+        if (isalnum(peek())) {
+            return identifier(); // Part of identifier like _var or var_
+        } else {
+            return make_token(TOKEN_UNDERSCORE); // Standalone underscore for pattern matching
+        }
+    }
     if (c == '"') return string();
     if (c == '\'') {
         // Character literal

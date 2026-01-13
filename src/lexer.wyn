@@ -144,9 +144,13 @@ fn lexer_skip_whitespace(lexer: &mut Lexer) {
     }
 }
 
-// Skip single-line comments
+// Skip single-line comments (both // and # styles)
 fn lexer_skip_comment(lexer: &mut Lexer) {
     if lexer.current_char == '/' && lexer_peek(lexer) == '/' {
+        while lexer.current_char != '\n' && lexer.current_char != '\0' {
+            lexer_advance(lexer)
+        }
+    } else if lexer.current_char == '#' {
         while lexer.current_char != '\n' && lexer.current_char != '\0' {
             lexer_advance(lexer)
         }
@@ -281,8 +285,13 @@ fn lexer_next_token(lexer: &mut Lexer) -> Token {
             return token
         }
         
-        // Skip comments
+        // Skip comments (both // and # styles)
         if lexer.current_char == '/' && lexer_peek(lexer) == '/' {
+            lexer_skip_comment(lexer)
+            continue
+        }
+        
+        if lexer.current_char == '#' {
             lexer_skip_comment(lexer)
             continue
         }

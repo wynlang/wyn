@@ -1,0 +1,1 @@
+fn main() -> int { let x = 5; let result = match x { 5 => 55, _ => 0 }; return result; }

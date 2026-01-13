@@ -1,0 +1,7 @@
+fn main() -> int {
+    let mut sum = 0;
+    if true { sum = 10; }
+    while sum < 20 { sum = sum + 5; }
+    for i in 0..3 { if i == 1 { break; } }
+    return 42;
+}

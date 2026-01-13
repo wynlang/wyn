@@ -1,0 +1,33 @@
+// Test program for ARC memory management integration
+fn test_arc_strings() -> int {
+    let s1 = "Hello";
+    let s2 = "World";
+    let s3 = s1 + " " + s2;  // Should use ARC-managed concatenation
+    print(s3);
+    return 0;
+}
+
+fn test_arc_arrays() -> int {
+    let arr = [1, 2, 3, 4, 5];  // Should use ARC-managed array
+    arr[0] = 10;  // Should properly handle assignment
+    print(arr[0]);
+    return 0;
+}
+
+struct Person {
+    name: string,
+    age: int
+}
+
+fn test_arc_structs() -> int {
+    let p = Person { name: "Alice", age: 30 };  // Should use ARC-managed struct
+    print(p.name);
+    return 0;
+}
+
+fn main() -> int {
+    test_arc_strings();
+    test_arc_arrays();
+    test_arc_structs();
+    return 0;
+}

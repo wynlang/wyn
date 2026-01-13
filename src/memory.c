@@ -179,6 +179,9 @@ void free_stmt(Stmt* stmt) {
         case STMT_THROW:
             free_expr(stmt->throw_stmt.value);
             break;
+        case STMT_CATCH:
+            free_stmt(stmt->catch_stmt.body);
+            break;
         case STMT_TEST:  // T1.6.2: Testing Framework Agent addition
             free_stmt(stmt->test_stmt.body);
             break;
@@ -384,7 +387,14 @@ void free_import_stmt(ImportStmt* stmt) {
 
 void free_try_stmt(TryStmt* stmt) {
     free_stmt(stmt->try_block);
-    free_stmt(stmt->catch_block);
+    free_stmt(stmt->try_block);
+    for (int i = 0; i < stmt->catch_count; i++) {
+        free_stmt(stmt->catch_blocks[i]);
+    }
+    if (stmt->catch_blocks) free(stmt->catch_blocks);
+    if (stmt->exception_types) free(stmt->exception_types);
+    if (stmt->exception_vars) free(stmt->exception_vars);
+    if (stmt->finally_block) free_stmt(stmt->finally_block);
 }
 
 // T1.1.5: RAII Pattern Implementation

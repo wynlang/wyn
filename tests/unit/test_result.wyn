@@ -1,0 +1,11 @@
+fn divide(a: int, b: int) -> Result<int, int> {
+    if b == 0 {
+        return err(1);
+    }
+    return ok(a / b);
+}
+
+fn main() -> int {
+    let result = divide(10, 2);
+    return 5;
+}

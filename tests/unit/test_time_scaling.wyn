@@ -1,0 +1,61 @@
+// Test time module with various inputs to prove durability
+
+fn days_in_month(month: int) -> int {
+    if month == 1 { return 31; }
+    if month == 2 { return 28; }
+    if month == 3 { return 31; }
+    if month == 4 { return 30; }
+    if month == 5 { return 31; }
+    if month == 6 { return 30; }
+    if month == 7 { return 31; }
+    if month == 8 { return 31; }
+    if month == 9 { return 30; }
+    if month == 10 { return 31; }
+    if month == 11 { return 30; }
+    if month == 12 { return 31; }
+    return 0;
+}
+
+fn is_leap_year(year: int) -> int {
+    let div4 = year % 4;
+    let div100 = year % 100;
+    let div400 = year % 400;
+    
+    if div400 == 0 { return 1; }
+    if div100 == 0 { return 0; }
+    if div4 == 0 { return 1; }
+    return 0;
+}
+
+fn main() -> int {
+    // Test with many different years
+    let y1 = is_leap_year(2000);  // 1
+    let y2 = is_leap_year(2004);  // 1
+    let y3 = is_leap_year(2008);  // 1
+    let y4 = is_leap_year(2012);  // 1
+    let y5 = is_leap_year(2016);  // 1
+    let y6 = is_leap_year(2020);  // 1
+    let y7 = is_leap_year(2024);  // 1
+    let y8 = is_leap_year(2001);  // 0
+    let y9 = is_leap_year(2002);  // 0
+    let y10 = is_leap_year(2003); // 0
+    
+    // Test all months
+    let m1 = days_in_month(1);    // 31
+    let m2 = days_in_month(2);    // 28
+    let m3 = days_in_month(3);    // 31
+    let m4 = days_in_month(4);    // 30
+    let m5 = days_in_month(5);    // 31
+    let m6 = days_in_month(6);    // 30
+    let m7 = days_in_month(7);    // 31
+    let m8 = days_in_month(8);    // 31
+    let m9 = days_in_month(9);    // 30
+    let m10 = days_in_month(10);  // 31
+    let m11 = days_in_month(11);  // 30
+    let m12 = days_in_month(12);  // 31
+    
+    // Sum leap years: 7 * 1 = 7
+    // Sum months: 31+28+31+30+31+30+31+31+30+31+30+31 = 365
+    // Total: 7 + 365 = 372
+    return y1 + y2 + y3 + y4 + y5 + y6 + y7 + y8 + y9 + y10 + m1 + m2 + m3 + m4 + m5 + m6 + m7 + m8 + m9 + m10 + m11 + m12;
+}

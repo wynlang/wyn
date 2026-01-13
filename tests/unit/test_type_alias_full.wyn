@@ -1,0 +1,12 @@
+type UserId = int;
+type Score = int;
+
+fn get_user_id() -> UserId {
+    return 123;
+}
+
+fn main() -> int {
+    let id: UserId = 42;
+    let score: Score = get_user_id();
+    return id + score;
+}

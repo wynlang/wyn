@@ -1,0 +1,14 @@
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Point {
+    fn new(x: int, y: int) -> int {
+        return x + y;
+    }
+}
+
+fn main() -> int {
+    return Point_new(3, 4);
+}

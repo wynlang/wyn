@@ -1,0 +1,15 @@
+// Final verification of all 9 working features
+struct Point { x: int, y: int }
+fn add(a: int, b: int) -> int { return a + b; }
+fn id<T>(x: T) -> T { return x; }
+trait T { fn f() -> int; }
+
+fn main() -> int {
+    let p = Point { x: 5, y: 10 };
+    let s = add(p.x, p.y);
+    let v = id(s);
+    let a = [10, 20, 30];
+    let m = match v { 15 => a[2], _ => 0 };
+    let o = some(m);
+    match m { 30 => return 30, _ => return 0 }
+}

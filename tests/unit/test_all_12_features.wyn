@@ -1,0 +1,81 @@
+// COMPREHENSIVE TEST: All 12 Core Language Features
+
+// 3. Structs
+struct Point { x: int, y: int }
+
+// 4. Enums
+enum Status { PENDING, DONE }
+
+// 9. Type Aliases
+type UserId = int;
+
+// 2. Functions
+fn add(a: int, b: int) -> int { return a + b; }
+
+// 10. Generics
+fn identity<T>(val: T) -> T { return val; }
+
+// 11. Extension Methods
+fn Point.sum(a: int, b: int) -> int { return a + b; }
+
+// 12. Concurrency
+fn worker() -> int { return 1; }
+
+fn main() -> int {
+    // 1. Variables (immutable and mutable)
+    let x = 10;
+    let mut y = 20;
+    y = 30;
+    
+    // 2. Functions
+    let sum = add(10, 20);
+    
+    // 3. Structs
+    let p = Point { x: 3, y: 4 };
+    
+    // 4. Enums
+    let s = DONE;
+    
+    // 5. Arrays
+    let arr = [1, 2, 3];
+    
+    // 6. Result/Option Types
+    let ok_val = ok(42);
+    let some_val = some(42);
+    
+    // 7. Pattern Matching
+    let matched = match p.x {
+        3 => 77,
+        _ => 0
+    };
+    
+    // 8. Control Flow
+    let mut counter = 0;
+    if matched == 77 {
+        let temp = 1;
+    }
+    
+    while counter < 3 {
+        counter = counter + 1;
+    }
+    
+    for i in 0..5 {
+        if i == 2 {
+            break;
+        }
+    }
+    
+    // 9. Type Aliases
+    let id: UserId = 123;
+    
+    // 10. Generics
+    let gen = identity(42);
+    
+    // 11. Extension Methods
+    let ext = Point_sum(3, 4);
+    
+    // 12. Concurrency
+    spawn worker();
+    
+    return matched;
+}

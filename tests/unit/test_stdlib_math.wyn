@@ -1,0 +1,27 @@
+// Math stdlib functions
+fn wyn_abs(x: int) -> int {
+    if x < 0 { return 0 - x; }
+    return x;
+}
+
+fn wyn_max(a: int, b: int) -> int {
+    if a > b { return a; }
+    return b;
+}
+
+fn wyn_pow(x: int, n: int) -> int {
+    let mut result = 1;
+    let mut i = 0;
+    while i < n {
+        result = result * x;
+        i = i + 1;
+    }
+    return result;
+}
+
+fn main() -> int {
+    let a = wyn_abs(0 - 5);      // 5
+    let m = wyn_max(10, 20);      // 20
+    let p = wyn_pow(2, 3);        // 8
+    return a + m + p;             // 5 + 20 + 8 = 33
+}

@@ -1,0 +1,8 @@
+trait Display {
+    fn show() -> int;
+    fn hide() -> int;
+}
+
+fn main() -> int {
+    return 0;
+}

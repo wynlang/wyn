@@ -1,0 +1,15 @@
+struct Point { x: int, y: int }
+fn add(a: int, b: int) -> int { return a + b; }
+fn identity<T>(x: T) -> T { return x; }
+trait Display { fn show() -> int; }
+
+fn main() -> int {
+    let p = Point { x: 5, y: 10 };
+    let sum = add(p.x, p.y);
+    let arr = [100, 200, 300];
+    let result = match sum {
+        15 => arr[2],
+        _ => 0
+    };
+    return result;
+}

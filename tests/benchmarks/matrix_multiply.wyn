@@ -1,0 +1,28 @@
+fn matrix_multiply(a: [[int]], b: [[int]], result: [[int]], size: int) {
+    for i in 0..size {
+        for j in 0..size {
+            result[i][j] = 0;
+            for k in 0..size {
+                result[i][j] = result[i][j] + a[i][k] * b[k][j];
+            }
+        }
+    }
+}
+
+fn main() -> int {
+    let size = 50;
+    let a = [[int; size]; size];
+    let b = [[int; size]; size];
+    let result = [[int; size]; size];
+    
+    // Initialize matrices
+    for i in 0..size {
+        for j in 0..size {
+            a[i][j] = i + j;
+            b[i][j] = i * j;
+        }
+    }
+    
+    matrix_multiply(a, b, result, size);
+    return 0;
+}

@@ -1,0 +1,32 @@
+fn wyn_abs(x: int) -> int {
+    if x < 0 { return 0 - x; }
+    return x;
+}
+
+fn wyn_max(a: int, b: int) -> int {
+    if a > b { return a; }
+    return b;
+}
+
+fn wyn_pow(x: int, n: int) -> int {
+    let mut result = 1;
+    let mut i = 0;
+    while i < n {
+        result = result * x;
+        i = i + 1;
+    }
+    return result;
+}
+
+fn main() -> int {
+    // Test with different inputs
+    let a1 = wyn_abs(0 - 15);      // 15
+    let a2 = wyn_abs(20);           // 20
+    let m1 = wyn_max(100, 50);      // 100
+    let m2 = wyn_max(3, 7);         // 7
+    let p1 = wyn_pow(3, 2);         // 9
+    let p2 = wyn_pow(2, 4);         // 16
+    
+    // Should return 15+20+100+7+9+16 = 167
+    return a1 + a2 + m1 + m2 + p1 + p2;
+}

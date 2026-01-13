@@ -1,0 +1,7 @@
+fn main() -> int {
+    let x = 3;
+    match x {
+        3 => return 30,
+        _ => return 0
+    }
+}

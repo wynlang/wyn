@@ -1,0 +1,33 @@
+fn quicksort(arr: [int], low: int, high: int) {
+    if low < high {
+        let pi = partition(arr, low, high);
+        quicksort(arr, low, pi - 1);
+        quicksort(arr, pi + 1, high);
+    }
+}
+
+fn partition(arr: [int], low: int, high: int) -> int {
+    let pivot = arr[high];
+    let i = low - 1;
+    
+    for j in low..high {
+        if arr[j] < pivot {
+            i = i + 1;
+            swap(arr, i, j);
+        }
+    }
+    swap(arr, i + 1, high);
+    return i + 1;
+}
+
+fn swap(arr: [int], i: int, j: int) {
+    let temp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = temp;
+}
+
+fn main() -> int {
+    let arr = [64, 34, 25, 12, 22, 11, 90, 88, 76, 50, 42];
+    quicksort(arr, 0, 10);
+    return 0;
+}

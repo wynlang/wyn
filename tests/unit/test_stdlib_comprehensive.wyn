@@ -1,0 +1,38 @@
+// Comprehensive Standard Library Test
+
+// Math module functions
+fn wyn_abs(x: int) -> int {
+    if x < 0 { return 0 - x; }
+    return x;
+}
+
+fn wyn_max(a: int, b: int) -> int {
+    if a > b { return a; }
+    return b;
+}
+
+fn wyn_min(a: int, b: int) -> int {
+    if a < b { return a; }
+    return b;
+}
+
+fn wyn_pow(x: int, n: int) -> int {
+    let mut res = 1;
+    let mut i = 0;
+    while i < n {
+        res = res * x;
+        i = i + 1;
+    }
+    return res;
+}
+
+fn main() -> int {
+    // Test math functions
+    let a = wyn_abs(0 - 10);        // 10
+    let m = wyn_max(5, 15);          // 15
+    let n = wyn_min(20, 10);         // 10
+    let p = wyn_pow(2, 4);           // 16
+    
+    // Return directly
+    return a + m + n + p;            // 10 + 15 + 10 + 16 = 51
+}

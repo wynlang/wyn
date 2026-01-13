@@ -1,0 +1,10 @@
+enum Status {
+    PENDING,
+    RUNNING,
+    DONE
+}
+
+fn main() -> int {
+    let s = Status::DONE;
+    return 42;
+}

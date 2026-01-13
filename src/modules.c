@@ -145,6 +145,66 @@ void* wyn_resolve_import(WynModule* module, const char* name) {
     return NULL;
 }
 
+// Load and parse module file
+WynModule* resolve_module(const char* module_name) {
+    // Check if module is already loaded
+    WynModule* existing = wyn_find_module(module_name);
+    if (existing && existing->is_loaded) {
+        return existing;
+    }
+    
+    // Resolve module path
+    char* path = wyn_resolve_module_path(module_name);
+    
+    // Try to open the file
+    FILE* file = fopen(path, "r");
+    if (!file) {
+        free(path);
+        return NULL;
+    }
+    
+    // Read file content
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    
+    char* content = malloc(size + 1);
+    fread(content, 1, size, file);
+    content[size] = '\0';
+    fclose(file);
+    
+    // Create module if it doesn't exist
+    if (!existing) {
+        existing = wyn_create_module(module_name, path);
+        wyn_register_module(existing);
+    }
+    
+    // Parse the module content (simplified - just look for function definitions)
+    char* pos = content;
+    while ((pos = strstr(pos, "fn ")) != NULL) {
+        pos += 3; // Skip "fn "
+        
+        // Extract function name
+        char* name_start = pos;
+        while (*pos && *pos != '(' && *pos != ' ') pos++;
+        
+        if (*pos == '(') {
+            size_t name_len = pos - name_start;
+            char* func_name = malloc(name_len + 1);
+            strncpy(func_name, name_start, name_len);
+            func_name[name_len] = '\0';
+            
+            // Add function to module exports (using function name as item)
+            wyn_add_export(existing, func_name, WYN_EXPORT_FUNCTION, func_name);
+        }
+    }
+    
+    existing->is_loaded = true;
+    free(content);
+    free(path);
+    return existing;
+}
+
 // Cleanup module system
 void wyn_cleanup_modules(void) {
     for (size_t i = 0; i < module_count; i++) {

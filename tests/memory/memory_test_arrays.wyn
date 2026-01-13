@@ -1,0 +1,19 @@
+fn test_array_allocation() -> int {
+    let arr = [int; 1000];
+    
+    for i in 0..1000 {
+        arr[i] = i * 2;
+    }
+    
+    let sum = 0;
+    for i in 0..1000 {
+        sum = sum + arr[i];
+    }
+    
+    return sum;
+}
+
+fn main() -> int {
+    let result = test_array_allocation();
+    return 0;
+}

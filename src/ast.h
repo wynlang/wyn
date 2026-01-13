@@ -30,6 +30,7 @@ typedef enum {
     EXPR_NONE,
     EXPR_OK,
     EXPR_ERR,
+    EXPR_TRY,           // TASK-026: ? operator for error propagation
     EXPR_PIPELINE,
     EXPR_IF_EXPR,
     EXPR_STRING_INTERP,
@@ -37,12 +38,12 @@ typedef enum {
     EXPR_LAMBDA,
     EXPR_DESTRUCTURE,
     EXPR_SPREAD,
-    EXPR_TRY,
     EXPR_MAP,
     EXPR_TUPLE,
     EXPR_INDEX_ASSIGN,
     EXPR_OPTIONAL_TYPE,  // T2.5.1: Optional Type Implementation
     EXPR_UNION_TYPE,     // T2.5.2: Union Type Support
+    EXPR_RESULT_TYPE,    // TASK-026: Result<T,E> Type Implementation
     EXPR_PATTERN,        // T3.3.1: Pattern expressions for destructuring
 } ExprType;
 
@@ -249,6 +250,15 @@ typedef struct {
     int type_count;    // Number of types in the union
 } UnionTypeExpr;
 
+typedef struct {
+    Expr* ok_type;     // The success type (T in Result<T,E>)
+    Expr* err_type;    // The error type (E in Result<T,E>)
+} ResultTypeExpr;
+
+typedef struct {
+    Expr* value;       // Expression that might fail (for ? operator)
+} TryExpr;
+
 struct Expr {
     ExprType type;
     Token token;
@@ -276,6 +286,8 @@ struct Expr {
         IndexAssignExpr index_assign;
         OptionalTypeExpr optional_type;  // T2.5.1: Optional Type Implementation
         UnionTypeExpr union_type;        // T2.5.2: Union Type Support
+        ResultTypeExpr result_type;      // TASK-026: Result<T,E> Type Implementation
+        TryExpr try_expr;                // TASK-026: ? operator for error propagation
     };
 };
 
@@ -298,11 +310,13 @@ typedef enum {
     STMT_EXPORT,
     STMT_ASYNC_FN,
     STMT_TRY,
+    STMT_CATCH,      // TASK-026: Catch block for error handling
     STMT_THROW,
     STMT_TEST,  // T1.6.2: Testing Framework Agent addition
     STMT_MATCH, // T1.4.3: Control Flow Agent addition
     STMT_TRAIT, // T3.2.1: Trait definition statement
     STMT_MODULE, // T3.5.1: Module declaration statement
+    STMT_SPAWN, // Concurrency: spawn statement
 } StmtType;
 
 typedef struct Stmt Stmt;
@@ -313,6 +327,7 @@ typedef struct {
     Expr* type;
     Expr* init;
     bool is_const;
+    bool is_mutable;     // Whether variable is declared with 'mut'
     bool uses_pattern;   // T3.3.2: Whether this uses pattern matching
 } VarStmt;
 
@@ -337,6 +352,8 @@ typedef struct {
     Expr* return_type;
     Stmt* body;
     bool is_public;
+    Token receiver_type;      // For extension methods: fn Type.method()
+    bool is_extension;        // True if this is an extension method
 } FnStmt;
 
 typedef struct {
@@ -399,6 +416,7 @@ typedef struct {
 
 typedef struct {
     Token module;
+    Token path;      // Optional path like "wyn:math"
     Token* items;
     int item_count;
 } ImportStmt;
@@ -415,13 +433,22 @@ typedef struct {
 
 typedef struct {
     Stmt* try_block;
-    Token exception_var;  // Variable to bind caught exception
-    Stmt* catch_block;
+    Token* exception_types;  // Types of exceptions to catch
+    Token* exception_vars;   // Variables to bind caught exceptions
+    Stmt** catch_blocks;     // Multiple catch blocks
+    int catch_count;         // Number of catch blocks
+    Stmt* finally_block;     // Optional finally block
 } TryStmt;
 
 typedef struct {
     Expr* value;  // Expression to throw
 } ThrowStmt;
+
+typedef struct {
+    Token exception_type;  // Type of exception to catch
+    Token exception_var;   // Variable to bind caught exception
+    Stmt* body;           // Catch block body
+} CatchStmt;
 
 // T1.4.2: Break/Continue Implementation - Control Flow Agent addition
 typedef struct {
@@ -466,6 +493,7 @@ struct Stmt {
         ExportStmt export;
         TryStmt try_stmt;
         ThrowStmt throw_stmt;
+        CatchStmt catch_stmt;        // TASK-026: Catch statement
         BreakStmt break_stmt;      // T1.4.2: Control Flow Agent addition
         ContinueStmt continue_stmt; // T1.4.2: Control Flow Agent addition
         MatchStmt match_stmt;      // T1.4.3: Control Flow Agent addition
@@ -474,6 +502,9 @@ struct Stmt {
             Stmt* body;
             bool is_async;
         } test_stmt;
+        struct {  // Spawn statement
+            Expr* call;
+        } spawn;
     };
 };
 

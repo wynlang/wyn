@@ -1,0 +1,47 @@
+// Test REAL stdlib modules
+
+// Math functions
+fn wyn_abs(x: int) -> int {
+    if x < 0 { return 0 - x; }
+    return x;
+}
+
+fn wyn_max(a: int, b: int) -> int {
+    if a > b { return a; }
+    return b;
+}
+
+fn wyn_pow(x: int, n: int) -> int {
+    let mut result = 1;
+    let mut i = 0;
+    while i < n {
+        result = result * x;
+        i = i + 1;
+    }
+    return result;
+}
+
+// Array functions
+fn wyn_array_sum(arr: [int], len: int) -> int {
+    let mut total = 0;
+    let mut i = 0;
+    while i < len {
+        total = total + arr[i];
+        i = i + 1;
+    }
+    return total;
+}
+
+fn main() -> int {
+    // Test math
+    let a = wyn_abs(0 - 5);
+    let m = wyn_max(10, 20);
+    let p = wyn_pow(2, 3);
+    
+    // Test arrays
+    let arr = [1, 2, 3, 4, 5];
+    let s = wyn_array_sum(arr, 5);
+    
+    // Return combined result
+    return a + m + p + s;
+}

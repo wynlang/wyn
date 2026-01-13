@@ -1,0 +1,2 @@
+struct Point { x: int, y: int }
+fn main() -> int { let p = Point { x: 42, y: 10 }; return p.x; }

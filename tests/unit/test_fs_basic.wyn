@@ -1,0 +1,6 @@
+// Test basic file operations
+fn main() -> int {
+    // For now, just test that we can call a function
+    // Real fs implementation comes later
+    return 42;
+}

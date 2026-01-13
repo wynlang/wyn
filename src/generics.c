@@ -1,6 +1,7 @@
 #include "types.h"
 #include "ast.h"
 #include "memory.h"
+#include "traits.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,7 @@
 Type* check_expr(Expr* expr, SymbolTable* scope);
 Symbol* find_symbol(SymbolTable* scope, Token name);
 Type* make_type(TypeKind kind);
+bool wyn_types_equal(Type* a, Type* b);
 
 // T3.1.3: Type constraint structure
 typedef struct TypeConstraint {
@@ -39,10 +41,72 @@ typedef struct GenericStruct {
     struct GenericStruct* next;
 } GenericStruct;
 
+// T3.1.1: Generic instantiation tracking
+typedef struct GenericInstantiation {
+    Token function_name;
+    Type** type_args;
+    int type_arg_count;
+    char* monomorphic_name;  // Generated name like "identity_int"
+    struct GenericInstantiation* next;
+} GenericInstantiation;
+
+// Global registries
 static GenericFunction* g_generic_functions = NULL;
-static GenericStruct* g_generic_structs = NULL;  // T3.1.2: Generic struct registry
-static size_t g_generic_function_count = 0;
-static size_t g_generic_struct_count = 0;        // T3.1.2: Generic struct count
+static GenericStruct* g_generic_structs = NULL;
+static int g_generic_function_count = 0;
+static int g_generic_struct_count = 0;
+
+static GenericInstantiation* g_instantiations = NULL;
+
+// Register a generic function instantiation
+void wyn_register_generic_instantiation(Token func_name, Type** type_args, int type_arg_count) {
+    // Check if this instantiation already exists
+    GenericInstantiation* current = g_instantiations;
+    while (current) {
+        if (current->function_name.length == func_name.length &&
+            memcmp(current->function_name.start, func_name.start, func_name.length) == 0 &&
+            current->type_arg_count == type_arg_count) {
+            
+            // Check if type arguments match
+            bool types_match = true;
+            for (int i = 0; i < type_arg_count; i++) {
+                if (!wyn_types_equal(current->type_args[i], type_args[i])) {
+                    types_match = false;
+                    break;
+                }
+            }
+            
+            if (types_match) {
+                return; // Already registered
+            }
+        }
+        current = current->next;
+    }
+    
+    // Create new instantiation
+    GenericInstantiation* inst = malloc(sizeof(GenericInstantiation));
+    inst->function_name = func_name;
+    inst->type_arg_count = type_arg_count;
+    inst->type_args = malloc(sizeof(Type*) * type_arg_count);
+    
+    for (int i = 0; i < type_arg_count; i++) {
+        inst->type_args[i] = type_args[i];
+    }
+    
+    // Generate monomorphic name
+    inst->monomorphic_name = malloc(256);
+    wyn_generate_monomorphic_name(func_name, type_args, type_arg_count, 
+                                  inst->monomorphic_name, 256);
+    
+    inst->next = g_instantiations;
+    g_instantiations = inst;
+}
+
+// Check if two types are equal (simplified)
+bool wyn_types_equal(Type* a, Type* b) {
+    if (!a || !b) return a == b;
+    return a->kind == b->kind;
+}
 
 // Initialize generic system
 void wyn_generics_init(void) {
@@ -82,7 +146,7 @@ TypeConstraint* wyn_add_constraint(TypeConstraint* constraints, Token trait_name
     return constraints;
 }
 
-// T3.2.2: Trait Bounds and Constraints - Enhanced constraint checking with trait validation
+// T3.2.2: Enhanced constraint checking with trait validation
 bool wyn_check_constraints(Type* concrete_type, TypeConstraint* constraints) {
     if (!concrete_type) return false;
     if (!constraints) return true; // No constraints to check
@@ -428,14 +492,45 @@ Type* wyn_infer_generic_call_type(Token function_name, Expr** args, int arg_coun
         return NULL;
     }
     
-    // For now, return a simple type based on the first argument
-    // This is a placeholder for proper type inference
-    if (arg_count > 0 && args[0]) {
-        // Simple heuristic: return the type of the first argument
-        return make_type(TYPE_INT); // Placeholder
+    // Enhanced type inference from all arguments
+    Type** inferred_types = malloc(sizeof(Type*) * arg_count);
+    
+    for (int i = 0; i < arg_count; i++) {
+        Type* arg_type = NULL;
+        
+        if (args[i]) {
+            switch (args[i]->type) {
+                case EXPR_INT:
+                    arg_type = make_type(TYPE_INT);
+                    break;
+                case EXPR_FLOAT:
+                    arg_type = make_type(TYPE_FLOAT);
+                    break;
+                case EXPR_BOOL:
+                    arg_type = make_type(TYPE_BOOL);
+                    break;
+                case EXPR_STRING:
+                    arg_type = make_type(TYPE_STRING);
+                    break;
+                case EXPR_ARRAY:
+                    arg_type = make_type(TYPE_ARRAY);
+                    break;
+                default:
+                    arg_type = make_type(TYPE_INT); // Default
+                    break;
+            }
+        } else {
+            arg_type = make_type(TYPE_INT); // Default
+        }
+        
+        inferred_types[i] = arg_type;
     }
     
-    return make_type(TYPE_INT); // Default
+    // For now, return the first argument's type as the function return type
+    Type* return_type = (arg_count > 0) ? inferred_types[0] : make_type(TYPE_INT);
+    
+    free(inferred_types);
+    return return_type;
 }
 
 // Generate a monomorphic function name
@@ -459,6 +554,23 @@ void wyn_generate_monomorphic_name(Token base_name, Type** type_args, int type_a
                 case TYPE_BOOL:
                     strncat(buffer, "bool", buffer_size - strlen(buffer) - 1);
                     break;
+                case TYPE_ARRAY:
+                    strncat(buffer, "array", buffer_size - strlen(buffer) - 1);
+                    break;
+                case TYPE_STRUCT:
+                    // For struct types, use the struct name if available
+                    if (type_args[i]->name.length > 0) {
+                        size_t remaining = buffer_size - strlen(buffer) - 1;
+                        size_t copy_len = (size_t)type_args[i]->name.length < remaining ? 
+                                          (size_t)type_args[i]->name.length : remaining;
+                        strncat(buffer, type_args[i]->name.start, copy_len);
+                    } else {
+                        strncat(buffer, "struct", buffer_size - strlen(buffer) - 1);
+                    }
+                    break;
+                case TYPE_GENERIC:
+                    strncat(buffer, "generic", buffer_size - strlen(buffer) - 1);
+                    break;
                 default:
                     strncat(buffer, "unknown", buffer_size - strlen(buffer) - 1);
                     break;
@@ -481,14 +593,331 @@ bool wyn_is_type_parameter(GenericFunction* generic_fn, Token type_name) {
     return false;
 }
 
+// Emit a monomorphic function instance (placeholder - will be implemented in codegen integration)
+void wyn_emit_monomorphic_function(GenericFunction* generic_fn, Type** type_args, int type_arg_count, const char* monomorphic_name) {
+    (void)generic_fn;
+    (void)type_args;
+    (void)type_arg_count;
+    (void)monomorphic_name;
+    // This will be implemented when integrating with codegen
+}
+
+// Emit a monomorphic function declaration for codegen
+void wyn_emit_monomorphic_function_declaration(void* original_fn_ptr, Type** type_args, int type_arg_count, const char* monomorphic_name) {
+    FnStmt* original_fn = (FnStmt*)original_fn_ptr;
+    // Forward declaration for wyn_emit function
+    extern void wyn_emit(const char* fmt, ...);
+    
+    if (!original_fn || !type_args || !monomorphic_name) {
+        return;
+    }
+    
+    // Determine return type based on type arguments
+    const char* return_type = "int"; // Default
+    if (type_arg_count > 0 && type_args[0]) {
+        switch (type_args[0]->kind) {
+            case TYPE_INT:
+                return_type = "int";
+                break;
+            case TYPE_FLOAT:
+                return_type = "double";
+                break;
+            case TYPE_STRING:
+                return_type = "char*";
+                break;
+            case TYPE_BOOL:
+                return_type = "bool";
+                break;
+            default:
+                return_type = "int";
+                break;
+        }
+    }
+    
+    // Generate function declaration
+    wyn_emit("%s %s(", return_type, monomorphic_name);
+    
+    // Generate parameters with concrete types
+    for (int i = 0; i < original_fn->param_count; i++) {
+        if (i > 0) wyn_emit(", ");
+        
+        // Use type argument for parameter type
+        const char* param_type = "int"; // Default
+        if (i < type_arg_count && type_args[i]) {
+            switch (type_args[i]->kind) {
+                case TYPE_INT:
+                    param_type = "int";
+                    break;
+                case TYPE_FLOAT:
+                    param_type = "double";
+                    break;
+                case TYPE_STRING:
+                    param_type = "const char*";
+                    break;
+                case TYPE_BOOL:
+                    param_type = "bool";
+                    break;
+                default:
+                    param_type = "int";
+                    break;
+            }
+        }
+        
+        wyn_emit("%s %.*s", param_type, 
+             (int)original_fn->params[i].length, original_fn->params[i].start);
+    }
+    
+    wyn_emit(");\n");
+}
+
+// Emit a monomorphic function definition for codegen
+void wyn_emit_monomorphic_function_definition(void* original_fn_ptr, Type** type_args, int type_arg_count, const char* monomorphic_name) {
+    FnStmt* original_fn = (FnStmt*)original_fn_ptr;
+    // Forward declaration for wyn_emit function
+    extern void wyn_emit(const char* fmt, ...);
+    extern void codegen_stmt(Stmt* stmt);
+    
+    if (!original_fn || !type_args || !monomorphic_name) {
+        return;
+    }
+    
+    // Determine return type based on type arguments
+    const char* return_type = "int"; // Default
+    if (type_arg_count > 0 && type_args[0]) {
+        switch (type_args[0]->kind) {
+            case TYPE_INT:
+                return_type = "int";
+                break;
+            case TYPE_FLOAT:
+                return_type = "double";
+                break;
+            case TYPE_STRING:
+                return_type = "char*";
+                break;
+            case TYPE_BOOL:
+                return_type = "bool";
+                break;
+            default:
+                return_type = "int";
+                break;
+        }
+    }
+    
+    // Generate function signature
+    wyn_emit("// Monomorphic instance of %.*s\n", 
+         (int)original_fn->name.length, original_fn->name.start);
+    wyn_emit("%s %s(", return_type, monomorphic_name);
+    
+    // Generate parameters with concrete types
+    for (int i = 0; i < original_fn->param_count; i++) {
+        if (i > 0) wyn_emit(", ");
+        
+        // Use type argument for parameter type
+        const char* param_type = "int"; // Default
+        if (i < type_arg_count && type_args[i]) {
+            switch (type_args[i]->kind) {
+                case TYPE_INT:
+                    param_type = "int";
+                    break;
+                case TYPE_FLOAT:
+                    param_type = "double";
+                    break;
+                case TYPE_STRING:
+                    param_type = "const char*";
+                    break;
+                case TYPE_BOOL:
+                    param_type = "bool";
+                    break;
+                default:
+                    param_type = "int";
+                    break;
+            }
+        }
+        
+        wyn_emit("%s %.*s", param_type, 
+             (int)original_fn->params[i].length, original_fn->params[i].start);
+    }
+    
+    wyn_emit(") {\n");
+    
+    // Generate function body
+    if (original_fn->body) {
+        codegen_stmt(original_fn->body);
+    } else {
+        wyn_emit("    return 0;\n");
+    }
+    
+    wyn_emit("}\n\n");
+}
+
+// Generate all monomorphic instances for code generation
+void wyn_generate_monomorphic_instances(void) {
+    GenericInstantiation* current = g_instantiations;
+    
+    while (current) {
+        // Find the original generic function
+        GenericFunction* generic_fn = wyn_find_generic_function(current->function_name);
+        if (generic_fn) {
+            // Generate monomorphic version
+            wyn_emit_monomorphic_function(generic_fn, current->type_args, current->type_arg_count, current->monomorphic_name);
+        }
+        current = current->next;
+    }
+}
+
+// Generate monomorphic instances for codegen integration
+void wyn_generate_monomorphic_instances_for_codegen(void* prog_ptr) {
+    Program* prog = (Program*)prog_ptr;
+    GenericInstantiation* current = g_instantiations;
+    
+    // First pass: Generate forward declarations
+    while (current) {
+        GenericFunction* generic_fn = wyn_find_generic_function(current->function_name);
+        if (generic_fn && generic_fn->original_fn) {
+            // Generate forward declaration
+            wyn_emit_monomorphic_function_declaration(generic_fn->original_fn, 
+                                                      current->type_args, 
+                                                      current->type_arg_count, 
+                                                      current->monomorphic_name);
+        }
+        current = current->next;
+    }
+    
+    // Second pass: Generate function definitions
+    current = g_instantiations;
+    while (current) {
+        GenericFunction* generic_fn = wyn_find_generic_function(current->function_name);
+        if (generic_fn && generic_fn->original_fn) {
+            // Generate monomorphic function definition
+            wyn_emit_monomorphic_function_definition(generic_fn->original_fn, 
+                                                     current->type_args, 
+                                                     current->type_arg_count, 
+                                                     current->monomorphic_name);
+        }
+        current = current->next;
+    }
+}
+
+// Collect generic instantiations from the entire program
+void wyn_collect_generic_instantiations_from_program(void* prog_ptr) {
+    Program* prog = (Program*)prog_ptr;
+    
+    // Walk through all statements and expressions to find generic function calls
+    for (int i = 0; i < prog->count; i++) {
+        wyn_collect_generic_instantiations_from_stmt(prog->stmts[i]);
+    }
+}
+
+// Collect generic instantiations from a statement
+void wyn_collect_generic_instantiations_from_stmt(void* stmt_ptr) {
+    Stmt* stmt = (Stmt*)stmt_ptr;
+    if (!stmt) return;
+    
+    switch (stmt->type) {
+        case STMT_EXPR:
+            wyn_collect_generic_instantiations_from_expr(stmt->expr);
+            break;
+        case STMT_VAR:
+            if (stmt->var.init) {
+                wyn_collect_generic_instantiations_from_expr(stmt->var.init);
+            }
+            break;
+        case STMT_RETURN:
+            if (stmt->ret.value) {
+                wyn_collect_generic_instantiations_from_expr(stmt->ret.value);
+            }
+            break;
+        case STMT_BLOCK:
+            for (int i = 0; i < stmt->block.count; i++) {
+                wyn_collect_generic_instantiations_from_stmt(stmt->block.stmts[i]);
+            }
+            break;
+        case STMT_FN:
+            if (stmt->fn.body) {
+                wyn_collect_generic_instantiations_from_stmt(stmt->fn.body);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+// Collect generic instantiations from an expression
+void wyn_collect_generic_instantiations_from_expr(void* expr_ptr) {
+    Expr* expr = (Expr*)expr_ptr;
+    if (!expr) return;
+    
+    switch (expr->type) {
+        case EXPR_CALL:
+            // Check if this is a generic function call
+            if (expr->call.callee->type == EXPR_IDENT) {
+                Token func_name = expr->call.callee->token;
+                
+                if (wyn_is_generic_function_call(func_name)) {
+                    // Collect argument types for generic instantiation
+                    Type** arg_types = malloc(sizeof(Type*) * expr->call.arg_count);
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        // Infer type from expression
+                        switch (expr->call.args[i]->type) {
+                            case EXPR_INT:
+                                arg_types[i] = make_type(TYPE_INT);
+                                break;
+                            case EXPR_FLOAT:
+                                arg_types[i] = make_type(TYPE_FLOAT);
+                                break;
+                            case EXPR_STRING:
+                                arg_types[i] = make_type(TYPE_STRING);
+                                break;
+                            case EXPR_BOOL:
+                                arg_types[i] = make_type(TYPE_BOOL);
+                                break;
+                            default:
+                                arg_types[i] = make_type(TYPE_INT);
+                                break;
+                        }
+                    }
+                    
+                    // Register this instantiation
+                    wyn_register_generic_instantiation(func_name, arg_types, expr->call.arg_count);
+                    free(arg_types);
+                }
+            }
+            
+            // Recursively process arguments
+            for (int i = 0; i < expr->call.arg_count; i++) {
+                wyn_collect_generic_instantiations_from_expr(expr->call.args[i]);
+            }
+            break;
+        case EXPR_STRUCT_INIT:
+            // Process field values
+            for (int i = 0; i < expr->struct_init.field_count; i++) {
+                wyn_collect_generic_instantiations_from_expr(expr->struct_init.field_values[i]);
+            }
+            break;
+        case EXPR_BINARY:
+            wyn_collect_generic_instantiations_from_expr(expr->binary.left);
+            wyn_collect_generic_instantiations_from_expr(expr->binary.right);
+            break;
+        case EXPR_UNARY:
+            wyn_collect_generic_instantiations_from_expr(expr->unary.operand);
+            break;
+        default:
+            break;
+    }
+}
+
+// Get all registered instantiations (for codegen)
+GenericInstantiation* wyn_get_instantiations(void) {
+    return g_instantiations;
+}
+
 // Get generic system statistics
 GenericStats wyn_get_generic_stats(void) {
-    GenericStats stats = {
-        .generic_functions_registered = g_generic_function_count,
-        .types_instantiated = g_generic_struct_count,  // T3.1.2: Include generic structs
-        .monomorphizations_generated = 0, // Placeholder
-        .generics_enabled = true
-    };
+    GenericStats stats;
+    stats.generic_functions_registered = g_generic_function_count;
+    stats.types_instantiated = g_generic_struct_count;  // T3.1.2: Include generic structs
+    stats.monomorphizations_generated = 0; // Placeholder
+    stats.generics_enabled = true;
     return stats;
 }
 

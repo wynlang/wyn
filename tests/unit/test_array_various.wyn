@@ -1,0 +1,36 @@
+fn wyn_array_sum(arr: [int], len: int) -> int {
+    let mut total = 0;
+    let mut i = 0;
+    while i < len {
+        total = total + arr[i];
+        i = i + 1;
+    }
+    return total;
+}
+
+fn wyn_array_max(arr: [int], len: int) -> int {
+    if len == 0 { return 0; }
+    let mut maximum = arr[0];
+    let mut i = 1;
+    while i < len {
+        if arr[i] > maximum {
+            maximum = arr[i];
+        }
+        i = i + 1;
+    }
+    return maximum;
+}
+
+fn main() -> int {
+    // Test with different arrays
+    let arr1 = [10, 20, 30];
+    let s1 = wyn_array_sum(arr1, 3);        // 60
+    let m1 = wyn_array_max(arr1, 3);        // 30
+    
+    let arr2 = [5, 15, 25, 35];
+    let s2 = wyn_array_sum(arr2, 4);        // 80
+    let m2 = wyn_array_max(arr2, 4);        // 35
+    
+    // Should return 60+30+80+35 = 205
+    return s1 + m1 + s2 + m2;
+}

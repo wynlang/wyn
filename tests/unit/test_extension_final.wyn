@@ -1,0 +1,12 @@
+struct Point {
+    x: int,
+    y: int
+}
+
+fn Point.add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn main() -> int {
+    return Point_add(3, 4);
+}

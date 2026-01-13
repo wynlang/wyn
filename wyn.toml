@@ -1,17 +1,3 @@
 [package]
-name = "wyn"
-version = "1.0.0"
-description = "Wyn programming language compiler"
-license = "MIT"
-authors = ["Wyn Language Team"]
-
-[build]
-compiler = "gcc"
-flags = ["-O2", "-Wall", "-Wextra"]
-target = "wyn"
-
-[dependencies]
-# No external dependencies - self-contained compiler
-
-[dev-dependencies]
-# Testing uses built-in test framework
+name = "my-package"
+version = "0.1.0"

@@ -73,6 +73,7 @@ Type* wyn_infer_variable_type(Expr* init_expr, SymbolTable* scope) {
         }
         case EXPR_STRUCT_INIT:
             inferred_type = make_type(TYPE_STRUCT);
+            inferred_type->name = init_expr->struct_init.type_name;
             break;
         case EXPR_BINARY:
             // Infer from binary operation result

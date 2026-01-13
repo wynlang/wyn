@@ -1,0 +1,6 @@
+type UserId = int;
+
+fn main() -> int {
+    let id = 42;
+    return id;
+}

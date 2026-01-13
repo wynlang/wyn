@@ -1,0 +1,2 @@
+enum Status { PENDING, DONE }
+fn main() -> int { let s = DONE; return 42; }

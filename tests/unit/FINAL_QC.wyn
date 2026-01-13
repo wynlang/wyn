@@ -1,0 +1,34 @@
+// FINAL QUALITY CONTROL - All Features
+struct Point { x: int, y: int }
+fn add(a: int, b: int) -> int { return a + b; }
+fn identity<T>(x: T) -> T { return x; }
+trait Display { fn show() -> int; }
+
+fn main() -> int {
+    // 1. Structs
+    let p = Point { x: 5, y: 10 };
+    
+    // 2. Functions
+    let sum = add(p.x, p.y);
+    
+    // 3. Generics
+    let val = identity(sum);
+    
+    // 4. Arrays
+    let arr = [10, 20, 30];
+    
+    // 5. Match expression
+    let matched = match val {
+        15 => arr[2],
+        _ => 0
+    };
+    
+    // 6. Optionals
+    let opt = some(matched);
+    
+    // 7. Match statement
+    match matched {
+        30 => return 100,
+        _ => return 0
+    }
+}

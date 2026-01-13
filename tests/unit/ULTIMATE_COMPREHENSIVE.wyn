@@ -1,0 +1,116 @@
+// Ultimate comprehensive test of ALL working features
+
+struct Point {
+    x: int,
+    y: int
+}
+
+enum Status {
+    PENDING,
+    RUNNING,
+    DONE
+}
+
+type UserId = int;
+type Score = int;
+
+fn identity<T>(val: T) -> T {
+    return val;
+}
+
+fn main() -> int {
+    // 1. Variables (mutable and immutable)
+    let x = 10;
+    let mut y = 20;
+    y = 30;
+    
+    // 2. Structs
+    let p = Point { x: 5, y: 10 };
+    
+    // 3. Arrays
+    let arr = [1, 2, 3];
+    
+    // 4. Enums
+    let status = DONE;
+    
+    // 5. Type aliases
+    let id: UserId = 123;
+    let score: Score = 456;
+    
+    // 6. Generics
+    let val = identity(42);
+    
+    // 7. Control flow (if/else)
+    if val == 42 {
+        let temp = 1;
+    } else {
+        let temp = 0;
+    }
+    
+    // 8. While loops with break
+    let mut counter = 0;
+    while counter < 10 {
+        counter = counter + 1;
+        if counter == 5 {
+            break;
+        }
+    }
+    
+    // 9. For loops with continue
+    let mut total = 0;
+    for i in 0..10 {
+        if i == 5 {
+            continue;
+        }
+        total = total + i;
+    }
+    
+    // 10. Pattern matching (expression)
+    let result = match val {
+        42 => 100,
+        _ => 0
+    };
+    
+    // 11. Pattern matching (statement)
+    let mut final_val = 0;
+    match result {
+        100 => final_val = 99,
+        _ => final_val = 0
+    }
+    
+    // 12. Result types
+    let success = ok(42);
+    let failure = err(1);
+    
+    // 13. Optional types
+    let maybe = some(42);
+    let nothing = none;
+    
+    // 14. Strings
+    let msg = "hello";
+    
+    // 15. Booleans
+    let flag = true;
+    let other = false;
+    
+    // 16. Logical operators
+    if flag and not other {
+        let temp = 1;
+    }
+    
+    // 17. Comparison operators
+    if x > 5 and x < 15 and x >= 10 and x <= 10 and x != 5 {
+        let temp = 1;
+    }
+    
+    // 18. Float literals
+    let pi = 3.14;
+    
+    // 19. Arithmetic
+    let sum = 10 + 20;
+    let diff = 30 - 10;
+    let prod = 5 * 6;
+    let quot = 20 / 4;
+    
+    return 77;
+}

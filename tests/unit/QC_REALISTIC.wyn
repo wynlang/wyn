@@ -1,0 +1,38 @@
+// Realistic program using all working features
+
+struct Config {
+    width: int,
+    height: int
+}
+
+fn calculate<T>(value: T) -> T {
+    return value;
+}
+
+fn get_area(w: int, h: int) -> int {
+    return w * h;
+}
+
+trait Renderable {
+    fn render() -> int;
+}
+
+fn main() -> int {
+    let config = Config { width: 10, height: 20 };
+    let area = get_area(config.width, config.height);
+    
+    let values = [100, 200, area];
+    let selected = values[2];
+    
+    let result = match selected {
+        200 => 1,
+        _ => 2
+    };
+    
+    let final_value = calculate(result);
+    
+    match final_value {
+        2 => return 42,
+        _ => return 0
+    }
+}

@@ -5,10 +5,15 @@
 #include "ast.h"
 #include "types.h"
 #include "error.h"  // T1.5.3: For type_error_mismatch function
+#include "optional.h"
+#include "result.h"
+#include "traits.h"
 
 // Forward declarations
 void check_stmt(Stmt* stmt, SymbolTable* scope);
 Type* check_expr(Expr* expr, SymbolTable* scope);
+void analyze_lambda_captures(LambdaExpr* lambda, Expr* body, SymbolTable* scope);
+void analyze_expr_captures(Expr* expr, LambdaExpr* lambda, SymbolTable* scope);
 
 static SymbolTable* global_scope = NULL;
 static Type* builtin_int = NULL;
@@ -36,6 +41,13 @@ static void print_type_name(Type* type) {
             print_type_name(type->optional_type.inner_type);
             printf("?");
             break;
+        case TYPE_RESULT: // TASK-026: Result Type Implementation
+            printf("Result<");
+            print_type_name(type->result_type.ok_type);
+            printf(", ");
+            print_type_name(type->result_type.err_type);
+            printf(">");
+            break;
         default: printf("unknown"); break;
     }
 }
@@ -49,6 +61,18 @@ Type* make_type(TypeKind kind) {
 // T2.5.1: Optional Type Implementation - Helper functions
 static bool is_optional_type(Type* type) {
     return type && type->kind == TYPE_OPTIONAL;
+}
+
+// TASK-026: Result Type Implementation - Helper functions
+static bool is_result_type(Type* type) {
+    return type && type->kind == TYPE_RESULT;
+}
+
+static Type* make_result_type(Type* ok_type, Type* err_type) {
+    Type* result_type = make_type(TYPE_RESULT);
+    result_type->result_type.ok_type = ok_type;
+    result_type->result_type.err_type = err_type;
+    return result_type;
 }
 
 // T1.5.4: Parameter Validation Implementation
@@ -141,7 +165,7 @@ static Type* get_inner_type(Type* optional_type) {
 
 void add_symbol(SymbolTable* scope, Token name, Type* type, bool is_mutable) {
     if (scope->count >= scope->capacity) {
-        scope->capacity *= 2;
+        scope->capacity = scope->capacity == 0 ? 8 : scope->capacity * 2;
         scope->symbols = realloc(scope->symbols, scope->capacity * sizeof(Symbol));
     }
     scope->symbols[scope->count].name = name;
@@ -168,6 +192,9 @@ void init_checker() {
     global_scope->capacity = 128;
     global_scope->symbols = calloc(128, sizeof(Symbol));
     had_error = false;
+    
+    // Initialize trait system
+    wyn_traits_init();
     
     builtin_int = make_type(TYPE_INT);
     builtin_float = make_type(TYPE_FLOAT);
@@ -202,6 +229,120 @@ void init_checker() {
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
     }
+    
+    // Add C interface functions with correct function types
+    Type* get_argc_type = make_type(TYPE_FUNCTION);
+    get_argc_type->fn_type.param_count = 0;
+    get_argc_type->fn_type.return_type = builtin_int;
+    Token get_argc_tok = {TOKEN_IDENT, "get_argc", 8, 0};
+    add_symbol(global_scope, get_argc_tok, get_argc_type, false);
+    
+    Type* get_argv_type = make_type(TYPE_FUNCTION);
+    get_argv_type->fn_type.param_count = 1;
+    get_argv_type->fn_type.param_types = malloc(sizeof(Type*));
+    get_argv_type->fn_type.param_types[0] = builtin_int;
+    get_argv_type->fn_type.return_type = builtin_string;
+    Token get_argv_tok = {TOKEN_IDENT, "get_argv", 8, 0};
+    add_symbol(global_scope, get_argv_tok, get_argv_type, false);
+    
+    Type* read_file_content_type = make_type(TYPE_FUNCTION);
+    read_file_content_type->fn_type.param_count = 1;
+    read_file_content_type->fn_type.param_types = malloc(sizeof(Type*));
+    read_file_content_type->fn_type.param_types[0] = builtin_string;
+    read_file_content_type->fn_type.return_type = builtin_string;
+    Token read_file_content_tok = {TOKEN_IDENT, "read_file_content", 17, 0};
+    add_symbol(global_scope, read_file_content_tok, read_file_content_type, false);
+    
+    Type* check_file_exists_type = make_type(TYPE_FUNCTION);
+    check_file_exists_type->fn_type.param_count = 1;
+    check_file_exists_type->fn_type.param_types = malloc(sizeof(Type*));
+    check_file_exists_type->fn_type.param_types[0] = builtin_string;
+    check_file_exists_type->fn_type.return_type = builtin_bool;
+    Token check_file_exists_tok = {TOKEN_IDENT, "check_file_exists", 17, 0};
+    add_symbol(global_scope, check_file_exists_tok, check_file_exists_type, false);
+    
+    Type* is_content_valid_type = make_type(TYPE_FUNCTION);
+    is_content_valid_type->fn_type.param_count = 1;
+    is_content_valid_type->fn_type.param_types = malloc(sizeof(Type*));
+    is_content_valid_type->fn_type.param_types[0] = builtin_string;
+    is_content_valid_type->fn_type.return_type = builtin_bool;
+    Token is_content_valid_tok = {TOKEN_IDENT, "is_content_valid", 16, 0};
+    add_symbol(global_scope, is_content_valid_tok, is_content_valid_type, false);
+    
+    // Add compiler interface functions
+    Type* c_init_lexer_type = make_type(TYPE_FUNCTION);
+    c_init_lexer_type->fn_type.param_count = 1;
+    c_init_lexer_type->fn_type.param_types = malloc(sizeof(Type*));
+    c_init_lexer_type->fn_type.param_types[0] = builtin_string;
+    c_init_lexer_type->fn_type.return_type = builtin_bool;
+    Token c_init_lexer_tok = {TOKEN_IDENT, "c_init_lexer", 12, 0};
+    add_symbol(global_scope, c_init_lexer_tok, c_init_lexer_type, false);
+    
+    Type* c_init_parser_type = make_type(TYPE_FUNCTION);
+    c_init_parser_type->fn_type.param_count = 0;
+    c_init_parser_type->fn_type.return_type = builtin_int;
+    Token c_init_parser_tok = {TOKEN_IDENT, "c_init_parser", 13, 0};
+    add_symbol(global_scope, c_init_parser_tok, c_init_parser_type, false);
+    
+    Type* c_parse_program_type = make_type(TYPE_FUNCTION);
+    c_parse_program_type->fn_type.param_count = 0;
+    c_parse_program_type->fn_type.return_type = builtin_int;
+    Token c_parse_program_tok = {TOKEN_IDENT, "c_parse_program", 15, 0};
+    add_symbol(global_scope, c_parse_program_tok, c_parse_program_type, false);
+    
+    Type* c_init_checker_type = make_type(TYPE_FUNCTION);
+    c_init_checker_type->fn_type.param_count = 0;
+    c_init_checker_type->fn_type.return_type = builtin_int;
+    Token c_init_checker_tok = {TOKEN_IDENT, "c_init_checker", 14, 0};
+    add_symbol(global_scope, c_init_checker_tok, c_init_checker_type, false);
+    
+    Type* c_check_program_type = make_type(TYPE_FUNCTION);
+    c_check_program_type->fn_type.param_count = 1;
+    c_check_program_type->fn_type.param_types = malloc(sizeof(Type*));
+    c_check_program_type->fn_type.param_types[0] = builtin_int;
+    c_check_program_type->fn_type.return_type = builtin_int;
+    Token c_check_program_tok = {TOKEN_IDENT, "c_check_program", 15, 0};
+    add_symbol(global_scope, c_check_program_tok, c_check_program_type, false);
+    
+    Type* c_checker_had_error_type = make_type(TYPE_FUNCTION);
+    c_checker_had_error_type->fn_type.param_count = 0;
+    c_checker_had_error_type->fn_type.return_type = builtin_bool;
+    Token c_checker_had_error_tok = {TOKEN_IDENT, "c_checker_had_error", 19, 0};
+    add_symbol(global_scope, c_checker_had_error_tok, c_checker_had_error_type, false);
+    
+    Type* c_generate_code_type = make_type(TYPE_FUNCTION);
+    c_generate_code_type->fn_type.param_count = 2;
+    c_generate_code_type->fn_type.param_types = malloc(2 * sizeof(Type*));
+    c_generate_code_type->fn_type.param_types[0] = builtin_int;
+    c_generate_code_type->fn_type.param_types[1] = builtin_string;
+    c_generate_code_type->fn_type.return_type = builtin_bool;
+    Token c_generate_code_tok = {TOKEN_IDENT, "c_generate_code", 15, 0};
+    add_symbol(global_scope, c_generate_code_tok, c_generate_code_type, false);
+    
+    Type* c_create_c_filename_type = make_type(TYPE_FUNCTION);
+    c_create_c_filename_type->fn_type.param_count = 1;
+    c_create_c_filename_type->fn_type.param_types = malloc(sizeof(Type*));
+    c_create_c_filename_type->fn_type.param_types[0] = builtin_string;
+    c_create_c_filename_type->fn_type.return_type = builtin_string;
+    Token c_create_c_filename_tok = {TOKEN_IDENT, "c_create_c_filename", 19, 0};
+    add_symbol(global_scope, c_create_c_filename_tok, c_create_c_filename_type, false);
+    
+    Type* c_compile_to_binary_type = make_type(TYPE_FUNCTION);
+    c_compile_to_binary_type->fn_type.param_count = 2;
+    c_compile_to_binary_type->fn_type.param_types = malloc(2 * sizeof(Type*));
+    c_compile_to_binary_type->fn_type.param_types[0] = builtin_string;
+    c_compile_to_binary_type->fn_type.param_types[1] = builtin_string;
+    c_compile_to_binary_type->fn_type.return_type = builtin_bool;
+    Token c_compile_to_binary_tok = {TOKEN_IDENT, "c_compile_to_binary", 19, 0};
+    add_symbol(global_scope, c_compile_to_binary_tok, c_compile_to_binary_type, false);
+    
+    Type* c_remove_file_type = make_type(TYPE_FUNCTION);
+    c_remove_file_type->fn_type.param_count = 1;
+    c_remove_file_type->fn_type.param_types = malloc(sizeof(Type*));
+    c_remove_file_type->fn_type.param_types[0] = builtin_string;
+    c_remove_file_type->fn_type.return_type = builtin_bool;
+    Token c_remove_file_tok = {TOKEN_IDENT, "c_remove_file", 13, 0};
+    add_symbol(global_scope, c_remove_file_tok, c_remove_file_type, false);
 }
 
 Symbol* find_symbol(SymbolTable* scope, Token name) {
@@ -356,13 +497,16 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
     
     switch (expr->type) {
         case EXPR_INT:
+            expr->expr_type = builtin_int;
             return builtin_int;
         case EXPR_FLOAT:
+            expr->expr_type = builtin_float;
             return builtin_float;
         case EXPR_STRING:
             expr->expr_type = builtin_string;
             return builtin_string;
         case EXPR_BOOL:
+            expr->expr_type = builtin_bool;
             return builtin_bool;
         case EXPR_IDENT: {
             // T2.5.1: Handle built-in type names
@@ -451,8 +595,30 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return left;
         }
         case EXPR_CALL: {
-            // T1.5.3: Function overloading support with T1.5.4: Parameter validation
+            // T3.1.1: Enhanced generic function call handling
             if (expr->call.callee->type == EXPR_IDENT) {
+                Token func_name = expr->call.callee->token;
+                
+                // Check if this is a generic function call
+                if (wyn_is_generic_function_call(func_name)) {
+                    // Collect argument types for generic instantiation
+                    Type** arg_types = malloc(sizeof(Type*) * expr->call.arg_count);
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        arg_types[i] = check_expr(expr->call.args[i], scope);
+                    }
+                    
+                    // Infer generic type and create monomorphic instance
+                    Type* return_type = wyn_infer_generic_call_type(func_name, expr->call.args, expr->call.arg_count);
+                    
+                    // Register this instantiation for code generation
+                    // wyn_register_generic_instantiation(func_name, arg_types, expr->call.arg_count);
+                    
+                    expr->expr_type = return_type;
+                    free(arg_types);
+                    return return_type;
+                }
+                
+                // T1.5.3: Function overloading support with T1.5.4: Parameter validation
                 // Collect argument types for overload resolution
                 Type** arg_types = malloc(sizeof(Type*) * expr->call.arg_count);
                 for (int i = 0; i < expr->call.arg_count; i++) {
@@ -532,42 +698,45 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int;
         }
         case EXPR_METHOD_CALL: {
-            check_expr(expr->method_call.object, scope);
+            Type* object_type = check_expr(expr->method_call.object, scope);
             for (int i = 0; i < expr->method_call.arg_count; i++) {
                 check_expr(expr->method_call.args[i], scope);
             }
             
             // Return proper types for string methods
             Token method = expr->method_call.method;
+            Type* return_type = builtin_int;  // default
+            
             if (method.length == 9 && memcmp(method.start, "substring", 9) == 0) {
-                return builtin_string;
+                return_type = builtin_string;
             } else if (method.length == 5 && memcmp(method.start, "slice", 5) == 0) {
-                return builtin_string;
+                return_type = builtin_string;
             } else if (method.length == 7 && memcmp(method.start, "indexOf", 7) == 0) {
-                return builtin_int;
+                return_type = builtin_int;
             } else if (method.length == 5 && memcmp(method.start, "upper", 5) == 0) {
-                return builtin_string;
+                return_type = builtin_string;
             } else if (method.length == 5 && memcmp(method.start, "lower", 5) == 0) {
-                return builtin_string;
+                return_type = builtin_string;
             } else if (method.length == 4 && memcmp(method.start, "trim", 4) == 0) {
-                return builtin_string;
+                return_type = builtin_string;
             } else if (method.length == 6 && memcmp(method.start, "repeat", 6) == 0) {
-                return builtin_string;
+                return_type = builtin_string;
             } else if (method.length == 7 && memcmp(method.start, "reverse", 7) == 0) {
-                return builtin_string;
+                return_type = builtin_string;
             } else if (method.length == 7 && memcmp(method.start, "replace", 7) == 0) {
-                return builtin_string;
+                return_type = builtin_string;
             } else if (method.length == 8 && memcmp(method.start, "padStart", 8) == 0) {
-                return builtin_string;
+                return_type = builtin_string;
             } else if (method.length == 6 && memcmp(method.start, "padEnd", 6) == 0) {
-                return builtin_string;
+                return_type = builtin_string;
             } else if (method.length == 12 && memcmp(method.start, "removePrefix", 12) == 0) {
-                return builtin_string;
+                return_type = builtin_string;
             } else if (method.length == 12 && memcmp(method.start, "removeSuffix", 12) == 0) {
-                return builtin_string;
+                return_type = builtin_string;
             }
             
-            return builtin_int;
+            expr->expr_type = return_type;
+            return return_type;
         }
         case EXPR_ARRAY: {
             // Check array elements and ensure type consistency
@@ -663,20 +832,40 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
         case EXPR_RANGE:
             return builtin_int; // Range type
         case EXPR_LAMBDA: {
-            // T3.4.1: Enhanced lambda expression checking
-            if (!wyn_validate_lambda(&expr->lambda, scope)) {
+            // TASK-040: Lambda expression type checking and capture analysis
+            
+            // Create new scope for lambda parameters
+            SymbolTable lambda_scope = {0};
+            lambda_scope.parent = scope;
+            
+            // Add parameters to lambda scope
+            for (int i = 0; i < expr->lambda.param_count; i++) {
+                add_symbol(&lambda_scope, expr->lambda.params[i], builtin_int, false);
+            }
+            
+            // Check lambda body in the new scope
+            Type* body_type = check_expr(expr->lambda.body, &lambda_scope);
+            if (!body_type) {
                 had_error = true;
                 return NULL;
             }
             
-            // Create closure type
-            Type* closure_type = wyn_create_closure_type(&expr->lambda, scope);
-            if (closure_type) {
-                expr->expr_type = closure_type;
-                return closure_type;
+            // Perform capture analysis - find free variables in lambda body
+            analyze_lambda_captures(&expr->lambda, expr->lambda.body, scope);
+            
+            // Create function type for lambda
+            Type* lambda_type = make_type(TYPE_FUNCTION);
+            lambda_type->fn_type.param_count = expr->lambda.param_count;
+            lambda_type->fn_type.param_types = malloc(sizeof(Type*) * expr->lambda.param_count);
+            
+            // For now, assume all parameters are int (simplified)
+            for (int i = 0; i < expr->lambda.param_count; i++) {
+                lambda_type->fn_type.param_types[i] = builtin_int;
             }
             
-            return builtin_int; // Fallback
+            lambda_type->fn_type.return_type = body_type;
+            expr->expr_type = lambda_type;
+            return lambda_type;
         }
         case EXPR_MAP: {
             // Create a proper map type
@@ -748,11 +937,46 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int; // Assignment returns int (simplified)
         }
         case EXPR_STRUCT_INIT: {
-            // Check struct initialization
-            for (int i = 0; i < expr->struct_init.field_count; i++) {
-                check_expr(expr->struct_init.field_values[i], scope);
+            // Check if this is a generic struct instantiation
+            Token struct_name = expr->struct_init.type_name;
+            
+            if (wyn_is_generic_struct(struct_name)) {
+                // This is a generic struct - infer type arguments from field values
+                Type** type_args = malloc(sizeof(Type*) * expr->struct_init.field_count);
+                int type_arg_count = 0;
+                
+                // Infer types from field values
+                for (int i = 0; i < expr->struct_init.field_count; i++) {
+                    Type* field_type = check_expr(expr->struct_init.field_values[i], scope);
+                    if (field_type && type_arg_count == 0) {
+                        // Use first field type as type argument (simplified)
+                        type_args[type_arg_count++] = field_type;
+                    }
+                }
+                
+                // Generate monomorphic struct name
+                char monomorphic_name[256];
+                wyn_generate_monomorphic_struct_name(struct_name, type_args, type_arg_count, 
+                                                     monomorphic_name, sizeof(monomorphic_name));
+                
+                // Create struct type
+                Type* struct_type = make_type(TYPE_STRUCT);
+                struct_type->name = struct_name;
+                expr->expr_type = struct_type;
+                
+                free(type_args);
+                return struct_type;
+            } else {
+                // Regular struct initialization
+                for (int i = 0; i < expr->struct_init.field_count; i++) {
+                    check_expr(expr->struct_init.field_values[i], scope);
+                }
+                // Create struct type with name
+                Type* struct_type = make_type(TYPE_STRUCT);
+                struct_type->name = struct_name;
+                expr->expr_type = struct_type;
+                return struct_type;
             }
-            return builtin_int; // Return struct type (simplified)
         }
         case EXPR_OPTIONAL_TYPE: {
             // T2.5.1: Optional Type Implementation - Type System Agent addition
@@ -786,6 +1010,96 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             expr->expr_type = union_type;
             return union_type;
         }
+        case EXPR_OK: {
+            // TASK-026: Ok(value) expression - creates Result type
+            if (!expr->option.value) {
+                fprintf(stderr, "Error: Ok() requires a value\n");
+                had_error = true;
+                return NULL;
+            }
+            
+            Type* value_type = check_expr(expr->option.value, scope);
+            if (!value_type) return NULL;
+            
+            // Create Result<T, String> type (default error type is string)
+            Type* result_type = make_result_type(value_type, builtin_string);
+            expr->expr_type = result_type;
+            return result_type;
+        }
+        case EXPR_ERR: {
+            // TASK-026: Err(error) expression - creates Result type
+            if (!expr->option.value) {
+                fprintf(stderr, "Error: Err() requires an error value\n");
+                had_error = true;
+                return NULL;
+            }
+            
+            Type* error_type = check_expr(expr->option.value, scope);
+            if (!error_type) return NULL;
+            
+            // Create Result<void, E> type (default success type is void for errors)
+            Type* result_type = make_result_type(builtin_void, error_type);
+            expr->expr_type = result_type;
+            return result_type;
+        }
+        case EXPR_TRY: {
+            // TASK-026: ? operator for error propagation
+            if (!expr->try_expr.value) {
+                fprintf(stderr, "Error: ? operator requires an expression\n");
+                had_error = true;
+                return NULL;
+            }
+            
+            Type* value_type = check_expr(expr->try_expr.value, scope);
+            if (!value_type || !is_result_type(value_type)) {
+                fprintf(stderr, "Error: ? operator can only be used on Result types\n");
+                had_error = true;
+                return NULL;
+            }
+            
+            // Return the Ok type from Result<T,E>
+            expr->expr_type = value_type->result_type.ok_type;
+            return value_type->result_type.ok_type;
+        }
+        case EXPR_RESULT_TYPE: {
+            // TASK-026: Result<T,E> type expression
+            Type* ok_type = check_expr(expr->result_type.ok_type, scope);
+            Type* err_type = check_expr(expr->result_type.err_type, scope);
+            
+            if (!ok_type || !err_type) return NULL;
+            
+            Type* result_type = make_result_type(ok_type, err_type);
+            expr->expr_type = result_type;
+            return result_type;
+        }
+        /*
+        case EXPR_SOME: {
+            // T2.5.1: Some(value) expression - creates optional type
+            if (!expr->option.value) {
+                fprintf(stderr, "Error: Some() requires a value\n");
+                had_error = true;
+                return NULL;
+            }
+            
+            Type* inner_type = check_expr(expr->option.value, scope);
+            if (!inner_type) return NULL;
+            
+            // Create optional type containing the inner type
+            Type* optional_type = make_type(TYPE_OPTIONAL);
+            optional_type->optional_type.inner_type = inner_type;
+            expr->expr_type = optional_type;
+            return optional_type;
+        }
+        case EXPR_NONE: {
+            // T2.5.1: None expression - creates empty optional type
+            // For now, create a generic optional type - in a full implementation,
+            // this would be inferred from context
+            Type* optional_type = make_type(TYPE_OPTIONAL);
+            optional_type->optional_type.inner_type = builtin_void; // Generic None
+            expr->expr_type = optional_type;
+            return optional_type;
+        }
+        */
         default:
             return builtin_int;
     }
@@ -803,12 +1117,14 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 // Explicit type annotation provided - convert Expr* to Type*
                 init_type = check_expr(stmt->var.type, scope);
             } else if (stmt->var.init) {
-                // Use enhanced type inference
-                init_type = wyn_infer_variable_type(stmt->var.init, scope);
-                if (!init_type) {
-                    // Fallback to original inference
-                    init_type = check_expr(stmt->var.init, scope);
-                }
+                // Always check the expression to populate expr_type
+                Type* checked_type = check_expr(stmt->var.init, scope);
+                
+                // Try enhanced type inference
+                Type* inferred_type = wyn_infer_variable_type(stmt->var.init, scope);
+                
+                // Use inferred type if available, otherwise use checked type
+                init_type = inferred_type ? inferred_type : checked_type;
             }
             
             // T3.3.2: Handle pattern-based variable declarations
@@ -893,13 +1209,18 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
         case STMT_TRY:
             // Check try block
             check_stmt(stmt->try_stmt.try_block, scope);
-            // Check catch block with exception variable in scope
-            {
+            // Check catch blocks with exception variables in scope
+            for (int i = 0; i < stmt->try_stmt.catch_count; i++) {
                 SymbolTable catch_scope = {0};
                 catch_scope.parent = scope;
                 // Add exception variable to catch scope
-                add_symbol(&catch_scope, stmt->try_stmt.exception_var, builtin_string, false);
-                check_stmt(stmt->try_stmt.catch_block, &catch_scope);
+                add_symbol(&catch_scope, stmt->try_stmt.exception_vars[i], builtin_string, false);
+                check_stmt(stmt->try_stmt.catch_blocks[i], &catch_scope);
+            }
+            
+            // Check finally block if present
+            if (stmt->try_stmt.finally_block) {
+                check_stmt(stmt->try_stmt.finally_block, scope);
             }
             break;
         case STMT_THROW:
@@ -912,38 +1233,72 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             // T3.1.2: Register generic structs
             if (stmt->struct_decl.type_param_count > 0) {
                 wyn_register_generic_struct(&stmt->struct_decl);
+                
+                // Create a new scope with type parameters for field type checking
+                SymbolTable struct_scope = {0};
+                struct_scope.parent = scope;
+                
+                // Add type parameters to the scope as type symbols
+                for (int i = 0; i < stmt->struct_decl.type_param_count; i++) {
+                    Type* type_param_type = make_type(TYPE_GENERIC);
+                    add_symbol(&struct_scope, stmt->struct_decl.type_params[i], type_param_type, false);
+                }
+                
+                // Check all field types with the extended scope
+                for (int i = 0; i < stmt->struct_decl.field_count; i++) {
+                    check_expr(stmt->struct_decl.field_types[i], &struct_scope);
+                }
+            } else {
+                // Non-generic struct - check field types with current scope
+                for (int i = 0; i < stmt->struct_decl.field_count; i++) {
+                    check_expr(stmt->struct_decl.field_types[i], scope);
+                }
             }
             
             // T2.5.3: Enhanced struct type checking with ARC integration
             add_symbol(global_scope, stmt->struct_decl.name, builtin_int, false); // Simplified: use int as placeholder
-            
-            // Check all field types
-            for (int i = 0; i < stmt->struct_decl.field_count; i++) {
-                check_expr(stmt->struct_decl.field_types[i], scope);
-            }
             break;
         case STMT_IMPL:
             // T2.5.3: Method definitions on structs
+            // Register each method as an extension method
             for (int i = 0; i < stmt->impl.method_count; i++) {
-                // Check each method in the impl block
                 FnStmt* method = stmt->impl.methods[i];
                 
-                // Create method scope with 'self' parameter
-                SymbolTable method_scope = {0};
-                method_scope.parent = scope;
-                
-                // Add 'self' parameter to method scope
-                Token self_token = {TOKEN_IDENT, "self", 4, 0};
-                add_symbol(&method_scope, self_token, builtin_int, false); // Simplified: struct type
-                
-                // Add method parameters to scope
+                // Create function type with proper parameter count
+                Type* fn_type = make_type(TYPE_FUNCTION);
+                fn_type->fn_type.param_count = method->param_count;
+                fn_type->fn_type.param_types = malloc(sizeof(Type*) * method->param_count);
                 for (int j = 0; j < method->param_count; j++) {
-                    Type* param_type = builtin_int; // Simplified
-                    add_symbol(&method_scope, method->params[j], param_type, method->param_mutable[j]);
+                    fn_type->fn_type.param_types[j] = builtin_int; // Simplified
                 }
+                fn_type->fn_type.return_type = builtin_int; // Simplified
+                
+                // Register as extension method: Type_method
+                char* ext_name = malloc(stmt->impl.type_name.length + 1 + method->name.length + 1);
+                memcpy(ext_name, stmt->impl.type_name.start, stmt->impl.type_name.length);
+                ext_name[stmt->impl.type_name.length] = '_';
+                memcpy(ext_name + stmt->impl.type_name.length + 1, method->name.start, method->name.length);
+                ext_name[stmt->impl.type_name.length + 1 + method->name.length] = '\0';
+                
+                Token function_name;
+                function_name.start = ext_name;
+                function_name.length = stmt->impl.type_name.length + 1 + method->name.length;
+                function_name.type = TOKEN_IDENT;
+                function_name.line = method->name.line;
+                
+                add_function_overload(global_scope, function_name, fn_type, false);
                 
                 // Check method body
                 if (method->body) {
+                    SymbolTable method_scope = {0};
+                    method_scope.parent = scope;
+                    
+                    // Add parameters to scope
+                    for (int j = 0; j < method->param_count; j++) {
+                        Type* param_type = builtin_int; // Simplified
+                        add_symbol(&method_scope, method->params[j], param_type, method->param_mutable[j]);
+                    }
+                    
                     check_stmt(method->body, &method_scope);
                 }
             }
@@ -963,7 +1318,8 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 // Add method parameters to scope
                 for (int j = 0; j < method->param_count; j++) {
                     Type* param_type = builtin_int; // Simplified
-                    add_symbol(&method_scope, method->params[j], param_type, method->param_mutable[j]);
+                    bool is_mutable = method->param_mutable ? method->param_mutable[j] : false;
+                    add_symbol(&method_scope, method->params[j], param_type, is_mutable);
                 }
                 
                 // Check method body if it has a default implementation
@@ -974,10 +1330,14 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             break;
         case STMT_ENUM:
             // Register enum type in global scope
-            add_symbol(global_scope, stmt->enum_decl.name, builtin_int, false); // Simplified: use int as placeholder
+            add_symbol(global_scope, stmt->enum_decl.name, builtin_int, false);
             
-            // Register each enum member with qualified name (EnumName.MEMBER)
+            // Register each enum variant BOTH as qualified and unqualified
             for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
+                // Register unqualified variant (e.g., DONE)
+                add_symbol(global_scope, stmt->enum_decl.variants[i], builtin_int, false);
+                
+                // Also register qualified variant (e.g., Status.DONE)
                 char qualified_member[128];
                 snprintf(qualified_member, 128, "%.*s.%.*s",
                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
@@ -986,6 +1346,14 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 Token qualified_token = {TOKEN_IDENT, strdup(qualified_member), (int)strlen(qualified_member), 0};
                 add_symbol(global_scope, qualified_token, builtin_int, false);
             }
+            break;
+        case STMT_TYPE_ALIAS:
+            // Register type alias in global scope
+            add_symbol(global_scope, stmt->type_alias.name, builtin_int, false);
+            break;
+        case STMT_IMPORT:
+            // Register module namespace in scope
+            add_symbol(scope, stmt->import.module, builtin_int, false);
             break;
         default:
             break;
@@ -1046,7 +1414,12 @@ void check_program(Program* prog) {
             for (int j = 0; j < fn->param_count; j++) {
                 // Determine parameter type from type annotation
                 Type* param_type = builtin_int; // default
-                if (fn->param_types[j]) {
+                
+                // FIX: For extension methods, first parameter defaults to receiver type
+                if (fn->is_extension && j == 0 && !fn->param_types[j]) {
+                    // Create a type for the receiver (simplified - use int as placeholder)
+                    param_type = builtin_int; // TODO: lookup actual struct type
+                } else if (fn->param_types[j]) {
                     if (fn->param_types[j]->type == EXPR_IDENT) {
                         Token type_name = fn->param_types[j]->token;
                         if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
@@ -1086,8 +1459,21 @@ void check_program(Program* prog) {
                 }
             }
             
+            // Register function name (or Type_method for extension methods)
+            Token function_name = fn->name;
+            if (fn->is_extension) {
+                // Create Type_method name
+                char* ext_name = malloc(fn->receiver_type.length + 1 + fn->name.length + 1);
+                memcpy(ext_name, fn->receiver_type.start, fn->receiver_type.length);
+                ext_name[fn->receiver_type.length] = '_';
+                memcpy(ext_name + fn->receiver_type.length + 1, fn->name.start, fn->name.length);
+                ext_name[fn->receiver_type.length + 1 + fn->name.length] = '\0';
+                function_name.start = ext_name;
+                function_name.length = fn->receiver_type.length + 1 + fn->name.length;
+            }
+            
             // T1.5.3: Register function with overload support
-            add_function_overload(global_scope, fn->name, fn_type, false);
+            add_function_overload(global_scope, function_name, fn_type, false);
         } else if (prog->stmts[i]->type == STMT_EXPORT) {
             // Handle exported statements
             Stmt* exported = prog->stmts[i]->export.stmt;
@@ -1283,5 +1669,75 @@ const char* type_to_string(Type* type) {
         case TYPE_OPTIONAL: return "optional";
         case TYPE_UNION: return "union";
         default: return "unknown";
+    }
+}
+
+// TASK-040: Capture analysis for lambda expressions
+void analyze_lambda_captures(LambdaExpr* lambda, Expr* body, SymbolTable* scope) {
+    if (!lambda || !body || !scope) return;
+    
+    // Simple capture analysis - find free variables in lambda body
+    // This is a simplified implementation that captures identifiers not in parameters
+    
+    // Initialize capture arrays
+    lambda->captured_vars = malloc(sizeof(Token) * 8);
+    lambda->capture_by_move = malloc(sizeof(bool) * 8);
+    lambda->captured_count = 0;
+    
+    // Recursively analyze the body expression for free variables
+    analyze_expr_captures(body, lambda, scope);
+}
+
+// Helper function to recursively analyze expressions for captures
+void analyze_expr_captures(Expr* expr, LambdaExpr* lambda, SymbolTable* scope) {
+    if (!expr || !lambda) return;
+    
+    switch (expr->type) {
+        case EXPR_IDENT: {
+            // Check if this identifier is a free variable (not a parameter)
+            bool is_param = false;
+            for (int i = 0; i < lambda->param_count; i++) {
+                if (expr->token.length == lambda->params[i].length &&
+                    memcmp(expr->token.start, lambda->params[i].start, expr->token.length) == 0) {
+                    is_param = true;
+                    break;
+                }
+            }
+            
+            if (!is_param && lambda->captured_count < 8) {
+                // Check if already captured
+                bool already_captured = false;
+                for (int i = 0; i < lambda->captured_count; i++) {
+                    if (expr->token.length == lambda->captured_vars[i].length &&
+                        memcmp(expr->token.start, lambda->captured_vars[i].start, expr->token.length) == 0) {
+                        already_captured = true;
+                        break;
+                    }
+                }
+                
+                if (!already_captured) {
+                    lambda->captured_vars[lambda->captured_count] = expr->token;
+                    lambda->capture_by_move[lambda->captured_count] = false; // Default to reference
+                    lambda->captured_count++;
+                }
+            }
+            break;
+        }
+        case EXPR_BINARY:
+            analyze_expr_captures(expr->binary.left, lambda, scope);
+            analyze_expr_captures(expr->binary.right, lambda, scope);
+            break;
+        case EXPR_CALL:
+            analyze_expr_captures(expr->call.callee, lambda, scope);
+            for (int i = 0; i < expr->call.arg_count; i++) {
+                analyze_expr_captures(expr->call.args[i], lambda, scope);
+            }
+            break;
+        case EXPR_UNARY:
+            analyze_expr_captures(expr->unary.operand, lambda, scope);
+            break;
+        // Add more cases as needed for other expression types
+        default:
+            break;
     }
 }

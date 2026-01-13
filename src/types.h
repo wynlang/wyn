@@ -32,6 +32,8 @@ typedef enum {
     TYPE_MAP,
     TYPE_OPTIONAL,  // T2.5.1: Optional Type Implementation
     TYPE_UNION,     // T2.5.2: Union Type Support
+    TYPE_RESULT,    // TASK-026: Result<T,E> Type Implementation
+    TYPE_GENERIC,   // T3.1.2: Generic type parameter
 } TypeKind;
 
 typedef struct Type Type;
@@ -63,6 +65,11 @@ typedef struct {
     int type_count;    // Number of types in the union
 } UnionType;
 
+typedef struct {
+    Type* ok_type;     // The success type (T in Result<T,E>)
+    Type* err_type;    // The error type (E in Result<T,E>)
+} ResultType;
+
 struct Type {
     TypeKind kind;
     Token name;
@@ -72,6 +79,7 @@ struct Type {
         MapType map_type;
         OptionalType optional_type;  // T2.5.1: Optional Type Implementation
         UnionType union_type;        // T2.5.2: Union Type Support
+        ResultType result_type;      // TASK-026: Result<T,E> Type Implementation
     };
 };
 
@@ -93,6 +101,8 @@ typedef struct SymbolTable {
 
 // Symbol table operations
 void add_symbol(SymbolTable* scope, Token name, Type* type, bool is_mutable);
+Symbol* find_symbol(SymbolTable* scope, Token name);
+SymbolTable* get_global_scope(void);
 
 // T2.5.4: Type Inference Improvements
 typedef struct {
@@ -136,6 +146,14 @@ Type* wyn_infer_generic_call_type(Token function_name, Expr** args, int arg_coun
 void wyn_generate_monomorphic_name(Token base_name, Type** type_args, int type_arg_count, 
                                    char* buffer, size_t buffer_size);
 bool wyn_is_type_parameter(GenericFunction* generic_fn, Token type_name);
+void wyn_register_generic_instantiation(Token func_name, Type** type_args, int type_arg_count);
+void wyn_collect_generic_instantiations_from_program(void* prog_ptr);
+void wyn_collect_generic_instantiations_from_stmt(void* stmt_ptr);
+void wyn_collect_generic_instantiations_from_expr(void* expr_ptr);
+void wyn_generate_monomorphic_instances_for_codegen(void* prog_ptr);
+void wyn_emit_monomorphic_function_declaration(void* original_fn, Type** type_args, int type_arg_count, const char* monomorphic_name);
+void wyn_emit_monomorphic_function_definition(void* original_fn, Type** type_args, int type_arg_count, const char* monomorphic_name);
+void wyn_emit(const char* fmt, ...); // Global emit function for code generation
 GenericStats wyn_get_generic_stats(void);
 void wyn_print_generic_stats(void);
 void wyn_list_generic_functions(void);

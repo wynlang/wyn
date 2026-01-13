@@ -1,0 +1,28 @@
+// Crypto module functions
+fn hash(val: int) -> int {
+    let mut h = 5381;
+    let mut v = val;
+    let mut i = 0;
+    while i < 4 {
+        h = ((h * 33) + (v % 256));
+        v = v / 256;
+        i = i + 1;
+    }
+    return h;
+}
+
+fn checksum(data: int) -> int {
+    let mut cs = 0;
+    let mut d = data;
+    while d > 0 {
+        cs = cs + (d % 256);
+        d = d / 256;
+    }
+    return cs % 256;
+}
+
+fn main() -> int {
+    let h = hash(12345);
+    let c = checksum(1000);
+    return c;  // Should return checksum of 1000
+}

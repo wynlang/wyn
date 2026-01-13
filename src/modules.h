@@ -52,6 +52,7 @@ void wyn_add_import(WynModule* module, const char* module_name, const char* item
 char* wyn_resolve_module_path(const char* module_name);
 WynExport* wyn_find_export(WynModule* module, const char* name);
 void* wyn_resolve_import(WynModule* module, const char* name);
+WynModule* resolve_module(const char* module_name);  // Load and parse module file
 void wyn_cleanup_modules(void);
 
 #endif // WYN_MODULES_H

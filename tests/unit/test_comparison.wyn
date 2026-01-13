@@ -1,0 +1,7 @@
+fn main() -> int {
+    let x = 10;
+    if x > 5 and x < 15 and x >= 10 and x <= 10 and x != 5 {
+        return 42;
+    }
+    return 0;
+}

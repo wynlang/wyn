@@ -1,0 +1,13 @@
+fn is_leap_year(year: int) -> int {
+    let div4 = year % 4;
+    if div4 == 0 { return 1; }
+    return 0;
+}
+
+fn main() -> int {
+    let a = is_leap_year(2024);  // 1
+    let b = is_leap_year(2020);  // 1
+    let c = is_leap_year(2023);  // 0
+    let d = is_leap_year(2021);  // 0
+    return a + b + c + d;  // Should be 2
+}

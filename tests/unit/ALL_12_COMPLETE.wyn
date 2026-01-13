@@ -1,0 +1,27 @@
+struct Point { x: int, y: int }
+enum Status { PENDING, DONE }
+type UserId = int;
+
+fn add(a: int, b: int) -> int { return a + b; }
+fn identity<T>(val: T) -> T { return val; }
+fn Point.distance(a: int, b: int) -> int { return a + b; }
+fn worker() -> int { return 1; }
+
+fn main() -> int {
+    let mut y = 20; y = 30;
+    let sum = add(10, 20);
+    let p = Point { x: 3, y: 4 };
+    let s = DONE;
+    let arr = [1, 2, 3];
+    let success = ok(42);
+    let maybe = some(42);
+    let result = match p.x { 3 => 88, _ => 0 };
+    if result == 88 { let temp = 1; }
+    while y < 35 { y = y + 1; }
+    for i in 0..5 { if i == 2 { break; } }
+    let id: UserId = 123;
+    let val = identity(42);
+    let ext_result = Point_distance(3, 4);
+    spawn worker();
+    return result;
+}

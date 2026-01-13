@@ -1,0 +1,11 @@
+trait Display {
+    fn show() -> int;
+}
+
+struct Point {
+    x: int
+}
+
+fn main() -> int {
+    return 0;
+}

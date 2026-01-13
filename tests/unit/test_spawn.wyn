@@ -1,0 +1,8 @@
+fn worker() -> int {
+    return 42;
+}
+
+fn main() -> int {
+    spawn worker();
+    return 99;
+}

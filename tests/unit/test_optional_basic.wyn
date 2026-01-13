@@ -1,0 +1,9 @@
+fn get_value() -> int {
+    let x = some(42);
+    return 0;
+}
+
+fn main() -> int {
+    let y = none;
+    return get_value();
+}

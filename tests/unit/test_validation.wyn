@@ -1,0 +1,41 @@
+// Comprehensive validation test for all working features
+
+struct Point {
+    x: int,
+    y: int
+}
+
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn identity<T>(x: T) -> T {
+    return x;
+}
+
+fn main() -> int {
+    // Test 1: Basic function
+    let sum = add(10, 5);
+    
+    // Test 2: Struct
+    let p = Point { x: 3, y: 4 };
+    
+    // Test 3: Generic function
+    let val = identity(42);
+    
+    // Test 4: Array
+    let arr = [100, 200, 300];
+    let arr_val = arr[2];
+    
+    // Test 5: Match expression
+    let match_result = match sum {
+        15 => 1,
+        _ => 0
+    };
+    
+    // Test 6: Match statement
+    match p.x {
+        3 => return 999,
+        _ => return 0
+    }
+}

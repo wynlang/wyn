@@ -1,0 +1,51 @@
+// Test ALL 12 core language features
+
+struct Point { x: int, y: int }
+enum Status { PENDING, DONE }
+type UserId = int;
+
+fn add(a: int, b: int) -> int { return a + b; }
+fn identity<T>(val: T) -> T { return val; }
+fn Point.distance(a: int, b: int) -> int { return a + b; }
+
+fn main() -> int {
+    // 1. Variables
+    let mut y = 20; y = 30;
+    
+    // 2. Functions
+    let sum = add(10, 20);
+    
+    // 3. Structs
+    let p = Point { x: 3, y: 4 };
+    
+    // 4. Enums
+    let s = DONE;
+    
+    // 5. Arrays
+    let arr = [1, 2, 3];
+    
+    // 6. Result/Option
+    let success = ok(42);
+    let maybe = some(42);
+    
+    // 7. Pattern Matching
+    let result = match p.x { 3 => 88, _ => 0 };
+    
+    // 8. Control Flow
+    if result == 88 { let temp = 1; }
+    while y < 35 { y = y + 1; }
+    for i in 0..5 { if i == 2 { break; } }
+    
+    // 9. Type Aliases
+    let id: UserId = 123;
+    
+    // 10. Generics
+    let val = identity(42);
+    
+    // 11. Extension Methods
+    let ext_result = Point_distance(3, 4);
+    
+    // 12. Concurrency - NOT IMPLEMENTED
+    
+    return result;
+}

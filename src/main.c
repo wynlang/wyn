@@ -6,7 +6,9 @@
 #include "types.h"
 #include "memory.h"
 #include "security.h"
+#include "platform.h"
 #include "llvm_codegen.h"
+#include "optimize.h"
 
 void init_lexer(const char* source);
 void init_parser();
@@ -55,7 +57,18 @@ static char* get_version() {
     return version;
 }
 
+#include "wyn_interface.h"
+
 int main(int argc, char** argv) {
+    // Initialize platform-specific functionality
+    if (wyn_platform_init() != 0) {
+        fprintf(stderr, "Error: Failed to initialize platform\n");
+        return 1;
+    }
+    
+    // Initialize arguments for Wyn compiler access
+    wyn_init_args(argc, argv);
+    
     if (argc < 2) {
         fprintf(stderr, "Wyn Compiler v%s\n", get_version());
         fprintf(stderr, "Usage:\n");
@@ -69,6 +82,9 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  wyn llvm <file.wyn>      Compile with LLVM backend\n");
         fprintf(stderr, "  wyn version              Show version\n");
         fprintf(stderr, "  wyn help                 Show this help\n");
+        fprintf(stderr, "\nOptimization flags:\n");
+        fprintf(stderr, "  -O1                      Basic optimizations\n");
+        fprintf(stderr, "  -O2                      Advanced optimizations\n");
         return 1;
     }
     
@@ -93,6 +109,9 @@ int main(int argc, char** argv) {
         printf("  wyn llvm <file.wyn>      Compile with LLVM backend\n");
         printf("  wyn version              Show version\n");
         printf("  wyn help                 Show this help\n");
+        printf("\nOptimization flags:\n");
+        printf("  -O1                      Basic optimizations (dead code elimination)\n");
+        printf("  -O2                      Advanced optimizations (includes function inlining)\n");
         printf("\nCross-compile targets:\n");
         printf("  linux   - Linux x86_64\n");
         printf("  macos   - macOS (current platform)\n");
@@ -303,18 +322,35 @@ int main(int argc, char** argv) {
     
     if (strcmp(command, "fmt") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn fmt <file.wyn>\n");
-            return 1;
-        }
-        char temp_cmd[512];
-        snprintf(temp_cmd, 512, "./wyn %s > /dev/null 2>&1", argv[2]);
-        if (system(temp_cmd) == 0) {
-            printf("✅ %s is valid\n", argv[2]);
+            printf("Wyn Code Formatter\n");
+            printf("Usage: wyn fmt <file.wyn>\n");
+            printf("\nRunning formatter demo:\n");
+            char demo_cmd[256];
+            snprintf(demo_cmd, 256, "./tools/formatter.wyn.out 2>/dev/null || (./wyn tools/formatter.wyn > /dev/null 2>&1 && ./tools/formatter.wyn.out)");
+            system(demo_cmd);
             return 0;
-        } else {
-            printf("❌ %s has errors\n", argv[2]);
+        }
+        
+        char* filename = argv[2];
+        printf("Formatting %s...\n", filename);
+        
+        // First validate the file
+        char validate_cmd[512];
+        snprintf(validate_cmd, 512, "./wyn %s > /dev/null 2>&1", filename);
+        if (system(validate_cmd) != 0) {
+            printf("❌ %s has syntax errors - cannot format\n", filename);
             return 1;
         }
+        
+        // Show formatting demo for now
+        printf("✅ %s is valid Wyn code\n", filename);
+        printf("\nFormatting rules that would be applied:\n");
+        printf("- 4-space indentation\n");
+        printf("- Spaces around operators (=, +, -, *, /)\n");
+        printf("- Spaces around braces\n");
+        printf("- Consistent function signatures\n");
+        printf("\nNote: Full file formatting will be implemented in future versions.\n");
+        return 0;
     }
     
     if (strcmp(command, "llvm") == 0) {
@@ -414,7 +450,7 @@ int main(int argc, char** argv) {
         fclose(out);
         
         char compile_cmd[512];
-        snprintf(compile_cmd, 512, "gcc -O2 -o %s.out %s.c -lm", file, file);
+        snprintf(compile_cmd, 512, "gcc -O2 -I src -o %s.out %s.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/arc_runtime.c src/safe_memory.c src/error.c -lm", file, file);
         int result = system(compile_cmd);
         
         if (result != 0) {
@@ -430,7 +466,31 @@ int main(int argc, char** argv) {
         return result;
     }
     
-    char* source = read_file(argv[1]);
+    // Parse optimization flags
+    OptLevel optimization = OPT_NONE;
+    int file_arg_index = 1;
+    
+    // Check for optimization flags
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-O1") == 0) {
+            optimization = OPT_O1;
+        } else if (strcmp(argv[i], "-O2") == 0) {
+            optimization = OPT_O2;
+        } else if (argv[i][0] != '-') {
+            file_arg_index = i;
+            break;
+        }
+    }
+    
+    if (file_arg_index >= argc) {
+        fprintf(stderr, "Error: No input file specified\n");
+        return 1;
+    }
+    
+    // Initialize optimizer
+    init_optimizer(optimization);
+    
+    char* source = read_file(argv[file_arg_index]);
     
     init_lexer(source);
     init_parser();
@@ -452,8 +512,23 @@ int main(int argc, char** argv) {
         return 1;
     }
     
+    // Apply optimizations
+    if (optimization > OPT_NONE) {
+        printf("Applying optimizations (level %d)...\n", optimization);
+        eliminate_dead_code(prog);
+        inline_small_functions(prog);
+        
+        // Apply constant folding to all expressions in the program
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* stmt = prog->stmts[i];
+            if (stmt && stmt->type == STMT_EXPR && stmt->expr) {
+                stmt->expr = fold_constants(stmt->expr);
+            }
+        }
+    }
+    
     char out_path[256];
-    snprintf(out_path, 256, "%s.c", argv[1]);
+    snprintf(out_path, 256, "%s.c", argv[file_arg_index]);
     FILE* out = fopen(out_path, "w");
     init_codegen(out);
     codegen_c_header();
@@ -464,20 +539,21 @@ int main(int argc, char** argv) {
     free_program(prog);
     
     char compile_cmd[512];
-    snprintf(compile_cmd, 512, "gcc -o %s.out %s.c -lm", argv[1], argv[1]);
+    const char* opt_flag = (optimization == OPT_O2) ? "-O2" : (optimization == OPT_O1) ? "-O1" : "-O0";
+    snprintf(compile_cmd, 512, "gcc %s -I src -o %s.out %s.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/arc_runtime.c src/safe_memory.c src/error.c -lm", opt_flag, argv[file_arg_index], argv[file_arg_index]);
     int result = system(compile_cmd);
     
     // Check if output file was actually created
     char check_path[256];
-    snprintf(check_path, 256, "%s.out", argv[1]);
+    snprintf(check_path, 256, "%s.out", argv[file_arg_index]);
     FILE* check = fopen(check_path, "r");
     if (check) {
         fclose(check);
-        printf("Compiled successfully: %s.out\n", argv[1]);
-        // Clean up intermediate .c file
-        char c_file[256];
-        snprintf(c_file, 256, "%s.c", argv[1]);
-        remove(c_file);
+        printf("Compiled successfully: %s.out\n", argv[file_arg_index]);
+        // Keep intermediate .c file for debugging
+        // char c_file[256];
+        // snprintf(c_file, 256, "%s.c", argv[file_arg_index]);
+        // remove(c_file);
     } else {
         fprintf(stderr, "C compilation failed - output file not created\n");
         fprintf(stderr, "Command: %s\n", compile_cmd);
@@ -486,6 +562,7 @@ int main(int argc, char** argv) {
     }
     
     safe_free(source);
+    wyn_platform_cleanup();
     return result;
 }
 

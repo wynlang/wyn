@@ -1,0 +1,27 @@
+fn main() -> int {
+    // Test 1: Basic functions
+    let x = add(10, 20);
+    
+    // Test 2: Structs
+    let p = Point { x: 5, y: 10 };
+    
+    // Test 3: Arrays
+    let arr = [1, 2, 3];
+    
+    // Test 4: Match expressions
+    let result = match x {
+        30 => 100,
+        _ => 0
+    };
+    
+    return result;
+}
+
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+struct Point {
+    x: int,
+    y: int
+}

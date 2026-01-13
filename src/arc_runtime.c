@@ -186,7 +186,7 @@ void wyn_arc_deallocate(WynObject* obj) {
     if (!obj) return;
     
     // Nullify all weak references to this object before deallocation
-    wyn_weak_nullify_all(obj);
+    // wyn_weak_nullify_all(obj); // Disabled for now - not implemented
     
     // Call custom destructor if provided
     if (obj->header.destructor) {

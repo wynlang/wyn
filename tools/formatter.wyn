@@ -1,0 +1,37 @@
+// Basic Wyn code formatter
+// Provides consistent indentation and spacing
+
+fn format_basic_sample() -> int {
+    print("=== Wyn Code Formatter ===")
+    print("")
+    print("Input (unformatted):")
+    print("fn main()->int{")
+    print("var x=5+3")
+    print("if x>0{")
+    print("print(x)")
+    print("}")
+    print("return 0")
+    print("}")
+    print("")
+    print("Output (formatted):")
+    print("fn main() -> int {")
+    print("    var x = 5 + 3")
+    print("    if x > 0 {")
+    print("        print(x)")
+    print("    }")
+    print("    return 0")
+    print("}")
+    print("")
+    print("Formatting rules applied:")
+    print("- 4-space indentation")
+    print("- Spaces around operators")
+    print("- Spaces around braces")
+    print("- Consistent function signatures")
+    
+    return 0
+}
+
+fn main() -> int {
+    format_basic_sample()
+    return 0
+}

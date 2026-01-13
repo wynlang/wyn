@@ -1,0 +1,12 @@
+fn main() -> int {
+    let area = 10 * 20;
+    let values = [100, 200, area];
+    let selected = values[2];
+    
+    let result = match selected {
+        200 => 1,
+        _ => 2
+    };
+    
+    return result;
+}

@@ -1,5 +1,35 @@
-CC=gcc
-CFLAGS=-Wall -Wextra -std=c11 -g
+# Platform detection
+UNAME_S := $(shell uname -s 2>/dev/null || echo "Windows")
+UNAME_M := $(shell uname -m 2>/dev/null || echo "x86_64")
+
+# Platform-specific settings
+ifeq ($(OS),Windows_NT)
+    PLATFORM := windows
+    CC := gcc
+    EXE_EXT := .exe
+    PLATFORM_LIBS := -lws2_32 -lpthread
+    PLATFORM_CFLAGS := -DWYN_PLATFORM_WINDOWS
+else ifeq ($(UNAME_S),Darwin)
+    PLATFORM := macos
+    CC := clang
+    EXE_EXT :=
+    PLATFORM_LIBS := -lpthread
+    PLATFORM_CFLAGS := -DWYN_PLATFORM_MACOS
+else ifeq ($(UNAME_S),Linux)
+    PLATFORM := linux
+    CC := gcc
+    EXE_EXT :=
+    PLATFORM_LIBS := -lpthread
+    PLATFORM_CFLAGS := -DWYN_PLATFORM_LINUX
+else
+    PLATFORM := unknown
+    CC := gcc
+    EXE_EXT :=
+    PLATFORM_LIBS := -lpthread
+    PLATFORM_CFLAGS := -DWYN_PLATFORM_UNKNOWN
+endif
+
+CFLAGS=-Wall -Wextra -std=c11 -g $(PLATFORM_CFLAGS)
 OPTFLAGS=-O2
 
 # LLVM Integration for Phase 2 (optional)
@@ -39,15 +69,42 @@ CFLAGS_LLVM = $(CFLAGS)
 LDFLAGS_LLVM = 
 endif
 
-all: wyn test
+all: wyn$(EXE_EXT) test
+
+# Platform information
+platform-info:
+	@echo "Platform: $(PLATFORM)"
+	@echo "Architecture: $(UNAME_M)"
+	@echo "Compiler: $(CC)"
+	@echo "Executable extension: $(EXE_EXT)"
+	@echo "Platform libs: $(PLATFORM_LIBS)"
+	@echo "Platform flags: $(PLATFORM_CFLAGS)"
 
 # Original C-based compiler (Phase 1)
-wyn: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/type_inference.c src/generics.c src/traits.c src/patterns.c src/closures.c src/modules.c src/package.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c
-ifeq ($(OS),Windows_NT)
-	$(CC) $(CFLAGS) -I src -o $@ $^ -lws2_32
-else
-	$(CC) $(CFLAGS) -I src -o $@ $^
-endif
+wyn$(EXE_EXT): src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/package.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c
+	$(CC) $(CFLAGS) -I src -o $@ $^ $(PLATFORM_LIBS)
+
+# Platform-specific targets
+wyn-windows: PLATFORM_CFLAGS += -DWYN_PLATFORM_WINDOWS
+wyn-windows: PLATFORM_LIBS = -lws2_32 -lpthread
+wyn-windows: CC = x86_64-w64-mingw32-gcc
+wyn-windows: EXE_EXT = .exe
+wyn-windows: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/package.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
+	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
+
+wyn-linux: PLATFORM_CFLAGS += -DWYN_PLATFORM_LINUX
+wyn-linux: PLATFORM_LIBS = -lpthread
+wyn-linux: CC = gcc
+wyn-linux: EXE_EXT =
+wyn-linux: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/package.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
+	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
+
+wyn-macos: PLATFORM_CFLAGS += -DWYN_PLATFORM_MACOS
+wyn-macos: PLATFORM_LIBS = -lpthread
+wyn-macos: CC = clang
+wyn-macos: EXE_EXT =
+wyn-macos: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/package.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
+	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 # LLVM-based compiler (Phase 2) with Context Management, Target Configuration, Type Mapping, Runtime Functions, Expression Codegen, Statement Codegen, Function Codegen, and Array/String Operations
 wyn-llvm: src/main.c src/lexer.c src/parser.c src/checker.c src/llvm_codegen.c src/llvm_context.c src/target_config.c src/type_mapping.c src/runtime_functions.c src/llvm_expression_codegen.c src/llvm_statement_codegen.c src/llvm_function_codegen.c src/llvm_array_string_codegen.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c
@@ -82,6 +139,31 @@ test_security: tests/test_security
 
 tests/test_security: tests/test_security.c src/security.c
 	$(CC) $(CFLAGS) -I src -o $@ $^
+
+# String memory management tests
+test_string_memory: tests/memory/test_string_memory
+	@echo "=== Running String Memory Tests ==="
+	@./tests/memory/test_string_memory
+
+tests/memory/test_string_memory: tests/memory/test_string_memory.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/safe_memory.c src/string.c src/error.c
+	@mkdir -p tests/memory
+	$(CC) $(CFLAGS) -I src -o $@ $^ -lpthread
+
+test_string_leaks: tests/memory/test_string_leaks
+	@echo "=== Running String Leak Detection Tests ==="
+	@./tests/memory/test_string_leaks
+
+tests/memory/test_string_leaks: tests/memory/test_string_leaks.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/safe_memory.c src/string.c src/error.c
+	@mkdir -p tests/memory
+	$(CC) $(CFLAGS) -I src -o $@ $^ -lpthread
+
+test_string_comprehensive: tests/memory/test_string_comprehensive.wyn.out
+	@echo "=== Running Comprehensive String Tests ==="
+	@./tests/memory/test_string_comprehensive.wyn.out
+
+tests/memory/test_string_comprehensive.wyn.out: tests/memory/test_string_comprehensive.wyn wyn
+	@mkdir -p tests/memory
+	./wyn tests/memory/test_string_comprehensive.wyn
 
 tests/test_codegen_wyn: tests/test_codegen_wyn.c $(HEADERS)
 	$(CC) $(CFLAGS) -I src -o $@ $< $(LIBS)
@@ -408,11 +490,17 @@ container-deploy:
 container-all:
 	@./scripts/container-deploy.sh all
 
+# Formatter tool
+fmt-tool: tools/formatter.wyn.out
+
+tools/formatter.wyn.out: tools/formatter.wyn wyn
+	./wyn tools/formatter.wyn
+
 clean:
-	rm -f wyn wyn-llvm tests/test_lexer tests/test_parser tests/test_checker tests/test_codegen tests/test_operators tests/test_default_parameters tests/test_function_overloading tests/test_generic_functions tests/test_parameter_validation tests/test_function_integration tests/test_syntax_design tests/test_system_integration tests/phase2_integration tests/test_llvm_context tests/phase2_integration_simple tests/test_wasm_support tests/test_self_compilation tests/test_documentation_system tests/test_performance_profiling tests/test_container_support tests/test_lexer_rewrite tests/test_simd_optimization
+	rm -f wyn wyn.exe wyn-windows.exe wyn-linux wyn-macos wyn-llvm tests/test_lexer tests/test_parser tests/test_checker tests/test_codegen tests/test_operators tests/test_default_parameters tests/test_function_overloading tests/test_generic_functions tests/test_parameter_validation tests/test_function_integration tests/test_syntax_design tests/test_system_integration tests/phase2_integration tests/test_llvm_context tests/phase2_integration_simple tests/test_wasm_support tests/test_self_compilation tests/test_documentation_system tests/test_performance_profiling tests/test_container_support tests/test_lexer_rewrite tests/test_simd_optimization tools/formatter.wyn.out
 	rm -rf temp
 
-.PHONY: all test test_lexer test_parser test_checker test_codegen test_operators clean test_phase2_integration phase2-monitor phase2-gates phase2-status container-build container-test container-deploy container-all
+.PHONY: all test test_lexer test_parser test_checker test_codegen test_operators clean test_phase2_integration phase2-monitor phase2-gates phase2-status container-build container-test container-deploy container-all fmt-tool platform-info wyn-windows wyn-linux wyn-macos
 
 # valgrind-test defined earlier in file (line ~125)
 

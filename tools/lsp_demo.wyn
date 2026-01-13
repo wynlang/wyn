@@ -1,0 +1,98 @@
+// LSP Server Request/Response Demo
+// Simulates realistic LSP requests and responses
+
+// Simulate LSP request types
+fn simulate_completion_request() -> int {
+    print(100)  // === COMPLETION REQUEST ===
+    
+    // Simulate cursor at line 5, character 2 (after "f")
+    var completions = handle_completion_request(5, 2)
+    print(200)  // Available completions:
+    print(completions)  // 11 keywords including "fn"
+    
+    return completions
+}
+
+fn simulate_diagnostic_request() -> int {
+    print(300)  // === DIAGNOSTIC REQUEST ===
+    
+    // Simulate checking a file with incomplete function
+    var incomplete_function = 8  // "fn test("
+    var errors = handle_diagnostic_request(incomplete_function)
+    print(400)  // Syntax errors found:
+    print(errors)  // 1 error (missing braces)
+    
+    return errors
+}
+
+fn simulate_definition_request() -> int {
+    print(500)  // === DEFINITION REQUEST ===
+    
+    // Simulate go-to-definition for "main" function
+    var file_content = 30  // Length of file content
+    var word_main = 4      // Length of "main"
+    var definition = handle_definition_request(file_content, word_main)
+    print(600)  // Definition found:
+    print(definition)  // 1 (found)
+    
+    return definition
+}
+
+// Include the LSP server functions
+fn get_keyword_count() -> int {
+    return 11
+}
+
+fn is_keyword_completion_available(line: int, character: int) -> int {
+    if line >= 0 && character >= 0 {
+        return 1
+    }
+    return 0
+}
+
+fn check_missing_braces(content_length: int) -> int {
+    if content_length < 10 {
+        return 1
+    }
+    return 0
+}
+
+fn find_function_at_position(content_length: int, word_length: int) -> int {
+    if content_length > word_length && word_length > 2 {
+        return 1
+    }
+    return 0
+}
+
+fn handle_completion_request(line: int, character: int) -> int {
+    var available = is_keyword_completion_available(line, character)
+    if available == 1 {
+        return get_keyword_count()
+    }
+    return 0
+}
+
+fn handle_diagnostic_request(content_length: int) -> int {
+    return check_missing_braces(content_length)
+}
+
+fn handle_definition_request(content_length: int, word_length: int) -> int {
+    return find_function_at_position(content_length, word_length)
+}
+
+fn main() -> int {
+    print(1)  // LSP Server Demo Starting
+    
+    // Simulate realistic LSP requests
+    var comp_result = simulate_completion_request()
+    var diag_result = simulate_diagnostic_request()
+    var def_result = simulate_definition_request()
+    
+    print(999)  // Demo Complete
+    
+    // Return success if all requests handled
+    if comp_result > 0 && diag_result >= 0 && def_result >= 0 {
+        return 0  // Success
+    }
+    return 1  // Error
+}

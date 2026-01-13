@@ -1,0 +1,31 @@
+// Simple string memory management test in Wyn
+fn test_basic_strings() -> int {
+    var s1 = "Hello";
+    var s2 = "World";
+    print("Basic strings: {} {}", s1, s2);
+    return 0;
+}
+
+fn test_string_concat() -> int {
+    var greeting = "Hello";
+    var target = "World";
+    var message = greeting + " " + target;
+    print("Concatenated: {}", message);
+    return 0;
+}
+
+fn test_string_assignment() -> int {
+    var original = "Original";
+    var copy = original;
+    print("Original: {}, Copy: {}", original, copy);
+    return 0;
+}
+
+fn main() -> int {
+    print("=== Simple String Tests ===");
+    test_basic_strings();
+    test_string_concat();
+    test_string_assignment();
+    print("=== Tests completed ===");
+    return 0;
+}

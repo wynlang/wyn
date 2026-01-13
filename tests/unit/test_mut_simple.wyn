@@ -1,0 +1,8 @@
+fn test_mut() -> int {
+    let mut x = 10;
+    return x;
+}
+
+fn main() -> int {
+    return test_mut();
+}

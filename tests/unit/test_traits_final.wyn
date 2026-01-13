@@ -1,0 +1,12 @@
+trait Printable {
+    fn print() -> int;
+    fn debug() -> int;
+}
+
+trait Comparable {
+    fn compare() -> int;
+}
+
+fn main() -> int {
+    return 0;
+}

@@ -1,0 +1,22 @@
+// Math module
+
+fn abs(n: int) -> int {
+    if n < 0 {
+        return 0 - n;
+    }
+    return n;
+}
+
+fn max(a: int, b: int) -> int {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+fn min(a: int, b: int) -> int {
+    if a < b {
+        return a;
+    }
+    return b;
+}

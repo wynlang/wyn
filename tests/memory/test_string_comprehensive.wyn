@@ -1,0 +1,120 @@
+// Comprehensive string memory management test in Wyn
+fn test_string_creation() -> int {
+    var s1 = "Hello";
+    var s2 = "World";
+    print("Created strings: {} and {}", s1, s2);
+    return 0;
+}
+
+fn test_string_concatenation() -> int {
+    var greeting = "Hello";
+    var target = "World";
+    var message = greeting + ", " + target + "!";
+    print("Concatenated: {}", message);
+    return 0;
+}
+
+fn test_string_assignment() -> int {
+    var original = "Original String";
+    var copy = original;  // Should use ARC properly
+    print("Original: {}", original);
+    print("Copy: {}", copy);
+    return 0;
+}
+
+fn test_string_in_struct() -> int {
+    struct Person {
+        name: string,
+        age: int
+    }
+    
+    var person = Person { name: "Alice", age: 30 };
+    print("Person: {} is {} years old", person.name, person.age);
+    return 0;
+}
+
+fn test_string_in_array() -> int {
+    var names = ["Alice", "Bob", "Charlie"];
+    for i in 0..len(names) {
+        print("Name {}: {}", i, names[i]);
+    }
+    return 0;
+}
+
+fn test_string_parameters(message: string) -> int {
+    print("Received message: {}", message);
+    return 0;
+}
+
+fn test_string_return() -> string {
+    return "Returned string";
+}
+
+fn test_nested_string_operations() -> int {
+    var base = "Base";
+    var suffix = "Suffix";
+    var combined = base + "_" + suffix;
+    var final_result = "Result: " + combined;
+    print("{}", final_result);
+    return 0;
+}
+
+fn test_string_methods() -> int {
+    var text = "  Hello World  ";
+    var trimmed = text.trim();
+    var upper = trimmed.upper();
+    var lower = upper.lower();
+    
+    print("Original: '{}'", text);
+    print("Trimmed: '{}'", trimmed);
+    print("Upper: '{}'", upper);
+    print("Lower: '{}'", lower);
+    
+    return 0;
+}
+
+fn test_string_comparison() -> int {
+    var str1 = "Hello";
+    var str2 = "Hello";
+    var str3 = "World";
+    
+    if str1 == str2 {
+        print("String equality works");
+    }
+    
+    if str1 != str3 {
+        print("String inequality works");
+    }
+    
+    return 0;
+}
+
+fn test_string_interpolation() -> int {
+    var name = "Alice";
+    var age = 25;
+    var message = "Hello, my name is {} and I am {} years old";
+    print(message, name, age);
+    return 0;
+}
+
+fn main() -> int {
+    print("=== String Memory Management Tests ===");
+    
+    test_string_creation();
+    test_string_concatenation();
+    test_string_assignment();
+    test_string_in_struct();
+    test_string_in_array();
+    test_string_parameters("Parameter test");
+    
+    var returned = test_string_return();
+    print("Got returned string: {}", returned);
+    
+    test_nested_string_operations();
+    test_string_methods();
+    test_string_comparison();
+    test_string_interpolation();
+    
+    print("=== All string tests completed ===");
+    return 0;
+}

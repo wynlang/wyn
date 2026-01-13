@@ -1,0 +1,31 @@
+// Edge case testing
+
+struct Point { x: int, y: int }
+struct Empty {}
+
+fn zero() -> int { return 0; }
+fn nested_call() -> int { return zero(); }
+fn generic_chain<T>(x: T) -> T { return x; }
+
+trait Empty {}
+trait Multi {
+    fn a() -> int;
+    fn b() -> int;
+}
+
+fn main() -> int {
+    let e = Empty {};
+    let p = Point { x: 1, y: 2 };
+    let z = nested_call();
+    let i = generic_chain(5);
+    let arr = [1];
+    
+    let single = match 1 {
+        1 => 10,
+        _ => 0
+    };
+    
+    match 99 {
+        _ => return 25
+    }
+}

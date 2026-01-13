@@ -1,0 +1,20 @@
+struct Data { value: int }
+fn process<T>(x: T) -> T { return x; }
+trait Handler { fn handle() -> int; }
+
+fn main() -> int {
+    let d = Data { value: 15 };
+    let arr = [10, 20, 30];
+    let x = some(42);
+    let p = process(5);
+    
+    let result = match d.value {
+        15 => arr[1],
+        _ => 0
+    };
+    
+    match result {
+        20 => return 20,
+        _ => return 0
+    }
+}

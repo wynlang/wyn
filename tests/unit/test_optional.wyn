@@ -1,0 +1,4 @@
+fn main() -> int {
+    let x: Option<int> = Some(42);
+    return 0;
+}

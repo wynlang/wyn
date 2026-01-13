@@ -26,8 +26,13 @@ static Stmt* parse_break_statement(); // T1.4.2: Control Flow Agent addition
 static Stmt* parse_continue_statement(); // T1.4.2: Control Flow Agent addition
 static Stmt* parse_match_statement(); // T1.4.3: Control Flow Agent addition
 static Expr* parse_type(); // T2.5.1: Optional Type Implementation
+static Expr* parse_result_type(); // TASK-026: Result type parsing
 static Stmt* impl_block(); // T2.5.3: Enhanced Struct System
 static Stmt* trait_decl(); // T3.2.1: Trait Definitions
+static Pattern* parse_pattern(); // T3.3.1: Pattern parsing for destructuring
+static Stmt* parse_try_statement(); // TASK-026: Try statement parsing
+static Stmt* parse_catch_statement(); // TASK-026: Catch statement parsing
+static Expr* parse_try_expression(); // TASK-026: ? operator parsing
 void check_stmt(Stmt* stmt, SymbolTable* scope);
 void codegen_stmt(Stmt* stmt);
 
@@ -317,8 +322,26 @@ static Expr* primary() {
         expr->match.arms = malloc(sizeof(MatchArm) * 32);
         
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            expr->match.arms[expr->match.arm_count].pattern = parser.current;
-            expect(TOKEN_IDENT, "Expected pattern");
+            // Parse pattern - support integer literals, wildcards, and identifiers
+            if (check(TOKEN_INT) || check(TOKEN_FLOAT) || check(TOKEN_STRING) || 
+                check(TOKEN_TRUE) || check(TOKEN_FALSE)) {
+                // Literal pattern
+                expr->match.arms[expr->match.arm_count].pattern = parser.current;
+                advance();
+            } else if (check(TOKEN_UNDERSCORE)) {
+                // Wildcard pattern
+                expr->match.arms[expr->match.arm_count].pattern = parser.current;
+                advance();
+            } else if (check(TOKEN_IDENT)) {
+                // Identifier pattern
+                expr->match.arms[expr->match.arm_count].pattern = parser.current;
+                advance();
+            } else {
+                fprintf(stderr, "Error at line %d: Expected pattern (literal, identifier, or _)\n", parser.current.line);
+                parser.had_error = true;
+                return NULL;
+            }
+            
             expect(TOKEN_FATARROW, "Expected '=>' after pattern");
             expr->match.arms[expr->match.arm_count].result = expression();
             expr->match.arm_count++;
@@ -393,6 +416,35 @@ static Expr* primary() {
         return expr;
     }
     
+    // TASK-040: Lambda expression parsing |x| x * 2
+    if (match(TOKEN_PIPE)) {
+        Expr* lambda_expr = alloc_expr();
+        lambda_expr->type = EXPR_LAMBDA;
+        
+        // Parse parameters
+        lambda_expr->lambda.param_count = 0;
+        lambda_expr->lambda.params = malloc(sizeof(Token) * 8);
+        
+        if (!check(TOKEN_PIPE)) {
+            do {
+                expect(TOKEN_IDENT, "Expected parameter name");
+                lambda_expr->lambda.params[lambda_expr->lambda.param_count++] = parser.previous;
+            } while (match(TOKEN_COMMA));
+        }
+        
+        expect(TOKEN_PIPE, "Expected '|' after lambda parameters");
+        
+        // Parse body expression
+        lambda_expr->lambda.body = expression();
+        
+        // Initialize capture fields (will be filled by capture analysis)
+        lambda_expr->lambda.captured_vars = NULL;
+        lambda_expr->lambda.captured_count = 0;
+        lambda_expr->lambda.capture_by_move = NULL;
+        
+        return lambda_expr;
+    }
+
     if (match(TOKEN_LPAREN)) {
         // Check if this is a tuple (has comma) or just grouped expression
         Expr* first_expr = expression();
@@ -503,6 +555,12 @@ static Expr* call() {
                     expr = field_expr;
                 }
             }
+        } else if (match(TOKEN_QUESTION)) {
+            // TASK-028: Handle ? operator for error propagation
+            Expr* try_expr = alloc_expr();
+            try_expr->type = EXPR_TRY;
+            try_expr->try_expr.value = expr;
+            expr = try_expr;
         } else {
             break;
         }
@@ -646,17 +704,6 @@ static Expr* assignment() {
         return NULL;
     }
     
-    // Check for ternary operator
-    if (match(TOKEN_QUESTION)) {
-        Expr* ternary = alloc_expr();
-        ternary->type = EXPR_TERNARY;
-        ternary->ternary.condition = expr;
-        ternary->ternary.then_expr = assignment();
-        expect(TOKEN_COLON, "Expected ':' in ternary expression");
-        ternary->ternary.else_expr = assignment();
-        return ternary;
-    }
-    
     // Check for ++ and --
     if (match(TOKEN_PLUSPLUS)) {
         if (expr->type == EXPR_IDENT) {
@@ -768,23 +815,37 @@ Stmt* statement() {
         }
         expect(TOKEN_RBRACE, "Expected '}' after try block");
         
-        // Parse catch block
-        expect(TOKEN_CATCH, "Expected 'catch' after try block");
-        expect(TOKEN_LPAREN, "Expected '(' after 'catch'");
-        stmt->try_stmt.exception_var = parser.current;
-        expect(TOKEN_IDENT, "Expected exception variable name");
-        expect(TOKEN_RPAREN, "Expected ')' after exception variable");
+        // Parse catch blocks using new structure
+        stmt->try_stmt.catch_count = 0;
+        stmt->try_stmt.catch_blocks = malloc(sizeof(Stmt*) * 8);
+        stmt->try_stmt.exception_types = malloc(sizeof(Token) * 8);
+        stmt->try_stmt.exception_vars = malloc(sizeof(Token) * 8);
         
-        expect(TOKEN_LBRACE, "Expected '{' after catch clause");
-        stmt->try_stmt.catch_block = alloc_stmt();
-        stmt->try_stmt.catch_block->type = STMT_BLOCK;
-        stmt->try_stmt.catch_block->block.count = 0;
-        stmt->try_stmt.catch_block->block.stmts = malloc(sizeof(Stmt*) * 32);
-        
-        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            stmt->try_stmt.catch_block->block.stmts[stmt->try_stmt.catch_block->block.count++] = statement();
+        while (match(TOKEN_CATCH)) {
+            expect(TOKEN_LPAREN, "Expected '(' after catch");
+            
+            // Parse exception type
+            expect(TOKEN_IDENT, "Expected exception type");
+            stmt->try_stmt.exception_types[stmt->try_stmt.catch_count] = parser.previous;
+            
+            // Parse exception variable
+            expect(TOKEN_IDENT, "Expected exception variable");
+            stmt->try_stmt.exception_vars[stmt->try_stmt.catch_count] = parser.previous;
+            
+            expect(TOKEN_RPAREN, "Expected ')' after catch parameters");
+            expect(TOKEN_LBRACE, "Expected '{' after catch");
+            
+            stmt->try_stmt.catch_blocks[stmt->try_stmt.catch_count] = statement();
+            stmt->try_stmt.catch_count++;
         }
-        expect(TOKEN_RBRACE, "Expected '}' after catch block");
+        
+        // Optional finally block
+        if (match(TOKEN_FINALLY)) {
+            expect(TOKEN_LBRACE, "Expected '{' after finally");
+            stmt->try_stmt.finally_block = statement();
+        } else {
+            stmt->try_stmt.finally_block = NULL;
+        }
         
         return stmt;
     }
@@ -860,10 +921,28 @@ Stmt* statement() {
         return stmt;
     }
     
-    if (match(TOKEN_VAR) || match(TOKEN_CONST)) {
+    if (match(TOKEN_SPAWN)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_SPAWN;
+        stmt->spawn.call = expression();
+        match(TOKEN_SEMI);
+        return stmt;
+    }
+    
+    if (match(TOKEN_VAR) || match(TOKEN_CONST) || match(TOKEN_LET)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_VAR;
-        stmt->var.is_const = (parser.previous.type == TOKEN_CONST);
+        TokenType decl_type = parser.previous.type;  // Save the declaration type
+        bool is_mutable = false;
+        
+        // Check for 'mut' keyword after 'let'
+        if (decl_type == TOKEN_LET && match(TOKEN_MUT)) {
+            is_mutable = true;
+        }
+        
+        // FIX: let variables are mutable by default, only const makes them immutable
+        stmt->var.is_const = (decl_type == TOKEN_CONST);
+        stmt->var.is_mutable = (decl_type == TOKEN_VAR || decl_type == TOKEN_LET || is_mutable);
         stmt->var.name = parser.current;
         expect(TOKEN_IDENT, "Expected variable name");
         
@@ -917,6 +996,37 @@ Stmt* statement() {
         } else {
             stmt->if_stmt.else_branch = NULL;
         }
+        return stmt;
+    }
+    
+    if (match(TOKEN_IMPORT)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_IMPORT;
+        
+        // Parse: import name from "path"
+        expect(TOKEN_IDENT, "Expected module name after 'import'");
+        stmt->import.module = parser.previous;
+        
+        // Optional: from "path"
+        if (match(TOKEN_FROM)) {
+            expect(TOKEN_STRING, "Expected string path after 'from'");
+            stmt->import.path = parser.previous;
+        } else {
+            // No path specified - use default
+            stmt->import.path.start = NULL;
+            stmt->import.path.length = 0;
+        }
+        
+        stmt->import.items = NULL;
+        stmt->import.item_count = 0;
+        match(TOKEN_SEMI);  // Optional semicolon
+        return stmt;
+    }
+    
+    if (match(TOKEN_EXPORT)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_EXPORT;
+        stmt->export.stmt = statement();  // Parse the statement being exported
         return stmt;
     }
     
@@ -1115,6 +1225,10 @@ Stmt* statement() {
         return stmt;
     }
     
+    if (check(TOKEN_MATCH)) {
+        return parse_match_statement();
+    }
+    
     Stmt* stmt = alloc_stmt();
     stmt->type = STMT_EXPR;
     stmt->expr = expression();
@@ -1131,15 +1245,39 @@ Stmt* function() {
     stmt->fn.name = parser.current;
     expect(TOKEN_IDENT, "Expected function name");
     
+    // Check for extension method syntax: fn Type.method()
+    Token receiver_type = {0};
+    bool is_extension = false;
+    if (match(TOKEN_DOT)) {
+        receiver_type = stmt->fn.name;
+        stmt->fn.name = parser.current;
+        expect(TOKEN_IDENT, "Expected method name after '.'");
+        is_extension = true;
+    }
+    
     stmt->fn.type_param_count = 0;
     stmt->fn.type_params = NULL;
-    if (match(TOKEN_LBRACKET)) {
+    if (match(TOKEN_LT)) {
         stmt->fn.type_params = malloc(sizeof(Token) * 8);
         do {
             stmt->fn.type_params[stmt->fn.type_param_count++] = parser.current;
             expect(TOKEN_IDENT, "Expected type parameter");
+            
+            // Parse optional type constraints (T: Display + Debug)
+            if (match(TOKEN_COLON)) {
+                // Skip constraint parsing for now - handled in generics.c
+                while (!check(TOKEN_COMMA) && !check(TOKEN_GT)) {
+                    advance(); // Skip constraint tokens
+                }
+            }
         } while (match(TOKEN_COMMA));
-        expect(TOKEN_RBRACKET, "Expected ']' after type parameters");
+        expect(TOKEN_GT, "Expected '>' after type parameters");
+    }
+    
+    // Store extension method info
+    stmt->fn.is_extension = is_extension;
+    if (is_extension) {
+        stmt->fn.receiver_type = receiver_type;
     }
     
     expect(TOKEN_LPAREN, "Expected '(' after function name");
@@ -1168,8 +1306,20 @@ Stmt* function() {
             stmt->fn.param_mutable[stmt->fn.param_count] = match(TOKEN_MUT);
             stmt->fn.params[stmt->fn.param_count] = parser.current;
             expect(TOKEN_IDENT, "Expected parameter name");
-            expect(TOKEN_COLON, "Expected ':' after parameter name");
-            stmt->fn.param_types[stmt->fn.param_count] = parse_type(); // Use parse_type for array support
+            
+            // Allow optional type for 'self' parameter (for impl blocks)
+            bool is_self = (parser.previous.length == 4 && 
+                           memcmp(parser.previous.start, "self", 4) == 0);
+            
+            if (match(TOKEN_COLON)) {
+                stmt->fn.param_types[stmt->fn.param_count] = parse_type();
+            } else if (is_self) {
+                // self without type - will be filled in by impl_block
+                stmt->fn.param_types[stmt->fn.param_count] = NULL;
+            } else {
+                expect(TOKEN_COLON, "Expected ':' after parameter name");
+                stmt->fn.param_types[stmt->fn.param_count] = parse_type();
+            }
             
             // T1.5.2: Parse default parameter value if present
             if (match(TOKEN_EQ)) {
@@ -1194,11 +1344,11 @@ Stmt* function() {
     Stmt* body = alloc_stmt();
     body->type = STMT_BLOCK;
     body->block.count = 0;
-    body->block.stmts = malloc(sizeof(Stmt*) * 256); // Increased from 32 to 256
+    body->block.stmts = malloc(sizeof(Stmt*) * 1024); // Increased to 1024 for large functions
     
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-        if (body->block.count >= 256) {
-            fprintf(stderr, "Error at line %d: Function body too large (max 256 statements)\n", parser.current.line);
+        if (body->block.count >= 1024) {
+            fprintf(stderr, "Error at line %d: Function body too large (max 1024 statements)\n", parser.current.line);
             break;
         }
         body->block.stmts[body->block.count++] = statement();
@@ -1220,13 +1370,21 @@ Stmt* struct_decl() {
     // T3.1.2: Parse generic type parameters
     stmt->struct_decl.type_param_count = 0;
     stmt->struct_decl.type_params = NULL;
-    if (match(TOKEN_LBRACKET)) {
+    if (match(TOKEN_LT)) {
         stmt->struct_decl.type_params = malloc(sizeof(Token) * 8);
         do {
             stmt->struct_decl.type_params[stmt->struct_decl.type_param_count++] = parser.current;
             expect(TOKEN_IDENT, "Expected type parameter");
+            
+            // Parse optional type constraints (T: Display + Debug)
+            if (match(TOKEN_COLON)) {
+                // Skip constraint parsing for now - handled in generics.c
+                while (!check(TOKEN_COMMA) && !check(TOKEN_GT)) {
+                    advance(); // Skip constraint tokens
+                }
+            }
         } while (match(TOKEN_COMMA));
-        expect(TOKEN_RBRACKET, "Expected ']' after type parameters");
+        expect(TOKEN_GT, "Expected '>' after type parameters");
     }
     
     expect(TOKEN_LBRACE, "Expected '{' after struct name");
@@ -1243,21 +1401,8 @@ Stmt* struct_decl() {
         stmt->struct_decl.field_types[stmt->struct_decl.field_count] = parse_type(); // Use parse_type for union/optional support
         
         // T2.5.3: Determine if field needs ARC management
-        // Only non-primitive types need ARC management
+        // For now, disable ARC management for struct fields to keep things simple
         bool needs_arc = false;
-        if (stmt->struct_decl.field_types[stmt->struct_decl.field_count] && 
-            stmt->struct_decl.field_types[stmt->struct_decl.field_count]->type == EXPR_IDENT) {
-            Token type_name = stmt->struct_decl.field_types[stmt->struct_decl.field_count]->token;
-            // Primitive types don't need ARC management
-            if (!(type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) &&
-                !(type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) &&
-                !(type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) &&
-                !(type_name.length == 4 && memcmp(type_name.start, "char", 4) == 0) &&
-                !(type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0) &&
-                !(type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0)) {
-                needs_arc = true;
-            }
-        }
         stmt->struct_decl.field_arc_managed[stmt->struct_decl.field_count] = needs_arc;
         
         stmt->struct_decl.field_count++;
@@ -1286,8 +1431,32 @@ Stmt* impl_block() {
     
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
         if (check(TOKEN_FN) || check(TOKEN_PUB)) {
+            // Don't consume TOKEN_FN - let function() do it
             Stmt* method = function();
-            stmt->impl.methods[stmt->impl.method_count] = &method->fn;
+            
+            // Transform method into extension method
+            // If first parameter is 'self', replace it with typed parameter
+            if (method->fn.param_count > 0 && 
+                method->fn.params[0].length == 4 && 
+                memcmp(method->fn.params[0].start, "self", 4) == 0) {
+                
+                // If self has no type, create one from impl type
+                if (method->fn.param_types[0] == NULL) {
+                    Expr* self_type = malloc(sizeof(Expr));
+                    self_type->type = EXPR_IDENT;
+                    self_type->token = stmt->impl.type_name;
+                    method->fn.param_types[0] = self_type;
+                }
+            }
+            
+            // Mark as extension method
+            method->fn.is_extension = true;
+            method->fn.receiver_type = stmt->impl.type_name;
+            
+            // Store the FnStmt pointer (allocate new memory)
+            FnStmt* fn_copy = malloc(sizeof(FnStmt));
+            *fn_copy = method->fn;
+            stmt->impl.methods[stmt->impl.method_count] = fn_copy;
             stmt->impl.method_count++;
         } else {
             fprintf(stderr, "Error at line %d: Expected function in impl block\n", parser.current.line);
@@ -1324,21 +1493,71 @@ Stmt* trait_decl() {
     
     expect(TOKEN_LBRACE, "Expected '{' after trait name");
     
-    // Parse trait methods
+    // Parse trait methods (declarations only, no bodies)
     stmt->trait_decl.method_count = 0;
     stmt->trait_decl.methods = malloc(sizeof(FnStmt*) * 32);
     stmt->trait_decl.method_has_default = malloc(sizeof(bool) * 32);
     
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
         if (check(TOKEN_FN)) {
-            Stmt* method = function();
-            stmt->trait_decl.methods[stmt->trait_decl.method_count] = malloc(sizeof(FnStmt));
-            memcpy(stmt->trait_decl.methods[stmt->trait_decl.method_count], &method->fn, sizeof(FnStmt));
+            advance(); // consume 'fn'
             
-            // Check if method has a body (default implementation)
-            stmt->trait_decl.method_has_default[stmt->trait_decl.method_count] = 
-                (method->fn.body != NULL);
+            FnStmt* method = calloc(1, sizeof(FnStmt));  // Use calloc to zero-initialize
+            method->name = parser.current;
+            expect(TOKEN_IDENT, "Expected method name");
             
+            // Initialize all fields
+            method->type_param_count = 0;
+            method->type_params = NULL;
+            method->is_public = false;
+            
+            expect(TOKEN_LPAREN, "Expected '(' after method name");
+            
+            // Parse parameters (simplified - skip self handling for now)
+            method->param_count = 0;
+            method->params = NULL;
+            method->param_types = NULL;
+            method->param_mutable = NULL;
+            method->param_defaults = NULL;
+            
+            if (!check(TOKEN_RPAREN)) {
+                method->params = malloc(sizeof(Token) * 8);
+                method->param_types = malloc(sizeof(Expr*) * 8);
+                method->param_mutable = malloc(sizeof(bool) * 8);
+                method->param_defaults = malloc(sizeof(Expr*) * 8);
+                
+                do {
+                    method->param_mutable[method->param_count] = false;
+                    method->params[method->param_count] = parser.current;
+                    expect(TOKEN_IDENT, "Expected parameter name");
+                    
+                    // Handle optional type annotation
+                    if (match(TOKEN_COLON)) {
+                        method->param_types[method->param_count] = parse_type();
+                    } else {
+                        method->param_types[method->param_count] = NULL;
+                    }
+                    
+                    method->param_defaults[method->param_count] = NULL;
+                    method->param_count++;
+                } while (match(TOKEN_COMMA));
+            }
+            
+            expect(TOKEN_RPAREN, "Expected ')' after parameters");
+            
+            // Parse return type
+            if (match(TOKEN_ARROW)) {
+                method->return_type = parse_type();
+            } else {
+                method->return_type = NULL;
+            }
+            
+            // Trait methods don't have bodies - expect semicolon
+            method->body = NULL;
+            match(TOKEN_SEMI);
+            
+            stmt->trait_decl.methods[stmt->trait_decl.method_count] = method;
+            stmt->trait_decl.method_has_default[stmt->trait_decl.method_count] = false;
             stmt->trait_decl.method_count++;
         } else {
             fprintf(stderr, "Error at line %d: Expected function in trait block\n", parser.current.line);
@@ -1420,17 +1639,21 @@ Program* parse_program() {
         if (match(TOKEN_IMPORT)) {
             Stmt* stmt = safe_malloc(sizeof(Stmt));
             stmt->type = STMT_IMPORT;
-            stmt->import.module = parser.current;
             expect(TOKEN_IDENT, "Expected module name");
+            stmt->import.module = parser.previous;
+            
+            // Optional: from "path"
+            if (match(TOKEN_FROM)) {
+                expect(TOKEN_STRING, "Expected string path after 'from'");
+                stmt->import.path = parser.previous;
+            } else {
+                stmt->import.path.start = NULL;
+                stmt->import.path.length = 0;
+            }
+            
             stmt->import.items = NULL;
             stmt->import.item_count = 0;
             prog->stmts[prog->count++] = stmt;
-            continue;
-        }
-        if (match(TOKEN_FROM)) {
-            expect(TOKEN_IDENT, "Expected module name");
-            expect(TOKEN_IMPORT, "Expected 'import'");
-            expect(TOKEN_IDENT, "Expected import name");
             continue;
         }
         
@@ -1596,12 +1819,49 @@ static Stmt* parse_match_statement() {
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
         MatchCase* current_case = &stmt->match_stmt.cases[stmt->match_stmt.case_count];
         
-        // Parse pattern (create simple identifier pattern from token)
+        // Parse pattern - enhanced to support literal, wildcard, and Some/None patterns
         Pattern* pattern = safe_malloc(sizeof(Pattern));
-        pattern->type = PATTERN_IDENT;
-        pattern->ident.name = parser.current;
+        
+        if (match(TOKEN_SOME)) {
+            // Some(pattern) - option pattern
+            pattern->type = PATTERN_OPTION;
+            pattern->option.is_some = true;
+            
+            expect(TOKEN_LPAREN, "Expected '(' after Some");
+            
+            // Parse inner pattern (for now, just identifier)
+            Pattern* inner_pattern = safe_malloc(sizeof(Pattern));
+            inner_pattern->type = PATTERN_IDENT;
+            inner_pattern->ident.name = parser.current;
+            expect(TOKEN_IDENT, "Expected identifier in Some pattern");
+            
+            pattern->option.inner = inner_pattern;
+            expect(TOKEN_RPAREN, "Expected ')' after Some pattern");
+        } else if (match(TOKEN_NONE)) {
+            // None pattern
+            pattern->type = PATTERN_OPTION;
+            pattern->option.is_some = false;
+            pattern->option.inner = NULL;
+        } else if (check(TOKEN_INT) || check(TOKEN_FLOAT) || check(TOKEN_STRING) || check(TOKEN_TRUE) || check(TOKEN_FALSE)) {
+            // Literal pattern
+            pattern->type = PATTERN_LITERAL;
+            pattern->literal.value = parser.current;
+            advance();
+        } else if (match(TOKEN_UNDERSCORE)) {
+            // Wildcard pattern
+            pattern->type = PATTERN_WILDCARD;
+        } else if (check(TOKEN_IDENT)) {
+            // Variable binding pattern
+            pattern->type = PATTERN_IDENT;
+            pattern->ident.name = parser.current;
+            advance();
+        } else {
+            fprintf(stderr, "Error at line %d: Expected pattern\n", parser.current.line);
+            parser.had_error = true;
+            return NULL;
+        }
+        
         current_case->pattern = pattern;
-        advance();
         
         // Check for guard clause
         if (match(TOKEN_IF)) {
@@ -1648,32 +1908,60 @@ static Expr* parse_type() {
         Token type_token = parser.current;
         advance();
         
-        // Check for built-in types
-        if (type_token.length == 3 && memcmp(type_token.start, "str", 3) == 0) {
-            // Built-in string type
+        // Check for generic type instantiation: TypeName<T1, T2, ...>
+        if (match(TOKEN_LT)) {
+            // This is a generic type instantiation
             base_type = alloc_expr();
-            base_type->type = EXPR_IDENT;
-            base_type->token = type_token;
-        } else if (type_token.length == 3 && memcmp(type_token.start, "int", 3) == 0) {
-            // Built-in int type
-            base_type = alloc_expr();
-            base_type->type = EXPR_IDENT;
-            base_type->token = type_token;
-        } else if (type_token.length == 4 && memcmp(type_token.start, "bool", 4) == 0) {
-            // Built-in bool type
-            base_type = alloc_expr();
-            base_type->type = EXPR_IDENT;
-            base_type->token = type_token;
-        } else if (type_token.length == 5 && memcmp(type_token.start, "float", 5) == 0) {
-            // Built-in float type
-            base_type = alloc_expr();
-            base_type->type = EXPR_IDENT;
-            base_type->token = type_token;
+            base_type->type = EXPR_CALL; // Reuse EXPR_CALL for generic instantiation
+            
+            // Create identifier expression for the type name
+            Expr* type_name_expr = alloc_expr();
+            type_name_expr->type = EXPR_IDENT;
+            type_name_expr->token = type_token;
+            base_type->call.callee = type_name_expr;
+            
+            // Parse type arguments
+            base_type->call.arg_count = 0;
+            base_type->call.args = malloc(sizeof(Expr*) * 8);
+            
+            if (!check(TOKEN_GT)) {
+                do {
+                    base_type->call.args[base_type->call.arg_count++] = parse_type();
+                } while (match(TOKEN_COMMA));
+            }
+            
+            expect(TOKEN_GT, "Expected '>' after generic type arguments");
         } else {
-            // User-defined type
-            base_type = alloc_expr();
-            base_type->type = EXPR_IDENT;
-            base_type->token = type_token;
+            // Regular type name
+            // Check for built-in types
+            if (type_token.length == 3 && memcmp(type_token.start, "str", 3) == 0) {
+                // Built-in string type
+                base_type = alloc_expr();
+                base_type->type = EXPR_IDENT;
+                base_type = alloc_expr();
+                base_type->type = EXPR_IDENT;
+                base_type->token = type_token;
+            } else if (type_token.length == 3 && memcmp(type_token.start, "int", 3) == 0) {
+                // Built-in int type
+                base_type = alloc_expr();
+                base_type->type = EXPR_IDENT;
+                base_type->token = type_token;
+            } else if (type_token.length == 4 && memcmp(type_token.start, "bool", 4) == 0) {
+                // Built-in bool type
+                base_type = alloc_expr();
+                base_type->type = EXPR_IDENT;
+                base_type->token = type_token;
+            } else if (type_token.length == 5 && memcmp(type_token.start, "float", 5) == 0) {
+                // Built-in float type
+                base_type = alloc_expr();
+                base_type->type = EXPR_IDENT;
+                base_type->token = type_token;
+            } else {
+                // User-defined type
+                base_type = alloc_expr();
+                base_type->type = EXPR_IDENT;
+                base_type->token = type_token;
+            }
         }
     } else {
         fprintf(stderr, "Error at line %d: Expected type name\n", parser.current.line);
@@ -1709,4 +1997,294 @@ static Expr* parse_type() {
     }
     
     return base_type;
+}
+
+// T3.3.1: Pattern parsing for destructuring
+static Pattern* parse_pattern() {
+    Pattern* pattern = safe_malloc(sizeof(Pattern));
+    
+    // Handle struct destructuring: Point { x, y }
+    if (check(TOKEN_IDENT)) {
+        Token potential_struct = parser.current;
+        advance();
+        
+        if (match(TOKEN_LBRACE)) {
+            // This is a struct pattern
+            pattern->type = PATTERN_STRUCT;
+            pattern->struct_pat.struct_name = potential_struct;
+            
+            // Parse field patterns
+            pattern->struct_pat.field_count = 0;
+            pattern->struct_pat.field_names = safe_malloc(sizeof(Token) * 16);
+            pattern->struct_pat.field_patterns = safe_malloc(sizeof(Pattern*) * 16);
+            
+            while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                if (pattern->struct_pat.field_count >= 16) {
+                    fprintf(stderr, "Error: Too many fields in struct pattern\n");
+                    break;
+                }
+                
+                // Parse field name
+                expect(TOKEN_IDENT, "Expected field name in struct pattern");
+                pattern->struct_pat.field_names[pattern->struct_pat.field_count] = parser.previous;
+                
+                // For now, create a simple identifier pattern for the field
+                Pattern* field_pattern = safe_malloc(sizeof(Pattern));
+                field_pattern->type = PATTERN_IDENT;
+                field_pattern->ident.name = parser.previous;
+                pattern->struct_pat.field_patterns[pattern->struct_pat.field_count] = field_pattern;
+                
+                pattern->struct_pat.field_count++;
+                
+                if (!check(TOKEN_RBRACE)) {
+                    expect(TOKEN_COMMA, "Expected ',' between struct pattern fields");
+                }
+            }
+            
+            expect(TOKEN_RBRACE, "Expected '}' after struct pattern");
+            return pattern;
+        } else {
+            // This is just an identifier pattern
+            pattern->type = PATTERN_IDENT;
+            pattern->ident.name = potential_struct;
+            return pattern;
+        }
+    }
+    
+    // Handle array destructuring: [first, second, ...rest]
+    if (match(TOKEN_LBRACKET)) {
+        pattern->type = PATTERN_ARRAY;
+        pattern->array.element_count = 0;
+        pattern->array.elements = safe_malloc(sizeof(Pattern*) * 16);
+        pattern->array.has_rest = false;
+        
+        while (!check(TOKEN_RBRACKET) && !check(TOKEN_EOF)) {
+            if (pattern->array.element_count >= 16) {
+                fprintf(stderr, "Error: Too many elements in array pattern\n");
+                break;
+            }
+            
+            // Check for rest pattern: ...name
+            if (match(TOKEN_DOT) && match(TOKEN_DOT) && match(TOKEN_DOT)) {
+                pattern->array.has_rest = true;
+                expect(TOKEN_IDENT, "Expected identifier after '...' in array pattern");
+                pattern->array.rest_name = parser.previous;
+                break; // Rest pattern must be last
+            }
+            
+            // Parse element pattern (recursively)
+            pattern->array.elements[pattern->array.element_count] = parse_pattern();
+            pattern->array.element_count++;
+            
+            if (!check(TOKEN_RBRACKET)) {
+                expect(TOKEN_COMMA, "Expected ',' between array pattern elements");
+            }
+        }
+        
+        expect(TOKEN_RBRACKET, "Expected ']' after array pattern");
+        return pattern;
+    }
+    
+    // Handle tuple destructuring: (first, second, third)
+    if (match(TOKEN_LPAREN)) {
+        pattern->type = PATTERN_TUPLE;
+        pattern->tuple.element_count = 0;
+        pattern->tuple.elements = safe_malloc(sizeof(Pattern*) * 16);
+        
+        while (!check(TOKEN_RPAREN) && !check(TOKEN_EOF)) {
+            if (pattern->tuple.element_count >= 16) {
+                fprintf(stderr, "Error: Too many elements in tuple pattern\n");
+                break;
+            }
+            
+            pattern->tuple.elements[pattern->tuple.element_count] = parse_pattern();
+            pattern->tuple.element_count++;
+            
+            if (!check(TOKEN_RPAREN)) {
+                expect(TOKEN_COMMA, "Expected ',' between tuple pattern elements");
+            }
+        }
+        
+        expect(TOKEN_RPAREN, "Expected ')' after tuple pattern");
+        return pattern;
+    }
+    
+    // Handle wildcard pattern: _
+    if (match(TOKEN_UNDERSCORE)) {
+        pattern->type = PATTERN_WILDCARD;
+        return pattern;
+    }
+    
+    // Handle literal patterns
+    if (match(TOKEN_INT) || match(TOKEN_FLOAT) || match(TOKEN_STRING) || 
+        match(TOKEN_TRUE) || match(TOKEN_FALSE)) {
+        pattern->type = PATTERN_LITERAL;
+        pattern->literal.value = parser.previous;
+        return pattern;
+    }
+    
+    // Handle Some/None patterns
+    if (match(TOKEN_SOME)) {
+        pattern->type = PATTERN_OPTION;
+        pattern->option.is_some = true;
+        
+        expect(TOKEN_LPAREN, "Expected '(' after Some");
+        pattern->option.inner = parse_pattern();
+        expect(TOKEN_RPAREN, "Expected ')' after Some pattern");
+        return pattern;
+    }
+    
+    if (match(TOKEN_NONE)) {
+        pattern->type = PATTERN_OPTION;
+        pattern->option.is_some = false;
+        pattern->option.inner = NULL;
+        return pattern;
+    }
+    
+    // Default: identifier pattern
+    if (check(TOKEN_IDENT)) {
+        pattern->type = PATTERN_IDENT;
+        pattern->ident.name = parser.current;
+        advance();
+        return pattern;
+    }
+    
+    // If we get here, it's an error
+    fprintf(stderr, "Error: Expected pattern at line %d\n", parser.current.line);
+    free(pattern);
+    return NULL;
+}
+// TASK-026: Result type parsing functions
+
+static Expr* parse_result_type() {
+    // Parse Result<T, E> syntax
+    expect(TOKEN_LT, "Expected '<' after Result");
+    
+    Expr* ok_type = parse_type();
+    expect(TOKEN_COMMA, "Expected ',' between Result types");
+    Expr* err_type = parse_type();
+    
+    expect(TOKEN_GT, "Expected '>' after Result types");
+    
+    Expr* result_expr = alloc_expr();
+    result_expr->type = EXPR_RESULT_TYPE;
+    result_expr->result_type.ok_type = ok_type;
+    result_expr->result_type.err_type = err_type;
+    
+    return result_expr;
+}
+
+static Stmt* parse_try_statement() {
+    // Parse try { ... } catch (Type var) { ... }
+    Stmt* try_stmt = alloc_stmt();
+    try_stmt->type = STMT_TRY;
+    
+    expect(TOKEN_LBRACE, "Expected '{' after try");
+    try_stmt->try_stmt.try_block = statement();
+    
+    // Parse multiple catch blocks
+    try_stmt->try_stmt.catch_count = 0;
+    try_stmt->try_stmt.catch_blocks = malloc(sizeof(Stmt*) * 8);
+    try_stmt->try_stmt.exception_types = malloc(sizeof(Token) * 8);
+    try_stmt->try_stmt.exception_vars = malloc(sizeof(Token) * 8);
+    
+    while (match(TOKEN_CATCH)) {
+        expect(TOKEN_LPAREN, "Expected '(' after catch");
+        
+        // Parse exception type
+        expect(TOKEN_IDENT, "Expected exception type");
+        try_stmt->try_stmt.exception_types[try_stmt->try_stmt.catch_count] = parser.previous;
+        
+        // Parse exception variable
+        expect(TOKEN_IDENT, "Expected exception variable");
+        try_stmt->try_stmt.exception_vars[try_stmt->try_stmt.catch_count] = parser.previous;
+        
+        expect(TOKEN_RPAREN, "Expected ')' after catch parameters");
+        expect(TOKEN_LBRACE, "Expected '{' after catch");
+        
+        try_stmt->try_stmt.catch_blocks[try_stmt->try_stmt.catch_count] = statement();
+        try_stmt->try_stmt.catch_count++;
+    }
+    
+    // Optional finally block
+    if (match(TOKEN_FINALLY)) {
+        expect(TOKEN_LBRACE, "Expected '{' after finally");
+        try_stmt->try_stmt.finally_block = statement();
+    } else {
+        try_stmt->try_stmt.finally_block = NULL;
+    }
+    
+    return try_stmt;
+}
+
+static Stmt* parse_catch_statement() {
+    // Parse standalone catch statement
+    Stmt* catch_stmt = alloc_stmt();
+    catch_stmt->type = STMT_CATCH;
+    
+    expect(TOKEN_LPAREN, "Expected '(' after catch");
+    
+    // Parse exception type
+    expect(TOKEN_IDENT, "Expected exception type");
+    catch_stmt->catch_stmt.exception_type = parser.previous;
+    
+    // Parse exception variable
+    expect(TOKEN_IDENT, "Expected exception variable");
+    catch_stmt->catch_stmt.exception_var = parser.previous;
+    
+    expect(TOKEN_RPAREN, "Expected ')' after catch parameters");
+    expect(TOKEN_LBRACE, "Expected '{' after catch");
+    
+    catch_stmt->catch_stmt.body = statement();
+    
+    return catch_stmt;
+}
+
+static Expr* parse_try_expression() {
+    // Parse expression? for error propagation
+    Expr* expr = primary();
+    
+    if (match(TOKEN_QUESTION)) {
+        Expr* try_expr = alloc_expr();
+        try_expr->type = EXPR_TRY;
+        try_expr->try_expr.value = expr;
+        return try_expr;
+    }
+    
+    return expr;
+}
+
+// Update primary() to handle Result constructors and ? operator
+static Expr* primary_with_result() {
+    // Handle Ok() constructor
+    if (match(TOKEN_OK)) {
+        Expr* expr = alloc_expr();
+        expr->type = EXPR_OK;
+        expect(TOKEN_LPAREN, "Expected '(' after Ok");
+        expr->option.value = expression();
+        expect(TOKEN_RPAREN, "Expected ')' after Ok value");
+        return expr;
+    }
+    
+    // Handle Err() constructor
+    if (match(TOKEN_ERR)) {
+        Expr* expr = alloc_expr();
+        expr->type = EXPR_ERR;
+        expect(TOKEN_LPAREN, "Expected '(' after Err");
+        expr->option.value = expression();
+        expect(TOKEN_RPAREN, "Expected ')' after Err value");
+        return expr;
+    }
+    
+    // Handle Result type
+    if (check(TOKEN_IDENT)) {
+        Token name = parser.current;
+        if (strncmp(name.start, "Result", 6) == 0 && name.length == 6) {
+            advance();
+            return parse_result_type();
+        }
+    }
+    
+    // Fall back to regular primary parsing
+    return primary();
 }

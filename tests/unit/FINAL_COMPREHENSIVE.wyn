@@ -1,0 +1,73 @@
+// Final comprehensive test of all working features
+
+struct Point {
+    x: int,
+    y: int
+}
+
+enum Status {
+    PENDING,
+    RUNNING,
+    DONE
+}
+
+type UserId = int;
+
+fn identity<T>(val: T) -> T {
+    return val;
+}
+
+fn main() -> int {
+    // 1. Variables (mutable and immutable)
+    let x = 10;
+    let mut y = 20;
+    y = 30;
+    
+    // 2. Structs
+    let p = Point { x: 5, y: 10 };
+    
+    // 3. Arrays
+    let arr = [1, 2, 3];
+    
+    // 4. Enums
+    let status = DONE;
+    
+    // 5. Type aliases
+    let id: UserId = 123;
+    
+    // 6. Generics
+    let val = identity(42);
+    
+    // 7. Control flow
+    if val == 42 {
+        let temp = 1;
+    }
+    
+    // 8. While loops
+    let mut counter = 0;
+    while counter < 3 {
+        counter = counter + 1;
+    }
+    
+    // 9. For loops
+    let mut total = 0;
+    for i in 0..5 {
+        total = total + i;
+    }
+    
+    // 10. Pattern matching
+    let result = match val {
+        42 => 100,
+        _ => 0
+    };
+    
+    // 11. Result types
+    let success = ok(42);
+    let failure = err(1);
+    
+    // 12. Optional types
+    let maybe = some(42);
+    let nothing = none;
+    
+    return 88;
+}

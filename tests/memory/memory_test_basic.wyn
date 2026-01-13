@@ -1,0 +1,10 @@
+fn test_basic_allocation() -> int {
+    let x = 42;
+    let y = x + 10;
+    return y;
+}
+
+fn main() -> int {
+    let result = test_basic_allocation();
+    return 0;
+}
