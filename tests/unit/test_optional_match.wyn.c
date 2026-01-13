@@ -814,19 +814,12 @@ int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }
 
 // ARC functions are provided by arc_runtime.c
 
-int divide(int a, int b);
 int wyn_main();
 
-int divide(int a, int b) {
-    if ((b == 0)) {
-    return 0;
-    }
-    return (a / b);
-}
-
 int wyn_main() {
-    int result = divide(10, 2);
+    WynOptional* x = ({ some_int(42); /* ARC retain for x */ });
     ;
-    return result;
+    return 42;
+    if(x) free(x);
 }
 

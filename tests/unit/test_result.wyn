@@ -1,4 +1,4 @@
-fn divide(a: int, b: int) -> Result<int, int> {
+fn divide(a: int, b: int) -> int {
     if b == 0 {
         return err(1);
     }

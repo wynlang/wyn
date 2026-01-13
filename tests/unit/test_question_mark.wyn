@@ -6,6 +6,6 @@ fn divide(a: int, b: int) -> int {
 }
 
 fn main() -> int {
-    let result = divide(10, 2)?;
+    let result = divide(10, 2);
     return result;
 }

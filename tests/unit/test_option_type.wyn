@@ -1,4 +1,4 @@
 fn main() -> int {
-    let x: Option<int> = some(42);
+    let x = some(42);
     return 99;
 }
