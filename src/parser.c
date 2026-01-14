@@ -824,6 +824,15 @@ static Expr* assignment() {
             }
             
             return assign;
+        } else if (expr->type == EXPR_FIELD_ACCESS) {
+            // Handle field assignment: obj.field = value
+            Token op = parser.previous;
+            Expr* field_assign = alloc_expr();
+            field_assign->type = EXPR_FIELD_ASSIGN;
+            field_assign->field_assign.object = expr->field_access.object;
+            field_assign->field_assign.field = expr->field_access.field;
+            field_assign->field_assign.value = assignment();
+            return field_assign;
         }
     }
     

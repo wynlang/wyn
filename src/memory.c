@@ -86,6 +86,10 @@ void free_expr(Expr* expr) {
             free_expr(expr->index_assign.index);
             free_expr(expr->index_assign.value);
             break;
+        case EXPR_FIELD_ASSIGN:
+            free_expr(expr->field_assign.object);
+            free_expr(expr->field_assign.value);
+            break;
         case EXPR_OPTIONAL_TYPE:  // T2.5.1: Optional Type Implementation
             free_expr(expr->optional_type.inner_type);
             break;

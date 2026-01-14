@@ -1883,6 +1883,14 @@ void codegen_expr(Expr* expr) {
             }
             break;
         }
+        case EXPR_FIELD_ASSIGN: {
+            // Handle field assignment: obj.field = value
+            emit("(");
+            codegen_expr(expr->field_assign.object);
+            emit(").%.*s = ", expr->field_assign.field.length, expr->field_assign.field.start);
+            codegen_expr(expr->field_assign.value);
+            break;
+        }
         case EXPR_OPTIONAL_TYPE:
             // T2.5.1: Optional Type Implementation - For type expressions, just emit the inner type
             // In a real implementation, this would generate optional type metadata

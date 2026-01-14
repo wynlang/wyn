@@ -948,6 +948,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             check_expr(expr->index_assign.value, scope);
             return builtin_int; // Assignment returns int (simplified)
         }
+        case EXPR_FIELD_ASSIGN: {
+            // Check field assignment
+            check_expr(expr->field_assign.object, scope);
+            check_expr(expr->field_assign.value, scope);
+            return builtin_int; // Assignment returns int (simplified)
+        }
         case EXPR_STRUCT_INIT: {
             // Check if this is a generic struct instantiation
             Token struct_name = expr->struct_init.type_name;

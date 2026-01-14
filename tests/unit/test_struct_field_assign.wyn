@@ -1,0 +1,29 @@
+struct Point {
+    x: int,
+    y: int
+}
+
+fn main() -> int {
+    let mut p = Point { x: 10, y: 20 };
+    
+    // Test field assignment
+    p.x = 30;
+    p.y = 40;
+    
+    if p.x != 30 {
+        return 1;
+    }
+    
+    if p.y != 40 {
+        return 2;
+    }
+    
+    // Test field assignment with expression
+    p.x = p.y + 10;
+    
+    if p.x != 50 {
+        return 3;
+    }
+    
+    return 0;
+}

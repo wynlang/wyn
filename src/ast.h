@@ -42,6 +42,7 @@ typedef enum {
     EXPR_TUPLE,
     EXPR_TUPLE_INDEX,   // Tuple element access (tuple.0, tuple.1, etc.)
     EXPR_INDEX_ASSIGN,
+    EXPR_FIELD_ASSIGN,  // Field assignment (obj.field = value)
     EXPR_OPTIONAL_TYPE,  // T2.5.1: Optional Type Implementation
     EXPR_UNION_TYPE,     // T2.5.2: Union Type Support
     EXPR_RESULT_TYPE,    // TASK-026: Result<T,E> Type Implementation
@@ -248,6 +249,12 @@ typedef struct {
 } IndexAssignExpr;
 
 typedef struct {
+    Expr* object;
+    Token field;
+    Expr* value;
+} FieldAssignExpr;
+
+typedef struct {
     Expr* inner_type;  // The type that is optional (T in T?)
 } OptionalTypeExpr;
 
@@ -291,6 +298,7 @@ struct Expr {
         TupleExpr tuple;
         TupleIndexExpr tuple_index;
         IndexAssignExpr index_assign;
+        FieldAssignExpr field_assign;
         OptionalTypeExpr optional_type;  // T2.5.1: Optional Type Implementation
         UnionTypeExpr union_type;        // T2.5.2: Union Type Support
         ResultTypeExpr result_type;      // TASK-026: Result<T,E> Type Implementation
