@@ -1,31 +1,35 @@
+// State Machine - Demonstrates enums and pattern matching
+
 enum State {
     IDLE,
-    LOADING,
-    READY,
-    ERROR
+    RUNNING,
+    PAUSED,
+    STOPPED
 }
 
-fn transition(current: State, event: int) -> State {
+fn next_state(current: State) -> State {
     return match current {
-        IDLE => LOADING,
-        LOADING => READY,
-        READY => IDLE,
-        ERROR => IDLE
-    }
+        IDLE => State::RUNNING,
+        RUNNING => State::PAUSED,
+        PAUSED => State::RUNNING,
+        STOPPED => State::IDLE
+    };
+}
+
+fn state_to_int(s: State) -> int {
+    return match s {
+        IDLE => 0,
+        RUNNING => 1,
+        PAUSED => 2,
+        STOPPED => 3
+    };
 }
 
 fn main() -> int {
-    var state = IDLE
-    print(state)
+    let s1 = State::IDLE;
+    let s2 = next_state(s1);
+    let s3 = next_state(s2);
+    let s4 = next_state(s3);
     
-    state = transition(state, 0)
-    print(state)
-    
-    state = transition(state, 0)
-    print(state)
-    
-    state = transition(state, 0)
-    print(state)
-    
-    return 0
+    return state_to_int(s2) + state_to_int(s3) + state_to_int(s4);
 }
