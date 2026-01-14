@@ -40,6 +40,7 @@ typedef enum {
     EXPR_SPREAD,
     EXPR_MAP,
     EXPR_TUPLE,
+    EXPR_TUPLE_INDEX,   // Tuple element access (tuple.0, tuple.1, etc.)
     EXPR_INDEX_ASSIGN,
     EXPR_OPTIONAL_TYPE,  // T2.5.1: Optional Type Implementation
     EXPR_UNION_TYPE,     // T2.5.2: Union Type Support
@@ -236,6 +237,11 @@ typedef struct {
 } TupleExpr;
 
 typedef struct {
+    Expr* tuple;
+    int index;
+} TupleIndexExpr;
+
+typedef struct {
     Expr* object;
     Expr* index;
     Expr* value;
@@ -283,6 +289,7 @@ struct Expr {
         LambdaExpr lambda;
         MapExpr map;
         TupleExpr tuple;
+        TupleIndexExpr tuple_index;
         IndexAssignExpr index_assign;
         OptionalTypeExpr optional_type;  // T2.5.1: Optional Type Implementation
         UnionTypeExpr union_type;        // T2.5.2: Union Type Support

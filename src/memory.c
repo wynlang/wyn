@@ -78,6 +78,9 @@ void free_expr(Expr* expr) {
         case EXPR_TUPLE:
             free_tuple_expr(&expr->tuple);
             break;
+        case EXPR_TUPLE_INDEX:
+            free_expr(expr->tuple_index.tuple);
+            break;
         case EXPR_INDEX_ASSIGN:
             free_expr(expr->index_assign.object);
             free_expr(expr->index_assign.index);

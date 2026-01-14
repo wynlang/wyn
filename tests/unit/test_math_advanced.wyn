@@ -1,0 +1,73 @@
+import math from "wyn:math"
+
+fn main() -> int {
+    // Test pow
+    let p1 = math.pow(2, 5);
+    if p1 != 32 {
+        return 1;
+    }
+    
+    // Test sqrt
+    let s1 = math.sqrt(16);
+    if s1 != 4 {
+        return 2;
+    }
+    
+    // Test gcd
+    let g1 = math.gcd(48, 18);
+    if g1 != 6 {
+        return 3;
+    }
+    
+    // Test lcm
+    let l1 = math.lcm(4, 6);
+    if l1 != 12 {
+        return 4;
+    }
+    
+    // Test factorial
+    let f1 = math.factorial(5);
+    if f1 != 120 {
+        return 5;
+    }
+    
+    // Test is_prime
+    let prime1 = math.is_prime(17);
+    if prime1 != 1 {
+        return 6;
+    }
+    
+    let prime2 = math.is_prime(18);
+    if prime2 != 0 {
+        return 7;
+    }
+    
+    // Test clamp
+    let c1 = math.clamp(15, 0, 10);
+    if c1 != 10 {
+        return 8;
+    }
+    
+    let c2 = math.clamp(5, 0, 10);
+    if c2 != 5 {
+        return 9;
+    }
+    
+    // Test sign
+    let sign1 = math.sign(-5);
+    if sign1 != -1 {
+        return 10;
+    }
+    
+    let sign2 = math.sign(5);
+    if sign2 != 1 {
+        return 11;
+    }
+    
+    let sign3 = math.sign(0);
+    if sign3 != 0 {
+        return 12;
+    }
+    
+    return 0;
+}

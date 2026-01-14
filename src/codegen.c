@@ -1846,6 +1846,13 @@ void codegen_expr(Expr* expr) {
             emit(" }");
             break;
         }
+        case EXPR_TUPLE_INDEX: {
+            // Access tuple element: tuple.0 -> tuple.item0
+            emit("(");
+            codegen_expr(expr->tuple_index.tuple);
+            emit(").item%d", expr->tuple_index.index);
+            break;
+        }
         case EXPR_INDEX_ASSIGN: {
             // Handle ARC-managed array assignment
             if (expr->index_assign.index->type == EXPR_STRING) {
@@ -3304,6 +3311,28 @@ void codegen_stmt(Stmt* stmt) {
                 emit("    int x = n, y = 1;\n");
                 emit("    while (x > y) { x = (x + y) / 2; y = n / x; }\n");
                 emit("    return x;\n");
+                emit("}\n");
+                emit("int math_gcd(int a, int b) {\n");
+                emit("    while (b != 0) { int t = b; b = a %% b; a = t; }\n");
+                emit("    return a;\n");
+                emit("}\n");
+                emit("int math_lcm(int a, int b) {\n");
+                emit("    return (a * b) / math_gcd(a, b);\n");
+                emit("}\n");
+                emit("int math_factorial(int n) {\n");
+                emit("    if (n <= 1) return 1;\n");
+                emit("    int result = 1;\n");
+                emit("    for (int i = 2; i <= n; i++) result *= i;\n");
+                emit("    return result;\n");
+                emit("}\n");
+                emit("int math_is_prime(int n) {\n");
+                emit("    if (n < 2) return 0;\n");
+                emit("    if (n == 2) return 1;\n");
+                emit("    if (n %% 2 == 0) return 0;\n");
+                emit("    for (int i = 3; i * i <= n; i += 2) {\n");
+                emit("        if (n %% i == 0) return 0;\n");
+                emit("    }\n");
+                emit("    return 1;\n");
                 emit("}\n");
                 emit("int math_clamp(int val, int min, int max) {\n");
                 emit("    if (val < min) return min;\n");

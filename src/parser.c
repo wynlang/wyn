@@ -535,8 +535,20 @@ static Expr* call() {
             expect(TOKEN_RBRACKET, "Expected ']' after index");
             expr = index_expr;
         } else if (match(TOKEN_DOT)) {
-            Token field_or_method = parser.current;
-            expect(TOKEN_IDENT, "Expected field or method name after '.'");
+            // Check if this is tuple element access (tuple.0, tuple.1, etc.)
+            if (check(TOKEN_INT)) {
+                Token index_token = parser.current;
+                advance();
+                
+                // Create tuple index access expression
+                Expr* tuple_index_expr = alloc_expr();
+                tuple_index_expr->type = EXPR_TUPLE_INDEX;
+                tuple_index_expr->tuple_index.tuple = expr;
+                tuple_index_expr->tuple_index.index = atoi(index_token.start);
+                expr = tuple_index_expr;
+            } else {
+                Token field_or_method = parser.current;
+                expect(TOKEN_IDENT, "Expected field or method name after '.'");
             
             if (match(TOKEN_LPAREN)) {
                 Expr* method_expr = alloc_expr();
@@ -579,6 +591,7 @@ static Expr* call() {
                     field_expr->field_access.is_enum_access = false;
                     expr = field_expr;
                 }
+            }
             }
         } else if (match(TOKEN_QUESTION)) {
             // TASK-028: Handle ? operator for error propagation

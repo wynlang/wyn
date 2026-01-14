@@ -817,8 +817,30 @@ int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }
 int wyn_main();
 
 int wyn_main() {
-    __auto_type pair = (struct { int item0; int item1; }){ 1, 2 };
+    __auto_type pair = (struct { int item0; int item1; }){ 10, 20 };
     ;
-    return 42;
+    int x = (pair).item0;
+    ;
+    int y = (pair).item1;
+    ;
+    __auto_type triple = (struct { int item0; int item1; int item2; }){ 1, 2, 3 };
+    ;
+    int a = (triple).item0;
+    ;
+    int b = (triple).item1;
+    ;
+    int c = (triple).item2;
+    ;
+    __auto_type quad = (struct { int item0; int item1; int item2; int item3; }){ 5, 6, 7, 8 };
+    ;
+    int p = (quad).item0;
+    ;
+    int q = (quad).item1;
+    ;
+    int r = (quad).item2;
+    ;
+    int s = (quad).item3;
+    ;
+    return ((((((((x + y) + a) + b) + c) + p) + q) + r) + s);
 }
 

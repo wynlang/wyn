@@ -894,6 +894,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             return builtin_int; // Tuple type (simplified for now)
         }
+        case EXPR_TUPLE_INDEX: {
+            // Check tuple and return element type
+            check_expr(expr->tuple_index.tuple, scope);
+            return builtin_int; // Element type (simplified for now)
+        }
         case EXPR_FIELD_ACCESS: {
             // Handle enum member access and module.function access
             (void)check_expr(expr->field_access.object, scope);  // Validate object
