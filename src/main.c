@@ -367,6 +367,11 @@ int main(int argc, char** argv) {
         return cmd_doc(argv[2], argc, argv);
     }
     
+    if (strcmp(command, "pkg") == 0) {
+        extern int cmd_pkg(int argc, char** argv);
+        return cmd_pkg(argc, argv);
+    }
+    
     if (strcmp(command, "llvm") == 0) {
 #ifdef WITH_LLVM
         if (argc < 3) {

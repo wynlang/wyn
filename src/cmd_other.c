@@ -163,15 +163,121 @@ int cmd_doc(const char* file, int argc, char** argv) {
 
 int cmd_pkg(int argc, char** argv) {
     if (argc < 3) {
-        printf("Usage: wyn pkg <command>\n");
+        printf("Wyn Package Manager\n\n");
+        printf("Usage: wyn pkg <command>\n\n");
         printf("Commands:\n");
-        printf("  init     - Initialize package\n");
+        printf("  init     - Initialize new package\n");
         printf("  add      - Add dependency\n");
+        printf("  remove   - Remove dependency\n");
+        printf("  list     - List dependencies\n");
         printf("  build    - Build package\n");
         return 1;
     }
-    printf("Package management (not yet implemented)\n");
-    return 0;
+    
+    char* cmd = argv[2];
+    
+    if (strcmp(cmd, "init") == 0) {
+        printf("Initializing Wyn package...\n");
+        
+        // Create wyn.toml
+        FILE* f = fopen("wyn.toml", "w");
+        if (!f) {
+            fprintf(stderr, "Error: Cannot create wyn.toml\n");
+            return 1;
+        }
+        
+        fprintf(f, "[package]\n");
+        fprintf(f, "name = \"my-package\"\n");
+        fprintf(f, "version = \"0.1.0\"\n");
+        fprintf(f, "authors = []\n\n");
+        fprintf(f, "[dependencies]\n");
+        fclose(f);
+        
+        printf("✅ Created wyn.toml\n");
+        
+        // Create src directory
+        system("mkdir -p src");
+        
+        // Create main.wyn
+        FILE* main = fopen("src/main.wyn", "w");
+        if (main) {
+            fprintf(main, "fn main() -> int {\n");
+            fprintf(main, "    return 0;\n");
+            fprintf(main, "}\n");
+            fclose(main);
+            printf("✅ Created src/main.wyn\n");
+        }
+        
+        printf("\n🎉 Package initialized!\n");
+        return 0;
+    }
+    
+    if (strcmp(cmd, "add") == 0) {
+        if (argc < 4) {
+            fprintf(stderr, "Usage: wyn pkg add <package-name>\n");
+            return 1;
+        }
+        
+        char* pkg_name = argv[3];
+        printf("Adding dependency: %s\n", pkg_name);
+        
+        // Append to wyn.toml
+        FILE* f = fopen("wyn.toml", "a");
+        if (!f) {
+            fprintf(stderr, "Error: wyn.toml not found. Run 'wyn pkg init' first.\n");
+            return 1;
+        }
+        
+        fprintf(f, "%s = \"*\"\n", pkg_name);
+        fclose(f);
+        
+        printf("✅ Added %s to dependencies\n", pkg_name);
+        return 0;
+    }
+    
+    if (strcmp(cmd, "list") == 0) {
+        FILE* f = fopen("wyn.toml", "r");
+        if (!f) {
+            fprintf(stderr, "Error: wyn.toml not found\n");
+            return 1;
+        }
+        
+        printf("Dependencies:\n");
+        char line[256];
+        int in_deps = 0;
+        
+        while (fgets(line, sizeof(line), f)) {
+            if (strstr(line, "[dependencies]")) {
+                in_deps = 1;
+                continue;
+            }
+            if (in_deps && line[0] != '[' && strlen(line) > 1) {
+                printf("  - %s", line);
+            }
+            if (in_deps && line[0] == '[') {
+                break;
+            }
+        }
+        
+        fclose(f);
+        return 0;
+    }
+    
+    if (strcmp(cmd, "build") == 0) {
+        printf("Building package...\n");
+        
+        // Compile src/main.wyn
+        int result = system("wyn src/main.wyn");
+        if (result == 0) {
+            printf("✅ Build successful\n");
+        } else {
+            printf("❌ Build failed\n");
+        }
+        return result;
+    }
+    
+    fprintf(stderr, "Unknown command: %s\n", cmd);
+    return 1;
 }
 
 int cmd_lsp(int argc, char** argv) {
