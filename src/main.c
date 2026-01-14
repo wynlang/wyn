@@ -358,6 +358,15 @@ int main(int argc, char** argv) {
         return cmd_repl(argc, argv);
     }
     
+    if (strcmp(command, "doc") == 0) {
+        extern int cmd_doc(const char* file, int argc, char** argv);
+        if (argc < 3) {
+            fprintf(stderr, "Usage: wyn doc <file.wyn>\n");
+            return 1;
+        }
+        return cmd_doc(argv[2], argc, argv);
+    }
+    
     if (strcmp(command, "llvm") == 0) {
 #ifdef WITH_LLVM
         if (argc < 3) {

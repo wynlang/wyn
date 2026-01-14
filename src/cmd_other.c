@@ -102,7 +102,62 @@ int cmd_doc(const char* file, int argc, char** argv) {
         fprintf(stderr, "Usage: wyn doc <file.wyn>\n");
         return 1;
     }
-    printf("Generating docs for %s... (not yet implemented)\n", file);
+    
+    FILE* f = fopen(file, "r");
+    if (!f) {
+        fprintf(stderr, "Error: Cannot open file %s\n", file);
+        return 1;
+    }
+    
+    printf("# Documentation for %s\n\n", file);
+    
+    char line[1024];
+    char comment[4096] = "";
+    int in_comment = 0;
+    
+    while (fgets(line, sizeof(line), f)) {
+        // Check for comment lines
+        if (strncmp(line, "//", 2) == 0) {
+            strcat(comment, line + 3);  // Skip "// "
+            in_comment = 1;
+        }
+        // Check for function definitions
+        else if (strncmp(line, "fn ", 3) == 0) {
+            if (in_comment && strlen(comment) > 0) {
+                printf("## Function\n\n");
+                printf("%s\n", comment);
+                comment[0] = 0;
+                in_comment = 0;
+            }
+            printf("```wyn\n%s```\n\n", line);
+        }
+        // Check for struct definitions
+        else if (strncmp(line, "struct ", 7) == 0) {
+            if (in_comment && strlen(comment) > 0) {
+                printf("## Struct\n\n");
+                printf("%s\n", comment);
+                comment[0] = 0;
+                in_comment = 0;
+            }
+            printf("```wyn\n%s```\n\n", line);
+        }
+        // Check for enum definitions
+        else if (strncmp(line, "enum ", 5) == 0) {
+            if (in_comment && strlen(comment) > 0) {
+                printf("## Enum\n\n");
+                printf("%s\n", comment);
+                comment[0] = 0;
+                in_comment = 0;
+            }
+            printf("```wyn\n%s```\n\n", line);
+        }
+        else if (strlen(line) > 1 && line[0] != ' ' && line[0] != '\t') {
+            comment[0] = 0;
+            in_comment = 0;
+        }
+    }
+    
+    fclose(f);
     return 0;
 }
 
