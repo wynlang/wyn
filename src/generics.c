@@ -837,6 +837,18 @@ void wyn_collect_generic_instantiations_from_stmt(void* stmt_ptr) {
                 wyn_collect_generic_instantiations_from_stmt(stmt->fn.body);
             }
             break;
+        case STMT_MATCH:
+            // Collect from match value expression
+            if (stmt->match_stmt.value) {
+                wyn_collect_generic_instantiations_from_expr(stmt->match_stmt.value);
+            }
+            // Collect from each match case body
+            for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+                if (stmt->match_stmt.cases[i].body) {
+                    wyn_collect_generic_instantiations_from_stmt(stmt->match_stmt.cases[i].body);
+                }
+            }
+            break;
         default:
             break;
     }
@@ -900,6 +912,18 @@ void wyn_collect_generic_instantiations_from_expr(void* expr_ptr) {
             break;
         case EXPR_UNARY:
             wyn_collect_generic_instantiations_from_expr(expr->unary.operand);
+            break;
+        case EXPR_MATCH:
+            // Collect from match value expression
+            if (expr->match.value) {
+                wyn_collect_generic_instantiations_from_expr(expr->match.value);
+            }
+            // Collect from each match arm result
+            for (int i = 0; i < expr->match.arm_count; i++) {
+                if (expr->match.arms[i].result) {
+                    wyn_collect_generic_instantiations_from_expr(expr->match.arms[i].result);
+                }
+            }
             break;
         default:
             break;
