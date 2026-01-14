@@ -2,7 +2,7 @@
 wyn
 *.out
 *.o
-.wyn.c
+*.wyn.c
 *.dSYM/
 
 # Test artifacts

@@ -814,45 +814,147 @@ int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }
 
 // ARC functions are provided by arc_runtime.c
 
-int wyn_str_len(int s);
-int wyn_str_to_int(int s);
-int wyn_int_to_str(int n);
-int wyn_str_eq(int a, int b);
-int wyn_str_concat(int a, int b);
+int wyn_string_length(const char* s);
+int wyn_string_equals(const char* a, const char* b);
+int wyn_string_starts_with(const char* s, const char* prefix);
+int wyn_string_ends_with(const char* s, const char* suffix);
+int wyn_string_contains(const char* s, const char* substr);
+int wyn_string_index_of(const char* s, const char* substr);
 int wyn_main();
 
-int wyn_str_len(int s) {
-    return 5;
+int wyn_string_length(const char* s) {
+    int len = 0;
+    ;
+    int i = 0;
+    ;
+    while ((array_get_int(s, i) != 0)) {
+    len = (len + 1);
+    i = (i + 1);
+    }
+    return len;
 }
 
-int wyn_str_to_int(int s) {
-    return s;
-}
-
-int wyn_int_to_str(int n) {
-    return n;
-}
-
-int wyn_str_eq(int a, int b) {
-    if ((a == b)) {
+int wyn_string_equals(const char* a, const char* b) {
+    int i = 0;
+    ;
+    while ((array_get_int(a, i) != 0)) {
+    if ((array_get_int(a, i) != array_get_int(b, i))) {
+    return 0;
+    }
+    i = (i + 1);
+    }
+    if ((array_get_int(b, i) != 0)) {
+    return 0;
+    }
     return 1;
+}
+
+int wyn_string_starts_with(const char* s, const char* prefix) {
+    int i = 0;
+    ;
+    while ((array_get_int(prefix, i) != 0)) {
+    if ((array_get_int(s, i) != array_get_int(prefix, i))) {
+    return 0;
+    }
+    i = (i + 1);
+    }
+    return 1;
+}
+
+int wyn_string_ends_with(const char* s, const char* suffix) {
+    __auto_type s_len = wyn_string_length(s);
+    ;
+    __auto_type suffix_len = wyn_string_length(suffix);
+    ;
+    if ((suffix_len > s_len)) {
+    return 0;
+    }
+    int i = 0;
+    ;
+    while ((i < suffix_len)) {
+    if ((array_get_int(s, ((s_len - suffix_len) + i)) != array_get_int(suffix, i))) {
+    return 0;
+    }
+    i = (i + 1);
+    }
+    return 1;
+}
+
+int wyn_string_contains(const char* s, const char* substr) {
+    __auto_type s_len = wyn_string_length(s);
+    ;
+    __auto_type substr_len = wyn_string_length(substr);
+    ;
+    if ((substr_len > s_len)) {
+    return 0;
+    }
+    int i = 0;
+    ;
+    while ((i <= (s_len - substr_len))) {
+    int j = 0;
+    ;
+    int found = 1;
+    ;
+    while ((j < substr_len)) {
+    if ((array_get_int(s, (i + j)) != array_get_int(substr, j))) {
+    found = 0;
+    j = substr_len;
+    }
+    if ((found == 1)) {
+    j = (j + 1);
+    }
+    }
+    if ((found == 1)) {
+    return 1;
+    }
+    i = (i + 1);
     }
     return 0;
 }
 
-int wyn_str_concat(int a, int b) {
-    return (a + b);
+int wyn_string_index_of(const char* s, const char* substr) {
+    __auto_type s_len = wyn_string_length(s);
+    ;
+    __auto_type substr_len = wyn_string_length(substr);
+    ;
+    if ((substr_len > s_len)) {
+    return -1;
+    }
+    int i = 0;
+    ;
+    while ((i <= (s_len - substr_len))) {
+    int j = 0;
+    ;
+    int found = 1;
+    ;
+    while ((j < substr_len)) {
+    if ((array_get_int(s, (i + j)) != array_get_int(substr, j))) {
+    found = 0;
+    j = substr_len;
+    }
+    if ((found == 1)) {
+    j = (j + 1);
+    }
+    }
+    if ((found == 1)) {
+    return i;
+    }
+    i = (i + 1);
+    }
+    return -1;
 }
 
 int wyn_main() {
-    const int len = wyn_str_len(12345);
+    const char* s = "hello world";
     ;
-    const int num = wyn_str_to_int(42);
+    __auto_type len = wyn_string_length(s);
     ;
-    const int eq = wyn_str_eq(10, 10);
+    __auto_type has_world = wyn_string_contains(s, "world");
     ;
-    const int cat = wyn_str_concat(5, 7);
+    __auto_type starts = wyn_string_starts_with(s, "hello");
     ;
-    return (((len + num) + eq) + cat);
+    __auto_type idx = wyn_string_index_of(s, "world");
+    ;
+    return (((len + has_world) + starts) + idx);
 }
 

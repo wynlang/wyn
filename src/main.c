@@ -353,6 +353,11 @@ int main(int argc, char** argv) {
         return 0;
     }
     
+    if (strcmp(command, "repl") == 0) {
+        extern int cmd_repl(int argc, char** argv);
+        return cmd_repl(argc, argv);
+    }
+    
     if (strcmp(command, "llvm") == 0) {
 #ifdef WITH_LLVM
         if (argc < 3) {

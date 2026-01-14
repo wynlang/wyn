@@ -819,6 +819,12 @@ int wyn_array_min(WynArray arr, int len);
 int wyn_array_max(WynArray arr, int len);
 int wyn_array_contains(WynArray arr, int len, int val);
 int wyn_array_reverse(WynArray arr, int len);
+int wyn_array_find(WynArray arr, int len, int val);
+int wyn_array_count(WynArray arr, int len, int val);
+int wyn_array_any(WynArray arr, int len, int val);
+int wyn_array_all_equal(WynArray arr, int len, int val);
+int wyn_array_first(WynArray arr, int len);
+int wyn_array_last(WynArray arr, int len);
 int wyn_main();
 
 int wyn_array_sum(WynArray arr, int len) {
@@ -885,7 +891,7 @@ int wyn_array_reverse(WynArray arr, int len) {
     int right = (len - 1);
     ;
     while ((left < right)) {
-    const int temp = array_get_int(arr, left);
+    int temp = array_get_int(arr, left);
     ;
     { WynArray* __arr_ptr = &(arr); int __idx = left; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = array_get_int(arr, right); } };
     { WynArray* __arr_ptr = &(arr); int __idx = right; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = temp; } };
@@ -895,17 +901,79 @@ int wyn_array_reverse(WynArray arr, int len) {
     return 0;
 }
 
+int wyn_array_find(WynArray arr, int len, int val) {
+    int i = 0;
+    ;
+    while ((i < len)) {
+    if ((array_get_int(arr, i) == val)) {
+    return i;
+    }
+    i = (i + 1);
+    }
+    return -1;
+}
+
+int wyn_array_count(WynArray arr, int len, int val) {
+    int count = 0;
+    ;
+    int i = 0;
+    ;
+    while ((i < len)) {
+    if ((array_get_int(arr, i) == val)) {
+    count = (count + 1);
+    }
+    i = (i + 1);
+    }
+    return count;
+}
+
+int wyn_array_any(WynArray arr, int len, int val) {
+    return wyn_array_contains(arr, len, val);
+}
+
+int wyn_array_all_equal(WynArray arr, int len, int val) {
+    int i = 0;
+    ;
+    while ((i < len)) {
+    if ((array_get_int(arr, i) != val)) {
+    return 0;
+    }
+    i = (i + 1);
+    }
+    return 1;
+}
+
+int wyn_array_first(WynArray arr, int len) {
+    if ((len == 0)) {
+    return 0;
+    }
+    return array_get_int(arr, 0);
+}
+
+int wyn_array_last(WynArray arr, int len) {
+    if ((len == 0)) {
+    return 0;
+    }
+    return array_get_int(arr, (len - 1));
+}
+
 int wyn_main() {
-    const WynArray arr = ({ WynArray __arr_0 = array_new(); array_push_int(&__arr_0, 5); array_push_int(&__arr_0, 2); array_push_int(&__arr_0, 8); array_push_int(&__arr_0, 1); array_push_int(&__arr_0, 9); __arr_0; });
+    WynArray arr = ({ WynArray __arr_0 = array_new(); array_push_int(&__arr_0, 5); array_push_int(&__arr_0, 2); array_push_int(&__arr_0, 8); array_push_int(&__arr_0, 1); array_push_int(&__arr_0, 9); __arr_0; });
     ;
-    const int s = wyn_array_sum(arr, 5);
+    __auto_type s = wyn_array_sum(arr, 5);
     ;
-    const int min_val = wyn_array_min(arr, 5);
+    __auto_type min_val = wyn_array_min(arr, 5);
     ;
-    const int max_val = wyn_array_max(arr, 5);
+    __auto_type max_val = wyn_array_max(arr, 5);
     ;
-    const int has_8 = wyn_array_contains(arr, 5, 8);
+    __auto_type has_8 = wyn_array_contains(arr, 5, 8);
     ;
-    return (((s + min_val) + max_val) + has_8);
+    __auto_type idx = wyn_array_find(arr, 5, 8);
+    ;
+    __auto_type first = wyn_array_first(arr, 5);
+    ;
+    __auto_type last = wyn_array_last(arr, 5);
+    ;
+    return ((((((s + min_val) + max_val) + has_8) + idx) + first) + last);
 }
 
