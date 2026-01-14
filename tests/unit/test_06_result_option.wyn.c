@@ -817,7 +817,7 @@ int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }
 int wyn_main();
 
 int wyn_main() {
-    WynResult* x = ({ ok_int(99); /* ARC retain for x */ });
+    WynResult* x = ({ 99; /* ARC retain for x */ });
     ;
     WynOptional* y = ({ some_int(42); /* ARC retain for y */ });
     ;

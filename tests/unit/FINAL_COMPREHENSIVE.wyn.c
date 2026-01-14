@@ -884,9 +884,9 @@ int wyn_main() {
         default: _match_result_0 = 0; break;
     } _match_result_0; });
     ;
-    WynResult* success = ({ ok_int(42); /* ARC retain for success */ });
+    WynResult* success = ({ 42; /* ARC retain for success */ });
     ;
-    WynResult* failure = ({ err_int(1); /* ARC retain for failure */ });
+    WynResult* failure = ({ 1; /* ARC retain for failure */ });
     ;
     WynOptional* maybe = ({ some_int(42); /* ARC retain for maybe */ });
     ;

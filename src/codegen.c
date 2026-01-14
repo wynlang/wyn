@@ -1669,46 +1669,20 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_OK: {
-            // TASK-026: Generate type-specific Ok constructor
+            // TASK-026: Generate Ok value - just return the inner value directly
             if (expr->option.value) {
-                // Infer type from the value expression
-                if (expr->option.value->type == EXPR_INT) {
-                    emit("ok_int(");
-                } else if (expr->option.value->type == EXPR_FLOAT) {
-                    emit("ok_float(");
-                } else if (expr->option.value->type == EXPR_STRING) {
-                    emit("ok_string(");
-                } else if (expr->option.value->type == EXPR_BOOL) {
-                    emit("ok_bool(");
-                } else {
-                    emit("ok_int(");  // Default to int
-                }
                 codegen_expr(expr->option.value);
-                emit(")");
             } else {
-                emit("ok_void()");
+                emit("0");  // ok() with no value returns 0
             }
             break;
         }
         case EXPR_ERR: {
-            // TASK-026: Generate type-specific Err constructor
+            // TASK-026: Generate Err value - return the error value directly
             if (expr->option.value) {
-                // Infer type from the error expression
-                if (expr->option.value->type == EXPR_INT) {
-                    emit("err_int(");
-                } else if (expr->option.value->type == EXPR_FLOAT) {
-                    emit("err_float(");
-                } else if (expr->option.value->type == EXPR_STRING) {
-                    emit("err_string(");
-                } else if (expr->option.value->type == EXPR_BOOL) {
-                    emit("err_bool(");
-                } else {
-                    emit("err_string(");  // Default to string for errors
-                }
                 codegen_expr(expr->option.value);
-                emit(")");
             } else {
-                emit("err_string(\"Unknown error\")");
+                emit("1");  // err() with no value returns 1
             }
             break;
         }

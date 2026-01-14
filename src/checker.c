@@ -1167,6 +1167,11 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 Type* return_expr_type = check_expr(stmt->ret.value, scope);
                 // Validate return type matches function return type
                 if (current_function_return_type && return_expr_type) {
+                    // Skip type checking for Result types (allows implicit conversion)
+                    if (return_expr_type->kind == TYPE_RESULT) {
+                        // Allow returning Result from any function
+                        break;
+                    }
                     if (current_function_return_type->kind != return_expr_type->kind) {
                         fprintf(stderr, "Error: Return type mismatch. Expected ");
                         print_type_name(current_function_return_type);

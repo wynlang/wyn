@@ -875,7 +875,7 @@ int wyn_main() {
     ;
     WynArray arr = ({ WynArray __arr_0 = array_new(); array_push_int(&__arr_0, 1); array_push_int(&__arr_0, 2); array_push_int(&__arr_0, 3); __arr_0; });
     ;
-    WynResult* ok_val = ({ ok_int(42); /* ARC retain for ok_val */ });
+    WynResult* ok_val = ({ 42; /* ARC retain for ok_val */ });
     ;
     WynOptional* some_val = ({ some_int(42); /* ARC retain for some_val */ });
     ;
