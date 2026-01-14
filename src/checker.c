@@ -1276,7 +1276,39 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 fn_type->fn_type.param_count = method->param_count;
                 fn_type->fn_type.param_types = malloc(sizeof(Type*) * method->param_count);
                 for (int j = 0; j < method->param_count; j++) {
-                    fn_type->fn_type.param_types[j] = builtin_int; // Simplified
+                    Type* param_type = builtin_int; // default
+                    
+                    // Check if first parameter is 'self' - if so, use the impl type
+                    if (j == 0 && method->param_count > 0 && 
+                        method->params[0].length == 4 && 
+                        memcmp(method->params[0].start, "self", 4) == 0) {
+                        Symbol* type_symbol = find_symbol(global_scope, stmt->impl.type_name);
+                        if (type_symbol && type_symbol->type && type_symbol->type->kind == TYPE_STRUCT) {
+                            param_type = type_symbol->type;
+                        }
+                    } else if (method->param_types[j]) {
+                        // Look up parameter type
+                        if (method->param_types[j]->type == EXPR_IDENT) {
+                            Token type_name = method->param_types[j]->token;
+                            if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+                                param_type = builtin_int;
+                            } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+                                param_type = builtin_string;
+                            } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
+                                param_type = builtin_float;
+                            } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
+                                param_type = builtin_bool;
+                            } else {
+                                // Check if it's a struct type
+                                Symbol* type_symbol = find_symbol(global_scope, type_name);
+                                if (type_symbol && type_symbol->type && type_symbol->type->kind == TYPE_STRUCT) {
+                                    param_type = type_symbol->type;
+                                }
+                            }
+                        }
+                    }
+                    
+                    fn_type->fn_type.param_types[j] = param_type;
                 }
                 fn_type->fn_type.return_type = builtin_int; // Simplified
                 
@@ -1435,8 +1467,13 @@ void check_program(Program* prog) {
                 
                 // FIX: For extension methods, first parameter defaults to receiver type
                 if (fn->is_extension && j == 0 && !fn->param_types[j]) {
-                    // Create a type for the receiver (simplified - use int as placeholder)
-                    param_type = builtin_int; // TODO: lookup actual struct type
+                    // Look up the receiver struct type
+                    Symbol* receiver_symbol = find_symbol(global_scope, fn->receiver_type);
+                    if (receiver_symbol && receiver_symbol->type && receiver_symbol->type->kind == TYPE_STRUCT) {
+                        param_type = receiver_symbol->type;
+                    } else {
+                        param_type = builtin_int; // Fallback
+                    }
                 } else if (fn->param_types[j]) {
                     if (fn->param_types[j]->type == EXPR_IDENT) {
                         Token type_name = fn->param_types[j]->token;
