@@ -1,0 +1,13 @@
+// Edge case: Spawn same function multiple times
+fn worker() -> int {
+    return 1;
+}
+
+fn main() -> int {
+    spawn worker();
+    spawn worker();
+    spawn worker();
+    spawn worker();
+    spawn worker();
+    return 0;
+}

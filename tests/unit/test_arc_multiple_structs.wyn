@@ -1,0 +1,22 @@
+// Edge case: Multiple structs with ARC
+struct Point {
+    x: int,
+    y: int
+}
+
+struct Box {
+    value: int
+}
+
+struct Data {
+    a: int,
+    b: int,
+    c: int
+}
+
+fn main() -> int {
+    let p = Point { x: 10, y: 20 };
+    let b = Box { value: 5 };
+    let d = Data { a: 1, b: 2, c: 3 };
+    return p.x + p.y + b.value + d.a + d.b + d.c;
+}

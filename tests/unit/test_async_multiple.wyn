@@ -1,0 +1,19 @@
+// Edge case: Multiple async functions
+async fn get_a() -> int {
+    return 10;
+}
+
+async fn get_b() -> int {
+    return 20;
+}
+
+async fn get_c() -> int {
+    return 30;
+}
+
+fn main() -> int {
+    let a = await get_a();
+    let b = await get_b();
+    let c = await get_c();
+    return a + b + c;
+}
