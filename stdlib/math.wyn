@@ -112,3 +112,133 @@ fn sign(n: int) -> int {
     }
     return 0;
 }
+
+
+// Additional math utilities
+
+fn max3(a: int, b: int, c: int) -> int {
+    let m = max(a, b);
+    return max(m, c);
+}
+
+fn min3(a: int, b: int, c: int) -> int {
+    let m = min(a, b);
+    return min(m, c);
+}
+
+fn avg(a: int, b: int) -> int {
+    return (a + b) / 2;
+}
+
+fn avg3(a: int, b: int, c: int) -> int {
+    return (a + b + c) / 3;
+}
+
+fn cube(n: int) -> int {
+    return n * n * n;
+}
+
+fn square(n: int) -> int {
+    return n * n;
+}
+
+fn is_even(n: int) -> int {
+    let rem = n - (n / 2) * 2;
+    if rem == 0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_odd(n: int) -> int {
+    let even = is_even(n);
+    if even == 1 {
+        return 0;
+    }
+    return 1;
+}
+
+fn div_ceil(a: int, b: int) -> int {
+    let q = a / b;
+    let r = a - q * b;
+    if r > 0 {
+        return q + 1;
+    }
+    return q;
+}
+
+fn div_floor(a: int, b: int) -> int {
+    return a / b;
+}
+
+fn mod_positive(a: int, b: int) -> int {
+    let r = a - (a / b) * b;
+    if r < 0 {
+        return r + b;
+    }
+    return r;
+}
+
+fn fibonacci(n: int) -> int {
+    if n <= 1 {
+        return n;
+    }
+    let mut a = 0;
+    let mut b = 1;
+    let mut i = 2;
+    while i <= n {
+        let temp = a + b;
+        a = b;
+        b = temp;
+        i = i + 1;
+    }
+    return b;
+}
+
+fn sum_range(n: int) -> int {
+    return n * (n + 1) / 2;
+}
+
+fn sum_squares(n: int) -> int {
+    return n * (n + 1) * (2 * n + 1) / 6;
+}
+
+fn nth_triangular(n: int) -> int {
+    return n * (n + 1) / 2;
+}
+
+fn nth_pentagonal(n: int) -> int {
+    return n * (3 * n - 1) / 2;
+}
+
+fn nth_hexagonal(n: int) -> int {
+    return n * (2 * n - 1);
+}
+
+fn binomial(n: int, k: int) -> int {
+    if k > n {
+        return 0;
+    }
+    if k == 0 {
+        return 1;
+    }
+    if k > n - k {
+        return binomial(n, n - k);
+    }
+    let mut result = 1;
+    let mut i = 0;
+    while i < k {
+        result = result * (n - i);
+        result = result / (i + 1);
+        i = i + 1;
+    }
+    return result;
+}
+
+fn catalan(n: int) -> int {
+    if n <= 1 {
+        return 1;
+    }
+    let c = binomial(2 * n, n);
+    return c / (n + 1);
+}
