@@ -1,0 +1,16 @@
+// Simple hash function example
+
+fn hash(key: int, size: int) -> int {
+    return key - (key / size) * size;  // key % size
+}
+
+fn main() -> int {
+    // Test hash function with different keys
+    let size = 10;
+    
+    let h1 = hash(15, size);  // 5
+    let h2 = hash(25, size);  // 5 (collision)
+    let h3 = hash(37, size);  // 7
+    
+    return h1 + h2 + h3;  // 5 + 5 + 7 = 17
+}
