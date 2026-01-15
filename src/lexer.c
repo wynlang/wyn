@@ -167,6 +167,9 @@ static TokenType keyword_type(const char* start, int length) {
             if (length == 5 && memcmp(start, "throw", 5) == 0) return TOKEN_THROW;
             if (length == 5 && memcmp(start, "trait", 5) == 0) return TOKEN_TRAIT;
             break;
+        case 'u':
+            if (length == 6 && memcmp(start, "unsafe", 6) == 0) return TOKEN_UNSAFE;
+            break;
         case 'v': if (length == 3 && memcmp(start, "var", 3) == 0) return TOKEN_VAR; break;
         case 'w': if (length == 5 && memcmp(start, "while", 5) == 0) return TOKEN_WHILE; break;
     }

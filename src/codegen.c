@@ -2908,6 +2908,15 @@ void codegen_stmt(Stmt* stmt) {
                 codegen_stmt(stmt->block.stmts[i]);
             }
             break;
+        case STMT_UNSAFE:
+            // Unsafe blocks are just regular blocks in C
+            emit("/* unsafe */ {\n");
+            for (int i = 0; i < stmt->block.count; i++) {
+                emit("    ");
+                codegen_stmt(stmt->block.stmts[i]);
+            }
+            emit("}\n");
+            break;
         case STMT_FN: {
             // Determine return type
             const char* return_type = "int"; // default

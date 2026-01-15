@@ -1005,6 +1005,19 @@ Stmt* statement() {
         return stmt;
     }
     
+    if (match(TOKEN_UNSAFE)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_UNSAFE;
+        expect(TOKEN_LBRACE, "Expected '{' after 'unsafe'");
+        stmt->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->block.count = 0;
+        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+            stmt->block.stmts[stmt->block.count++] = statement();
+        }
+        expect(TOKEN_RBRACE, "Expected '}' after unsafe block");
+        return stmt;
+    }
+    
     if (match(TOKEN_IF) || match(TOKEN_ELSEIF)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_IF;

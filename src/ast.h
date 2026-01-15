@@ -311,6 +311,7 @@ typedef enum {
     STMT_VAR,
     STMT_RETURN,
     STMT_BLOCK,
+    STMT_UNSAFE,
     STMT_FN,
     STMT_EXTERN,
     STMT_STRUCT,
