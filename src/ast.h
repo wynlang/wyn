@@ -323,6 +323,7 @@ typedef enum {
     STMT_CONTINUE,
     STMT_ENUM,
     STMT_TYPE_ALIAS,
+    STMT_MACRO,
     STMT_IMPORT,
     STMT_EXPORT,
     STMT_ASYNC_FN,
@@ -443,6 +444,13 @@ typedef struct {
 } TypeAliasStmt;
 
 typedef struct {
+    Token name;
+    Token* params;
+    int param_count;
+    Token body;  // Store as token for simple text substitution
+} MacroStmt;
+
+typedef struct {
     Token module;
     Token path;      // Optional path like "wyn:math"
     Token* items;
@@ -518,6 +526,7 @@ struct Stmt {
         ForStmt for_stmt;
         EnumStmt enum_decl;
         TypeAliasStmt type_alias;
+        MacroStmt macro;
         ImportStmt import;
         ExportStmt export;
         TryStmt try_stmt;

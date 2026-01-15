@@ -1,0 +1,5 @@
+// Test very basic lambda without types
+fn main() -> int {
+    let double = |x| x * 2;
+    return double(5);  // Should return 10
+}

@@ -1788,6 +1788,71 @@ Program* parse_program() {
             continue;
         }
         
+        // Handle macro definitions
+        if (match(TOKEN_MACRO)) {
+            Stmt* stmt = malloc(sizeof(Stmt));
+            stmt->type = STMT_MACRO;
+            stmt->macro.name = parser.current;
+            expect(TOKEN_IDENT, "Expected macro name");
+            
+            // Parse parameters
+            expect(TOKEN_LPAREN, "Expected '(' after macro name");
+            stmt->macro.params = NULL;
+            stmt->macro.param_count = 0;
+            
+            if (!check(TOKEN_RPAREN)) {
+                int capacity = 8;
+                stmt->macro.params = malloc(sizeof(Token) * capacity);
+                do {
+                    if (stmt->macro.param_count >= capacity) {
+                        capacity *= 2;
+                        stmt->macro.params = realloc(stmt->macro.params, sizeof(Token) * capacity);
+                    }
+                    stmt->macro.params[stmt->macro.param_count] = parser.current;
+                    expect(TOKEN_IDENT, "Expected parameter name");
+                    stmt->macro.param_count++;
+                } while (match(TOKEN_COMMA));
+            }
+            expect(TOKEN_RPAREN, "Expected ')' after parameters");
+            
+            // Parse body as token sequence (simple text substitution)
+            expect(TOKEN_LBRACE, "Expected '{' before macro body");
+            stmt->macro.body.start = parser.current.start;
+            int brace_count = 1;
+            while (!check(TOKEN_EOF) && brace_count > 0) {
+                if (check(TOKEN_LBRACE)) brace_count++;
+                else if (check(TOKEN_RBRACE)) brace_count--;
+                if (brace_count > 0) advance();
+            }
+            stmt->macro.body.length = parser.current.start - stmt->macro.body.start;
+            expect(TOKEN_RBRACE, "Expected '}' after macro body");
+            
+            prog->stmts[prog->count++] = stmt;
+            continue;
+        }
+        
+        // Handle import statements (old position - remove duplicate)
+        if (false && match(TOKEN_IMPORT)) {
+            Stmt* stmt = safe_malloc(sizeof(Stmt));
+            stmt->type = STMT_IMPORT;
+            expect(TOKEN_IDENT, "Expected module name");
+            stmt->import.module = parser.previous;
+            
+            // Optional: from "path"
+            if (match(TOKEN_FROM)) {
+                expect(TOKEN_STRING, "Expected string path after 'from'");
+                stmt->import.path = parser.previous;
+            } else {
+                stmt->import.path.start = NULL;
+                stmt->import.path.length = 0;
+            }
+            
+            stmt->import.items = NULL;
+            stmt->import.item_count = 0;
+            prog->stmts[prog->count++] = stmt;
+            continue;
+        }
+        
         // Handle export statements
         if (match(TOKEN_EXPORT)) {
             Stmt* stmt = malloc(sizeof(Stmt));

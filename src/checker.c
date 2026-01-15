@@ -1453,6 +1453,17 @@ void check_program(Program* prog) {
             }
             fn_type->fn_type.return_type = builtin_int; // Simplified
             add_function_overload(global_scope, ext->name, fn_type, false);
+        } else if (prog->stmts[i]->type == STMT_MACRO) {
+            // Register macro as function
+            MacroStmt* macro = &prog->stmts[i]->macro;
+            Type* fn_type = make_type(TYPE_FUNCTION);
+            fn_type->fn_type.param_count = macro->param_count;
+            fn_type->fn_type.param_types = malloc(sizeof(Type*) * macro->param_count);
+            for (int j = 0; j < macro->param_count; j++) {
+                fn_type->fn_type.param_types[j] = builtin_int; // Simplified
+            }
+            fn_type->fn_type.return_type = builtin_int; // Simplified
+            add_function_overload(global_scope, macro->name, fn_type, false);
         }
     }
     

@@ -150,6 +150,9 @@ void free_stmt(Stmt* stmt) {
             }
             if (stmt->extern_fn.return_type) free_expr(stmt->extern_fn.return_type);
             break;
+        case STMT_MACRO:
+            if (stmt->macro.params) free(stmt->macro.params);
+            break;
         case STMT_STRUCT:
             free_struct_stmt(&stmt->struct_decl);
             break;

@@ -133,6 +133,7 @@ static TokenType keyword_type(const char* start, int length) {
             if (length == 3 && memcmp(start, "mut", 3) == 0) return TOKEN_MUT;
             if (length == 3 && memcmp(start, "map", 3) == 0) return TOKEN_MAP;
             if (length == 6 && memcmp(start, "module", 6) == 0) return TOKEN_MODULE;
+            if (length == 5 && memcmp(start, "macro", 5) == 0) return TOKEN_MACRO;
             break;
         case 'n': 
             if (length == 3 && memcmp(start, "not", 3) == 0) return TOKEN_NOT;

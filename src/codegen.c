@@ -3051,6 +3051,16 @@ void codegen_stmt(Stmt* stmt) {
             emit(");\n");
             break;
         }
+        case STMT_MACRO: {
+            // Generate C macro
+            emit("#define %.*s(", stmt->macro.name.length, stmt->macro.name.start);
+            for (int i = 0; i < stmt->macro.param_count; i++) {
+                if (i > 0) emit(", ");
+                emit("%.*s", stmt->macro.params[i].length, stmt->macro.params[i].start);
+            }
+            emit(") %.*s\n", stmt->macro.body.length, stmt->macro.body.start);
+            break;
+        }
         case STMT_STRUCT:
             // Skip generic structs - they will be handled by monomorphization
             if (stmt->struct_decl.type_param_count > 0) {
@@ -3656,6 +3666,13 @@ void codegen_program(Program* prog) {
     // Generate extern declarations
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_EXTERN) {
+            codegen_stmt(prog->stmts[i]);
+        }
+    }
+    
+    // Generate macros
+    for (int i = 0; i < prog->count; i++) {
+        if (prog->stmts[i]->type == STMT_MACRO) {
             codegen_stmt(prog->stmts[i]);
         }
     }

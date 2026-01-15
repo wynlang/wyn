@@ -1,0 +1,6 @@
+// Test basic macro
+macro DOUBLE(x) { (x) * 2 }
+
+fn main() -> int {
+    return DOUBLE(5);  // Should return 10
+}
