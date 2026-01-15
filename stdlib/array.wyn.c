@@ -834,6 +834,12 @@ int wyn_array_equal(WynArray a, WynArray b, int len);
 int wyn_array_swap(WynArray arr, int i, int j);
 int wyn_array_rotate_left(WynArray arr, int len);
 int wyn_array_rotate_right(WynArray arr, int len);
+int wyn_array_slice(WynArray src, WynArray dst, int start, int end);
+int wyn_array_concat(WynArray a, int a_len, WynArray b, int b_len, WynArray result);
+int wyn_array_unique_count(WynArray arr, int len);
+int wyn_array_index_of_max(WynArray arr, int len);
+int wyn_array_index_of_min(WynArray arr, int len);
+int wyn_array_range(int start, int end, WynArray result);
 
 int wyn_array_sum(WynArray arr, int len) {
     int total = 0;
@@ -1077,5 +1083,109 @@ int wyn_array_rotate_right(WynArray arr, int len) {
     }
     { WynArray* __arr_ptr = &(arr); int __idx = 0; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = last; } };
     return 0;
+}
+
+int wyn_array_slice(WynArray src, WynArray dst, int start, int end) {
+    int i = start;
+    ;
+    int j = 0;
+    ;
+    while ((i < end)) {
+    { WynArray* __arr_ptr = &(dst); int __idx = j; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = array_get_int(src, i); } };
+    i = (i + 1);
+    j = (j + 1);
+    }
+    return j;
+}
+
+int wyn_array_concat(WynArray a, int a_len, WynArray b, int b_len, WynArray result) {
+    int i = 0;
+    ;
+    while ((i < a_len)) {
+    { WynArray* __arr_ptr = &(result); int __idx = i; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = array_get_int(a, i); } };
+    i = (i + 1);
+    }
+    int j = 0;
+    ;
+    while ((j < b_len)) {
+    { WynArray* __arr_ptr = &(result); int __idx = (a_len + j); if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = array_get_int(b, j); } };
+    j = (j + 1);
+    }
+    return (a_len + b_len);
+}
+
+int wyn_array_unique_count(WynArray arr, int len) {
+    if ((len == 0)) {
+    return 0;
+    }
+    int count = 1;
+    ;
+    int i = 1;
+    ;
+    while ((i < len)) {
+    int is_unique = 1;
+    ;
+    int j = 0;
+    ;
+    while ((j < i)) {
+    if ((array_get_int(arr, i) == array_get_int(arr, j))) {
+    is_unique = 0;
+    j = i;
+    }
+    j = (j + 1);
+    }
+    if ((is_unique == 1)) {
+    count = (count + 1);
+    }
+    i = (i + 1);
+    }
+    return count;
+}
+
+int wyn_array_index_of_max(WynArray arr, int len) {
+    if ((len == 0)) {
+    return -1;
+    }
+    int max_idx = 0;
+    ;
+    int i = 1;
+    ;
+    while ((i < len)) {
+    if ((array_get_int(arr, i) > array_get_int(arr, max_idx))) {
+    max_idx = i;
+    }
+    i = (i + 1);
+    }
+    return max_idx;
+}
+
+int wyn_array_index_of_min(WynArray arr, int len) {
+    if ((len == 0)) {
+    return -1;
+    }
+    int min_idx = 0;
+    ;
+    int i = 1;
+    ;
+    while ((i < len)) {
+    if ((array_get_int(arr, i) < array_get_int(arr, min_idx))) {
+    min_idx = i;
+    }
+    i = (i + 1);
+    }
+    return min_idx;
+}
+
+int wyn_array_range(int start, int end, WynArray result) {
+    int i = start;
+    ;
+    int j = 0;
+    ;
+    while ((i < end)) {
+    { WynArray* __arr_ptr = &(result); int __idx = j; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = i; } };
+    i = (i + 1);
+    j = (j + 1);
+    }
+    return j;
 }
 
