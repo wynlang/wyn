@@ -3383,6 +3383,28 @@ void codegen_stmt(Stmt* stmt) {
                 emit("    int c = math_binomial(2 * n, n);\n");
                 emit("    return c / (n + 1);\n");
                 emit("}\n");
+                emit("int math_bit_count(int n) {\n");
+                emit("    int count = 0;\n");
+                emit("    while (n) { count += n & 1; n >>= 1; }\n");
+                emit("    return count;\n");
+                emit("}\n");
+                emit("int math_bit_set(int n, int pos) { return n | (1 << pos); }\n");
+                emit("int math_bit_clear(int n, int pos) { return n & ~(1 << pos); }\n");
+                emit("int math_bit_toggle(int n, int pos) { return n ^ (1 << pos); }\n");
+                emit("int math_bit_test(int n, int pos) { return (n & (1 << pos)) != 0 ? 1 : 0; }\n");
+                emit("int math_next_power_of_2(int n) {\n");
+                emit("    if (n <= 1) return 1;\n");
+                emit("    int p = 1;\n");
+                emit("    while (p < n) p *= 2;\n");
+                emit("    return p;\n");
+                emit("}\n");
+                emit("int math_is_power_of_2(int n) { return n > 0 && (n & (n - 1)) == 0 ? 1 : 0; }\n");
+                emit("int math_log2_floor(int n) {\n");
+                emit("    if (n <= 0) return -1;\n");
+                emit("    int count = 0;\n");
+                emit("    while (n > 1) { n >>= 1; count++; }\n");
+                emit("    return count;\n");
+                emit("}\n");
             } else if (strcmp(module_name, "random") == 0) {
                 emit("// import random module\n");
                 emit("#ifndef WYN_RANDOM_MODULE\n");
