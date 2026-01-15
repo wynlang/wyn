@@ -472,10 +472,17 @@ static int calculate_match_score(Type* fn_type, Type** arg_types, int arg_count)
     if (fn_type->kind != TYPE_FUNCTION) return -1;
     
     FunctionType* func = &fn_type->fn_type;
-    if (func->param_count != arg_count) return -1;  // Exact count match required for now
+    
+    // For variadic functions, allow arg_count >= param_count
+    if (func->is_variadic) {
+        if (arg_count < func->param_count) return -1;
+    } else {
+        if (func->param_count != arg_count) return -1;  // Exact count match required for non-variadic
+    }
     
     int score = 0;
-    for (int i = 0; i < arg_count; i++) {
+    // Only check types for the declared parameters
+    for (int i = 0; i < func->param_count && i < arg_count; i++) {
         if (types_equal(func->param_types[i], arg_types[i])) {
             score += 10;  // Exact match
         } else if (can_convert_type(arg_types[i], func->param_types[i])) {
@@ -483,6 +490,11 @@ static int calculate_match_score(Type* fn_type, Type** arg_types, int arg_count)
         } else {
             return -1;    // No match possible
         }
+    }
+    
+    // For variadic functions, give a small bonus for extra args (they're allowed)
+    if (func->is_variadic && arg_count > func->param_count) {
+        score += 1;  // Small bonus for variadic match
     }
     
     return score;
@@ -670,14 +682,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             
             // T1.5.4: Enhanced parameter validation for function types
             if (callee_type && callee_type->kind == TYPE_FUNCTION) {
-                if (expr->call.arg_count != callee_type->fn_type.param_count) {
+                // For variadic functions, allow any number of arguments >= param_count
+                if (callee_type->fn_type.is_variadic) {
+                    if (expr->call.arg_count < callee_type->fn_type.param_count) {
+                        fprintf(stderr, "Error: Variadic function expects at least %d arguments, got %d\n",
+                                callee_type->fn_type.param_count, expr->call.arg_count);
+                        had_error = true;
+                    }
+                } else if (expr->call.arg_count != callee_type->fn_type.param_count) {
                     fprintf(stderr, "Error: Parameter count mismatch - function expects %d arguments, got %d\n",
                             callee_type->fn_type.param_count, expr->call.arg_count);
                     had_error = true;
                 }
                 
-                // Check type compatibility for each argument
-                for (int i = 0; i < expr->call.arg_count && i < callee_type->fn_type.param_count; i++) {
+                // Check type compatibility for each argument (only for non-variadic params)
+                int params_to_check = callee_type->fn_type.param_count;
+                for (int i = 0; i < expr->call.arg_count && i < params_to_check; i++) {
                     Type* expected_type = callee_type->fn_type.param_types[i];
                     Type* actual_type = check_expr(expr->call.args[i], scope);
                     
@@ -1447,9 +1467,22 @@ void check_program(Program* prog) {
             ExternStmt* ext = &prog->stmts[i]->extern_fn;
             Type* fn_type = make_type(TYPE_FUNCTION);
             fn_type->fn_type.param_count = ext->param_count;
+            fn_type->fn_type.is_variadic = ext->is_variadic;
             fn_type->fn_type.param_types = malloc(sizeof(Type*) * ext->param_count);
             for (int j = 0; j < ext->param_count; j++) {
-                fn_type->fn_type.param_types[j] = builtin_int; // Simplified
+                // Convert type expression to Type*
+                if (ext->param_types[j] && ext->param_types[j]->type == EXPR_IDENT) {
+                    Token type_name = ext->param_types[j]->token;
+                    if (strncmp(type_name.start, "string", type_name.length) == 0) {
+                        fn_type->fn_type.param_types[j] = builtin_string;
+                    } else if (strncmp(type_name.start, "int", type_name.length) == 0) {
+                        fn_type->fn_type.param_types[j] = builtin_int;
+                    } else {
+                        fn_type->fn_type.param_types[j] = builtin_int; // Default fallback
+                    }
+                } else {
+                    fn_type->fn_type.param_types[j] = builtin_int; // Fallback
+                }
             }
             fn_type->fn_type.return_type = builtin_int; // Simplified
             add_function_overload(global_scope, ext->name, fn_type, false);
