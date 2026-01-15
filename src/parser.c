@@ -1407,6 +1407,62 @@ Stmt* function() {
     return stmt;
 }
 
+Stmt* extern_decl() {
+    expect(TOKEN_EXTERN, "Expected 'extern'");
+    expect(TOKEN_FN, "Expected 'fn' after 'extern'");
+    
+    Stmt* stmt = alloc_stmt();
+    stmt->type = STMT_EXTERN;
+    stmt->extern_fn.name = parser.current;
+    expect(TOKEN_IDENT, "Expected function name");
+    
+    expect(TOKEN_LPAREN, "Expected '(' after function name");
+    
+    stmt->extern_fn.params = NULL;
+    stmt->extern_fn.param_types = NULL;
+    stmt->extern_fn.param_count = 0;
+    stmt->extern_fn.is_variadic = false;
+    
+    if (!check(TOKEN_RPAREN)) {
+        int capacity = 8;
+        stmt->extern_fn.params = malloc(sizeof(Token) * capacity);
+        stmt->extern_fn.param_types = malloc(sizeof(Expr*) * capacity);
+        
+        do {
+            if (stmt->extern_fn.param_count >= capacity) {
+                capacity *= 2;
+                stmt->extern_fn.params = realloc(stmt->extern_fn.params, sizeof(Token) * capacity);
+                stmt->extern_fn.param_types = realloc(stmt->extern_fn.param_types, sizeof(Expr*) * capacity);
+            }
+            
+            // Check for variadic ...
+            if (match(TOKEN_DOTDOTDOT)) {
+                stmt->extern_fn.is_variadic = true;
+                break;
+            }
+            
+            stmt->extern_fn.params[stmt->extern_fn.param_count] = parser.current;
+            expect(TOKEN_IDENT, "Expected parameter name");
+            expect(TOKEN_COLON, "Expected ':' after parameter name");
+            stmt->extern_fn.param_types[stmt->extern_fn.param_count] = parse_type();
+            stmt->extern_fn.param_count++;
+        } while (match(TOKEN_COMMA));
+    }
+    
+    expect(TOKEN_RPAREN, "Expected ')' after parameters");
+    
+    // Optional return type
+    if (match(TOKEN_ARROW)) {
+        stmt->extern_fn.return_type = parse_type();
+    } else {
+        stmt->extern_fn.return_type = NULL;
+    }
+    
+    expect(TOKEN_SEMI, "Expected ';' after extern declaration");
+    
+    return stmt;
+}
+
 Stmt* struct_decl() {
     expect(TOKEN_STRUCT, "Expected 'struct'");
     Stmt* stmt = alloc_stmt();
@@ -1744,6 +1800,8 @@ Program* parse_program() {
         
         if (check(TOKEN_FN) || check(TOKEN_PUB)) {
             prog->stmts[prog->count++] = function();
+        } else if (check(TOKEN_EXTERN)) {
+            prog->stmts[prog->count++] = extern_decl();
         } else if (check(TOKEN_STRUCT)) {
             prog->stmts[prog->count++] = struct_decl();
         } else if (check(TOKEN_ENUM)) {

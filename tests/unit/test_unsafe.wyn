@@ -1,0 +1,9 @@
+// Test unsafe block
+fn main() -> int {
+    let x = 10;
+    unsafe {
+        // Unsafe operations here
+        let ptr = &x;
+        return *ptr;
+    }
+}

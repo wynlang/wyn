@@ -1,0 +1,6 @@
+// Test extern function declaration with actual C implementation
+extern fn abs(x: int) -> int;
+
+fn main() -> int {
+    return abs(-42);  // Should return 42
+}

@@ -312,6 +312,7 @@ typedef enum {
     STMT_RETURN,
     STMT_BLOCK,
     STMT_FN,
+    STMT_EXTERN,
     STMT_STRUCT,
     STMT_IMPL,
     STMT_IF,
@@ -370,6 +371,15 @@ typedef struct {
     Token receiver_type;      // For extension methods: fn Type.method()
     bool is_extension;        // True if this is an extension method
 } FnStmt;
+
+typedef struct {
+    Token name;
+    Token* params;
+    Expr** param_types;
+    int param_count;
+    Expr* return_type;
+    bool is_variadic;  // For functions like printf(format, ...)
+} ExternStmt;
 
 typedef struct {
     Token name;
@@ -497,6 +507,7 @@ struct Stmt {
         ReturnStmt ret;
         BlockStmt block;
         FnStmt fn;
+        ExternStmt extern_fn;
         StructStmt struct_decl;
         ImplStmt impl;
         TraitStmt trait_decl;      // T3.2.1: Trait definition statement

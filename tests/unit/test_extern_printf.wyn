@@ -1,0 +1,7 @@
+// Test extern with variadic function
+extern fn printf(format: string, ...) -> int;
+
+fn main() -> int {
+    printf("Hello from Wyn!\n");
+    return 0;
+}

@@ -3003,6 +3003,45 @@ void codegen_stmt(Stmt* stmt) {
             emit("}\n\n");
             break;
         }
+        case STMT_EXTERN: {
+            // Generate extern function declaration
+            const char* return_type = "int"; // default
+            if (stmt->extern_fn.return_type && stmt->extern_fn.return_type->type == EXPR_IDENT) {
+                Token ret_type = stmt->extern_fn.return_type->token;
+                if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
+                    return_type = "int";
+                } else if (ret_type.length == 6 && memcmp(ret_type.start, "string", 6) == 0) {
+                    return_type = "char*";
+                } else if (ret_type.length == 4 && memcmp(ret_type.start, "void", 4) == 0) {
+                    return_type = "void";
+                }
+            }
+            
+            emit("extern %s %.*s(", return_type, 
+                 stmt->extern_fn.name.length, stmt->extern_fn.name.start);
+            
+            for (int i = 0; i < stmt->extern_fn.param_count; i++) {
+                if (i > 0) emit(", ");
+                
+                const char* param_type = "int"; // default
+                if (stmt->extern_fn.param_types[i] && stmt->extern_fn.param_types[i]->type == EXPR_IDENT) {
+                    Token type_name = stmt->extern_fn.param_types[i]->token;
+                    if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+                        param_type = "const char*";
+                    }
+                }
+                
+                emit("%s", param_type);
+            }
+            
+            if (stmt->extern_fn.is_variadic) {
+                if (stmt->extern_fn.param_count > 0) emit(", ");
+                emit("...");
+            }
+            
+            emit(");\n");
+            break;
+        }
         case STMT_STRUCT:
             // Skip generic structs - they will be handled by monomorphization
             if (stmt->struct_decl.type_param_count > 0) {
@@ -3601,6 +3640,13 @@ void codegen_program(Program* prog) {
     // Generate all structs and enums first
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_STRUCT || prog->stmts[i]->type == STMT_ENUM) {
+            codegen_stmt(prog->stmts[i]);
+        }
+    }
+    
+    // Generate extern declarations
+    for (int i = 0; i < prog->count; i++) {
+        if (prog->stmts[i]->type == STMT_EXTERN) {
             codegen_stmt(prog->stmts[i]);
         }
     }

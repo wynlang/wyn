@@ -110,6 +110,7 @@ static TokenType keyword_type(const char* start, int length) {
             if (length == 4 && memcmp(start, "enum", 4) == 0) return TOKEN_ENUM;
             if (length == 6 && memcmp(start, "export", 6) == 0) return TOKEN_EXPORT;
             if (length == 3 && memcmp(start, "err", 3) == 0) return TOKEN_ERR;
+            if (length == 6 && memcmp(start, "extern", 6) == 0) return TOKEN_EXTERN;
             break;
         case 'f':
             if (length == 5 && memcmp(start, "false", 5) == 0) return TOKEN_FALSE;

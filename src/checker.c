@@ -1442,6 +1442,17 @@ void check_program(Program* prog) {
             struct_type->struct_type.name = struct_decl->name;
             struct_type->struct_type.field_count = struct_decl->field_count;
             add_symbol(global_scope, struct_decl->name, struct_type, false);
+        } else if (prog->stmts[i]->type == STMT_EXTERN) {
+            // Register extern function
+            ExternStmt* ext = &prog->stmts[i]->extern_fn;
+            Type* fn_type = make_type(TYPE_FUNCTION);
+            fn_type->fn_type.param_count = ext->param_count;
+            fn_type->fn_type.param_types = malloc(sizeof(Type*) * ext->param_count);
+            for (int j = 0; j < ext->param_count; j++) {
+                fn_type->fn_type.param_types[j] = builtin_int; // Simplified
+            }
+            fn_type->fn_type.return_type = builtin_int; // Simplified
+            add_function_overload(global_scope, ext->name, fn_type, false);
         }
     }
     

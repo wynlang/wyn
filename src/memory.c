@@ -137,6 +137,16 @@ void free_stmt(Stmt* stmt) {
         case STMT_FN:
             free_fn_stmt(&stmt->fn);
             break;
+        case STMT_EXTERN:
+            if (stmt->extern_fn.params) free(stmt->extern_fn.params);
+            if (stmt->extern_fn.param_types) {
+                for (int i = 0; i < stmt->extern_fn.param_count; i++) {
+                    if (stmt->extern_fn.param_types[i]) free_expr(stmt->extern_fn.param_types[i]);
+                }
+                free(stmt->extern_fn.param_types);
+            }
+            if (stmt->extern_fn.return_type) free_expr(stmt->extern_fn.return_type);
+            break;
         case STMT_STRUCT:
             free_struct_stmt(&stmt->struct_decl);
             break;
