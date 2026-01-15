@@ -821,6 +821,11 @@ int wyn_string_ends_with(const char* s, const char* suffix);
 int wyn_string_contains(const char* s, const char* substr);
 int wyn_string_index_of(const char* s, const char* substr);
 int wyn_main();
+int wyn_string_last_index_of(const char* s, const char* substr);
+int wyn_string_count(const char* s, const char* substr);
+int wyn_string_is_empty(const char* s);
+int wyn_string_char_at(const char* s, int index);
+int wyn_string_compare(const char* a, const char* b);
 
 int wyn_string_length(const char* s) {
     int len = 0;
@@ -956,5 +961,105 @@ int wyn_main() {
     __auto_type idx = wyn_string_index_of(s, "world");
     ;
     return (((len + has_world) + starts) + idx);
+}
+
+int wyn_string_last_index_of(const char* s, const char* substr) {
+    __auto_type s_len = wyn_string_length(s);
+    ;
+    __auto_type substr_len = wyn_string_length(substr);
+    ;
+    if ((substr_len > s_len)) {
+    return -1;
+    }
+    int i = (s_len - substr_len);
+    ;
+    while ((i >= 0)) {
+    int j = 0;
+    ;
+    int found = 1;
+    ;
+    while ((j < substr_len)) {
+    if ((array_get_int(s, (i + j)) != array_get_int(substr, j))) {
+    found = 0;
+    j = substr_len;
+    }
+    if ((found == 1)) {
+    j = (j + 1);
+    }
+    }
+    if ((found == 1)) {
+    return i;
+    }
+    i = (i - 1);
+    }
+    return -1;
+}
+
+int wyn_string_count(const char* s, const char* substr) {
+    __auto_type s_len = wyn_string_length(s);
+    ;
+    __auto_type substr_len = wyn_string_length(substr);
+    ;
+    if ((substr_len > s_len)) {
+    return 0;
+    }
+    int count = 0;
+    ;
+    int i = 0;
+    ;
+    while ((i <= (s_len - substr_len))) {
+    int j = 0;
+    ;
+    int found = 1;
+    ;
+    while ((j < substr_len)) {
+    if ((array_get_int(s, (i + j)) != array_get_int(substr, j))) {
+    found = 0;
+    j = substr_len;
+    }
+    if ((found == 1)) {
+    j = (j + 1);
+    }
+    }
+    if ((found == 1)) {
+    count = (count + 1);
+    i = (i + substr_len);
+    }
+    if ((found == 0)) {
+    i = (i + 1);
+    }
+    }
+    return count;
+}
+
+int wyn_string_is_empty(const char* s) {
+    __auto_type len = wyn_string_length(s);
+    ;
+    if ((len == 0)) {
+    return 1;
+    }
+    return 0;
+}
+
+int wyn_string_char_at(const char* s, int index) {
+    return array_get_int(s, index);
+}
+
+int wyn_string_compare(const char* a, const char* b) {
+    int i = 0;
+    ;
+    while ((array_get_int(a, i) != 0)) {
+    if ((array_get_int(a, i) < array_get_int(b, i))) {
+    return -1;
+    }
+    if ((array_get_int(a, i) > array_get_int(b, i))) {
+    return 1;
+    }
+    i = (i + 1);
+    }
+    if ((array_get_int(b, i) != 0)) {
+    return -1;
+    }
+    return 0;
 }
 

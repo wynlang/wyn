@@ -128,3 +128,89 @@ fn main() -> int {
     let last = wyn_array_last(arr, 5);
     return s + min_val + max_val + has_8 + idx + first + last;
 }
+
+// Additional utility functions
+
+fn wyn_array_avg(arr: [int], len: int) -> int {
+    if len == 0 {
+        return 0;
+    }
+    return wyn_array_sum(arr, len) / len;
+}
+
+fn wyn_array_product(arr: [int], len: int) -> int {
+    if len == 0 {
+        return 0;
+    }
+    let mut prod = 1;
+    let mut i = 0;
+    while i < len {
+        prod = prod * arr[i];
+        i = i + 1;
+    }
+    return prod;
+}
+
+fn wyn_array_fill(arr: [int], len: int, val: int) -> int {
+    let mut i = 0;
+    while i < len {
+        arr[i] = val;
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn wyn_array_copy(src: [int], dst: [int], len: int) -> int {
+    let mut i = 0;
+    while i < len {
+        dst[i] = src[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn wyn_array_equal(a: [int], b: [int], len: int) -> int {
+    let mut i = 0;
+    while i < len {
+        if a[i] != b[i] {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn wyn_array_swap(arr: [int], i: int, j: int) -> int {
+    let temp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = temp;
+    return 0;
+}
+
+fn wyn_array_rotate_left(arr: [int], len: int) -> int {
+    if len <= 1 {
+        return 0;
+    }
+    let first = arr[0];
+    let mut i = 0;
+    while i < len - 1 {
+        arr[i] = arr[i + 1];
+        i = i + 1;
+    }
+    arr[len - 1] = first;
+    return 0;
+}
+
+fn wyn_array_rotate_right(arr: [int], len: int) -> int {
+    if len <= 1 {
+        return 0;
+    }
+    let last = arr[len - 1];
+    let mut i = len - 1;
+    while i > 0 {
+        arr[i] = arr[i - 1];
+        i = i - 1;
+    }
+    arr[0] = last;
+    return 0;
+}

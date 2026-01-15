@@ -826,6 +826,14 @@ int wyn_array_all_equal(WynArray arr, int len, int val);
 int wyn_array_first(WynArray arr, int len);
 int wyn_array_last(WynArray arr, int len);
 int wyn_main();
+int wyn_array_avg(WynArray arr, int len);
+int wyn_array_product(WynArray arr, int len);
+int wyn_array_fill(WynArray arr, int len, int val);
+int wyn_array_copy(WynArray src, WynArray dst, int len);
+int wyn_array_equal(WynArray a, WynArray b, int len);
+int wyn_array_swap(WynArray arr, int i, int j);
+int wyn_array_rotate_left(WynArray arr, int len);
+int wyn_array_rotate_right(WynArray arr, int len);
 
 int wyn_array_sum(WynArray arr, int len) {
     int total = 0;
@@ -975,5 +983,99 @@ int wyn_main() {
     __auto_type last = wyn_array_last(arr, 5);
     ;
     return ((((((s + min_val) + max_val) + has_8) + idx) + first) + last);
+}
+
+int wyn_array_avg(WynArray arr, int len) {
+    if ((len == 0)) {
+    return 0;
+    }
+    return (wyn_array_sum(arr, len) / len);
+}
+
+int wyn_array_product(WynArray arr, int len) {
+    if ((len == 0)) {
+    return 0;
+    }
+    int prod = 1;
+    ;
+    int i = 0;
+    ;
+    while ((i < len)) {
+    prod = (prod * array_get_int(arr, i));
+    i = (i + 1);
+    }
+    return prod;
+}
+
+int wyn_array_fill(WynArray arr, int len, int val) {
+    int i = 0;
+    ;
+    while ((i < len)) {
+    { WynArray* __arr_ptr = &(arr); int __idx = i; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = val; } };
+    i = (i + 1);
+    }
+    return 0;
+}
+
+int wyn_array_copy(WynArray src, WynArray dst, int len) {
+    int i = 0;
+    ;
+    while ((i < len)) {
+    { WynArray* __arr_ptr = &(dst); int __idx = i; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = array_get_int(src, i); } };
+    i = (i + 1);
+    }
+    return 0;
+}
+
+int wyn_array_equal(WynArray a, WynArray b, int len) {
+    int i = 0;
+    ;
+    while ((i < len)) {
+    if ((array_get_int(a, i) != array_get_int(b, i))) {
+    return 0;
+    }
+    i = (i + 1);
+    }
+    return 1;
+}
+
+int wyn_array_swap(WynArray arr, int i, int j) {
+    int temp = array_get_int(arr, i);
+    ;
+    { WynArray* __arr_ptr = &(arr); int __idx = i; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = array_get_int(arr, j); } };
+    { WynArray* __arr_ptr = &(arr); int __idx = j; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = temp; } };
+    return 0;
+}
+
+int wyn_array_rotate_left(WynArray arr, int len) {
+    if ((len <= 1)) {
+    return 0;
+    }
+    int first = array_get_int(arr, 0);
+    ;
+    int i = 0;
+    ;
+    while ((i < (len - 1))) {
+    { WynArray* __arr_ptr = &(arr); int __idx = i; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = array_get_int(arr, (i + 1)); } };
+    i = (i + 1);
+    }
+    { WynArray* __arr_ptr = &(arr); int __idx = (len - 1); if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = first; } };
+    return 0;
+}
+
+int wyn_array_rotate_right(WynArray arr, int len) {
+    if ((len <= 1)) {
+    return 0;
+    }
+    int last = array_get_int(arr, (len - 1));
+    ;
+    int i = (len - 1);
+    ;
+    while ((i > 0)) {
+    { WynArray* __arr_ptr = &(arr); int __idx = i; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = array_get_int(arr, (i - 1)); } };
+    i = (i - 1);
+    }
+    { WynArray* __arr_ptr = &(arr); int __idx = 0; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = last; } };
+    return 0;
 }
 
