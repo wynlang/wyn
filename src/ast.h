@@ -383,6 +383,8 @@ typedef struct {
 
 typedef struct {
     Token type_name;
+    Token trait_name;         // Optional: for "impl Trait for Type"
+    bool is_trait_impl;       // True if this is "impl Trait for Type"
     FnStmt** methods;
     int method_count;
 } ImplStmt;

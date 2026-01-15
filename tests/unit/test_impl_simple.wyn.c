@@ -827,6 +827,7 @@ int Point_new(int x, int y) {
 }
 
 int wyn_main();
+int Point_new(int x, int y);
 
 int wyn_main() {
     return Point_new(3, 4);

@@ -845,7 +845,7 @@ int identity_int(int val) {
 }
 
 int add(int a, int b);
-int distance(int a, int b);
+int Point_distance(int a, int b);
 int worker();
 int wyn_main();
 

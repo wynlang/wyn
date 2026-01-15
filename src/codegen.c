@@ -680,7 +680,7 @@ void codegen_expr(Expr* expr) {
             if (expr->method_call.object->expr_type && 
                 expr->method_call.object->expr_type->kind == TYPE_STRUCT) {
                 // Generate extension method call: TypeName_method(obj, args...)
-                Token type_name = expr->method_call.object->expr_type->name;
+                Token type_name = expr->method_call.object->expr_type->struct_type.name;
                 emit("%.*s_%.*s(", type_name.length, type_name.start, 
                      method.length, method.start);
                 codegen_expr(expr->method_call.object);
@@ -3684,6 +3684,11 @@ void codegen_program(Program* prog) {
             
             if (is_main_function) {
                 emit("%s wyn_main(", return_type);
+            } else if (fn->is_extension) {
+                // Extension method: Type_method
+                emit("%s %.*s_%.*s(", return_type,
+                     fn->receiver_type.length, fn->receiver_type.start,
+                     fn->name.length, fn->name.start);
             } else {
                 emit("%s %.*s(", return_type, fn->name.length, fn->name.start);
             }
@@ -3729,6 +3734,60 @@ void codegen_program(Program* prog) {
                 emit("%s %.*s", param_type, fn->params[j].length, fn->params[j].start);
             }
             emit(");\n");
+        }
+    }
+    
+    // Generate forward declarations for impl block methods
+    for (int i = 0; i < prog->count; i++) {
+        if (prog->stmts[i]->type == STMT_IMPL) {
+            Stmt* stmt = prog->stmts[i];
+            for (int j = 0; j < stmt->impl.method_count; j++) {
+                FnStmt* method = stmt->impl.methods[j];
+                
+                // Determine return type
+                const char* return_type = "int";
+                if (method->return_type && method->return_type->type == EXPR_IDENT) {
+                    Token ret_type = method->return_type->token;
+                    if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
+                        return_type = "int";
+                    } else if (ret_type.length == 5 && memcmp(ret_type.start, "float", 5) == 0) {
+                        return_type = "double";
+                    } else if (ret_type.length == 4 && memcmp(ret_type.start, "bool", 4) == 0) {
+                        return_type = "bool";
+                    }
+                }
+                
+                // Generate forward declaration: Type_method
+                emit("%s %.*s_%.*s(", return_type,
+                     stmt->impl.type_name.length, stmt->impl.type_name.start,
+                     method->name.length, method->name.start);
+                
+                for (int k = 0; k < method->param_count; k++) {
+                    if (k > 0) emit(", ");
+                    
+                    // Determine parameter type
+                    const char* param_type = "int";
+                    char custom_type_buf[256] = {0};
+                    if (method->param_types[k] && method->param_types[k]->type == EXPR_IDENT) {
+                        Token type_name = method->param_types[k]->token;
+                        if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+                            param_type = "int";
+                        } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
+                            param_type = "double";
+                        } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
+                            param_type = "bool";
+                        } else {
+                            // Custom struct type
+                            snprintf(custom_type_buf, sizeof(custom_type_buf), "%.*s", 
+                                   type_name.length, type_name.start);
+                            param_type = custom_type_buf;
+                        }
+                    }
+                    
+                    emit("%s %.*s", param_type, method->params[k].length, method->params[k].start);
+                }
+                emit(");\n");
+            }
         }
     }
     emit("\n");

@@ -822,7 +822,7 @@ typedef struct {
 void Point_cleanup(Point* obj) {
 }
 
-int distance(int self);
+int Point_distance(int self);
 int wyn_main();
 
 int Point_distance(Point self) {

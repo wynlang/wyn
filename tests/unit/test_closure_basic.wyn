@@ -1,0 +1,6 @@
+// Test basic closure - capture and call
+fn main() -> int {
+    let x = 10;
+    let add_x = |y: int| -> int { return x + y; };
+    return add_x(5);  // Should return 15
+}

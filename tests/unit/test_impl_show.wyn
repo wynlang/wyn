@@ -1,0 +1,16 @@
+// Test simple impl block (not trait impl)
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Point {
+    fn show(self) -> int {
+        return self.x + self.y;
+    }
+}
+
+fn main() -> int {
+    let p = Point { x: 10, y: 20 };
+    return p.show();  // Should return 30
+}

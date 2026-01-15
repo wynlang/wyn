@@ -1469,8 +1469,23 @@ Stmt* impl_block() {
     expect(TOKEN_IMPL, "Expected 'impl'");
     Stmt* stmt = alloc_stmt();
     stmt->type = STMT_IMPL;
-    stmt->impl.type_name = parser.current;
-    expect(TOKEN_IDENT, "Expected type name after 'impl'");
+    
+    // Check for "impl Trait for Type" syntax
+    Token first_name = parser.current;
+    expect(TOKEN_IDENT, "Expected trait or type name after 'impl'");
+    
+    if (match(TOKEN_FOR)) {
+        // This is "impl Trait for Type"
+        stmt->impl.is_trait_impl = true;
+        stmt->impl.trait_name = first_name;
+        stmt->impl.type_name = parser.current;
+        expect(TOKEN_IDENT, "Expected type name after 'for'");
+    } else {
+        // This is "impl Type"
+        stmt->impl.is_trait_impl = false;
+        stmt->impl.type_name = first_name;
+    }
+    
     expect(TOKEN_LBRACE, "Expected '{' after impl type name");
     
     stmt->impl.method_count = 0;

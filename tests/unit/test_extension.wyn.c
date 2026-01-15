@@ -822,7 +822,7 @@ typedef struct {
 void Point_cleanup(Point* obj) {
 }
 
-int distance(int self);
+int Point_distance(int self);
 int wyn_main();
 
 int Point_distance(Point self) {
@@ -832,6 +832,6 @@ int Point_distance(Point self) {
 int wyn_main() {
     Point p = (Point){.x = 3, .y = 4};
     ;
-    return _distance(p);
+    return Point_distance(p);
 }
 
