@@ -41,6 +41,17 @@ typedef enum {
     WYN_TYPE_CUSTOM_BASE = 1000  // Base for user-defined types
 } WynTypeId;
 
+// Minimal ARC struct
+typedef struct WynArc {
+    int ref_count;
+    char data[];
+} WynArc;
+
+// Minimal ARC operations
+WynArc* wyn_arc_new(size_t size, void* init_data);
+WynArc* wyn_arc_retain_arc(WynArc* arc);
+void wyn_arc_release_arc(WynArc* arc);
+
 // ARC operations - core interface
 WynObject* wyn_arc_alloc(size_t size, uint32_t type_id, void (*destructor)(void*));
 WynObject* wyn_arc_retain(WynObject* obj);
