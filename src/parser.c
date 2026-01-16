@@ -6,6 +6,7 @@
 #include "types.h"
 #include "security.h"
 #include "test.h"
+#include "error.h"
 
 extern Token next_token();
 
@@ -17,6 +18,12 @@ typedef struct {
 } Parser;
 
 static Parser parser;
+static const char* current_source_file = NULL;  // Global for error reporting
+
+void set_parser_filename(const char* filename) {
+    current_source_file = filename;
+    parser.filename = filename;
+}
 
 Expr* expression();
 static Expr* assignment();
@@ -58,7 +65,15 @@ static void expect(TokenType type, const char* message) {
         advance();
         return;
     }
-    fprintf(stderr, "Error at line %d: %s\n", parser.current.line, message);
+    
+    // Use enhanced error reporting if filename is available
+    if (current_source_file) {
+        show_error_context(current_source_file, parser.current.line, 1, message, NULL);
+    } else {
+        // Fallback to basic error
+        fprintf(stderr, "Error at line %d: %s (no filename set)\n", parser.current.line, message);
+    }
+    
     parser.had_error = true;
     // Skip to next statement to avoid cascading errors
     while (!check(TOKEN_SEMI) && !check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {

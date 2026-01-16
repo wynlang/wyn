@@ -180,6 +180,7 @@ int main(int argc, char** argv) {
         char* source = read_file("temp/combined.wyn");
         init_lexer(source);
         init_parser();
+        set_parser_filename("temp/combined.wyn");  // Set filename for better error messages
         init_checker();
         
         Program* prog = parse_program();
@@ -264,6 +265,7 @@ int main(int argc, char** argv) {
         char* source = read_file(file);
         init_lexer(source);
         init_parser();
+        set_parser_filename(file);  // Set filename for better error messages
         init_checker();
         
         Program* prog = parse_program();
@@ -432,6 +434,7 @@ int main(int argc, char** argv) {
         
         init_lexer(source);
         init_parser();
+        set_parser_filename(file);  // Set filename for better error messages
         init_checker();
         
         Program* prog = parse_program();
@@ -503,6 +506,7 @@ int main(int argc, char** argv) {
     
     init_lexer(source);
     init_parser();
+    set_parser_filename(argv[file_arg_index]);  // Set filename for better error messages
     init_checker();
     
     Program* prog = parse_program();

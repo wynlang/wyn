@@ -37,4 +37,7 @@ typedef struct {
     int line;
 } Token;
 
+// Parser functions
+void set_parser_filename(const char* filename);
+
 #endif
