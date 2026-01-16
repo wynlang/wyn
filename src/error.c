@@ -173,3 +173,54 @@ void type_suggest_conversion(const char* from_type, const char* to_type) {
     
     report_error_with_suggestion(ERR_TYPE_MISMATCH, "type_checker", 0, 0, message, suggestion);
 }
+
+
+// Show source code context for better error messages
+void show_error_context(const char* filename, int line, int column, const char* message, const char* suggestion) {
+    FILE* f = fopen(filename, "r");
+    if (!f) {
+        printf("Error at %s:%d:%d: %s\n", filename, line, column, message);
+        if (suggestion) printf("  help: %s\n", suggestion);
+        return;
+    }
+    
+    // Read file lines
+    char* lines[1000] = {0};
+    char buffer[1024];
+    int line_count = 0;
+    while (fgets(buffer, sizeof(buffer), f) && line_count < 1000) {
+        lines[line_count++] = strdup(buffer);
+    }
+    fclose(f);
+    
+    // Print error header
+    printf("\nError: %s\n", message);
+    printf("  --> %s:%d:%d\n", filename, line, column);
+    printf("   |\n");
+    
+    // Show context (3 lines before and after)
+    int start = (line - 3 > 0) ? line - 3 : 1;
+    int end = (line + 3 < line_count) ? line + 3 : line_count;
+    
+    for (int i = start; i <= end && i <= line_count; i++) {
+        if (i == line) {
+            printf(" %3d | %s", i, lines[i-1]);
+            printf("     | ");
+            for (int j = 0; j < column - 1; j++) printf(" ");
+            printf("^\n");
+        } else {
+            printf(" %3d | %s", i, lines[i-1]);
+        }
+    }
+    
+    printf("   |\n");
+    if (suggestion) {
+        printf("help: %s\n", suggestion);
+    }
+    printf("\n");
+    
+    // Free lines
+    for (int i = 0; i < line_count; i++) {
+        free(lines[i]);
+    }
+}

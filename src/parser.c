@@ -13,6 +13,7 @@ typedef struct {
     Token current;
     Token previous;
     bool had_error;
+    const char* filename;  // For better error messages
 } Parser;
 
 static Parser parser;

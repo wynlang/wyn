@@ -55,6 +55,9 @@ void clear_errors(void);
 bool has_errors(void);
 int get_error_count(void);
 
+// Show source code context for errors
+void show_error_context(const char* filename, int line, int column, const char* message, const char* suggestion);
+
 // T1.2.3: Parser error recovery functions
 void parser_error_at_current(const char* message);
 void parser_error_at_previous(const char* message);
