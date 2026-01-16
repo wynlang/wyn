@@ -228,11 +228,12 @@ void init_checker() {
         "Error", "TypeError", "ValueError", "DivisionByZeroError", "print_error",
         "http_get", "http_post", "http_put", "http_delete", "http_set_header", "http_clear_headers", "http_status", "http_error",
         "https_get", "https_post",
+        "hashmap_new", "hashmap_insert", "hashmap_get", "hashmap_free",
         "json_get_str", "json_get_int", "json_get_bool", "json_has_key", "json_stringify_int", "json_stringify_str", "json_stringify_bool", "json_array_stringify", "json_array_length", "json_array_get",
         "url_encode", "url_decode", "base64_encode", "hash_string"
     };
     
-    for (int i = 0; i < 121; i++) {
+    for (int i = 0; i < 139; i++) {
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
     }

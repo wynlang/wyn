@@ -11,6 +11,7 @@
 #include "modules.h"
 #include "optimize.h"
 #include "functional.h"
+#include "hashmap.h"
 
 // Forward declarations
 void codegen_stmt(Stmt* stmt);
@@ -2006,6 +2007,7 @@ void codegen_c_header() {
     emit("#include \"concurrency.h\"\n");
     emit("#include \"optional.h\"\n");
     emit("#include \"result.h\"\n");
+    emit("#include \"hashmap.h\"\n");
     emit("#include \"async_runtime.h\"\n\n");
     
     // Function declarations for C interface

@@ -20,6 +20,7 @@
 #include "concurrency.h"
 #include "optional.h"
 #include "result.h"
+#include "hashmap.h"
 #include "async_runtime.h"
 
 int wyn_get_argc(void);

@@ -1,0 +1,33 @@
+// Test File I/O implementation
+fn main() -> int {
+    // Test write
+    let result = file_write("/tmp/wyn_test.txt", "Hello, Wyn!");
+    if result != 1 {
+        return 1;
+    }
+    
+    // Test read
+    let content = file_read("/tmp/wyn_test.txt");
+    if content == 0 {
+        return 2;
+    }
+    
+    // Test append
+    let result2 = file_append("/tmp/wyn_test.txt", " More text.");
+    if result2 != 1 {
+        return 3;
+    }
+    
+    // Test exists
+    let exists = file_exists("/tmp/wyn_test.txt");
+    if exists != 1 {
+        return 4;
+    }
+    
+    let not_exists = file_exists("/tmp/nonexistent.txt");
+    if not_exists != 0 {
+        return 5;
+    }
+    
+    return 0;
+}
