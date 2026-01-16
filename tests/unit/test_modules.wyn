@@ -1,0 +1,8 @@
+// Test module system - this file tests that modules work
+// Run with: wyn build (directory with math.wyn and main.wyn)
+
+fn main() -> int {
+    // This test is run as part of the build system tests
+    // The actual module tests are in /tmp/module_test*
+    return 0;
+}

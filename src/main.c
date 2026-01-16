@@ -184,8 +184,53 @@ int main(int argc, char** argv) {
         char line[512];
         while (fgets(line, 512, files)) {
             line[strcspn(line, "\n")] = 0; // Remove newline
+            
+            // Extract module name from filename (e.g., /path/to/math.wyn -> math)
+            char* filename = strrchr(line, '/');
+            if (!filename) filename = line;
+            else filename++; // Skip the /
+            
+            char module_name[128] = "";
+            char* dot = strrchr(filename, '.');
+            if (dot) {
+                int len = dot - filename;
+                if (len > 0 && len < 127) {
+                    strncpy(module_name, filename, len);
+                    module_name[len] = '\0';
+                }
+            }
+            
             char* source = read_file(line);
-            fprintf(combined, "// From %s\n%s\n\n", line, source);
+            
+            // If module name is not "main", prefix exported functions
+            if (strcmp(module_name, "main") != 0 && strlen(module_name) > 0) {
+                // Simple text replacement: "export fn name" -> "fn module_name"
+                // This is minimal but works for the basic case
+                char* modified = malloc(strlen(source) * 2); // Extra space for prefixes
+                char* dst = modified;
+                char* src = source;
+                
+                while (*src) {
+                    if (strncmp(src, "export fn ", 10) == 0) {
+                        // Replace "export fn name" with "fn module_name"
+                        strcpy(dst, "fn ");
+                        dst += 3;
+                        strcpy(dst, module_name);
+                        dst += strlen(module_name);
+                        *dst++ = '_';
+                        src += 10; // Skip "export fn "
+                    } else {
+                        *dst++ = *src++;
+                    }
+                }
+                *dst = '\0';
+                
+                fprintf(combined, "// From %s\n%s\n\n", line, modified);
+                free(modified);
+            } else {
+                fprintf(combined, "// From %s\n%s\n\n", line, source);
+            }
+            
             free(source);
         }
         fclose(files);

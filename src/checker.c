@@ -557,6 +557,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             
             Symbol* sym = find_symbol(scope, expr->token);
             if (!sym) {
+                // Check if this is a module-qualified name (e.g., math::add)
+                // If so, allow it - it will be resolved at codegen time
+                bool is_qualified = false;
+                for (int i = 0; i < expr->token.length - 1; i++) {
+                    if (expr->token.start[i] == ':' && expr->token.start[i+1] == ':') {
+                        is_qualified = true;
+                        break;
+                    }
+                }
+                
+                if (is_qualified) {
+                    // Module-qualified name - assume it's valid
+                    expr->expr_type = builtin_int;  // Default type
+                    return builtin_int;
+                }
+                
                 fprintf(stderr, "\nError at line %d: Undefined variable '%.*s'\n", 
                         expr->token.line, expr->token.length, expr->token.start);
                 
@@ -647,6 +663,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 
                 // Find best matching overload
                 Symbol* best_match = find_function_overload(scope, expr->call.callee->token, arg_types, expr->call.arg_count);
+                
+                // Check if this is a module-qualified function call (e.g., math::add)
+                bool is_qualified = false;
+                for (int i = 0; i < expr->call.callee->token.length - 1; i++) {
+                    if (expr->call.callee->token.start[i] == ':' && expr->call.callee->token.start[i+1] == ':') {
+                        is_qualified = true;
+                        break;
+                    }
+                }
+                
+                if (is_qualified && !best_match) {
+                    // Module-qualified function - assume it's valid
+                    expr->expr_type = builtin_int;  // Default return type
+                    free(arg_types);
+                    return builtin_int;
+                }
                 
                 if (best_match && best_match->type->kind == TYPE_FUNCTION) {
                     // T1.5.4: Validate the function call with detailed parameter checking
