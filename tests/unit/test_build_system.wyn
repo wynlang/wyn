@@ -1,0 +1,8 @@
+// Test build system functionality
+// This test verifies the build command works correctly
+
+fn main() -> int {
+    // This file is used to test that the build system
+    // can compile and run projects correctly
+    return 0;
+}

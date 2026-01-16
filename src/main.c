@@ -151,6 +151,10 @@ int main(int argc, char** argv) {
         }
         
         char* dir = argv[2];
+        
+        // Create temp directory if it doesn't exist
+        system("mkdir -p temp");
+        
         printf("Building project in %s...\n", dir);
         
         // Find all .wyn files and compile them together
@@ -162,6 +166,17 @@ int main(int argc, char** argv) {
         FILE* files = fopen("temp/files.txt", "r");
         if (!files) {
             fprintf(stderr, "Error: No .wyn files found in %s\n", dir);
+            return 1;
+        }
+        
+        // Check if file list is empty
+        fseek(files, 0, SEEK_END);
+        long file_size = ftell(files);
+        fseek(files, 0, SEEK_SET);
+        
+        if (file_size == 0) {
+            fprintf(stderr, "Error: No .wyn files found in %s\n", dir);
+            fclose(files);
             return 1;
         }
         
@@ -205,8 +220,8 @@ int main(int argc, char** argv) {
         codegen_program(prog);
         fclose(out);
         
-        char compile_cmd[512];
-        snprintf(compile_cmd, 512, "gcc -o %s/main %s/main.c -lm", dir, dir);
+        char compile_cmd[1024];
+        snprintf(compile_cmd, 1024, "gcc -I src -o %s/main %s/main.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c -lm", dir, dir);
         int result = system(compile_cmd);
         
         if (result == 0) {
