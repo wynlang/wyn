@@ -1,0 +1,46 @@
+// Phase 2 Completion: Test trim() and split() methods
+
+fn test_trim() -> int {
+    var text1 = "  hello  ";
+    var trimmed = text1.trim();
+    var len = trimmed.len();
+    // "hello" = 5
+    
+    var text2 = "\t\ntest\n\t";
+    var trimmed2 = text2.trim();
+    var len2 = trimmed2.len();
+    // "test" = 4
+    
+    return len + len2;  // 5 + 4 = 9
+}
+
+fn test_split() -> int {
+    var csv = "apple,banana,cherry";
+    var parts = csv.split(",");
+    var count = parts.len();
+    // Should have 3 parts
+    
+    var path = "usr/local/bin";
+    var dirs = path.split("/");
+    var dir_count = dirs.len();
+    // Should have 3 parts
+    
+    return count + dir_count;  // 3 + 3 = 6
+}
+
+fn test_split_empty() -> int {
+    var single = "hello";
+    var parts = single.split(",");
+    var count = parts.len();
+    // No delimiter found, should have 1 part
+    return count;  // 1
+}
+
+fn main() -> int {
+    var trim_result = test_trim();
+    var split_result = test_split();
+    var empty_result = test_split_empty();
+    
+    // Expected: 9 + 6 + 1 = 16
+    return trim_result + split_result + empty_result;
+}

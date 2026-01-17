@@ -1549,6 +1549,28 @@ void codegen_c_header() {
     emit("    memcpy(result, str, len);\n");
     emit("    result[len] = '\\0';\n");
     emit("    return result;\n");
+    emit("}\n");
+    
+    emit("char* string_trim(const char* str) {\n");
+    emit("    while (*str == ' ' || *str == '\\t' || *str == '\\n') str++;\n");
+    emit("    int len = strlen(str);\n");
+    emit("    while (len > 0 && (str[len-1] == ' ' || str[len-1] == '\\t' || str[len-1] == '\\n')) len--;\n");
+    emit("    char* result = malloc(len + 1);\n");
+    emit("    memcpy(result, str, len);\n");
+    emit("    result[len] = '\\0';\n");
+    emit("    return result;\n");
+    emit("}\n");
+    
+    emit("WynArray string_split(const char* str, const char* delim) {\n");
+    emit("    WynArray arr = array_new();\n");
+    emit("    char* copy = strdup(str);\n");
+    emit("    char* token = strtok(copy, delim);\n");
+    emit("    while (token != NULL) {\n");
+    emit("        array_push_str(&arr, strdup(token));\n");
+    emit("        token = strtok(NULL, delim);\n");
+    emit("    }\n");
+    emit("    free(copy);\n");
+    emit("    return arr;\n");
     emit("}\n\n");
     
     // Phase 3 Task 3.1: Integer methods (conversion methods already exist for interpolation)

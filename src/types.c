@@ -11,6 +11,7 @@ static const MethodSignature method_signatures[] = {
     {"string", "trim", "string", 0},
     {"string", "trim_left", "string", 0},
     {"string", "trim_right", "string", 0},
+    {"string", "split", "array", 1},     // Returns array of strings
     {"string", "capitalize", "string", 0},
     {"string", "title", "string", 0},
     {"string", "reverse", "string", 0},
@@ -190,11 +191,17 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "title") == 0 && arg_count == 0) {
             out->c_function = "string_title"; return true;
         }
+        if (strcmp(method_name, "trim") == 0 && arg_count == 0) {
+            out->c_function = "string_trim"; return true;
+        }
         if (strcmp(method_name, "trim_left") == 0 && arg_count == 0) {
             out->c_function = "string_trim_left"; return true;
         }
         if (strcmp(method_name, "trim_right") == 0 && arg_count == 0) {
             out->c_function = "string_trim_right"; return true;
+        }
+        if (strcmp(method_name, "split") == 0 && arg_count == 1) {
+            out->c_function = "string_split"; return true;
         }
         if (strcmp(method_name, "contains") == 0 && arg_count == 1) {
             out->c_function = "string_contains"; return true;
