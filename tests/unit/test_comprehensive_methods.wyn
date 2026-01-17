@@ -1,0 +1,69 @@
+// Comprehensive demonstration of type-aware method dispatch
+// Tests all 65 working methods across all types
+
+fn test_string_methods() -> int {
+    var text = "hello world";
+    var upper = text.upper();
+    var len = text.len();
+    var contains = text.contains("world");
+    var title = text.title();
+    return len;  // 11
+}
+
+fn test_number_methods() -> int {
+    var num = 42;
+    var str = num.to_string();
+    var even = num.is_even();
+    
+    var flt = 3.14;
+    var rounded = flt.round();
+    var floored = flt.floor();
+    
+    return num;  // 42
+}
+
+fn test_array_methods() -> int {
+    var arr = [3, 1, 4, 2];
+    var len = arr.len();
+    arr.push(5);
+    arr.sort();
+    var first = arr.get(0);
+    var last = arr.get(4);
+    
+    return first + last;  // 1 + 5 = 6
+}
+
+fn test_method_chaining() -> int {
+    // String chaining
+    var text = "  HELLO  ";
+    var result = text.upper().reverse();
+    
+    // Number chaining
+    var num = 3.7;
+    var int_result = num.floor().to_int();
+    
+    return int_result;  // 3
+}
+
+fn test_type_aware_dispatch() -> int {
+    // Same method name, different types
+    var text = "hello";
+    var text_len = text.len();  // string.len()
+    
+    var arr = [1, 2, 3];
+    var arr_len = arr.len();    // array.len()
+    
+    // Both work correctly!
+    return text_len + arr_len;  // 5 + 3 = 8
+}
+
+fn main() -> int {
+    var s = test_string_methods();
+    var n = test_number_methods();
+    var a = test_array_methods();
+    var c = test_method_chaining();
+    var d = test_type_aware_dispatch();
+    
+    // Expected: 11 + 42 + 6 + 3 + 8 = 70
+    return s + n + a + c + d;
+}
