@@ -755,52 +755,164 @@ void codegen_expr(Expr* expr) {
                 break;
             }
             
-            // Check for int methods
+            // Check for int methods (Phase 3)
             bool is_int_method = (method.length == 3 && memcmp(method.start, "abs", 3) == 0 && expr->method_call.arg_count == 0) ||
                                 (method.length == 7 && memcmp(method.start, "is_even", 7) == 0 && expr->method_call.arg_count == 0) ||
-                                (method.length == 6 && memcmp(method.start, "is_odd", 6) == 0 && expr->method_call.arg_count == 0);
+                                (method.length == 6 && memcmp(method.start, "is_odd", 6) == 0 && expr->method_call.arg_count == 0) ||
+                                (method.length == 9 && memcmp(method.start, "to_string", 9) == 0 && expr->method_call.arg_count == 0) ||
+                                (method.length == 8 && memcmp(method.start, "to_float", 8) == 0 && expr->method_call.arg_count == 0) ||
+                                (method.length == 3 && memcmp(method.start, "pow", 3) == 0 && expr->method_call.arg_count == 1) ||
+                                (method.length == 3 && memcmp(method.start, "min", 3) == 0 && expr->method_call.arg_count == 1) ||
+                                (method.length == 3 && memcmp(method.start, "max", 3) == 0 && expr->method_call.arg_count == 1) ||
+                                (method.length == 5 && memcmp(method.start, "clamp", 5) == 0 && expr->method_call.arg_count == 2) ||
+                                (method.length == 11 && memcmp(method.start, "is_positive", 11) == 0 && expr->method_call.arg_count == 0) ||
+                                (method.length == 11 && memcmp(method.start, "is_negative", 11) == 0 && expr->method_call.arg_count == 0) ||
+                                (method.length == 7 && memcmp(method.start, "is_zero", 7) == 0 && expr->method_call.arg_count == 0);
             
             if (is_int_method) {
                 if (method.length == 3 && memcmp(method.start, "abs", 3) == 0) {
-                    emit("abs_val(");
-                    codegen_expr(expr->method_call.object);
-                    emit(")");
+                    emit("int_abs(");
                 } else if (method.length == 7 && memcmp(method.start, "is_even", 7) == 0) {
-                    emit("is_even(");
-                    codegen_expr(expr->method_call.object);
-                    emit(")");
+                    emit("int_is_even(");
                 } else if (method.length == 6 && memcmp(method.start, "is_odd", 6) == 0) {
-                    emit("is_odd(");
+                    emit("int_is_odd(");
+                } else if (method.length == 9 && memcmp(method.start, "to_string", 9) == 0) {
+                    emit("int_to_string(");
+                } else if (method.length == 8 && memcmp(method.start, "to_float", 8) == 0) {
+                    emit("int_to_float(");
+                } else if (method.length == 3 && memcmp(method.start, "pow", 3) == 0) {
+                    emit("int_pow(");
                     codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
                     emit(")");
+                    break;
+                } else if (method.length == 3 && memcmp(method.start, "min", 3) == 0) {
+                    emit("int_min(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                    break;
+                } else if (method.length == 3 && memcmp(method.start, "max", 3) == 0) {
+                    emit("int_max(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                    break;
+                } else if (method.length == 5 && memcmp(method.start, "clamp", 5) == 0) {
+                    emit("int_clamp(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[1]);
+                    emit(")");
+                    break;
+                } else if (method.length == 11 && memcmp(method.start, "is_positive", 11) == 0) {
+                    emit("int_is_positive(");
+                } else if (method.length == 11 && memcmp(method.start, "is_negative", 11) == 0) {
+                    emit("int_is_negative(");
+                } else if (method.length == 7 && memcmp(method.start, "is_zero", 7) == 0) {
+                    emit("int_is_zero(");
                 }
+                codegen_expr(expr->method_call.object);
+                emit(")");
                 break;
             }
             
-            // Check for float methods
+            // Check for float methods (Phase 3)
             bool is_float_method = (method.length == 5 && memcmp(method.start, "floor", 5) == 0 && expr->method_call.arg_count == 0) ||
                                   (method.length == 4 && memcmp(method.start, "ceil", 4) == 0 && expr->method_call.arg_count == 0) ||
                                   (method.length == 5 && memcmp(method.start, "round", 5) == 0 && expr->method_call.arg_count == 0) ||
-                                  (method.length == 3 && memcmp(method.start, "abs", 3) == 0 && expr->method_call.arg_count == 0);
+                                  (method.length == 3 && memcmp(method.start, "abs", 3) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 9 && memcmp(method.start, "to_string", 9) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 6 && memcmp(method.start, "to_int", 6) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 3 && memcmp(method.start, "pow", 3) == 0 && expr->method_call.arg_count == 1) ||
+                                  (method.length == 4 && memcmp(method.start, "sqrt", 4) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 3 && memcmp(method.start, "min", 3) == 0 && expr->method_call.arg_count == 1) ||
+                                  (method.length == 3 && memcmp(method.start, "max", 3) == 0 && expr->method_call.arg_count == 1) ||
+                                  (method.length == 5 && memcmp(method.start, "clamp", 5) == 0 && expr->method_call.arg_count == 2) ||
+                                  (method.length == 6 && memcmp(method.start, "is_nan", 6) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 11 && memcmp(method.start, "is_infinite", 11) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 9 && memcmp(method.start, "is_finite", 9) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 11 && memcmp(method.start, "is_positive", 11) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 11 && memcmp(method.start, "is_negative", 11) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 3 && memcmp(method.start, "sin", 3) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 3 && memcmp(method.start, "cos", 3) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 3 && memcmp(method.start, "tan", 3) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 3 && memcmp(method.start, "log", 3) == 0 && expr->method_call.arg_count == 0) ||
+                                  (method.length == 3 && memcmp(method.start, "exp", 3) == 0 && expr->method_call.arg_count == 0);
             
             if (is_float_method) {
                 if (method.length == 5 && memcmp(method.start, "floor", 5) == 0) {
-                    emit("floor(");
-                    codegen_expr(expr->method_call.object);
-                    emit(")");
+                    emit("float_floor(");
                 } else if (method.length == 4 && memcmp(method.start, "ceil", 4) == 0) {
-                    emit("ceil(");
-                    codegen_expr(expr->method_call.object);
-                    emit(")");
+                    emit("float_ceil(");
                 } else if (method.length == 5 && memcmp(method.start, "round", 5) == 0) {
-                    emit("round(");
-                    codegen_expr(expr->method_call.object);
-                    emit(")");
+                    emit("float_round(");
                 } else if (method.length == 3 && memcmp(method.start, "abs", 3) == 0) {
-                    emit("fabs(");
+                    emit("float_abs(");
+                } else if (method.length == 9 && memcmp(method.start, "to_string", 9) == 0) {
+                    emit("float_to_string(");
+                } else if (method.length == 6 && memcmp(method.start, "to_int", 6) == 0) {
+                    emit("float_to_int(");
+                } else if (method.length == 4 && memcmp(method.start, "sqrt", 4) == 0) {
+                    emit("float_sqrt(");
+                } else if (method.length == 6 && memcmp(method.start, "is_nan", 6) == 0) {
+                    emit("float_is_nan(");
+                } else if (method.length == 11 && memcmp(method.start, "is_infinite", 11) == 0) {
+                    emit("float_is_infinite(");
+                } else if (method.length == 9 && memcmp(method.start, "is_finite", 9) == 0) {
+                    emit("float_is_finite(");
+                } else if (method.length == 11 && memcmp(method.start, "is_positive", 11) == 0) {
+                    emit("float_is_positive(");
+                } else if (method.length == 11 && memcmp(method.start, "is_negative", 11) == 0) {
+                    emit("float_is_negative(");
+                } else if (method.length == 3 && memcmp(method.start, "sin", 3) == 0) {
+                    emit("float_sin(");
+                } else if (method.length == 3 && memcmp(method.start, "cos", 3) == 0) {
+                    emit("float_cos(");
+                } else if (method.length == 3 && memcmp(method.start, "tan", 3) == 0) {
+                    emit("float_tan(");
+                } else if (method.length == 3 && memcmp(method.start, "log", 3) == 0) {
+                    emit("float_log(");
+                } else if (method.length == 3 && memcmp(method.start, "exp", 3) == 0) {
+                    emit("float_exp(");
+                } else if (method.length == 3 && memcmp(method.start, "pow", 3) == 0) {
+                    emit("float_pow(");
                     codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
                     emit(")");
+                    break;
+                } else if (method.length == 3 && memcmp(method.start, "min", 3) == 0) {
+                    emit("float_min(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                    break;
+                } else if (method.length == 3 && memcmp(method.start, "max", 3) == 0) {
+                    emit("float_max(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                    break;
+                } else if (method.length == 5 && memcmp(method.start, "clamp", 5) == 0) {
+                    emit("float_clamp(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[1]);
+                    emit(")");
+                    break;
                 }
+                codegen_expr(expr->method_call.object);
+                emit(")");
                 break;
             }
             
@@ -2319,6 +2431,53 @@ void codegen_c_header() {
     emit("    result[len * count] = '\\0';\n");
     emit("    return result;\n");
     emit("}\n\n");
+    
+    // Phase 3 Task 3.1: Integer methods (conversion methods already exist for interpolation)
+    emit("double int_to_float(int n) { return (double)n; }\n");
+    emit("int int_abs(int n) { return n < 0 ? -n : n; }\n");
+    emit("int int_pow(int base, int exp) {\n");
+    emit("    int result = 1;\n");
+    emit("    for (int i = 0; i < exp; i++) result *= base;\n");
+    emit("    return result;\n");
+    emit("}\n");
+    emit("int int_min(int a, int b) { return a < b ? a : b; }\n");
+    emit("int int_max(int a, int b) { return a > b ? a : b; }\n");
+    emit("int int_clamp(int n, int min, int max) {\n");
+    emit("    if (n < min) return min;\n");
+    emit("    if (n > max) return max;\n");
+    emit("    return n;\n");
+    emit("}\n");
+    emit("int int_is_even(int n) { return n % 2 == 0; }\n");
+    emit("int int_is_odd(int n) { return n % 2 != 0; }\n");
+    emit("int int_is_positive(int n) { return n > 0; }\n");
+    emit("int int_is_negative(int n) { return n < 0; }\n");
+    emit("int int_is_zero(int n) { return n == 0; }\n\n");
+    
+    // Phase 3 Task 3.2: Float methods (conversion methods already exist for interpolation)
+    emit("int float_to_int(double f) { return (int)f; }\n");
+    emit("double float_round(double f) { return round(f); }\n");
+    emit("double float_floor(double f) { return floor(f); }\n");
+    emit("double float_ceil(double f) { return ceil(f); }\n");
+    emit("double float_abs(double f) { return fabs(f); }\n");
+    emit("double float_pow(double base, double exp) { return pow(base, exp); }\n");
+    emit("double float_sqrt(double f) { return sqrt(f); }\n");
+    emit("double float_min(double a, double b) { return a < b ? a : b; }\n");
+    emit("double float_max(double a, double b) { return a > b ? a : b; }\n");
+    emit("double float_clamp(double f, double min, double max) {\n");
+    emit("    if (f < min) return min;\n");
+    emit("    if (f > max) return max;\n");
+    emit("    return f;\n");
+    emit("}\n");
+    emit("int float_is_nan(double f) { return isnan(f); }\n");
+    emit("int float_is_infinite(double f) { return isinf(f); }\n");
+    emit("int float_is_finite(double f) { return isfinite(f); }\n");
+    emit("int float_is_positive(double f) { return f > 0.0; }\n");
+    emit("int float_is_negative(double f) { return f < 0.0; }\n");
+    emit("double float_sin(double f) { return sin(f); }\n");
+    emit("double float_cos(double f) { return cos(f); }\n");
+    emit("double float_tan(double f) { return tan(f); }\n");
+    emit("double float_log(double f) { return log(f); }\n");
+    emit("double float_exp(double f) { return exp(f); }\n\n");
     
     // Map utility functions
     emit("int map_get(WynMap map, const char* key) {\n");
