@@ -1,0 +1,72 @@
+// Phase 2 Task 2.3: Comprehensive String Method Tests
+
+fn test_case_conversion() -> int {
+    var hello = "hello";
+    var upper = hello.upper();
+    var hello2 = "HELLO";
+    var lower = hello2.lower();
+    var hello3 = "hello";
+    var cap = hello3.capitalize();
+    
+    // Test that types are correct (should compile)
+    return 0;
+}
+
+fn test_string_info() -> int {
+    var text = "hello";
+    var len = text.len();
+    var empty_str = "";
+    var empty = empty_str.is_empty();
+    var hello = "hello";
+    var not_empty = hello.is_empty();
+    
+    // len should be 5, empty should be 1, not_empty should be 0
+    return len;
+}
+
+fn test_search() -> int {
+    var text = "hello world";
+    var has_ell = text.contains("ell");
+    var starts = text.starts_with("hello");
+    var ends = text.ends_with("world");
+    var idx = text.index_of("world");
+    
+    // All should work
+    return idx;
+}
+
+fn test_manipulation() -> int {
+    var text = "hello";
+    var replaced = text.replace("l", "L");
+    var sliced = text.slice(1, 4);
+    var hi = "hi";
+    var repeated = hi.repeat(3);
+    var reversed = text.reverse();
+    
+    // All should return strings
+    return 0;
+}
+
+fn test_chaining() -> int {
+    var hello = "hello";
+    var result = hello.upper().lower().capitalize();
+    // Should compile and work
+    return 0;
+}
+
+fn test_complex_chaining() -> int {
+    var text = "  hello world  ";
+    var result = text.upper().reverse();
+    // Should work
+    return 0;
+}
+
+fn main() -> int {
+    test_case_conversion();
+    var len = test_string_info();
+    var idx = test_search();
+    test_manipulation();
+    test_chaining();
+    test_complex_chaining();
+    return len + idx;
+}

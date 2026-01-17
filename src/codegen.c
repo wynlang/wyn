@@ -827,7 +827,17 @@ void codegen_expr(Expr* expr) {
                                    (method.length == 8 && memcmp(method.start, "contains", 8) == 0 && expr->method_call.arg_count == 1) ||
                                    (method.length == 6 && memcmp(method.start, "concat", 6) == 0 && expr->method_call.arg_count == 1) ||
                                    (method.length == 5 && memcmp(method.start, "upper", 5) == 0 && expr->method_call.arg_count == 0) ||
-                                   (method.length == 5 && memcmp(method.start, "lower", 5) == 0 && expr->method_call.arg_count == 0);
+                                   (method.length == 5 && memcmp(method.start, "lower", 5) == 0 && expr->method_call.arg_count == 0) ||
+                                   (method.length == 10 && memcmp(method.start, "capitalize", 10) == 0 && expr->method_call.arg_count == 0) ||
+                                   (method.length == 7 && memcmp(method.start, "reverse", 7) == 0 && expr->method_call.arg_count == 0) ||
+                                   (method.length == 3 && memcmp(method.start, "len", 3) == 0 && expr->method_call.arg_count == 0) ||
+                                   (method.length == 8 && memcmp(method.start, "is_empty", 8) == 0 && expr->method_call.arg_count == 0) ||
+                                   (method.length == 11 && memcmp(method.start, "starts_with", 11) == 0 && expr->method_call.arg_count == 1) ||
+                                   (method.length == 9 && memcmp(method.start, "ends_with", 9) == 0 && expr->method_call.arg_count == 1) ||
+                                   (method.length == 8 && memcmp(method.start, "index_of", 8) == 0 && expr->method_call.arg_count == 1) ||
+                                   (method.length == 7 && memcmp(method.start, "replace", 7) == 0 && expr->method_call.arg_count == 2) ||
+                                   (method.length == 5 && memcmp(method.start, "slice", 5) == 0 && expr->method_call.arg_count == 2) ||
+                                   (method.length == 6 && memcmp(method.start, "repeat", 6) == 0 && expr->method_call.arg_count == 1);
             
             if (is_string_method) {
                 // Handle string methods
@@ -862,6 +872,68 @@ void codegen_expr(Expr* expr) {
                 } else if (method.length == 5 && memcmp(method.start, "lower", 5) == 0) {
                     emit("string_lower(");
                     codegen_expr(expr->method_call.object);
+                    emit(")");
+                } else if (method.length == 10 && memcmp(method.start, "capitalize", 10) == 0) {
+                    emit("string_capitalize(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                } else if (method.length == 7 && memcmp(method.start, "reverse", 7) == 0) {
+                    emit("string_reverse(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                } else if (method.length == 3 && memcmp(method.start, "len", 3) == 0) {
+                    emit("string_len(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                } else if (method.length == 8 && memcmp(method.start, "is_empty", 8) == 0) {
+                    emit("string_is_empty(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                } else if (method.length == 8 && memcmp(method.start, "contains", 8) == 0) {
+                    emit("string_contains(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                } else if (method.length == 11 && memcmp(method.start, "starts_with", 11) == 0) {
+                    emit("string_starts_with(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                } else if (method.length == 9 && memcmp(method.start, "ends_with", 9) == 0) {
+                    emit("string_ends_with(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                } else if (method.length == 8 && memcmp(method.start, "index_of", 8) == 0) {
+                    emit("string_index_of(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                } else if (method.length == 7 && memcmp(method.start, "replace", 7) == 0) {
+                    emit("string_replace(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[1]);
+                    emit(")");
+                } else if (method.length == 5 && memcmp(method.start, "slice", 5) == 0) {
+                    emit("string_slice(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[1]);
+                    emit(")");
+                } else if (method.length == 6 && memcmp(method.start, "repeat", 6) == 0) {
+                    emit("string_repeat(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
                     emit(")");
                 }
             }
@@ -2137,7 +2209,7 @@ void codegen_c_header() {
     emit("    result[len] = '\\0';\n");
     emit("    return result;\n");
     emit("}\n");
-    emit("bool string_contains(const char* str, const char* substr) {\n");
+    emit("int string_contains(const char* str, const char* substr) {\n");
     emit("    return strstr(str, substr) != NULL;\n");
     emit("}\n");
     emit("char* string_concat(const char* a, const char* b) {\n");
@@ -2163,6 +2235,88 @@ void codegen_c_header() {
     emit("        result[i] = tolower(str[i]);\n");
     emit("    }\n");
     emit("    result[len] = '\\0';\n");
+    emit("    return result;\n");
+    emit("}\n");
+    
+    // Phase 2 Task 2.1: Additional string methods
+    emit("char* string_capitalize(const char* str) {\n");
+    emit("    int len = strlen(str);\n");
+    emit("    char* result = malloc(len + 1);\n");
+    emit("    if (len > 0) result[0] = toupper(str[0]);\n");
+    emit("    for (int i = 1; i < len; i++) result[i] = tolower(str[i]);\n");
+    emit("    result[len] = '\\0';\n");
+    emit("    return result;\n");
+    emit("}\n");
+    
+    emit("char* string_reverse(const char* str) {\n");
+    emit("    int len = strlen(str);\n");
+    emit("    char* result = malloc(len + 1);\n");
+    emit("    for (int i = 0; i < len; i++) result[i] = str[len - 1 - i];\n");
+    emit("    result[len] = '\\0';\n");
+    emit("    return result;\n");
+    emit("}\n");
+    
+    emit("int string_len(const char* str) { return strlen(str); }\n");
+    emit("int string_is_empty(const char* str) { return str[0] == '\\0'; }\n");
+    
+    emit("int string_starts_with(const char* str, const char* prefix) {\n");
+    emit("    return strncmp(str, prefix, strlen(prefix)) == 0;\n");
+    emit("}\n");
+    
+    emit("int string_ends_with(const char* str, const char* suffix) {\n");
+    emit("    int str_len = strlen(str);\n");
+    emit("    int suffix_len = strlen(suffix);\n");
+    emit("    if (suffix_len > str_len) return 0;\n");
+    emit("    return strcmp(str + str_len - suffix_len, suffix) == 0;\n");
+    emit("}\n");
+    
+    emit("int string_index_of(const char* str, const char* substr) {\n");
+    emit("    const char* pos = strstr(str, substr);\n");
+    emit("    return pos ? (int)(pos - str) : -1;\n");
+    emit("}\n");
+    
+    emit("char* string_replace(const char* str, const char* old, const char* new) {\n");
+    emit("    int count = 0;\n");
+    emit("    const char* p = str;\n");
+    emit("    int old_len = strlen(old);\n");
+    emit("    while ((p = strstr(p, old))) { count++; p += old_len; }\n");
+    emit("    int new_len = strlen(new);\n");
+    emit("    int result_len = strlen(str) + count * (new_len - old_len);\n");
+    emit("    char* result = malloc(result_len + 1);\n");
+    emit("    char* r = result;\n");
+    emit("    p = str;\n");
+    emit("    while (*p) {\n");
+    emit("        const char* match = strstr(p, old);\n");
+    emit("        if (match) {\n");
+    emit("            int len = match - p;\n");
+    emit("            memcpy(r, p, len); r += len;\n");
+    emit("            memcpy(r, new, new_len); r += new_len;\n");
+    emit("            p = match + old_len;\n");
+    emit("        } else {\n");
+    emit("            strcpy(r, p); break;\n");
+    emit("        }\n");
+    emit("    }\n");
+    emit("    result[result_len] = '\\0';\n");
+    emit("    return result;\n");
+    emit("}\n");
+    
+    emit("char* string_slice(const char* str, int start, int end) {\n");
+    emit("    int len = strlen(str);\n");
+    emit("    if (start < 0) start = 0;\n");
+    emit("    if (end > len) end = len;\n");
+    emit("    if (start >= end) return strdup(\"\");\n");
+    emit("    int slice_len = end - start;\n");
+    emit("    char* result = malloc(slice_len + 1);\n");
+    emit("    memcpy(result, str + start, slice_len);\n");
+    emit("    result[slice_len] = '\\0';\n");
+    emit("    return result;\n");
+    emit("}\n");
+    
+    emit("char* string_repeat(const char* str, int count) {\n");
+    emit("    int len = strlen(str);\n");
+    emit("    char* result = malloc(len * count + 1);\n");
+    emit("    for (int i = 0; i < count; i++) memcpy(result + i * len, str, len);\n");
+    emit("    result[len * count] = '\\0';\n");
     emit("    return result;\n");
     emit("}\n\n");
     
