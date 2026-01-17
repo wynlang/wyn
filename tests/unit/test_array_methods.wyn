@@ -1,0 +1,65 @@
+// Phase 4: Remaining Array Method Tests (TDD)
+
+fn test_array_push() -> int {
+    var arr = [1, 2, 3];
+    arr.push(4);
+    var len = arr.len();
+    // len should be 4
+    return len;
+}
+
+fn test_array_pop() -> int {
+    var arr = [1, 2, 3];
+    var last = arr.pop();
+    var len = arr.len();
+    // last should be 3, len should be 2
+    return last + len;  // 3 + 2 = 5
+}
+
+fn test_array_get() -> int {
+    var arr = [10, 20, 30, 40];
+    var first = arr.get(0);
+    var third = arr.get(2);
+    // first=10, third=30
+    return first + third;  // 10 + 30 = 40
+}
+
+fn test_array_index_of() -> int {
+    var arr = [5, 10, 15, 20];
+    var idx = arr.index_of(15);
+    var not_found = arr.index_of(99);
+    // idx=2, not_found=-1
+    return idx + not_found;  // 2 + (-1) = 1
+}
+
+fn test_array_reverse() -> int {
+    var arr = [1, 2, 3, 4];
+    arr.reverse();
+    var first = arr.get(0);
+    var last = arr.get(3);
+    // After reverse: [4, 3, 2, 1]
+    // first=4, last=1
+    return first + last;  // 4 + 1 = 5
+}
+
+fn test_array_sort() -> int {
+    var arr = [3, 1, 4, 2];
+    arr.sort();
+    var first = arr.get(0);
+    var last = arr.get(3);
+    // After sort: [1, 2, 3, 4]
+    // first=1, last=4
+    return first + last;  // 1 + 4 = 5
+}
+
+fn main() -> int {
+    var push_result = test_array_push();
+    var pop_result = test_array_pop();
+    var get_result = test_array_get();
+    var index_result = test_array_index_of();
+    var reverse_result = test_array_reverse();
+    var sort_result = test_array_sort();
+    
+    // Expected: 4 + 5 + 40 + 1 + 5 + 5 = 60
+    return push_result + pop_result + get_result + index_result + reverse_result + sort_result;
+}

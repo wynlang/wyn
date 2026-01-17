@@ -759,7 +759,13 @@ void codegen_expr(Expr* expr) {
                 MethodDispatch dispatch;
                 if (dispatch_method(receiver_type, method_name, expr->method_call.arg_count, &dispatch)) {
                     emit("%s(", dispatch.c_function);
-                    codegen_expr(expr->method_call.object);
+                    if (dispatch.pass_by_ref) {
+                        emit("&(");
+                        codegen_expr(expr->method_call.object);
+                        emit(")");
+                    } else {
+                        codegen_expr(expr->method_call.object);
+                    }
                     for (int i = 0; i < expr->method_call.arg_count; i++) {
                         emit(", ");
                         codegen_expr(expr->method_call.args[i]);
@@ -1339,6 +1345,48 @@ void codegen_c_header() {
     emit("        if (arr.data[i].type == WYN_TYPE_INT && arr.data[i].data.int_val == value) return true;\n");
     emit("    }\n");
     emit("    return false;\n");
+    emit("}\n");
+    emit("void array_push(WynArray* arr, int value) {\n");
+    emit("    if (arr->count >= arr->capacity) {\n");
+    emit("        arr->capacity = arr->capacity == 0 ? 4 : arr->capacity * 2;\n");
+    emit("        arr->data = realloc(arr->data, sizeof(WynValue) * arr->capacity);\n");
+    emit("    }\n");
+    emit("    arr->data[arr->count].type = WYN_TYPE_INT;\n");
+    emit("    arr->data[arr->count].data.int_val = value;\n");
+    emit("    arr->count++;\n");
+    emit("}\n");
+    emit("int array_pop(WynArray* arr) {\n");
+    emit("    if (arr->count == 0) return 0;\n");
+    emit("    arr->count--;\n");
+    emit("    return arr->data[arr->count].data.int_val;\n");
+    emit("}\n");
+    emit("int array_get(WynArray arr, int index) {\n");
+    emit("    if (index < 0 || index >= arr.count) return 0;\n");
+    emit("    return arr.data[index].data.int_val;\n");
+    emit("}\n");
+    emit("int array_index_of(WynArray arr, int value) {\n");
+    emit("    for (int i = 0; i < arr.count; i++) {\n");
+    emit("        if (arr.data[i].type == WYN_TYPE_INT && arr.data[i].data.int_val == value) return i;\n");
+    emit("    }\n");
+    emit("    return -1;\n");
+    emit("}\n");
+    emit("void array_reverse(WynArray* arr) {\n");
+    emit("    for (int i = 0; i < arr->count / 2; i++) {\n");
+    emit("        WynValue temp = arr->data[i];\n");
+    emit("        arr->data[i] = arr->data[arr->count - 1 - i];\n");
+    emit("        arr->data[arr->count - 1 - i] = temp;\n");
+    emit("    }\n");
+    emit("}\n");
+    emit("void array_sort(WynArray* arr) {\n");
+    emit("    for (int i = 0; i < arr->count - 1; i++) {\n");
+    emit("        for (int j = 0; j < arr->count - i - 1; j++) {\n");
+    emit("            if (arr->data[j].data.int_val > arr->data[j + 1].data.int_val) {\n");
+    emit("                WynValue temp = arr->data[j];\n");
+    emit("                arr->data[j] = arr->data[j + 1];\n");
+    emit("                arr->data[j + 1] = temp;\n");
+    emit("            }\n");
+    emit("        }\n");
+    emit("    }\n");
     emit("}\n\n");
     
     // Range utility function

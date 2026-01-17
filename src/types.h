@@ -27,6 +27,7 @@ const char* get_receiver_type_string(const Type* type);
 typedef struct {
     const char* c_function;  // C function to call (e.g., "string_len")
     bool needs_args;         // Whether to emit arguments
+    bool pass_by_ref;        // Whether to pass receiver by reference (&obj)
 } MethodDispatch;
 
 bool dispatch_method(const char* receiver_type, const char* method_name, int arg_count, MethodDispatch* out);

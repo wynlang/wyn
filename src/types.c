@@ -82,12 +82,12 @@ static const MethodSignature method_signatures[] = {
     {"array", "len", "int", 0},
     {"array", "is_empty", "bool", 0},
     {"array", "push", "void", 1},
-    {"array", "pop", "void", 0},
+    {"array", "pop", "int", 0},         // Returns last element
     {"array", "get", "int", 1},        // Returns element (type depends on array)
     {"array", "contains", "bool", 1},
     {"array", "index_of", "int", 1},
-    {"array", "reverse", "array", 0},
-    {"array", "sort", "array", 0},
+    {"array", "reverse", "void", 0},   // Mutates in place
+    {"array", "sort", "void", 0},      // Mutates in place
     
     // HashMap methods
     {"map", "insert", "void", 2},
@@ -162,8 +162,9 @@ const char* get_receiver_type_string(const Type* type) {
 bool dispatch_method(const char* receiver_type, const char* method_name, int arg_count, MethodDispatch* out) {
     if (!receiver_type || !method_name || !out) return false;
     
-    // Default: needs_args = true (most methods need arguments)
+    // Default: needs_args = true, pass_by_ref = false
     out->needs_args = true;
+    out->pass_by_ref = false;
     
     // Dispatch by receiver type first
     if (strcmp(receiver_type, "string") == 0) {
@@ -338,6 +339,32 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "contains") == 0 && arg_count == 1) {
             out->c_function = "array_contains"; return true;
+        }
+        if (strcmp(method_name, "push") == 0 && arg_count == 1) {
+            out->c_function = "array_push"; 
+            out->pass_by_ref = true;
+            return true;
+        }
+        if (strcmp(method_name, "pop") == 0 && arg_count == 0) {
+            out->c_function = "array_pop";
+            out->pass_by_ref = true;
+            return true;
+        }
+        if (strcmp(method_name, "get") == 0 && arg_count == 1) {
+            out->c_function = "array_get"; return true;
+        }
+        if (strcmp(method_name, "index_of") == 0 && arg_count == 1) {
+            out->c_function = "array_index_of"; return true;
+        }
+        if (strcmp(method_name, "reverse") == 0 && arg_count == 0) {
+            out->c_function = "array_reverse";
+            out->pass_by_ref = true;
+            return true;
+        }
+        if (strcmp(method_name, "sort") == 0 && arg_count == 0) {
+            out->c_function = "array_sort";
+            out->pass_by_ref = true;
+            return true;
         }
         return false;
     }
