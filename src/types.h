@@ -8,6 +8,17 @@ typedef struct Expr Expr;
 typedef struct Stmt Stmt;
 typedef struct Pattern Pattern;  // T3.3.1: Pattern forward declaration
 
+// Phase 1 Task 1.2: Method Signature Table
+typedef struct {
+    const char* receiver_type;  // "string", "int", "float", etc.
+    const char* method_name;    // "upper", "lower", "abs", etc.
+    const char* return_type;    // "string", "int", "float", etc.
+    int param_count;            // Number of parameters (excluding self)
+} MethodSignature;
+
+// Lookup method return type given receiver type and method name
+const char* lookup_method_return_type(const char* receiver_type, const char* method_name);
+
 // T1.5.2: LambdaExpr definition (moved from ast.h to break circular dependency)
 typedef struct LambdaExpr {
     Token* params;

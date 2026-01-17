@@ -2795,6 +2795,78 @@ void codegen_stmt(Stmt* stmt) {
                     // Map type - use the typedef
                     c_type = "WynMap";
                     needs_arc_management = true;
+                } else if (stmt->var.init->type == EXPR_METHOD_CALL) {
+                    // Phase 1 Task 1.3: Infer type from method call
+                    // Determine receiver type from expr_type (populated by checker)
+                    const char* receiver_type = "int";  // default
+                    
+                    Expr* obj = stmt->var.init->method_call.object;
+                    if (obj->expr_type) {
+                        // Use type information from checker
+                        switch (obj->expr_type->kind) {
+                            case TYPE_STRING:
+                                receiver_type = "string";
+                                break;
+                            case TYPE_INT:
+                                receiver_type = "int";
+                                break;
+                            case TYPE_FLOAT:
+                                receiver_type = "float";
+                                break;
+                            case TYPE_BOOL:
+                                receiver_type = "bool";
+                                break;
+                            case TYPE_ARRAY:
+                                receiver_type = "array";
+                                break;
+                            case TYPE_MAP:
+                                receiver_type = "map";
+                                break;
+                            default:
+                                receiver_type = "int";
+                        }
+                    } else {
+                        // Fallback: infer from expression type
+                        if (obj->type == EXPR_STRING) {
+                            receiver_type = "string";
+                        } else if (obj->type == EXPR_FLOAT) {
+                            receiver_type = "float";
+                        } else if (obj->type == EXPR_INT) {
+                            receiver_type = "int";
+                        } else if (obj->type == EXPR_BOOL) {
+                            receiver_type = "bool";
+                        } else if (obj->type == EXPR_ARRAY) {
+                            receiver_type = "array";
+                        } else if (obj->type == EXPR_MAP) {
+                            receiver_type = "map";
+                        } else if (obj->type == EXPR_METHOD_CALL) {
+                            // Nested method call (chaining) - assume string for now
+                            receiver_type = "string";
+                        }
+                    }
+                    
+                    // Look up method return type
+                    Token method = stmt->var.init->method_call.method;
+                    char method_name[64];
+                    snprintf(method_name, sizeof(method_name), "%.*s", method.length, method.start);
+                    
+                    const char* return_type = lookup_method_return_type(receiver_type, method_name);
+                    if (return_type) {
+                        if (strcmp(return_type, "string") == 0) {
+                            c_type = "char*";
+                            needs_arc_management = false;  // Disable ARC for now (Phase 1 focus)
+                        } else if (strcmp(return_type, "int") == 0) {
+                            c_type = "int";
+                        } else if (strcmp(return_type, "float") == 0) {
+                            c_type = "double";
+                        } else if (strcmp(return_type, "bool") == 0) {
+                            c_type = "bool";
+                        } else if (strcmp(return_type, "array") == 0) {
+                            c_type = "WynArray";
+                        } else if (strcmp(return_type, "void") == 0) {
+                            c_type = "void";
+                        }
+                    }
                 } else if (stmt->var.init->type == EXPR_STRUCT_INIT) {
                     // Use the struct type name
                     static char struct_type[64];

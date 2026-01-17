@@ -1,0 +1,40 @@
+// Phase 1 Task 1.4: Type Inference Tests
+// Tests that method calls infer correct return types
+
+fn test_string_method_inference() -> int {
+    var text = "hello";
+    var upper = text.upper();
+    // upper should be inferred as char*, not int
+    return 0;
+}
+
+fn test_string_method_chaining() -> int {
+    var result = "  HELLO  ".trim().lower();
+    // result should be inferred as char*
+    return 0;
+}
+
+fn test_multiple_string_methods() -> int {
+    var text = "hello world";
+    var upper = text.upper();
+    var lower = text.lower();
+    var trimmed = "  spaces  ".trim();
+    // All should be inferred as char*
+    return 0;
+}
+
+fn test_mixed_types() -> int {
+    var text = "hello";
+    var upper = text.upper();
+    var num = 42;
+    // upper is char*, num is int
+    return num;
+}
+
+fn main() -> int {
+    test_string_method_inference();
+    test_string_method_chaining();
+    test_multiple_string_methods();
+    var exit_code = test_mixed_types();
+    return exit_code;
+}
