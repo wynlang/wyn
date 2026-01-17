@@ -5,6 +5,9 @@ A modern systems programming language that compiles to C.
 ## Features
 
 - **Modern Syntax** - Clean, expressive syntax inspired by Rust and Go
+- **Object-Oriented Methods** - 71 built-in methods for strings, numbers, and arrays
+- **Type-Aware Dispatch** - Methods dispatch based on receiver type
+- **Method Chaining** - Fluent API with chainable methods
 - **Generics** - Full generic programming support with monomorphization
 - **Async/Await** - First-class asynchronous programming
 - **Module System** - Organize code with imports and exports
@@ -88,6 +91,38 @@ fn identity<T>(x: T) -> T {
 }
 ```
 
+### Object-Oriented Methods (NEW!)
+```wyn
+fn main() -> int {
+    // String methods (23 methods)
+    var text = "  Hello, World!  ";
+    var clean = text.trim().lower();
+    var parts = text.split(",");
+    var len = text.len();
+    
+    // Number methods (33 methods)
+    var num = 42;
+    var str = num.to_string();
+    var is_even = num.is_even();
+    
+    var pi = 3.14159;
+    var rounded = pi.round();
+    var sine = pi.sin();
+    
+    // Array methods (9 methods)
+    var arr = [3, 1, 4, 2];
+    arr.sort();
+    arr.push(5);
+    var first = arr.get(0);
+    var count = arr.len();
+    
+    // Method chaining
+    var result = "  HELLO  ".trim().lower().capitalize();
+    
+    return 0;
+}
+```
+
 ### Async/Await
 ```wyn
 async fn fetch() -> int {
@@ -114,6 +149,27 @@ fn main() -> int {
     return math::add(1, 2);
 }
 ```
+
+## Built-in Methods
+
+Wyn provides 71 built-in methods across all core types:
+
+### String Methods (23)
+- **Case:** `upper()`, `lower()`, `capitalize()`, `title()`
+- **Whitespace:** `trim()`, `trim_left()`, `trim_right()`, `pad_left()`, `pad_right()`
+- **Info:** `len()`, `is_empty()`
+- **Search:** `contains()`, `starts_with()`, `ends_with()`, `index_of()`
+- **Transform:** `replace()`, `slice()`, `repeat()`, `reverse()`, `split()`
+- **Convert:** `chars()`, `to_bytes()`
+
+### Number Methods (33)
+**Integer (12):** `to_string()`, `to_float()`, `abs()`, `pow()`, `min()`, `max()`, `clamp()`, `is_even()`, `is_odd()`, `is_positive()`, `is_negative()`, `is_zero()`
+
+**Float (21):** `to_string()`, `to_int()`, `round()`, `floor()`, `ceil()`, `abs()`, `pow()`, `sqrt()`, `min()`, `max()`, `clamp()`, `is_nan()`, `is_infinite()`, `is_finite()`, `is_positive()`, `is_negative()`, `sin()`, `cos()`, `tan()`, `log()`, `exp()`
+
+### Array Methods (9)
+`len()`, `is_empty()`, `contains()`, `push()`, `pop()`, `get()`, `index_of()`, `reverse()`, `sort()`
+
 
 ### Structs
 ```wyn
