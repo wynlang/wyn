@@ -1092,7 +1092,28 @@ void codegen_expr(Expr* expr) {
                 }
                 break;  // Important: prevent fallthrough to array methods
             }
-            // Array methods
+            // Phase 4: Array/Vec methods
+            else if ((method.length == 3 && memcmp(method.start, "len", 3) == 0 && expr->method_call.arg_count == 0) ||
+                     (method.length == 8 && memcmp(method.start, "is_empty", 8) == 0 && expr->method_call.arg_count == 0) ||
+                     (method.length == 8 && memcmp(method.start, "contains", 8) == 0 && expr->method_call.arg_count == 1)) {
+                if (method.length == 3 && memcmp(method.start, "len", 3) == 0) {
+                    emit("array_len(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                } else if (method.length == 8 && memcmp(method.start, "is_empty", 8) == 0) {
+                    emit("array_is_empty(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                } else if (method.length == 8 && memcmp(method.start, "contains", 8) == 0) {
+                    emit("array_contains(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                }
+                break;
+            }
+            // Array methods (old sizeof-based, keep for compatibility)
             else if (method.length == 5 && memcmp(method.start, "first", 5) == 0) {
                 codegen_expr(expr->method_call.object);
                 emit("[0]");
@@ -2534,6 +2555,16 @@ void codegen_c_header() {
     emit("    }\n");
     emit("    keys[map.count] = NULL; // Null terminate\n");
     emit("    return keys;\n");
+    emit("}\n\n");
+    
+    // Phase 4: Array/Vec methods
+    emit("int array_len(WynArray arr) { return arr.count; }\n");
+    emit("int array_is_empty(WynArray arr) { return arr.count == 0; }\n");
+    emit("int array_contains(WynArray arr, int item) {\n");
+    emit("    for (int i = 0; i < arr.count; i++) {\n");
+    emit("        if (((int*)arr.data)[i] == item) return 1;\n");
+    emit("    }\n");
+    emit("    return 0;\n");
     emit("}\n\n");
     
     // HTTP helper
