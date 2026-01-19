@@ -19,7 +19,7 @@ extern void codegen_c_header();
 extern void codegen_program(Program* prog);
 
 // Compile a single file
-static int compile_file(const char* filename) {
+static int compile_file_with_output(const char* filename, const char* output_name) {
     char* source = wyn_read_file(filename);
     
     // Generate output filename
@@ -63,7 +63,11 @@ static int compile_file(const char* filename) {
     
     // Compile C to binary
     char output_bin[512];
-    snprintf(output_bin, sizeof(output_bin), "%s.out", filename);
+    if (output_name) {
+        snprintf(output_bin, sizeof(output_bin), "%s", output_name);
+    } else {
+        snprintf(output_bin, sizeof(output_bin), "%s.out", filename);
+    }
     
     char cmd[2048];
     snprintf(cmd, sizeof(cmd), 
@@ -79,6 +83,10 @@ static int compile_file(const char* filename) {
     
     printf("Compiled successfully: %s\n", output_bin);
     return 0;
+}
+
+static int compile_file(const char* filename) {
+    return compile_file_with_output(filename, NULL);
 }
 
 // Find main.wyn in directory
@@ -103,18 +111,27 @@ static char* find_main_file(const char* dir) {
 
 // Main compile command
 int cmd_compile(const char* target, int argc, char** argv) {
+    // Check for -o flag
+    const char* output_name = NULL;
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+            output_name = argv[i + 1];
+            break;
+        }
+    }
+    
     // Check if target is a file or directory
     FILE* f = fopen(target, "r");
     if (f) {
         // It's a file
         fclose(f);
-        return compile_file(target);
+        return compile_file_with_output(target, output_name);
     }
     
     // Try as directory
     char* main_file = find_main_file(target);
     if (main_file) {
-        return compile_file(main_file);
+        return compile_file_with_output(main_file, output_name);
     }
     
     fprintf(stderr, "Error: Could not find '%s' or main.wyn in directory\n", target);

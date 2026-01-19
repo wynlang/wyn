@@ -70,16 +70,25 @@ static Token make_token(TokenType type) {
 }
 
 static Token number() {
+    // Hex literals: 0xFF
     if (*(lexer.current - 1) == '0' && (peek() == 'x' || peek() == 'X')) {
         advance();
         while (isxdigit(peek())) advance();
         return make_token(TOKEN_INT);
     }
     
-    while (isdigit(peek())) advance();
+    // Binary literals: 0b1010
+    if (*(lexer.current - 1) == '0' && (peek() == 'b' || peek() == 'B')) {
+        advance();
+        while (peek() == '0' || peek() == '1') advance();
+        return make_token(TOKEN_INT);
+    }
+    
+    // Regular numbers with optional underscores
+    while (isdigit(peek()) || peek() == '_') advance();
     if (peek() == '.' && isdigit(peek_next())) {
         advance();
-        while (isdigit(peek())) advance();
+        while (isdigit(peek()) || peek() == '_') advance();
         return make_token(TOKEN_FLOAT);
     }
     return make_token(TOKEN_INT);

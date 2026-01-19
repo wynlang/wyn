@@ -44,7 +44,8 @@ static char* read_file(const char* path) {
 static char* get_version() {
     static char version[32] = {0};
     if (version[0] == 0) {
-        FILE* f = fopen("../VERSION", "r");
+        FILE* f = fopen("VERSION", "r");
+        if (!f) f = fopen("../VERSION", "r");
         if (f) {
             if (fgets(version, sizeof(version), f)) {
                 char* newline = strchr(version, '\n');
@@ -90,12 +91,14 @@ int main(int argc, char** argv) {
     
     char* command = argv[1];
     
-    if (strcmp(command, "version") == 0) {
+    // Handle --version and -v flags
+    if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0 || strcmp(command, "-v") == 0) {
         printf("Wyn v%s\n", get_version());
         return 0;
     }
     
-    if (strcmp(command, "help") == 0) {
+    // Handle --help and -h flags
+    if (strcmp(command, "help") == 0 || strcmp(command, "--help") == 0 || strcmp(command, "-h") == 0) {
         printf("Wyn Compiler v%s\n\n", get_version());
         printf("Commands:\n");
         printf("  wyn <file.wyn>           Compile file\n");
@@ -544,23 +547,26 @@ int main(int argc, char** argv) {
         return result;
     }
     
-    // Parse optimization flags
+    // Parse optimization flags and -o flag
     OptLevel optimization = OPT_NONE;
-    int file_arg_index = 1;
+    int file_arg_index = -1;
+    const char* output_name = NULL;
     
-    // Check for optimization flags
+    // Check for flags (scan all args)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-O1") == 0) {
             optimization = OPT_O1;
         } else if (strcmp(argv[i], "-O2") == 0) {
             optimization = OPT_O2;
-        } else if (argv[i][0] != '-') {
+        } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+            output_name = argv[i + 1];
+            i++; // Skip next arg
+        } else if (argv[i][0] != '-' && file_arg_index == -1) {
             file_arg_index = i;
-            break;
         }
     }
     
-    if (file_arg_index >= argc) {
+    if (file_arg_index == -1 || file_arg_index >= argc) {
         fprintf(stderr, "Error: No input file specified\n");
         return 1;
     }
@@ -619,16 +625,20 @@ int main(int argc, char** argv) {
     
     char compile_cmd[512];
     const char* opt_flag = (optimization == OPT_O2) ? "-O2" : (optimization == OPT_O1) ? "-O1" : "-O0";
-    snprintf(compile_cmd, 512, "gcc %s -I src -o %s.out %s.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c -lm", opt_flag, argv[file_arg_index], argv[file_arg_index]);
+    char output_bin[256];
+    if (output_name) {
+        snprintf(output_bin, 256, "%s", output_name);
+    } else {
+        snprintf(output_bin, 256, "%s.out", argv[file_arg_index]);
+    }
+    snprintf(compile_cmd, 512, "gcc %s -I src -o %s %s.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c -lm", opt_flag, output_bin, argv[file_arg_index]);
     int result = system(compile_cmd);
     
     // Check if output file was actually created
-    char check_path[256];
-    snprintf(check_path, 256, "%s.out", argv[file_arg_index]);
-    FILE* check = fopen(check_path, "r");
+    FILE* check = fopen(output_bin, "r");
     if (check) {
         fclose(check);
-        printf("Compiled successfully: %s.out\n", argv[file_arg_index]);
+        printf("Compiled successfully: %s\n", output_bin);
         // Keep intermediate .c file for debugging
         // char c_file[256];
         // snprintf(c_file, 256, "%s.c", argv[file_arg_index]);

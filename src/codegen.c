@@ -163,9 +163,34 @@ void codegen_expr(Expr* expr) {
     if (!expr) return;
     
     switch (expr->type) {
-        case EXPR_INT:
-            emit("%.*s", expr->token.length, expr->token.start);
+        case EXPR_INT: {
+            // Handle binary literals (0b1010)
+            if (expr->token.length > 2 && expr->token.start[0] == '0' && 
+                (expr->token.start[1] == 'b' || expr->token.start[1] == 'B')) {
+                // Convert binary to decimal
+                long long value = 0;
+                for (int i = 2; i < expr->token.length; i++) {
+                    if (expr->token.start[i] == '0' || expr->token.start[i] == '1') {
+                        value = value * 2 + (expr->token.start[i] - '0');
+                    }
+                }
+                emit("%lld", value);
+            }
+            // Handle numbers with underscores (1_000)
+            else if (memchr(expr->token.start, '_', expr->token.length)) {
+                // Emit without underscores
+                for (int i = 0; i < expr->token.length; i++) {
+                    if (expr->token.start[i] != '_') {
+                        emit("%c", expr->token.start[i]);
+                    }
+                }
+            }
+            // Regular int
+            else {
+                emit("%.*s", expr->token.length, expr->token.start);
+            }
             break;
+        }
         case EXPR_FLOAT:
             emit("%.*s", expr->token.length, expr->token.start);
             break;
