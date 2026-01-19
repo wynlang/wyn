@@ -1,0 +1,52 @@
+// Test: String collection methods
+// Expected: Exit code 0
+
+fn main() -> int {
+    // Test split
+    let csv = "a,b,c";
+    let parts = csv.split(",");
+    if (parts.len() != 3) {
+        return 1;
+    }
+    
+    // Test chars
+    let text = "abc";
+    let chars = text.chars();
+    if (chars.len() != 3) {
+        return 2;
+    }
+    
+    // Test to_bytes
+    let bytes = "AB".to_bytes();
+    if (bytes.len() != 2) {
+        return 3;
+    }
+    
+    // Test lines
+    let multiline = "line1\nline2\nline3";
+    let lines = multiline.lines();
+    if (lines.len() != 3) {
+        return 4;
+    }
+    
+    // Test words
+    let sentence = "hello world test";
+    let words = sentence.words();
+    if (words.len() != 3) {
+        return 5;
+    }
+    
+    // Test pad_left
+    let padded_left = "hi".pad_left(5, " ");
+    if (padded_left.len() != 5) {
+        return 6;
+    }
+    
+    // Test pad_right
+    let padded_right = "hi".pad_right(5, " ");
+    if (padded_right.len() != 5) {
+        return 7;
+    }
+    
+    return 0;
+}

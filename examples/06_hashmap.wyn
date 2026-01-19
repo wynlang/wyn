@@ -1,7 +1,7 @@
 // HashMap - Using hash maps for key-value storage
 fn main() -> int {
     // Create a new hash map
-    let hmap = hashmap_new();
+    var hmap = hashmap_new();
     
     // Insert key-value pairs
     hashmap_insert(hmap, "name", 1);
@@ -9,8 +9,8 @@ fn main() -> int {
     hashmap_insert(hmap, "score", 100);
     
     // Get values
-    let name_val = hashmap_get(hmap, "name");
-    let age_val = hashmap_get(hmap, "age");
+    var name_val = hashmap_get(hmap, "name");
+    var age_val = hashmap_get(hmap, "age");
     
     print_str("Name value: ");
     print(name_val);
@@ -18,7 +18,7 @@ fn main() -> int {
     print(age_val);
     
     // Check for missing key
-    let missing = hashmap_get(hmap, "missing");
+    var missing = hashmap_get(hmap, "missing");
     if missing == -1 {
         print_str("Key not found (as expected)");
     }

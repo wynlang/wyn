@@ -22,7 +22,6 @@ tests/test_lexer
 tests/test_parser
 tests/test_checker
 tests/test_codegen
-tests/test_*
 !tests/*.c
 !tests/*.h
 

@@ -15,14 +15,14 @@ fn cell_is_alive(c: Cell) -> int {
 }
 
 fn cell_toggle(c: Cell) -> Cell {
-    let new_alive = if c.alive == 1 { 0 } else { 1 };
+    var new_alive = if c.alive == 1 { 0 } else { 1 };
     return Cell { alive: new_alive, x: c.x, y: c.y };
 }
 
 fn main() -> int {
-    let cell1 = cell_new(0, 0, 1);
-    let cell2 = cell_new(1, 0, 0);
-    let cell3 = cell_toggle(cell2);
+    var cell1 = cell_new(0, 0, 1);
+    var cell2 = cell_new(1, 0, 0);
+    var cell3 = cell_toggle(cell2);
     
     return cell_is_alive(cell1) + cell_is_alive(cell3);
 }

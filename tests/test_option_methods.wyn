@@ -1,0 +1,24 @@
+fn main() -> int {
+    // Test basic Option operations
+    var some_val = Some(42);
+    var none_val = None[int]();
+    
+    // Test is_some and is_none
+    assert(some_val.is_some());
+    assert(!some_val.is_none());
+    assert(!none_val.is_some());
+    assert(none_val.is_none());
+    
+    // Test unwrap and unwrap_or
+    assert(some_val.unwrap() == 42);
+    assert(some_val.unwrap_or(0) == 42);
+    assert(none_val.unwrap_or(99) == 99);
+    
+    // Test expect method
+    assert(some_val.expect("Should have value") == 42);
+    
+    // Note: or_else requires lambda support, so we'll test it later
+    // For now, just test that the methods exist and compile
+    
+    return 0;
+}

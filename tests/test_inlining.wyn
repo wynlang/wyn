@@ -1,0 +1,20 @@
+// Test function inlining optimization
+fn small_function(x: int) -> int {
+    return x * 2 + 1;
+}
+
+fn medium_function(a: int, b: int) -> int {
+    let sum: int = a + b;
+    return sum * 2 + small_function(a);
+}
+
+fn main() -> int {
+    let x: int = 5;
+    let y: int = small_function(x);  // Should be inlined
+    let z: int = medium_function(x, y);  // May be inlined
+    
+    print_str("Inlining test result: ");
+    print(z);
+    
+    return 0;
+}

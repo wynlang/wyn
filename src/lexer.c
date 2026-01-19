@@ -135,7 +135,7 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 6 && memcmp(start, "import", 6) == 0) return TOKEN_IMPORT;
             break;
         case 'l':
-            if (length == 3 && memcmp(start, "let", 3) == 0) return TOKEN_LET;
+            // 'let' keyword removed in v1.2.3 - use 'var' or 'const' instead
             break;
         case 'm':
             if (length == 5 && memcmp(start, "match", 5) == 0) return TOKEN_MATCH;

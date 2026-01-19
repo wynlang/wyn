@@ -1,7 +1,7 @@
 // HashSet - Using hash sets for unique collections
 fn main() -> int {
     // Create a new hash set
-    let set = hashset_new();
+    var set = hashset_new();
     
     // Add elements
     hashset_add(set, "apple");

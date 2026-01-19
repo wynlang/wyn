@@ -1,8 +1,8 @@
 // JSON - Parsing and using JSON data
 fn main() -> int {
     // Parse JSON string
-    let json_text = "{\"name\":\"Alice\",\"age\":30,\"score\":95}";
-    let json = json_parse(json_text);
+    var json_text = "{\"name\":\"Alice\",\"age\":30,\"score\":95}";
+    var json = json_parse(json_text);
     
     if json == 0 {
         print_str("Failed to parse JSON");
@@ -10,15 +10,15 @@ fn main() -> int {
     }
     
     // Get string value
-    let name = json_get_string(json, "name");
+    var name = json_get_string(json, "name");
     if name != 0 {
         print_str("Name: ");
         print_str(name);
     }
     
     // Get integer values
-    let age = json_get_int(json, "age");
-    let score = json_get_int(json, "score");
+    var age = json_get_int(json, "age");
+    var score = json_get_int(json, "score");
     
     print_str("Age: ");
     print(age);

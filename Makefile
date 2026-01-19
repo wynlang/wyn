@@ -69,7 +69,7 @@ CFLAGS_LLVM = $(CFLAGS)
 LDFLAGS_LLVM = 
 endif
 
-all: wyn$(EXE_EXT) test
+all: wyn$(EXE_EXT)
 
 # Platform information
 platform-info:

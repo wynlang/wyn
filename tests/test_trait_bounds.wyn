@@ -1,0 +1,19 @@
+trait Display {
+    fn display(self) -> string;
+}
+
+impl Display for int {
+    fn display(self) -> string {
+        return "42";  // Simplified implementation
+    }
+}
+
+fn show<T: Display>(x: T) {
+    // Simplified - just call the method
+    x.display();
+}
+
+fn main() -> int {
+    show(42);  // OK
+    return 0;
+}

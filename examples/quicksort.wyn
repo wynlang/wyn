@@ -1,21 +1,21 @@
 // Quicksort implementation in Wyn
 
 fn partition(arr: [int], low: int, high: int) -> int {
-    let pivot = arr[high];
-    let mut i = low - 1;
+    var pivot = arr[high];
+    var i = low - 1;
     
-    let mut j = low;
+    var j = low;
     while j < high {
         if arr[j] < pivot {
             i = i + 1;
-            let temp = arr[i];
+            var temp = arr[i];
             arr[i] = arr[j];
             arr[j] = temp;
         }
         j = j + 1;
     }
     
-    let temp = arr[i + 1];
+    var temp = arr[i + 1];
     arr[i + 1] = arr[high];
     arr[high] = temp;
     
@@ -24,18 +24,18 @@ fn partition(arr: [int], low: int, high: int) -> int {
 
 fn quicksort(arr: [int], low: int, high: int) -> int {
     if low < high {
-        let pi = partition(arr, low, high);
-        let dummy1 = quicksort(arr, low, pi - 1);
-        let dummy2 = quicksort(arr, pi + 1, high);
+        var pi = partition(arr, low, high);
+        var dummy1 = quicksort(arr, low, pi - 1);
+        var dummy2 = quicksort(arr, pi + 1, high);
     }
     return 0;
 }
 
 fn main() -> int {
-    let mut arr = [64, 34, 25, 12, 22, 11, 90];
-    let n = 7;
+    var arr = [64, 34, 25, 12, 22, 11, 90];
+    var n = 7;
     
-    let dummy = quicksort(arr, 0, n - 1);
+    var dummy = quicksort(arr, 0, n - 1);
     
     // Return first element to verify sorting
     return arr[0];  // Should be 11

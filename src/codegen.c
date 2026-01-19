@@ -914,6 +914,35 @@ void codegen_expr(Expr* expr) {
             emit("__arr_%d; })", arr_id);
             break;
         }
+        case EXPR_HASHMAP_LITERAL: {
+            // v1.2.4: {} with initialization
+            if (expr->array.count == 0) {
+                // Empty hashmap
+                emit("hashmap_new()");
+            } else {
+                // HashMap with initial values
+                static int map_counter = 0;
+                int map_id = map_counter++;
+                emit("({ WynHashMap* __map_%d = hashmap_new(); ", map_id);
+                
+                // Insert key-value pairs (stored as key, value, key, value...)
+                for (int i = 0; i < expr->array.count; i += 2) {
+                    emit("hashmap_insert(__map_%d, ", map_id);
+                    codegen_expr(expr->array.elements[i]);    // key
+                    emit(", ");
+                    codegen_expr(expr->array.elements[i+1]);  // value
+                    emit("); ");
+                }
+                
+                emit("__map_%d; })", map_id);
+            }
+            break;
+        }
+        case EXPR_HASHSET_LITERAL: {
+            // v1.2.3: () generates hashset_new()
+            emit("hashset_new()");
+            break;
+        }
         case EXPR_INDEX: {
             // Check if this is map indexing by looking at the object
             // For now, assume if index is a string, it's a map
@@ -1984,20 +2013,34 @@ void codegen_c_header() {
     emit("}\n");
     
     emit("void map_merge(WynHashMap* dest, WynHashMap* src) {\n");
-    emit("    // Note: This is a simplified merge - in a real implementation\n");
-    emit("    // we would iterate through src and insert each key-value pair\n");
-    emit("    // For now, just a placeholder that does nothing\n");
+    emit("    // Merge src into dest by iterating all buckets\n");
+    emit("    for (int i = 0; i < 128; i++) {\n");
+    emit("        void* entry = ((void**)src)[i];\n");
+    emit("        while (entry) {\n");
+    emit("            char* key = *(char**)entry;\n");
+    emit("            int value = *((int*)((char*)entry + sizeof(char*)));\n");
+    emit("            hashmap_insert(dest, key, value);\n");
+    emit("            entry = *((void**)((char*)entry + sizeof(char*) + sizeof(int)));\n");
+    emit("        }\n");
+    emit("    }\n");
     emit("}\n");
     
     emit("int map_len(WynHashMap* map) {\n");
-    emit("    // Note: Simple hashmap doesn't track size\n");
-    emit("    // This is a placeholder that returns 0\n");
-    emit("    return 0;\n");
+    emit("    int count = 0;\n");
+    emit("    for (int i = 0; i < 128; i++) {\n");
+    emit("        void* entry = ((void**)map)[i];\n");
+    emit("        while (entry) {\n");
+    emit("            count++;\n");
+    emit("            entry = *((void**)((char*)entry + sizeof(char*) + sizeof(int)));\n");
+    emit("        }\n");
+    emit("    }\n");
+    emit("    return count;\n");
     emit("}\n");
     
     emit("bool map_is_empty(WynHashMap* map) {\n");
-    emit("    // Note: Simple hashmap doesn't track size\n");
-    emit("    // This is a placeholder that returns true\n");
+    emit("    for (int i = 0; i < 128; i++) {\n");
+    emit("        if (((void**)map)[i] != NULL) return false;\n");
+    emit("    }\n");
     emit("    return true;\n");
     emit("}\n");
     
@@ -2006,9 +2049,7 @@ void codegen_c_header() {
     emit("}\n");
     
     emit("void map_remove(WynHashMap* map, const char* key) {\n");
-    emit("    // Note: This is a placeholder - simple hashmap doesn't have remove\n");
-    emit("    // In a real implementation, we would add a hashmap_remove function\n");
-    emit("    (void)map; (void)key; // Suppress unused parameter warnings\n");
+    emit("    hashmap_remove(map, key);\n");
     emit("}\n\n");
     
     // Phase 4: Array/Vec methods
@@ -2739,44 +2780,39 @@ void codegen_stmt(Stmt* stmt) {
                     // Lambda/closure type - function pointer
                     c_type = "int (*)(int, int)";  // Simplified: assume int params and return
                     needs_arc_management = false;
+                } else if (stmt->var.init->type == EXPR_HASHMAP_LITERAL) {
+                    // v1.2.3: HashMap literal
+                    c_type = "WynHashMap*";
+                    needs_arc_management = false;
+                } else if (stmt->var.init->type == EXPR_HASHSET_LITERAL) {
+                    // v1.2.3: HashSet literal
+                    c_type = "WynHashSet*";
+                    needs_arc_management = false;
                 } else if (stmt->var.init->type == EXPR_TUPLE) {
                     // Tuple type - use __auto_type (GCC/Clang extension)
                     c_type = "__auto_type";
                 } else if (stmt->var.init->type == EXPR_CALL) {
                     // Function call - use __auto_type to infer return type
                     c_type = "__auto_type";
-                } else if (stmt->var.init->type == EXPR_BINARY && 
-                          stmt->var.init->binary.op.type == TOKEN_PLUS) {
-                    // String concatenation result - check if any operand is a string
-                    bool is_string_concat = false;
-                    
-                    // Check left operand
-                    if (stmt->var.init->binary.left->type == EXPR_STRING ||
-                        stmt->var.init->binary.left->type == EXPR_IDENT || // Assume identifiers might be strings
-                        (stmt->var.init->binary.left->type == EXPR_BINARY && 
-                         stmt->var.init->binary.left->binary.op.type == TOKEN_PLUS)) {
-                        is_string_concat = true;
-                    }
-                    
-                    // Check right operand
-                    if (stmt->var.init->binary.right->type == EXPR_STRING ||
-                        stmt->var.init->binary.right->type == EXPR_IDENT) { // Assume identifiers might be strings
-                        is_string_concat = true;
-                    }
-                    
-                    if (is_string_concat) {
-                        c_type = "const char*";
-                        is_already_const = true;  // String concat result already has const
-                        needs_arc_management = true;
-                    }
-                } else if (stmt->var.init->type == EXPR_BINARY && 
-                          stmt->var.init->binary.op.type == TOKEN_PLUS) {
-                    // String concatenation result
-                    bool left_is_string = (stmt->var.init->binary.left->type == EXPR_STRING);
-                    bool right_is_string = (stmt->var.init->binary.right->type == EXPR_STRING);
-                    if (left_is_string || right_is_string) {
-                        c_type = "char*";
-                        needs_arc_management = true;
+                } else if (stmt->var.init->type == EXPR_BINARY) {
+                    // Binary expression - check if it's string concatenation or arithmetic
+                    if (stmt->var.init->binary.op.type == TOKEN_PLUS) {
+                        // Check if either operand is explicitly a string literal
+                        bool left_is_string = (stmt->var.init->binary.left->type == EXPR_STRING);
+                        bool right_is_string = (stmt->var.init->binary.right->type == EXPR_STRING);
+                        
+                        if (left_is_string || right_is_string) {
+                            // String concatenation
+                            c_type = "const char*";
+                            is_already_const = true;
+                            needs_arc_management = true;
+                        } else {
+                            // Arithmetic - use __auto_type to infer from expression
+                            c_type = "__auto_type";
+                        }
+                    } else {
+                        // Other binary operations (-, *, /, ==, etc.) - use __auto_type
+                        c_type = "__auto_type";
                     }
                 }
                 // ... rest of type determination logic

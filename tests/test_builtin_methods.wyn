@@ -1,0 +1,24 @@
+// Test: Built-in methods on core types
+// Expected: Exit code 100
+
+fn main() -> int {
+    // Array methods - work out of the box!
+    let numbers = [5, 10, 15, 20, 25];
+    let array_sum = numbers.sum();      // 75
+    let array_max = numbers.max();      // 25
+    let array_min = numbers.min();      // 5
+    
+    // String methods - work out of the box!
+    let text = "Wyn";
+    let text_len = text.length();       // 3
+    
+    // Int methods - work out of the box!
+    let negative = -10;
+    let absolute = negative.abs();      // 10
+    let num = 6;
+    let even_check = num.is_even();     // 1 (true)
+    
+    // Calculate result: 75 + 25 + 5 + 3 + 10 + 1 = 119
+    // Subtract 19 to get 100
+    return array_sum + array_max + array_min + text_len + absolute + even_check - 19;
+}

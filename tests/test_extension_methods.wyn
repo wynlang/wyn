@@ -1,0 +1,50 @@
+// Test: Extension methods on custom types
+// Expected: Exit code 100
+
+struct Point { x: int, y: int }
+struct Rectangle { width: int, height: int }
+struct Circle { radius: int }
+
+// Extension methods for Point
+fn Point.sum(p: Point) -> int {
+    return p.x + p.y;
+}
+
+fn Point.multiply(p: Point) -> int {
+    return p.x * p.y;
+}
+
+fn Point.distance_squared(p: Point) -> int {
+    return p.x * p.x + p.y * p.y;
+}
+
+// Extension methods for Rectangle
+fn Rectangle.area(r: Rectangle) -> int {
+    return r.width * r.height;
+}
+
+fn Rectangle.perimeter(r: Rectangle) -> int {
+    return 2 * (r.width + r.height);
+}
+
+// Extension method for Circle
+fn Circle.area(c: Circle) -> int {
+    return 3 * c.radius * c.radius;  // Simplified pi = 3
+}
+
+fn main() -> int {
+    let p = Point { x: 3, y: 4 };
+    let r = Rectangle { width: 5, height: 6 };
+    let c = Circle { radius: 2 };
+    
+    let sum = p.sum();              // 7
+    let mult = p.multiply();        // 12
+    let dist = p.distance_squared(); // 25
+    let rect_area = r.area();       // 30
+    let perim = r.perimeter();      // 22
+    let circ_area = c.area();       // 12
+    
+    // Total: 7 + 12 + 25 + 30 + 22 + 12 = 108
+    // But we'll subtract 8 to get 100
+    return sum + mult + dist + rect_area + perim + circ_area - 8;
+}

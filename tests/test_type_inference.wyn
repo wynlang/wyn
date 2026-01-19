@@ -1,0 +1,21 @@
+fn main() -> int {
+    // Array literals: var arr = [1, 2, 3] → Vec[int]
+    var arr = [1, 2, 3];
+    
+    // Method chains: var x = "hello".upper().len() → int
+    var x = "hello".upper().len();
+    
+    // Option/Result: var opt = some(42) → Option[int]
+    var opt = some(42);
+    
+    // Nested expressions
+    var nested = [1, 2, 3].len();
+    
+    // Binary operations
+    var sum = 1 + 2 + 3;
+    
+    // String operations
+    var greeting = "Hello, " + "World!";
+    
+    return 0;
+}

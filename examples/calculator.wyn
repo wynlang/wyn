@@ -18,9 +18,9 @@ fn calculate(op: Operation, a: int, b: int) -> int {
 }
 
 fn main() -> int {
-    let result1 = calculate(Operation::ADD, 10, 5);
-    let result2 = calculate(Operation::MULTIPLY, 3, 7);
-    let result3 = calculate(Operation::DIVIDE, 20, 4);
+    var result1 = calculate(Operation::ADD, 10, 5);
+    var result2 = calculate(Operation::MULTIPLY, 3, 7);
+    var result3 = calculate(Operation::DIVIDE, 20, 4);
     
     return result1 + result2 + result3;
 }

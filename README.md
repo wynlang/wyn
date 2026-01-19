@@ -1,27 +1,28 @@
 # Wyn Programming Language
 
-**Version:** 1.1.0  
-**Status:** Production Ready  
-**Type:** Systems programming language with "everything is an object"
+**Version:** 1.2.0  
+**Status:** Production Ready ✓  
+**Type:** Systems programming language where "everything is an object"
 
 ---
 
 ## Quick Start
 
-### Installation
+### Build
 ```bash
-make wyn
+cd wyn
+make
 ```
 
 ### Hello World
-```bash
-cat > hello.wyn << 'EOF'
+```wyn
 fn main() -> int {
-    println("Hello, World!")
-    return 0
+    print("Hello, World!\n");
+    return 0;
 }
-EOF
+```
 
+```bash
 ./wyn hello.wyn
 ./hello.wyn.out
 ```
@@ -30,57 +31,56 @@ EOF
 
 ## Features
 
-- **Everything is an object:** `42.abs()`, `"hello".upper()`, `16.0.sqrt()`
+### Everything is an Object
+```wyn
+42.abs()              // Methods on integers
+"hello".upper()       // Methods on strings
+[1,2,3].len()         // Methods on arrays
+```
+
+### Clean Collection Syntax
+```wyn
+var arr = [1, 2, 3];                    // Array
+var hmap = {"key": 10, "key2": 20};     // HashMap
+var hset = {:};                          // HashSet
+```
+
+### Simple Variable Declaration
+```wyn
+var mutable = 10;      // Mutable
+const immutable = 20;  // Immutable
+```
+
+### Core Features
 - **Type aliases:** `type UserId = int`
 - **Extension methods:** `impl Point { fn sum(self) -> int }`
-- **Nil coalescing:** `value ?? default`
 - **String interpolation:** `"Hello {name}!"`
-- **Method chaining:** `"  test  ".trim().upper().len()`
 - **Pattern matching:** Exhaustive enum matching
 - **Generics:** `Option<T>`, `Result<T, E>`
 - **Async/await:** Future-based concurrency
 - **Memory safety:** Automatic Reference Counting (ARC)
-- **150 methods:** Across all primitive and collection types
+- **150+ methods:** Across all primitive and collection types
 
 ---
 
 ## Example
 
 ```wyn
-// Type aliases
-type UserId = int
-
-// Structs with methods
-struct Point {
-    x: int,
-    y: int
-}
-
-impl Point {
-    fn sum(self) -> int {
-        return self.x + self.y
-    }
-}
-
 fn main() -> int {
-    // Type alias
-    var id: UserId = 42
+    // Collections with clean syntax
+    var scores = {"alice": 95, "bob": 87};
+    var tags = {:};
+    var numbers = [1, 2, 3, 4, 5];
     
-    // Extension method
-    var p = Point { x: 3, y: 4 }
-    var result = p.sum()
+    // Everything is an object
+    var len = numbers.len();
+    var sum = numbers.contains(3);
     
-    // String methods
-    var text = "  hello  ".trim().upper()
+    // HashMap operations
+    var alice_score = hashmap_get(scores, "alice");
+    print_int(alice_score);  // 95
     
-    // Nil coalescing
-    var value = some(10)
-    var final = value ?? 0
-    
-    // Method chaining
-    var len = "hello world".upper().len()
-    
-    return result + final + len
+    return 0;
 }
 ```
 
@@ -88,60 +88,93 @@ fn main() -> int {
 
 ## Documentation
 
-- **Language Guide:** See `docs/LANGUAGE.md`
-- **API Reference:** See `docs/API.md`
-- **Examples:** See `examples/` directory
+- **User Guide:** See `docs/` directory
+- **Examples:** See `examples/` directory (21 examples)
+- **Changelog:** See [CHANGELOG.md](CHANGELOG.md)
+- **Internal Docs:** See `../internal-docs/` for specifications
 
 ---
 
-## Building
+## What's New in v1.2.0
+
+### Breaking Changes
+- **Removed `let` keyword** - Use `var` or `const` instead
+
+### New Features
+- HashMap literal syntax: `{}`
+- HashMap initialization: `{"key": value}`
+- HashSet literal syntax: `{:}`
+- HashSet operations: `set_union()`, `set_intersection()`, etc.
+
+### Bug Fixes
+- Fixed impl methods calling other methods
+- Fixed HashMap implementation (remove, has, helpers)
+- Fixed binary expression type inference
+
+See [CHANGELOG.md](CHANGELOG.md) for complete details.
+
+---
+
+## Testing
 
 ```bash
-# Build compiler
-make wyn
+# Run all examples
+cd examples
+for f in *.wyn; do ../wyn "$f" && ./"${f}.out"; done
 
-# Run tests
-make test
+# Run regression tests
+./tests/regression.sh
 
-# Clean build
-make clean
+# Run specific test
+./wyn tests/wyn/test_v1.2.0_complete.wyn
+./tests/wyn/test_v1.2.0_complete.wyn.out
 ```
 
 ---
 
-## Examples
+## Project Structure
 
-All 21 examples in `examples/` directory:
-- `01_hello_world.wyn` - Basic hello world
-- `02_functions.wyn` - Function definitions
-- `03_generics.wyn` - Generic types
-- `04_async_await.wyn` - Async programming
-- `11_methods.wyn` - Method chaining
-- And 16 more...
-
----
-
-## Performance
-
-- **Compilation:** <100ms for small programs
-- **Runtime:** Native C performance
-- **Binary Size:** 486KB compiler, ~50KB hello world
+```
+wyn/
+├── src/           # Compiler source code
+├── examples/      # 21 example programs
+├── tests/         # Test suite
+├── docs/          # User documentation
+├── README.md      # This file
+└── CHANGELOG.md   # Version history
+```
 
 ---
 
-## Status
+## Building from Source
 
-- ✓ 21/21 examples working
-- ✓ 150 methods implemented
-- ✓ 0 stubs in code
-- ✓ Production ready
+```bash
+# Clean build
+make clean
+make
+
+# Check version
+./wyn --version
+
+# Run tests
+./tests/regression.sh
+```
 
 ---
 
 ## License
 
-See LICENSE file.
+See LICENSE file for details.
 
 ---
 
-**Wyn v1.1.0 - A modern systems programming language where everything is an object.**
+## Links
+
+- **Internal Documentation:** `../internal-docs/`
+- **Language Spec:** `../internal-docs/01_LANGUAGE_SPEC.md`
+- **Architecture:** `../internal-docs/02_ARCHITECTURE.md`
+- **Release Notes:** `../internal-docs/RELEASE_NOTES_v1.2.0.md`
+
+---
+
+**Wyn v1.2.0 - A modern systems programming language where everything is an object.**

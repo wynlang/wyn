@@ -1,27 +1,57 @@
 # Changelog
 
-## [1.1.0] - 2026-01-19
+## [1.2.0] - 2026-01-20
+
+### Changed (BREAKING)
+- **Removed `let` keyword** - Use `var` (mutable) or `const` (immutable) instead
+  - Migration: Replace `let x = 10` with `var x = 10` or `const x = 10`
+  - Reason: Simplify syntax, reduce confusion
 
 ### Added
-- **Module System**: Full module system with 11 search paths
-  - Public/private visibility with `pub` keyword
-  - Nested imports and user module override
-  - Built-in math module with 7 functions (sqrt, pow, sin, cos, tan, abs, floor)
-- **Cross-platform Support**: Release binaries for Linux (x64, ARM64), macOS (x64, ARM64), and Windows (x64)
+- **HashMap literal syntax `{}`** - Create hashmaps with `var hmap = {}`
+  - Empty hashmaps: `var hmap = {}`
+  - With initialization: `var hmap = {"key1": 10, "key2": 20}`
+  - Keys must be strings, values are integers
+
+- **HashSet literal syntax `{:}`** - Create hashsets with `var hset = {:}`
+  - Cleaner than `hashset_new()`
+  - Unique syntax that doesn't conflict with tuples
+
+- **HashSet Operations** - Registered set operation functions
+  - `set_union()`, `set_intersection()`, `set_difference()`
+  - `set_is_subset()`, `set_is_superset()`
+  - `set_len()`, `set_is_empty()`, `set_clear()`
 
 ### Fixed
-- Method call code generation for extension methods, string methods, and number methods
-- Built-in math module accessibility (all 7 functions now work)
-- Test pollution with proper cleanup of `/tmp/wyn_modules/`
-- Linux build compatibility with POSIX defines
-- Windows compatibility issues (TokenType conflicts, time_t conversions, dirent.h)
-- Compilation paths with WYN_ROOT environment variable
+- **Critical Bug**: Methods calling other methods in impl blocks
+  - Fixed `self` parameter type resolution in method bodies
+  - Test: `tests/wyn/test_impl_method_calls.wyn`
 
-### Changed
-- Release workflow now runs tests before cross-compilation
-- Test scripts use relative paths for better portability
+- **HashMap Implementation**: Completed all functions
+  - Added `hashmap_remove()` and `hashmap_has()`
+  - Implemented `map_len()`, `map_is_empty()`, `map_merge()`
+  - Test: `tests/wyn/test_hashmap_complete.wyn`
+
+- **Critical Bug**: Binary expression type inference
+  - Fixed incorrect type inference for nested arithmetic expressions
+  - Variables with binary expressions now correctly infer as `int` instead of `const char*`
+  - Test: `tests/wyn/test_nested_binary.wyn`
 
 ### Validated
-- 21/21 examples pass
-- 11/11 module tests pass
-- All advertised features verified working
+- **Array helpers** already implemented and working:
+  - `contains()`, `index_of()`, `reverse()`
+  - Test: `tests/wyn/test_array_helpers.wyn`
+
+- **String helpers** already implemented and working:
+  - `starts_with()`, `ends_with()`, `trim()`, `replace()`
+  - Test: `tests/wyn/test_string_helpers.wyn`
+
+- All 21 examples compile and run
+- All regression tests pass
+- Comprehensive v1.2.0 test passes
+
+---
+
+## Previous Versions
+
+See archive/ for older changelog entries.

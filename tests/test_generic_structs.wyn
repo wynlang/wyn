@@ -1,0 +1,9 @@
+struct Box<T> {
+    value: T
+}
+
+fn main() -> int {
+    var int_box = Box { value: 42 };
+    var str_box = Box { value: "hello" };
+    return 0;
+}

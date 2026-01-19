@@ -472,6 +472,71 @@ static Expr* primary() {
         return expr;
     }
     
+    // v1.2.4: {} for HashMap, {:} for HashSet
+    if (match(TOKEN_LBRACE)) {
+        // Check if next token is : followed by }
+        if (check(TOKEN_COLON)) {
+            Token colon = parser.current;
+            advance();  // consume :
+            if (check(TOKEN_RBRACE)) {
+                advance();  // consume }
+                // {:} is HashSet literal
+                Expr* expr = alloc_expr();
+                expr->type = EXPR_HASHSET_LITERAL;
+                expr->array.elements = NULL;
+                expr->array.count = 0;
+                return expr;
+            }
+            // Not {:}, backtrack - this will be an error
+            parser.current = colon;
+        }
+        
+        // Otherwise it's a HashMap
+        Expr* expr = alloc_expr();
+        expr->type = EXPR_HASHMAP_LITERAL;
+        expr->array.elements = NULL;
+        expr->array.count = 0;
+        
+        // Parse key-value pairs: {"key": value, "key2": value2}
+        if (!check(TOKEN_RBRACE)) {
+            int capacity = 8;
+            expr->array.elements = malloc(sizeof(Expr*) * capacity);
+            
+            do {
+                // Expect string key
+                if (!check(TOKEN_STRING)) {
+                    fprintf(stderr, "Error: HashMap keys must be strings\n");
+                    break;
+                }
+                Expr* key = expression();
+                
+                // Expect colon
+                if (!match(TOKEN_COLON)) {
+                    fprintf(stderr, "Error: Expected ':' after HashMap key\n");
+                    break;
+                }
+                
+                // Parse value
+                Expr* value = expression();
+                
+                // Store key-value pair (key at even index, value at odd)
+                if (expr->array.count + 1 >= capacity) {
+                    capacity *= 2;
+                    expr->array.elements = realloc(expr->array.elements, sizeof(Expr*) * capacity);
+                }
+                expr->array.elements[expr->array.count++] = key;
+                expr->array.elements[expr->array.count++] = value;
+                
+            } while (match(TOKEN_COMMA));
+        }
+        
+        expect(TOKEN_RBRACE, "Expected '}' after hashmap elements");
+        return expr;
+    }
+    
+    // v1.2.3: () for HashSet literal - DISABLED due to conflict with tuples/grouping
+    // Use hashset_new() for now
+    
     if (match(TOKEN_MAP)) {
         Expr* expr = alloc_expr();
         expr->type = EXPR_MAP;
@@ -1229,20 +1294,14 @@ Stmt* statement() {
         return stmt;
     }
     
-    if (match(TOKEN_VAR) || match(TOKEN_CONST) || match(TOKEN_LET)) {
+    if (match(TOKEN_VAR) || match(TOKEN_CONST)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_VAR;
-        WynTokenType decl_type = parser.previous.type;  // Save the declaration type
-        bool is_mutable = false;
+        WynTokenType decl_type = parser.previous.type;
         
-        // Check for 'mut' keyword after 'let'
-        if (decl_type == TOKEN_LET && match(TOKEN_MUT)) {
-            is_mutable = true;
-        }
-        
-        // FIX: let variables are mutable by default, only const makes them immutable
+        // var = mutable, const = immutable
         stmt->var.is_const = (decl_type == TOKEN_CONST);
-        stmt->var.is_mutable = (decl_type == TOKEN_VAR || decl_type == TOKEN_LET || is_mutable);
+        stmt->var.is_mutable = (decl_type == TOKEN_VAR);
         stmt->var.name = parser.current;
         expect(TOKEN_IDENT, "Expected variable name");
         

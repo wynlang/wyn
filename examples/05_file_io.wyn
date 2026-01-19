@@ -1,14 +1,14 @@
 // File I/O - Reading and writing files
 fn main() -> int {
     // Write to file
-    let write_result = file_write("/tmp/wyn_example.txt", "Hello from Wyn!");
+    var write_result = file_write("/tmp/wyn_example.txt", "Hello from Wyn!");
     if write_result != 1 {
         print_str("Failed to write file");
         return 1;
     }
     
     // Read from file
-    let content = file_read("/tmp/wyn_example.txt");
+    var content = file_read("/tmp/wyn_example.txt");
     if content == 0 {
         print_str("Failed to read file");
         return 2;
@@ -18,7 +18,7 @@ fn main() -> int {
     print_str(content);
     
     // Check if file exists
-    let exists = file_exists("/tmp/wyn_example.txt");
+    var exists = file_exists("/tmp/wyn_example.txt");
     if exists == 1 {
         print_str("File exists!");
     }

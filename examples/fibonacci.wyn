@@ -8,7 +8,7 @@ fn fibonacci(n: int) -> int {
 }
 
 fn main() -> int {
-    let fib5 = fibonacci(5);
-    let fib7 = fibonacci(7);
+    var fib5 = fibonacci(5);
+    var fib7 = fibonacci(7);
     return fib5 + fib7;
 }

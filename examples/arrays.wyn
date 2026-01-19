@@ -1,8 +1,8 @@
 // Array Example - Demonstrates arrays and loops
 
 fn array_sum(arr: [int], len: int) -> int {
-    let mut total = 0;
-    let mut i = 0;
+    var total = 0;
+    var i = 0;
     while i < len {
         total = total + arr[i];
         i = i + 1;
@@ -11,8 +11,8 @@ fn array_sum(arr: [int], len: int) -> int {
 }
 
 fn array_max(arr: [int], len: int) -> int {
-    let mut maximum = arr[0];
-    let mut i = 1;
+    var maximum = arr[0];
+    var i = 1;
     while i < len {
         if arr[i] > maximum {
             maximum = arr[i];
@@ -23,8 +23,8 @@ fn array_max(arr: [int], len: int) -> int {
 }
 
 fn main() -> int {
-    let numbers = [5, 2, 8, 1, 9, 3];
-    let sum = array_sum(numbers, 6);
-    let max = array_max(numbers, 6);
+    var numbers = [5, 2, 8, 1, 9, 3];
+    var sum = array_sum(numbers, 6);
+    var max = array_max(numbers, 6);
     return sum + max;
 }

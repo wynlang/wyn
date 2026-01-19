@@ -1,0 +1,14 @@
+enum Status { PENDING, RUNNING, DONE }
+
+fn main() -> int {
+    var status = PENDING;
+    
+    // Should compile with wildcard
+    match status {
+        PENDING => print_str("pending"),
+        RUNNING => print_str("running"),
+        _ => print_str("other")
+    }
+    
+    return 0;
+}

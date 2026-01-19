@@ -1,0 +1,8 @@
+// Test: Module system with math module
+// Expected: Exit code 50
+
+import math from "wyn:math"
+
+fn main() -> int {
+    return math.abs(-15) + math.max(10, 20) + math.min(8, 12) + 7;
+}

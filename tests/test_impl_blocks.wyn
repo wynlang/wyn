@@ -1,0 +1,44 @@
+// Test: Impl blocks with multiple methods
+// Expected: Exit code 100
+
+struct Point { x: int, y: int }
+struct Rectangle { width: int, height: int }
+
+impl Point {
+    fn sum(self) -> int {
+        return self.x + self.y;
+    }
+    
+    fn multiply(self) -> int {
+        return self.x * self.y;
+    }
+    
+    fn distance_squared(self) -> int {
+        return self.x * self.x + self.y * self.y;
+    }
+}
+
+impl Rectangle {
+    fn area(self) -> int {
+        return self.width * self.height;
+    }
+    
+    fn perimeter(self) -> int {
+        return 2 * (self.width + self.height);
+    }
+}
+
+fn main() -> int {
+    let p = Point { x: 3, y: 4 };
+    let r = Rectangle { width: 5, height: 6 };
+    
+    let sum = p.sum();              // 7
+    let mult = p.multiply();        // 12
+    let dist = p.distance_squared(); // 25
+    let area = r.area();            // 30
+    let perim = r.perimeter();      // 22
+    
+    // Total: 7 + 12 + 25 + 30 + 22 = 96
+    // Add 4 to get 100
+    return sum + mult + dist + area + perim + 4;
+}

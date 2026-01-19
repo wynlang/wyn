@@ -66,7 +66,18 @@ int cmd_fmt(const char* file, int argc, char** argv) {
 }
 
 int cmd_repl(int argc, char** argv) {
-    printf("Wyn REPL v1.0.0\n");
+    // Read version from VERSION file
+    char version[32] = "1.2.1";
+    FILE* vf = fopen("VERSION", "r");
+    if (!vf) vf = fopen("../VERSION", "r");
+    if (vf) {
+        if (fgets(version, sizeof(version), vf)) {
+            char* newline = strchr(version, '\n');
+            if (newline) *newline = 0;
+        }
+        fclose(vf);
+    }
+    printf("Wyn REPL v%s\n", version);
     printf("Type expressions to evaluate, or 'exit' to quit\n\n");
     
     char line[1024];
@@ -452,7 +463,23 @@ int cmd_init(const char* name, int argc, char** argv) {
 }
 
 int cmd_version(int argc, char** argv) {
-    printf("Wyn v1.0.0\n");
+    (void)argc; (void)argv;
+    // Read version from VERSION file
+    FILE* f = fopen("VERSION", "r");
+    if (!f) f = fopen("../VERSION", "r");
+    if (f) {
+        char version[32];
+        if (fgets(version, sizeof(version), f)) {
+            char* newline = strchr(version, '\n');
+            if (newline) *newline = 0;
+            printf("Wyn v%s\n", version);
+        } else {
+            printf("Wyn v1.2.1\n");
+        }
+        fclose(f);
+    } else {
+        printf("Wyn v1.2.1\n");
+    }
     return 0;
 }
 

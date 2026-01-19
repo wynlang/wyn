@@ -26,10 +26,10 @@ fn state_to_int(s: State) -> int {
 }
 
 fn main() -> int {
-    let s1 = State::IDLE;
-    let s2 = next_state(s1);
-    let s3 = next_state(s2);
-    let s4 = next_state(s3);
+    var s1 = State::IDLE;
+    var s2 = next_state(s1);
+    var s3 = next_state(s2);
+    var s4 = next_state(s3);
     
     return state_to_int(s2) + state_to_int(s3) + state_to_int(s4);
 }

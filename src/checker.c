@@ -229,14 +229,15 @@ void init_checker() {
         "Error", "TypeError", "ValueError", "DivisionByZeroError", "print_error",
         "http_get", "http_post", "http_put", "http_delete", "http_set_header", "http_clear_headers", "http_status", "http_error",
         "https_get", "https_post",
-        "hashmap_new", "hashmap_insert", "hashmap_get", "hashmap_free",
+        "hashmap_new", "hashmap_insert", "hashmap_get", "hashmap_has", "hashmap_remove", "hashmap_free",
         "hashset_new", "hashset_add", "hashset_contains", "hashset_remove", "hashset_free",
+        "set_len", "set_is_empty", "set_clear", "set_union", "set_intersection", "set_difference", "set_is_subset", "set_is_superset",
         "json_parse", "json_get_string", "json_get_int", "json_free",
         "json_get_str", "json_get_int", "json_get_bool", "json_has_key", "json_stringify_int", "json_stringify_str", "json_stringify_bool", "json_array_stringify", "json_array_length", "json_array_get",
         "url_encode", "url_decode", "base64_encode", "hash_string"
     };
     
-    for (int i = 0; i < 148; i++) {
+    for (int i = 0; i < 156; i++) {
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
     }
@@ -848,6 +849,16 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             
             expr->expr_type = builtin_array;
             return builtin_array;
+        }
+        case EXPR_HASHMAP_LITERAL: {
+            // v1.2.3: {} creates a hashmap
+            expr->expr_type = builtin_int;  // Placeholder - hashmap type
+            return builtin_int;
+        }
+        case EXPR_HASHSET_LITERAL: {
+            // v1.2.3: () creates a hashset
+            expr->expr_type = builtin_int;  // Placeholder - hashset type
+            return builtin_int;
         }
         case EXPR_INDEX: {
             Type* array_type = check_expr(expr->index.array, scope);
@@ -1525,7 +1536,38 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     
                     // Add parameters to scope
                     for (int j = 0; j < method->param_count; j++) {
-                        Type* param_type = builtin_int; // Simplified
+                        Type* param_type = builtin_int; // default
+                        
+                        // Special handling for 'self' parameter - use the impl type
+                        if (j == 0 && method->param_count > 0 && 
+                            method->params[0].length == 4 && 
+                            memcmp(method->params[0].start, "self", 4) == 0) {
+                            Symbol* type_symbol = find_symbol(global_scope, stmt->impl.type_name);
+                            if (type_symbol && type_symbol->type && type_symbol->type->kind == TYPE_STRUCT) {
+                                param_type = type_symbol->type;
+                            }
+                        } else if (method->param_types[j]) {
+                            // Look up parameter type for other parameters
+                            if (method->param_types[j]->type == EXPR_IDENT) {
+                                Token type_name = method->param_types[j]->token;
+                                if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+                                    param_type = builtin_int;
+                                } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+                                    param_type = builtin_string;
+                                } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
+                                    param_type = builtin_float;
+                                } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
+                                    param_type = builtin_bool;
+                                } else {
+                                    // Check if it's a struct type
+                                    Symbol* type_symbol = find_symbol(global_scope, type_name);
+                                    if (type_symbol && type_symbol->type && type_symbol->type->kind == TYPE_STRUCT) {
+                                        param_type = type_symbol->type;
+                                    }
+                                }
+                            }
+                        }
+                        
                         add_symbol(&method_scope, method->params[j], param_type, method->param_mutable[j]);
                     }
                     

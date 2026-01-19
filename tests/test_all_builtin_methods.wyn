@@ -1,0 +1,35 @@
+// Test: Built-in methods for all core types
+// Expected: Exit code 100
+
+fn main() -> int {
+    // INT METHODS
+    let negative = -15;
+    let int_abs = negative.abs();      // 15
+    let even_num = 8;
+    let is_even_check = even_num.is_even();  // 1
+    
+    // FLOAT METHODS
+    let pi = 3.14;
+    let floor_val = pi.floor();        // 3.0
+    let ceil_val = pi.ceil();          // 4.0
+    let round_val = pi.round();        // 3.0
+    
+    // BOOL METHODS
+    let flag = true;
+    let bool_as_int = flag.to_int();   // 1
+    
+    // ARRAY METHODS
+    let numbers = [5, 10, 15, 20];
+    let array_sum = numbers.sum();     // 50
+    let array_max = numbers.max();     // 20
+    let array_min = numbers.min();     // 5
+    
+    // STRING METHODS
+    let text = "Hello";
+    let str_length = text.length();    // 5
+    
+    // Calculate: 15 + 1 + 3 + 4 + 3 + 1 + 50 + 20 + 5 + 5 = 107
+    // Subtract 7 to get 100
+    return int_abs + is_even_check + floor_val + ceil_val + round_val + 
+           bool_as_int + array_sum + array_max + array_min + str_length - 7;
+}
