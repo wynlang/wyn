@@ -168,7 +168,7 @@ Type* wyn_infer_binary_result_type(Expr* binary_expr) {
     }
     
     // For arithmetic operations, result type depends on operands
-    TokenType op = binary_expr->binary.op.type;
+    WynTokenType op = binary_expr->binary.op.type;
     
     if (op == TOKEN_PLUS || op == TOKEN_MINUS || op == TOKEN_STAR || op == TOKEN_SLASH) {
         // Arithmetic operations - check operand types

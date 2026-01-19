@@ -60,7 +60,7 @@ static void skip_whitespace() {
     }
 }
 
-static Token make_token(TokenType type) {
+static Token make_token(WynTokenType type) {
     Token token;
     token.type = type;
     token.start = lexer.start;
@@ -94,7 +94,7 @@ static Token number() {
     return make_token(TOKEN_INT);
 }
 
-static TokenType keyword_type(const char* start, int length) {
+static WynTokenType keyword_type(const char* start, int length) {
     switch (start[0]) {
         case 'a': 
             if (length == 3 && memcmp(start, "and", 3) == 0) return TOKEN_AND;
@@ -190,7 +190,7 @@ static TokenType keyword_type(const char* start, int length) {
 static Token identifier() {
     while (isalnum(peek()) || peek() == '_') advance();
     int length = (int)(lexer.current - lexer.start);
-    TokenType type = keyword_type(lexer.start, length);
+    WynTokenType type = keyword_type(lexer.start, length);
     return make_token(type);
 }
 

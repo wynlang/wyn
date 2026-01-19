@@ -92,17 +92,17 @@ static void advance() {
     parser.current = next_token();
 }
 
-static bool check(TokenType type) {
+static bool check(WynTokenType type) {
     return parser.current.type == type;
 }
 
-static bool match(TokenType type) {
+static bool match(WynTokenType type) {
     if (!check(type)) return false;
     advance();
     return true;
 }
 
-static void expect(TokenType type, const char* message) {
+static void expect(WynTokenType type, const char* message) {
     if (parser.current.type == type) {
         advance();
         return;
@@ -1232,7 +1232,7 @@ Stmt* statement() {
     if (match(TOKEN_VAR) || match(TOKEN_CONST) || match(TOKEN_LET)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_VAR;
-        TokenType decl_type = parser.previous.type;  // Save the declaration type
+        WynTokenType decl_type = parser.previous.type;  // Save the declaration type
         bool is_mutable = false;
         
         // Check for 'mut' keyword after 'let'
