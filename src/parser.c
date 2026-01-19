@@ -20,6 +20,48 @@ typedef struct {
 static Parser parser;
 static const char* current_source_file = NULL;  // Global for error reporting
 
+// Parser state stack for module loading
+static Parser parser_stack[16];
+static int parser_stack_depth = 0;
+
+// Module alias registry (shared with checker/codegen)
+typedef struct {
+    char alias[64];
+    char module[64];
+} ModuleAlias;
+
+static ModuleAlias global_module_aliases[32];
+static int global_module_alias_count = 0;
+
+void register_parser_module_alias(const char* alias, const char* module) {
+    if (global_module_alias_count < 32) {
+        snprintf(global_module_aliases[global_module_alias_count].alias, 64, "%s", alias);
+        snprintf(global_module_aliases[global_module_alias_count].module, 64, "%s", module);
+        global_module_alias_count++;
+    }
+}
+
+const char* resolve_parser_module_alias(const char* name) {
+    for (int i = 0; i < global_module_alias_count; i++) {
+        if (strcmp(global_module_aliases[i].alias, name) == 0) {
+            return global_module_aliases[i].module;
+        }
+    }
+    return NULL;  // Not an alias
+}
+
+void save_parser_state() {
+    if (parser_stack_depth < 16) {
+        parser_stack[parser_stack_depth++] = parser;
+    }
+}
+
+void restore_parser_state() {
+    if (parser_stack_depth > 0) {
+        parser = parser_stack[--parser_stack_depth];
+    }
+}
+
 void set_parser_filename(const char* filename) {
     current_source_file = filename;
     parser.filename = filename;
@@ -726,7 +768,30 @@ static Expr* call() {
                 Token field_or_method = parser.current;
                 expect(TOKEN_IDENT, "Expected field or method name after '.'");
             
-            if (match(TOKEN_LPAREN)) {
+            // Check for module.Type { ... } struct initialization
+            if (check(TOKEN_LBRACE) && field_or_method.start[0] >= 'A' && field_or_method.start[0] <= 'Z') {
+                advance(); // consume '{'
+                
+                Expr* struct_expr = alloc_expr();
+                struct_expr->type = EXPR_STRUCT_INIT;
+                struct_expr->struct_init.type_name = field_or_method;
+                struct_expr->struct_init.field_names = malloc(sizeof(Token) * 16);
+                struct_expr->struct_init.field_values = malloc(sizeof(Expr*) * 16);
+                struct_expr->struct_init.field_count = 0;
+                
+                if (!check(TOKEN_RBRACE)) {
+                    do {
+                        expect(TOKEN_IDENT, "Expected field name");
+                        struct_expr->struct_init.field_names[struct_expr->struct_init.field_count] = parser.previous;
+                        expect(TOKEN_COLON, "Expected ':' after field name");
+                        struct_expr->struct_init.field_values[struct_expr->struct_init.field_count] = expression();
+                        struct_expr->struct_init.field_count++;
+                    } while (match(TOKEN_COMMA));
+                }
+                
+                expect(TOKEN_RBRACE, "Expected '}' after struct fields");
+                expr = struct_expr;
+            } else if (match(TOKEN_LPAREN)) {
                 Expr* method_expr = alloc_expr();
                 method_expr->type = EXPR_METHOD_CALL;
                 method_expr->method_call.object = expr;
@@ -1251,9 +1316,26 @@ Stmt* statement() {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_IMPORT;
         
-        // Parse: import name from "path"
+        // Parse: import name [as alias] [from "path"]
         expect(TOKEN_IDENT, "Expected module name after 'import'");
         stmt->import.module = parser.previous;
+        
+        // Optional: as alias
+        if (match(TOKEN_AS)) {
+            expect(TOKEN_IDENT, "Expected alias name after 'as'");
+            stmt->import.alias = parser.previous;
+            
+            // Register alias globally
+            char module_name[256], alias_name[256];
+            snprintf(module_name, sizeof(module_name), "%.*s",
+                    stmt->import.module.length, stmt->import.module.start);
+            snprintf(alias_name, sizeof(alias_name), "%.*s",
+                    stmt->import.alias.length, stmt->import.alias.start);
+            register_parser_module_alias(alias_name, module_name);
+        } else {
+            stmt->import.alias.start = NULL;
+            stmt->import.alias.length = 0;
+        }
         
         // Optional: from "path"
         if (match(TOKEN_FROM)) {
@@ -1670,6 +1752,7 @@ Stmt* struct_decl() {
     expect(TOKEN_STRUCT, "Expected 'struct'");
     Stmt* stmt = alloc_stmt();
     stmt->type = STMT_STRUCT;
+    stmt->struct_decl.is_public = false; // Caller will set if needed
     stmt->struct_decl.name = parser.current;
     expect(TOKEN_IDENT, "Expected struct name");
     
@@ -2145,6 +2228,23 @@ Program* parse_program() {
             expect(TOKEN_IDENT, "Expected module name");
             stmt->import.module = parser.previous;
             
+            // Optional: as alias
+            if (match(TOKEN_AS)) {
+                expect(TOKEN_IDENT, "Expected alias name after 'as'");
+                stmt->import.alias = parser.previous;
+                
+                // Register alias globally
+                char module_name[256], alias_name[256];
+                snprintf(module_name, sizeof(module_name), "%.*s",
+                        stmt->import.module.length, stmt->import.module.start);
+                snprintf(alias_name, sizeof(alias_name), "%.*s",
+                        stmt->import.alias.length, stmt->import.alias.start);
+                register_parser_module_alias(alias_name, module_name);
+            } else {
+                stmt->import.alias.start = NULL;
+                stmt->import.alias.length = 0;
+            }
+            
             // Optional: from "path"
             if (match(TOKEN_FROM)) {
                 expect(TOKEN_STRING, "Expected string path after 'from'");
@@ -2210,6 +2310,23 @@ Program* parse_program() {
             expect(TOKEN_IDENT, "Expected module name");
             stmt->import.module = parser.previous;
             
+            // Optional: as alias
+            if (match(TOKEN_AS)) {
+                expect(TOKEN_IDENT, "Expected alias name after 'as'");
+                stmt->import.alias = parser.previous;
+                
+                // Register alias globally
+                char module_name[256], alias_name[256];
+                snprintf(module_name, sizeof(module_name), "%.*s",
+                        stmt->import.module.length, stmt->import.module.start);
+                snprintf(alias_name, sizeof(alias_name), "%.*s",
+                        stmt->import.alias.length, stmt->import.alias.start);
+                register_parser_module_alias(alias_name, module_name);
+            } else {
+                stmt->import.alias.start = NULL;
+                stmt->import.alias.length = 0;
+            }
+            
             // Optional: from "path"
             if (match(TOKEN_FROM)) {
                 expect(TOKEN_STRING, "Expected string path after 'from'");
@@ -2248,8 +2365,23 @@ Program* parse_program() {
             continue;
         }
         
-        if (check(TOKEN_FN) || check(TOKEN_PUB) || check(TOKEN_ASYNC)) {
+        if (check(TOKEN_FN) || check(TOKEN_ASYNC)) {
             prog->stmts[prog->count++] = function();
+        } else if (check(TOKEN_PUB)) {
+            // Save current token, advance to see what's after pub
+            advance(); // consume pub
+            if (check(TOKEN_STRUCT)) {
+                // It's pub struct
+                Stmt* stmt = struct_decl();
+                stmt->struct_decl.is_public = true;
+                prog->stmts[prog->count++] = stmt;
+            } else {
+                // It's pub fn or pub async - function() will handle it
+                // But we already consumed pub, so we need to handle it here
+                Stmt* stmt = function();
+                stmt->fn.is_public = true;
+                prog->stmts[prog->count++] = stmt;
+            }
         } else if (check(TOKEN_EXTERN)) {
             prog->stmts[prog->count++] = extern_decl();
         } else if (check(TOKEN_STRUCT)) {

@@ -22,6 +22,33 @@ Type* make_type(TypeKind kind); // Forward declaration for type creation
 
 static FILE* out = NULL;
 
+// Current module being emitted (for prefixing internal calls)
+static const char* current_module_prefix = NULL;
+
+// Module alias tracking
+static struct {
+    char alias[64];
+    char module[64];
+} module_aliases[32];
+static int module_alias_count = 0;
+
+static void register_module_alias(const char* alias, const char* module) {
+    if (module_alias_count < 32) {
+        snprintf(module_aliases[module_alias_count].alias, 64, "%s", alias);
+        snprintf(module_aliases[module_alias_count].module, 64, "%s", module);
+        module_alias_count++;
+    }
+}
+
+static const char* resolve_module_alias(const char* name) {
+    for (int i = 0; i < module_alias_count; i++) {
+        if (strcmp(module_aliases[i].alias, name) == 0) {
+            return module_aliases[i].module;
+        }
+    }
+    return name;  // Not an alias, return as-is
+}
+
 // Lambda function collection
 typedef struct {
     char* code;
@@ -229,15 +256,32 @@ void codegen_expr(Expr* expr) {
             break;
         case EXPR_IDENT: {
             // Convert :: to _ for C compatibility (e.g., Status::DONE -> Status_DONE)
-            char* ident = malloc(expr->token.length + 2); // +2 for potential _ prefix
+            char* ident = malloc(expr->token.length + 256); // Extra space for alias resolution
             int offset = 0;
+            
+            // Check if this is a module.function call and resolve alias
+            char temp_ident[512];
+            memcpy(temp_ident, expr->token.start, expr->token.length);
+            temp_ident[expr->token.length] = '\0';
+            
+            char* dot = strchr(temp_ident, '.');
+            if (dot) {
+                *dot = '\0';  // Split at dot
+                const char* resolved = resolve_module_alias(temp_ident);
+                if (resolved != temp_ident) {
+                    // Alias was resolved - rebuild identifier
+                    snprintf(temp_ident, sizeof(temp_ident), "%s.%s", resolved, dot + 1);
+                } else {
+                    *dot = '.';  // Restore dot
+                }
+            }
             
             // Check if this is a C keyword that needs prefix
             const char* c_keywords[] = {"double", "float", "int", "char", "void", "return", "if", "else", "while", "for", NULL};
             bool is_c_keyword = false;
             for (int i = 0; c_keywords[i] != NULL; i++) {
-                if (expr->token.length == strlen(c_keywords[i]) && 
-                    memcmp(expr->token.start, c_keywords[i], expr->token.length) == 0) {
+                if (strlen(temp_ident) == strlen(c_keywords[i]) && 
+                    strcmp(temp_ident, c_keywords[i]) == 0) {
                     is_c_keyword = true;
                     ident[0] = '_';
                     offset = 1;
@@ -245,16 +289,14 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
-            memcpy(ident + offset, expr->token.start, expr->token.length);
-            ident[expr->token.length + offset] = '\0';
+            strcpy(ident + offset, temp_ident);
             
             // Replace :: with _
-            for (int i = offset; i < expr->token.length + offset - 1; i++) {
+            for (int i = offset; ident[i] && ident[i+1]; i++) {
                 if (ident[i] == ':' && ident[i+1] == ':') {
                     ident[i] = '_';
                     // Shift rest of string left by 1
-                    memmove(ident + i + 1, ident + i + 2, expr->token.length + offset - i - 1);
-                    ident[expr->token.length + offset - 1] = '\0';
+                    memmove(ident + i + 1, ident + i + 2, strlen(ident + i + 2) + 1);
                 }
             }
             
@@ -709,9 +751,17 @@ void codegen_expr(Expr* expr) {
                             if (overload->mangled_name && overload->next_overload) {
                                 emit("%s", overload->mangled_name);
                             } else {
+                                // Check if we're in a module and need to prefix
+                                if (current_module_prefix) {
+                                    emit("%s_", current_module_prefix);
+                                }
                                 codegen_expr(expr->call.callee);
                             }
                         } else {
+                            // Check if we're in a module and need to prefix
+                            if (current_module_prefix) {
+                                emit("%s_", current_module_prefix);
+                            }
                             codegen_expr(expr->call.callee);
                         }
                     }
@@ -768,18 +818,18 @@ void codegen_expr(Expr* expr) {
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
             
-            // Module method calls (math.sin(), etc.)
+            // Module method calls (module.function())
             if (expr->method_call.object->type == EXPR_IDENT) {
                 Token obj_name = expr->method_call.object->token;
-                if (obj_name.length == 4 && memcmp(obj_name.start, "math", 4) == 0) {
-                    emit("math_%.*s(", method.length, method.start);
-                    for (int i = 0; i < expr->method_call.arg_count; i++) {
-                        if (i > 0) emit(", ");
-                        codegen_expr(expr->method_call.args[i]);
-                    }
-                    emit(")");
-                    break;
+                // Check if this is a module call (any identifier followed by method)
+                // Emit as: modulename_methodname(args)
+                emit("%.*s_%.*s(", obj_name.length, obj_name.start, method.length, method.start);
+                for (int i = 0; i < expr->method_call.arg_count; i++) {
+                    if (i > 0) emit(", ");
+                    codegen_expr(expr->method_call.args[i]);
                 }
+                emit(")");
+                break;
             }
             
             // Extension methods on struct types
@@ -968,9 +1018,18 @@ void codegen_expr(Expr* expr) {
             }
             
             // Handle module.function calls
-            if (obj_name.length == 4 && memcmp(obj_name.start, "math", 4) == 0) {
-                // Generate direct function call for math module
-                emit("%.*s", field_name.length, field_name.start);
+            // Check if this is a module call (resolve aliases)
+            char module_name[256];
+            snprintf(module_name, sizeof(module_name), "%.*s", obj_name.length, obj_name.start);
+            const char* resolved_module = resolve_module_alias(module_name);
+            
+            // Check if it's a known module
+            extern bool is_module_loaded(const char* name);
+            extern bool is_builtin_module(const char* name);
+            if (is_module_loaded(resolved_module) || is_builtin_module(resolved_module)) {
+                // Emit as module_function
+                emit("%s_%.*s", resolved_module,
+                     field_name.length, field_name.start);
             } else if (expr->field_access.field.length == 6 && 
                        memcmp(expr->field_access.field.start, "length", 6) == 0) {
                 // Special case for array.length -> arr.count for dynamic arrays
@@ -2463,6 +2522,61 @@ void codegen_c_header() {
 // Track async function context
 static bool in_async_function = false;
 
+static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
+    if (!fn_stmt || fn_stmt->type != STMT_FN) {
+        return;
+    }
+    
+    // Set module context for internal call prefixing
+    const char* saved_prefix = current_module_prefix;
+    current_module_prefix = prefix;
+    
+    // Emit function signature with module prefix
+    // Private functions are static (not accessible from outside)
+    if (!fn_stmt->fn.is_public) {
+        emit("static ");
+    }
+    emit("int %s_%.*s(", prefix, fn_stmt->fn.name.length, fn_stmt->fn.name.start);
+    
+    // Parameters
+    for (int i = 0; i < fn_stmt->fn.param_count; i++) {
+        if (i > 0) emit(", ");
+        
+        // Check if parameter has a type expression
+        if (fn_stmt->fn.param_types && fn_stmt->fn.param_types[i]) {
+            Expr* param_type = fn_stmt->fn.param_types[i];
+            if (param_type->type == EXPR_IDENT) {
+                // Emit the type name
+                emit("%.*s ", param_type->token.length, param_type->token.start);
+            } else {
+                emit("int ");
+            }
+        } else {
+            emit("int ");
+        }
+        
+        // Emit parameter name
+        Token param_name = fn_stmt->fn.params[i];
+        emit("%.*s", param_name.length, param_name.start);
+    }
+    emit(") ");
+    
+    // Body
+    if (fn_stmt->fn.body) {
+        if (fn_stmt->fn.body->type == STMT_BLOCK) {
+            emit("{\n");
+            codegen_stmt(fn_stmt->fn.body);
+            emit("}\n");
+        } else {
+            codegen_stmt(fn_stmt->fn.body);
+        }
+    }
+    emit("\n");
+    
+    // Restore context
+    current_module_prefix = saved_prefix;
+}
+
 void codegen_stmt(Stmt* stmt) {
     if (!stmt) return;
     
@@ -3316,188 +3430,92 @@ void codegen_stmt(Stmt* stmt) {
             }
             break;
         case STMT_IMPORT: {
-            // Extract module name and path
+            // Extract module name
             char module_name[256];
             snprintf(module_name, sizeof(module_name), "%.*s", 
                     stmt->import.module.length, stmt->import.module.start);
             
-            // Handle built-in modules
-            if (strcmp(module_name, "math") == 0) {
-                emit("// import math module\n");
-                emit("int math_abs(int n) { return n < 0 ? -n : n; }\n");
-                emit("int math_max(int a, int b) { return a > b ? a : b; }\n");
-                emit("int math_min(int a, int b) { return a < b ? a : b; }\n");
-                emit("int math_pow(int base, int exp) {\n");
-                emit("    int result = 1;\n");
-                emit("    for (int i = 0; i < exp; i++) result *= base;\n");
-                emit("    return result;\n");
-                emit("}\n");
-                emit("int math_sqrt(int n) {\n");
-                emit("    if (n < 0) return 0;\n");
-                emit("    int x = n, y = 1;\n");
-                emit("    while (x > y) { x = (x + y) / 2; y = n / x; }\n");
-                emit("    return x;\n");
-                emit("}\n");
-                emit("int math_gcd(int a, int b) {\n");
-                emit("    while (b != 0) { int t = b; b = a %% b; a = t; }\n");
-                emit("    return a;\n");
-                emit("}\n");
-                emit("int math_lcm(int a, int b) {\n");
-                emit("    return (a * b) / math_gcd(a, b);\n");
-                emit("}\n");
-                emit("int math_factorial(int n) {\n");
-                emit("    if (n <= 1) return 1;\n");
-                emit("    int result = 1;\n");
-                emit("    for (int i = 2; i <= n; i++) result *= i;\n");
-                emit("    return result;\n");
-                emit("}\n");
-                emit("int math_is_prime(int n) {\n");
-                emit("    if (n < 2) return 0;\n");
-                emit("    if (n == 2) return 1;\n");
-                emit("    if (n %% 2 == 0) return 0;\n");
-                emit("    for (int i = 3; i * i <= n; i += 2) {\n");
-                emit("        if (n %% i == 0) return 0;\n");
-                emit("    }\n");
-                emit("    return 1;\n");
-                emit("}\n");
-                emit("int math_clamp(int val, int min, int max) {\n");
-                emit("    if (val < min) return min;\n");
-                emit("    if (val > max) return max;\n");
-                emit("    return val;\n");
-                emit("}\n");
-                emit("int math_sign(int n) { return n < 0 ? -1 : (n > 0 ? 1 : 0); }\n");
-                emit("int math_max3(int a, int b, int c) { int m = a > b ? a : b; return m > c ? m : c; }\n");
-                emit("int math_min3(int a, int b, int c) { int m = a < b ? a : b; return m < c ? m : c; }\n");
-                emit("int math_avg(int a, int b) { return (a + b) / 2; }\n");
-                emit("int math_avg3(int a, int b, int c) { return (a + b + c) / 3; }\n");
-                emit("int math_cube(int n) { return n * n * n; }\n");
-                emit("int math_square(int n) { return n * n; }\n");
-                emit("int math_is_even(int n) { return (n %% 2) == 0 ? 1 : 0; }\n");
-                emit("int math_is_odd(int n) { return (n %% 2) != 0 ? 1 : 0; }\n");
-                emit("int math_div_ceil(int a, int b) { int q = a / b; return (a %% b) > 0 ? q + 1 : q; }\n");
-                emit("int math_div_floor(int a, int b) { return a / b; }\n");
-                emit("int math_mod_positive(int a, int b) { int r = a %% b; return r < 0 ? r + b : r; }\n");
-                emit("int math_fibonacci(int n) {\n");
-                emit("    if (n <= 1) return n;\n");
-                emit("    int a = 0, b = 1;\n");
-                emit("    for (int i = 2; i <= n; i++) { int t = a + b; a = b; b = t; }\n");
-                emit("    return b;\n");
-                emit("}\n");
-                emit("int math_sum_range(int n) { return n * (n + 1) / 2; }\n");
-                emit("int math_sum_squares(int n) { return n * (n + 1) * (2 * n + 1) / 6; }\n");
-                emit("int math_nth_triangular(int n) { return n * (n + 1) / 2; }\n");
-                emit("int math_nth_pentagonal(int n) { return n * (3 * n - 1) / 2; }\n");
-                emit("int math_nth_hexagonal(int n) { return n * (2 * n - 1); }\n");
-                emit("int math_binomial(int n, int k) {\n");
-                emit("    if (k > n) return 0;\n");
-                emit("    if (k == 0) return 1;\n");
-                emit("    if (k > n - k) k = n - k;\n");
-                emit("    int r = 1;\n");
-                emit("    for (int i = 0; i < k; i++) { r = r * (n - i) / (i + 1); }\n");
-                emit("    return r;\n");
-                emit("}\n");
-                emit("int math_catalan(int n) {\n");
-                emit("    if (n <= 1) return 1;\n");
-                emit("    int c = math_binomial(2 * n, n);\n");
-                emit("    return c / (n + 1);\n");
-                emit("}\n");
-                emit("int math_bit_count(int n) {\n");
-                emit("    int count = 0;\n");
-                emit("    while (n) { count += n & 1; n >>= 1; }\n");
-                emit("    return count;\n");
-                emit("}\n");
-                emit("int math_bit_set(int n, int pos) { return n | (1 << pos); }\n");
-                emit("int math_bit_clear(int n, int pos) { return n & ~(1 << pos); }\n");
-                emit("int math_bit_toggle(int n, int pos) { return n ^ (1 << pos); }\n");
-                emit("int math_bit_test(int n, int pos) { return (n & (1 << pos)) != 0 ? 1 : 0; }\n");
-                emit("int math_next_power_of_2(int n) {\n");
-                emit("    if (n <= 1) return 1;\n");
-                emit("    int p = 1;\n");
-                emit("    while (p < n) p *= 2;\n");
-                emit("    return p;\n");
-                emit("}\n");
-                emit("int math_is_power_of_2(int n) { return n > 0 && (n & (n - 1)) == 0 ? 1 : 0; }\n");
-                emit("int math_log2_floor(int n) {\n");
-                emit("    if (n <= 0) return -1;\n");
-                emit("    int count = 0;\n");
-                emit("    while (n > 1) { n >>= 1; count++; }\n");
-                emit("    return count;\n");
-                emit("}\n");
-            } else if (strcmp(module_name, "random") == 0) {
-                emit("// import random module\n");
-                emit("#ifndef WYN_RANDOM_MODULE\n");
-                emit("#define WYN_RANDOM_MODULE\n");
-                emit("#include <stdlib.h>\n");
-                emit("#include <time.h>\n");
-                emit("static int random_initialized = 0;\n");
-                emit("void random_init() {\n");
-                emit("    if (!random_initialized) {\n");
-                emit("        srand((unsigned)time(NULL));\n");
-                emit("        random_initialized = 1;\n");
-                emit("    }\n");
-                emit("}\n");
-                emit("int random_int(int max) {\n");
-                emit("    random_init();\n");
-                emit("    return rand() %% max;\n");
-                emit("}\n");
-                emit("int random_range(int min, int max) {\n");
-                emit("    random_init();\n");
-                emit("    return min + (rand() %% (max - min));\n");
-                emit("}\n");
-                emit("#endif\n");
-            } else if (strcmp(module_name, "array") == 0) {
-                emit("// import array module\n");
-                emit("int array_contains(int* arr, int len, int val) {\n");
-                emit("    for (int i = 0; i < len; i++) {\n");
-                emit("        if (arr[i] == val) return 1;\n");
-                emit("    }\n");
-                emit("    return 0;\n");
-                emit("}\n");
-                emit("int array_index_of(int* arr, int len, int val) {\n");
-                emit("    for (int i = 0; i < len; i++) {\n");
-                emit("        if (arr[i] == val) return i;\n");
-                emit("    }\n");
-                emit("    return -1;\n");
-                emit("}\n");
-                emit("void array_reverse(int* arr, int len) {\n");
-                emit("    for (int i = 0; i < len / 2; i++) {\n");
-                emit("        int temp = arr[i];\n");
-                emit("        arr[i] = arr[len - 1 - i];\n");
-                emit("        arr[len - 1 - i] = temp;\n");
-                emit("    }\n");
-                emit("}\n");
-            } else if (strcmp(module_name, "string") == 0) {
-                emit("// import string module\n");
-                emit("#include <ctype.h>\n");
-                emit("int string_starts_with(const char* str, const char* prefix) {\n");
-                emit("    while (*prefix) {\n");
-                emit("        if (*str++ != *prefix++) return 0;\n");
-                emit("    }\n");
-                emit("    return 1;\n");
-                emit("}\n");
-                emit("int string_ends_with(const char* str, const char* suffix) {\n");
-                emit("    int str_len = strlen(str);\n");
-                emit("    int suf_len = strlen(suffix);\n");
-                emit("    if (suf_len > str_len) return 0;\n");
-                emit("    return strcmp(str + str_len - suf_len, suffix) == 0;\n");
-                emit("}\n");
-                emit("int string_count(const char* str, char ch) {\n");
-                emit("    int count = 0;\n");
-                emit("    while (*str) { if (*str++ == ch) count++; }\n");
-                emit("    return count;\n");
-                emit("}\n");
-            } else if (strcmp(module_name, "time") == 0) {
-                emit("// import time module\n");
-                emit("#include <time.h>\n");
-                emit("int time_now() {\n");
-                emit("    return (int)time(NULL);\n");
-                emit("}\n");
-                emit("int time_sleep(int seconds) {\n");
-                emit("    sleep(seconds);\n");
-                emit("    return 0;\n");
-                emit("}\n");
-            } else {
-                emit("// import %s (not implemented)\n", module_name);
+            // Register alias if present
+            if (stmt->import.alias.start != NULL) {
+                char alias_name[256];
+                snprintf(alias_name, sizeof(alias_name), "%.*s",
+                        stmt->import.alias.length, stmt->import.alias.start);
+                register_module_alias(alias_name, module_name);
+            }
+            
+            extern bool is_builtin_module(const char* name);
+            extern bool is_module_loaded(const char* name);
+            
+            // Priority: User modules > Built-ins
+            // This allows community to override/extend built-in modules
+            if (is_module_loaded(module_name)) {
+                // User module exists - emit all loaded modules once
+                static bool user_modules_emitted = false;
+                if (!user_modules_emitted) {
+                    user_modules_emitted = true;
+                    
+                    extern int get_all_modules_raw(void** out_modules, int max_count);
+                    void* all_modules_raw[64];
+                    int module_count = get_all_modules_raw(all_modules_raw, 64);
+                    
+                    for (int m = 0; m < module_count; m++) {
+                        typedef struct { char* name; Program* ast; } ModuleEntry;
+                        ModuleEntry* mod = (ModuleEntry*)all_modules_raw[m];
+                        
+                        // First: emit forward declarations for all functions
+                        for (int i = 0; i < mod->ast->count; i++) {
+                            Stmt* s = mod->ast->stmts[i];
+                            if (s->type == STMT_FN) {
+                                // Private functions are static
+                                if (!s->fn.is_public) {
+                                    emit("static ");
+                                }
+                                emit("int %s_%.*s();\n", mod->name, s->fn.name.length, s->fn.name.start);
+                            }
+                        }
+                        
+                        // Second: emit structs
+                        for (int i = 0; i < mod->ast->count; i++) {
+                            Stmt* s = mod->ast->stmts[i];
+                            if (s->type == STMT_STRUCT && s->struct_decl.is_public) {
+                                codegen_stmt(s);
+                            }
+                        }
+                        
+                        // Third: emit functions
+                        for (int i = 0; i < mod->ast->count; i++) {
+                            Stmt* s = mod->ast->stmts[i];
+                            if (s->type == STMT_FN) {
+                                emit_function_with_prefix(s, mod->name);
+                            }
+                        }
+                    }
+                }
+            } else if (is_builtin_module(module_name)) {
+                // Built-in module (only if no user override)
+                static bool builtin_modules_emitted = false;
+                if (!builtin_modules_emitted) {
+                    builtin_modules_emitted = true;
+                    
+                    if (strcmp(module_name, "math") == 0) {
+                        emit("int math_add(int a, int b) { return a + b; }\n");
+                        emit("int math_multiply(int a, int b) { return a * b; }\n");
+                        emit("int math_abs(int n) { return n < 0 ? -n : n; }\n");
+                        emit("int math_max(int a, int b) { return a > b ? a : b; }\n");
+                        emit("int math_min(int a, int b) { return a < b ? a : b; }\n");
+                        emit("int math_pow(int base, int exp) {\n");
+                        emit("    int result = 1;\n");
+                        emit("    for (int i = 0; i < exp; i++) result *= base;\n");
+                        emit("    return result;\n");
+                        emit("}\n");
+                        emit("int math_sqrt(int n) {\n");
+                        emit("    if (n < 0) return 0;\n");
+                        emit("    int x = n, y = 1;\n");
+                        emit("    while (x > y) { x = (x + y) / 2; y = n / x; }\n");
+                        emit("    return x;\n");
+                        emit("}\n");
+                    }
+                }
             }
             break;
         }
@@ -3821,13 +3839,7 @@ void codegen_program(Program* prog) {
         }
     }
     
-    // Generate math functions if math module is imported
-    if (has_math_import) {
-        emit("// Math module functions\n");
-        emit("int add(int a, int b) { return a + b; }\n");
-        emit("int multiply(int a, int b) { return a * b; }\n");
-        emit("double PI = 3.14159;\n\n");
-    }
+    // Math functions are now handled by the module system
     
     // Collect generic instantiations (but don't generate yet)
     wyn_collect_generic_instantiations_from_program(prog);

@@ -574,7 +574,19 @@ int main(int argc, char** argv) {
     // Initialize optimizer
     init_optimizer(optimization);
     
+    // Initialize module registry
+    extern void init_module_registry();
+    init_module_registry();
+    
+    // Set source directory for relative module imports
+    extern void set_source_directory(const char* source_file);
+    set_source_directory(argv[file_arg_index]);
+    
     char* source = read_file(argv[file_arg_index]);
+    
+    // Pre-load all imports before parsing
+    extern void preload_imports(const char* source);
+    preload_imports(source);
     
     init_lexer(source);
     init_parser();

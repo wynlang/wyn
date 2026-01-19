@@ -1,0 +1,33 @@
+import math
+import geometry
+import calculator
+
+fn main() -> int {
+    // Use built-in math module
+    var sum = math.add(10, 20)
+    print("math.add(10, 20) = ")
+    print(sum)
+    print("\n")
+    
+    // Use geometry module
+    var p = geometry.Point { x: 3, y: 4 }
+    var dist = geometry.point_distance(p)
+    print("point_distance(3, 4) = ")
+    print(dist)
+    print("\n")
+    
+    var rect = geometry.Rectangle { width: 5, height: 10 }
+    var area = geometry.rect_area(rect)
+    print("rect_area(5, 10) = ")
+    print(area)
+    print("\n")
+    
+    // Use calculator module (which uses math)
+    var squares = calculator.sum_of_squares(3, 4)
+    print("sum_of_squares(3, 4) = ")
+    print(squares)
+    print("\n")
+    
+    // Return sum
+    return math.add(sum, dist)
+}

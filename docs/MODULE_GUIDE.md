@@ -1,340 +1,282 @@
 # Wyn Module System Guide
 
-Complete guide to using the Wyn module system.
-
 ## Overview
 
-The module system allows you to organize code across multiple files and create reusable libraries.
+Wyn v1.1.0 includes a complete module system for organizing code across multiple files and using external packages.
 
-## Basic Concepts
+## Basic Usage
 
-### Modules
-A module is a Wyn file that exports functions, structs, or other items.
+### Importing Modules
 
-### Exports
-Use `export` to make items public.
-
-### Imports
-Use `import` to use items from other modules.
-
-### Namespaces
-Access imported items with `::` syntax.
-
-## Quick Start
-
-### Step 1: Create a Module
-
-**math.wyn:**
 ```wyn
-export fn add(a: int, b: int) -> int {
-    return a + b;
-}
-
-export fn multiply(a: int, b: int) -> int {
-    return a * b;
-}
-```
-
-### Step 2: Import and Use
-
-**main.wyn:**
-```wyn
-import math;
+import math      // Import a module
+import point     // Import another module
 
 fn main() -> int {
-    let sum = math::add(10, 20);
-    let product = math::multiply(5, 6);
-    return sum + product;
+    return math.add(10, 20)
 }
 ```
 
-### Step 3: Build
+### Creating Modules
 
-```bash
-./wyn build myproject/
-./myproject/main
-```
+Create a file `utils.wyn`:
 
-## Exporting
-
-### Export Functions
 ```wyn
-export fn public_function() -> int {
-    return 42;
+// Only public items are accessible from other modules
+pub fn helper(x: int) -> int {
+    return x * 2
 }
 
-fn private_function() -> int {
-    return 0;  // Not exported
+// Private function (not accessible)
+fn internal_helper(x: int) -> int {
+    return x + 1
 }
 ```
 
-### Export Structs
+Use it in `main.wyn`:
+
 ```wyn
-export struct Point {
+import utils
+
+fn main() -> int {
+    return utils.helper(21)  // Returns 42
+}
+```
+
+### Modules with Structs
+
+Create `point.wyn`:
+
+```wyn
+pub struct Point {
     x: int,
     y: int
 }
+
+pub fn distance(p: Point) -> int {
+    return p.x + p.y
+}
 ```
 
-### Multiple Exports
-```wyn
-export fn func1() -> int { return 1; }
-export fn func2() -> int { return 2; }
-export fn func3() -> int { return 3; }
-```
+Use it:
 
-## Importing
-
-### Single Import
 ```wyn
-import math;
+import point
 
 fn main() -> int {
-    return math::add(1, 2);
+    var p = point.Point { x: 3, y: 4 }
+    return point.distance(p)  // Returns 7
 }
 ```
 
-### Multiple Imports
+## Module Resolution
+
+When you write `import mymodule`, Wyn searches for `mymodule.wyn` in this order:
+
+1. **Current directory** - `./mymodule.wyn`
+2. **Project modules** - `./modules/mymodule.wyn`
+3. **Project packages** - `./wyn_modules/mymodule.wyn`
+4. **User packages** - `~/.wyn/packages/mymodule/mymodule.wyn`
+5. **User modules** - `~/.wyn/modules/mymodule.wyn`
+6. **System modules** - `/usr/local/lib/wyn/modules/mymodule.wyn`
+7. **Standard library** - `./stdlib/mymodule.wyn`
+
+The first match wins, so local files take priority over installed packages.
+
+## Standard Library
+
+Wyn includes one built-in module:
+
+### math
+
 ```wyn
-import math;
-import utils;
-import helpers;
+import math
 
 fn main() -> int {
-    let a = math::add(1, 2);
-    let b = utils::process(a);
-    return helpers::finalize(b);
+    var a = math.add(10, 20)        // 30
+    var b = math.multiply(5, 6)     // 30
+    var c = math.abs(-15)           // 15
+    var d = math.max(10, 20)        // 20
+    var e = math.min(10, 20)        // 10
+    var f = math.pow(2, 8)          // 256
+    var g = math.sqrt(16)           // 4
+    return g
 }
 ```
 
-## Namespace Resolution
+**Note:** Additional standard library modules (io, string, array) are planned for future releases.
 
-### Using Imported Functions
+## Project Structure
+
+### Simple Project
+
+```
+my-project/
+├── main.wyn
+└── utils.wyn
+```
+
+### Organized Project
+
+```
+my-project/
+├── main.wyn
+├── modules/
+│   ├── database.wyn
+│   ├── auth.wyn
+│   └── utils.wyn
+└── wyn_modules/
+    └── external_lib.wyn
+```
+
+## Nested Imports
+
+Modules can import other modules:
+
+`math.wyn`:
 ```wyn
-import math;
+pub fn add(a: int, b: int) -> int {
+    return a + b
+}
+```
+
+`utils.wyn`:
+```wyn
+import math
+
+pub fn calculate(a: int, b: int) -> int {
+    return math.add(a, b) * 2
+}
+```
+
+`main.wyn`:
+```wyn
+import utils
 
 fn main() -> int {
-    return math::add(1, 2);  // module::function
+    return utils.calculate(5, 10)  // Returns 30
 }
 ```
 
-### Avoiding Conflicts
+## Installing Packages
+
+### Manual Installation
+
+1. Create directory: `~/.wyn/packages/mypackage/`
+2. Add module file: `~/.wyn/packages/mypackage/mypackage.wyn`
+3. Import: `import mypackage`
+
+### User Modules
+
+For personal reusable modules:
+
+1. Create: `~/.wyn/modules/myutils.wyn`
+2. Import from any project: `import myutils`
+
+## Public vs Private
+
+Only items marked with `pub` are accessible from other modules:
+
 ```wyn
-import math;
+// Accessible from other modules
+pub fn public_function() -> int { return 1 }
+pub struct PublicStruct { x: int }
 
-// Local function doesn't conflict
-fn add(a: int, b: int) -> int {
-    return a + b + 1;
-}
-
-fn main() -> int {
-    let local_sum = add(1, 2);        // Calls local function
-    let module_sum = math::add(1, 2); // Calls module function
-    return local_sum + module_sum;
-}
+// Only accessible within this module
+fn private_function() -> int { return 2 }
+struct PrivateStruct { y: int }
 ```
-
-## Module Organization
-
-### Flat Structure
-```
-project/
-  main.wyn
-  math.wyn
-  utils.wyn
-```
-
-### Nested Structure
-```
-project/
-  main.wyn
-  lib/
-    math.wyn
-    utils.wyn
-```
-
-**Note:** Currently, all `.wyn` files in the project directory are included.
 
 ## Best Practices
 
-### 1. One Module Per File
-Keep each module in its own file.
+1. **Use `./modules/` for project code** - Keep related modules together
+2. **Use `~/.wyn/modules/` for personal utilities** - Reusable across projects
+3. **Mark only necessary items as `pub`** - Keep implementation details private
+4. **One module per file** - Clear organization
+5. **Descriptive names** - `database.wyn`, not `db.wyn`
 
-**Good:**
-```
-math.wyn      # Math functions
-string.wyn    # String functions
-io.wyn        # I/O functions
-```
+## Examples
 
-### 2. Export Only Public API
-Don't export internal helper functions.
+### Database Module
 
+`modules/database.wyn`:
 ```wyn
-// Public API
-export fn calculate(x: int) -> int {
-    return internal_helper(x) * 2;
-}
-
-// Private helper
-fn internal_helper(x: int) -> int {
-    return x + 1;
-}
-```
-
-### 3. Use Descriptive Module Names
-```wyn
-import math;        // Good
-import m;           // Bad
-```
-
-### 4. Group Related Functions
-```wyn
-// math.wyn - All math operations
-export fn add(a: int, b: int) -> int { ... }
-export fn subtract(a: int, b: int) -> int { ... }
-export fn multiply(a: int, b: int) -> int { ... }
-```
-
-## Common Patterns
-
-### Utility Module
-```wyn
-// utils.wyn
-export fn is_even(n: int) -> bool {
-    return n % 2 == 0;
-}
-
-export fn is_odd(n: int) -> bool {
-    return n % 2 != 0;
-}
-```
-
-### Data Module
-```wyn
-// data.wyn
-export struct Config {
+pub struct Connection {
     host: string,
     port: int
 }
 
-export fn default_config() -> Config {
-    return Config { host: "localhost", port: 8080 };
+pub fn connect(host: string, port: int) -> Connection {
+    return Connection { host: host, port: port }
+}
+
+pub fn query(conn: Connection, sql: string) -> int {
+    // Execute query
+    return 0
 }
 ```
 
-### Service Module
+### Using Multiple Modules
+
+`main.wyn`:
 ```wyn
-// service.wyn
-export fn start_service() -> int {
-    return initialize() + configure();
-}
-
-fn initialize() -> int {
-    return 1;  // Private
-}
-
-fn configure() -> int {
-    return 2;  // Private
-}
-```
-
-## Examples
-
-### Example 1: Math Library
-
-**math.wyn:**
-```wyn
-export fn add(a: int, b: int) -> int {
-    return a + b;
-}
-
-export fn subtract(a: int, b: int) -> int {
-    return a - b;
-}
-
-export fn multiply(a: int, b: int) -> int {
-    return a * b;
-}
-```
-
-**main.wyn:**
-```wyn
-import math;
+import database
+import auth
+import utils
 
 fn main() -> int {
-    let sum = math::add(10, 5);
-    let diff = math::subtract(10, 5);
-    let prod = math::multiply(10, 5);
-    
-    print(sum);   // 15
-    print(diff);  // 5
-    print(prod);  // 50
-    
-    return 0;
+    var conn = database.connect("localhost", 5432)
+    var user = auth.login("admin", "password")
+    var result = utils.process(conn, user)
+    return result
 }
 ```
-
-### Example 2: Multiple Modules
-
-**math.wyn:**
-```wyn
-export fn square(x: int) -> int {
-    return x * x;
-}
-```
-
-**utils.wyn:**
-```wyn
-export fn double(x: int) -> int {
-    return x + x;
-}
-```
-
-**main.wyn:**
-```wyn
-import math;
-import utils;
-
-fn main() -> int {
-    let x = 5;
-    let squared = math::square(x);
-    let doubled = utils::double(x);
-    return squared + doubled;  // 25 + 10 = 35
-}
-```
-
-## Limitations
-
-### Current Limitations
-1. No nested module paths (e.g., `math::advanced::func`)
-2. No selective imports (e.g., `import math::{add, subtract}`)
-3. No module aliases (e.g., `import math as m`)
-4. All files in directory are included
-
-### Future Features
-- Nested module hierarchies
-- Selective imports
-- Module aliases
-- Package management
 
 ## Troubleshooting
 
-### "Undefined variable 'module::function'"
-- Ensure module file exists
-- Check function is exported
-- Verify import statement
+### Module Not Found
 
-### "Redefinition of 'function'"
-- Check for name conflicts with built-in functions
-- Rename your function or use different module name
+If you get "Module 'X' not found":
 
-### "No .wyn files found"
-- Ensure all module files are in project directory
-- Check file extensions are `.wyn`
+1. Check the filename matches: `import foo` needs `foo.wyn`
+2. Check the search paths (see Module Resolution above)
+3. Verify the file exists: `ls -la modules/foo.wyn`
 
-## See Also
+### Symbol Not Found
 
-- [Language Guide](LANGUAGE_GUIDE.md)
-- [Build Guide](BUILD_GUIDE.md)
-- [Standard Library](STDLIB_REFERENCE.md)
+If you get "Undefined function 'X'":
+
+1. Check the function is marked `pub`
+2. Use the module prefix: `math.add()` not `add()`
+3. Verify the module was imported
+
+### Circular Imports
+
+Avoid circular dependencies:
+```
+❌ a.wyn imports b.wyn
+   b.wyn imports a.wyn
+```
+
+Instead, extract shared code to a third module:
+```
+✓ a.wyn imports common.wyn
+  b.wyn imports common.wyn
+```
+
+## Future Features (v1.2+)
+
+- Module aliases: `import math as m`
+- Selective imports: `import math { add, multiply }`
+- Package manager: `wyn pkg install github.com/user/repo`
+- Package manifest: `wyn.toml`
+- Version management
+- Central package registry
+
+## Summary
+
+- Use `import module` to import modules
+- Mark exports with `pub`
+- Organize code in `./modules/`
+- Share code via `~/.wyn/modules/`
+- Built-in modules: `math`, `io`, `string`, `array`

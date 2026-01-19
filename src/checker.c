@@ -559,13 +559,31 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             
             Symbol* sym = find_symbol(scope, expr->token);
             if (!sym) {
-                // Check if this is a module-qualified name (e.g., math::add)
+                // Check if this is a module-qualified name (e.g., math::add or math.add)
                 // If so, allow it - it will be resolved at codegen time
                 bool is_qualified = false;
                 for (int i = 0; i < expr->token.length - 1; i++) {
                     if (expr->token.start[i] == ':' && expr->token.start[i+1] == ':') {
                         is_qualified = true;
                         break;
+                    }
+                    if (expr->token.start[i] == '.') {
+                        // Any identifier with a dot is assumed to be a module call
+                        is_qualified = true;
+                        break;
+                    }
+                }
+                
+                // Check if this might be a module alias (will be used with dot later)
+                // This is a heuristic - assume short names might be module aliases
+                extern const char* resolve_parser_module_alias(const char* name);
+                if (!is_qualified) {
+                    char name_buf[256];
+                    int len = expr->token.length < 255 ? expr->token.length : 255;
+                    memcpy(name_buf, expr->token.start, len);
+                    name_buf[len] = '\0';
+                    if (resolve_parser_module_alias(name_buf) != NULL) {
+                        is_qualified = true;
                     }
                 }
                 

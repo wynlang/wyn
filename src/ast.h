@@ -401,6 +401,7 @@ typedef struct {
     int field_count;
     FnStmt** methods;         // Methods defined inside struct
     int method_count;         // Number of methods
+    bool is_public;           // Whether struct is public (for modules)
 } StructStmt;
 
 typedef struct {
@@ -467,6 +468,7 @@ typedef struct {
 typedef struct {
     Token module;
     Token path;      // Optional path like "wyn:math"
+    Token alias;     // Optional alias for "import math as m"
     Token* items;
     int item_count;
 } ImportStmt;
