@@ -44,8 +44,19 @@ static char* read_file(const char* path) {
 static char* get_version() {
     static char version[32] = {0};
     if (version[0] == 0) {
-        FILE* f = fopen("VERSION", "r");
-        if (!f) f = fopen("../VERSION", "r");
+        // Try multiple locations for VERSION file
+        const char* paths[] = {
+            "VERSION",
+            "../VERSION",
+            "../../VERSION",
+            NULL
+        };
+        
+        FILE* f = NULL;
+        for (int i = 0; paths[i] != NULL && !f; i++) {
+            f = fopen(paths[i], "r");
+        }
+        
         if (f) {
             if (fgets(version, sizeof(version), f)) {
                 char* newline = strchr(version, '\n');
@@ -53,7 +64,7 @@ static char* get_version() {
             }
             fclose(f);
         }
-        if (version[0] == 0) strcpy(version, "1.0.0");
+        if (version[0] == 0) strcpy(version, "1.2.1");
     }
     return version;
 }

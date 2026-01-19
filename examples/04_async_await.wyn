@@ -8,11 +8,11 @@ async fn process_data(value: int) -> int {
 }
 
 fn main() -> int {
-    let future1 = fetch_data();
-    let data = await future1;
+    var future1 = fetch_data();
+    var data = await future1;
     
-    let future2 = process_data(data);
-    let result = await future2;
+    var future2 = process_data(data);
+    var result = await future2;
     
     print_str("Result: ");
     print(result);

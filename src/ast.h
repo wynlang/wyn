@@ -40,6 +40,8 @@ typedef enum {
     EXPR_DESTRUCTURE,
     EXPR_SPREAD,
     EXPR_MAP,
+    EXPR_HASHMAP_LITERAL,  // v1.2.3: {} for HashMap
+    EXPR_HASHSET_LITERAL,  // v1.2.3: () for HashSet
     EXPR_TUPLE,
     EXPR_TUPLE_INDEX,   // Tuple element access (tuple.0, tuple.1, etc.)
     EXPR_INDEX_ASSIGN,

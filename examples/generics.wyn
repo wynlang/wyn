@@ -12,8 +12,8 @@ fn max<T>(a: T, b: T) -> T {
 }
 
 fn main() -> int {
-    let x = identity(42);
-    let y = max(10, 20);
-    let z = max(5, 3);
+    var x = identity(42);
+    var y = max(10, 20);
+    var z = max(5, 3);
     return x + y + z;
 }

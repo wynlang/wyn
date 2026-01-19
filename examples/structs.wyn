@@ -14,8 +14,8 @@ fn rect_perimeter(r: Rectangle) -> int {
 }
 
 fn main() -> int {
-    let rect = Rectangle { width: 5, height: 10 };
-    let area = rect_area(rect);
-    let perim = rect_perimeter(rect);
+    var rect = Rectangle { width: 5, height: 10 };
+    var area = rect_area(rect);
+    var perim = rect_perimeter(rect);
     return area + perim;
 }

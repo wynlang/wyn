@@ -472,6 +472,26 @@ static Expr* primary() {
         return expr;
     }
     
+    // v1.2.3: {} for HashMap literal
+    if (match(TOKEN_LBRACE)) {
+        Expr* expr = alloc_expr();
+        expr->type = EXPR_HASHMAP_LITERAL;
+        expr->array.elements = NULL;  // Reuse array structure for now
+        expr->array.count = 0;
+        
+        // Empty hashmap: {}
+        if (!check(TOKEN_RBRACE)) {
+            // TODO: Parse key-value pairs for v1.2.4
+            // For now, only empty {} is supported
+        }
+        
+        expect(TOKEN_RBRACE, "Expected '}' after hashmap elements");
+        return expr;
+    }
+    
+    // v1.2.3: () for HashSet literal - DISABLED due to conflict with tuples/grouping
+    // Use hashset_new() for now
+    
     if (match(TOKEN_MAP)) {
         Expr* expr = alloc_expr();
         expr->type = EXPR_MAP;
@@ -1229,20 +1249,14 @@ Stmt* statement() {
         return stmt;
     }
     
-    if (match(TOKEN_VAR) || match(TOKEN_CONST) || match(TOKEN_LET)) {
+    if (match(TOKEN_VAR) || match(TOKEN_CONST)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_VAR;
-        WynTokenType decl_type = parser.previous.type;  // Save the declaration type
-        bool is_mutable = false;
+        WynTokenType decl_type = parser.previous.type;
         
-        // Check for 'mut' keyword after 'let'
-        if (decl_type == TOKEN_LET && match(TOKEN_MUT)) {
-            is_mutable = true;
-        }
-        
-        // FIX: let variables are mutable by default, only const makes them immutable
+        // var = mutable, const = immutable
         stmt->var.is_const = (decl_type == TOKEN_CONST);
-        stmt->var.is_mutable = (decl_type == TOKEN_VAR || decl_type == TOKEN_LET || is_mutable);
+        stmt->var.is_mutable = (decl_type == TOKEN_VAR);
         stmt->var.name = parser.current;
         expect(TOKEN_IDENT, "Expected variable name");
         

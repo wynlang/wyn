@@ -11,8 +11,8 @@ fn max<T>(a: T, b: T) -> T {
 }
 
 fn main() -> int {
-    let num = identity(42);
-    let larger = max(10, 20);
+    var num = identity(42);
+    var larger = max(10, 20);
     
     print_str("Identity: ");
     print(num);

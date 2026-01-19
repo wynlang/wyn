@@ -1,6 +1,6 @@
 # Wyn Programming Language
 
-**Version:** 1.1.0  
+**Version:** 1.2.1  
 **Status:** Production Ready  
 **Type:** Systems programming language with "everything is an object"
 
@@ -144,4 +144,4 @@ See LICENSE file.
 
 ---
 
-**Wyn v1.1.0 - A modern systems programming language where everything is an object.**
+**Wyn v1.2.1 - A modern systems programming language where everything is an object.**

@@ -61,6 +61,41 @@ int hashmap_get(WynHashMap* map, const char* key) {
     return -1;
 }
 
+int hashmap_has(WynHashMap* map, const char* key) {
+    unsigned int idx = hash(key);
+    Entry* entry = map->buckets[idx];
+    
+    while (entry) {
+        if (strcmp(entry->key, key) == 0) {
+            return 1;
+        }
+        entry = entry->next;
+    }
+    
+    return 0;
+}
+
+void hashmap_remove(WynHashMap* map, const char* key) {
+    unsigned int idx = hash(key);
+    Entry* entry = map->buckets[idx];
+    Entry* prev = NULL;
+    
+    while (entry) {
+        if (strcmp(entry->key, key) == 0) {
+            if (prev) {
+                prev->next = entry->next;
+            } else {
+                map->buckets[idx] = entry->next;
+            }
+            free(entry->key);
+            free(entry);
+            return;
+        }
+        prev = entry;
+        entry = entry->next;
+    }
+}
+
 void hashmap_free(WynHashMap* map) {
     for (int i = 0; i < HASHMAP_SIZE; i++) {
         Entry* entry = map->buckets[i];

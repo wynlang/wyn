@@ -1,695 +1,736 @@
 # Wyn Standard Library Reference
 
-The Wyn standard library provides essential functionality for common programming tasks. This reference covers all available modules, types, and functions.
+![Version](https://img.shields.io/badge/version-1.2.2-blue.svg)
+**Latest: v1.2.2**
+
+Complete reference for all standard library functions and methods available in Wyn.
 
 ## Table of Contents
 
-1. [Core Types](#core-types)
-2. [Collections](#collections)
-3. [I/O Operations](#io-operations)
-4. [String Operations](#string-operations)
-5. [Math Functions](#math-functions)
-6. [Memory Management](#memory-management)
-7. [Error Handling](#error-handling)
-8. [Networking](#networking)
-9. [Concurrency](#concurrency)
-10. [File System](#file-system)
+1. [I/O Functions](#io-functions)
+2. [String Functions](#string-functions)
+3. [Math Functions](#math-functions)
+4. [Collections](#collections)
+5. [File Operations](#file-operations)
+6. [JSON](#json)
+7. [Concurrency](#concurrency)
+8. [Async](#async)
+9. [Utility Functions](#utility-functions)
 
-## Core Types
+## I/O Functions
 
-### Option<T>
+### Console Output
 
-Represents an optional value that may or may not be present.
-
+#### `print(value: int)`
+Prints an integer followed by newline.
 ```wyn
-enum Option<T> {
-    Some(T),
-    None
-}
+print(42);  // Output: 42
+```
 
-impl<T> Option<T> {
-    fn is_some(self) -> bool
-    fn is_none(self) -> bool
-    fn unwrap(self) -> T  // Panics if None
-    fn unwrap_or(self, default: T) -> T
-    fn map<U>(self, f: fn(T) -> U) -> Option<U>
+#### `print_str(text: string)`
+Prints a string followed by newline.
+```wyn
+print_str("Hello");  // Output: Hello
+```
+
+#### `print_float(value: float)`
+Prints a floating point number followed by newline.
+```wyn
+print_float(3.14);  // Output: 3.14
+```
+
+#### `print_bool(value: bool)`
+Prints a boolean value.
+```wyn
+print_bool(true);   // Output: true
+print_bool(false);  // Output: false
+```
+
+### Console Input
+
+#### `input() -> int`
+Reads an integer from standard input.
+```wyn
+print_str("Enter a number: ");
+let num = input();
+print(num);
+```
+
+#### `input_str() -> string`
+Reads a string from standard input.
+```wyn
+print_str("Enter your name: ");
+let name = input_str();
+print_str(name);
+```
+
+## String Functions
+
+### Basic String Operations
+
+#### `str_len(s: string) -> int`
+Returns the length of a string.
+```wyn
+let len = str_len("hello");  // Returns 5
+```
+
+#### `str_concat(a: string, b: string) -> string`
+Concatenates two strings.
+```wyn
+let result = str_concat("Hello", " World");  // "Hello World"
+```
+
+#### `str_eq(a: string, b: string) -> bool`
+Compares two strings for equality.
+```wyn
+if str_eq(name, "Alice") {
+    print_str("Found Alice");
 }
 ```
 
-**Example:**
-```wyn
-fn find_item(items: []string, target: string) -> Option<int> {
-    for var i = 0; i < items.len(); i = i + 1 {
-        if items[i] == target {
-            return Some(i)
-        }
-    }
-    return None
-}
+### String Manipulation
 
-fn main() -> int {
-    var fruits = ["apple", "banana", "orange"]
-    var index = find_item(fruits, "banana")
-    
-    match index {
-        Some(i) => print("Found at index: " + i),
-        None => print("Not found")
-    }
-    return 0
+#### `str_upper(s: string) -> string`
+Converts string to uppercase.
+```wyn
+let upper = str_upper("hello");  // "HELLO"
+```
+
+#### `str_lower(s: string) -> string`
+Converts string to lowercase.
+```wyn
+let lower = str_lower("HELLO");  // "hello"
+```
+
+#### `str_trim(s: string) -> string`
+Removes whitespace from both ends.
+```wyn
+let trimmed = str_trim("  hello  ");  // "hello"
+```
+
+#### `str_split(s: string, delimiter: string) -> array<string>`
+Splits string by delimiter.
+```wyn
+let parts = str_split("a,b,c", ",");  // ["a", "b", "c"]
+```
+
+#### `str_substring(s: string, start: int, length: int) -> string`
+Extracts substring.
+```wyn
+let sub = str_substring("hello", 1, 3);  // "ell"
+```
+
+### String Queries
+
+#### `str_contains(s: string, substring: string) -> bool`
+Checks if string contains substring.
+```wyn
+if str_contains("hello world", "world") {
+    print_str("Found 'world'");
 }
 ```
 
-### Result<T, E>
-
-Represents the result of an operation that may succeed or fail.
-
+#### `str_starts_with(s: string, prefix: string) -> bool`
+Checks if string starts with prefix.
 ```wyn
-enum Result<T, E> {
-    Ok(T),
-    Err(E)
-}
-
-impl<T, E> Result<T, E> {
-    fn is_ok(self) -> bool
-    fn is_err(self) -> bool
-    fn unwrap(self) -> T  // Panics if Err
-    fn unwrap_or(self, default: T) -> T
-    fn map<U>(self, f: fn(T) -> U) -> Result<U, E>
-    fn map_err<F>(self, f: fn(E) -> F) -> Result<T, F>
+if str_starts_with("hello", "he") {
+    print_str("Starts with 'he'");
 }
 ```
 
-**Example:**
+#### `str_ends_with(s: string, suffix: string) -> bool`
+Checks if string ends with suffix.
 ```wyn
-fn parse_int(s: string) -> Result<int, string> {
-    // Implementation would parse string to int
-    if s == "42" {
-        return Ok(42)
-    } else {
-        return Err("Invalid number format")
-    }
-}
-
-fn main() -> int {
-    var result = parse_int("42")
-    match result {
-        Ok(num) => print("Parsed: " + num),
-        Err(error) => print("Error: " + error)
-    }
-    return 0
-}
-```
-
-## Collections
-
-### Vec<T>
-
-Dynamic array that can grow and shrink at runtime.
-
-```wyn
-struct Vec<T> {
-    // Internal implementation
-}
-
-impl<T> Vec<T> {
-    fn new() -> Vec<T>
-    fn with_capacity(capacity: int) -> Vec<T>
-    fn len(self) -> int
-    fn capacity(self) -> int
-    fn is_empty(self) -> bool
-    fn push(mut self, item: T)
-    fn pop(mut self) -> Option<T>
-    fn get(self, index: int) -> Option<T>
-    fn set(mut self, index: int, value: T) -> bool
-    fn insert(mut self, index: int, item: T)
-    fn remove(mut self, index: int) -> Option<T>
-    fn clear(mut self)
-    fn contains(self, item: T) -> bool
-    fn reverse(mut self)
-    fn sort(mut self) where T: Comparable
-}
-```
-
-**Example:**
-```wyn
-fn main() -> int {
-    var numbers = Vec::new()
-    numbers.push(1)
-    numbers.push(2)
-    numbers.push(3)
-    
-    print("Length: " + numbers.len())
-    
-    var first = numbers.get(0)
-    match first {
-        Some(value) => print("First: " + value),
-        None => print("Empty vector")
-    }
-    
-    var popped = numbers.pop()
-    match popped {
-        Some(value) => print("Popped: " + value),
-        None => print("Nothing to pop")
-    }
-    
-    return 0
-}
-```
-
-### HashMap<K, V>
-
-Hash table for key-value storage.
-
-```wyn
-struct HashMap<K, V> {
-    // Internal implementation
-}
-
-impl<K, V> HashMap<K, V> where K: Hash + Eq {
-    fn new() -> HashMap<K, V>
-    fn with_capacity(capacity: int) -> HashMap<K, V>
-    fn len(self) -> int
-    fn is_empty(self) -> bool
-    fn insert(mut self, key: K, value: V) -> Option<V>
-    fn get(self, key: K) -> Option<V>
-    fn remove(mut self, key: K) -> Option<V>
-    fn contains_key(self, key: K) -> bool
-    fn clear(mut self)
-    fn keys(self) -> Vec<K>
-    fn values(self) -> Vec<V>
-}
-```
-
-**Example:**
-```wyn
-fn main() -> int {
-    var scores = HashMap::new()
-    scores.insert("Alice", 95)
-    scores.insert("Bob", 87)
-    scores.insert("Charlie", 92)
-    
-    var alice_score = scores.get("Alice")
-    match alice_score {
-        Some(score) => print("Alice's score: " + score),
-        None => print("Alice not found")
-    }
-    
-    if scores.contains_key("Bob") {
-        print("Bob is in the map")
-    }
-    
-    return 0
-}
-```
-
-### HashSet<T>
-
-Hash set for storing unique values.
-
-```wyn
-struct HashSet<T> {
-    // Internal implementation
-}
-
-impl<T> HashSet<T> where T: Hash + Eq {
-    fn new() -> HashSet<T>
-    fn with_capacity(capacity: int) -> HashSet<T>
-    fn len(self) -> int
-    fn is_empty(self) -> bool
-    fn insert(mut self, value: T) -> bool
-    fn remove(mut self, value: T) -> bool
-    fn contains(self, value: T) -> bool
-    fn clear(mut self)
-    fn union(self, other: HashSet<T>) -> HashSet<T>
-    fn intersection(self, other: HashSet<T>) -> HashSet<T>
-    fn difference(self, other: HashSet<T>) -> HashSet<T>
-}
-```
-
-## I/O Operations
-
-### Standard Input/Output
-
-```wyn
-// Print functions
-fn print(value: int) -> void
-fn print(value: float) -> void  
-fn print(value: string) -> void
-fn print(value: bool) -> void
-fn println(value: string) -> void  // Print with newline
-
-// Input functions
-fn read_line() -> Result<string, string>
-fn read_int() -> Result<int, string>
-fn read_float() -> Result<float, string>
-```
-
-**Example:**
-```wyn
-fn main() -> int {
-    print("Enter your name: ")
-    var name_result = read_line()
-    
-    match name_result {
-        Ok(name) => {
-            println("Hello, " + name + "!")
-        },
-        Err(error) => {
-            println("Error reading input: " + error)
-        }
-    }
-    
-    return 0
-}
-```
-
-### File Operations
-
-```wyn
-struct File {
-    // Internal implementation
-}
-
-impl File {
-    fn open(path: string) -> Result<File, string>
-    fn create(path: string) -> Result<File, string>
-    fn read_to_string(mut self) -> Result<string, string>
-    fn read_bytes(mut self) -> Result<Vec<u8>, string>
-    fn write_string(mut self, content: string) -> Result<void, string>
-    fn write_bytes(mut self, data: Vec<u8>) -> Result<void, string>
-    fn close(mut self) -> Result<void, string>
-}
-
-// Convenience functions
-fn read_file(path: string) -> Result<string, string>
-fn write_file(path: string, content: string) -> Result<void, string>
-```
-
-**Example:**
-```wyn
-fn main() -> int {
-    // Write to file
-    var write_result = write_file("hello.txt", "Hello, World!")
-    match write_result {
-        Ok(_) => print("File written successfully"),
-        Err(error) => print("Write error: " + error)
-    }
-    
-    // Read from file
-    var read_result = read_file("hello.txt")
-    match read_result {
-        Ok(content) => print("File content: " + content),
-        Err(error) => print("Read error: " + error)
-    }
-    
-    return 0
-}
-```
-
-## String Operations
-
-### String Type
-
-```wyn
-struct String {
-    // Internal implementation
-}
-
-impl String {
-    fn new() -> String
-    fn from(s: string) -> String
-    fn len(self) -> int
-    fn is_empty(self) -> bool
-    fn push(mut self, ch: char)
-    fn push_str(mut self, s: string)
-    fn pop(mut self) -> Option<char>
-    fn clear(mut self)
-    fn to_uppercase(self) -> String
-    fn to_lowercase(self) -> String
-    fn trim(self) -> String
-    fn split(self, delimiter: string) -> Vec<String>
-    fn replace(self, from: string, to: string) -> String
-    fn starts_with(self, prefix: string) -> bool
-    fn ends_with(self, suffix: string) -> bool
-    fn contains(self, substring: string) -> bool
-    fn find(self, pattern: string) -> Option<int>
-    fn substring(self, start: int, end: int) -> String
-}
-```
-
-**Example:**
-```wyn
-fn main() -> int {
-    var text = String::from("  Hello, World!  ")
-    
-    var trimmed = text.trim()
-    print("Trimmed: '" + trimmed + "'")
-    
-    var uppercase = text.to_uppercase()
-    print("Uppercase: " + uppercase)
-    
-    var words = text.split(" ")
-    print("Word count: " + words.len())
-    
-    if text.contains("World") {
-        print("Found 'World' in text")
-    }
-    
-    return 0
+if str_ends_with("hello", "lo") {
+    print_str("Ends with 'lo'");
 }
 ```
 
 ## Math Functions
 
-### Basic Math Operations
+### Basic Math
 
+#### `abs_val(x: int) -> int`
+Returns absolute value of integer.
 ```wyn
-// Constants
-const PI: float = 3.141592653589793
-const E: float = 2.718281828459045
-
-// Basic functions
-fn abs(x: int) -> int
-fn abs(x: float) -> float
-fn min(a: int, b: int) -> int
-fn min(a: float, b: float) -> float
-fn max(a: int, b: int) -> int
-fn max(a: float, b: float) -> float
-fn pow(base: float, exp: float) -> float
-fn sqrt(x: float) -> float
-fn cbrt(x: float) -> float
-
-// Trigonometric functions
-fn sin(x: float) -> float
-fn cos(x: float) -> float
-fn tan(x: float) -> float
-fn asin(x: float) -> float
-fn acos(x: float) -> float
-fn atan(x: float) -> float
-fn atan2(y: float, x: float) -> float
-
-// Logarithmic functions
-fn log(x: float) -> float      // Natural logarithm
-fn log10(x: float) -> float    // Base-10 logarithm
-fn log2(x: float) -> float     // Base-2 logarithm
-fn exp(x: float) -> float      // e^x
-
-// Rounding functions
-fn floor(x: float) -> float
-fn ceil(x: float) -> float
-fn round(x: float) -> float
-fn trunc(x: float) -> float
-
-// Random number generation
-fn random() -> float           // Random float between 0.0 and 1.0
-fn random_int(min: int, max: int) -> int
-fn random_float(min: float, max: float) -> float
+let result = abs_val(-5);  // Returns 5
 ```
 
-**Example:**
+#### `abs_float(x: float) -> float`
+Returns absolute value of float.
 ```wyn
-fn main() -> int {
-    var angle = PI / 4.0  // 45 degrees in radians
-    
-    print("sin(45°) = " + sin(angle))
-    print("cos(45°) = " + cos(angle))
-    print("tan(45°) = " + tan(angle))
-    
-    var number = 16.7
-    print("sqrt(" + number + ") = " + sqrt(number))
-    print("floor(" + number + ") = " + floor(number))
-    print("ceil(" + number + ") = " + ceil(number))
-    
-    var random_num = random_int(1, 100)
-    print("Random number: " + random_num)
-    
-    return 0
-}
+let result = abs_float(-3.14);  // Returns 3.14
 ```
 
-## Memory Management
-
-### Reference Counting
-
+#### `min(a: int, b: int) -> int`
+Returns minimum of two integers.
 ```wyn
-struct Arc<T> {
-    // Atomic reference counter
-}
-
-impl<T> Arc<T> {
-    fn new(value: T) -> Arc<T>
-    fn clone(self) -> Arc<T>
-    fn strong_count(self) -> int
-    fn get(self) -> T
-}
-
-struct Weak<T> {
-    // Weak reference (doesn't affect reference count)
-}
-
-impl<T> Weak<T> {
-    fn upgrade(self) -> Option<Arc<T>>
-    fn strong_count(self) -> int
-}
+let smaller = min(10, 20);  // Returns 10
 ```
 
-**Example:**
+#### `max(a: int, b: int) -> int`
+Returns maximum of two integers.
 ```wyn
-struct Node {
-    value: int,
-    next: Option<Arc<Node>>
-}
+let larger = max(10, 20);  // Returns 20
+```
 
-fn create_linked_list() -> Arc<Node> {
-    var node3 = Arc::new(Node { value: 3, next: None })
-    var node2 = Arc::new(Node { value: 2, next: Some(Arc::clone(&node3)) })
-    var node1 = Arc::new(Node { value: 1, next: Some(Arc::clone(&node2)) })
-    return node1
-}
+### Power and Roots
 
-fn main() -> int {
-    var list = create_linked_list()
-    print("First node value: " + list.get().value)
-    return 0
+#### `pow_int(base: int, exp: int) -> int`
+Raises integer base to integer power.
+```wyn
+let result = pow_int(2, 3);  // Returns 8
+```
+
+#### `pow_float(base: float, exp: float) -> float`
+Raises float base to float power.
+```wyn
+let result = pow_float(2.0, 3.0);  // Returns 8.0
+```
+
+#### `sqrt(x: float) -> float`
+Returns square root.
+```wyn
+let result = sqrt(16.0);  // Returns 4.0
+```
+
+### Trigonometry
+
+#### `sin(x: float) -> float`
+Returns sine of x (in radians).
+```wyn
+let result = sin(3.14159 / 2);  // Returns ~1.0
+```
+
+#### `cos(x: float) -> float`
+Returns cosine of x (in radians).
+```wyn
+let result = cos(0.0);  // Returns 1.0
+```
+
+#### `tan(x: float) -> float`
+Returns tangent of x (in radians).
+```wyn
+let result = tan(0.0);  // Returns 0.0
+```
+
+## Collections
+
+### HashMap
+
+Hash maps provide key-value storage with string keys.
+
+#### `hashmap_new() -> WynHashMap*`
+Creates a new hash map.
+```wyn
+let map = hashmap_new();
+```
+
+#### `hashmap_insert(map: WynHashMap*, key: string, value: int)`
+Inserts a key-value pair.
+```wyn
+hashmap_insert(map, "age", 25);
+hashmap_insert(map, "score", 100);
+```
+
+#### `hashmap_get(map: WynHashMap*, key: string) -> int`
+Gets a value by key. Returns -1 if not found.
+```wyn
+let age = hashmap_get(map, "age");
+if age != -1 {
+    print(age);
 }
 ```
 
-## Error Handling
-
-### Panic Functions
-
+#### `hashmap_has(map: WynHashMap*, key: string) -> bool`
+Checks if key exists in map.
 ```wyn
-fn panic(message: string) -> !  // Never returns
-fn assert(condition: bool, message: string) -> void
-fn unreachable() -> !
-```
-
-### Error Propagation
-
-```wyn
-// The ? operator for error propagation
-fn read_and_parse_file(path: string) -> Result<int, string> {
-    var content = read_file(path)?  // Propagates error if read fails
-    var number = parse_int(content)?  // Propagates error if parse fails
-    return Ok(number)
+if hashmap_has(map, "age") {
+    print_str("Age is set");
 }
 ```
 
-## Networking
-
-### HTTP Client
-
+#### `hashmap_remove(map: WynHashMap*, key: string)`
+Removes a key-value pair.
 ```wyn
-struct HttpClient {
-    // Internal implementation
-}
+hashmap_remove(map, "age");
+```
 
-struct HttpResponse {
-    status: int,
-    headers: HashMap<string, string>,
-    body: string
-}
+#### `hashmap_size(map: WynHashMap*) -> int`
+Returns number of key-value pairs.
+```wyn
+let count = hashmap_size(map);
+print(count);
+```
 
-impl HttpClient {
-    fn new() -> HttpClient
-    fn get(mut self, url: string) -> Result<HttpResponse, string>
-    fn post(mut self, url: string, body: string) -> Result<HttpResponse, string>
-    fn put(mut self, url: string, body: string) -> Result<HttpResponse, string>
-    fn delete(mut self, url: string) -> Result<HttpResponse, string>
-    fn set_header(mut self, key: string, value: string)
-    fn set_timeout(mut self, seconds: int)
+#### `hashmap_free(map: WynHashMap*)`
+Frees the hash map memory.
+```wyn
+hashmap_free(map);
+```
+
+### HashSet
+
+Hash sets provide unique string storage.
+
+#### `hashset_new() -> WynHashSet*`
+Creates a new hash set.
+```wyn
+let set = hashset_new();
+```
+
+#### `hashset_add(set: WynHashSet*, key: string)`
+Adds an element to the set.
+```wyn
+hashset_add(set, "apple");
+hashset_add(set, "banana");
+```
+
+#### `hashset_contains(set: WynHashSet*, key: string) -> int`
+Checks if element exists. Returns 1 if found, 0 otherwise.
+```wyn
+if hashset_contains(set, "apple") == 1 {
+    print_str("Found apple");
 }
 ```
 
-**Example:**
+#### `hashset_remove(set: WynHashSet*, key: string)`
+Removes an element from the set.
 ```wyn
-fn main() -> int {
-    var client = HttpClient::new()
-    client.set_header("User-Agent", "Wyn/1.0")
-    
-    var response = client.get("https://api.example.com/data")
-    match response {
-        Ok(resp) => {
-            print("Status: " + resp.status)
-            print("Body: " + resp.body)
-        },
-        Err(error) => {
-            print("HTTP Error: " + error)
-        }
-    }
-    
-    return 0
+hashset_remove(set, "apple");
+```
+
+#### `hashset_size(set: WynHashSet*) -> int`
+Returns number of elements in set.
+```wyn
+let count = hashset_size(set);
+print(count);
+```
+
+#### `hashset_free(set: WynHashSet*)`
+Frees the hash set memory.
+```wyn
+hashset_free(set);
+```
+
+### Arrays
+
+#### `array_len(arr: array<T>) -> int`
+Returns array length.
+```wyn
+let numbers = [1, 2, 3, 4, 5];
+let len = array_len(numbers);  // Returns 5
+```
+
+#### `array_get(arr: array<T>, index: int) -> T`
+Gets element at index.
+```wyn
+let first = array_get(numbers, 0);  // Returns 1
+```
+
+#### `array_set(arr: array<T>, index: int, value: T)`
+Sets element at index.
+```wyn
+array_set(numbers, 0, 10);  // numbers[0] = 10
+```
+
+## File Operations
+
+### File I/O
+
+#### `file_read(path: string) -> string`
+Reads entire file contents as string.
+```wyn
+let content = file_read("/tmp/data.txt");
+if str_len(content) > 0 {
+    print_str("File loaded successfully");
 }
 ```
 
-### TCP Sockets
-
+#### `file_write(path: string, content: string) -> int`
+Writes content to file. Returns 1 on success, 0 on failure.
 ```wyn
-struct TcpListener {
-    // Internal implementation
+let success = file_write("/tmp/output.txt", "Hello World");
+if success == 1 {
+    print_str("File written successfully");
 }
+```
 
-struct TcpStream {
-    // Internal implementation
-}
+#### `file_append(path: string, content: string) -> int`
+Appends content to file. Returns 1 on success, 0 on failure.
+```wyn
+file_append("/tmp/log.txt", "New entry\n");
+```
 
-impl TcpListener {
-    fn bind(addr: string) -> Result<TcpListener, string>
-    fn accept(mut self) -> Result<TcpStream, string>
-}
+### File System
 
-impl TcpStream {
-    fn connect(addr: string) -> Result<TcpStream, string>
-    fn read(mut self, buffer: &mut [u8]) -> Result<int, string>
-    fn write(mut self, data: &[u8]) -> Result<int, string>
-    fn close(mut self) -> Result<void, string>
+#### `file_exists(path: string) -> int`
+Checks if file exists. Returns 1 if exists, 0 otherwise.
+```wyn
+if file_exists("/tmp/config.txt") == 1 {
+    let config = file_read("/tmp/config.txt");
+    // Process config...
 }
+```
+
+#### `file_size(path: string) -> int`
+Returns file size in bytes. Returns -1 if file doesn't exist.
+```wyn
+let size = file_size("/tmp/data.txt");
+if size > 0 {
+    print(size);
+}
+```
+
+#### `file_delete(path: string) -> int`
+Deletes file. Returns 1 on success, 0 on failure.
+```wyn
+let deleted = file_delete("/tmp/temp.txt");
+if deleted == 1 {
+    print_str("File deleted");
+}
+```
+
+## JSON
+
+### JSON Parsing
+
+#### `json_parse(text: string) -> WynJson*`
+Parses JSON string into object.
+```wyn
+let json_text = "{\"name\":\"Alice\",\"age\":30}";
+let json = json_parse(json_text);
+```
+
+#### `json_get_string(json: WynJson*, key: string) -> string`
+Gets string value from JSON object.
+```wyn
+let name = json_get_string(json, "name");  // "Alice"
+```
+
+#### `json_get_int(json: WynJson*, key: string) -> int`
+Gets integer value from JSON object.
+```wyn
+let age = json_get_int(json, "age");  // 30
+```
+
+#### `json_get_float(json: WynJson*, key: string) -> float`
+Gets float value from JSON object.
+```wyn
+let score = json_get_float(json, "score");
+```
+
+#### `json_get_bool(json: WynJson*, key: string) -> bool`
+Gets boolean value from JSON object.
+```wyn
+let active = json_get_bool(json, "active");
+```
+
+#### `json_has_key(json: WynJson*, key: string) -> bool`
+Checks if JSON object has key.
+```wyn
+if json_has_key(json, "email") {
+    let email = json_get_string(json, "email");
+}
+```
+
+#### `json_free(json: WynJson*)`
+Frees JSON object memory.
+```wyn
+json_free(json);
 ```
 
 ## Concurrency
 
-### Threads
+### Threading
 
+#### `spawn(fn: function) -> thread`
+Spawns a new thread to execute function.
 ```wyn
-struct Thread {
-    // Internal implementation
+fn worker() -> int {
+    print_str("Worker thread running");
+    return 42;
 }
 
-impl Thread {
-    fn spawn<F>(f: F) -> Thread where F: Fn() -> void + Send
-    fn join(self) -> Result<void, string>
-    fn sleep(duration_ms: int)
-    fn current_id() -> int
+let thread = spawn(worker);
+```
+
+#### `thread_join(thread: thread) -> int`
+Waits for thread to complete and returns result.
+```wyn
+let result = thread_join(thread);
+print(result);  // 42
+```
+
+### Channels
+
+#### `channel_new() -> Channel`
+Creates a new channel for thread communication.
+```wyn
+let ch = channel_new();
+```
+
+#### `channel_send(ch: Channel, value: int)`
+Sends value through channel.
+```wyn
+channel_send(ch, 42);
+```
+
+#### `channel_recv(ch: Channel) -> int`
+Receives value from channel (blocks until available).
+```wyn
+let value = channel_recv(ch);
+print(value);
+```
+
+## Async
+
+### Async Functions
+
+#### `async fn`
+Declares an asynchronous function that returns a Future.
+```wyn
+async fn fetch_data() -> int {
+    // Simulate async work
+    return 42;
 }
 ```
 
-### Synchronization
-
-```wyn
-struct Mutex<T> {
-    // Internal implementation
-}
-
-struct MutexGuard<T> {
-    // Internal implementation
-}
-
-impl<T> Mutex<T> {
-    fn new(value: T) -> Mutex<T>
-    fn lock(self) -> Result<MutexGuard<T>, string>
-    fn try_lock(self) -> Option<MutexGuard<T>>
-}
-
-impl<T> MutexGuard<T> {
-    fn get(self) -> &T
-    fn get_mut(mut self) -> &mut T
-}
-```
-
-**Example:**
-```wyn
-fn main() -> int {
-    var counter = Arc::new(Mutex::new(0))
-    var handles = Vec::new()
-    
-    for var i = 0; i < 10; i = i + 1 {
-        var counter_clone = Arc::clone(&counter)
-        var handle = Thread::spawn(|| {
-            var guard = counter_clone.lock().unwrap()
-            var value = guard.get_mut()
-            *value = *value + 1
-        })
-        handles.push(handle)
-    }
-    
-    for handle in handles {
-        handle.join().unwrap()
-    }
-    
-    var final_count = counter.lock().unwrap().get()
-    print("Final count: " + *final_count)
-    
-    return 0
-}
-```
-
-## File System
-
-### Path Operations
-
-```wyn
-struct Path {
-    // Internal implementation
-}
-
-impl Path {
-    fn new(path: string) -> Path
-    fn exists(self) -> bool
-    fn is_file(self) -> bool
-    fn is_dir(self) -> bool
-    fn parent(self) -> Option<Path>
-    fn file_name(self) -> Option<string>
-    fn extension(self) -> Option<string>
-    fn join(self, component: string) -> Path
-    fn canonicalize(self) -> Result<Path, string>
-}
-
-// Directory operations
-fn create_dir(path: string) -> Result<void, string>
-fn create_dir_all(path: string) -> Result<void, string>
-fn remove_dir(path: string) -> Result<void, string>
-fn remove_dir_all(path: string) -> Result<void, string>
-fn read_dir(path: string) -> Result<Vec<Path>, string>
-
-// File operations
-fn copy_file(from: string, to: string) -> Result<void, string>
-fn move_file(from: string, to: string) -> Result<void, string>
-fn remove_file(path: string) -> Result<void, string>
-fn file_size(path: string) -> Result<int, string>
-```
-
-**Example:**
+#### `await`
+Waits for async operation to complete and returns result.
 ```wyn
 fn main() -> int {
-    var path = Path::new("example.txt")
-    
-    if path.exists() {
-        if path.is_file() {
-            print("It's a file")
-            var size = file_size("example.txt")
-            match size {
-                Ok(bytes) => print("Size: " + bytes + " bytes"),
-                Err(error) => print("Error getting size: " + error)
-            }
-        } else {
-            print("It's a directory")
-        }
-    } else {
-        print("Path doesn't exist")
-    }
-    
-    return 0
+    let future = fetch_data();
+    let result = await future;
+    return result;
 }
 ```
 
-This standard library reference provides the essential building blocks for Wyn programming. Each module is designed to be safe, efficient, and easy to use, following Wyn's principles of memory safety and performance.
+### Future Combinators
+
+#### `future_map<T, U>(future: Future<T>, fn: T -> U) -> Future<U>`
+Transforms future result.
+```wyn
+let future = fetch_data();
+let mapped = future_map(future, |x| x * 2);
+let result = await mapped;  // 84
+```
+
+#### `future_then<T, U>(future: Future<T>, fn: T -> Future<U>) -> Future<U>`
+Chains futures together.
+```wyn
+let future1 = fetch_data();
+let future2 = future_then(future1, |x| fetch_more_data(x));
+let result = await future2;
+```
+
+## Utility Functions
+
+### Assertions and Testing
+
+#### `assert_eq(a: int, b: int)`
+Asserts two integers are equal. Panics if not.
+```wyn
+let result = add(2, 3);
+assert_eq(result, 5);  // Passes
+```
+
+#### `assert_eq_str(a: string, b: string)`
+Asserts two strings are equal.
+```wyn
+let result = str_upper("hello");
+assert_eq_str(result, "HELLO");
+```
+
+#### `assert_true(condition: bool)`
+Asserts condition is true.
+```wyn
+assert_true(5 > 3);  // Passes
+```
+
+#### `assert_false(condition: bool)`
+Asserts condition is false.
+```wyn
+assert_false(3 > 5);  // Passes
+```
+
+### Program Control
+
+#### `panic(message: string)`
+Terminates program with error message.
+```wyn
+if critical_error {
+    panic("Critical error occurred");
+}
+```
+
+#### `exit_program(code: int)`
+Exits program with status code.
+```wyn
+if success {
+    exit_program(0);  // Success
+} else {
+    exit_program(1);  // Error
+}
+```
+
+### Memory and Performance
+
+#### `gc_collect()`
+Forces garbage collection (for debugging).
+```wyn
+// Create lots of objects...
+gc_collect();  // Clean up
+```
+
+#### `memory_usage() -> int`
+Returns current memory usage in bytes.
+```wyn
+let usage = memory_usage();
+print(usage);
+```
+
+#### `benchmark_start() -> int`
+Starts timing benchmark.
+```wyn
+let start = benchmark_start();
+// ... code to benchmark ...
+let elapsed = benchmark_end(start);
+```
+
+#### `benchmark_end(start: int) -> int`
+Ends timing benchmark and returns elapsed microseconds.
+```wyn
+print(elapsed);  // Microseconds elapsed
+```
+
+## Type Conversion
+
+### String Conversions
+
+#### `int_to_string(x: int) -> string`
+Converts integer to string.
+```wyn
+let text = int_to_string(42);  // "42"
+```
+
+#### `float_to_string(x: float) -> string`
+Converts float to string.
+```wyn
+let text = float_to_string(3.14);  // "3.14"
+```
+
+#### `bool_to_string(x: bool) -> string`
+Converts boolean to string.
+```wyn
+let text = bool_to_string(true);  // "true"
+```
+
+### Numeric Conversions
+
+#### `string_to_int(s: string) -> int`
+Converts string to integer. Returns 0 if invalid.
+```wyn
+let num = string_to_int("42");  // 42
+```
+
+#### `string_to_float(s: string) -> float`
+Converts string to float. Returns 0.0 if invalid.
+```wyn
+let num = string_to_float("3.14");  // 3.14
+```
+
+#### `int_to_float(x: int) -> float`
+Converts integer to float.
+```wyn
+let f = int_to_float(42);  // 42.0
+```
+
+#### `float_to_int(x: float) -> int`
+Converts float to integer (truncates).
+```wyn
+let i = float_to_int(3.14);  // 3
+```
+
+## Error Handling
+
+### Result Type
+
+#### `Ok<T>(value: T) -> Result<T, E>`
+Creates successful result.
+```wyn
+fn divide(a: int, b: int) -> Result<int, string> {
+    if b == 0 {
+        return Err("Division by zero");
+    }
+    return Ok(a / b);
+}
+```
+
+#### `Err<E>(error: E) -> Result<T, E>`
+Creates error result.
+```wyn
+return Err("Something went wrong");
+```
+
+#### `result_is_ok<T, E>(result: Result<T, E>) -> bool`
+Checks if result is Ok.
+```wyn
+let result = divide(10, 2);
+if result_is_ok(result) {
+    let value = result_unwrap(result);
+    print(value);
+}
+```
+
+#### `result_unwrap<T, E>(result: Result<T, E>) -> T`
+Extracts value from Ok result. Panics if Err.
+```wyn
+let value = result_unwrap(result);
+```
+
+### Optional Type
+
+#### `Some<T>(value: T) -> Optional<T>`
+Creates optional with value.
+```wyn
+fn find_user(id: int) -> Optional<string> {
+    if id == 1 {
+        return Some("Alice");
+    }
+    return None();
+}
+```
+
+#### `None<T>() -> Optional<T>`
+Creates empty optional.
+```wyn
+return None();
+```
+
+#### `option_is_some<T>(opt: Optional<T>) -> bool`
+Checks if optional has value.
+```wyn
+let user = find_user(1);
+if option_is_some(user) {
+    let name = option_unwrap(user);
+    print_str(name);
+}
+```
+
+#### `option_unwrap<T>(opt: Optional<T>) -> T`
+Extracts value from Some. Panics if None.
+```wyn
+let name = option_unwrap(user);
+```
+
+## See Also
+
+- [**Language Guide**](language-guide.md) - Complete language syntax reference
+- [**Getting Started**](getting-started.md) - Installation and first steps
+- [**Examples**](examples.md) - Code examples and tutorials
+- [**FAQ**](faq.md) - Common questions and troubleshooting
+
+---
+
+*This reference covers Wyn v1.2.2. For the latest updates, see the [GitHub repository](https://github.com/wyn-lang/wyn).*
