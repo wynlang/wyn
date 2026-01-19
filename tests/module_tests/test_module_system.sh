@@ -25,7 +25,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/test_builtin_math.wyn >/dev/null 2>&1
+../../wyn /tmp/test_builtin_math.wyn >/dev/null 2>&1
 if [ -f /tmp/test_builtin_math.wyn.out ]; then
     /tmp/test_builtin_math.wyn.out 2>/dev/null
     if [ $? -eq 36 ]; then
@@ -57,7 +57,7 @@ fn main() -> int {
 EOF
 
 cp local_utils.wyn /tmp/
-./wyn /tmp/test_local.wyn >/dev/null 2>&1
+../../wyn /tmp/test_local.wyn >/dev/null 2>&1
 if [ -f /tmp/test_local.wyn.out ]; then
     /tmp/test_local.wyn.out 2>/dev/null
     if [ $? -eq 42 ]; then
@@ -88,7 +88,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/test_project_modules.wyn >/dev/null 2>&1
+../../wyn /tmp/test_project_modules.wyn >/dev/null 2>&1
 if [ -f /tmp/test_project_modules.wyn.out ]; then
     /tmp/test_project_modules.wyn.out 2>/dev/null
     if [ $? -eq 21 ]; then
@@ -119,7 +119,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/test_user_modules.wyn >/dev/null 2>&1
+../../wyn /tmp/test_user_modules.wyn >/dev/null 2>&1
 if [ -f /tmp/test_user_modules.wyn.out ]; then
     /tmp/test_user_modules.wyn.out 2>/dev/null
     if [ $? -eq 20 ]; then
@@ -150,7 +150,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/test_packages.wyn >/dev/null 2>&1
+../../wyn /tmp/test_packages.wyn >/dev/null 2>&1
 if [ -f /tmp/test_packages.wyn.out ]; then
     /tmp/test_packages.wyn.out 2>/dev/null
     if [ $? -eq 20 ]; then
@@ -187,7 +187,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/test_struct.wyn >/dev/null 2>&1
+../../wyn /tmp/test_struct.wyn >/dev/null 2>&1
 if [ -f /tmp/test_struct.wyn.out ]; then
     /tmp/test_struct.wyn.out 2>/dev/null
     if [ $? -eq 7 ]; then
@@ -226,7 +226,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/test_nested.wyn >/dev/null 2>&1
+../../wyn /tmp/test_nested.wyn >/dev/null 2>&1
 if [ -f /tmp/test_nested.wyn.out ]; then
     /tmp/test_nested.wyn.out 2>/dev/null
     if [ $? -eq 30 ]; then
@@ -264,7 +264,7 @@ fn main() -> int {
 EOF
 
 cp priority_test.wyn /tmp/
-./wyn /tmp/test_priority.wyn >/dev/null 2>&1
+../../wyn /tmp/test_priority.wyn >/dev/null 2>&1
 if [ -f /tmp/test_priority.wyn.out ]; then
     /tmp/test_priority.wyn.out 2>/dev/null
     if [ $? -eq 100 ]; then

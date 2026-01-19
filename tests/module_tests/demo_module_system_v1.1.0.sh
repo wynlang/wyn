@@ -23,7 +23,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/wyn_demo/test1.wyn >/dev/null 2>&1
+../../wyn /tmp/wyn_demo/test1.wyn >/dev/null 2>&1
 ( /tmp/wyn_demo/test1.wyn.out 2>/dev/null )
 result=$?
 if [ $result -eq 42 ]; then
@@ -46,7 +46,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/wyn_demo/test2.wyn >/dev/null 2>&1
+../../wyn /tmp/wyn_demo/test2.wyn >/dev/null 2>&1
 ( /tmp/wyn_demo/test2.wyn.out 2>/dev/null )
 result=$?
 if [ $result -eq 10 ]; then
@@ -77,7 +77,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/wyn_demo/test3.wyn >/dev/null 2>&1
+../../wyn /tmp/wyn_demo/test3.wyn >/dev/null 2>&1
 ( /tmp/wyn_demo/test3.wyn.out 2>/dev/null )
 result=$?
 if [ $result -eq 30 ]; then
@@ -110,7 +110,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/wyn_demo/test4.wyn >/dev/null 2>&1
+../../wyn /tmp/wyn_demo/test4.wyn >/dev/null 2>&1
 ( /tmp/wyn_demo/test4.wyn.out 2>/dev/null )
 result=$?
 if [ $result -eq 15 ]; then
@@ -135,7 +135,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/wyn_demo/test5.wyn >/dev/null 2>&1
+../../wyn /tmp/wyn_demo/test5.wyn >/dev/null 2>&1
 ( /tmp/wyn_demo/test5.wyn.out 2>/dev/null )
 result=$?
 if [ $result -eq 100 ]; then
@@ -167,7 +167,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/wyn_demo/test6.wyn >/dev/null 2>&1
+../../wyn /tmp/wyn_demo/test6.wyn >/dev/null 2>&1
 ( /tmp/wyn_demo/test6.wyn.out 2>/dev/null )
 result=$?
 if [ $result -eq 7 ]; then

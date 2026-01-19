@@ -30,7 +30,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/test_import.wyn >/dev/null 2>&1
+../../wyn /tmp/test_import.wyn >/dev/null 2>&1
 if [ -f /tmp/test_import.wyn.out ]; then
     /tmp/test_import.wyn.out 2>/dev/null
     exit_code=$?
@@ -68,7 +68,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/test_struct.wyn >/dev/null 2>&1
+../../wyn /tmp/test_struct.wyn >/dev/null 2>&1
 if [ -f /tmp/test_struct.wyn.out ]; then
     /tmp/test_struct.wyn.out 2>/dev/null
     exit_code=$?
@@ -102,7 +102,7 @@ fn main() -> int {
 }
 EOF
 
-./wyn /tmp/test_nested.wyn >/dev/null 2>&1
+../../wyn /tmp/test_nested.wyn >/dev/null 2>&1
 if [ -f /tmp/test_nested.wyn.out ]; then
     /tmp/test_nested.wyn.out 2>/dev/null
     exit_code=$?
