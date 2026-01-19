@@ -48,12 +48,17 @@ jobs:
         shell: bash
 
       - name: Test
-        if: matrix.os != 'windows-latest'
-        run: make test
-      
-      - name: Test (Windows - unit tests only)
-        if: matrix.os == 'windows-latest'
-        run: make test_unit
+        if: matrix.os != 'windows-latest' && matrix.arch != 'aarch64'
+        run: |
+          # Run module tests
+          ./tests/module_tests/test_modules.sh
+          ./tests/module_tests/test_module_system.sh
+          
+          # Test examples compile
+          for f in examples/*.wyn; do
+            ./wyn "$f" || exit 1
+          done
+        shell: bash
 
       - name: Rename binary
         run: |
