@@ -57,12 +57,12 @@ jobs:
 
       - name: Build (cross-compile if needed)
         run: |
-          make clean
           if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            # Only clean and cross-compile for ARM
+            make clean
             CC=aarch64-linux-gnu-gcc make wyn
-          else
-            make wyn
           fi
+          # For native builds, wyn binary already exists from test step
         shell: bash
 
       - name: Rename binary
