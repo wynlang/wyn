@@ -54,6 +54,7 @@ typedef enum {
     TYPE_ENUM,
     TYPE_FUNCTION,
     TYPE_MAP,
+    TYPE_SET,
     TYPE_OPTIONAL,  // T2.5.1: Optional Type Implementation
     TYPE_UNION,     // T2.5.2: Union Type Support
     TYPE_RESULT,    // TASK-026: Result<T,E> Type Implementation

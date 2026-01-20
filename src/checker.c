@@ -877,9 +877,8 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return map_type;
         }
         case EXPR_HASHSET_LITERAL: {
-            // v1.3.0: {:} creates a hashset with proper type  
-            // Use TYPE_MAP for now (HashSet is a special map)
-            Type* set_type = make_type(TYPE_MAP);
+            // v1.3.1: {:} creates a hashset with TYPE_SET
+            Type* set_type = make_type(TYPE_SET);
             expr->expr_type = set_type;
             return set_type;
         }

@@ -204,6 +204,7 @@ const char* get_receiver_type_string(const Type* type) {
         case TYPE_BOOL: return "bool";
         case TYPE_ARRAY: return "array";
         case TYPE_MAP: return "map";
+        case TYPE_SET: return "set";
         case TYPE_OPTIONAL: return "option";
         case TYPE_RESULT: return "result";
         default: return NULL;
@@ -522,15 +523,15 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
     if (strcmp(receiver_type, "set") == 0) {
         // HashSet methods
         if (strcmp(method_name, "insert") == 0 && arg_count == 1) {
-            out->c_function = "set_insert";
+            out->c_function = "hashset_add";
             out->pass_by_ref = true;
             return true;
         }
         if (strcmp(method_name, "contains") == 0 && arg_count == 1) {
-            out->c_function = "set_contains"; return true;
+            out->c_function = "hashset_contains"; return true;
         }
         if (strcmp(method_name, "remove") == 0 && arg_count == 1) {
-            out->c_function = "set_remove";
+            out->c_function = "hashset_remove";
             out->pass_by_ref = true;
             return true;
         }
