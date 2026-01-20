@@ -55,8 +55,6 @@ tests/
 
 ## Documentation
 
-Complete documentation is available at:
-`/Users/aoaws/src/ao/wyn-lang/internal-docs/northstar/TEST_FRAMEWORK.md`
 
 ## Requirements
 

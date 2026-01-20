@@ -91,7 +91,6 @@ fn main() -> int {
 - **User Guide:** See `docs/` directory
 - **Examples:** See `examples/` directory (21 examples)
 - **Changelog:** See [CHANGELOG.md](CHANGELOG.md)
-- **Internal Docs:** See `../internal-docs/` for specifications
 
 ---
 
@@ -169,9 +168,6 @@ See LICENSE file for details.
 
 ## Links
 
-- **Internal Documentation:** `../internal-docs/`
-- **Language Spec:** `../internal-docs/01_LANGUAGE_SPEC.md`
-- **Architecture:** `../internal-docs/02_ARCHITECTURE.md`
 - **Changelog:** `CHANGELOG.md`
 
 ---
