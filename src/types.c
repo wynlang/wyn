@@ -524,7 +524,7 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         // HashSet methods
         if (strcmp(method_name, "insert") == 0 && arg_count == 1) {
             out->c_function = "hashset_add";
-            out->pass_by_ref = true;
+            
             return true;
         }
         if (strcmp(method_name, "contains") == 0 && arg_count == 1) {
@@ -532,7 +532,7 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "remove") == 0 && arg_count == 1) {
             out->c_function = "hashset_remove";
-            out->pass_by_ref = true;
+            
             return true;
         }
         if (strcmp(method_name, "len") == 0 && arg_count == 0) {

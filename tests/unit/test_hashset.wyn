@@ -1,29 +1,29 @@
-// Test HashSet implementation with OO syntax
+// Test HashSet with OO method syntax
 fn main() -> int {
     // Test creation with initialization
     var set = {:"apple", "banana", "cherry"};
     
-    if (!hashset_contains(set, "apple")) {
+    if (!set.contains("apple")) {
         return 1;
     }
     
-    if (!hashset_contains(set, "banana")) {
+    if (!set.contains("banana")) {
         return 2;
     }
     
-    if (hashset_contains(set, "missing")) {
+    if (set.contains("missing")) {
         return 3;
     }
     
-    // Test add
-    hashset_add(set, "date");
-    if (!hashset_contains(set, "date")) {
+    // Test insert method
+    set.insert("date");
+    if (!set.contains("date")) {
         return 4;
     }
     
-    // Test remove
-    hashset_remove(set, "banana");
-    if (hashset_contains(set, "banana")) {
+    // Test remove method
+    set.remove("banana");
+    if (set.contains("banana")) {
         return 5;
     }
     
