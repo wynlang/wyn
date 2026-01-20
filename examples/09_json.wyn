@@ -4,26 +4,29 @@ fn main() -> int {
     var json_text = "{\"name\":\"Alice\",\"age\":30,\"score\":95}";
     var json = json_parse(json_text);
     
-    if json == 0 {
-        print_str("Failed to parse JSON");
+    if (json == 0) {
+        print("Failed to parse JSON\n");
         return 1;
     }
     
     // Get string value
     var name = json_get_string(json, "name");
-    if name != 0 {
-        print_str("Name: ");
-        print_str(name);
+    if (name != 0) {
+        print("Name: ");
+        print(name);
+        print("\n");
     }
     
     // Get integer values
     var age = json_get_int(json, "age");
     var score = json_get_int(json, "score");
     
-    print_str("Age: ");
+    print("Age: ");
     print(age);
-    print_str("Score: ");
+    print("\n");
+    print("Score: ");
     print(score);
+    print("\n");
     
     json_free(json);
     return 0;

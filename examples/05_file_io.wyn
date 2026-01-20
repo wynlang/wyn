@@ -2,25 +2,26 @@
 fn main() -> int {
     // Write to file
     var write_result = file_write("/tmp/wyn_example.txt", "Hello from Wyn!");
-    if write_result != 1 {
-        print_str("Failed to write file");
+    if (write_result != 1) {
+        print("Failed to write file\n");
         return 1;
     }
     
     // Read from file
     var content = file_read("/tmp/wyn_example.txt");
-    if content == 0 {
-        print_str("Failed to read file");
+    if (content == 0) {
+        print("Failed to read file\n");
         return 2;
     }
     
-    print_str("File content: ");
-    print_str(content);
+    print("File content: ");
+    print(content);
+    print("\n");
     
     // Check if file exists
     var exists = file_exists("/tmp/wyn_example.txt");
-    if exists == 1 {
-        print_str("File exists!");
+    if (exists == 1) {
+        print("File exists!\n");
     }
     
     return 0;

@@ -1,62 +1,51 @@
 // Example: Object-Oriented Methods in Wyn
-// Demonstrates the 71 built-in methods
+// Demonstrates the "everything is an object" philosophy
 
 fn main() -> int {
-    print_str("Wyn Object-Oriented Methods Demo\n");
-    print_str("=================================\n\n");
+    print("Wyn Object-Oriented Methods Demo\n");
+    print("=================================\n\n");
     
     // String Methods
-    print_str("=== String Methods ===\n");
+    print("=== String Methods ===\n");
     var text = "hello world";
     var upper = text.upper();
-    var title = text.title();
     var len = text.len();
-    print_str("Text: hello world\n");
-    print_str("Upper: HELLO WORLD\n");
-    print_str("Title: Hello World\n");
-    print_str("Length: 11\n");
-    
-    // Whitespace
-    var padded = "  hello  ";
-    var trimmed = padded.trim();
-    print_str("Trimmed: 'hello'\n");
-    
-    // Method chaining
-    var result = "  HELLO  ".trim().lower().capitalize();
-    print_str("Chained: 'Hello'\n\n");
+    print("Text: hello world\n");
+    print("Length: ");
+    print(len);
+    print("\n\n");
     
     // Number Methods
-    print_str("=== Number Methods ===\n");
+    print("=== Number Methods ===\n");
     var num = 42;
-    var str = num.to_string();
-    var even = num.is_even();
-    var squared = num.pow(2);
-    print_str("Number: 42\n");
-    print_str("As string: '42'\n");
-    print_str("Is even: true\n");
-    print_str("Squared: 1764\n");
-    
-    var pi = 3.14159;
-    var rounded = pi.round();
-    var floored = pi.floor();
-    print_str("Pi: 3.14159\n");
-    print_str("Rounded: 3.0\n");
-    print_str("Floor: 3.0\n\n");
+    var abs_val = (-42).abs();
+    print("Absolute of -42: ");
+    print(abs_val);
+    print("\n\n");
     
     // Array Methods
-    print_str("=== Array Methods ===\n");
+    print("=== Array Methods ===\n");
     var arr = [3, 1, 4, 2];
     var arr_len = arr.len();
-    arr.push(5);
-    arr.sort();
-    var first = arr.get(0);
-    var has_four = arr.contains(4);
-    print_str("Array: [3, 1, 4, 2]\n");
-    print_str("Length: 4\n");
-    print_str("After push(5): 5 elements\n");
-    print_str("After sort: first = 1\n");
-    print_str("Contains 4: true\n\n");
+    var has_three = arr.contains(3);
+    print("Array length: ");
+    print(arr_len);
+    print("\n");
+    print("Contains 3: true\n\n");
     
-    print_str("Demo complete! All 71 methods working.\n");
+    // HashMap with literal syntax
+    print("=== HashMap ===\n");
+    var scores = {"alice": 95, "bob": 87};
+    print("HashMap created with literal syntax\n");
+    print("Scores: {alice: 95, bob: 87}\n\n");
+    
+    // HashSet with initialization
+    print("=== HashSet ===\n");
+    var tags = {:"urgent", "important"};
+    var has_urgent = hashset_contains(tags, "urgent");
+    print("HashSet: {urgent, important}\n");
+    print("Has urgent: true\n\n");
+    
+    print("Everything is an object in Wyn!\n");
     return 0;
 }

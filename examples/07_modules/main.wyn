@@ -2,16 +2,15 @@
 import math;
 
 fn main() -> int {
-    let sum = math::add(10, 20);
-    let product = math::multiply(5, 6);
-    let squared = math::power2(7);
+    var sum = math::add(10, 20);
+    var product = math::multiply(5, 6);
     
-    print_str("Sum: ");
+    print("Sum: ");
     print(sum);
-    print_str("Product: ");
+    print("\n");
+    print("Product: ");
     print(product);
-    print_str("Power2: ");
-    print(squared);
+    print("\n");
     
     return 0;
 }
