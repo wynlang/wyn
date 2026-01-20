@@ -1,7 +1,7 @@
 # Wyn Programming Language
 
 **Status:** Production Ready ✓  
-**Type:** Systems programming language where "everything is an object"  
+**Type:** A modern systems programming language where everything is an object  
 **Version:** See [VERSION](VERSION) file
 
 ---
@@ -9,12 +9,14 @@
 ## Quick Start
 
 ### Build
+
 ```bash
 cd wyn
 make
 ```
 
 ### Hello World
+
 ```wyn
 fn main() -> int {
     print("Hello, World!\n");
@@ -32,6 +34,7 @@ fn main() -> int {
 ## Features
 
 ### Everything is an Object
+
 ```wyn
 42.abs()              // Methods on integers
 "hello".upper()       // Methods on strings
@@ -40,6 +43,7 @@ fn main() -> int {
 ```
 
 ### Clean Collection Syntax
+
 ```wyn
 var arr = [1, 2, 3];                    // Array
 var hmap = {"key": 10, "key2": 20};     // HashMap
@@ -47,12 +51,14 @@ var hset = {:"item1", "item2"};         // HashSet
 ```
 
 ### Simple Variable Declaration
+
 ```wyn
 var mutable = 10;      // Mutable
 const immutable = 20;  // Immutable
 ```
 
 ### Core Features
+
 - **Type aliases:** `type UserId = int`
 - **Extension methods:** `impl Point { fn sum(self) -> int }`
 - **String interpolation:** `"Hello {name}!"`
@@ -99,12 +105,14 @@ fn main() -> int {
 See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
 
 ### Latest Features
+
 - HashMap multi-type support (int, float, string, bool)
 - HashSet initialization syntax: `{:"item1", "item2"}`
 - Full standard library with 60+ functions
 - Object-oriented method syntax for all collections
 
 ### Bug Fixes
+
 - Fixed impl methods calling other methods
 - Fixed HashMap implementation (remove, has, helpers)
 - Fixed binary expression type inference
