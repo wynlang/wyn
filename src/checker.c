@@ -230,14 +230,34 @@ void init_checker() {
         "http_get", "http_post", "http_put", "http_delete", "http_set_header", "http_clear_headers", "http_status", "http_error",
         "https_get", "https_post",
         "hashmap_new", "hashmap_insert", "hashmap_get", "hashmap_has", "hashmap_remove", "hashmap_free",
+        "hashmap_insert_int", "hashmap_insert_float", "hashmap_insert_string", "hashmap_insert_bool",
+        "hashmap_get_int", "hashmap_get_float", "hashmap_get_string", "hashmap_get_bool",
         "hashset_new", "hashset_add", "hashset_contains", "hashset_remove", "hashset_free",
         "set_len", "set_is_empty", "set_clear", "set_union", "set_intersection", "set_difference", "set_is_subset", "set_is_superset",
         "json_parse", "json_get_string", "json_get_int", "json_free",
         "json_get_str", "json_get_int", "json_get_bool", "json_has_key", "json_stringify_int", "json_stringify_str", "json_stringify_bool", "json_array_stringify", "json_array_length", "json_array_get",
-        "url_encode", "url_decode", "base64_encode", "hash_string"
+        "url_encode", "url_decode", "base64_encode", "hash_string",
+        // v1.3.0 Standard Library
+        "wyn_string_len", "wyn_string_contains", "wyn_string_starts_with", "wyn_string_ends_with",
+        "wyn_string_to_upper", "wyn_string_to_lower", "wyn_string_trim", "wyn_str_replace",
+        "wyn_string_split", "wyn_string_join", "wyn_str_substring", "wyn_string_index_of",
+        "wyn_string_last_index_of", "wyn_string_repeat", "wyn_string_reverse",
+        "wyn_array_map", "wyn_array_filter", "wyn_array_reduce", "wyn_array_find",
+        "wyn_array_any", "wyn_array_all", "wyn_array_reverse", "wyn_array_sort",
+        "wyn_array_contains", "wyn_array_index_of", "wyn_array_last_index_of",
+        "wyn_array_slice", "wyn_array_concat", "wyn_array_fill",
+        "wyn_array_sum", "wyn_array_min", "wyn_array_max", "wyn_array_average",
+        "wyn_time_now", "wyn_time_now_millis", "wyn_time_now_micros",
+        "wyn_time_sleep", "wyn_time_sleep_millis", "wyn_time_sleep_micros",
+        "wyn_time_format", "wyn_time_parse",
+        "wyn_time_year", "wyn_time_month", "wyn_time_day",
+        "wyn_time_hour", "wyn_time_minute", "wyn_time_second",
+        "wyn_crypto_hash32", "wyn_crypto_hash64", "wyn_crypto_md5", "wyn_crypto_sha256",
+        "wyn_crypto_base64_encode", "wyn_crypto_base64_decode",
+        "wyn_crypto_random_bytes", "wyn_crypto_random_hex", "wyn_crypto_xor_cipher"
     };
     
-    for (int i = 0; i < 156; i++) {
+    for (int i = 0; i < 217; i++) {
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
     }

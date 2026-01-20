@@ -1,8 +1,8 @@
 # Wyn Programming Language
 
-**Version:** 1.2.0  
 **Status:** Production Ready ✓  
-**Type:** Systems programming language where "everything is an object"
+**Type:** Systems programming language where "everything is an object"  
+**Version:** See [VERSION](VERSION) file
 
 ---
 
@@ -95,14 +95,14 @@ fn main() -> int {
 
 ---
 
-## What's New in v1.2.0
+## What's New
 
-### Breaking Changes
-- **Removed `let` keyword** - Use `var` or `const` instead
+See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
 
-### New Features
-- HashMap literal syntax: `{}`
-- HashMap initialization: `{"key": value}`
+### Latest Features
+- HashMap multi-type support (int, float, string, bool)
+- HashSet initialization syntax: `{:"item1", "item2"}`
+- Full standard library with 60+ functions
 - HashSet literal syntax: `{:}`
 - HashSet operations: `set_union()`, `set_intersection()`, etc.
 
@@ -126,8 +126,8 @@ for f in *.wyn; do ../wyn "$f" && ./"${f}.out"; done
 ./tests/regression.sh
 
 # Run specific test
-./wyn tests/wyn/test_v1.2.0_complete.wyn
-./tests/wyn/test_v1.2.0_complete.wyn.out
+./wyn tests/wyn/test_hashmap_multitypes.wyn
+./tests/wyn/test_hashmap_multitypes.wyn.out
 ```
 
 ---
@@ -173,8 +173,8 @@ See LICENSE file for details.
 - **Internal Documentation:** `../internal-docs/`
 - **Language Spec:** `../internal-docs/01_LANGUAGE_SPEC.md`
 - **Architecture:** `../internal-docs/02_ARCHITECTURE.md`
-- **Release Notes:** `../internal-docs/RELEASE_NOTES_v1.2.0.md`
+- **Changelog:** `CHANGELOG.md`
 
 ---
 
-**Wyn v1.2.0 - A modern systems programming language where everything is an object.**
+**Wyn - A modern systems programming language where everything is an object.**

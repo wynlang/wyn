@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.3.0] - 2026-01-20
+
+### Added
+- **HashMap Multi-Type Support** - HashMap now supports int, float, string, and bool values
+  - New functions: `hashmap_insert_int()`, `hashmap_insert_float()`, `hashmap_insert_string()`, `hashmap_insert_bool()`
+  - New functions: `hashmap_get_int()`, `hashmap_get_float()`, `hashmap_get_string()`, `hashmap_get_bool()`
+  - Tagged union implementation for type-safe value storage
+  - Automatic type detection in HashMap literals
+
+- **HashSet Initialization Syntax** - Create HashSets with initial values
+  - Syntax: `{:"item1", "item2", "item3"}`
+  - Empty HashSet: `{:}`
+  - Supports string and int elements
+
+- **Full Standard Library** - Comprehensive built-in functions across 7 modules
+  - **String Module** (15 functions): split, join, replace, substring, index_of, last_index_of, repeat, reverse, and more
+  - **Array Module** (18 functions): slice, concat, fill, sum, min, max, average, last_index_of, and more
+  - **Time Module** (13 functions): now, now_millis, now_micros, sleep, format, parse, year, month, day, hour, minute, second
+  - **Crypto Module** (9 functions): hash32, hash64, md5, sha256, base64_encode, base64_decode, random_bytes, random_hex, xor_cipher
+  - **File I/O Module**: Existing file operations
+  - **System Module**: Existing system operations
+  - **Net Module**: Existing network operations
+
+### Changed
+- HashMap implementation now uses tagged union for multi-type support
+- HashSet literal parsing enhanced to support initialization
+- Improved quicksort algorithm for array sorting (replaced bubble sort)
+
+### Technical
+- Added `stdlib_crypto.c` with hashing and encoding functions
+- Enhanced `stdlib_string.c` with 8 additional string functions
+- Enhanced `stdlib_array.c` with 8 additional array functions
+- Updated codegen to emit type-specific HashMap insert/get calls
+- Updated Makefile to include new crypto module
+
+---
+
 ## [1.2.0] - 2026-01-20
 
 ### Changed (BREAKING)

@@ -102,6 +102,13 @@ void free_expr(Expr* expr) {
             }
             safe_free(expr->union_type.types);
             break;
+        case EXPR_HASHMAP_LITERAL:  // v1.3.0: HashMap literal
+        case EXPR_HASHSET_LITERAL:  // v1.3.0: HashSet literal
+            free_array_expr(&expr->array);
+            break;
+        case EXPR_RESULT_TYPE:
+            // No additional cleanup needed
+            break;
         case EXPR_TRY:
         case EXPR_INT:
         case EXPR_FLOAT:
@@ -207,6 +214,9 @@ void free_stmt(Stmt* stmt) {
             break;
         case STMT_CATCH:
             free_stmt(stmt->catch_stmt.body);
+            break;
+        case STMT_SPAWN:
+            free_expr(stmt->expr);
             break;
         case STMT_TEST:  // T1.6.2: Testing Framework Agent addition
             free_stmt(stmt->test_stmt.body);

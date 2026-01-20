@@ -472,23 +472,39 @@ static Expr* primary() {
         return expr;
     }
     
-    // v1.2.4: {} for HashMap, {:} for HashSet
+    // v1.3.0: {} for HashMap, {:} for HashSet with initialization
     if (match(TOKEN_LBRACE)) {
-        // Check if next token is : followed by }
+        // Check if next token is : (HashSet)
         if (check(TOKEN_COLON)) {
-            Token colon = parser.current;
             advance();  // consume :
-            if (check(TOKEN_RBRACE)) {
-                advance();  // consume }
-                // {:} is HashSet literal
-                Expr* expr = alloc_expr();
-                expr->type = EXPR_HASHSET_LITERAL;
-                expr->array.elements = NULL;
-                expr->array.count = 0;
-                return expr;
+            
+            // HashSet literal
+            Expr* expr = alloc_expr();
+            expr->type = EXPR_HASHSET_LITERAL;
+            expr->array.elements = NULL;
+            expr->array.count = 0;
+            
+            // Parse elements: {:"item1", "item2", "item3"}
+            if (!check(TOKEN_RBRACE)) {
+                int capacity = 8;
+                expr->array.elements = malloc(sizeof(Expr*) * capacity);
+                
+                do {
+                    // Parse element (string or int)
+                    Expr* element = expression();
+                    
+                    // Store element
+                    if (expr->array.count >= capacity) {
+                        capacity *= 2;
+                        expr->array.elements = realloc(expr->array.elements, sizeof(Expr*) * capacity);
+                    }
+                    expr->array.elements[expr->array.count++] = element;
+                    
+                } while (match(TOKEN_COMMA));
             }
-            // Not {:}, backtrack - this will be an error
-            parser.current = colon;
+            
+            expect(TOKEN_RBRACE, "Expected '}' after hashset elements");
+            return expr;
         }
         
         // Otherwise it's a HashMap
@@ -1144,7 +1160,6 @@ static Expr* assignment() {
             return assign;
         } else if (expr->type == EXPR_FIELD_ACCESS) {
             // Handle field assignment: obj.field = value
-            Token op = parser.previous;
             Expr* field_assign = alloc_expr();
             field_assign->type = EXPR_FIELD_ASSIGN;
             field_assign->field_assign.object = expr->field_access.object;

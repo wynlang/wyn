@@ -748,7 +748,6 @@ void wyn_emit_monomorphic_function_declaration(void* original_fn_ptr, Type** typ
     
     // Determine return type from original function's return type annotation
     const char* return_type = "int"; // Default
-    char return_type_buf[256] = {0};
     
     if (original_fn->return_type && original_fn->return_type->type == EXPR_IDENT) {
         Token type_name = original_fn->return_type->token;
@@ -820,7 +819,6 @@ void wyn_emit_monomorphic_function_definition(void* original_fn_ptr, Type** type
     
     // Determine return type from original function's return type annotation
     const char* return_type = "int"; // Default
-    char return_type_buf[256] = {0};
     
     if (original_fn->return_type && original_fn->return_type->type == EXPR_IDENT) {
         Token type_name = original_fn->return_type->token;

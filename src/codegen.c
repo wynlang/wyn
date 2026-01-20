@@ -915,7 +915,7 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_HASHMAP_LITERAL: {
-            // v1.2.4: {} with initialization
+            // v1.3.0: {} with initialization supporting multiple types
             if (expr->array.count == 0) {
                 // Empty hashmap
                 emit("hashmap_new()");
@@ -927,7 +927,19 @@ void codegen_expr(Expr* expr) {
                 
                 // Insert key-value pairs (stored as key, value, key, value...)
                 for (int i = 0; i < expr->array.count; i += 2) {
-                    emit("hashmap_insert(__map_%d, ", map_id);
+                    Expr* value_expr = expr->array.elements[i+1];
+                    
+                    // Determine insert function based on value type
+                    const char* insert_func = "hashmap_insert_int";
+                    if (value_expr->type == EXPR_FLOAT) {
+                        insert_func = "hashmap_insert_float";
+                    } else if (value_expr->type == EXPR_STRING) {
+                        insert_func = "hashmap_insert_string";
+                    } else if (value_expr->type == EXPR_BOOL) {
+                        insert_func = "hashmap_insert_bool";
+                    }
+                    
+                    emit("%s(__map_%d, ", insert_func, map_id);
                     codegen_expr(expr->array.elements[i]);    // key
                     emit(", ");
                     codegen_expr(expr->array.elements[i+1]);  // value
@@ -939,8 +951,25 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_HASHSET_LITERAL: {
-            // v1.2.3: () generates hashset_new()
-            emit("hashset_new()");
+            // v1.3.0: {:} with initialization
+            if (expr->array.count == 0) {
+                // Empty hashset
+                emit("hashset_new()");
+            } else {
+                // HashSet with initial values
+                static int set_counter = 0;
+                int set_id = set_counter++;
+                emit("({ WynHashSet* __set_%d = hashset_new(); ", set_id);
+                
+                // Add elements
+                for (int i = 0; i < expr->array.count; i++) {
+                    emit("hashset_add(__set_%d, ", set_id);
+                    codegen_expr(expr->array.elements[i]);
+                    emit("); ");
+                }
+                
+                emit("__set_%d; })", set_id);
+            }
             break;
         }
         case EXPR_INDEX: {
@@ -1407,6 +1436,71 @@ void codegen_c_header() {
     
     // String runtime functions
     emit("const char* wyn_string_concat_safe(const char* left, const char* right);\n\n");
+    
+    // Standard library function declarations
+    emit("// String module\n");
+    emit("int wyn_string_len(const char* str);\n");
+    emit("int wyn_string_contains(const char* str, const char* substr);\n");
+    emit("int wyn_string_starts_with(const char* str, const char* prefix);\n");
+    emit("int wyn_string_ends_with(const char* str, const char* suffix);\n");
+    emit("char* wyn_string_to_upper(const char* str);\n");
+    emit("char* wyn_string_to_lower(const char* str);\n");
+    emit("char* wyn_string_trim(const char* str);\n");
+    emit("char* wyn_str_replace(const char* str, const char* old, const char* new);\n");
+    emit("char** wyn_string_split(const char* str, const char* delim, int* count);\n");
+    emit("char* wyn_string_join(char** strings, int count, const char* delim);\n");
+    emit("char* wyn_str_substring(const char* str, int start, int end);\n");
+    emit("int wyn_string_index_of(const char* str, const char* substr);\n");
+    emit("int wyn_string_last_index_of(const char* str, const char* substr);\n");
+    emit("char* wyn_string_repeat(const char* str, int n);\n");
+    emit("char* wyn_string_reverse(const char* str);\n\n");
+    
+    emit("// Array module\n");
+    emit("int* wyn_array_map(int* arr, int len, int (*fn)(int));\n");
+    emit("int* wyn_array_filter(int* arr, int len, int (*pred)(int), int* out_len);\n");
+    emit("int wyn_array_reduce(int* arr, int len, int (*fn)(int, int), int initial);\n");
+    emit("int wyn_array_find(int* arr, int len, int (*pred)(int), int* found);\n");
+    emit("int wyn_array_any(int* arr, int len, int (*pred)(int));\n");
+    emit("int wyn_array_all(int* arr, int len, int (*pred)(int));\n");
+    emit("void wyn_array_reverse(int* arr, int len);\n");
+    emit("void wyn_array_sort(int* arr, int len);\n");
+    emit("int wyn_array_contains(int* arr, int len, int value);\n");
+    emit("int wyn_array_index_of(int* arr, int len, int value);\n");
+    emit("int wyn_array_last_index_of(int* arr, int len, int value);\n");
+    emit("int* wyn_array_slice(int* arr, int start, int end, int* out_len);\n");
+    emit("int* wyn_array_concat(int* arr1, int len1, int* arr2, int len2, int* out_len);\n");
+    emit("void wyn_array_fill(int* arr, int len, int value);\n");
+    emit("int wyn_array_sum(int* arr, int len);\n");
+    emit("int wyn_array_min(int* arr, int len);\n");
+    emit("int wyn_array_max(int* arr, int len);\n");
+    emit("double wyn_array_average(int* arr, int len);\n\n");
+    
+    emit("// Time module\n");
+    emit("long wyn_time_now();\n");
+    emit("long long wyn_time_now_millis();\n");
+    emit("long long wyn_time_now_micros();\n");
+    emit("void wyn_time_sleep(int seconds);\n");
+    emit("void wyn_time_sleep_millis(int millis);\n");
+    emit("void wyn_time_sleep_micros(int micros);\n");
+    emit("char* wyn_time_format(long timestamp);\n");
+    emit("long wyn_time_parse(const char* str);\n");
+    emit("int wyn_time_year(long timestamp);\n");
+    emit("int wyn_time_month(long timestamp);\n");
+    emit("int wyn_time_day(long timestamp);\n");
+    emit("int wyn_time_hour(long timestamp);\n");
+    emit("int wyn_time_minute(long timestamp);\n");
+    emit("int wyn_time_second(long timestamp);\n\n");
+    
+    emit("// Crypto module\n");
+    emit("uint32_t wyn_crypto_hash32(const char* data, size_t len);\n");
+    emit("uint64_t wyn_crypto_hash64(const char* data, size_t len);\n");
+    emit("void wyn_crypto_md5(const char* data, size_t len, char* output);\n");
+    emit("void wyn_crypto_sha256(const char* data, size_t len, char* output);\n");
+    emit("char* wyn_crypto_base64_encode(const char* data, size_t len);\n");
+    emit("char* wyn_crypto_base64_decode(const char* data, size_t* out_len);\n");
+    emit("void wyn_crypto_random_bytes(char* buffer, size_t len);\n");
+    emit("char* wyn_crypto_random_hex(size_t len);\n");
+    emit("char* wyn_crypto_xor_cipher(const char* data, size_t len, const char* key, size_t key_len);\n\n");
     
     // Global variable declarations
     emit("extern char* global_filename;\n");
@@ -2006,9 +2100,9 @@ void codegen_c_header() {
     emit("    return keys;\n");
     emit("}\n\n");
     
-    // New map methods for Task 3.3
+    // New map methods for Task 3.3 - updated for v1.3.0 multi-type support
     emit("int map_get_or_default(WynHashMap* map, const char* key, int default_value) {\n");
-    emit("    int result = hashmap_get(map, key);\n");
+    emit("    int result = hashmap_get_int(map, key);\n");
     emit("    return (result == -1) ? default_value : result;\n");
     emit("}\n");
     
@@ -2019,7 +2113,7 @@ void codegen_c_header() {
     emit("        while (entry) {\n");
     emit("            char* key = *(char**)entry;\n");
     emit("            int value = *((int*)((char*)entry + sizeof(char*)));\n");
-    emit("            hashmap_insert(dest, key, value);\n");
+    emit("            hashmap_insert_int(dest, key, value);\n");
     emit("            entry = *((void**)((char*)entry + sizeof(char*) + sizeof(int)));\n");
     emit("        }\n");
     emit("    }\n");
@@ -2045,7 +2139,7 @@ void codegen_c_header() {
     emit("}\n");
     
     emit("bool map_has(WynHashMap* map, const char* key) {\n");
-    emit("    return hashmap_get(map, key) != -1;\n");
+    emit("    return hashmap_has(map, key);\n");
     emit("}\n");
     
     emit("void map_remove(WynHashMap* map, const char* key) {\n");
