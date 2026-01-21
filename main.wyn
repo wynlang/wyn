@@ -1,0 +1,25 @@
+// Calculator Module - Demonstrates Wyn's Module System
+import calculator
+
+fn main() -> int {
+    print("=== CALCULATOR WITH MODULES ===");
+    print("Demonstrates: Module System (import)");
+    print("");
+    
+    var a = 15;
+    var b = 3;
+    
+    var sum = calculator::add(a, b);
+    print("${a} + ${b} = ${sum}");
+    
+    var product = calculator::multiply(a, b);
+    print("${a} * ${b} = ${product}");
+    
+    var squared = calculator::square(5);
+    print("5² = ${squared}");
+    
+    print("");
+    print("=== MODULE SYSTEM WORKING! ===");
+    
+    return 0;
+}

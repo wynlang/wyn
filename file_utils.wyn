@@ -1,0 +1,26 @@
+// File utilities module
+fn read_file_safe(path: string) -> string {
+    if File::exists(path) == 0 {
+        print("Error: File not found: ${path}");
+        return "";
+    }
+    
+    return File::read(path);
+}
+
+fn write_file_safe(path: string, content: string) -> bool {
+    var result = File::write(path, content);
+    if result {
+        print("Successfully wrote to ${path}");
+    } else {
+        print("Error: Failed to write to ${path}");
+    }
+    return result;
+}
+
+fn get_file_info(path: string) -> int {
+    if File::exists(path) == 0 {
+        return -1;
+    }
+    return File::file_size(path);
+}

@@ -1,0 +1,38 @@
+// String utilities module
+fn count_words(text: string) -> int {
+    if text.is_empty() {
+        return 0;
+    }
+    var words = text.split(" ");
+    return words.len();
+}
+
+fn count_lines(text: string) -> int {
+    if text.is_empty() {
+        return 0;
+    }
+    var lines = text.split("\n");
+    return lines.len();
+}
+
+fn reverse_text(text: string) -> string {
+    return text.reverse();
+}
+
+fn to_title_case(text: string) -> string {
+    var words = text.split(" ");
+    var result = "";
+    
+    for i in 0..words.len() {
+        var word = words[i];
+        if word.len() > 0 {
+            var capitalized = word.capitalize();
+            if i > 0 {
+                result = result.concat(" ");
+            }
+            result = result.concat(capitalized);
+        }
+    }
+    
+    return result;
+}

@@ -3021,7 +3021,23 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     if (!fn_stmt->fn.is_public) {
         emit("static ");
     }
-    emit("int %s_%.*s(", prefix, fn_stmt->fn.name.length, fn_stmt->fn.name.start);
+    
+    // Determine return type
+    const char* return_type = "int";
+    if (fn_stmt->fn.return_type) {
+        if (fn_stmt->fn.return_type->type == EXPR_IDENT) {
+            Token rt = fn_stmt->fn.return_type->token;
+            if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) {
+                return_type = "const char*";
+            } else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) {
+                return_type = "double";
+            } else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) {
+                return_type = "bool";
+            }
+        }
+    }
+    
+    emit("%s %s_%.*s(", return_type, prefix, fn_stmt->fn.name.length, fn_stmt->fn.name.start);
     
     // Parameters
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
@@ -3031,8 +3047,27 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
         if (fn_stmt->fn.param_types && fn_stmt->fn.param_types[i]) {
             Expr* param_type = fn_stmt->fn.param_types[i];
             if (param_type->type == EXPR_IDENT) {
-                // Emit the type name
-                emit("%.*s ", param_type->token.length, param_type->token.start);
+                // Convert Wyn types to C types
+                Token type_token = param_type->token;
+                const char* c_type = "int";
+                
+                if (type_token.length == 6 && memcmp(type_token.start, "string", 6) == 0) {
+                    c_type = "const char*";
+                } else if (type_token.length == 5 && memcmp(type_token.start, "float", 5) == 0) {
+                    c_type = "double";
+                } else if (type_token.length == 4 && memcmp(type_token.start, "bool", 4) == 0) {
+                    c_type = "bool";
+                } else if (type_token.length == 5 && memcmp(type_token.start, "array", 5) == 0) {
+                    c_type = "WynArray";
+                } else if (type_token.length == 3 && memcmp(type_token.start, "int", 3) == 0) {
+                    c_type = "int";
+                } else {
+                    // Assume struct type
+                    emit("%.*s ", type_token.length, type_token.start);
+                    goto emit_param_name;
+                }
+                
+                emit("%s ", c_type);
             } else {
                 emit("int ");
             }
@@ -3040,6 +3075,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
             emit("int ");
         }
         
+        emit_param_name:
         // Emit parameter name
         Token param_name = fn_stmt->fn.params[i];
         emit("%.*s", param_name.length, param_name.start);
@@ -3986,7 +4022,48 @@ void codegen_stmt(Stmt* stmt) {
                                 if (!s->fn.is_public) {
                                     emit("static ");
                                 }
-                                emit("int %s_%.*s();\n", mod->name, s->fn.name.length, s->fn.name.start);
+                                
+                                // Determine return type
+                                const char* return_type = "int";
+                                if (s->fn.return_type) {
+                                    if (s->fn.return_type->type == EXPR_IDENT) {
+                                        Token rt = s->fn.return_type->token;
+                                        if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) {
+                                            return_type = "const char*";
+                                        } else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) {
+                                            return_type = "double";
+                                        } else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) {
+                                            return_type = "bool";
+                                        }
+                                    }
+                                }
+                                
+                                emit("%s %s_%.*s(", return_type, mod->name, s->fn.name.length, s->fn.name.start);
+                                
+                                // Emit parameters with types
+                                for (int j = 0; j < s->fn.param_count; j++) {
+                                    if (j > 0) emit(", ");
+                                    
+                                    const char* param_type = "int";
+                                    if (s->fn.param_types[j]) {
+                                        if (s->fn.param_types[j]->type == EXPR_IDENT) {
+                                            Token pt = s->fn.param_types[j]->token;
+                                            if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) {
+                                                param_type = "const char*";
+                                            } else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) {
+                                                param_type = "double";
+                                            } else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) {
+                                                param_type = "bool";
+                                            } else if (pt.length == 5 && memcmp(pt.start, "array", 5) == 0) {
+                                                param_type = "WynArray";
+                                            }
+                                        }
+                                    }
+                                    
+                                    emit("%s %.*s", param_type, s->fn.params[j].length, s->fn.params[j].start);
+                                }
+                                
+                                emit(");\n");
                             }
                         }
                         

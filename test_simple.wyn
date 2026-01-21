@@ -1,0 +1,21 @@
+// Simple module test
+import math_utils
+
+fn main() -> int {
+    print("=== MODULE SYSTEM DEMO ===");
+    print("");
+    
+    var a = 5;
+    var b = 3;
+    
+    var sum = math_utils::add(a, b);
+    print("${a} + ${b} = ${sum}");
+    
+    var product = math_utils::multiply(a, b);
+    print("${a} * ${b} = ${product}");
+    
+    var squared = math_utils::square(a);
+    print("${a}² = ${squared}");
+    
+    return 0;
+}

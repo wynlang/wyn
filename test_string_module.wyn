@@ -1,0 +1,11 @@
+import string_module
+
+fn main() -> int {
+    var greeting = string_module::greet("Alice");
+    print(greeting);
+    
+    var reversed = string_module::reverse_string("hello");
+    print(reversed);
+    
+    return 0;
+}

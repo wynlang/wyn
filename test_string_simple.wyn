@@ -1,0 +1,11 @@
+import string_module_simple
+
+fn main() -> int {
+    var greeting = string_module_simple::greet("Alice");
+    print(greeting);
+    
+    var message = string_module_simple::get_message();
+    print(message);
+    
+    return 0;
+}

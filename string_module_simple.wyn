@@ -1,0 +1,8 @@
+// Test string types in modules - simple version
+fn greet(name: string) -> string {
+    return name;
+}
+
+fn get_message() -> string {
+    return "Hello from module";
+}

@@ -1,0 +1,12 @@
+// Math utilities module
+fn add(a, b) {
+    return a + b;
+}
+
+fn multiply(a, b) {
+    return a * b;
+}
+
+fn square(n) {
+    return n * n;
+}

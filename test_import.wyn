@@ -1,0 +1,12 @@
+// Test importing a module
+import mymath
+
+fn main() -> int {
+    var result = mymath::add(5, 3);
+    print("5 + 3 = ${result}");
+    
+    var product = mymath::multiply(4, 7);
+    print("4 * 7 = ${product}");
+    
+    return 0;
+}
