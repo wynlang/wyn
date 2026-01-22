@@ -703,6 +703,56 @@ var formatted = Time::format(now);  // "2026-01-22 14:30:45"
 
 ---
 
+## Error Handling
+
+Wyn uses return codes for error handling. Functions return special values to indicate errors.
+
+### Error Patterns
+
+#### Return -1 for Errors
+```wyn
+fn divide(a: int, b: int) -> int {
+    if b == 0 {
+        return -1;  // Error indicator
+    }
+    return a / b;
+}
+
+// Check for errors
+var result = divide(10, 0);
+if result == -1 {
+    print("Error: division by zero\n");
+}
+```
+
+#### Return Empty String for Errors
+```wyn
+fn read_file(path: string) -> string {
+    if !File::exists(path) {
+        return "";  // Error indicator
+    }
+    return File::read(path);
+}
+
+// Check for errors
+var content = read_file("missing.txt");
+if content.len() == 0 {
+    print("Error: could not read file\n");
+}
+```
+
+#### Use Exit Codes
+```wyn
+fn main() -> int {
+    if some_error {
+        return 1;  // Non-zero indicates error
+    }
+    return 0;  // Success
+}
+```
+
+---
+
 ## Examples
 
 ### String Processing

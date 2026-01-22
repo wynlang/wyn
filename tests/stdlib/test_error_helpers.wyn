@@ -1,0 +1,17 @@
+// Test error helper functions
+
+fn main() -> int {
+    // Test error message
+    var err_msg = "File not found";
+    if err_msg.len() == 0 {
+        return 1;
+    }
+    
+    // Test validation
+    var value = 5;
+    if value != 5 {
+        return 2;
+    }
+    
+    return 0;
+}

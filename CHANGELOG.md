@@ -46,6 +46,12 @@
 **Time Operations (NEW):**
 - `Time::format(timestamp)` - Format timestamp as human-readable string
 
+**Error Handling (Documented):**
+- Return code patterns for error handling
+- -1 for numeric errors
+- Empty string for string errors
+- Non-zero exit codes for program errors
+
 ### Added - Module System (Major Feature)
 - **Nested Modules** - Java/TypeScript-style syntax with `.` separator
   - Import: `import network.http`

@@ -1,0 +1,32 @@
+// Test Result type for error handling
+
+fn divide(a: int, b: int) -> int {
+    if b == 0 {
+        return -1;  // Error indicator
+    }
+    return a / b;
+}
+
+fn safe_divide(a: int, b: int) -> int {
+    var result = divide(a, b);
+    if result == -1 {
+        return 0;  // Default value on error
+    }
+    return result;
+}
+
+fn main() -> int {
+    // Test successful division
+    var result1 = safe_divide(10, 2);
+    if result1 != 5 {
+        return 1;
+    }
+    
+    // Test division by zero
+    var result2 = safe_divide(10, 0);
+    if result2 != 0 {
+        return 2;
+    }
+    
+    return 0;
+}
