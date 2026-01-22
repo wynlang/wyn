@@ -2,6 +2,31 @@
 
 ## [1.4.0] - 2026-01-22
 
+### Added - Function Types & Functional Programming
+
+**Function Types:**
+- Function type syntax: `fn(T) -> R`
+- Functions as first-class values
+- Function pointers as parameters
+- Type-safe higher-order functions
+
+**Functional Array Methods:**
+- `.map(fn)` - Transform each element with function
+- `.filter(fn)` - Keep elements matching predicate
+- `.reduce(fn, initial)` - Fold array into single value
+
+**Examples:**
+```wyn
+fn twice(x: int) -> int { return x * 2; }
+var doubled = [1, 2, 3].map(twice);  // [2, 4, 6]
+
+fn is_positive(x: int) -> int { return x > 0; }
+var positive = [-1, 2, -3].filter(is_positive);  // [2]
+
+fn add(acc: int, x: int) -> int { return acc + x; }
+var sum = [1, 2, 3].reduce(add, 0);  // 6
+```
+
 ### Added - Standard Library Expansion
 
 **String Character Methods:**
