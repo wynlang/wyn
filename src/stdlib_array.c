@@ -3,6 +3,10 @@
 
 // Array module - comprehensive array manipulation functions
 
+// NOTE: map/filter/reduce are now implemented in generated code using WynArray
+// These old versions are kept for reference but not used
+
+/*
 // Map: apply function to each element
 int* wyn_array_map(int* arr, int len, int (*fn)(int)) {
     int* result = malloc(sizeof(int) * len);
@@ -33,6 +37,7 @@ int wyn_array_reduce(int* arr, int len, int (*fn)(int, int), int initial) {
     }
     return result;
 }
+*/
 
 // Find: return first element matching predicate
 int wyn_array_find(int* arr, int len, int (*pred)(int), int* found) {

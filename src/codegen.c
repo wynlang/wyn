@@ -1783,9 +1783,6 @@ void codegen_c_header() {
     emit("char* wyn_string_reverse(const char* str);\n\n");
     
     emit("// Array module\n");
-    emit("int* wyn_array_map(int* arr, int len, int (*fn)(int));\n");
-    emit("int* wyn_array_filter(int* arr, int len, int (*pred)(int), int* out_len);\n");
-    emit("int wyn_array_reduce(int* arr, int len, int (*fn)(int, int), int initial);\n");
     emit("int wyn_array_find(int* arr, int len, int (*pred)(int), int* found);\n");
     emit("int wyn_array_any(int* arr, int len, int (*pred)(int));\n");
     emit("int wyn_array_all(int* arr, int len, int (*pred)(int));\n");
@@ -1852,6 +1849,12 @@ void codegen_c_header() {
     emit("} WynValue;\n\n");
     
     emit("typedef struct WynArray { WynValue* data; int count; int capacity; } WynArray;\n");
+    
+    // Forward declarations for higher-order array functions
+    emit("WynArray wyn_array_map(WynArray arr, int (*fn)(int));\n");
+    emit("WynArray wyn_array_filter(WynArray arr, int (*fn)(int));\n");
+    emit("int wyn_array_reduce(WynArray arr, int (*fn)(int, int), int initial);\n");
+    
     emit("WynArray array_new() { WynArray arr = {0}; return arr; }\n");
     emit("void array_push_int(WynArray* arr, int value) {\n");
     emit("    if (arr->count >= arr->capacity) {\n");
@@ -3361,6 +3364,35 @@ void codegen_c_header() {
     emit("WynArray arr_filter_greater_than_3(WynArray arr) { WynArray result = array_new(); for(int i = 0; i < arr.count; i++) { int val = array_get_int(arr, i); if(val > 3) array_push_int(&result, val); } return result; }\n");
     emit("int arr_reduce_sum(WynArray arr) { int result = 0; for(int i = 0; i < arr.count; i++) { result += array_get_int(arr, i); } return result; }\n");
     emit("int arr_reduce_product(WynArray arr) { int result = 1; for(int i = 0; i < arr.count; i++) { result *= array_get_int(arr, i); } return result; }\n");
+    
+    // Generic higher-order array functions
+    emit("WynArray wyn_array_map(WynArray arr, int (*fn)(int)) {\n");
+    emit("    WynArray result = array_new();\n");
+    emit("    for (int i = 0; i < arr.count; i++) {\n");
+    emit("        int val = array_get_int(arr, i);\n");
+    emit("        array_push_int(&result, fn(val));\n");
+    emit("    }\n");
+    emit("    return result;\n");
+    emit("}\n");
+    
+    emit("WynArray wyn_array_filter(WynArray arr, int (*fn)(int)) {\n");
+    emit("    WynArray result = array_new();\n");
+    emit("    for (int i = 0; i < arr.count; i++) {\n");
+    emit("        int val = array_get_int(arr, i);\n");
+    emit("        if (fn(val)) array_push_int(&result, val);\n");
+    emit("    }\n");
+    emit("    return result;\n");
+    emit("}\n");
+    
+    emit("int wyn_array_reduce(WynArray arr, int (*fn)(int, int), int initial) {\n");
+    emit("    int result = initial;\n");
+    emit("    for (int i = 0; i < arr.count; i++) {\n");
+    emit("        int val = array_get_int(arr, i);\n");
+    emit("        result = fn(result, val);\n");
+    emit("    }\n");
+    emit("    return result;\n");
+    emit("}\n");
+    
     emit("int random_int(int max) { return rand() %% max; }\n");
     emit("int random_range(int min, int max) { return min + rand() %% (max - min + 1); }\n");
     emit("double random_float() { return (double)rand() / RAND_MAX; }\n");

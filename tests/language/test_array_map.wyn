@@ -1,0 +1,16 @@
+// Test: Array.map() method
+
+fn twice(x: int) -> int {
+    return x * 2;
+}
+
+fn main() -> int {
+    var nums = [1, 2, 3];
+    var doubled = nums.map(twice);
+    
+    if doubled[0] != 2 { return 1; }
+    if doubled[1] != 4 { return 2; }
+    if doubled[2] != 6 { return 3; }
+    
+    return 0;
+}

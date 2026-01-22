@@ -847,7 +847,12 @@ static Expr* call() {
                 expr = tuple_index_expr;
             } else {
                 Token field_or_method = parser.current;
-                expect(TOKEN_IDENT, "Expected field or method name after '.'");
+                // Allow keywords as method names (e.g., .map())
+                if (parser.current.type != TOKEN_EOF && parser.current.type != TOKEN_LPAREN) {
+                    advance();
+                } else {
+                    expect(TOKEN_IDENT, "Expected field or method name after '.'");
+                }
             
             // Check for module.Type { ... } struct initialization
             if (check(TOKEN_LBRACE) && field_or_method.start[0] >= 'A' && field_or_method.start[0] <= 'Z') {

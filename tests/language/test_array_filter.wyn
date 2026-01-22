@@ -1,0 +1,20 @@
+// Test: Array.filter() method
+
+fn is_positive(x: int) -> int {
+    if x > 0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn main() -> int {
+    var nums = [-1, 2, -3, 4, 5];
+    var positive = nums.filter(is_positive);
+    
+    if positive.len() != 3 { return 1; }
+    if positive[0] != 2 { return 2; }
+    if positive[1] != 4 { return 3; }
+    if positive[2] != 5 { return 4; }
+    
+    return 0;
+}

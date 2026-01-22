@@ -1,0 +1,21 @@
+// Test: Array.reduce() method
+
+fn add(acc: int, x: int) -> int {
+    return acc + x;
+}
+
+fn multiply(acc: int, x: int) -> int {
+    return acc * x;
+}
+
+fn main() -> int {
+    var nums = [1, 2, 3, 4];
+    
+    var sum = nums.reduce(add, 0);
+    if sum != 10 { return 1; }
+    
+    var product = nums.reduce(multiply, 1);
+    if product != 24 { return 2; }
+    
+    return 0;
+}
