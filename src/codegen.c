@@ -1291,8 +1291,8 @@ void codegen_expr(Expr* expr) {
                         codegen_expr(expr->index.index);
                         emit(")");
                     } else {
-                        // Return WynValue - caller must handle
-                        emit("array_get(");
+                        // Default to int array (most common case)
+                        emit("array_get_int(");
                         codegen_expr(expr->index.array);
                         emit(", ");
                         codegen_expr(expr->index.index);

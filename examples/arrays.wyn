@@ -1,6 +1,6 @@
 // Array Example - Demonstrates arrays and loops
 
-fn array_sum(arr: [int], len: int) -> int {
+fn sum_array(arr: [int], len: int) -> int {
     var total = 0;
     var i = 0;
     while i < len {
@@ -10,7 +10,7 @@ fn array_sum(arr: [int], len: int) -> int {
     return total;
 }
 
-fn array_max(arr: [int], len: int) -> int {
+fn max_array(arr: [int], len: int) -> int {
     var maximum = arr[0];
     var i = 1;
     while i < len {
@@ -24,7 +24,7 @@ fn array_max(arr: [int], len: int) -> int {
 
 fn main() -> int {
     var numbers = [5, 2, 8, 1, 9, 3];
-    var sum = array_sum(numbers, 6);
-    var max = array_max(numbers, 6);
+    var sum = sum_array(numbers, 6);
+    var max = max_array(numbers, 6);
     return sum + max;
 }

@@ -23,17 +23,11 @@ echo "   ✓ $VERSION"
 echo "3. Testing examples compile..."
 PASS=0
 FAIL=0
-SKIP=("binary_search.wyn" "quicksort.wyn" "arrays.wyn")  # Known array indexing bug
 for ex in examples/*.wyn; do
-    basename=$(basename "$ex")
-    # Skip known broken examples
-    if [[ " ${SKIP[@]} " =~ " ${basename} " ]]; then
-        continue
-    fi
     if timeout 3 ./wyn "$ex" >/dev/null 2>&1; then
         ((PASS++))
     else
-        echo "   ✗ $basename failed to compile"
+        echo "   ✗ $(basename $ex) failed to compile"
         ((FAIL++))
     fi
 done
