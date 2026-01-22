@@ -223,6 +223,14 @@ Returns character at index as a string.
 var ch = "hello".char_at(1);  // "e"
 ```
 
+#### `.equals(other: string) -> bool`
+Compares two strings for equality.
+```wyn
+if name.equals("Alice") == 1 {
+    print("Hello Alice!");
+}
+```
+
 ### Conversion
 
 #### `.parse_int() -> int`
@@ -578,6 +586,15 @@ All system operations use `System::` prefix.
 Executes shell command and returns output.
 ```wyn
 var output = System::exec("ls -la");
+```
+
+#### `System::exec_code(command: string) -> int`
+Executes command and returns exit code.
+```wyn
+var code = System::exec_code("make test");
+if code == 0 {
+    print("Success!");
+}
 ```
 
 #### `System::exit(code: int)`

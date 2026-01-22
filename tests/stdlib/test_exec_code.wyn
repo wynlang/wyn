@@ -1,0 +1,17 @@
+// Test process execution with return code
+
+fn main() -> int {
+    // Test successful command
+    var result = System::exec_code("echo test");
+    if result != 0 {
+        return 1;
+    }
+    
+    // Test failed command
+    var fail_result = System::exec_code("false");
+    if fail_result == 0 {
+        return 2;
+    }
+    
+    return 0;
+}

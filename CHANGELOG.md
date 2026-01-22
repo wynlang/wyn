@@ -10,6 +10,7 @@
 - `.is_alnum()` - Check if all characters are alphanumeric
 - `.is_whitespace()` - Check if all whitespace
 - `.char_at(index)` - Get character at index
+- `.equals(other)` - String equality comparison
 
 **File Path Manipulation:**
 - `File::dirname(path)` - Extract directory from path
@@ -30,6 +31,7 @@
 
 **System Environment (NEW):**
 - `System::set_env(key, value)` - Set environment variable
+- `System::exec_code(command)` - Execute command and get exit code
 
 **Time Operations (NEW):**
 - `Time::format(timestamp)` - Format timestamp as human-readable string

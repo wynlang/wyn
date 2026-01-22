@@ -2201,6 +2201,10 @@ void codegen_c_header() {
     emit("    return result;\n");
     emit("}\n");
     
+    emit("int string_equals(const char* a, const char* b) {\n");
+    emit("    return strcmp(a, b) == 0;\n");
+    emit("}\n");
+    
     // Phase 2 Task 2.1: Additional string methods
     emit("char* string_capitalize(const char* str) {\n");
     emit("    int len = strlen(str);\n");
@@ -3158,6 +3162,15 @@ void codegen_c_header() {
     emit("    }\n");
     emit("    pclose(pipe);\n");
     emit("    return result;\n");
+    emit("}\n");
+    
+    emit("int System_exec_code(const char* cmd) {\n");
+    emit("    int result = system(cmd);\n");
+    emit("    #ifdef _WIN32\n");
+    emit("    return result;\n");
+    emit("    #else\n");
+    emit("    return WEXITSTATUS(result);\n");
+    emit("    #endif\n");
     emit("}\n");
     
     emit("void System_exit(int code) { exit(code); }\n");

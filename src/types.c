@@ -40,6 +40,7 @@ static const MethodSignature method_signatures[] = {
     {"string", "is_alnum", "bool", 0},       // Check if alphanumeric
     {"string", "is_whitespace", "bool", 0},  // Check if all whitespace
     {"string", "char_at", "string", 1},      // Get char at index
+    {"string", "equals", "bool", 1},         // String equality
     
     // Int methods
     {"int", "to_string", "string", 0},
@@ -327,6 +328,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "char_at") == 0 && arg_count == 1) {
             out->c_function = "string_char_at"; return true;
+        }
+        if (strcmp(method_name, "equals") == 0 && arg_count == 1) {
+            out->c_function = "string_equals"; return true;
         }
         if (strcmp(method_name, "parse_int") == 0 && arg_count == 0) {
             out->c_function = "str_parse_int"; return true;

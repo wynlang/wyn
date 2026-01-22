@@ -1,0 +1,91 @@
+// Build Tool - Demonstrates complete stdlib for build systems
+
+fn main() -> int {
+    print("=== Wyn Build Tool ===\n\n");
+    
+    // Get command line arguments
+    var args = System::args();
+    if args.len() < 2 {
+        print("Usage: build_tool <command>\n");
+        print("Commands: info, compile, test\n");
+        return 1;
+    }
+    
+    var command = args[1];
+    
+    // Command: info
+    if command.equals("info") == 1 {
+        print("Project Information:\n");
+        var cwd = File::get_cwd();
+        print("  Directory: ");
+        print(cwd);
+        print("\n");
+        
+        var name = File::basename(cwd);
+        print("  Project: ");
+        print(name);
+        print("\n");
+        
+        var user = System::env("USER");
+        print("  User: ");
+        print(user);
+        print("\n");
+        
+        var now = Time::now();
+        var formatted = Time::format(now);
+        print("  Time: ");
+        print(formatted);
+        print("\n");
+        
+        return 0;
+    }
+    
+    // Command: compile
+    if command.equals("compile") == 1 {
+        print("Compiling project...\n");
+        
+        // Find all .wyn files
+        var files = File::list_dir(".");
+        var wyn_count = 0;
+        var i = 0;
+        while i < files.len() {
+            var file = files[i];
+            var ext = File::extension(file);
+            if ext.equals("wyn") == 1 {
+                print("  Found: ");
+                print(file);
+                print("\n");
+                wyn_count = wyn_count + 1;
+            }
+            i = i + 1;
+        }
+        
+        print("Total files: ");
+        print(wyn_count);
+        print("\n");
+        
+        return 0;
+    }
+    
+    // Command: test
+    if command.equals("test") == 1 {
+        print("Running tests...\n");
+        
+        // Execute test command
+        var result = System::exec_code("echo 'Test passed'");
+        if result == 0 {
+            print("  ✓ Tests passed\n");
+        }
+        if result != 0 {
+            print("  ✗ Tests failed\n");
+            return 1;
+        }
+        
+        return 0;
+    }
+    
+    print("Unknown command: ");
+    print(command);
+    print("\n");
+    return 1;
+}

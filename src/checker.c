@@ -2293,6 +2293,14 @@ void check_program(Program* prog) {
         sys_exec_type->fn_type.return_type = builtin_string;
         add_symbol(global_scope, sys_exec_tok, sys_exec_type, false);
         
+        Token sys_exec_code_tok = {TOKEN_IDENT, "System::exec_code", 17, 0};
+        Type* sys_exec_code_type = make_type(TYPE_FUNCTION);
+        sys_exec_code_type->fn_type.param_count = 1;
+        sys_exec_code_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
+        sys_exec_code_type->fn_type.param_types[0] = builtin_string;
+        sys_exec_code_type->fn_type.return_type = builtin_int;
+        add_symbol(global_scope, sys_exec_code_tok, sys_exec_code_type, false);
+        
         Token sys_exit_tok = {TOKEN_IDENT, "System::exit", 12, 0};
         Type* sys_exit_type = make_type(TYPE_FUNCTION);
         sys_exit_type->fn_type.param_count = 1;
