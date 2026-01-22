@@ -1554,6 +1554,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             expr->expr_type = result_type ? result_type : builtin_void;
             return expr->expr_type;
         }
+        case EXPR_FN_TYPE: {
+            // Function type: fn(T1, T2) -> R
+            Type* fn_type = make_type(TYPE_FUNCTION);
+            fn_type->fn_type.param_count = expr->fn_type.param_count;
+            fn_type->fn_type.param_types = malloc(sizeof(Type*) * expr->fn_type.param_count);
+            
+            for (int i = 0; i < expr->fn_type.param_count; i++) {
+                fn_type->fn_type.param_types[i] = check_expr(expr->fn_type.param_types[i], scope);
+            }
+            
+            fn_type->fn_type.return_type = check_expr(expr->fn_type.return_type, scope);
+            fn_type->fn_type.is_variadic = false;
+            
+            expr->expr_type = fn_type;
+            return fn_type;
+        }
         default:
             return builtin_int;
     }
