@@ -231,6 +231,21 @@ if name.equals("Alice") == 1 {
 }
 ```
 
+#### `.count(substring: string) -> int`
+Counts occurrences of substring.
+```wyn
+var text = "hello world hello";
+var count = text.count("hello");  // 2
+```
+
+#### `.is_numeric() -> bool`
+Checks if string is a valid number (int or float).
+```wyn
+"123".is_numeric()    // 1 (true)
+"12.34".is_numeric()  // 1 (true)
+"abc".is_numeric()    // 0 (false)
+```
+
 ### Conversion
 
 #### `.parse_int() -> int`
@@ -283,6 +298,13 @@ var last = arr.pop();
 Checks if array contains element.
 ```wyn
 if numbers.contains(5) { }
+```
+
+#### `.count(item: T) -> int`
+Counts occurrences of element.
+```wyn
+var arr = [1, 2, 3, 2, 4, 2];
+var count = arr.count(2);  // 3
 ```
 
 #### `.index_of(item: T) -> int`

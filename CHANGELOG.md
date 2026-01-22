@@ -11,6 +11,11 @@
 - `.is_whitespace()` - Check if all whitespace
 - `.char_at(index)` - Get character at index
 - `.equals(other)` - String equality comparison
+- `.count(substring)` - Count occurrences of substring
+- `.is_numeric()` - Check if valid number (int or float)
+
+**Array Utility Methods:**
+- `.count(value)` - Count occurrences of value in array
 
 **File Path Manipulation:**
 - `File::dirname(path)` - Extract directory from path

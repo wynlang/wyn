@@ -1973,6 +1973,14 @@ void codegen_c_header() {
     emit("    return array_get_int(arr, arr.count - 1);\n");
     emit("}\n");
     
+    emit("int array_count(WynArray arr, int value) {\n");
+    emit("    int count = 0;\n");
+    emit("    for (int i = 0; i < arr.count; i++) {\n");
+    emit("        if (array_get_int(arr, i) == value) count++;\n");
+    emit("    }\n");
+    emit("    return count;\n");
+    emit("}\n");
+    
     emit("void array_clear(WynArray* arr) {\n");
     emit("    arr->count = 0;\n");
     emit("}\n");
@@ -2203,6 +2211,35 @@ void codegen_c_header() {
     
     emit("int string_equals(const char* a, const char* b) {\n");
     emit("    return strcmp(a, b) == 0;\n");
+    emit("}\n");
+    
+    emit("int string_count(const char* str, const char* substr) {\n");
+    emit("    int count = 0;\n");
+    emit("    int substr_len = strlen(substr);\n");
+    emit("    if (substr_len == 0) return 0;\n");
+    emit("    const char* pos = str;\n");
+    emit("    while ((pos = strstr(pos, substr)) != NULL) {\n");
+    emit("        count++;\n");
+    emit("        pos += substr_len;\n");
+    emit("    }\n");
+    emit("    return count;\n");
+    emit("}\n");
+    
+    emit("int string_is_numeric(const char* str) {\n");
+    emit("    if (!str || !*str) return 0;\n");
+    emit("    int has_dot = 0;\n");
+    emit("    int i = 0;\n");
+    emit("    if (str[0] == '-' || str[0] == '+') i = 1;\n");
+    emit("    if (!str[i]) return 0;\n");
+    emit("    for (; str[i]; i++) {\n");
+    emit("        if (str[i] == '.') {\n");
+    emit("            if (has_dot) return 0;\n");
+    emit("            has_dot = 1;\n");
+    emit("        } else if (!isdigit(str[i])) {\n");
+    emit("            return 0;\n");
+    emit("        }\n");
+    emit("    }\n");
+    emit("    return 1;\n");
     emit("}\n");
     
     // Phase 2 Task 2.1: Additional string methods

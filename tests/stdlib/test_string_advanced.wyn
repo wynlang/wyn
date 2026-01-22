@@ -1,0 +1,28 @@
+// Test additional string methods
+
+fn main() -> int {
+    // Test count
+    var text = "hello world hello";
+    var count = text.count("hello");
+    if count != 2 {
+        return 1;
+    }
+    
+    // Test is_numeric (for numbers with decimals)
+    var num1 = "123";
+    if num1.is_numeric() == 0 {
+        return 2;
+    }
+    
+    var num2 = "12.34";
+    if num2.is_numeric() == 0 {
+        return 3;
+    }
+    
+    var not_num = "abc";
+    if not_num.is_numeric() == 1 {
+        return 4;
+    }
+    
+    return 0;
+}

@@ -1,0 +1,35 @@
+// Test array utility methods
+
+fn main() -> int {
+    var numbers = [1, 2, 3, 2, 4, 2, 5];
+    
+    // Test count
+    var count = numbers.count(2);
+    if count != 3 {
+        return 1;
+    }
+    
+    // Test first
+    var first = numbers.first();
+    if first != 1 {
+        return 2;
+    }
+    
+    // Test last
+    var last = numbers.last();
+    if last != 5 {
+        return 3;
+    }
+    
+    // Test is_empty
+    var empty = [];
+    if empty.is_empty() == 0 {
+        return 4;
+    }
+    
+    if numbers.is_empty() == 1 {
+        return 5;
+    }
+    
+    return 0;
+}

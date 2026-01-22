@@ -41,6 +41,8 @@ static const MethodSignature method_signatures[] = {
     {"string", "is_whitespace", "bool", 0},  // Check if all whitespace
     {"string", "char_at", "string", 1},      // Get char at index
     {"string", "equals", "bool", 1},         // String equality
+    {"string", "count", "int", 1},           // Count occurrences
+    {"string", "is_numeric", "bool", 0},     // Check if numeric (int or float)
     
     // Int methods
     {"int", "to_string", "string", 0},
@@ -103,6 +105,8 @@ static const MethodSignature method_signatures[] = {
     {"array", "sort", "void", 0},      // Mutates in place
     {"array", "first", "int", 0},      // Returns first element
     {"array", "last", "int", 0},       // Returns last element
+    {"array", "count", "int", 1},      // Count occurrences of value
+    {"array", "is_empty", "bool", 0},  // Check if empty
     {"array", "take", "array", 1},     // Returns new array with first n elements
     {"array", "skip", "array", 1},     // Returns new array skipping first n elements
     {"array", "slice", "array", 2},    // Returns new array from start to end
@@ -332,6 +336,12 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "equals") == 0 && arg_count == 1) {
             out->c_function = "string_equals"; return true;
         }
+        if (strcmp(method_name, "count") == 0 && arg_count == 1) {
+            out->c_function = "string_count"; return true;
+        }
+        if (strcmp(method_name, "is_numeric") == 0 && arg_count == 0) {
+            out->c_function = "string_is_numeric"; return true;
+        }
         if (strcmp(method_name, "parse_int") == 0 && arg_count == 0) {
             out->c_function = "str_parse_int"; return true;
         }
@@ -463,6 +473,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "is_empty") == 0 && arg_count == 0) {
             out->c_function = "array_is_empty"; return true;
+        }
+        if (strcmp(method_name, "count") == 0 && arg_count == 1) {
+            out->c_function = "array_count"; return true;
         }
         if (strcmp(method_name, "contains") == 0 && arg_count == 1) {
             out->c_function = "array_contains"; return true;
