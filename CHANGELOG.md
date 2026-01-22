@@ -17,6 +17,11 @@
 **Array Utility Methods:**
 - `.count(value)` - Count occurrences of value in array
 
+**Integer Methods:**
+- `.to_binary()` - Convert to binary string
+- `.to_hex()` - Convert to hexadecimal string
+- `.is_even()` / `.is_odd()` - Check parity (already existed, now documented)
+
 **File Path Manipulation:**
 - `File::dirname(path)` - Extract directory from path
 - `File::extension(path)` - Extract file extension

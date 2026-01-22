@@ -58,6 +58,8 @@ static const MethodSignature method_signatures[] = {
     {"int", "is_negative", "bool", 0},
     {"int", "is_zero", "bool", 0},
     {"int", "sign", "int", 0},  // Returns -1, 0, or 1
+    {"int", "to_binary", "string", 0},
+    {"int", "to_hex", "string", 0},
     
     // Float methods
     {"float", "to_string", "string", 0},
@@ -394,6 +396,12 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "is_zero") == 0 && arg_count == 0) {
             out->c_function = "int_is_zero"; return true;
+        }
+        if (strcmp(method_name, "to_binary") == 0 && arg_count == 0) {
+            out->c_function = "int_to_binary"; return true;
+        }
+        if (strcmp(method_name, "to_hex") == 0 && arg_count == 0) {
+            out->c_function = "int_to_hex"; return true;
         }
         return false;
     }

@@ -2511,7 +2511,29 @@ void codegen_c_header() {
     emit("int int_is_odd(int n) { return n %% 2 != 0; }\n");
     emit("int int_is_positive(int n) { return n > 0; }\n");
     emit("int int_is_negative(int n) { return n < 0; }\n");
-    emit("int int_is_zero(int n) { return n == 0; }\n\n");
+    emit("int int_is_zero(int n) { return n == 0; }\n");
+    emit("char* int_to_binary(int n) {\n");
+    emit("    if (n == 0) return \"0\";\n");
+    emit("    char* result = malloc(33);\n");
+    emit("    int i = 0;\n");
+    emit("    unsigned int num = (unsigned int)n;\n");
+    emit("    while (num > 0) {\n");
+    emit("        result[i++] = (num %% 2) + '0';\n");
+    emit("        num /= 2;\n");
+    emit("    }\n");
+    emit("    result[i] = '\\0';\n");
+    emit("    for (int j = 0; j < i/2; j++) {\n");
+    emit("        char temp = result[j];\n");
+    emit("        result[j] = result[i-1-j];\n");
+    emit("        result[i-1-j] = temp;\n");
+    emit("    }\n");
+    emit("    return result;\n");
+    emit("}\n");
+    emit("char* int_to_hex(int n) {\n");
+    emit("    char* result = malloc(12);\n");
+    emit("    sprintf(result, \"%%x\", n);\n");
+    emit("    return result;\n");
+    emit("}\n\n");
     
     // Phase 3 Task 3.2: Float methods (conversion methods already exist for interpolation)
     emit("int float_to_int(double f) { return (int)f; }\n");

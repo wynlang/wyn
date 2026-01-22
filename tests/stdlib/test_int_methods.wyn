@@ -1,0 +1,36 @@
+// Test integer utility methods
+
+fn main() -> int {
+    // Test to_binary
+    var num = 5;
+    var binary = num.to_binary();
+    if binary.len() == 0 {
+        return 1;
+    }
+    
+    // Test to_hex
+    var hex = num.to_hex();
+    if hex.len() == 0 {
+        return 2;
+    }
+    
+    // Test is_even
+    if 4.is_even() == 0 {
+        return 3;
+    }
+    
+    if 5.is_even() == 1 {
+        return 4;
+    }
+    
+    // Test is_odd
+    if 5.is_odd() == 0 {
+        return 5;
+    }
+    
+    if 4.is_odd() == 1 {
+        return 6;
+    }
+    
+    return 0;
+}

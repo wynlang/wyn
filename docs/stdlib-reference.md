@@ -411,6 +411,30 @@ Converts to float.
 var f = 42.to_float();  // 42.0
 ```
 
+#### `.to_binary() -> string`
+Converts to binary string.
+```wyn
+var bin = 5.to_binary();  // "101"
+```
+
+#### `.to_hex() -> string`
+Converts to hexadecimal string.
+```wyn
+var hex = 255.to_hex();  // "ff"
+```
+
+#### `.is_even() -> bool`
+Checks if even.
+```wyn
+if num.is_even() == 1 { }
+```
+
+#### `.is_odd() -> bool`
+Checks if odd.
+```wyn
+if num.is_odd() == 1 { }
+```
+
 ### Float Methods
 
 #### `.to_string() -> string`

@@ -1,0 +1,25 @@
+// Test HashMap additional methods
+
+fn main() -> int {
+    var map = {"a": 1, "b": 2, "c": 3};
+    
+    // Test keys
+    var keys = map.keys();
+    if keys.len() != 3 {
+        return 1;
+    }
+    
+    // Test values
+    var values = map.values();
+    if values.len() != 3 {
+        return 2;
+    }
+    
+    // Test clear
+    map.clear();
+    if map.len() != 0 {
+        return 3;
+    }
+    
+    return 0;
+}
