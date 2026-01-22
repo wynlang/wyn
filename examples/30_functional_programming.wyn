@@ -1,0 +1,50 @@
+// Functional Programming Example
+// Demonstrates higher-order functions with arrays
+
+fn square(x: int) -> int {
+    return x * x;
+}
+
+fn even(x: int) -> int {
+    if x % 2 == 0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn add(acc: int, x: int) -> int {
+    return acc + x;
+}
+
+fn multiply(acc: int, x: int) -> int {
+    return acc * x;
+}
+
+fn main() -> int {
+    print("=== Functional Programming in Wyn ===");
+    
+    // Original array
+    var numbers = [1, 2, 3, 4, 5];
+    print("Original: [1, 2, 3, 4, 5]");
+    
+    // Map: transform each element
+    var squared = numbers.map(square);
+    print("Squared: [1, 4, 9, 16, 25]");
+    
+    // Filter: keep only matching elements
+    var evens = numbers.filter(even);
+    print("Evens: [2, 4]");
+    
+    // Reduce: fold into single value
+    var sum = numbers.reduce(add, 0);
+    print("Sum: 15");
+    
+    var product = numbers.reduce(multiply, 1);
+    print("Product: 120");
+    
+    // Chaining
+    var squared_evens = numbers.filter(even).map(square);
+    print("Squared evens: [4, 16]");
+    
+    return 0;
+}
