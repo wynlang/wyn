@@ -1,0 +1,17 @@
+// Test basic TCP networking
+
+fn main() -> int {
+    // Test TCP server creation
+    var server = Net::listen(8080);
+    if server == -1 {
+        return 1;  // Failed to create server
+    }
+    
+    // Close server
+    var close_result = Net::close(server);
+    if close_result == 0 {
+        return 2;
+    }
+    
+    return 0;
+}

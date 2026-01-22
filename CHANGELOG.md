@@ -52,6 +52,13 @@
 - Empty string for string errors
 - Non-zero exit codes for program errors
 
+**Networking (NEW):**
+- `Net::listen(port)` - Create TCP server
+- `Net::connect(host, port)` - Connect to TCP server
+- `Net::send(socket, data)` - Send data
+- `Net::recv(socket)` - Receive data
+- `Net::close(socket)` - Close socket
+
 ### Added - Module System (Major Feature)
 - **Nested Modules** - Java/TypeScript-style syntax with `.` separator
   - Import: `import network.http`

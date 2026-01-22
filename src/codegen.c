@@ -1719,6 +1719,7 @@ void codegen_c_header() {
     emit("#include <sys/socket.h>\n");
     emit("#include <sys/time.h>\n");
     emit("#include <netinet/in.h>\n");
+    emit("#include <arpa/inet.h>\n");
     emit("#include <netdb.h>\n");
     emit("#include <unistd.h>\n");
     emit("#include <fcntl.h>\n");
@@ -3265,6 +3266,65 @@ void codegen_c_header() {
     // Math module functions
     emit("double Math_pow(double x, double y) { return pow(x, y); }\n");
     emit("double Math_sqrt(double x) { return sqrt(x); }\n");
+    
+    // Net module functions
+    emit("int Net_listen(int port) {\n");
+    emit("    int sockfd = socket(AF_INET, SOCK_STREAM, 0);\n");
+    emit("    if (sockfd < 0) return -1;\n");
+    emit("    int opt = 1;\n");
+    emit("    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));\n");
+    emit("    struct sockaddr_in addr;\n");
+    emit("    addr.sin_family = AF_INET;\n");
+    emit("    addr.sin_addr.s_addr = INADDR_ANY;\n");
+    emit("    addr.sin_port = htons(port);\n");
+    emit("    if (bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {\n");
+    emit("        close(sockfd);\n");
+    emit("        return -1;\n");
+    emit("    }\n");
+    emit("    if (listen(sockfd, 5) < 0) {\n");
+    emit("        close(sockfd);\n");
+    emit("        return -1;\n");
+    emit("    }\n");
+    emit("    return sockfd;\n");
+    emit("}\n\n");
+    
+    emit("int Net_connect(const char* host, int port) {\n");
+    emit("    int sockfd = socket(AF_INET, SOCK_STREAM, 0);\n");
+    emit("    if (sockfd < 0) return -1;\n");
+    emit("    struct sockaddr_in addr;\n");
+    emit("    addr.sin_family = AF_INET;\n");
+    emit("    addr.sin_port = htons(port);\n");
+    emit("    if (inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {\n");
+    emit("        close(sockfd);\n");
+    emit("        return -1;\n");
+    emit("    }\n");
+    emit("    if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {\n");
+    emit("        close(sockfd);\n");
+    emit("        return -1;\n");
+    emit("    }\n");
+    emit("    return sockfd;\n");
+    emit("}\n\n");
+    
+    emit("int Net_send(int sockfd, const char* data) {\n");
+    emit("    int len = strlen(data);\n");
+    emit("    int sent = send(sockfd, data, len, 0);\n");
+    emit("    return sent;\n");
+    emit("}\n\n");
+    
+    emit("char* Net_recv(int sockfd) {\n");
+    emit("    char* buffer = malloc(4096);\n");
+    emit("    int received = recv(sockfd, buffer, 4095, 0);\n");
+    emit("    if (received < 0) {\n");
+    emit("        free(buffer);\n");
+    emit("        return \"\";\n");
+    emit("    }\n");
+    emit("    buffer[received] = '\\0';\n");
+    emit("    return buffer;\n");
+    emit("}\n\n");
+    
+    emit("int Net_close(int sockfd) {\n");
+    emit("    return close(sockfd) == 0 ? 1 : 0;\n");
+    emit("}\n\n");
     
     // Time module functions
     emit("int Time_now() { return (int)time(NULL); }\n");

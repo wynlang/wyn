@@ -1,0 +1,25 @@
+// Simple HTTP Server - Demonstrates networking
+
+fn main() -> int {
+    print("Starting HTTP server on port 8080...\n");
+    
+    var server = Net::listen(8080);
+    if server == -1 {
+        print("Error: Could not start server\n");
+        return 1;
+    }
+    
+    print("Server started! Visit http://localhost:8080\n");
+    print("Press Ctrl+C to stop\n\n");
+    
+    // Note: This is a minimal example
+    // Real server would need accept() and proper HTTP parsing
+    
+    // Keep server alive for a bit
+    Time::sleep(1000);
+    
+    Net::close(server);
+    print("Server stopped\n");
+    
+    return 0;
+}

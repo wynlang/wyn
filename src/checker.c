@@ -2374,6 +2374,49 @@ void check_program(Program* prog) {
         time_format_type->fn_type.param_types[0] = builtin_int;
         time_format_type->fn_type.return_type = builtin_string;
         add_symbol(global_scope, time_format_tok, time_format_type, false);
+        
+        // Net module
+        Token net_listen_tok = {TOKEN_IDENT, "Net::listen", 11, 0};
+        Type* net_listen_type = make_type(TYPE_FUNCTION);
+        net_listen_type->fn_type.param_count = 1;
+        net_listen_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
+        net_listen_type->fn_type.param_types[0] = builtin_int;
+        net_listen_type->fn_type.return_type = builtin_int;
+        add_symbol(global_scope, net_listen_tok, net_listen_type, false);
+        
+        Token net_connect_tok = {TOKEN_IDENT, "Net::connect", 12, 0};
+        Type* net_connect_type = make_type(TYPE_FUNCTION);
+        net_connect_type->fn_type.param_count = 2;
+        net_connect_type->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        net_connect_type->fn_type.param_types[0] = builtin_string;
+        net_connect_type->fn_type.param_types[1] = builtin_int;
+        net_connect_type->fn_type.return_type = builtin_int;
+        add_symbol(global_scope, net_connect_tok, net_connect_type, false);
+        
+        Token net_send_tok = {TOKEN_IDENT, "Net::send", 9, 0};
+        Type* net_send_type = make_type(TYPE_FUNCTION);
+        net_send_type->fn_type.param_count = 2;
+        net_send_type->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        net_send_type->fn_type.param_types[0] = builtin_int;
+        net_send_type->fn_type.param_types[1] = builtin_string;
+        net_send_type->fn_type.return_type = builtin_int;
+        add_symbol(global_scope, net_send_tok, net_send_type, false);
+        
+        Token net_recv_tok = {TOKEN_IDENT, "Net::recv", 9, 0};
+        Type* net_recv_type = make_type(TYPE_FUNCTION);
+        net_recv_type->fn_type.param_count = 1;
+        net_recv_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
+        net_recv_type->fn_type.param_types[0] = builtin_int;
+        net_recv_type->fn_type.return_type = builtin_string;
+        add_symbol(global_scope, net_recv_tok, net_recv_type, false);
+        
+        Token net_close_tok = {TOKEN_IDENT, "Net::close", 10, 0};
+        Type* net_close_type = make_type(TYPE_FUNCTION);
+        net_close_type->fn_type.param_count = 1;
+        net_close_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
+        net_close_type->fn_type.param_types[0] = builtin_int;
+        net_close_type->fn_type.return_type = builtin_int;
+        add_symbol(global_scope, net_close_tok, net_close_type, false);
     }
     
     // First pass: process imports and register functions with their signatures

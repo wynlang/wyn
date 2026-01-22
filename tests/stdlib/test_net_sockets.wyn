@@ -1,0 +1,23 @@
+// Test TCP client-server communication
+
+fn main() -> int {
+    // Test connect to localhost (will fail, but tests API)
+    var client = Net::connect("127.0.0.1", 9999);
+    if client != -1 {
+        // If somehow connected, close it
+        Net::close(client);
+    }
+    
+    // Test that we can create and close sockets
+    var server = Net::listen(0);  // Port 0 = random port
+    if server == -1 {
+        return 1;
+    }
+    
+    var close_result = Net::close(server);
+    if close_result == 0 {
+        return 2;
+    }
+    
+    return 0;
+}

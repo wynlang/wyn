@@ -703,6 +703,51 @@ var formatted = Time::format(now);  // "2026-01-22 14:30:45"
 
 ---
 
+## Net Module
+
+Basic TCP networking operations.
+
+#### `Net::listen(port: int) -> int`
+Creates TCP server socket. Returns socket descriptor or -1 on error.
+```wyn
+var server = Net::listen(8080);
+if server == -1 {
+    print("Error: Could not start server\n");
+}
+```
+
+#### `Net::connect(host: string, port: int) -> int`
+Connects to TCP server. Returns socket descriptor or -1 on error.
+```wyn
+var client = Net::connect("127.0.0.1", 8080);
+if client == -1 {
+    print("Error: Could not connect\n");
+}
+```
+
+#### `Net::send(socket: int, data: string) -> int`
+Sends data through socket. Returns bytes sent or -1 on error.
+```wyn
+var sent = Net::send(socket, "Hello\n");
+```
+
+#### `Net::recv(socket: int) -> string`
+Receives data from socket. Returns data or empty string on error.
+```wyn
+var data = Net::recv(socket);
+if data.len() > 0 {
+    print(data);
+}
+```
+
+#### `Net::close(socket: int) -> int`
+Closes socket. Returns 1 on success, 0 on error.
+```wyn
+Net::close(socket);
+```
+
+---
+
 ## Error Handling
 
 Wyn uses return codes for error handling. Functions return special values to indicate errors.
