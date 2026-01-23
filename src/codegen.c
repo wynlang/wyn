@@ -1431,8 +1431,21 @@ void codegen_expr(Expr* expr) {
                 actual_type_name = expr->struct_init.monomorphic_name;
                 actual_type_name_len = strlen(actual_type_name);
             } else {
-                // Check if we need to add module prefix
-                if (current_module_prefix) {
+                // Check if type_name contains a module prefix (from member expression)
+                // e.g., point.Point should become point_Point
+                char temp_name[128];
+                snprintf(temp_name, 128, "%.*s", type_name.length, type_name.start);
+                
+                // Check if there's a dot in the name (module.Type)
+                char* dot = strchr(temp_name, '.');
+                if (dot) {
+                    // Replace dot with underscore: point.Point → point_Point
+                    *dot = '_';
+                    snprintf(prefixed_type_name, 128, "%s", temp_name);
+                    actual_type_name = prefixed_type_name;
+                    actual_type_name_len = strlen(prefixed_type_name);
+                } else if (current_module_prefix) {
+                    // Add module prefix if in module context
                     snprintf(prefixed_type_name, 128, "%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                     actual_type_name = prefixed_type_name;
                     actual_type_name_len = strlen(prefixed_type_name);
