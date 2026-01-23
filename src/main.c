@@ -10,6 +10,7 @@
 #include "llvm_codegen.h"
 #include "optimize.h"
 #include "module.h"
+#include "commands.h"
 
 void init_lexer(const char* source);
 void init_parser();
@@ -157,6 +158,14 @@ int main(int argc, char** argv) {
             project_name = argv[2];
         }
         return create_new_project(project_name);
+    }
+    
+    if (strcmp(command, "watch") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: wyn watch <file.wyn>\n");
+            return 1;
+        }
+        return cmd_watch(argv[2], argc - 3, argv + 3);
     }
     
     if (strcmp(command, "build") == 0) {

@@ -4,8 +4,13 @@
 #include <sys/stat.h>
 #ifndef _WIN32
 #include <sys/wait.h>  // For WEXITSTATUS
+#include <unistd.h>    // For sleep
+#ifdef __APPLE__
+#include <mach-o/dyld.h>  // For _NSGetExecutablePath
+#endif
 #else
 #define WEXITSTATUS(x) (x)
+#include <windows.h>   // For Sleep
 #endif
 
 // Forward declarations
@@ -522,6 +527,60 @@ int cmd_init(const char* name, int argc, char** argv) {
     printf("\nNext steps:\n");
     printf("  cd %s\n", name);
     printf("  wyn run main.wyn\n");
+    
+    return 0;
+}
+
+int cmd_watch(const char* file, int argc, char** argv) {
+    (void)argc; (void)argv;  // Unused
+    
+    if (!file) {
+        fprintf(stderr, "Usage: wyn watch <file.wyn>\n");
+        return 1;
+    }
+    
+    printf("Watching %s for changes (Ctrl+C to stop)...\n", file);
+    
+    // Initial build
+    printf("\n[%s] Building...\n", file);
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "wyn run %s 2>&1", file);
+    int result = system(cmd);
+    if (result == 0) {
+        printf("[%s] ✓ Build successful\n", file);
+    } else {
+        printf("[%s] ✗ Build failed\n", file);
+    }
+    
+    // Watch for changes
+    struct stat last_stat;
+    if (stat(file, &last_stat) != 0) {
+        fprintf(stderr, "Error: Could not stat file '%s'\n", file);
+        return 1;
+    }
+    
+    while (1) {
+        // Sleep for 1 second
+        #ifdef _WIN32
+        Sleep(1000);
+        #else
+        sleep(1);
+        #endif
+        
+        struct stat current_stat;
+        if (stat(file, &current_stat) != 0) continue;
+        
+        if (current_stat.st_mtime > last_stat.st_mtime) {
+            last_stat = current_stat;
+            printf("\n[%s] File changed, rebuilding...\n", file);
+            result = system(cmd);
+            if (result == 0) {
+                printf("[%s] ✓ Build successful\n", file);
+            } else {
+                printf("[%s] ✗ Build failed\n", file);
+            }
+        }
+    }
     
     return 0;
 }

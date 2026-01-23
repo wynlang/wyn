@@ -11,6 +11,7 @@ int cmd_pkg(int argc, char** argv);
 int cmd_lsp(int argc, char** argv);
 int cmd_debug(const char* program, int argc, char** argv);
 int cmd_init(const char* name, int argc, char** argv);
+int cmd_watch(const char* file, int argc, char** argv);
 int cmd_version(int argc, char** argv);
 int cmd_help(const char* command, int argc, char** argv);
 
