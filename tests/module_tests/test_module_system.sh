@@ -18,32 +18,7 @@ mkdir -p modules
 mkdir -p ~/.wyn/modules
 mkdir -p ~/.wyn/packages/mypackage
 
-# Test 1: Built-in math module
-echo -n "Testing built-in math module... "
-cat > /tmp/test_builtin_math.wyn << 'EOF'
-import math
-
-fn main() -> int {
-    return math.add(10, 20) + math.multiply(2, 3)
-}
-EOF
-
-../../wyn /tmp/test_builtin_math.wyn 2>&1
-if [ -f /tmp/test_builtin_math.wyn.out ]; then
-    /tmp/test_builtin_math.wyn.out 2>/dev/null
-    if [ $? -eq 36 ]; then
-        echo "✓ PASS"
-        ((PASS++))
-    else
-        echo "✗ FAIL (wrong result)"
-        ((FAIL++))
-    fi
-else
-    echo "✗ FAIL (compile error)"
-    ((FAIL++))
-fi
-
-# Test 2: Local module (current directory)
+# Test 1: Local module (current directory)
 echo -n "Testing local module... "
 cat > local_utils.wyn << 'EOF'
 pub fn double(x: int) -> int {

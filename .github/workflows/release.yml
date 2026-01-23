@@ -72,9 +72,9 @@ jobs:
           make clean
           make wyn
 
-          # Run module tests (non-blocking)
-          ./tests/module_tests/test_modules.sh || echo "⚠ test_modules.sh had issues (non-blocking)"
-          ./tests/module_tests/test_module_system.sh || echo "⚠ test_module_system.sh had issues (non-blocking)"
+          # Run module tests
+          ./tests/module_tests/test_modules.sh
+          ./tests/module_tests/test_module_system.sh
 
           # Test examples compile
           for f in examples/*.wyn; do
