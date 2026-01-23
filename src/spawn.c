@@ -124,9 +124,16 @@ static void* worker_thread(void* arg) {
         } else {
             // Adaptive backoff: spin → yield → sleep
             if (idle_spins < 100) {
-                // Spin (no syscall)
+                // Spin (no syscall) - architecture-specific
                 for (int i = 0; i < 10; i++) {
+                    #if defined(__x86_64__) || defined(__i386__)
                     __asm__ __volatile__("pause" ::: "memory");
+                    #elif defined(__aarch64__) || defined(__arm__)
+                    __asm__ __volatile__("yield" ::: "memory");
+                    #else
+                    // Fallback for other architectures
+                    volatile int dummy = 0; (void)dummy;
+                    #endif
                 }
                 idle_spins++;
             } else if (idle_spins < 200) {
