@@ -168,6 +168,36 @@ int main(int argc, char** argv) {
         return cmd_watch(argv[2], argc - 3, argv + 3);
     }
     
+    if (strcmp(command, "install") == 0) {
+        // wyn install - install packages from wyn.toml
+        extern int package_install(const char*);
+        return package_install(".");
+    }
+    
+    if (strcmp(command, "lsp") == 0) {
+        // wyn lsp - start LSP server
+        extern int lsp_server_start();
+        return lsp_server_start();
+    }
+    
+    if (strcmp(command, "pkg") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: wyn pkg <list|install>\n");
+            return 1;
+        }
+        extern int package_install(const char*);
+        extern int package_list();
+        
+        if (strcmp(argv[2], "list") == 0) {
+            return package_list();
+        } else if (strcmp(argv[2], "install") == 0) {
+            return package_install(".");
+        } else {
+            fprintf(stderr, "Unknown pkg command: %s\n", argv[2]);
+            return 1;
+        }
+    }
+    
     if (strcmp(command, "build") == 0) {
         if (argc < 3) {
             fprintf(stderr, "Usage: wyn build <directory>\n");
