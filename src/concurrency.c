@@ -1,18 +1,8 @@
+// Concurrency primitives (threads, mutexes, etc.)
+// Note: wyn_spawn is now in spawn.c
 #include "concurrency.h"
 #include <stdlib.h>
 #include <unistd.h>
-
-// Spawn a new thread
-WynThread* wyn_spawn(void* (*fn)(void*), void* arg) {
-    WynThread* thread = malloc(sizeof(WynThread));
-    thread->fn = fn;
-    thread->arg = arg;
-    thread->result = 0;
-    
-    pthread_create(&thread->thread, NULL, fn, arg);
-    
-    return thread;
-}
 
 // Join a thread (wait for completion)
 int wyn_join(WynThread* thread) {
