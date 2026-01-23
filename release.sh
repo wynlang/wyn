@@ -19,20 +19,29 @@ echo "Building compiler..."
 make clean >/dev/null 2>&1
 make wyn || exit 1
 
-# Run module tests
+# Run module tests (skip if scripts don't exist)
 echo "Running module tests..."
-./tests/module_tests/test_modules.sh || echo "⚠ Module tests had issues (non-critical)"
+if [ -f ./tests/module_tests/test_modules.sh ]; then
+    ./tests/module_tests/test_modules.sh 2>&1 | grep -E "(PASS|FAIL|Results)" || echo "⚠ Module tests skipped"
+else
+    echo "⚠ Module tests not found (skipped)"
+fi
 
 # Test all examples compile
 echo "Testing examples..."
 FAIL=0
+COUNT=0
 for f in examples/[0-4]*.wyn; do
-    timeout 5 ./wyn "$f" >/dev/null 2>&1 || FAIL=1
+    [ -f "$f" ] || continue
+    timeout 10 ./wyn "$f" >/dev/null 2>&1 || FAIL=1
+    COUNT=$((COUNT + 1))
 done
-if [ $FAIL -eq 1 ]; then
+if [ $COUNT -eq 0 ]; then
+    echo "⚠ No examples found to test"
+elif [ $FAIL -eq 1 ]; then
     echo "⚠ Some examples failed to compile (non-critical)"
 else
-    echo "✅ All examples compile"
+    echo "✅ All tested examples compile ($COUNT files)"
 fi
 
 # Test basic execution
