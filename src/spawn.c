@@ -7,6 +7,53 @@
 
 WynScheduler* global_scheduler = NULL;
 
+// Spawn pool for memory reuse (per-worker to reduce contention)
+#define SPAWN_POOL_SIZE 256
+typedef struct {
+    WynSpawn* pool[SPAWN_POOL_SIZE];
+    _Atomic int count;
+} SpawnPool;
+
+static SpawnPool worker_pools[64];  // Max 64 workers
+
+// Allocate spawn (from thread-local pool)
+static inline WynSpawn* alloc_spawn(int worker_id) {
+    if (worker_id < 0 || worker_id >= 64) {
+        return malloc(sizeof(WynSpawn));
+    }
+    
+    SpawnPool* pool = &worker_pools[worker_id];
+    int count = atomic_load(&pool->count);
+    
+    if (count > 0) {
+        int idx = atomic_fetch_sub(&pool->count, 1) - 1;
+        if (idx >= 0 && idx < SPAWN_POOL_SIZE) {
+            return pool->pool[idx];
+        }
+    }
+    return malloc(sizeof(WynSpawn));
+}
+
+// Free spawn (return to thread-local pool)
+static inline void free_spawn(WynSpawn* spawn, int worker_id) {
+    if (worker_id < 0 || worker_id >= 64) {
+        free(spawn);
+        return;
+    }
+    
+    SpawnPool* pool = &worker_pools[worker_id];
+    int count = atomic_load(&pool->count);
+    
+    if (count < SPAWN_POOL_SIZE) {
+        int idx = atomic_fetch_add(&pool->count, 1);
+        if (idx < SPAWN_POOL_SIZE) {
+            pool->pool[idx] = spawn;
+            return;
+        }
+    }
+    free(spawn);
+}
+
 // Initialize scheduler with N worker threads
 WynScheduler* wyn_scheduler_init(int num_workers) {
     WynScheduler* sched = malloc(sizeof(WynScheduler));
@@ -40,10 +87,12 @@ static void* worker_thread(void* arg) {
         }
     }
     
+    int idle_spins = 0;
+    
     while (sched->running) {
         WynSpawn* spawn = NULL;
         
-        // Try to get spawn from our queue
+        // Try to get spawn from our queue (fast path)
         pthread_mutex_lock(&sched->locks[worker_id]);
         if (sched->queues[worker_id]) {
             spawn = sched->queues[worker_id];
@@ -53,27 +102,42 @@ static void* worker_thread(void* arg) {
         
         // Work stealing: try other queues
         if (!spawn) {
-            for (int i = 0; i < sched->num_workers; i++) {
-                if (i == worker_id) continue;
+            for (int i = 1; i < sched->num_workers; i++) {
+                int target = (worker_id + i) % sched->num_workers;
                 
-                pthread_mutex_lock(&sched->locks[i]);
-                if (sched->queues[i]) {
-                    spawn = sched->queues[i];
-                    sched->queues[i] = spawn->next;
-                    pthread_mutex_unlock(&sched->locks[i]);
+                pthread_mutex_lock(&sched->locks[target]);
+                if (sched->queues[target]) {
+                    spawn = sched->queues[target];
+                    sched->queues[target] = spawn->next;
+                    pthread_mutex_unlock(&sched->locks[target]);
                     break;
                 }
-                pthread_mutex_unlock(&sched->locks[i]);
+                pthread_mutex_unlock(&sched->locks[target]);
             }
         }
         
         // Execute spawn
         if (spawn) {
             spawn->func(spawn->arg);
-            free(spawn);
+            free_spawn(spawn, worker_id);  // Return to worker's pool
+            idle_spins = 0;
         } else {
-            // No work, sleep briefly (adaptive)
-            usleep(100); // 0.1ms
+            // Adaptive backoff: spin → yield → sleep
+            if (idle_spins < 100) {
+                // Spin (no syscall)
+                for (int i = 0; i < 10; i++) {
+                    __asm__ __volatile__("pause" ::: "memory");
+                }
+                idle_spins++;
+            } else if (idle_spins < 200) {
+                // Yield to other threads
+                sched_yield();
+                idle_spins++;
+            } else {
+                // Sleep (longer idle)
+                usleep(100);  // 0.1ms
+                idle_spins = 0;
+            }
         }
     }
     
@@ -87,16 +151,16 @@ void wyn_scheduler_start(WynScheduler* sched) {
     }
 }
 
-// Enqueue a spawn (lock-free fast path)
+// Enqueue a spawn (optimized)
 void wyn_scheduler_enqueue(WynScheduler* sched, WynSpawnFunc func, void* arg) {
-    WynSpawn* spawn = malloc(sizeof(WynSpawn));
-    spawn->func = func;
-    spawn->arg = arg;
-    spawn->next = NULL;
-    
     // Round-robin assignment to workers
     static _Atomic int next_worker = 0;
     int worker_id = atomic_fetch_add(&next_worker, 1) % sched->num_workers;
+    
+    WynSpawn* spawn = alloc_spawn(worker_id);  // Use worker's pool
+    spawn->func = func;
+    spawn->arg = arg;
+    spawn->next = NULL;
     
     pthread_mutex_lock(&sched->locks[worker_id]);
     spawn->next = sched->queues[worker_id];

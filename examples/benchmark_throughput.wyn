@@ -1,0 +1,29 @@
+// Benchmark: Spawn throughput (pure creation speed)
+
+fn empty() {
+}
+
+fn main() {
+    print("Measuring pure spawn throughput...\n\n");
+    
+    // Test 1: 10,000 spawns
+    print("Creating 10,000 spawns...\n");
+    var i = 0;
+    while (i < 10000) {
+        spawn empty();
+        i = i + 1;
+    }
+    print("Done!\n\n");
+    
+    // Test 2: 50,000 spawns
+    print("Creating 50,000 spawns...\n");
+    i = 0;
+    while (i < 50000) {
+        spawn empty();
+        i = i + 1;
+    }
+    print("Done!\n\n");
+    
+    print("All spawns created successfully!\n");
+    return 0;
+}
