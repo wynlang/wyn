@@ -16,7 +16,9 @@ fn main() {
     var i = 0;
     while (i < 5) {
         print(shared_array[i]);
-        if (i < 4) print(", ");
+        if (i < 4) {
+            print(", ");
+        }
         i = i + 1;
     }
     print("]\n");
@@ -41,7 +43,9 @@ fn main() {
     i = 0;
     while (i < 5) {
         print(shared_array[i]);
-        if (i < 4) print(", ");
+        if (i < 4) {
+            print(", ");
+        }
         i = i + 1;
     }
     print("]\n");
