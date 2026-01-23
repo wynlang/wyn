@@ -24,11 +24,6 @@ echo "3. Testing examples compile..."
 PASS=0
 FAIL=0
 for ex in examples/*.wyn; do
-    # Skip broken examples with unimplemented functions
-    basename_ex=$(basename "$ex")
-    if [[ "$basename_ex" == "00_v1.4_showcase.wyn" ]] || [[ "$basename_ex" == "26_file_explorer.wyn" ]]; then
-        continue
-    fi
     if timeout 3 ./wyn "$ex" >/dev/null 2>&1; then
         ((PASS++))
     else
