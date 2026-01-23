@@ -168,6 +168,45 @@ for f in *.wyn; do ../wyn "$f" && ./"${f}.out"; done
 
 ---
 
+## Developer Tools (v1.4.0)
+
+### Project Management
+
+```bash
+# Create new project
+wyn init my-app
+
+# Auto-rebuild on changes
+wyn watch main.wyn
+
+# Install dependencies
+wyn install
+
+# Package management
+wyn pkg list
+```
+
+### Project Configuration (wyn.toml)
+
+```toml
+[project]
+name = "my-app"
+version = "1.0.0"
+entry = "main.wyn"
+
+[dependencies]
+# Add package dependencies here
+```
+
+### Language Server
+
+```bash
+# Start LSP server for IDE integration
+wyn lsp
+```
+
+---
+
 ## Project Structure
 
 ```

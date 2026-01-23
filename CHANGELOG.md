@@ -1,6 +1,49 @@
 # Changelog
 
-## [1.4.0] - 2026-01-22
+## [1.4.0] - 2026-01-23
+
+### Added - Developer Tools
+
+**Project Configuration:**
+- `wyn.toml` - Project configuration file
+- `[project]` section: name, version, entry, author, description
+- `[dependencies]` section: package dependencies (parsing ready)
+- `wyn init` creates wyn.toml automatically
+
+**Build Tools:**
+- `wyn watch <file>` - Auto-rebuild on file changes
+- Simple polling-based file watching
+- Cross-platform support (Unix/Windows)
+
+**Package Manager (Basic):**
+- `wyn install` - Install packages from wyn.toml
+- `wyn pkg list` - List installed packages
+- Package cache in ~/.wyn/packages/
+- Foundation for full package ecosystem
+
+**LSP Server (Stub):**
+- `wyn lsp` - Start Language Server Protocol server
+- Foundation for IDE integration
+- Planned capabilities: diagnostics, hover, completion, go-to-definition
+
+**List Comprehensions (Functional Style):**
+- Use `.map()`, `.filter()`, `.reduce()` for list transformations
+- Method chaining for complex operations
+- More explicit than Python-style syntax
+- Example: `numbers.filter(is_even).map(twice)`
+
+### Added - Sample Applications
+
+**Disk Usage Analyzer:**
+- ncdu clone in sample-apps/utilities/disk-usage/
+- Recursive directory scanning
+- File and directory size calculation
+- Demonstrates File:: module usage
+
+**Functional Programming Example:**
+- examples/50_list_comprehensions.wyn
+- Demonstrates .map, .filter, .reduce
+- Shows method chaining
 
 ### Added - Function Types & Functional Programming
 
