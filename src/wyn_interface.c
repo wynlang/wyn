@@ -157,11 +157,11 @@ long _now(void) {
 }
 
 // Additional stubs for file explorer example
-typedef struct { void* data; int count; int capacity; } WynArray;
+struct WynArray { void* data; int count; int capacity; };
 
-WynArray _list_dir(const char* path) {
+struct WynArray _list_dir(const char* path) {
     (void)path;
-    WynArray arr = {0};
+    struct WynArray arr = {0};
     return arr;
 }
 

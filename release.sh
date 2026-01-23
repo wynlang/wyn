@@ -22,7 +22,7 @@ make wyn || exit 1
 # Run module tests (skip if scripts don't exist)
 echo "Running module tests..."
 if [ -f ./tests/module_tests/test_modules.sh ]; then
-    ./tests/module_tests/test_modules.sh 2>&1 | grep -E "(PASS|FAIL|Results)" || echo "⚠ Module tests skipped"
+    ./tests/module_tests/test_modules.sh >/dev/null 2>&1 && echo "✅ Module tests passed" || echo "⚠ Module tests failed"
 else
     echo "⚠ Module tests not found (skipped)"
 fi

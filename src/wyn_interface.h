@@ -32,7 +32,8 @@ int wyn_store_file_content(const char* path);
 int wyn_get_content_valid(void);
 
 // Stub implementations for v1.4 showcase (TODO: implement properly)
-typedef struct { void* data; int count; int capacity; } WynArray;
+// Note: WynArray is defined in codegen, we just forward declare for stubs
+typedef struct WynArray WynArray;
 
 int _write(const char* path, const char* content);
 int _exists(const char* path);
