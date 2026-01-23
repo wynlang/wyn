@@ -1,0 +1,34 @@
+// List Comprehension Example
+// Using functional methods (.map, .filter, .reduce)
+
+fn twice(x: int) -> int { 
+    return x * 2; 
+}
+
+fn even_only(x: int) -> int { 
+    return x % 2 == 0; 
+}
+
+fn add(acc: int, x: int) -> int { 
+    return acc + x; 
+}
+
+fn main() {
+    var numbers = [1, 2, 3, 4, 5];
+    
+    // Map: double each number
+    var doubled = numbers.map(twice);
+    print(doubled);  // [2, 4, 6, 8, 10]
+    
+    // Filter: only even numbers
+    var evens = numbers.filter(even_only);
+    print(evens);  // [2, 4]
+    
+    // Reduce: sum all numbers
+    var sum = numbers.reduce(add, 0);
+    print(sum);  // 15
+    
+    // Chained: filter evens, then double
+    var result = numbers.filter(even_only).map(twice);
+    print(result);  // [4, 8]
+}
