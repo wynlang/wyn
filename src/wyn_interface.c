@@ -14,7 +14,6 @@
 #include <unistd.h>
 #endif
 #include "io.h"  // Use existing file functions
-#include "collections.h"  // For WynArray
 
 // Global storage for command line arguments
 static int global_argc = 0;
@@ -158,14 +157,12 @@ long _now(void) {
 }
 
 // Additional stubs for file explorer example
+typedef struct { void* data; int count; int capacity; } WynArray;
+
 WynArray _list_dir(const char* path) {
     (void)path;
     WynArray arr = {0};
     return arr;
-}
-
-int _is_file(const char* path) {
-    return _exists(path) && !_is_dir(path);
 }
 
 int _is_dir(const char* path) {
@@ -176,6 +173,10 @@ int _is_dir(const char* path) {
     struct stat st;
     return (stat(path, &st) == 0) && S_ISDIR(st.st_mode);
     #endif
+}
+
+int _is_file(const char* path) {
+    return _exists(path) && !_is_dir(path);
 }
 
 const char* _extension(const char* path) {
