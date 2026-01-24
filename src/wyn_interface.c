@@ -214,3 +214,29 @@ char* _dirname(const char* path) {
     }
     return ".";
 }
+
+// Additional stubs for system_info example
+const char* _env(const char* name) {
+    return getenv(name);
+}
+
+int _set_env(const char* name, const char* value) {
+    #ifdef _WIN32
+    return _putenv_s(name, value) == 0 ? 1 : 0;
+    #else
+    return setenv(name, value, 1) == 0 ? 1 : 0;
+    #endif
+}
+
+const char* _format(long timestamp) {
+    static char buf[64];
+    time_t t = (time_t)timestamp;
+    struct tm* tm_info = localtime(&t);
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm_info);
+    return buf;
+}
+
+struct WynArray _args(void) {
+    struct WynArray arr = {0};
+    return arr;
+}

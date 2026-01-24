@@ -48,5 +48,9 @@ const char* _extension(const char* path);
 char* _path_join(const char* dir, const char* file);
 const char* _basename(const char* path);
 char* _dirname(const char* path);
+const char* _env(const char* name);
+int _set_env(const char* name, const char* value);
+const char* _format(long timestamp);
+WynArray _args(void);
 
 #endif // WYN_INTERFACE_H
