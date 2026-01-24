@@ -1,6 +1,10 @@
 // C interface functions for Wyn compiler
 // These functions provide file I/O and argument access to Wyn programs
 
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -239,4 +243,8 @@ const char* _format(long timestamp) {
 struct WynArray _args(void) {
     struct WynArray arr = {0};
     return arr;
+}
+
+int _exec_code(const char* cmd) {
+    return system(cmd);
 }

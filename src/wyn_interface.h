@@ -52,5 +52,6 @@ const char* _env(const char* name);
 int _set_env(const char* name, const char* value);
 const char* _format(long timestamp);
 WynArray _args(void);
+int _exec_code(const char* cmd);
 
 #endif // WYN_INTERFACE_H
