@@ -13,9 +13,11 @@
 #ifdef _WIN32
 #include <direct.h>
 #include <windows.h>
+#include <winsock2.h>
 #define getcwd _getcwd
 #else
 #include <unistd.h>
+#include <sys/socket.h>
 #endif
 #include "io.h"  // Use existing file functions
 
@@ -247,4 +249,29 @@ struct WynArray _args(void) {
 
 int _exec_code(const char* cmd) {
     return system(cmd);
+}
+
+// Additional stubs for http_server example
+int _listen(int sockfd, int backlog) {
+    #ifdef _WIN32
+    return listen(sockfd, backlog);
+    #else
+    return listen(sockfd, backlog);
+    #endif
+}
+
+void _sleep(int seconds) {
+    #ifdef _WIN32
+    Sleep(seconds * 1000);
+    #else
+    sleep(seconds);
+    #endif
+}
+
+int _close(int fd) {
+    #ifdef _WIN32
+    return closesocket(fd);
+    #else
+    return close(fd);
+    #endif
 }

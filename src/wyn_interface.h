@@ -53,5 +53,8 @@ int _set_env(const char* name, const char* value);
 const char* _format(long timestamp);
 WynArray _args(void);
 int _exec_code(const char* cmd);
+int _listen(int sockfd, int backlog);
+void _sleep(int seconds);
+int _close(int fd);
 
 #endif // WYN_INTERFACE_H
