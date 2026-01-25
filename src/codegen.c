@@ -4169,6 +4169,13 @@ void codegen_stmt(Stmt* stmt) {
                         c_type = "double";
                     } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
                         c_type = "bool";
+                    } else {
+                        // Custom struct/enum type - use the type name as-is
+                        static char custom_type_buf[256];
+                        int len = type_name.length < 255 ? type_name.length : 255;
+                        memcpy(custom_type_buf, type_name.start, len);
+                        custom_type_buf[len] = '\0';
+                        c_type = custom_type_buf;
                     }
                 }
             } else if (stmt->var.init) {
