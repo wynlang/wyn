@@ -465,7 +465,7 @@ static Expr* primary() {
                     expr->array.elements = realloc(expr->array.elements, sizeof(Expr*) * capacity);
                 }
                 expr->array.elements[expr->array.count++] = expression();
-            } while (match(TOKEN_COMMA));
+            } while (match(TOKEN_COMMA) && !check(TOKEN_RBRACKET));
         }
         
         expect(TOKEN_RBRACKET, "Expected ']' after array elements");
@@ -798,7 +798,7 @@ static Expr* call() {
                         call_expr->call.args = realloc(call_expr->call.args, sizeof(Expr*) * capacity);
                     }
                     call_expr->call.args[call_expr->call.arg_count++] = expression();
-                } while (match(TOKEN_COMMA));
+                } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
             }
             
             expect(TOKEN_RPAREN, "Expected ')' after arguments");
