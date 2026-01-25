@@ -304,13 +304,14 @@ void array_push(WynArray* arr, int value) {
     arr->count++;
 }
 #define array_push_struct(arr, value, StructType) do { \
+    StructType __temp_val = (value); \
     if ((arr)->count >= (arr)->capacity) { \
         (arr)->capacity = (arr)->capacity == 0 ? 4 : (arr)->capacity * 2; \
         (arr)->data = realloc((arr)->data, sizeof(WynValue) * (arr)->capacity); \
     } \
     (arr)->data[(arr)->count].type = WYN_TYPE_STRUCT; \
     (arr)->data[(arr)->count].data.struct_val = malloc(sizeof(StructType)); \
-    memcpy((arr)->data[(arr)->count].data.struct_val, &(value), sizeof(StructType)); \
+    memcpy((arr)->data[(arr)->count].data.struct_val, &__temp_val, sizeof(StructType)); \
     (arr)->count++; \
 } while(0)
 int array_pop(WynArray* arr) {
@@ -1894,11 +1895,23 @@ int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }
 // ARC functions are provided by arc_runtime.c
 
 typedef struct {
-    int x;
-    int y;
-} Point;
+} Vec;
 
-void Point_cleanup(Point* obj) {
+void Vec_cleanup(Vec* obj) {
+}
+
+/* Generating 0 methods */
+typedef struct {
+} Pair;
+
+void Pair_cleanup(Pair* obj) {
+}
+
+/* Generating 0 methods */
+typedef struct {
+} Node;
+
+void Node_cleanup(Node* obj) {
 }
 
 /* Generating 0 methods */
@@ -1907,16 +1920,15 @@ void Point_cleanup(Point* obj) {
 int wyn_main();
 
 int wyn_main() {
-    WynArray points = ({ WynArray __arr_0 = array_new(); __arr_0; });
-    Point p1 = *(Point*)wyn_arc_new(sizeof(Point), &(Point){.x = 1, .y = 2})->data;
-    array_push_struct(&(points), p1, Point);
-    Point p2 = *(Point*)wyn_arc_new(sizeof(Point), &(Point){.x = 3, .y = 4})->data;
-    array_push_struct(&(points), p2, Point);
-    if ((array_len(points) == 2)) {
-    print("✓ Struct array works!");
+    print("=== T3.1.2 Generic Types and Structs Test ===");
+    int vec_size = 10;
+    ;
+    int pair_count = 5;
+    ;
+    print("Generic struct parsing test completed!");
+    print("Vec[T] struct defined successfully");
+    print("Pair[T, U] struct defined successfully");
+    print("Node[T] struct defined successfully");
     return 0;
-    }
-    print("✗ Failed");
-    return 1;
 }
 

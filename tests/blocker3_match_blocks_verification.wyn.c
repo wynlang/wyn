@@ -215,6 +215,7 @@ typedef struct {
         double float_val;
         const char* string_val;
         struct WynArray* array_val;
+        void* struct_val;
     } data;
 } WynValue;
 
@@ -302,6 +303,17 @@ void array_push(WynArray* arr, int value) {
     arr->data[arr->count].data.int_val = value;
     arr->count++;
 }
+#define array_push_struct(arr, value, StructType) do { \
+    StructType __temp_val = (value); \
+    if ((arr)->count >= (arr)->capacity) { \
+        (arr)->capacity = (arr)->capacity == 0 ? 4 : (arr)->capacity * 2; \
+        (arr)->data = realloc((arr)->data, sizeof(WynValue) * (arr)->capacity); \
+    } \
+    (arr)->data[(arr)->count].type = WYN_TYPE_STRUCT; \
+    (arr)->data[(arr)->count].data.struct_val = malloc(sizeof(StructType)); \
+    memcpy((arr)->data[(arr)->count].data.struct_val, &__temp_val, sizeof(StructType)); \
+    (arr)->count++; \
+} while(0)
 int array_pop(WynArray* arr) {
     if (arr->count == 0) return 0;
     arr->count--;

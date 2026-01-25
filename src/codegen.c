@@ -1137,6 +1137,26 @@ void codegen_expr(Expr* expr) {
             // Type-aware method dispatch (Phase 4)
             Type* object_type = expr->method_call.object->expr_type;
             
+            // Special handling for array.push() with struct elements
+            if (object_type && object_type->kind == TYPE_ARRAY) {
+                Token method = expr->method_call.method;
+                if (method.length == 4 && memcmp(method.start, "push", 4) == 0) {
+                    Type* elem_type = object_type->array_type.element_type;
+                    if (elem_type && elem_type->kind == TYPE_STRUCT) {
+                        // Use macro for struct push
+                        emit("array_push_struct(&(");
+                        codegen_expr(expr->method_call.object);
+                        emit("), ");
+                        codegen_expr(expr->method_call.args[0]);
+                        emit(", ");
+                        Token type_name = elem_type->struct_type.name;
+                        emit("%.*s", type_name.length, type_name.start);
+                        emit(")");
+                        break;
+                    }
+                }
+            }
+            
             // Special handling for array.get() - use type-specific accessor
             if (object_type && object_type->kind == TYPE_ARRAY) {
                 Token method = expr->method_call.method;
@@ -2203,6 +2223,7 @@ void codegen_c_header() {
     emit("        double float_val;\n");
     emit("        const char* string_val;\n");
     emit("        struct WynArray* array_val;\n");
+    emit("        void* struct_val;\n");
     emit("    } data;\n");
     emit("} WynValue;\n\n");
     
@@ -2294,6 +2315,17 @@ void codegen_c_header() {
     emit("    arr->data[arr->count].data.int_val = value;\n");
     emit("    arr->count++;\n");
     emit("}\n");
+    emit("#define array_push_struct(arr, value, StructType) do { \\\n");
+    emit("    StructType __temp_val = (value); \\\n");
+    emit("    if ((arr)->count >= (arr)->capacity) { \\\n");
+    emit("        (arr)->capacity = (arr)->capacity == 0 ? 4 : (arr)->capacity * 2; \\\n");
+    emit("        (arr)->data = realloc((arr)->data, sizeof(WynValue) * (arr)->capacity); \\\n");
+    emit("    } \\\n");
+    emit("    (arr)->data[(arr)->count].type = WYN_TYPE_STRUCT; \\\n");
+    emit("    (arr)->data[(arr)->count].data.struct_val = malloc(sizeof(StructType)); \\\n");
+    emit("    memcpy((arr)->data[(arr)->count].data.struct_val, &__temp_val, sizeof(StructType)); \\\n");
+    emit("    (arr)->count++; \\\n");
+    emit("} while(0)\n");
     emit("int array_pop(WynArray* arr) {\n");
     emit("    if (arr->count == 0) return 0;\n");
     emit("    arr->count--;\n");
