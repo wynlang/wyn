@@ -418,25 +418,13 @@ static Expr* primary() {
         expr->match.arms = malloc(sizeof(MatchArm) * 32);
         
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            // Parse pattern - support integer literals, wildcards, and identifiers
-            if (check(TOKEN_INT) || check(TOKEN_FLOAT) || check(TOKEN_STRING) || 
-                check(TOKEN_TRUE) || check(TOKEN_FALSE)) {
-                // Literal pattern
-                expr->match.arms[expr->match.arm_count].pattern = parser.current;
-                advance();
-            } else if (check(TOKEN_UNDERSCORE)) {
-                // Wildcard pattern
-                expr->match.arms[expr->match.arm_count].pattern = parser.current;
-                advance();
-            } else if (check(TOKEN_IDENT)) {
-                // Identifier pattern
-                expr->match.arms[expr->match.arm_count].pattern = parser.current;
-                advance();
-            } else {
-                fprintf(stderr, "Error at line %d: Expected pattern (literal, identifier, or _)\n", parser.current.line);
+            // Parse pattern using full pattern parser
+            Pattern* pat = parse_pattern();
+            if (!pat) {
                 parser.had_error = true;
                 return NULL;
             }
+            expr->match.arms[expr->match.arm_count].pattern = pat;
             
             expect(TOKEN_FATARROW, "Expected '=>' after pattern");
             expr->match.arms[expr->match.arm_count].result = expression();
@@ -3078,9 +3066,26 @@ static Pattern* parse_pattern() {
     Pattern* pattern = safe_malloc(sizeof(Pattern));
     
     // Handle struct destructuring: Point { x, y }
+    // OR enum variant destructuring: Some(x), Option_Some(x)
     if (check(TOKEN_IDENT)) {
         Token potential_struct = parser.current;
         advance();
+        
+        // Check for enum variant with data: Some(x) or Option_Some(x)
+        if (match(TOKEN_LPAREN)) {
+            pattern->type = PATTERN_OPTION;  // Reuse PATTERN_OPTION for all enum variants
+            pattern->option.is_some = true;  // Has data
+            pattern->option.variant_name = potential_struct;
+            
+            if (!check(TOKEN_RPAREN)) {
+                pattern->option.inner = parse_pattern();
+            } else {
+                pattern->option.inner = NULL;
+            }
+            
+            expect(TOKEN_RPAREN, "Expected ')' after enum variant pattern");
+            return pattern;
+        }
         
         if (match(TOKEN_LBRACE)) {
             // This is a struct pattern

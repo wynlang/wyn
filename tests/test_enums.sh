@@ -287,6 +287,40 @@ ENDTEST
 
 run_test "Result.unwrap_or" test_result_unwrap_or.wyn
 
+# Test 13: Enum variant destructuring in match
+cat > test_enum_match.wyn << 'ENDTEST'
+enum Option {
+    Some(int),
+    None
+}
+
+fn main() -> int {
+    var some = Option_Some(42)
+    var none = Option_None()
+    
+    var val1 = match some {
+        Option_Some(x) => x,
+        Option_None => 0
+    }
+    
+    var val2 = match none {
+        Option_Some(x) => x,
+        Option_None => -1
+    }
+    
+    if val1 == 42 {
+        if val2 == -1 {
+            print("✓ Enum destructuring in match works")
+            return 0
+        }
+    }
+    
+    return 1
+}
+ENDTEST
+
+run_test "Enum destructuring in match" test_enum_match.wyn
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "RESULTS"

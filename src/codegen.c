@@ -1568,24 +1568,95 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_MATCH: {
-            static int match_temp_counter = 0;
-            int temp_id = match_temp_counter++;
-            emit("({ int _match_result_%d; switch (", temp_id);
+            // Generate match expression using if-else chain
+            static int match_counter = 0;
+            int match_id = match_counter++;
+            
+            emit("({ ");
+            
+            // Store match value in temp variable
+            // TODO: Get actual type from type checker
+            emit("Option __match_val_%d = ", match_id);
             codegen_expr(expr->match.value);
-            emit(") {\n");
+            emit("; ");
+            
+            // Generate result variable
+            emit("int __match_result_%d; ", match_id);
+            
+            // Generate if-else chain for each arm
             for (int i = 0; i < expr->match.arm_count; i++) {
-                if (expr->match.arms[i].pattern.length == 1 && 
-                    expr->match.arms[i].pattern.start[0] == '_') {
-                    emit("        default: _match_result_%d = ", temp_id);
+                Pattern* pat = expr->match.arms[i].pattern;
+                
+                if (i > 0) emit("else ");
+                
+                // Check pattern type
+                if (pat->type == PATTERN_WILDCARD) {
+                    // Wildcard always matches
+                    emit("{ ");
+                } else if (pat->type == PATTERN_LITERAL) {
+                    emit("if (__match_val_%d == %.*s) { ",
+                         match_id,
+                         pat->literal.value.length,
+                         pat->literal.value.start);
+                } else if (pat->type == PATTERN_IDENT) {
+                    // Variable binding - always matches, bind variable
+                    emit("{ Option %.*s = __match_val_%d; ",
+                         pat->ident.name.length,
+                         pat->ident.name.start,
+                         match_id);
+                } else if (pat->type == PATTERN_OPTION && pat->option.is_some) {
+                    // Enum variant with data: Some(x), Ok(x), etc.
+                    // Check tag matches variant
+                    emit("if (__match_val_%d.tag == %.*s_TAG) { ",
+                         match_id,
+                         pat->option.variant_name.length,
+                         pat->option.variant_name.start);
+                    
+                    // Bind inner variable if present
+                    if (pat->option.inner && pat->option.inner->type == PATTERN_IDENT) {
+                        // Extract variant name (e.g., "Some" from "Option_Some")
+                        const char* variant_start = pat->option.variant_name.start;
+                        int variant_len = pat->option.variant_name.length;
+                        
+                        // Find the last underscore to get the variant name
+                        const char* underscore = NULL;
+                        for (int j = 0; j < variant_len; j++) {
+                            if (variant_start[j] == '_') {
+                                underscore = variant_start + j;
+                            }
+                        }
+                        
+                        if (underscore) {
+                            // Use the part after the last underscore
+                            int short_variant_len = variant_len - (underscore - variant_start + 1);
+                            emit("int %.*s = __match_val_%d.data.%.*s_value; ",
+                                 pat->option.inner->ident.name.length,
+                                 pat->option.inner->ident.name.start,
+                                 match_id,
+                                 short_variant_len,
+                                 underscore + 1);
+                        } else {
+                            // No underscore, use full name
+                            emit("int %.*s = __match_val_%d.data.%.*s_value; ",
+                                 pat->option.inner->ident.name.length,
+                                 pat->option.inner->ident.name.start,
+                                 match_id,
+                                 variant_len,
+                                 variant_start);
+                        }
+                    }
                 } else {
-                    emit("        case %.*s: _match_result_%d = ", 
-                         expr->match.arms[i].pattern.length,
-                         expr->match.arms[i].pattern.start, temp_id);
+                    // Unsupported pattern - treat as wildcard
+                    emit("{ ");
                 }
+                
+                // Generate result
+                emit("__match_result_%d = ", match_id);
                 codegen_expr(expr->match.arms[i].result);
-                emit("; break;\n");
+                emit("; } ");
             }
-            emit("    } _match_result_%d; })", temp_id);
+            
+            emit("__match_result_%d; })", match_id);
             break;
         };
         case EXPR_SOME: {

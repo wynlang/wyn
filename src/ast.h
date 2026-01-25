@@ -163,6 +163,7 @@ typedef struct {
 typedef struct {
     Pattern* inner;       // Pattern inside Some() or None
     bool is_some;         // true for Some(pattern), false for None
+    Token variant_name;   // Variant name (Some, None, Ok, Err, etc.)
 } OptionPattern;
 
 typedef struct {
@@ -185,7 +186,7 @@ struct Pattern {
 };
 
 typedef struct {
-    Token pattern;
+    Pattern* pattern;
     Expr* result;
 } MatchArm;
 
