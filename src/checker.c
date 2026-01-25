@@ -2857,7 +2857,25 @@ void check_program(Program* prog) {
             // Determine return type from function signature or infer from body
             fn_type->fn_type.return_type = builtin_int; // default
             if (fn->return_type) {
-                if (fn->return_type->type == EXPR_ARRAY) {
+                if (fn->return_type->type == EXPR_CALL) {
+                    // Generic type like HashMap<K,V>
+                    if (fn->return_type->call.callee->type == EXPR_IDENT) {
+                        Token type_name = fn->return_type->call.callee->token;
+                        if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
+                            fn_type->fn_type.return_type = make_type(TYPE_MAP);
+                        } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
+                            fn_type->fn_type.return_type = make_type(TYPE_SET);
+                        } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
+                            fn_type->fn_type.return_type = builtin_int; // Simplified
+                        } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
+                            // Check if it's an enum type
+                            Symbol* type_symbol = find_symbol(global_scope, type_name);
+                            if (type_symbol && type_symbol->type) {
+                                fn_type->fn_type.return_type = type_symbol->type;
+                            }
+                        }
+                    }
+                } else if (fn->return_type->type == EXPR_ARRAY) {
                     // Array type like [int] or [string]
                     Type* array_type = make_type(TYPE_ARRAY);
                     if (fn->return_type->array.count > 0 && fn->return_type->array.elements[0]) {
