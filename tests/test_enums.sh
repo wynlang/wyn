@@ -113,6 +113,34 @@ ENDTEST
 
 run_test "Enum toString" test_enum_tostring.wyn
 
+# Test 6: Mixed enum variants (Some(T) + None)
+cat > test_mixed_enum.wyn << 'ENDTEST'
+enum Option {
+    Some(int),
+    None
+}
+
+fn main() -> int {
+    var some_val = Option_Some(42)
+    var none_val = Option_None()
+    
+    var s1 = Option_toString(some_val)
+    var s2 = Option_toString(none_val)
+    
+    if s1 == "Some" {
+        if s2 == "None" {
+            print("✓ Mixed enum variants work")
+            return 0
+        }
+    }
+    
+    print("✗ Mixed enum variants failed")
+    return 1
+}
+ENDTEST
+
+run_test "Mixed enum variants" test_mixed_enum.wyn
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "RESULTS"

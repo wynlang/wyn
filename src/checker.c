@@ -2245,8 +2245,18 @@ void check_program(Program* prog) {
                 Token qualified_token = {TOKEN_IDENT, strdup(qualified), (int)strlen(qualified), 0};
                 add_symbol(global_scope, qualified_token, enum_type, false);
                 
-                // Register constructor function for variants with data
-                if (enum_decl->variant_type_counts && enum_decl->variant_type_counts[j] > 0) {
+                // Register constructor function for all variants (with or without data)
+                // For mixed enums (Some(T) + None), we need constructors for all
+                bool has_any_data = false;
+                for (int k = 0; k < enum_decl->variant_count; k++) {
+                    if (enum_decl->variant_type_counts && enum_decl->variant_type_counts[k] > 0) {
+                        has_any_data = true;
+                        break;
+                    }
+                }
+                
+                if (has_any_data) {
+                    // This is a tagged union enum - register constructors for ALL variants
                     char constructor_name[128];
                     snprintf(constructor_name, 128, "%.*s_%.*s",
                             enum_decl->name.length, enum_decl->name.start,
@@ -2255,11 +2265,13 @@ void check_program(Program* prog) {
                     Token constructor_token = {TOKEN_IDENT, strdup(constructor_name), (int)strlen(constructor_name), 0};
                     
                     Type* constructor_type = make_type(TYPE_FUNCTION);
-                    constructor_type->fn_type.param_count = enum_decl->variant_type_counts[j];
-                    constructor_type->fn_type.param_types = malloc(sizeof(Type*) * constructor_type->fn_type.param_count);
+                    int param_count = (enum_decl->variant_type_counts && enum_decl->variant_type_counts[j] > 0) 
+                                      ? enum_decl->variant_type_counts[j] : 0;
+                    constructor_type->fn_type.param_count = param_count;
+                    constructor_type->fn_type.param_types = malloc(sizeof(Type*) * (param_count > 0 ? param_count : 1));
                     
                     // Parse parameter types from variant_types
-                    for (int k = 0; k < constructor_type->fn_type.param_count; k++) {
+                    for (int k = 0; k < param_count; k++) {
                         if (enum_decl->variant_types && enum_decl->variant_types[j] && enum_decl->variant_types[j][k]) {
                             Expr* type_expr = enum_decl->variant_types[j][k];
                             if (type_expr->type == EXPR_IDENT) {

@@ -148,11 +148,9 @@ static WynTokenType keyword_type(const char* start, int length) {
             break;
         case 'n': 
             if (length == 3 && memcmp(start, "not", 3) == 0) return TOKEN_NOT;
-            if (length == 4 && memcmp(start, "none", 4) == 0) return TOKEN_NONE;
             if (length == 4 && memcmp(start, "null", 4) == 0) return TOKEN_NULL;
             break;
         case 'N':
-            if (length == 4 && memcmp(start, "None", 4) == 0) return TOKEN_NONE;
             break;
         case 'O':
             // Removed TOKEN_OK - let Ok be a regular identifier for enum variants
@@ -169,12 +167,10 @@ static WynTokenType keyword_type(const char* start, int length) {
             break;
         case 's': 
             if (length == 6 && memcmp(start, "struct", 6) == 0) return TOKEN_STRUCT;
-            if (length == 4 && memcmp(start, "some", 4) == 0) return TOKEN_SOME;
             if (length == 5 && memcmp(start, "spawn", 5) == 0) return TOKEN_SPAWN;
             if (length == 4 && memcmp(start, "self", 4) == 0) return TOKEN_SELF;
             break;
         case 'S':
-            if (length == 4 && memcmp(start, "Some", 4) == 0) return TOKEN_SOME;
             break;
         case 't':
             if (length == 4 && memcmp(start, "true", 4) == 0) return TOKEN_TRUE;

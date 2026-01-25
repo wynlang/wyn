@@ -4840,35 +4840,36 @@ void codegen_stmt(Stmt* stmt) {
             // Generate constructor functions for enums with data
             if (has_data) {
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
+                    // Constructor function for all variants (with or without data)
+                    emit("%.*s %.*s_%.*s(",
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
+                    
                     if (stmt->enum_decl.variant_type_counts[i] > 0) {
-                        // Constructor function: Result Result_Ok(int value) { ... }
-                        emit("%.*s %.*s_%.*s(",
-                             stmt->enum_decl.name.length, stmt->enum_decl.name.start,
-                             stmt->enum_decl.name.length, stmt->enum_decl.name.start,
-                             stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
-                        
                         // Only handle single-field variants for now
                         if (stmt->enum_decl.variant_type_counts[i] == 1) {
                             Expr* type_expr = stmt->enum_decl.variant_types[i][0];
                             emit_type_from_expr(type_expr);
                             emit(" value");
                         }
-                        
-                        emit(") {\n");
-                        emit("    %.*s result;\n",
-                             stmt->enum_decl.name.length, stmt->enum_decl.name.start);
-                        emit("    result.tag = %.*s_%.*s_TAG;\n",
-                             stmt->enum_decl.name.length, stmt->enum_decl.name.start,
-                             stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
-                        
-                        if (stmt->enum_decl.variant_type_counts[i] == 1) {
-                            emit("    result.data.%.*s_value = value;\n",
-                                 stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
-                        }
-                        
-                        emit("    return result;\n");
-                        emit("}\n\n");
                     }
+                    // else: zero-argument constructor
+                    
+                    emit(") {\n");
+                    emit("    %.*s result;\n",
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+                    emit("    result.tag = %.*s_%.*s_TAG;\n",
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
+                    
+                    if (stmt->enum_decl.variant_type_counts[i] == 1) {
+                        emit("    result.data.%.*s_value = value;\n",
+                             stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
+                    }
+                    
+                    emit("    return result;\n");
+                    emit("}\n\n");
                 }
             }
             

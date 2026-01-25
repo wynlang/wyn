@@ -2384,8 +2384,8 @@ Stmt* enum_decl() {
     stmt->enum_decl.variant_type_counts = malloc(sizeof(int) * 32);
     
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-        stmt->enum_decl.variants[stmt->enum_decl.variant_count] = parser.current;
         expect(TOKEN_IDENT, "Expected variant name");
+        stmt->enum_decl.variants[stmt->enum_decl.variant_count] = parser.previous;
         
         // Check for associated data: Ok(int) or Err(string)
         if (match(TOKEN_LPAREN)) {

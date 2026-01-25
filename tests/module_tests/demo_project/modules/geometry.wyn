@@ -1,0 +1,21 @@
+pub struct Point {
+    x: int,
+    y: int
+}
+
+pub struct Rectangle {
+    width: int,
+    height: int
+}
+
+pub fn point_distance(p: Point) -> int {
+    return p.x + p.y
+}
+
+pub fn rect_area(r: Rectangle) -> int {
+    return r.width * r.height
+}
+
+pub fn rect_perimeter(r: Rectangle) -> int {
+    return (r.width + r.height) * 2
+}
