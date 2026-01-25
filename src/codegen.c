@@ -6457,7 +6457,24 @@ void codegen_match_statement(Stmt* stmt) {
     } else {
         // Generate if-else chain for complex patterns
         emit("{\n");
-        emit("    int __match_val = ");
+        
+        // Determine the type of the match value
+        bool is_enum_match = false;
+        for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+            MatchCase* match_case = &stmt->match_stmt.cases[i];
+            if (match_case->pattern->type == PATTERN_OPTION && 
+                match_case->pattern->option.variant_name.length > 0) {
+                is_enum_match = true;
+                break;
+            }
+        }
+        
+        if (is_enum_match) {
+            // For enum matches, store the whole enum value
+            emit("    __auto_type __match_val = ");
+        } else {
+            emit("    int __match_val = ");
+        }
         codegen_expr(stmt->match_stmt.value);
         emit(";\n");
         
@@ -6478,7 +6495,22 @@ void codegen_match_statement(Stmt* stmt) {
             } else if (match_case->pattern->type == PATTERN_WILDCARD) {
                 emit("1"); // Always true for wildcard
             } else if (match_case->pattern->type == PATTERN_OPTION) {
-                if (match_case->pattern->option.is_some) {
+                if (match_case->pattern->option.variant_name.length > 0) {
+                    // Enum variant match: check tag
+                    if (match_case->pattern->option.enum_name.length > 0) {
+                        // Full enum name available: Result::Ok
+                        emit("__match_val.tag == %.*s_%.*s_TAG",
+                             match_case->pattern->option.enum_name.length,
+                             match_case->pattern->option.enum_name.start,
+                             match_case->pattern->option.variant_name.length,
+                             match_case->pattern->option.variant_name.start);
+                    } else {
+                        // Only variant name: Ok
+                        emit("__match_val.tag == %.*s_TAG",
+                             match_case->pattern->option.variant_name.length,
+                             match_case->pattern->option.variant_name.start);
+                    }
+                } else if (match_case->pattern->option.is_some) {
                     emit("wyn_optional_is_some(__match_val)");
                 } else {
                     emit("wyn_optional_is_none(__match_val)");
@@ -6503,13 +6535,21 @@ void codegen_match_statement(Stmt* stmt) {
                 Token var_name = match_case->pattern->ident.name;
                 emit("        int %.*s = __match_val;\n", var_name.length, var_name.start);
             } else if (match_case->pattern->type == PATTERN_OPTION && 
-                       match_case->pattern->option.is_some &&
                        match_case->pattern->option.inner &&
                        match_case->pattern->option.inner->type == PATTERN_IDENT) {
                 
                 Token var_name = match_case->pattern->option.inner->ident.name;
-                emit("        int %.*s = wyn_optional_unwrap(__match_val);\n", 
-                     var_name.length, var_name.start);
+                
+                if (match_case->pattern->option.variant_name.length > 0) {
+                    // Enum variant destructuring: extract from data union
+                    emit("        __auto_type %.*s = __match_val.data.%.*s_value;\n", 
+                         var_name.length, var_name.start,
+                         match_case->pattern->option.variant_name.length,
+                         match_case->pattern->option.variant_name.start);
+                } else if (match_case->pattern->option.is_some) {
+                    emit("        int %.*s = wyn_optional_unwrap(__match_val);\n", 
+                         var_name.length, var_name.start);
+                }
             }
             
             // Generate case body

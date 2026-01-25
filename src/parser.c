@@ -132,6 +132,19 @@ static Stmt* alloc_stmt() {
     return (Stmt*)safe_calloc(1, sizeof(Stmt));
 }
 
+// Helper to check if we're looking at a struct initialization pattern
+// Returns true if pattern looks like: { } or { ident : ...
+static bool is_struct_init_pattern() {
+    // Check if next token is {
+    if (!check(TOKEN_LBRACE)) return false;
+    
+    // For a more robust check, we'd need to peek ahead
+    // For now, assume it's a struct init if we see uppercase + {
+    // The comparison operator should have already consumed its operands
+    // so if we're here with uppercase + {, it's likely a struct init
+    return true;
+}
+
 static Expr* primary() {
     if (match(TOKEN_AWAIT)) {
         Expr* expr = alloc_expr();
@@ -266,9 +279,38 @@ static Expr* primary() {
         Token name = parser.previous;
         
         // Check for struct initialization: TypeName { field: value, ... }
-        // Only if we're in an expression context and the identifier starts with uppercase
-        if (check(TOKEN_LBRACE) && name.start[0] >= 'A' && name.start[0] <= 'Z') {
+        // Only parse as struct init if identifier starts with uppercase AND next is {
+        if (is_struct_init_pattern() && name.start[0] >= 'A' && name.start[0] <= 'Z') {
             advance(); // consume '{'
+            
+            Expr* expr = alloc_expr();
+            expr->type = EXPR_STRUCT_INIT;
+            expr->struct_init.type_name = name;
+            expr->struct_init.field_names = malloc(sizeof(Token) * 16);
+            expr->struct_init.field_values = malloc(sizeof(Expr*) * 16);
+            expr->struct_init.field_count = 0;
+            
+            if (!check(TOKEN_RBRACE)) {
+                do {
+                    // Parse field name
+                    expect(TOKEN_IDENT, "Expected field name");
+                    expr->struct_init.field_names[expr->struct_init.field_count] = parser.previous;
+                    
+                    expect(TOKEN_COLON, "Expected ':' after field name");
+                    
+                    // Parse field value
+                    expr->struct_init.field_values[expr->struct_init.field_count] = expression();
+                    expr->struct_init.field_count++;
+                } while (match(TOKEN_COMMA));
+            }
+            
+            expect(TOKEN_RBRACE, "Expected '}' after struct fields");
+            return expr;
+        }
+        
+        // Not a struct init, treat as regular identifier
+        if (false && check(TOKEN_LBRACE) && name.start[0] >= 'A' && name.start[0] <= 'Z') {
+            // OLD CODE - DISABLED
             
             Expr* expr = alloc_expr();
             expr->type = EXPR_STRUCT_INIT;
@@ -1781,6 +1823,18 @@ Stmt* statement() {
         return parse_match_statement();
     }
     
+    if (match(TOKEN_LBRACE)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_BLOCK;
+        stmt->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->block.count = 0;
+        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+            stmt->block.stmts[stmt->block.count++] = statement();
+        }
+        expect(TOKEN_RBRACE, "Expected '}' after block");
+        return stmt;
+    }
+    
     Stmt* stmt = alloc_stmt();
     stmt->type = STMT_EXPR;
     stmt->expr = expression();
@@ -2925,10 +2979,45 @@ static Stmt* parse_match_statement() {
             // Wildcard pattern
             pattern->type = PATTERN_WILDCARD;
         } else if (check(TOKEN_IDENT)) {
-            // Variable binding pattern
-            pattern->type = PATTERN_IDENT;
-            pattern->ident.name = parser.current;
+            // Variable binding pattern or enum variant
+            Token first_token = parser.current;
             advance();
+            
+            // Check for enum variant: Color::Red or Result::Ok(val)
+            if (match(TOKEN_COLONCOLON)) {
+                Token variant_name = parser.current;
+                expect(TOKEN_IDENT, "Expected variant name after '::'");
+                
+                // Check for destructuring: Result::Ok(val)
+                if (match(TOKEN_LPAREN)) {
+                    pattern->type = PATTERN_OPTION;
+                    pattern->option.is_some = true;
+                    pattern->option.variant_name = variant_name;
+                    pattern->option.enum_name = first_token;  // Store the enum type name
+                    
+                    // Parse inner pattern (identifier or wildcard)
+                    if (match(TOKEN_UNDERSCORE)) {
+                        // Wildcard pattern - don't bind the value
+                        pattern->option.inner = NULL;
+                    } else {
+                        Pattern* inner_pattern = safe_malloc(sizeof(Pattern));
+                        inner_pattern->type = PATTERN_IDENT;
+                        inner_pattern->ident.name = parser.current;
+                        expect(TOKEN_IDENT, "Expected identifier in destructuring pattern");
+                        pattern->option.inner = inner_pattern;
+                    }
+                    
+                    expect(TOKEN_RPAREN, "Expected ')' after destructuring pattern");
+                } else {
+                    // Just a simple enum variant without destructuring
+                    pattern->type = PATTERN_IDENT;
+                    pattern->ident.name = variant_name;
+                }
+            } else {
+                // Just a simple identifier pattern
+                pattern->type = PATTERN_IDENT;
+                pattern->ident.name = first_token;
+            }
         } else {
             fprintf(stderr, "Error at line %d: Expected pattern\n", parser.current.line);
             parser.had_error = true;

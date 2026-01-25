@@ -1,0 +1,74 @@
+// BLOCKER #3 VERIFICATION TEST
+// Match with Blocks - COMPLETE ✅
+// Date: 2026-01-26
+//
+// This test verifies that match statements can now use blocks in their arms.
+// The key fix was adding standalone block statement parsing in statement().
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+// Test 1: Match with blocks (the main fix)
+fn test_with_blocks() -> int {
+    var c = Color::Red
+    match c {
+        Color::Red => {
+            return 1
+        },
+        Color::Green => {
+            return 2
+        },
+        Color::Blue => {
+            return 3
+        }
+    }
+}
+
+// Test 2: Mixed single statements and blocks
+fn test_mixed() -> int {
+    var c = Color::Red
+    match c {
+        Color::Red => {
+            var x = 1
+            return x
+        },
+        Color::Green => return 2,
+        Color::Blue => {
+            var y = 3
+            return y
+        }
+    }
+}
+
+// Test 3: Multiple statements in block
+fn test_multiple_statements() -> int {
+    var c = Color::Red
+    match c {
+        Color::Red => {
+            var x = 0
+            var y = 1
+            return x + y
+        },
+        Color::Green => return 2,
+        Color::Blue => return 3
+    }
+}
+
+fn main() -> int {
+    if test_with_blocks() != 1 {
+        return 1
+    }
+    
+    if test_mixed() != 1 {
+        return 2
+    }
+    
+    if test_multiple_statements() != 1 {
+        return 3
+    }
+    
+    return 0
+}

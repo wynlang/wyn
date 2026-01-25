@@ -787,6 +787,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
         case EXPR_BINARY: {
             Type* left = check_expr(expr->binary.left, scope);
             Type* right = check_expr(expr->binary.right, scope);
+            
             if (!left || !right) return NULL;
             
             // Nil coalescing operator ??
@@ -2126,9 +2127,28 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     has_wildcard = true;
                 }
                 
-                // Type-check the case body
+                // Create a new scope for this match arm to hold bound variables
+                SymbolTable arm_scope = {0};
+                arm_scope.parent = scope;
+                
+                // If this is a destructuring pattern, bind the variable
+                if (match_case->pattern && match_case->pattern->type == PATTERN_OPTION) {
+                    if (match_case->pattern->option.inner && 
+                        match_case->pattern->option.inner->type == PATTERN_IDENT) {
+                        Token var_name = match_case->pattern->option.inner->ident.name;
+                        
+                        // For now, assume the bound variable has type int
+                        // TODO: Get actual type from enum variant
+                        Type* bound_type = calloc(1, sizeof(Type));
+                        bound_type->kind = TYPE_INT;
+                        
+                        add_symbol(&arm_scope, var_name, bound_type, false);
+                    }
+                }
+                
+                // Type-check the case body in the arm scope
                 if (match_case->body) {
-                    check_stmt(match_case->body, scope);
+                    check_stmt(match_case->body, &arm_scope);
                 }
             }
             
@@ -2148,9 +2168,18 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         // Check if any of our patterns match this enum's variants
                         for (int i = 0; i < stmt->match_stmt.case_count; i++) {
                             MatchCase* match_case = &stmt->match_stmt.cases[i];
+                            Token pattern_name;
+                            bool has_pattern_name = false;
+                            
                             if (match_case->pattern && match_case->pattern->type == PATTERN_IDENT) {
-                                Token pattern_name = match_case->pattern->ident.name;
-                                
+                                pattern_name = match_case->pattern->ident.name;
+                                has_pattern_name = true;
+                            } else if (match_case->pattern && match_case->pattern->type == PATTERN_OPTION) {
+                                pattern_name = match_case->pattern->option.variant_name;
+                                has_pattern_name = true;
+                            }
+                            
+                            if (has_pattern_name) {
                                 // Check if this pattern matches any variant of this enum
                                 for (int v = 0; v < sym->type->enum_type.variant_count; v++) {
                                     Token variant = sym->type->enum_type.variants[v];
@@ -2182,9 +2211,18 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                             // Check which variants are covered
                             for (int i = 0; i < stmt->match_stmt.case_count; i++) {
                                 MatchCase* match_case = &stmt->match_stmt.cases[i];
+                                Token pattern_name;
+                                bool has_pattern_name = false;
+                                
                                 if (match_case->pattern && match_case->pattern->type == PATTERN_IDENT) {
-                                    Token pattern_name = match_case->pattern->ident.name;
-                                    
+                                    pattern_name = match_case->pattern->ident.name;
+                                    has_pattern_name = true;
+                                } else if (match_case->pattern && match_case->pattern->type == PATTERN_OPTION) {
+                                    pattern_name = match_case->pattern->option.variant_name;
+                                    has_pattern_name = true;
+                                }
+                                
+                                if (has_pattern_name) {
                                     for (int v = 0; v < sym->type->enum_type.variant_count; v++) {
                                         Token variant = sym->type->enum_type.variants[v];
                                         if (pattern_name.length == variant.length &&

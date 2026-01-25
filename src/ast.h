@@ -165,6 +165,7 @@ typedef struct {
     Pattern* inner;       // Pattern inside Some() or None
     bool is_some;         // true for Some(pattern), false for None
     Token variant_name;   // Variant name (Some, None, Ok, Err, etc.)
+    Token enum_name;      // Enum type name (Result, Option, etc.)
 } OptionPattern;
 
 typedef struct {
