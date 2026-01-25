@@ -12,6 +12,7 @@ static const MethodSignature method_signatures[] = {
     {"string", "trim_left", "string", 0},
     {"string", "trim_right", "string", 0},
     {"string", "split", "array", 1},     // Returns array of strings
+    {"string", "charAt", "string", 1},   // Returns single char as string
     {"string", "capitalize", "string", 0},
     {"string", "title", "string", 0},
     {"string", "reverse", "string", 0},
@@ -268,6 +269,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "split") == 0 && arg_count == 1) {
             out->c_function = "string_split"; return true;
+        }
+        if (strcmp(method_name, "charAt") == 0 && arg_count == 1) {
+            out->c_function = "wyn_string_charat"; return true;
         }
         if (strcmp(method_name, "chars") == 0 && arg_count == 0) {
             out->c_function = "string_chars"; return true;

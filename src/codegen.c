@@ -2615,6 +2615,15 @@ void codegen_c_header() {
     emit("    return arr;\n");
     emit("}\n");
     
+    emit("const char* wyn_string_charat(const char* str, int index) {\n");
+    emit("    int len = strlen(str);\n");
+    emit("    if (index < 0 || index >= len) return \"\";\n");
+    emit("    char* result = malloc(2);\n");
+    emit("    result[0] = str[index];\n");
+    emit("    result[1] = '\\0';\n");
+    emit("    return result;\n");
+    emit("}\n");
+    
     emit("WynArray string_chars(const char* str) {\n");
     emit("    WynArray arr = array_new();\n");
     emit("    for (int i = 0; str[i] != '\\0'; i++) {\n");

@@ -99,6 +99,27 @@ ENDTEST
 
 run_test "Array reduce" test_reduce.wyn
 
+# Test 5: String charAt
+cat > test_charat.wyn << 'ENDTEST'
+fn main() -> int {
+    var s = "hello"
+    var first = s.charAt(0)
+    var last = s.charAt(4)
+    
+    if first == "h" {
+        if last == "o" {
+            print("✓ charAt works")
+            return 0
+        }
+    }
+    
+    print("✗ charAt failed")
+    return 1
+}
+ENDTEST
+
+run_test "String charAt" test_charat.wyn
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "RESULTS"
