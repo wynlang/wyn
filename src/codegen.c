@@ -21,6 +21,7 @@
 
 // Forward declarations
 void codegen_stmt(Stmt* stmt);
+
 void codegen_match_statement(Stmt* stmt); // T1.4.4: Control Flow Agent addition
 Type* make_type(TypeKind kind); // Forward declaration for type creation
 extern bool is_builtin_module(const char* name);  // Module system
@@ -284,6 +285,26 @@ void wyn_emit(const char* fmt, ...) {
     va_start(args, fmt);
     vfprintf(out, fmt, args);
     va_end(args);
+}
+
+// Helper to emit C type from type expression
+static void emit_type_from_expr(Expr* type_expr) {
+    if (type_expr->type == EXPR_IDENT) {
+        Token type_name = type_expr->token;
+        if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+            emit("int");
+        } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+            emit("const char*");
+        } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
+            emit("int");
+        } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
+            emit("double");
+        } else {
+            emit("%.*s", type_name.length, type_name.start);
+        }
+    } else {
+        emit("int"); // fallback
+    }
 }
 
 void codegen_expr(Expr* expr) {
@@ -4741,37 +4762,63 @@ void codegen_stmt(Stmt* stmt) {
             
             break;
         case STMT_ENUM:
-            emit("typedef enum {\n");
+            // Check if any variant has data
+            bool has_data = false;
             for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
-                emit("    %.*s", 
-                     stmt->enum_decl.variants[i].length,
-                     stmt->enum_decl.variants[i].start);
-                if (i < stmt->enum_decl.variant_count - 1) {
-                    emit(",");
+                if (stmt->enum_decl.variant_type_counts[i] > 0) {
+                    has_data = true;
+                    break;
                 }
-                emit("\n");
             }
-            // Emit enum name with module prefix if in module context
-            if (current_module_prefix) {
-                emit("} %s_%.*s;\n\n", 
-                     current_module_prefix,
+            
+            if (has_data) {
+                // Generate tagged union for enum with data
+                emit("typedef struct {\n");
+                emit("    enum { ");
+                for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
+                    emit("%.*s_%.*s_TAG",
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
+                    if (i < stmt->enum_decl.variant_count - 1) emit(", ");
+                }
+                emit(" } tag;\n");
+                emit("    union {\n");
+                for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
+                    if (stmt->enum_decl.variant_type_counts[i] > 0) {
+                        emit("        ");
+                        // For now, only handle single-field variants
+                        if (stmt->enum_decl.variant_type_counts[i] == 1) {
+                            Expr* type_expr = stmt->enum_decl.variant_types[i][0];
+                            emit_type_from_expr(type_expr);
+                            emit(" %.*s_value;\n",
+                                 stmt->enum_decl.variants[i].length,
+                                 stmt->enum_decl.variants[i].start);
+                        }
+                    }
+                }
+                emit("    } data;\n");
+                emit("} %.*s;\n\n",
                      stmt->enum_decl.name.length,
                      stmt->enum_decl.name.start);
-                
-                // Generate qualified constants for EnumName.MEMBER access
-                for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
-                    emit("#define %s_%.*s_%.*s %d\n",
-                         current_module_prefix,
-                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
-                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
-                         i);
-                }
             } else {
+                // Simple enum without data
+                emit("typedef enum {\n");
+                for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
+                    emit("    %.*s", 
+                         stmt->enum_decl.variants[i].length,
+                         stmt->enum_decl.variants[i].start);
+                    if (i < stmt->enum_decl.variant_count - 1) {
+                        emit(",");
+                    }
+                    emit("\n");
+                }
                 emit("} %.*s;\n\n", 
                      stmt->enum_decl.name.length,
                      stmt->enum_decl.name.start);
-                
-                // Generate qualified constants for EnumName.MEMBER access
+            }
+            
+            // Generate qualified constants for EnumName.MEMBER access (only for simple enums)
+            if (!has_data) {
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
                     emit("#define %.*s_%.*s %d\n",
                          stmt->enum_decl.name.length, stmt->enum_decl.name.start,
@@ -4781,18 +4828,31 @@ void codegen_stmt(Stmt* stmt) {
             }
             emit("\n");
             
-            // Generate toString function for enum with module prefix
-            if (current_module_prefix) {
-                emit("const char* %s_%.*s_toString(%s_%.*s val) {\n",
-                     current_module_prefix,
-                     stmt->enum_decl.name.length, stmt->enum_decl.name.start,
-                     current_module_prefix,
-                     stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+            // Generate toString function
+            emit("const char* %.*s_toString(%.*s val) {\n",
+                 stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                 stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+            if (has_data) {
+                emit("    switch(val.tag) {\n");
+                for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
+                    emit("        case %.*s_%.*s_TAG: return \"%.*s\";\n",
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
+                }
+                emit("    }\n");
             } else {
-                emit("const char* %.*s_toString(%.*s val) {\n",
-                     stmt->enum_decl.name.length, stmt->enum_decl.name.start,
-                     stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+                emit("    switch(val) {\n");
+                for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
+                    emit("        case %.*s: return \"%.*s\";\n",
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
+                }
+                emit("    }\n");
             }
+            emit("    return \"Unknown\";\n");
+            emit("}\n\n");
+            break;
             emit("    switch(val) {\n");
             for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
                 emit("        case %.*s: return \"%.*s\";\n",
