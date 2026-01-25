@@ -585,6 +585,20 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         return false;
     }
     
+    if (strcmp(receiver_type, "arena") == 0) {
+        // Arena methods
+        if (strcmp(method_name, "alloc") == 0 && arg_count == 1) {
+            out->c_function = "wyn_arena_alloc_int"; return true;
+        }
+        if (strcmp(method_name, "clear") == 0 && arg_count == 0) {
+            out->c_function = "wyn_arena_clear"; return true;
+        }
+        if (strcmp(method_name, "free") == 0 && arg_count == 0) {
+            out->c_function = "wyn_arena_free"; return true;
+        }
+        return false;
+    }
+    
     if (strcmp(receiver_type, "map") == 0) {
         // HashMap methods
         if (strcmp(method_name, "insert") == 0 && arg_count == 2) {

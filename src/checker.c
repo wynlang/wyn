@@ -2623,6 +2623,14 @@ void check_program(Program* prog) {
         hashmap_free_lc_type->fn_type.param_types[0] = builtin_int;
         hashmap_free_lc_type->fn_type.return_type = builtin_void;
         add_symbol(global_scope, hashmap_free_lc_tok, hashmap_free_lc_type, false);
+        
+        // Arena functions
+        Token wyn_arena_new_tok = {TOKEN_IDENT, "wyn_arena_new", 13, 0};
+        Type* wyn_arena_new_type = make_type(TYPE_FUNCTION);
+        wyn_arena_new_type->fn_type.param_count = 0;
+        wyn_arena_new_type->fn_type.param_types = NULL;
+        wyn_arena_new_type->fn_type.return_type = builtin_int;
+        add_symbol(global_scope, wyn_arena_new_tok, wyn_arena_new_type, false);
     }
     
     // First pass: process imports and register functions with their signatures

@@ -1975,6 +1975,13 @@ void codegen_c_header() {
     emit("int wyn_hashmap_len(int map);\n");
     emit("void wyn_hashmap_free(int map);\n\n");
     
+    emit("// Arena module\n");
+    emit("typedef struct WynArena WynArena;\n");
+    emit("WynArena* wyn_arena_new();\n");
+    emit("int* wyn_arena_alloc_int(WynArena* arena, int value);\n");
+    emit("void wyn_arena_clear(WynArena* arena);\n");
+    emit("void wyn_arena_free(WynArena* arena);\n\n");
+    
     emit("// Array module\n");
     emit("int wyn_array_find(int* arr, int len, int (*pred)(int), int* found);\n");
     emit("int wyn_array_any(int* arr, int len, int (*pred)(int));\n");
