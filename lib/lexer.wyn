@@ -74,7 +74,7 @@ fn is_whitespace(ch: string) -> int {
     return 0
 }
 
-fn lex(input: string) -> int {
+fn lex(input: string) -> [int] {
     var pos = 0
     var tokens = []
     
@@ -151,17 +151,17 @@ fn lex(input: string) -> int {
     }
     
     tokens.push(TokenType_EndOfFile)
-    return tokens.len()
+    return tokens
 }
 
 fn main() -> int {
     var input = "fn main() { var x = 42 + 10; }"
-    var token_count = lex(input)
+    var tokens = lex(input)
     
     print("Lexed tokens:")
-    print(token_count)
+    print(tokens.len())
     
-    if token_count > 10 {
+    if tokens.len() > 10 {
         print("✓ Lexer works!")
         return 0
     }
