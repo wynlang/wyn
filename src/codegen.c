@@ -4916,6 +4916,22 @@ void codegen_stmt(Stmt* stmt) {
                         emit("    fprintf(stderr, \"Error: unwrap() called on None\\n\");\n");
                         emit("    exit(1);\n");
                         emit("}\n\n");
+                        
+                        // Generate is_some function
+                        emit("bool %.*s_is_some(%.*s val) {\n",
+                             stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                             stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+                        emit("    return val.tag == %.*s_Some_TAG;\n",
+                             stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+                        emit("}\n\n");
+                        
+                        // Generate is_none function
+                        emit("bool %.*s_is_none(%.*s val) {\n",
+                             stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                             stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+                        emit("    return val.tag == %.*s_None_TAG;\n",
+                             stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+                        emit("}\n\n");
                         break;
                     }
                 }
@@ -4938,6 +4954,22 @@ void codegen_stmt(Stmt* stmt) {
                         emit("    }\n");
                         emit("    fprintf(stderr, \"Error: unwrap() called on Err\\n\");\n");
                         emit("    exit(1);\n");
+                        emit("}\n\n");
+                        
+                        // Generate is_ok function
+                        emit("bool %.*s_is_ok(%.*s val) {\n",
+                             stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                             stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+                        emit("    return val.tag == %.*s_Ok_TAG;\n",
+                             stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+                        emit("}\n\n");
+                        
+                        // Generate is_err function
+                        emit("bool %.*s_is_err(%.*s val) {\n",
+                             stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                             stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+                        emit("    return val.tag == %.*s_Err_TAG;\n",
+                             stmt->enum_decl.name.length, stmt->enum_decl.name.start);
                         emit("}\n\n");
                         break;
                     }

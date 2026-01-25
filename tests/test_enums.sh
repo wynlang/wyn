@@ -185,6 +185,54 @@ ENDTEST
 
 run_test "Result.unwrap()" test_result_unwrap.wyn
 
+# Test 9: Option.is_some/is_none
+cat > test_option_is_some.wyn << 'ENDTEST'
+enum Option {
+    Some(int),
+    None
+}
+
+fn main() -> int {
+    var some = Option_Some(42)
+    var none = Option_None()
+    
+    if some.is_some() {
+        if none.is_none() {
+            print("✓ is_some/is_none work")
+            return 0
+        }
+    }
+    
+    return 1
+}
+ENDTEST
+
+run_test "Option.is_some/is_none" test_option_is_some.wyn
+
+# Test 10: Result.is_ok/is_err
+cat > test_result_is_ok.wyn << 'ENDTEST'
+enum Result {
+    Ok(int),
+    Err(string)
+}
+
+fn main() -> int {
+    var ok = Result_Ok(42)
+    var err = Result_Err("failed")
+    
+    if ok.is_ok() {
+        if err.is_err() {
+            print("✓ is_ok/is_err work")
+            return 0
+        }
+    }
+    
+    return 1
+}
+ENDTEST
+
+run_test "Result.is_ok/is_err" test_result_is_ok.wyn
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "RESULTS"
