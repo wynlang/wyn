@@ -1621,6 +1621,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             expr->expr_type = result_type ? result_type : builtin_void;
             return expr->expr_type;
         }
+        case EXPR_BLOCK: {
+            // Check block expression
+            for (int i = 0; i < expr->block.stmt_count; i++) {
+                check_stmt(expr->block.stmts[i], scope);
+            }
+            if (expr->block.result) {
+                expr->expr_type = check_expr(expr->block.result, scope);
+            } else {
+                expr->expr_type = builtin_void;
+            }
+            return expr->expr_type;
+        }
         case EXPR_FN_TYPE: {
             // Function type: fn(T1, T2) -> R
             Type* fn_type = make_type(TYPE_FUNCTION);

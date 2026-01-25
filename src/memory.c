@@ -44,6 +44,15 @@ void free_expr(Expr* expr) {
         case EXPR_MATCH:
             free_match_expr(&expr->match);
             break;
+        case EXPR_BLOCK:
+            for (int i = 0; i < expr->block.stmt_count; i++) {
+                free_stmt(expr->block.stmts[i]);
+            }
+            free(expr->block.stmts);
+            if (expr->block.result) {
+                free_expr(expr->block.result);
+            }
+            break;
         case EXPR_TERNARY:
             free_expr(expr->ternary.condition);
             free_expr(expr->ternary.then_expr);

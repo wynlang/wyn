@@ -1608,12 +1608,29 @@ void codegen_expr(Expr* expr) {
                          pat->literal.value.length,
                          pat->literal.value.start);
                 } else if (pat->type == PATTERN_IDENT) {
-                    // Variable binding - always matches, bind variable
-                    emit("{ %.*s %.*s = __match_val_%d; ",
-                         type_name_len, type_name,
-                         pat->ident.name.length,
-                         pat->ident.name.start,
-                         match_id);
+                    // Check if this looks like an enum variant (contains underscore)
+                    bool is_enum_variant = false;
+                    for (int j = 0; j < pat->ident.name.length; j++) {
+                        if (pat->ident.name.start[j] == '_') {
+                            is_enum_variant = true;
+                            break;
+                        }
+                    }
+                    
+                    if (is_enum_variant) {
+                        // Enum variant - generate comparison
+                        emit("if (__match_val_%d == %.*s) { ",
+                             match_id,
+                             pat->ident.name.length,
+                             pat->ident.name.start);
+                    } else {
+                        // Variable binding - always matches, bind variable
+                        emit("{ %.*s %.*s = __match_val_%d; ",
+                             type_name_len, type_name,
+                             pat->ident.name.length,
+                             pat->ident.name.start,
+                             match_id);
+                    }
                 } else if (pat->type == PATTERN_OPTION && pat->option.is_some) {
                     // Enum variant with data: Some(x), Ok(x), etc.
                     // Check tag matches variant
@@ -1685,6 +1702,18 @@ void codegen_expr(Expr* expr) {
             emit("__match_result_%d; })", match_id);
             break;
         };
+        case EXPR_BLOCK: {
+            // Generate block expression as compound statement
+            emit("({ ");
+            for (int i = 0; i < expr->block.stmt_count; i++) {
+                codegen_stmt(expr->block.stmts[i]);
+            }
+            if (expr->block.result) {
+                codegen_expr(expr->block.result);
+            }
+            emit("; })");
+            break;
+        }
         case EXPR_SOME: {
             // Generate Some constructor using generic some() function
             if (expr->option.value) {

@@ -427,7 +427,43 @@ static Expr* primary() {
             expr->match.arms[expr->match.arm_count].pattern = pat;
             
             expect(TOKEN_FATARROW, "Expected '=>' after pattern");
-            expr->match.arms[expr->match.arm_count].result = expression();
+            
+            // Handle block expressions in match arms
+            if (check(TOKEN_LBRACE)) {
+                advance(); // consume '{'
+                Expr* block_expr = alloc_expr();
+                block_expr->type = EXPR_BLOCK;
+                block_expr->block.stmts = malloc(sizeof(Stmt*) * 32);
+                block_expr->block.stmt_count = 0;
+                block_expr->block.result = NULL;
+                
+                while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                    // Try to parse as statement first
+                    if (check(TOKEN_VAR) || check(TOKEN_CONST)) {
+                        block_expr->block.stmts[block_expr->block.stmt_count++] = statement();
+                    } else {
+                        // Parse as expression
+                        Expr* e = expression();
+                        if (check(TOKEN_SEMI)) {
+                            advance();
+                            // This was a statement, wrap it
+                            Stmt* stmt = malloc(sizeof(Stmt));
+                            stmt->type = STMT_EXPR;
+                            stmt->expr = e;
+                            block_expr->block.stmts[block_expr->block.stmt_count++] = stmt;
+                        } else {
+                            // This is the final expression
+                            block_expr->block.result = e;
+                            break;
+                        }
+                    }
+                }
+                expect(TOKEN_RBRACE, "Expected '}' after block");
+                expr->match.arms[expr->match.arm_count].result = block_expr;
+            } else {
+                expr->match.arms[expr->match.arm_count].result = expression();
+            }
+            
             expr->match.arm_count++;
             if (!check(TOKEN_RBRACE)) {
                 match(TOKEN_COMMA);
