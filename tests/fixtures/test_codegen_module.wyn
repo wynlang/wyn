@@ -1,0 +1,54 @@
+// Test codegen_module.wyn
+import codegen_module
+
+fn main() -> int {
+    print("Testing codegen module...")
+    
+    // Test 1: Empty program
+    var result1 = codegen_module_generate(0)
+    print("Lines for 0 nodes: ")
+    print(result1)
+    if result1 != 3 {
+        print("ERROR: Expected 3 lines for empty program")
+        return 1
+    }
+    
+    // Test 2: Simple program (3 nodes)
+    var result2 = codegen_module_generate(3)
+    print("Lines for 3 nodes: ")
+    print(result2)
+    if result2 < 6 {
+        print("ERROR: Expected at least 6 lines")
+        return 1
+    }
+    
+    // Test 3: Medium program (10 nodes)
+    var result3 = codegen_module_generate(10)
+    print("Lines for 10 nodes: ")
+    print(result3)
+    if result3 < 20 {
+        print("ERROR: Expected at least 20 lines")
+        return 1
+    }
+    
+    // Test 4: Large program (100 nodes)
+    var result4 = codegen_module_generate(100)
+    print("Lines for 100 nodes: ")
+    print(result4)
+    if result4 < 200 {
+        print("ERROR: Expected at least 200 lines")
+        return 1
+    }
+    
+    // Test 5: Invalid AST
+    var result5 = codegen_module_generate(-1)
+    print("Lines for invalid AST: ")
+    print(result5)
+    if result5 != 0 {
+        print("ERROR: Expected 0 lines for invalid AST")
+        return 1
+    }
+    
+    print("All codegen module tests passed!")
+    return 0
+}
