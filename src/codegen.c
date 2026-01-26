@@ -85,6 +85,10 @@ static const char* resolve_short_module_name(const char* short_name) {
 static char* current_function_params[64];
 static int current_param_count = 0;
 
+// Local variable tracking for current function
+static char* current_function_locals[256];
+static int current_local_count = 0;
+
 static void register_module_function(const char* name) {
     if (module_function_count < 256) {
         module_functions[module_function_count++] = strdup(name);
@@ -127,6 +131,28 @@ static void clear_parameters() {
         free(current_function_params[i]);
     }
     current_param_count = 0;
+}
+
+static void register_local_variable(const char* name) {
+    if (current_local_count < 256) {
+        current_function_locals[current_local_count++] = strdup(name);
+    }
+}
+
+static bool is_local_variable(const char* name) {
+    for (int i = 0; i < current_local_count; i++) {
+        if (strcmp(current_function_locals[i], name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void clear_local_variables() {
+    for (int i = 0; i < current_local_count; i++) {
+        free(current_function_locals[i]);
+    }
+    current_local_count = 0;
 }
 
 // Module alias tracking
@@ -393,6 +419,14 @@ void codegen_expr(Expr* expr) {
                 // Check if this is a parameter - never prefix parameters
                 if (is_parameter(temp_ident)) {
                     // This is a parameter, emit as-is
+                    emit("%s", temp_ident);
+                    free(ident);
+                    break;
+                }
+                
+                // Check if this is a local variable - never prefix local variables
+                if (is_local_variable(temp_ident)) {
+                    // This is a local variable, emit as-is
                     emit("%s", temp_ident);
                     free(ident);
                     break;
@@ -1456,6 +1490,20 @@ void codegen_expr(Expr* expr) {
             target_name[expr->assign.name.length] = '\0';
             
             if (current_module_prefix && !strchr(target_name, ':') && !strchr(target_name, '.')) {
+                // Check if this is a parameter - never prefix parameters
+                if (is_parameter(target_name)) {
+                    emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
+                    codegen_expr(expr->assign.value);
+                    break;
+                }
+                
+                // Check if this is a local variable - never prefix local variables
+                if (is_local_variable(target_name)) {
+                    emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
+                    codegen_expr(expr->assign.value);
+                    break;
+                }
+                
                 // Check if this looks like a module-level variable
                 // Don't prefix common local variable names or single-letter variables
                 bool is_single_letter = (strlen(target_name) == 1);
@@ -4042,6 +4090,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     
     // Register function parameters for scope tracking
     clear_parameters();
+    clear_local_variables();
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
         char param_name[256];
         snprintf(param_name, 256, "%.*s", fn_stmt->fn.params[i].length, fn_stmt->fn.params[i].start);
@@ -4521,6 +4570,13 @@ void codegen_stmt(Stmt* stmt) {
                 emit("const %s %.*s = ", c_type, stmt->var.name.length, stmt->var.name.start);
             } else {
                 emit("%s %.*s = ", c_type, stmt->var.name.length, stmt->var.name.start);
+            }
+            
+            // Register local variable for scope tracking (if inside a function)
+            if (current_module_prefix) {
+                char var_name[256];
+                snprintf(var_name, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                register_local_variable(var_name);
             }
             
             if (needs_arc_management) {
@@ -5456,6 +5512,10 @@ void codegen_stmt(Stmt* stmt) {
                         clear_module_functions();
                         for (int i = 0; i < mod->ast->count; i++) {
                             Stmt* s = mod->ast->stmts[i];
+                            // Unwrap export statements
+                            if (s->type == STMT_EXPORT && s->export.stmt) {
+                                s = s->export.stmt;
+                            }
                             if (s->type == STMT_FN) {
                                 char func_name[256];
                                 snprintf(func_name, 256, "%.*s", s->fn.name.length, s->fn.name.start);
