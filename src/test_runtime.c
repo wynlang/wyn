@@ -1,6 +1,7 @@
 // Wyn Testing Framework - Runtime Support
 // Provides comprehensive testing utilities for Wyn programs
 
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
