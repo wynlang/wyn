@@ -1184,10 +1184,33 @@ void codegen_expr(Expr* expr) {
                         emit("array_push_struct(&(");
                         codegen_expr(expr->method_call.object);
                         emit("), ");
+                        
+                        // Emit the struct initializer
                         codegen_expr(expr->method_call.args[0]);
                         emit(", ");
-                        Token type_name = elem_type->struct_type.name;
-                        emit("%.*s", type_name.length, type_name.start);
+                        
+                        // Emit the type name for the macro's third argument
+                        // This must match the type used in the struct initializer
+                        Expr* init_expr = expr->method_call.args[0];
+                        if (init_expr->type == EXPR_STRUCT_INIT) {
+                            Token type_name = init_expr->struct_init.type_name;
+                            
+                            // The struct initializer codegen adds current_module_prefix
+                            // We need to do the same here to match
+                            if (current_module_prefix) {
+                                emit("%s_%.*s", current_module_prefix, type_name.length, type_name.start);
+                            } else {
+                                emit("%.*s", type_name.length, type_name.start);
+                            }
+                        } else {
+                            // Fallback
+                            Token type_name = elem_type->struct_type.name;
+                            if (current_module_prefix) {
+                                emit("%s_%.*s", current_module_prefix, type_name.length, type_name.start);
+                            } else {
+                                emit("%.*s", type_name.length, type_name.start);
+                            }
+                        }
                         emit(")");
                         break;
                     }
@@ -1203,6 +1226,9 @@ void codegen_expr(Expr* expr) {
                     if (elem_type) {
                         if (elem_type->kind == TYPE_STRING) {
                             emit("array_get_str(");
+                        } else if (elem_type->kind == TYPE_STRUCT) {
+                            // Use struct accessor
+                            emit("array_get_struct(");
                         } else {
                             // Default to int accessor
                             emit("array_get_int(");
@@ -1214,6 +1240,11 @@ void codegen_expr(Expr* expr) {
                     codegen_expr(expr->method_call.object);
                     emit(", ");
                     codegen_expr(expr->method_call.args[0]);
+                    if (elem_type && elem_type->kind == TYPE_STRUCT) {
+                        emit(", ");
+                        Token type_name = elem_type->struct_type.name;
+                        emit("%.*s", type_name.length, type_name.start);
+                    }
                     emit(")");
                     break;
                 }
@@ -1463,9 +1494,27 @@ void codegen_expr(Expr* expr) {
                     }
                 } else {
                     // Single indexing: arr[i]
-                    // Always use array_get_str for known string arrays
-                    // For unknown types, check if we're in a string context
-                    if (is_string_array) {
+                    // Check if this is a struct array
+                    bool is_struct_array = false;
+                    Type* elem_type = NULL;
+                    if (expr->index.array->expr_type && 
+                        expr->index.array->expr_type->kind == TYPE_ARRAY) {
+                        elem_type = expr->index.array->expr_type->array_type.element_type;
+                        if (elem_type && elem_type->kind == TYPE_STRUCT) {
+                            is_struct_array = true;
+                        }
+                    }
+                    
+                    if (is_struct_array) {
+                        emit("array_get_struct(");
+                        codegen_expr(expr->index.array);
+                        emit(", ");
+                        codegen_expr(expr->index.index);
+                        emit(", ");
+                        Token type_name = elem_type->struct_type.name;
+                        emit("%.*s", type_name.length, type_name.start);
+                        emit(")");
+                    } else if (is_string_array) {
                         emit("array_get_str(");
                         codegen_expr(expr->index.array);
                         emit(", ");
@@ -2323,6 +2372,7 @@ void codegen_c_header() {
     emit("    if (arr.data[index].type == WYN_TYPE_STRING) return arr.data[index].data.string_val;\n");
     emit("    return \"\";\n");
     emit("}\n");
+    emit("#define array_get_struct(arr, idx, T) (*(T*)arr.data[idx].data.struct_val)\n");
     emit("WynValue array_get(WynArray arr, int index) {\n");
     emit("    WynValue val = {0};\n");
     emit("    if (index >= 0 && index < arr.count) val = arr.data[index];\n");
