@@ -1,0 +1,91 @@
+// Test suite for codegen_module.wyn
+// Tests real C code generation from Wyn source
+
+import codegen_module
+
+fn test_empty_source() -> int {
+    var c_len = codegen_module.generate("")
+    
+    // Empty source should generate minimal C (includes only)
+    if c_len < 50 {
+        print("FAIL: Empty source should generate includes (~50+ chars)")
+        return 1
+    }
+    
+    print("PASS: Empty source generates includes")
+    return 0
+}
+
+fn test_simple_literal() -> int {
+    var c_len = codegen_module.generate("42")
+    
+    // Should generate includes + literal
+    if c_len < 60 {
+        print("FAIL: Literal should generate C code")
+        return 1
+    }
+    
+    print("PASS: Simple literal generates C")
+    return 0
+}
+
+fn test_variable_declaration() -> int {
+    var c_len = codegen_module.generate("var x = 42")
+    
+    // Should generate includes + int x = 42;
+    if c_len < 70 {
+        print("FAIL: Variable declaration should generate C code")
+        return 1
+    }
+    
+    print("PASS: Variable declaration generates C")
+    return 0
+}
+
+fn test_binary_expression() -> int {
+    var c_len = codegen_module.generate("a + b")
+    
+    // Should generate includes + (a + b)
+    if c_len < 65 {
+        print("FAIL: Binary expression should generate C code")
+        return 1
+    }
+    
+    print("PASS: Binary expression generates C")
+    return 0
+}
+
+fn test_function_declaration() -> int {
+    var c_len = codegen_module.generate("fn add(a: int, b: int) -> int { return a + b }")
+    
+    // Should generate includes + function definition
+    if c_len < 100 {
+        print("FAIL: Function should generate C code")
+        return 1
+    }
+    
+    print("PASS: Function declaration generates C")
+    return 0
+}
+
+fn main() -> int {
+    print("Running codegen_module tests...")
+    
+    var failures = 0
+    
+    failures = failures + test_empty_source()
+    failures = failures + test_simple_literal()
+    failures = failures + test_variable_declaration()
+    failures = failures + test_binary_expression()
+    failures = failures + test_function_declaration()
+    
+    if failures > 0 {
+        print("FAILED: ")
+        print(failures)
+        print(" test(s) failed")
+        return 1
+    }
+    
+    print("SUCCESS: All codegen_module tests passed!")
+    return 0
+}
