@@ -1,11 +1,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <arpa/inet.h>
+
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #pragma comment(lib, "ws2_32.lib")
+    #define close closesocket
+#else
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <netdb.h>
+    #include <unistd.h>
+    #include <arpa/inet.h>
+#endif
+
 #include "registry.h"
 #include "toml.h"
 #include "semver.h"
@@ -14,7 +23,24 @@
 #define REGISTRY_PORT 443  // HTTPS
 #define BUFFER_SIZE 8192
 
-// Simple HTTP client using POSIX sockets
+// Initialize Winsock on Windows
+static int init_sockets(void) {
+#ifdef _WIN32
+    WSADATA wsa_data;
+    return WSAStartup(MAKEWORD(2, 2), &wsa_data);
+#else
+    return 0;
+#endif
+}
+
+// Cleanup Winsock on Windows
+static void cleanup_sockets(void) {
+#ifdef _WIN32
+    WSACleanup();
+#endif
+}
+
+// Simple HTTP client using POSIX sockets (or Winsock2 on Windows)
 static int http_get(const char *host, const char *path, char **response_body) {
     struct hostent *server;
     struct sockaddr_in serv_addr;
@@ -23,10 +49,17 @@ static int http_get(const char *host, const char *path, char **response_body) {
     char buffer[BUFFER_SIZE];
     int bytes_received;
     
+    // Initialize sockets (Windows only)
+    if (init_sockets() != 0) {
+        fprintf(stderr, "Error: Cannot initialize sockets\n");
+        return -1;
+    }
+    
     // Create socket
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
         fprintf(stderr, "Error: Cannot create socket\n");
+        cleanup_sockets();
         return -1;
     }
     
@@ -35,6 +68,7 @@ static int http_get(const char *host, const char *path, char **response_body) {
     if (server == NULL) {
         fprintf(stderr, "Error: Cannot resolve host %s\n", host);
         close(sockfd);
+        cleanup_sockets();
         return -1;
     }
     
@@ -48,6 +82,7 @@ static int http_get(const char *host, const char *path, char **response_body) {
     if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         fprintf(stderr, "Error: Cannot connect to %s\n", host);
         close(sockfd);
+        cleanup_sockets();
         return -1;
     }
     
@@ -65,6 +100,7 @@ static int http_get(const char *host, const char *path, char **response_body) {
     if (send(sockfd, request, strlen(request), 0) < 0) {
         fprintf(stderr, "Error: Cannot send request\n");
         close(sockfd);
+        cleanup_sockets();
         return -1;
     }
     
@@ -79,6 +115,7 @@ static int http_get(const char *host, const char *path, char **response_body) {
         if (!new_response) {
             free(full_response);
             close(sockfd);
+            cleanup_sockets();
             return -1;
         }
         full_response = new_response;
@@ -88,6 +125,7 @@ static int http_get(const char *host, const char *path, char **response_body) {
     }
     
     close(sockfd);
+    cleanup_sockets();
     
     // Parse HTTP response - extract body
     char *body_start = strstr(full_response, "\r\n\r\n");
