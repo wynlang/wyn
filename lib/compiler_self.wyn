@@ -30,8 +30,8 @@ fn compile_file(input_path: string, output_path: string) -> int {
     print("Tokens:")
     print(token_count)
     
-    // Step 2: Parsing
-    var node_count = parser_module_parse(token_count)
+    // Step 2: Parsing (now takes source string)
+    var node_count = parser_module_parse(source)
     print("Nodes:")
     print(node_count)
     

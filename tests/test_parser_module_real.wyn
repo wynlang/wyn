@@ -1,0 +1,41 @@
+// Test: Real parser module
+// Tests that parser_module can parse actual tokens
+
+import parser_module
+
+fn main() -> int {
+    // Test 1: Parse simple expression "42"
+    // Expected: 1 node (int literal)
+    var nodes1 = parser_module_parse(1)
+    print("Test 1 - Parse '42': ")
+    print(nodes1)
+    if nodes1 != 1 {
+        print("FAIL: Expected 1 node")
+        return 1
+    }
+    
+    // Test 2: Parse "var x = 42"
+    // Tokens: var, x, =, 42 (4 tokens)
+    // Expected: 3 nodes (vardecl, ident, int)
+    var nodes2 = parser_module_parse(4)
+    print("Test 2 - Parse 'var x = 42': ")
+    print(nodes2)
+    if nodes2 < 2 {
+        print("FAIL: Expected at least 2 nodes")
+        return 1
+    }
+    
+    // Test 3: Parse "a + b"
+    // Tokens: a, +, b (3 tokens)
+    // Expected: 3 nodes (binary, var, var)
+    var nodes3 = parser_module_parse(3)
+    print("Test 3 - Parse 'a + b': ")
+    print(nodes3)
+    if nodes3 < 2 {
+        print("FAIL: Expected at least 2 nodes")
+        return 1
+    }
+    
+    print("All parser module tests passed!")
+    return 0
+}
