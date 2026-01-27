@@ -8,7 +8,6 @@
     #include <io.h>
     #define access _access
     #define F_OK 0
-    #pragma comment(lib, "ws2_32.lib")
     #define close closesocket
 #else
     #define _POSIX_C_SOURCE 200809L
