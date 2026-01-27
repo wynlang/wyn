@@ -1,70 +1,256 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 #include "registry.h"
 #include "toml.h"
 #include "semver.h"
 
-#define REGISTRY_URL "https://pkg.wynlang.com"
+#define REGISTRY_HOST "pkg.wynlang.com"
+#define REGISTRY_PORT 443  // HTTPS
+#define BUFFER_SIZE 8192
 
-// Note: Package registry server not deployed yet (coming in v1.5.1)
-// These are stub implementations. In v1.5.1, they will be replaced with
-// a POSIX socket-based HTTP client (no external dependencies).
+// Simple HTTP client using POSIX sockets
+static int http_get(const char *host, const char *path, char **response_body) {
+    struct hostent *server;
+    struct sockaddr_in serv_addr;
+    int sockfd;
+    char request[2048];
+    char buffer[BUFFER_SIZE];
+    int bytes_received;
+    
+    // Create socket
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        fprintf(stderr, "Error: Cannot create socket\n");
+        return -1;
+    }
+    
+    // Get host by name
+    server = gethostbyname(host);
+    if (server == NULL) {
+        fprintf(stderr, "Error: Cannot resolve host %s\n", host);
+        close(sockfd);
+        return -1;
+    }
+    
+    // Setup server address
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+    serv_addr.sin_port = htons(80);  // Use HTTP for now (HTTPS requires SSL/TLS)
+    
+    // Connect
+    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        fprintf(stderr, "Error: Cannot connect to %s\n", host);
+        close(sockfd);
+        return -1;
+    }
+    
+    // Build HTTP request
+    snprintf(request, sizeof(request),
+             "GET %s HTTP/1.1\r\n"
+             "Host: %s\r\n"
+             "User-Agent: wyn-cli/1.5.0\r\n"
+             "Accept: application/json\r\n"
+             "Connection: close\r\n"
+             "\r\n",
+             path, host);
+    
+    // Send request
+    if (send(sockfd, request, strlen(request), 0) < 0) {
+        fprintf(stderr, "Error: Cannot send request\n");
+        close(sockfd);
+        return -1;
+    }
+    
+    // Receive response
+    char *full_response = malloc(1);
+    full_response[0] = '\0';
+    size_t total_size = 0;
+    
+    while ((bytes_received = recv(sockfd, buffer, BUFFER_SIZE - 1, 0)) > 0) {
+        buffer[bytes_received] = '\0';
+        char *new_response = realloc(full_response, total_size + bytes_received + 1);
+        if (!new_response) {
+            free(full_response);
+            close(sockfd);
+            return -1;
+        }
+        full_response = new_response;
+        memcpy(full_response + total_size, buffer, bytes_received);
+        total_size += bytes_received;
+        full_response[total_size] = '\0';
+    }
+    
+    close(sockfd);
+    
+    // Parse HTTP response - extract body
+    char *body_start = strstr(full_response, "\r\n\r\n");
+    if (body_start) {
+        body_start += 4;
+        *response_body = strdup(body_start);
+        free(full_response);
+        return 0;
+    }
+    
+    free(full_response);
+    return -1;
+}
 
 int registry_search(const char *query) {
-    (void)query;  // Unused
-    fprintf(stderr, "Package registry not available yet (coming in v1.5.1)\n");
-    fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
+    char path[512];
+    char *response = NULL;
+    
+    snprintf(path, sizeof(path), "/api/search?q=%s", query);
+    
+    if (http_get(REGISTRY_HOST, path, &response) != 0) {
+        fprintf(stderr, "Error: Failed to connect to package registry\n");
+        fprintf(stderr, "Note: Registry server may not be deployed yet\n");
+        fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
+        return 1;
+    }
+    
+    if (response) {
+        printf("%s\n", response);
+        free(response);
+        return 0;
+    }
+    
     return 1;
 }
 
 int registry_info(const char *package) {
-    (void)package;  // Unused
-    fprintf(stderr, "Package registry not available yet (coming in v1.5.1)\n");
-    fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
-    return 1;
-}
-
-int registry_install(const char *package_spec) {
-    (void)package_spec;  // Unused
-    fprintf(stderr, "Package registry not available yet (coming in v1.5.1)\n");
-    fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
+    char path[512];
+    char *response = NULL;
+    
+    snprintf(path, sizeof(path), "/api/packages/%s", package);
+    
+    if (http_get(REGISTRY_HOST, path, &response) != 0) {
+        fprintf(stderr, "Error: Failed to connect to package registry\n");
+        fprintf(stderr, "Note: Registry server may not be deployed yet\n");
+        fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
+        return 1;
+    }
+    
+    if (response) {
+        printf("%s\n", response);
+        free(response);
+        return 0;
+    }
+    
     return 1;
 }
 
 int registry_versions(const char *package) {
-    (void)package;  // Unused
-    fprintf(stderr, "Package registry not available yet (coming in v1.5.1)\n");
-    fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
+    char path[512];
+    char *response = NULL;
+    
+    snprintf(path, sizeof(path), "/api/packages/%s/versions", package);
+    
+    if (http_get(REGISTRY_HOST, path, &response) != 0) {
+        fprintf(stderr, "Error: Failed to connect to package registry\n");
+        fprintf(stderr, "Note: Registry server may not be deployed yet\n");
+        fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
+        return 1;
+    }
+    
+    if (response) {
+        printf("%s\n", response);
+        free(response);
+        return 0;
+    }
+    
+    return 1;
+}
+
+int registry_install(const char *package_spec) {
+    char package[256];
+    char version[64] = "latest";
+    
+    // Parse package@version
+    const char *at = strchr(package_spec, '@');
+    if (at) {
+        size_t pkg_len = at - package_spec;
+        if (pkg_len >= sizeof(package)) pkg_len = sizeof(package) - 1;
+        memcpy(package, package_spec, pkg_len);
+        package[pkg_len] = '\0';
+        strncpy(version, at + 1, sizeof(version) - 1);
+        version[sizeof(version) - 1] = '\0';
+    } else {
+        strncpy(package, package_spec, sizeof(package) - 1);
+        package[sizeof(package) - 1] = '\0';
+    }
+    
+    printf("Installing %s@%s...\n", package, version);
+    
+    char path[512];
+    char *response = NULL;
+    
+    if (strcmp(version, "latest") == 0) {
+        snprintf(path, sizeof(path), "/api/packages/%s", package);
+    } else {
+        snprintf(path, sizeof(path), "/api/packages/%s/versions/%s", package, version);
+    }
+    
+    if (http_get(REGISTRY_HOST, path, &response) != 0) {
+        fprintf(stderr, "Error: Failed to connect to package registry\n");
+        fprintf(stderr, "Note: Registry server may not be deployed yet\n");
+        fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
+        return 1;
+    }
+    
+    if (response) {
+        // TODO: Parse JSON response and download package tarball
+        printf("Package info retrieved. Download functionality coming soon.\n");
+        free(response);
+        return 0;
+    }
+    
     return 1;
 }
 
 int registry_resolve_version(const char *package, const char *constraint, char *resolved_version, size_t buf_size) {
-    (void)package;  // Unused
-    (void)constraint;  // Unused
-    (void)resolved_version;  // Unused
-    (void)buf_size;  // Unused
-    fprintf(stderr, "Package registry not available yet (coming in v1.5.1)\n");
-    return 1;
+    char path[512];
+    char *response = NULL;
+    
+    snprintf(path, sizeof(path), "/api/packages/%s/versions", package);
+    
+    if (http_get(REGISTRY_HOST, path, &response) != 0) {
+        return -1;
+    }
+    
+    if (response) {
+        // TODO: Parse JSON and match constraint using semver
+        // For now, just use "latest"
+        strncpy(resolved_version, "latest", buf_size - 1);
+        resolved_version[buf_size - 1] = '\0';
+        free(response);
+        return 0;
+    }
+    
+    return -1;
 }
 
 int registry_publish(int dry_run) {
-    // 1. Validate wyn.toml exists
+    // Validate wyn.toml exists
     if (access("wyn.toml", F_OK) != 0) {
         fprintf(stderr, "Error: wyn.toml not found. Run 'wyn init' first.\n");
         return 1;
     }
     
-    // 2. Parse wyn.toml
+    // Parse wyn.toml
     WynConfig *config = wyn_config_parse("wyn.toml");
     if (!config) {
         fprintf(stderr, "Error: Failed to parse wyn.toml\n");
         return 1;
     }
     
-    // 3. Validate required fields
+    // Validate required fields
     if (!config->project.name || strlen(config->project.name) == 0) {
         fprintf(stderr, "Error: Missing required field: name\n");
         wyn_config_free(config);
@@ -89,13 +275,15 @@ int registry_publish(int dry_run) {
                 printf("    - %s@%s\n", config->dependencies[i].name, config->dependencies[i].version);
             }
         }
-        printf("\nNote: Registry server not deployed yet (coming in v1.5.1)\n");
         wyn_config_free(config);
         return 0;
     }
     
     printf("Publishing %s@%s...\n", config->project.name, config->project.version);
-    fprintf(stderr, "Error: Package registry not available yet (coming in v1.5.1)\n");
+    
+    // TODO: Create tarball and upload via HTTP POST
+    fprintf(stderr, "Error: Publish functionality requires registry server\n");
+    fprintf(stderr, "Note: Registry server not deployed yet (coming in v1.5.1)\n");
     fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
     
     wyn_config_free(config);
