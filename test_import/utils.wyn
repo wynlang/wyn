@@ -1,7 +1,0 @@
-export fn double(x: int) -> int {
-    return x * 2
-}
-
-export fn triple(x: int) -> int {
-    return x * 3
-}

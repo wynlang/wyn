@@ -1,6 +1,0 @@
-import math_module
-
-fn main() -> int {
-    var result = math_module_add(5, 3)
-    return result
-}
