@@ -116,6 +116,8 @@ int wyn_string_index_of(const char* str, const char* substr);
 int wyn_string_last_index_of(const char* str, const char* substr);
 char* wyn_string_repeat(const char* str, int n);
 char* wyn_string_reverse(const char* str);
+char* wyn_string_pad_left(const char* str, int width, const char* pad_char);
+char* wyn_string_pad_right(const char* str, int width, const char* pad_char);
 
 // Json module
 typedef struct WynJson WynJson;
@@ -261,6 +263,7 @@ const char* array_get_str(WynArray arr, int index) {
     if (arr.data[index].type == WYN_TYPE_STRING) return arr.data[index].data.string_val;
     return "";
 }
+#define array_get_struct(arr, idx, T) (*(T*)arr.data[idx].data.struct_val)
 WynValue array_get(WynArray arr, int index) {
     WynValue val = {0};
     if (index >= 0 && index < arr.count) val = arr.data[index];

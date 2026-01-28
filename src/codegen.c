@@ -2219,7 +2219,9 @@ void codegen_c_header() {
     emit("int wyn_string_index_of(const char* str, const char* substr);\n");
     emit("int wyn_string_last_index_of(const char* str, const char* substr);\n");
     emit("char* wyn_string_repeat(const char* str, int n);\n");
-    emit("char* wyn_string_reverse(const char* str);\n\n");
+    emit("char* wyn_string_reverse(const char* str);\n");
+    emit("char* wyn_string_pad_left(const char* str, int width, const char* pad_char);\n");
+    emit("char* wyn_string_pad_right(const char* str, int width, const char* pad_char);\n\n");
     
     emit("// Json module\n");
     emit("typedef struct WynJson WynJson;\n");

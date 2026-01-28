@@ -16,6 +16,11 @@ LLVMValueRef codegen_function_definition(FnStmt* fn_stmt, LLVMCodegenContext* ct
         return NULL;
     }
     
+    // Safety check for function name
+    if (!fn_stmt->name.start || fn_stmt->name.length == 0) {
+        return NULL;
+    }
+    
     // First create/get the function declaration
     LLVMValueRef function = codegen_function_declaration(fn_stmt, ctx);
     if (!function) {
@@ -182,8 +187,14 @@ void codegen_function_epilogue(FnStmt* fn_stmt, LLVMValueRef function, LLVMCodeg
         return;
     }
     
-    // Get function return type
-    LLVMTypeRef func_type = LLVMGetElementType(LLVMTypeOf(function));
+    // Get function return type directly from the function
+    LLVMTypeRef func_type = LLVMGlobalGetValueType(function);
+    if (!func_type) {
+        // Fallback: just return 0 for int
+        LLVMBuildRet(ctx->builder, LLVMConstInt(ctx->int_type, 0, false));
+        return;
+    }
+    
     LLVMTypeRef return_type = LLVMGetReturnType(func_type);
     
     // Generate appropriate return

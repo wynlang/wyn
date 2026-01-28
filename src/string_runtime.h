@@ -24,5 +24,7 @@ const char* wyn_string_replace_safe(const char* str, const char* old_str, const 
 const char* wyn_string_to_upper_safe(const char* str);
 const char* wyn_string_to_lower_safe(const char* str);
 const char* wyn_string_trim_safe(const char* str);
+const char* wyn_string_pad_left_safe(const char* str, int width, const char* pad_char);
+const char* wyn_string_pad_right_safe(const char* str, int width, const char* pad_char);
 
 #endif // STRING_RUNTIME_H

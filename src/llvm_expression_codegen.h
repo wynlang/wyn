@@ -18,9 +18,9 @@ LLVMValueRef codegen_bool_literal(Expr* expr, LLVMCodegenContext* ctx);
 
 // Binary expressions
 LLVMValueRef codegen_binary_expr(BinaryExpr* expr, LLVMCodegenContext* ctx);
-LLVMValueRef codegen_arithmetic_op(LLVMValueRef left, LLVMValueRef right, TokenType op, LLVMCodegenContext* ctx);
-LLVMValueRef codegen_comparison_op(LLVMValueRef left, LLVMValueRef right, TokenType op, LLVMCodegenContext* ctx);
-LLVMValueRef codegen_logical_op(LLVMValueRef left, LLVMValueRef right, TokenType op, LLVMCodegenContext* ctx);
+LLVMValueRef codegen_arithmetic_op(LLVMValueRef left, LLVMValueRef right, WynTokenType op, LLVMCodegenContext* ctx);
+LLVMValueRef codegen_comparison_op(LLVMValueRef left, LLVMValueRef right, WynTokenType op, LLVMCodegenContext* ctx);
+LLVMValueRef codegen_logical_op(LLVMValueRef left, LLVMValueRef right, WynTokenType op, LLVMCodegenContext* ctx);
 
 // Unary expressions
 LLVMValueRef codegen_unary_expr(UnaryExpr* expr, LLVMCodegenContext* ctx);

@@ -15,6 +15,9 @@ void codegen_program(Program* prog);
 void cleanup_codegen(void);
 
 // LLVM-specific functions
+bool llvm_write_ir_to_file(const char* filename);
+bool llvm_compile_to_object(const char* ir_file, const char* obj_file);
+bool llvm_link_binary(const char* obj_file, const char* output, const char* wyn_root);
 bool codegen_generate_bitcode(const char* filename);
 bool codegen_generate_object(const char* filename);
 LLVMCodegenContext* get_current_llvm_context(void);

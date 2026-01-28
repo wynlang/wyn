@@ -1,0 +1,21 @@
+fn takes_float(x: float) -> float {
+    return x * 2.0
+}
+
+fn takes_array(arr: [string]) -> string {
+    return arr[0]
+}
+
+fn main() -> int {
+    // Error 1: int to float conversion needed
+    takes_float(42)
+    
+    // Error 2: wrong array type
+    var numbers = [1, 2, 3]
+    takes_array(numbers)
+    
+    // Error 3: float to int conversion
+    var x: int = 3.14
+    
+    return 0
+}

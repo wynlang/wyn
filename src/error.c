@@ -93,15 +93,68 @@ bool parser_check_and_suggest(int expected_token, const char* context) {
 
 // T1.2.4: Type Checker Error Message Implementation
 
+// ANSI color codes
+#define RED     "\033[31m"
+#define YELLOW  "\033[33m"
+#define BLUE    "\033[34m"
+#define GREEN   "\033[32m"
+#define RESET   "\033[0m"
+#define BOLD    "\033[1m"
+
+// Helper function to get detailed type description
+static const char* get_detailed_type_description(const char* type_name) {
+    if (strcmp(type_name, "int") == 0) return "integer";
+    if (strcmp(type_name, "float") == 0) return "floating-point number";
+    if (strcmp(type_name, "string") == 0) return "text string";
+    if (strcmp(type_name, "bool") == 0) return "boolean (true/false)";
+    if (strcmp(type_name, "array") == 0) return "array/list";
+    if (strcmp(type_name, "map") == 0) return "HashMap<string, int>";
+    if (strcmp(type_name, "set") == 0) return "HashSet<int>";
+    if (strcmp(type_name, "optional") == 0) return "Option<T>";
+    if (strcmp(type_name, "result") == 0) return "Result<T, E>";
+    return type_name;
+}
+
+// Helper function to suggest type conversion
+static const char* get_conversion_suggestion(const char* from_type, const char* to_type) {
+    if (strcmp(from_type, "int") == 0 && strcmp(to_type, "float") == 0) {
+        return "add '.0' to make it a float literal, or use explicit cast";
+    }
+    if (strcmp(from_type, "float") == 0 && strcmp(to_type, "int") == 0) {
+        return "use (int) cast to truncate decimal part";
+    }
+    if (strcmp(from_type, "string") == 0 && strcmp(to_type, "int") == 0) {
+        return "use str_to_int() function to parse the string";
+    }
+    if (strcmp(from_type, "int") == 0 && strcmp(to_type, "string") == 0) {
+        return "use int_to_str() function to convert";
+    }
+    if (strcmp(from_type, "array") == 0 && strcmp(to_type, "string") == 0) {
+        return "use arr_join() to convert array to string";
+    }
+    if (strstr(from_type, "HashMap") && strstr(to_type, "int")) {
+        return "access map values with map[key] syntax";
+    }
+    return "check if these types are compatible";
+}
+
 void type_error_mismatch(const char* expected_type, const char* actual_type, const char* context, int line, int column) {
+    // Enhanced error message with colors and detailed information
+    printf("\n" RED BOLD "Error:" RESET " Type mismatch at line %d\n", line);
+    printf("  " BOLD "Expected:" RESET " %s (%s)\n", 
+           expected_type, get_detailed_type_description(expected_type));
+    printf("  " BOLD "Got:" RESET "      %s (%s)\n", 
+           actual_type, get_detailed_type_description(actual_type));
+    printf("  " BOLD "Context:" RESET "  %s\n", context);
+    
+    // Provide helpful suggestion
+    const char* suggestion = get_conversion_suggestion(actual_type, expected_type);
+    printf("\n" YELLOW "Note:" RESET " %s\n", suggestion);
+    
+    // Add to error system for tracking
     char message[512];
-    snprintf(message, sizeof(message), "Type mismatch in %s: expected '%s' but got '%s'", 
-             context, expected_type, actual_type);
-    
-    char suggestion[256];
-    snprintf(suggestion, sizeof(suggestion), "Convert '%s' to '%s' or change the expected type", 
-             actual_type, expected_type);
-    
+    snprintf(message, sizeof(message), "Type mismatch: expected '%s' but got '%s'", 
+             expected_type, actual_type);
     report_error_with_suggestion(ERR_TYPE_MISMATCH, "type_checker", line, column, message, suggestion);
 }
 

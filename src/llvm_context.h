@@ -13,7 +13,8 @@
 #include "error.h"
 
 // Forward declarations
-typedef struct SymbolTable SymbolTable;
+typedef struct LLVMSymbolTable LLVMSymbolTable;
+typedef struct LLVMSymbolTableEntry LLVMSymbolTableEntry;
 
 // LLVM Context Management Structure
 typedef struct {
@@ -41,6 +42,13 @@ typedef struct {
     // Current compilation state
     LLVMValueRef current_function;
     LLVMBasicBlockRef current_block;
+    
+    // Symbol table for variable tracking
+    LLVMSymbolTable* symbol_table;
+    
+    // Loop control for break/continue
+    LLVMBasicBlockRef current_loop_end;
+    LLVMBasicBlockRef current_loop_header;
     
     // Thread safety
     pthread_mutex_t context_mutex;
@@ -90,6 +98,14 @@ void llvm_context_clear_errors(LLVMCodegenContext* ctx);
 bool llvm_context_validate_state(LLVMCodegenContext* ctx);
 void llvm_context_dump_module(LLVMCodegenContext* ctx);
 
+// Symbol table operations
+LLVMSymbolTable* symbol_table_create(LLVMSymbolTable* parent);
+void symbol_table_destroy(LLVMSymbolTable* table);
+void symbol_table_insert(LLVMSymbolTable* table, const char* name, LLVMValueRef value);
+LLVMValueRef symbol_table_lookup(LLVMSymbolTable* table, const char* name);
+void symbol_table_push_scope(LLVMCodegenContext* ctx);
+void symbol_table_pop_scope(LLVMCodegenContext* ctx);
+
 #ifdef WYN_TESTING
 // Test functions
 void test_llvm_context_create(void);
@@ -97,6 +113,7 @@ void test_llvm_context_thread_safety(void);
 void test_llvm_context_module_management(void);
 void test_llvm_context_builder_lifecycle(void);
 void run_llvm_context_tests(void);
+
 #endif
 
 #else

@@ -44,7 +44,7 @@ static char* read_file(const char* path) {
 }
 
 static char* get_version() {
-    static char version[32] = {0};
+    static char version[64] = {0};
     if (version[0] == 0) {
         // Try multiple locations for VERSION file
         const char* paths[] = {
@@ -66,7 +66,12 @@ static char* get_version() {
             }
             fclose(f);
         }
-        if (version[0] == 0) strcpy(version, "1.2.1");
+        if (version[0] == 0) strcpy(version, "1.6.0");
+        
+        // Add LLVM backend indicator
+        #ifdef WITH_LLVM
+        strcat(version, " (LLVM backend)");
+        #endif
     }
     return version;
 }
@@ -584,25 +589,81 @@ int main(int argc, char** argv) {
             return 1;
         }
         
-        // Generate LLVM IR
-        char out_path[256];
-        snprintf(out_path, 256, "%s.ll", file);
-        FILE* out = fopen(out_path, "w");
-        init_codegen(out);
-        codegen_c_header();
-        codegen_program(prog);
-        fclose(out);
+        // Generate code using LLVM backend
+        char base_name[256];
+        strncpy(base_name, file, sizeof(base_name) - 1);
+        char* dot = strrchr(base_name, '.');
+        if (dot) *dot = '\0';
         
-        // Generate bitcode if possible
-        char bc_path[256];
-        snprintf(bc_path, 256, "%s.bc", file);
-        if (codegen_generate_bitcode(bc_path)) {
-            printf("Generated LLVM bitcode: %s\n", bc_path);
+        char ll_path[300];
+        char obj_path[300];
+        char out_path[300];
+        snprintf(ll_path, sizeof(ll_path), "%s.ll", base_name);
+        snprintf(obj_path, sizeof(obj_path), "%s.o", base_name);
+        snprintf(out_path, sizeof(out_path), "%s.out", base_name);
+        
+        // Initialize LLVM codegen (no C file output)
+        init_codegen(NULL);
+        codegen_program(prog);
+        
+        // Write LLVM IR to file
+        extern bool llvm_write_ir_to_file(const char* filename);
+        if (!llvm_write_ir_to_file(ll_path)) {
+            fprintf(stderr, "Error: Failed to write LLVM IR\n");
+            free(source);
+            return 1;
+        }
+        printf("Generated LLVM IR: %s\n", ll_path);
+        
+        // Compile LLVM IR to object file
+        extern bool llvm_compile_to_object(const char* ir_file, const char* obj_file);
+        if (!llvm_compile_to_object(ll_path, obj_path)) {
+            fprintf(stderr, "Error: Failed to compile LLVM IR to object file\n");
+            free(source);
+            return 1;
+        }
+        printf("Compiled to object: %s\n", obj_path);
+        
+        // Get WYN_ROOT
+        char wyn_root[1024] = ".";
+        char* root_env = getenv("WYN_ROOT");
+        if (root_env) {
+            snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
+        } else {
+            // Auto-detect: try multiple locations
+            const char* test_paths[] = {
+                "./src/wyn_wrapper.c",
+                "../src/wyn_wrapper.c",
+                "./wyn/src/wyn_wrapper.c",
+                NULL
+            };
+            
+            for (int i = 0; test_paths[i] != NULL; i++) {
+                FILE* test = fopen(test_paths[i], "r");
+                if (test) {
+                    fclose(test);
+                    if (i == 0) {
+                        strcpy(wyn_root, ".");
+                    } else if (i == 1) {
+                        strcpy(wyn_root, "..");
+                    } else if (i == 2) {
+                        strcpy(wyn_root, "./wyn");
+                    }
+                    break;
+                }
+            }
         }
         
-        printf("Generated LLVM IR: %s\n", out_path);
+        // Link to binary
+        extern bool llvm_link_binary(const char* obj_file, const char* output, const char* wyn_root);
+        if (!llvm_link_binary(obj_path, out_path, wyn_root)) {
+            fprintf(stderr, "Error: Failed to link binary\n");
+            free(source);
+            return 1;
+        }
+        printf("Linked binary: %s\n", out_path);
+        printf("Compiled successfully\n");
         
-        // Cleanup
         cleanup_codegen();
         free_program(prog);
         free(source);
@@ -770,6 +831,91 @@ int main(int argc, char** argv) {
         }
     }
     
+    #ifdef WITH_LLVM
+    // Use LLVM backend
+    char base_name[256];
+    strncpy(base_name, argv[file_arg_index], sizeof(base_name) - 1);
+    char* dot = strrchr(base_name, '.');
+    if (dot) *dot = '\0';
+    
+    char ll_path[300];
+    char obj_path[300];
+    char out_path[300];
+    snprintf(ll_path, sizeof(ll_path), "%s.ll", base_name);
+    snprintf(obj_path, sizeof(obj_path), "%s.o", base_name);
+    
+    if (output_name) {
+        snprintf(out_path, sizeof(out_path), "%s", output_name);
+    } else {
+        snprintf(out_path, sizeof(out_path), "%s.out", base_name);
+    }
+    
+    // Initialize LLVM codegen
+    init_codegen(NULL);
+    codegen_program(prog);
+    
+    // Write LLVM IR to file
+    extern bool llvm_write_ir_to_file(const char* filename);
+    if (!llvm_write_ir_to_file(ll_path)) {
+        fprintf(stderr, "Error: Failed to write LLVM IR\n");
+        free(source);
+        return 1;
+    }
+    
+    // Compile LLVM IR to object file
+    extern bool llvm_compile_to_object(const char* ir_file, const char* obj_file);
+    if (!llvm_compile_to_object(ll_path, obj_path)) {
+        fprintf(stderr, "Error: Failed to compile LLVM IR to object file\n");
+        free(source);
+        return 1;
+    }
+    
+    // Get WYN_ROOT
+    char wyn_root[1024] = ".";
+    char* root_env = getenv("WYN_ROOT");
+    if (root_env) {
+        snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
+    } else {
+        // Auto-detect: try multiple locations
+        const char* test_paths[] = {
+            "./src/wyn_wrapper.c",
+            "../src/wyn_wrapper.c",
+            "./wyn/src/wyn_wrapper.c",
+            NULL
+        };
+        
+        for (int i = 0; test_paths[i] != NULL; i++) {
+            FILE* test = fopen(test_paths[i], "r");
+            if (test) {
+                fclose(test);
+                if (i == 0) {
+                    strcpy(wyn_root, ".");
+                } else if (i == 1) {
+                    strcpy(wyn_root, "..");
+                } else if (i == 2) {
+                    strcpy(wyn_root, "./wyn");
+                }
+                break;
+            }
+        }
+    }
+    
+    // Link to binary
+    extern bool llvm_link_binary(const char* obj_file, const char* output, const char* wyn_root);
+    if (!llvm_link_binary(obj_path, out_path, wyn_root)) {
+        fprintf(stderr, "Error: Failed to link binary\n");
+        free(source);
+        return 1;
+    }
+    
+    printf("Compiled successfully\n");
+    cleanup_codegen();
+    free_program(prog);
+    free(source);
+    return 0;
+    
+    #else
+    // Use C backend (fallback)
     char out_path[256];
     snprintf(out_path, 256, "%s.c", argv[file_arg_index]);
     FILE* out = fopen(out_path, "w");
@@ -802,34 +948,26 @@ int main(int argc, char** argv) {
     const char* opt_flag = (optimization == OPT_O2) ? "-O2" : (optimization == OPT_O1) ? "-O1" : "-O0";
     char output_bin[256];
     if (output_name) {
-        snprintf(output_bin, 256, "%s", output_name);
+        snprintf(output_bin, sizeof(output_bin), "%s", output_name);
     } else {
-        snprintf(output_bin, 256, "%s.out", argv[file_arg_index]);
+        snprintf(output_bin, sizeof(output_bin), "%s.out", argv[file_arg_index]);
     }
-    snprintf(compile_cmd, sizeof(compile_cmd), 
+    
+    snprintf(compile_cmd, sizeof(compile_cmd),
              "gcc %s -std=c11 -I %s/src -o %s %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/spawn.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c -lm", 
              opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
-    int result = system(compile_cmd);
     
-    // Check if output file was actually created
-    FILE* check = fopen(output_bin, "r");
-    if (check) {
-        fclose(check);
-        printf("Compiled successfully: %s\n", output_bin);
-        // Keep intermediate .c file for debugging
-        // char c_file[256];
-        // snprintf(c_file, 256, "%s.c", argv[file_arg_index]);
-        // remove(c_file);
-    } else {
-        fprintf(stderr, "C compilation failed - output file not created\n");
-        fprintf(stderr, "Command: %s\n", compile_cmd);
-        fprintf(stderr, "GCC exit code: %d\n", result);
-        return 1;
+    int result = system(compile_cmd);
+    if (result != 0) {
+        fprintf(stderr, "C compilation failed\n");
+        free(source);
+        return result;
     }
     
-    safe_free(source);
-    wyn_platform_cleanup();
-    return result;
+    printf("Compiled successfully\n");
+    free(source);
+    return 0;
+    #endif
 }
 
 int create_new_project(const char* project_name) {

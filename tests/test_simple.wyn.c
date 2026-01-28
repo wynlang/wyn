@@ -116,6 +116,8 @@ int wyn_string_index_of(const char* str, const char* substr);
 int wyn_string_last_index_of(const char* str, const char* substr);
 char* wyn_string_repeat(const char* str, int n);
 char* wyn_string_reverse(const char* str);
+char* wyn_string_pad_left(const char* str, int width, const char* pad_char);
+char* wyn_string_pad_right(const char* str, int width, const char* pad_char);
 
 // Json module
 typedef struct WynJson WynJson;
@@ -261,6 +263,7 @@ const char* array_get_str(WynArray arr, int index) {
     if (arr.data[index].type == WYN_TYPE_STRING) return arr.data[index].data.string_val;
     return "";
 }
+#define array_get_struct(arr, idx, T) (*(T*)arr.data[idx].data.struct_val)
 WynValue array_get(WynArray arr, int index) {
     WynValue val = {0};
     if (index >= 0 && index < arr.count) val = arr.data[index];
@@ -314,8 +317,6 @@ void array_push(WynArray* arr, int value) {
     memcpy((arr)->data[(arr)->count].data.struct_val, &__temp_val, sizeof(StructType)); \
     (arr)->count++; \
 } while(0)
-#define array_get_struct(arr, index, StructType) \
-    (*(StructType*)((arr).data[index].data.struct_val))
 int array_pop(WynArray* arr) {
     if (arr->count == 0) return 0;
     arr->count--;
@@ -1896,8 +1897,6 @@ int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }
 
 // ARC functions are provided by arc_runtime.c
 
-int x = 42;
-int y = 100;
 
 // Lambda functions (defined before use)
 

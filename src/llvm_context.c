@@ -9,6 +9,18 @@
 #include "safe_memory.h"
 #include "error.h"
 
+// Symbol table structures
+struct LLVMSymbolTableEntry {
+    char* name;
+    LLVMValueRef value;
+    LLVMSymbolTableEntry* next;
+};
+
+struct LLVMSymbolTable {
+    LLVMSymbolTableEntry* entries;
+    LLVMSymbolTable* parent;
+};
+
 // Context lifecycle management
 LLVMCodegenContext* llvm_context_create(const char* module_name) {
     if (!module_name) {
@@ -81,6 +93,11 @@ LLVMCodegenContext* llvm_context_create(const char* module_name) {
     ctx->is_initialized = true;
     ctx->has_errors = false;
     ctx->last_error = NULL;
+    ctx->current_loop_end = NULL;
+    ctx->current_loop_header = NULL;
+    
+    // Initialize symbol table
+    ctx->symbol_table = symbol_table_create(NULL);
     
     // Store module name
     ctx->module_name = safe_strdup(module_name);
@@ -534,7 +551,72 @@ void run_llvm_context_tests(void) {
     test_llvm_context_builder_lifecycle();
     printf("=== LLVM Context Tests Complete ===\n");
 }
-#endif
+#endif // WYN_TESTING
+
+// Symbol table operations
+LLVMSymbolTable* symbol_table_create(LLVMSymbolTable* parent) {
+    LLVMSymbolTable* table = (LLVMSymbolTable*)malloc(sizeof(LLVMSymbolTable));
+    if (!table) return NULL;
+    table->entries = NULL;
+    table->parent = parent;
+    return table;
+}
+
+void symbol_table_destroy(LLVMSymbolTable* table) {
+    if (!table) return;
+    
+    LLVMSymbolTableEntry* entry = table->entries;
+    while (entry) {
+        LLVMSymbolTableEntry* next = entry->next;
+        free(entry->name);
+        free(entry);
+        entry = next;
+    }
+    free(table);
+}
+
+void symbol_table_insert(LLVMSymbolTable* table, const char* name, LLVMValueRef value) {
+    if (!table || !name) return;
+    
+    LLVMSymbolTableEntry* entry = (LLVMSymbolTableEntry*)malloc(sizeof(LLVMSymbolTableEntry));
+    if (!entry) return;
+    
+    entry->name = strdup(name);
+    entry->value = value;
+    entry->next = table->entries;
+    table->entries = entry;
+}
+
+LLVMValueRef symbol_table_lookup(LLVMSymbolTable* table, const char* name) {
+    if (!table || !name) return NULL;
+    
+    // Search current scope
+    for (LLVMSymbolTableEntry* entry = table->entries; entry; entry = entry->next) {
+        if (strcmp(entry->name, name) == 0) {
+            return entry->value;
+        }
+    }
+    
+    // Search parent scope
+    if (table->parent) {
+        return symbol_table_lookup(table->parent, name);
+    }
+    
+    return NULL;
+}
+
+void symbol_table_push_scope(LLVMCodegenContext* ctx) {
+    if (!ctx) return;
+    ctx->symbol_table = symbol_table_create(ctx->symbol_table);
+}
+
+void symbol_table_pop_scope(LLVMCodegenContext* ctx) {
+    if (!ctx || !ctx->symbol_table) return;
+    
+    LLVMSymbolTable* old_table = ctx->symbol_table;
+    ctx->symbol_table = old_table->parent;
+    symbol_table_destroy(old_table);
+}
 
 #else
 // Fallback implementations when LLVM is not available

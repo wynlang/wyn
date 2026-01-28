@@ -8,6 +8,7 @@
 #include "safe_memory.h"
 #include "error.h"
 #include "type_mapping.h"
+#include "llvm_context.h"
 #include "llvm_expression_codegen.h"
 #include "llvm_function_codegen.h"
 
@@ -39,6 +40,16 @@ void codegen_statement(Stmt* stmt, LLVMCodegenContext* ctx) {
         case STMT_BLOCK:
             codegen_block_statement(&stmt->block, ctx);
             break;
+        case STMT_BREAK:
+            if (ctx->current_loop_end) {
+                LLVMBuildBr(ctx->builder, ctx->current_loop_end);
+            }
+            break;
+        case STMT_CONTINUE:
+            if (ctx->current_loop_header) {
+                LLVMBuildBr(ctx->builder, ctx->current_loop_header);
+            }
+            break;
         case STMT_FN:
             codegen_function_definition(&stmt->fn, ctx);
             break;
@@ -58,6 +69,14 @@ void codegen_if_statement(IfStmt* stmt, LLVMCodegenContext* ctx) {
     LLVMValueRef condition = codegen_expression(stmt->condition, ctx);
     if (!condition) {
         return;
+    }
+    
+    // Convert condition to i1 if needed
+    LLVMTypeRef cond_type = LLVMTypeOf(condition);
+    if (LLVMGetTypeKind(cond_type) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(cond_type) != 1) {
+        // Convert to boolean by comparing with zero
+        condition = LLVMBuildICmp(ctx->builder, LLVMIntNE, condition, 
+                                   LLVMConstInt(cond_type, 0, false), "tobool");
     }
     
     // Get current function
@@ -109,6 +128,12 @@ void codegen_while_statement(WhileStmt* stmt, LLVMCodegenContext* ctx) {
     LLVMBasicBlockRef loop_body = LLVMAppendBasicBlock(function, "while.body");
     LLVMBasicBlockRef loop_end = LLVMAppendBasicBlock(function, "while.end");
     
+    // Save previous loop context
+    LLVMBasicBlockRef prev_loop_end = ctx->current_loop_end;
+    LLVMBasicBlockRef prev_loop_header = ctx->current_loop_header;
+    ctx->current_loop_end = loop_end;
+    ctx->current_loop_header = loop_header;
+    
     // Jump to loop header
     LLVMBuildBr(ctx->builder, loop_header);
     
@@ -116,8 +141,18 @@ void codegen_while_statement(WhileStmt* stmt, LLVMCodegenContext* ctx) {
     LLVMPositionBuilderAtEnd(ctx->builder, loop_header);
     LLVMValueRef condition = codegen_expression(stmt->condition, ctx);
     if (!condition) {
+        ctx->current_loop_end = prev_loop_end;
+        ctx->current_loop_header = prev_loop_header;
         return;
     }
+    
+    // Convert condition to i1 if needed
+    LLVMTypeRef cond_type = LLVMTypeOf(condition);
+    if (LLVMGetTypeKind(cond_type) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(cond_type) != 1) {
+        condition = LLVMBuildICmp(ctx->builder, LLVMIntNE, condition, 
+                                   LLVMConstInt(cond_type, 0, false), "tobool");
+    }
+    
     LLVMBuildCondBr(ctx->builder, condition, loop_body, loop_end);
     
     // Generate loop body
@@ -127,19 +162,129 @@ void codegen_while_statement(WhileStmt* stmt, LLVMCodegenContext* ctx) {
         LLVMBuildBr(ctx->builder, loop_header);
     }
     
+    // Restore previous loop context
+    ctx->current_loop_end = prev_loop_end;
+    ctx->current_loop_header = prev_loop_header;
+    
     // Continue with loop end
     LLVMPositionBuilderAtEnd(ctx->builder, loop_end);
 }
 
-// Generate code for for statements (placeholder)
+// Generate code for for statements
 void codegen_for_statement(ForStmt* stmt, LLVMCodegenContext* ctx) {
     if (!stmt || !ctx) {
         return;
     }
     
-    // For now, create a simple placeholder
-    // In a full implementation, this would handle for loop initialization, condition, and increment
-    report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "For statements not yet implemented");
+    // For range-based loops: for i in 0..5
+    if (stmt->array_expr && stmt->array_expr->type == EXPR_RANGE) {
+        // Get range bounds
+        LLVMValueRef start = codegen_expression(stmt->array_expr->range.start, ctx);
+        LLVMValueRef end = codegen_expression(stmt->array_expr->range.end, ctx);
+        if (!start || !end) return;
+        
+        // Create loop variable
+        char* var_name = safe_malloc(stmt->loop_var.length + 1);
+        if (!var_name) return;
+        strncpy(var_name, stmt->loop_var.start, stmt->loop_var.length);
+        var_name[stmt->loop_var.length] = '\0';
+        
+        LLVMValueRef loop_var = create_local_variable(var_name, ctx->int_type, ctx);
+        LLVMBuildStore(ctx->builder, start, loop_var);
+        
+        // Create blocks
+        LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(ctx->builder));
+        LLVMBasicBlockRef loop_header = LLVMAppendBasicBlock(function, "for.header");
+        LLVMBasicBlockRef loop_body = LLVMAppendBasicBlock(function, "for.body");
+        LLVMBasicBlockRef loop_end = LLVMAppendBasicBlock(function, "for.end");
+        
+        // Save previous loop context
+        LLVMBasicBlockRef prev_loop_end = ctx->current_loop_end;
+        LLVMBasicBlockRef prev_loop_header = ctx->current_loop_header;
+        ctx->current_loop_end = loop_end;
+        ctx->current_loop_header = loop_header;
+        
+        LLVMBuildBr(ctx->builder, loop_header);
+        
+        // Header: check condition
+        LLVMPositionBuilderAtEnd(ctx->builder, loop_header);
+        LLVMValueRef current = LLVMBuildLoad2(ctx->builder, ctx->int_type, loop_var, var_name);
+        LLVMValueRef cond = LLVMBuildICmp(ctx->builder, LLVMIntSLT, current, end, "for.cond");
+        LLVMBuildCondBr(ctx->builder, cond, loop_body, loop_end);
+        
+        // Body
+        LLVMPositionBuilderAtEnd(ctx->builder, loop_body);
+        codegen_statement(stmt->body, ctx);
+        
+        // Increment
+        if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(ctx->builder))) {
+            LLVMValueRef next = LLVMBuildAdd(ctx->builder, current, LLVMConstInt(ctx->int_type, 1, false), "for.inc");
+            LLVMBuildStore(ctx->builder, next, loop_var);
+            LLVMBuildBr(ctx->builder, loop_header);
+        }
+        
+        // Restore previous loop context
+        ctx->current_loop_end = prev_loop_end;
+        ctx->current_loop_header = prev_loop_header;
+        
+        LLVMPositionBuilderAtEnd(ctx->builder, loop_end);
+        safe_free(var_name);
+        return;
+    }
+    
+    // Traditional for loop: for (init; cond; inc)
+    if (stmt->init) {
+        codegen_statement(stmt->init, ctx);
+    }
+    
+    LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(ctx->builder));
+    LLVMBasicBlockRef loop_header = LLVMAppendBasicBlock(function, "for.header");
+    LLVMBasicBlockRef loop_body = LLVMAppendBasicBlock(function, "for.body");
+    LLVMBasicBlockRef loop_end = LLVMAppendBasicBlock(function, "for.end");
+    
+    // Save previous loop context
+    LLVMBasicBlockRef prev_loop_end = ctx->current_loop_end;
+    LLVMBasicBlockRef prev_loop_header = ctx->current_loop_header;
+    ctx->current_loop_end = loop_end;
+    ctx->current_loop_header = loop_header;
+    
+    LLVMBuildBr(ctx->builder, loop_header);
+    
+    // Header
+    LLVMPositionBuilderAtEnd(ctx->builder, loop_header);
+    if (stmt->condition) {
+        LLVMValueRef cond = codegen_expression(stmt->condition, ctx);
+        if (!cond) {
+            ctx->current_loop_end = prev_loop_end;
+            ctx->current_loop_header = prev_loop_header;
+            return;
+        }
+        LLVMTypeRef cond_type = LLVMTypeOf(cond);
+        if (LLVMGetTypeKind(cond_type) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(cond_type) != 1) {
+            cond = LLVMBuildICmp(ctx->builder, LLVMIntNE, cond, LLVMConstInt(cond_type, 0, false), "tobool");
+        }
+        LLVMBuildCondBr(ctx->builder, cond, loop_body, loop_end);
+    } else {
+        LLVMBuildBr(ctx->builder, loop_body);
+    }
+    
+    // Body
+    LLVMPositionBuilderAtEnd(ctx->builder, loop_body);
+    codegen_statement(stmt->body, ctx);
+    
+    // Increment
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(ctx->builder))) {
+        if (stmt->increment) {
+            codegen_expression(stmt->increment, ctx);
+        }
+        LLVMBuildBr(ctx->builder, loop_header);
+    }
+    
+    // Restore previous loop context
+    ctx->current_loop_end = prev_loop_end;
+    ctx->current_loop_header = prev_loop_header;
+    
+    LLVMPositionBuilderAtEnd(ctx->builder, loop_end);
 }
 
 // Generate code for variable declarations
@@ -197,6 +342,9 @@ LLVMValueRef create_local_variable(const char* name, LLVMTypeRef type, LLVMCodeg
     // Create alloca
     LLVMValueRef alloca = LLVMBuildAlloca(ctx->builder, type, name);
     
+    // Register in symbol table
+    symbol_table_insert(ctx->symbol_table, name, alloca);
+    
     // Restore position
     LLVMPositionBuilderAtEnd(ctx->builder, current_block);
     
@@ -208,6 +356,7 @@ void codegen_return_statement(ReturnStmt* stmt, LLVMCodegenContext* ctx) {
     if (!stmt || !ctx) {
         return;
     }
+    
     
     if (stmt->value) {
         // Return with value
@@ -226,6 +375,7 @@ void codegen_block_statement(BlockStmt* stmt, LLVMCodegenContext* ctx) {
     if (!stmt || !ctx) {
         return;
     }
+    
     
     // Enter new scope
     enter_scope(ctx);
@@ -257,8 +407,7 @@ void enter_scope(LLVMCodegenContext* ctx) {
         return;
     }
     
-    // For now, this is a placeholder
-    // In a full implementation, this would push a new scope onto a symbol table stack
+    symbol_table_push_scope(ctx);
 }
 
 // Exit the current scope (placeholder for symbol table)
@@ -267,8 +416,7 @@ void exit_scope(LLVMCodegenContext* ctx) {
         return;
     }
     
-    // For now, this is a placeholder
-    // In a full implementation, this would pop the current scope from a symbol table stack
+    symbol_table_pop_scope(ctx);
 }
 
 #endif // WITH_LLVM

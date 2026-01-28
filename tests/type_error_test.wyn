@@ -1,0 +1,6 @@
+fn main() {
+    var x: int = 42
+    var y: string = "hello"
+    var result = x + y  // This should trigger a type error
+    print(result)
+}

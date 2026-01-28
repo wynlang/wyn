@@ -203,3 +203,58 @@ const char* wyn_string_trim_safe(const char* str) {
     
     return result;
 }
+
+// String pad left
+const char* wyn_string_pad_left_safe(const char* str, int width, const char* pad_char) {
+    if (!str) return NULL;
+    
+    int len = strlen(str);
+    if (width <= len) {
+        // No padding needed, return copy
+        char* result = malloc(len + 1);
+        if (result) {
+            memcpy(result, str, len + 1);
+        }
+        return result;
+    }
+    
+    char pad = pad_char && pad_char[0] ? pad_char[0] : ' ';
+    int pad_count = width - len;
+    char* result = malloc(width + 1);
+    if (!result) return str;
+    
+    for (int i = 0; i < pad_count; i++) {
+        result[i] = pad;
+    }
+    memcpy(result + pad_count, str, len);
+    result[width] = '\0';
+    
+    return result;
+}
+
+// String pad right
+const char* wyn_string_pad_right_safe(const char* str, int width, const char* pad_char) {
+    if (!str) return NULL;
+    
+    int len = strlen(str);
+    if (width <= len) {
+        // No padding needed, return copy
+        char* result = malloc(len + 1);
+        if (result) {
+            memcpy(result, str, len + 1);
+        }
+        return result;
+    }
+    
+    char pad = pad_char && pad_char[0] ? pad_char[0] : ' ';
+    char* result = malloc(width + 1);
+    if (!result) return str;
+    
+    memcpy(result, str, len);
+    for (int i = len; i < width; i++) {
+        result[i] = pad;
+    }
+    result[width] = '\0';
+    
+    return result;
+}

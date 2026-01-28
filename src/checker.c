@@ -144,7 +144,21 @@ static void print_type_name(Type* type) {
         case TYPE_STRING: fprintf(stderr, "string"); break;
         case TYPE_BOOL: fprintf(stderr, "bool"); break;
         case TYPE_VOID: fprintf(stderr, "void"); break;
-        case TYPE_ARRAY: fprintf(stderr, "array"); break;
+        case TYPE_ARRAY: 
+            fprintf(stderr, "[");
+            if (type->array_type.element_type) {
+                print_type_name(type->array_type.element_type);
+            } else {
+                fprintf(stderr, "unknown");
+            }
+            fprintf(stderr, "]");
+            break;
+        case TYPE_MAP:
+            fprintf(stderr, "HashMap<string, int>");
+            break;
+        case TYPE_SET:
+            fprintf(stderr, "HashSet<int>");
+            break;
         case TYPE_STRUCT:
             if (type->struct_type.name.length > 0) {
                 fprintf(stderr, "%.*s", type->struct_type.name.length, type->struct_type.name.start);
@@ -153,8 +167,9 @@ static void print_type_name(Type* type) {
             }
             break;
         case TYPE_OPTIONAL: // T2.5.1: Optional Type Implementation
+            fprintf(stderr, "Option<");
             print_type_name(type->optional_type.inner_type);
-            fprintf(stderr, "?");
+            fprintf(stderr, ">");
             break;
         case TYPE_RESULT: // TASK-026: Result Type Implementation
             fprintf(stderr, "Result<");
@@ -162,6 +177,15 @@ static void print_type_name(Type* type) {
             fprintf(stderr, ", ");
             print_type_name(type->result_type.err_type);
             fprintf(stderr, ">");
+            break;
+        case TYPE_FUNCTION:
+            fprintf(stderr, "fn(");
+            for (int i = 0; i < type->fn_type.param_count; i++) {
+                if (i > 0) fprintf(stderr, ", ");
+                print_type_name(type->fn_type.param_types[i]);
+            }
+            fprintf(stderr, ") -> ");
+            print_type_name(type->fn_type.return_type);
             break;
         default: fprintf(stderr, "unknown"); break;
     }
@@ -459,6 +483,8 @@ void init_checker() {
         "wyn_string_to_upper", "wyn_string_to_lower", "wyn_string_trim", "wyn_str_replace",
         "wyn_string_split", "wyn_string_join", "wyn_str_substring", "wyn_string_index_of",
         "wyn_string_last_index_of", "wyn_string_repeat", "wyn_string_reverse",
+        "wyn_string_pad_left", "wyn_string_pad_right",
+        "wyn_string_pad_left_safe", "wyn_string_pad_right_safe",
         "wyn_array_map", "wyn_array_filter", "wyn_array_reduce", "wyn_array_find",
         "wyn_array_any", "wyn_array_all", "wyn_array_reverse", "wyn_array_sort",
         "wyn_array_contains", "wyn_array_index_of", "wyn_array_last_index_of",
@@ -474,7 +500,7 @@ void init_checker() {
         "wyn_crypto_random_bytes", "wyn_crypto_random_hex", "wyn_crypto_xor_cipher"
     };
     
-    for (int i = 0; i < 214; i++) {  // Updated count: 217 - 3 = 214
+    for (int i = 0; i < 218; i++) {  // Updated count: 216 + 2 = 218
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
     }
@@ -956,8 +982,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             
             if (left->kind != right->kind) {
-                fprintf(stderr, "Error at line %d: Type mismatch in binary expression (left: %d, right: %d, op: %d)\n", 
-                        expr->binary.op.line, left->kind, right->kind, expr->binary.op.type);
+                // Use enhanced error reporting with detailed type information
+                char left_type[256], right_type[256];
+                snprintf(left_type, sizeof(left_type), "%s", type_to_string(left));
+                snprintf(right_type, sizeof(right_type), "%s", type_to_string(right));
+                
+                type_error_mismatch(left_type, right_type, "binary expression", 
+                                  expr->binary.op.line, 0);
                 had_error = true;
                 return NULL;
             }
@@ -1114,11 +1145,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     Type* actual_type = check_expr(expr->call.args[i], scope);
                     
                     if (!wyn_is_type_compatible(expected_type, actual_type)) {
-                        fprintf(stderr, "Error: Type mismatch for argument %d - expected ", i + 1);
-                        print_type_name(expected_type);
-                        fprintf(stderr, ", got ");
-                        print_type_name(actual_type);
-                        fprintf(stderr, "\n");
+                        char expected_str[256], actual_str[256], context[256];
+                        snprintf(expected_str, sizeof(expected_str), "%s", type_to_string(expected_type));
+                        snprintf(actual_str, sizeof(actual_str), "%s", type_to_string(actual_type));
+                        snprintf(context, sizeof(context), "argument %d", i + 1);
+                        
+                        type_error_mismatch(expected_str, actual_str, context, 
+                                          expr->call.args[i]->token.line, 0);
                         had_error = true;
                     }
                 }

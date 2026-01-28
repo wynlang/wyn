@@ -8,6 +8,7 @@
 #include "safe_memory.h"
 #include "error.h"
 #include "type_mapping.h"
+#include "llvm_context.h"
 #include "llvm_array_string_codegen.h"
 #include "runtime_functions.h"
 
@@ -17,33 +18,49 @@ LLVMValueRef codegen_expression(Expr* expr, LLVMCodegenContext* ctx) {
         return NULL;
     }
     
+    
+    LLVMValueRef result = NULL;
+    
     switch (expr->type) {
         case EXPR_INT:
-            return codegen_int_literal(expr, ctx);
+            result = codegen_int_literal(expr, ctx);
+            break;
         case EXPR_FLOAT:
-            return codegen_float_literal(expr, ctx);
+            result = codegen_float_literal(expr, ctx);
+            break;
         case EXPR_STRING:
-            return codegen_string_literal(expr, ctx);
+            result = codegen_string_literal(expr, ctx);
+            break;
         case EXPR_BOOL:
-            return codegen_bool_literal(expr, ctx);
+            result = codegen_bool_literal(expr, ctx);
+            break;
         case EXPR_BINARY:
-            return codegen_binary_expr(&expr->binary, ctx);
+            result = codegen_binary_expr(&expr->binary, ctx);
+            break;
         case EXPR_UNARY:
-            return codegen_unary_expr(&expr->unary, ctx);
+            result = codegen_unary_expr(&expr->unary, ctx);
+            break;
         case EXPR_IDENT:
-            return codegen_variable_ref(expr, ctx);
+            result = codegen_variable_ref(expr, ctx);
+            break;
         case EXPR_ASSIGN:
-            return codegen_assignment(&expr->assign, ctx);
+            result = codegen_assignment(&expr->assign, ctx);
+            break;
         case EXPR_CALL:
-            return codegen_function_call(&expr->call, ctx);
+            result = codegen_function_call(&expr->call, ctx);
+            break;
         case EXPR_INDEX:
-            return codegen_array_indexing(&expr->index, ctx);
+            result = codegen_array_indexing(&expr->index, ctx);
+            break;
         case EXPR_ARRAY:
-            return codegen_array_literal(&expr->array, ctx);
+            result = codegen_array_literal(&expr->array, ctx);
+            break;
         default:
             report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Unsupported expression type for code generation");
             return NULL;
     }
+    
+    return result;
 }
 
 // Generate code for integer literals
@@ -145,7 +162,7 @@ LLVMValueRef codegen_binary_expr(BinaryExpr* expr, LLVMCodegenContext* ctx) {
 }
 
 // Generate arithmetic operations
-LLVMValueRef codegen_arithmetic_op(LLVMValueRef left, LLVMValueRef right, TokenType op, LLVMCodegenContext* ctx) {
+LLVMValueRef codegen_arithmetic_op(LLVMValueRef left, LLVMValueRef right, WynTokenType op, LLVMCodegenContext* ctx) {
     if (!left || !right || !ctx) {
         return NULL;
     }
@@ -188,7 +205,7 @@ LLVMValueRef codegen_arithmetic_op(LLVMValueRef left, LLVMValueRef right, TokenT
 }
 
 // Generate comparison operations
-LLVMValueRef codegen_comparison_op(LLVMValueRef left, LLVMValueRef right, TokenType op, LLVMCodegenContext* ctx) {
+LLVMValueRef codegen_comparison_op(LLVMValueRef left, LLVMValueRef right, WynTokenType op, LLVMCodegenContext* ctx) {
     if (!left || !right || !ctx) {
         return NULL;
     }
@@ -230,7 +247,7 @@ LLVMValueRef codegen_comparison_op(LLVMValueRef left, LLVMValueRef right, TokenT
 }
 
 // Generate logical operations
-LLVMValueRef codegen_logical_op(LLVMValueRef left, LLVMValueRef right, TokenType op, LLVMCodegenContext* ctx) {
+LLVMValueRef codegen_logical_op(LLVMValueRef left, LLVMValueRef right, WynTokenType op, LLVMCodegenContext* ctx) {
     if (!left || !right || !ctx) {
         return NULL;
     }
@@ -278,34 +295,117 @@ LLVMValueRef codegen_variable_ref(Expr* expr, LLVMCodegenContext* ctx) {
         return NULL;
     }
     
-    // For now, create a simple placeholder
-    // In a full implementation, this would look up the variable in a symbol table
-    report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Variable references not yet implemented");
-    return NULL;
+    // Extract variable name from token
+    char* var_name = safe_malloc(expr->token.length + 1);
+    if (!var_name) return NULL;
+    
+    strncpy(var_name, expr->token.start, expr->token.length);
+    var_name[expr->token.length] = '\0';
+    
+    // Look up variable in symbol table
+    LLVMValueRef var_ptr = symbol_table_lookup(ctx->symbol_table, var_name);
+    if (!var_ptr) {
+        fprintf(stderr, "Error: Undefined variable '%s'\n", var_name);
+        safe_free(var_name);
+        return NULL;
+    }
+    
+    // Load the value from the pointer
+    LLVMValueRef value = LLVMBuildLoad2(ctx->builder, LLVMInt32Type(), var_ptr, var_name);
+    safe_free(var_name);
+    return value;
 }
 
-// Generate assignment (placeholder - needs symbol table)
+// Generate assignment
 LLVMValueRef codegen_assignment(AssignExpr* expr, LLVMCodegenContext* ctx) {
     if (!expr || !ctx) {
         return NULL;
     }
     
-    // For now, create a simple placeholder
-    // In a full implementation, this would handle variable assignment
-    report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Variable assignment not yet implemented");
-    return NULL;
+    // Get variable name
+    char* var_name = safe_malloc(expr->name.length + 1);
+    if (!var_name) return NULL;
+    
+    strncpy(var_name, expr->name.start, expr->name.length);
+    var_name[expr->name.length] = '\0';
+    
+    // Look up variable in symbol table
+    LLVMValueRef var_ptr = symbol_table_lookup(ctx->symbol_table, var_name);
+    if (!var_ptr) {
+        fprintf(stderr, "Error: Undefined variable '%s'\n", var_name);
+        safe_free(var_name);
+        return NULL;
+    }
+    
+    // Generate value expression
+    LLVMValueRef value = codegen_expression(expr->value, ctx);
+    if (!value) {
+        safe_free(var_name);
+        return NULL;
+    }
+    
+    // Store value
+    LLVMBuildStore(ctx->builder, value, var_ptr);
+    safe_free(var_name);
+    return value;
 }
 
 // Generate function call (placeholder - needs function table)
 LLVMValueRef codegen_function_call(CallExpr* expr, LLVMCodegenContext* ctx) {
-    if (!expr || !ctx) {
+    if (!expr || !ctx || !expr->callee) {
         return NULL;
     }
     
-    // For now, create a simple placeholder
-    // In a full implementation, this would handle function calls with proper ABI
-    report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Function calls not yet implemented");
-    return NULL;
+    // Get function name from callee expression (should be a variable ref)
+    if (expr->callee->type != EXPR_IDENT) {
+        report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Function callee must be an identifier");
+        return NULL;
+    }
+    
+    char* func_name = safe_malloc(expr->callee->token.length + 1);
+    if (!func_name) return NULL;
+    
+    strncpy(func_name, expr->callee->token.start, expr->callee->token.length);
+    func_name[expr->callee->token.length] = '\0';
+    
+    // Look up function
+    LLVMValueRef function = LLVMGetNamedFunction(ctx->module, func_name);
+    if (!function) {
+        fprintf(stderr, "Error: Undefined function '%s'\n", func_name);
+        safe_free(func_name);
+        return NULL;
+    }
+    
+    // Generate arguments
+    LLVMValueRef* args = NULL;
+    if (expr->arg_count > 0) {
+        args = safe_malloc(sizeof(LLVMValueRef) * expr->arg_count);
+        if (!args) {
+            safe_free(func_name);
+            return NULL;
+        }
+        
+        for (int i = 0; i < expr->arg_count; i++) {
+            args[i] = codegen_expression(expr->args[i], ctx);
+            if (!args[i]) {
+                safe_free(args);
+                safe_free(func_name);
+                return NULL;
+            }
+        }
+    }
+    
+    // Build call
+    LLVMValueRef call = LLVMBuildCall2(ctx->builder, 
+                                        LLVMGlobalGetValueType(function),
+                                        function, 
+                                        args, 
+                                        expr->arg_count, 
+                                        func_name);
+    
+    safe_free(args);
+    safe_free(func_name);
+    return call;
 }
 
 // Generate array access (implemented in llvm_array_string_codegen.c)

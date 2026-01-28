@@ -208,6 +208,40 @@ char* wyn_string_repeat(const char* str, int n) {
     return result;
 }
 
+// Pad left: pad string to width with pad_char on the left
+char* wyn_string_pad_left(const char* str, int width, const char* pad_char) {
+    int len = strlen(str);
+    if (width <= len) return strdup(str);
+    
+    char pad = pad_char && pad_char[0] ? pad_char[0] : ' ';
+    int pad_count = width - len;
+    char* result = malloc(width + 1);
+    
+    for (int i = 0; i < pad_count; i++) {
+        result[i] = pad;
+    }
+    memcpy(result + pad_count, str, len);
+    result[width] = '\0';
+    return result;
+}
+
+// Pad right: pad string to width with pad_char on the right
+char* wyn_string_pad_right(const char* str, int width, const char* pad_char) {
+    int len = strlen(str);
+    if (width <= len) return strdup(str);
+    
+    char pad = pad_char && pad_char[0] ? pad_char[0] : ' ';
+    int pad_count = width - len;
+    char* result = malloc(width + 1);
+    
+    memcpy(result, str, len);
+    for (int i = len; i < width; i++) {
+        result[i] = pad;
+    }
+    result[width] = '\0';
+    return result;
+}
+
 // Reverse: reverse string
 char* wyn_string_reverse(const char* str) {
     int len = strlen(str);
