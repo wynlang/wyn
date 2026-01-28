@@ -1903,44 +1903,24 @@ int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }
 
 // ARC functions are provided by arc_runtime.c
 
-typedef enum {
-    PENDING,
-    RUNNING,
-    DONE
-} Status;
-
-#define Status_PENDING 0
-#define Status_RUNNING 1
-#define Status_DONE 2
-
-const char* Status_toString(Status val) {
-    switch(val) {
-        case PENDING: return "PENDING";
-        case RUNNING: return "RUNNING";
-        case DONE: return "DONE";
-    }
-    return "Unknown";
-}
-
 
 // Lambda functions (defined before use)
 int wyn_main();
 
 int wyn_main() {
-    int status = PENDING;
+    WynArray arr = ({ WynArray __arr_0 = array_new(); array_push_int(&__arr_0, 1); array_push_int(&__arr_0, 2); array_push_int(&__arr_0, 3); array_push_int(&__arr_0, 4); array_push_int(&__arr_0, 5); __arr_0; });
     ;
-    {
-    int __match_val = status;
-    if (1) {
-        int PENDING = __match_val;
-        print_str("pending");
-    } else if (1) {
-        int RUNNING = __match_val;
-        print_str("running");
-    } else if (1) {
-        print_str("other");
-    }
-}
+    int unique_len = 0;
+    ;
+    __auto_type unique_arr = wyn_array_unique(arr.data, arr.count, ( & unique_len));
+    ;
+    int slice_len = 0;
+    ;
+    __auto_type slice_arr = wyn_array_slice(arr.data, 1, 4, ( & slice_len));
+    ;
+    __auto_type joined = wyn_array_join(arr.data, arr.count, ",");
+    ;
+    print("Memory allocation test completed");
     return 0;
 }
 

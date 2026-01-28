@@ -29,6 +29,8 @@ WynHashMap* hashmap_new(void) {
 }
 
 void hashmap_insert_int(WynHashMap* map, const char* key, int value) {
+    if (!map || !key) return;  // Add null checks
+    
     unsigned int idx = hash(key);
     Entry* entry = map->buckets[idx];
     
@@ -50,6 +52,8 @@ void hashmap_insert_int(WynHashMap* map, const char* key, int value) {
 }
 
 void hashmap_insert_float(WynHashMap* map, const char* key, double value) {
+    if (!map || !key) return;  // Add null checks
+    
     unsigned int idx = hash(key);
     Entry* entry = map->buckets[idx];
     
@@ -71,6 +75,8 @@ void hashmap_insert_float(WynHashMap* map, const char* key, double value) {
 }
 
 void hashmap_insert_string(WynHashMap* map, const char* key, const char* value) {
+    if (!map || !key || !value) return;  // Add null checks
+    
     unsigned int idx = hash(key);
     Entry* entry = map->buckets[idx];
     
@@ -95,6 +101,8 @@ void hashmap_insert_string(WynHashMap* map, const char* key, const char* value) 
 }
 
 void hashmap_insert_bool(WynHashMap* map, const char* key, int value) {
+    if (!map || !key) return;  // Add null checks
+    
     unsigned int idx = hash(key);
     Entry* entry = map->buckets[idx];
     
@@ -116,6 +124,13 @@ void hashmap_insert_bool(WynHashMap* map, const char* key, int value) {
 }
 
 HashMapValue hashmap_get(WynHashMap* map, const char* key) {
+    if (!map || !key) {
+        HashMapValue default_val;
+        default_val.type = HASHMAP_INT;
+        default_val.value.as_int = -1;
+        return default_val;
+    }
+    
     unsigned int idx = hash(key);
     Entry* entry = map->buckets[idx];
     
@@ -166,6 +181,8 @@ int hashmap_get_bool(WynHashMap* map, const char* key) {
 }
 
 int hashmap_has(WynHashMap* map, const char* key) {
+    if (!map || !key) return 0;  // Add null checks
+    
     unsigned int idx = hash(key);
     Entry* entry = map->buckets[idx];
     
@@ -180,6 +197,8 @@ int hashmap_has(WynHashMap* map, const char* key) {
 }
 
 void hashmap_remove(WynHashMap* map, const char* key) {
+    if (!map || !key) return;  // Add null checks
+    
     unsigned int idx = hash(key);
     Entry* entry = map->buckets[idx];
     Entry* prev = NULL;
@@ -204,6 +223,8 @@ void hashmap_remove(WynHashMap* map, const char* key) {
 }
 
 int hashmap_len(WynHashMap* map) {
+    if (!map) return 0;  // Add null check
+    
     int count = 0;
     for (int i = 0; i < HASHMAP_SIZE; i++) {
         Entry* entry = map->buckets[i];
@@ -216,6 +237,8 @@ int hashmap_len(WynHashMap* map) {
 }
 
 void hashmap_free(WynHashMap* map) {
+    if (!map) return;  // Add null check
+    
     for (int i = 0; i < HASHMAP_SIZE; i++) {
         Entry* entry = map->buckets[i];
         while (entry) {

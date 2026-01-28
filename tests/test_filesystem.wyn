@@ -1,0 +1,60 @@
+// Test file for new filesystem utilities
+
+fn main() {
+    print("Testing filesystem utilities...")
+    
+    // Test file operations
+    var test_file = "test_file.txt"
+    var test_dir = "test_directory"
+    var moved_file = "moved_file.txt"
+    
+    // Create a test file
+    File::write(test_file, "Hello, filesystem!")
+    
+    // Test file_is_file
+    if file_is_file(test_file) {
+        print("✓ file_is_file works")
+    } else {
+        print("✗ file_is_file failed")
+    }
+    
+    // Test file_size
+    var size = file_size(test_file)
+    if size > 0 {
+        print("✓ file_size works")
+    } else {
+        print("✗ file_size failed")
+    }
+    
+    // Test file_copy
+    var copied_file = "copied_file.txt"
+    file_copy(test_file, copied_file)
+    if File::exists(copied_file) {
+        print("✓ file_copy works")
+    } else {
+        print("✗ file_copy failed")
+    }
+    
+    // Test file_move
+    file_move(copied_file, moved_file)
+    if File::exists(moved_file) {
+        print("✓ file_move works")
+    } else {
+        print("✗ file_move failed")
+    }
+    
+    // Test directory operations
+    file_mkdir(test_dir)
+    if file_is_dir(test_dir) {
+        print("✓ file_mkdir and file_is_dir work")
+    } else {
+        print("✗ file_mkdir or file_is_dir failed")
+    }
+    
+    // Cleanup
+    File::delete(test_file)
+    File::delete(moved_file)
+    file_rmdir(test_dir)
+    
+    print("Filesystem tests completed!")
+}

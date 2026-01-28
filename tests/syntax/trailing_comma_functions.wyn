@@ -1,0 +1,25 @@
+// Test trailing commas in function parameters
+
+fn add(x: int, y: int,) -> int {
+    return x + y;
+}
+
+fn greet(name: string, age: int, city: string,) -> string {
+    return "Hello " + name;
+}
+
+fn no_params() -> int {
+    return 42;
+}
+
+fn single_param(x: int,) -> int {
+    return x * 2;
+}
+
+fn main() -> int {
+    var result = add(5, 3,);
+    var msg = greet("Alice", 25, "NYC",);
+    var single = single_param(10,);
+    
+    return result + single;
+}

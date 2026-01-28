@@ -1,0 +1,14 @@
+// Test trailing commas in match arms
+
+fn main() -> int {
+    var x = 5;
+    
+    var result = match x {
+        1 => 10,
+        2 => 20,
+        3 => 30,
+        _ => 40,
+    };
+    
+    return result;
+}

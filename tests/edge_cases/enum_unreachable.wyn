@@ -1,0 +1,22 @@
+// Test: Unreachable pattern should produce warning
+enum Status {
+    Active,
+    Inactive,
+    Pending
+}
+
+fn main() -> int {
+    var status = Active
+    var result = 0
+    
+    // Warning: The second Active case is unreachable
+    match status {
+        Active => result = 1,
+        Active => result = 2,  // This should be unreachable and trigger a warning
+        Inactive => result = 3,
+        Pending => result = 4
+    }
+    
+    print_str("Unreachable pattern test")
+    return result
+}

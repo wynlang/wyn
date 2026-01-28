@@ -208,6 +208,16 @@ void wyn_crypto_random_bytes(char* buffer, size_t len);
 char* wyn_crypto_random_hex(size_t len);
 char* wyn_crypto_xor_cipher(const char* data, size_t len, const char* key, size_t key_len);
 
+// Math module
+double wyn_math_abs(double x);
+double wyn_math_min(double a, double b);
+double wyn_math_max(double a, double b);
+double wyn_math_pow(double base, double exp);
+double wyn_math_sqrt(double x);
+double wyn_math_floor(double x);
+double wyn_math_ceil(double x);
+double wyn_math_round(double x);
+
 extern char* global_filename;
 extern char* global_file_content;
 
@@ -1531,6 +1541,38 @@ int file_copy(const char* src, const char* dst) {
     fclose(d);
     return 1;
 }
+int file_move(const char* src, const char* dst) {
+    last_error[0] = 0;
+    int result = rename(src, dst);
+    if(result != 0) snprintf(last_error, 256, "Cannot move file: %s to %s", src, dst);
+    return result == 0;
+}
+int file_mkdir(const char* path) {
+    last_error[0] = 0;
+#ifdef _WIN32
+    int result = _mkdir(path);
+#else
+    int result = mkdir(path, 0755);
+#endif
+    if(result != 0) snprintf(last_error, 256, "Cannot create directory: %s", path);
+    return result == 0;
+}
+int file_rmdir(const char* path) {
+    last_error[0] = 0;
+    int result = rmdir(path);
+    if(result != 0) snprintf(last_error, 256, "Cannot remove directory: %s", path);
+    return result == 0;
+}
+int file_is_file(const char* path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return 0;
+    return S_ISREG(st.st_mode);
+}
+int file_is_dir(const char* path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return 0;
+    return S_ISDIR(st.st_mode);
+}
 long File_modified_time(const char* path) {
     struct stat st;
     if (stat(path, &st) != 0) return -1;
@@ -1903,44 +1945,49 @@ int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }
 
 // ARC functions are provided by arc_runtime.c
 
-typedef enum {
-    PENDING,
-    RUNNING,
-    DONE
-} Status;
-
-#define Status_PENDING 0
-#define Status_RUNNING 1
-#define Status_DONE 2
-
-const char* Status_toString(Status val) {
-    switch(val) {
-        case PENDING: return "PENDING";
-        case RUNNING: return "RUNNING";
-        case DONE: return "DONE";
-    }
-    return "Unknown";
-}
-
 
 // Lambda functions (defined before use)
 int wyn_main();
 
 int wyn_main() {
-    int status = PENDING;
-    ;
-    {
-    int __match_val = status;
-    if (1) {
-        int PENDING = __match_val;
-        print_str("pending");
-    } else if (1) {
-        int RUNNING = __match_val;
-        print_str("running");
-    } else if (1) {
-        print_str("other");
+    print("Testing filesystem utilities...");
+    const char* test_file = "test_file.txt";
+    const char* test_dir = "test_directory";
+    const char* moved_file = "moved_file.txt";
+    File_write(test_file, "Hello, filesystem!");
+    if (file_is_file(test_file)) {
+    print("✓ file_is_file works");
+    } else {
+    print("✗ file_is_file failed");
     }
-}
-    return 0;
+    __auto_type size = file_size(test_file);
+    if ((size > 0)) {
+    print("✓ file_size works");
+    } else {
+    print("✗ file_size failed");
+    }
+    const char* copied_file = "copied_file.txt";
+    file_copy(test_file, copied_file);
+    if (File_exists(copied_file)) {
+    print("✓ file_copy works");
+    } else {
+    print("✗ file_copy failed");
+    }
+    file_move(copied_file, moved_file);
+    if (File_exists(moved_file)) {
+    print("✓ file_move works");
+    } else {
+    print("✗ file_move failed");
+    }
+    file_mkdir(test_dir);
+    if (file_is_dir(test_dir)) {
+    print("✓ file_mkdir and file_is_dir work");
+    } else {
+    print("✗ file_mkdir or file_is_dir failed");
+    }
+    File_delete(test_file);
+    File_delete(moved_file);
+    file_rmdir(test_dir);
+    print("Filesystem tests completed!");
 }
 

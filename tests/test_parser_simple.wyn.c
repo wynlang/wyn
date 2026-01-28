@@ -116,6 +116,8 @@ int wyn_string_index_of(const char* str, const char* substr);
 int wyn_string_last_index_of(const char* str, const char* substr);
 char* wyn_string_repeat(const char* str, int n);
 char* wyn_string_reverse(const char* str);
+char* wyn_string_pad_left(const char* str, int width, const char* pad_char);
+char* wyn_string_pad_right(const char* str, int width, const char* pad_char);
 
 // Json module
 typedef struct WynJson WynJson;
@@ -158,14 +160,20 @@ void wyn_arena_free(WynArena* arena);
 
 // Array module
 int wyn_array_find(int* arr, int len, int (*pred)(int), int* found);
+int wyn_array_find_index(int* arr, int len, int (*pred)(int));
+int* wyn_array_unique(int* arr, int len, int* out_len);
+char* wyn_array_join(int* arr, int len, const char* separator);
+int wyn_array_first(int* arr, int len, int* found);
+int wyn_array_last(int* arr, int len, int* found);
+int wyn_array_is_empty(int* arr, int len);
 int wyn_array_any(int* arr, int len, int (*pred)(int));
 int wyn_array_all(int* arr, int len, int (*pred)(int));
 void wyn_array_reverse(int* arr, int len);
 void wyn_array_sort(int* arr, int len);
 int wyn_array_contains(int* arr, int len, int value);
+int* wyn_array_slice(int* arr, int start, int end, int* out_len);
 int wyn_array_index_of(int* arr, int len, int value);
 int wyn_array_last_index_of(int* arr, int len, int value);
-int* wyn_array_slice(int* arr, int start, int end, int* out_len);
 int* wyn_array_concat(int* arr1, int len1, int* arr2, int len2, int* out_len);
 void wyn_array_fill(int* arr, int len, int value);
 int wyn_array_sum(int* arr, int len);
@@ -261,6 +269,7 @@ const char* array_get_str(WynArray arr, int index) {
     if (arr.data[index].type == WYN_TYPE_STRING) return arr.data[index].data.string_val;
     return "";
 }
+#define array_get_struct(arr, idx, T) (*(T*)arr.data[idx].data.struct_val)
 WynValue array_get(WynArray arr, int index) {
     WynValue val = {0};
     if (index >= 0 && index < arr.count) val = arr.data[index];
@@ -314,8 +323,6 @@ void array_push(WynArray* arr, int value) {
     memcpy((arr)->data[(arr)->count].data.struct_val, &__temp_val, sizeof(StructType)); \
     (arr)->count++; \
 } while(0)
-#define array_get_struct(arr, index, StructType) \
-    (*(StructType*)((arr).data[index].data.struct_val))
 int array_pop(WynArray* arr) {
     if (arr->count == 0) return 0;
     arr->count--;

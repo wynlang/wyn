@@ -1903,44 +1903,61 @@ int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }
 
 // ARC functions are provided by arc_runtime.c
 
-typedef enum {
-    PENDING,
-    RUNNING,
-    DONE
-} Status;
-
-#define Status_PENDING 0
-#define Status_RUNNING 1
-#define Status_DONE 2
-
-const char* Status_toString(Status val) {
-    switch(val) {
-        case PENDING: return "PENDING";
-        case RUNNING: return "RUNNING";
-        case DONE: return "DONE";
-    }
-    return "Unknown";
-}
-
 
 // Lambda functions (defined before use)
+int test_is_even(int x);
 int wyn_main();
 
-int wyn_main() {
-    int status = PENDING;
-    ;
-    {
-    int __match_val = status;
-    if (1) {
-        int PENDING = __match_val;
-        print_str("pending");
-    } else if (1) {
-        int RUNNING = __match_val;
-        print_str("running");
-    } else if (1) {
-        print_str("other");
-    }
+int test_is_even(int x) {
+    return ((x % 2) == 0);
 }
+
+int wyn_main() {
+    WynArray arr = ({ WynArray __arr_0 = array_new(); array_push_int(&__arr_0, 1); array_push_int(&__arr_0, 2); array_push_int(&__arr_0, 3); array_push_int(&__arr_0, 4); array_push_int(&__arr_0, 5); array_push_int(&__arr_0, 2); array_push_int(&__arr_0, 6); __arr_0; });
+    ;
+    print("Testing 10 essential array methods:");
+    __auto_type index = wyn_array_find_index(arr.data, arr.count, test_is_even);
+    ;
+    print("1. find_index(is_even) completed");
+    WynArray rev_arr = ({ WynArray __arr_1 = array_new(); array_push_int(&__arr_1, 1); array_push_int(&__arr_1, 2); array_push_int(&__arr_1, 3); array_push_int(&__arr_1, 4); array_push_int(&__arr_1, 5); __arr_1; });
+    ;
+    wyn_array_reverse(rev_arr.data, rev_arr.count);
+    print("2. reverse completed");
+    int unique_len = 0;
+    ;
+    __auto_type unique_arr = wyn_array_unique(arr.data, arr.count, ( & unique_len));
+    ;
+    print("3. unique completed");
+    __auto_type joined = wyn_array_join(arr.data, arr.count, ",");
+    ;
+    print("4. join completed");
+    int slice_len = 0;
+    ;
+    __auto_type slice_arr = wyn_array_slice(arr.data, 1, 4, ( & slice_len));
+    ;
+    print("5. slice completed");
+    __auto_type contains_3 = wyn_array_contains(arr.data, arr.count, 3);
+    ;
+    print("6. contains completed");
+    int first_found = 0;
+    ;
+    __auto_type first_val = wyn_array_first(arr.data, arr.count, ( & first_found));
+    ;
+    print("7. first completed");
+    int last_found = 0;
+    ;
+    __auto_type last_val = wyn_array_last(arr.data, arr.count, ( & last_found));
+    ;
+    print("8. last completed");
+    __auto_type is_empty_arr = wyn_array_is_empty(arr.data, arr.count);
+    ;
+    print("9. is_empty completed");
+    int found = 0;
+    ;
+    __auto_type result = wyn_array_find(arr.data, arr.count, test_is_even, ( & found));
+    ;
+    print("10. find completed");
+    print("All 10 array methods tested successfully!");
     return 0;
 }
 

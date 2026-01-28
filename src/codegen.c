@@ -2264,14 +2264,20 @@ void codegen_c_header() {
     
     emit("// Array module\n");
     emit("int wyn_array_find(int* arr, int len, int (*pred)(int), int* found);\n");
+    emit("int wyn_array_find_index(int* arr, int len, int (*pred)(int));\n");
+    emit("int* wyn_array_unique(int* arr, int len, int* out_len);\n");
+    emit("char* wyn_array_join(int* arr, int len, const char* separator);\n");
+    emit("int wyn_array_first(int* arr, int len, int* found);\n");
+    emit("int wyn_array_last(int* arr, int len, int* found);\n");
+    emit("int wyn_array_is_empty(int* arr, int len);\n");
     emit("int wyn_array_any(int* arr, int len, int (*pred)(int));\n");
     emit("int wyn_array_all(int* arr, int len, int (*pred)(int));\n");
     emit("void wyn_array_reverse(int* arr, int len);\n");
     emit("void wyn_array_sort(int* arr, int len);\n");
     emit("int wyn_array_contains(int* arr, int len, int value);\n");
+    emit("int* wyn_array_slice(int* arr, int start, int end, int* out_len);\n");
     emit("int wyn_array_index_of(int* arr, int len, int value);\n");
     emit("int wyn_array_last_index_of(int* arr, int len, int value);\n");
-    emit("int* wyn_array_slice(int* arr, int start, int end, int* out_len);\n");
     emit("int* wyn_array_concat(int* arr1, int len1, int* arr2, int len2, int* out_len);\n");
     emit("void wyn_array_fill(int* arr, int len, int value);\n");
     emit("int wyn_array_sum(int* arr, int len);\n");
@@ -2305,6 +2311,16 @@ void codegen_c_header() {
     emit("void wyn_crypto_random_bytes(char* buffer, size_t len);\n");
     emit("char* wyn_crypto_random_hex(size_t len);\n");
     emit("char* wyn_crypto_xor_cipher(const char* data, size_t len, const char* key, size_t key_len);\n\n");
+    
+    emit("// Math module\n");
+    emit("double wyn_math_abs(double x);\n");
+    emit("double wyn_math_min(double a, double b);\n");
+    emit("double wyn_math_max(double a, double b);\n");
+    emit("double wyn_math_pow(double base, double exp);\n");
+    emit("double wyn_math_sqrt(double x);\n");
+    emit("double wyn_math_floor(double x);\n");
+    emit("double wyn_math_ceil(double x);\n");
+    emit("double wyn_math_round(double x);\n\n");
     
     // Global variable declarations
     emit("extern char* global_filename;\n");
@@ -3726,6 +3742,44 @@ void codegen_c_header() {
     emit("    fclose(s);\n");
     emit("    fclose(d);\n");
     emit("    return 1;\n");
+    emit("}\n");
+    
+    // New file system utility functions
+    emit("int file_move(const char* src, const char* dst) {\n");
+    emit("    last_error[0] = 0;\n");
+    emit("    int result = rename(src, dst);\n");
+    emit("    if(result != 0) snprintf(last_error, 256, \"Cannot move file: %%s to %%s\", src, dst);\n");
+    emit("    return result == 0;\n");
+    emit("}\n");
+    
+    emit("int file_mkdir(const char* path) {\n");
+    emit("    last_error[0] = 0;\n");
+    emit("#ifdef _WIN32\n");
+    emit("    int result = _mkdir(path);\n");
+    emit("#else\n");
+    emit("    int result = mkdir(path, 0755);\n");
+    emit("#endif\n");
+    emit("    if(result != 0) snprintf(last_error, 256, \"Cannot create directory: %%s\", path);\n");
+    emit("    return result == 0;\n");
+    emit("}\n");
+    
+    emit("int file_rmdir(const char* path) {\n");
+    emit("    last_error[0] = 0;\n");
+    emit("    int result = rmdir(path);\n");
+    emit("    if(result != 0) snprintf(last_error, 256, \"Cannot remove directory: %%s\", path);\n");
+    emit("    return result == 0;\n");
+    emit("}\n");
+    
+    emit("int file_is_file(const char* path) {\n");
+    emit("    struct stat st;\n");
+    emit("    if (stat(path, &st) != 0) return 0;\n");
+    emit("    return S_ISREG(st.st_mode);\n");
+    emit("}\n");
+    
+    emit("int file_is_dir(const char* path) {\n");
+    emit("    struct stat st;\n");
+    emit("    if (stat(path, &st) != 0) return 0;\n");
+    emit("    return S_ISDIR(st.st_mode);\n");
     emit("}\n");
     
     // File::modified_time - get file modification timestamp

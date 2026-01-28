@@ -1,0 +1,30 @@
+// Test trailing commas in struct fields
+
+struct Point {
+    x: int,
+    y: int,
+}
+
+struct Person {
+    name: string,
+    age: int,
+    city: string,
+}
+
+struct Empty {
+}
+
+struct Single {
+    value: int,
+}
+
+fn main() -> int {
+    var p = Point { x: 10, y: 20, };
+    var person = Person { 
+        name: "Alice", 
+        age: 25, 
+        city: "NYC",
+    };
+    
+    return p.x + p.y + person.age;
+}

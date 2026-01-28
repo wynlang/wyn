@@ -160,14 +160,20 @@ void wyn_arena_free(WynArena* arena);
 
 // Array module
 int wyn_array_find(int* arr, int len, int (*pred)(int), int* found);
+int wyn_array_find_index(int* arr, int len, int (*pred)(int));
+int* wyn_array_unique(int* arr, int len, int* out_len);
+char* wyn_array_join(int* arr, int len, const char* separator);
+int wyn_array_first(int* arr, int len, int* found);
+int wyn_array_last(int* arr, int len, int* found);
+int wyn_array_is_empty(int* arr, int len);
 int wyn_array_any(int* arr, int len, int (*pred)(int));
 int wyn_array_all(int* arr, int len, int (*pred)(int));
 void wyn_array_reverse(int* arr, int len);
 void wyn_array_sort(int* arr, int len);
 int wyn_array_contains(int* arr, int len, int value);
+int* wyn_array_slice(int* arr, int start, int end, int* out_len);
 int wyn_array_index_of(int* arr, int len, int value);
 int wyn_array_last_index_of(int* arr, int len, int value);
-int* wyn_array_slice(int* arr, int start, int end, int* out_len);
 int* wyn_array_concat(int* arr1, int len1, int* arr2, int len2, int* out_len);
 void wyn_array_fill(int* arr, int len, int value);
 int wyn_array_sum(int* arr, int len);

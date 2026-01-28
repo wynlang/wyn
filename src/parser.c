@@ -305,7 +305,7 @@ static Expr* primary() {
                     // Parse field value
                     expr->struct_init.field_values[expr->struct_init.field_count] = expression();
                     expr->struct_init.field_count++;
-                } while (match(TOKEN_COMMA));
+                } while (match(TOKEN_COMMA) && !check(TOKEN_RBRACE));
             }
             
             expect(TOKEN_RBRACE, "Expected '}' after struct fields");
@@ -334,7 +334,7 @@ static Expr* primary() {
                     // Parse field value
                     expr->struct_init.field_values[expr->struct_init.field_count] = expression();
                     expr->struct_init.field_count++;
-                } while (match(TOKEN_COMMA));
+                } while (match(TOKEN_COMMA) && !check(TOKEN_RBRACE));
             }
             
             expect(TOKEN_RBRACE, "Expected '}' after struct fields");
@@ -694,7 +694,7 @@ static Expr* primary() {
                         }
                     }
                 }
-            } while (match(TOKEN_COMMA));
+            } while (match(TOKEN_COMMA) && !check(TOKEN_PIPE));
         }
         
         expect(TOKEN_PIPE, "Expected '|' after lambda parameters");
@@ -766,7 +766,7 @@ static Expr* primary() {
                         advance(); // Skip type name
                     }
                 }
-            } while (match(TOKEN_COMMA));
+            } while (match(TOKEN_COMMA) && !check(TOKEN_PIPE));
         }
         
         expect(TOKEN_RPAREN, "Expected ')' after lambda parameters");
@@ -961,7 +961,7 @@ static Expr* call() {
                         expect(TOKEN_COLON, "Expected ':' after field name");
                         struct_expr->struct_init.field_values[struct_expr->struct_init.field_count] = expression();
                         struct_expr->struct_init.field_count++;
-                    } while (match(TOKEN_COMMA));
+                    } while (match(TOKEN_COMMA) && !check(TOKEN_RBRACE));
                 }
                 
                 expect(TOKEN_RBRACE, "Expected '}' after struct fields");
@@ -1960,7 +1960,7 @@ Stmt* function() {
             }
             
             stmt->fn.param_count++;
-        } while (match(TOKEN_COMMA));
+        } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
     }
     
     expect(TOKEN_RPAREN, "Expected ')' after parameters");
@@ -2030,7 +2030,7 @@ Stmt* extern_decl() {
             expect(TOKEN_COLON, "Expected ':' after parameter name");
             stmt->extern_fn.param_types[stmt->extern_fn.param_count] = parse_type();
             stmt->extern_fn.param_count++;
-        } while (match(TOKEN_COMMA));
+        } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
     }
     
     expect(TOKEN_RPAREN, "Expected ')' after parameters");
@@ -2104,7 +2104,7 @@ Stmt* struct_decl() {
                     expect(TOKEN_COLON, "Expected ':' after parameter");
                     method->param_types[method->param_count] = parse_type();
                     method->param_count++;
-                } while (match(TOKEN_COMMA));
+                } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
             }
             expect(TOKEN_RPAREN, "Expected ')' after parameters");
             
@@ -2146,7 +2146,12 @@ Stmt* struct_decl() {
             stmt->struct_decl.field_count++;
             
             // Consume optional comma after field
-            match(TOKEN_COMMA);
+            if (match(TOKEN_COMMA)) {
+                // Allow trailing comma - continue if not at closing brace
+                if (check(TOKEN_RBRACE)) {
+                    break;
+                }
+            }
         }
     }
     
@@ -2205,7 +2210,7 @@ Stmt* object_decl() {
                     expect(TOKEN_COLON, "Expected ':' after parameter");
                     method->param_types[method->param_count] = parse_type();
                     method->param_count++;
-                } while (match(TOKEN_COMMA));
+                } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
             }
             expect(TOKEN_RPAREN, "Expected ')' after parameters");
             
@@ -2425,7 +2430,7 @@ Stmt* trait_decl() {
                     
                     method->param_defaults[method->param_count] = NULL;
                     method->param_count++;
-                } while (match(TOKEN_COMMA));
+                } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
             }
             
             expect(TOKEN_RPAREN, "Expected ')' after parameters");
@@ -2521,6 +2526,10 @@ Stmt* enum_decl() {
         
         // After each variant, we expect either ',' or '}'
         if (match(TOKEN_COMMA)) {
+            // Allow trailing comma - check if we're at the end
+            if (check(TOKEN_RBRACE)) {
+                break;
+            }
             // Continue to next variant
             continue;
         } else if (check(TOKEN_RBRACE)) {
@@ -3071,9 +3080,12 @@ static Stmt* parse_match_statement() {
         
         stmt->match_stmt.case_count++;
         
-        // Optional comma
-        if (check(TOKEN_COMMA)) {
-            advance();
+        // Optional comma - allow trailing comma
+        if (match(TOKEN_COMMA)) {
+            // If we see closing brace after comma, it's a trailing comma
+            if (check(TOKEN_RBRACE)) {
+                break;
+            }
         }
     }
     
@@ -3100,7 +3112,7 @@ static Expr* parse_type() {
         if (!check(TOKEN_RPAREN)) {
             do {
                 base_type->fn_type.param_types[base_type->fn_type.param_count++] = parse_type();
-            } while (match(TOKEN_COMMA));
+            } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
         }
         
         expect(TOKEN_RPAREN, "Expected ')' after function parameter types");

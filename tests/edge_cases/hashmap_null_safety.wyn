@@ -1,0 +1,26 @@
+// Test HashMap null pointer handling
+fn main() -> int {
+    print("Testing HashMap null pointer handling\n");
+    
+    // Test operations with null key (this should be handled gracefully)
+    // Note: We can't pass NULL from Wyn directly, but we can test edge cases
+    
+    var map = wyn_hashmap_new();
+    
+    // Test with empty string (edge case)
+    wyn_hashmap_insert_int(map, "", 42);
+    var val = wyn_hashmap_get_int(map, "");
+    print("Empty string key test: ");
+    print(val);
+    print("\n");
+    
+    // Test getting non-existent key
+    var missing = wyn_hashmap_get_int(map, "nonexistent");
+    print("Missing key returns: ");
+    print(missing);
+    print("\n");
+    
+    wyn_hashmap_free(map);
+    print("Null pointer edge case tests completed\n");
+    return 0;
+}

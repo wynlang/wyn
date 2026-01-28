@@ -461,6 +461,7 @@ void init_checker() {
         "bit_set", "bit_clear", "bit_toggle", "bit_check", "bit_count",
         "arr_sum", "arr_max", "arr_min", "arr_contains", "arr_find", "arr_reverse", "arr_sort", "arr_count", "arr_fill", "arr_all", "arr_join", "arr_map_double", "arr_map_square", "arr_filter_positive", "arr_filter_even", "arr_filter_greater_than_3", "arr_reduce_sum", "arr_reduce_product",
         "file_exists", "file_size", "file_delete", "file_append", "file_copy", "last_error_get",
+        "file_move", "file_list_dir", "file_mkdir", "file_rmdir", "file_is_file", "file_is_dir",
         // NOTE: file_read, file_write, sys_exec are registered separately with proper types
         "random_int", "random_range", "random_float", "seed_random", "time_now", "time_format",
         "range", "array_new", "array_push", "array_pop", "array_length_dyn", "len",
@@ -486,6 +487,8 @@ void init_checker() {
         "wyn_string_pad_left", "wyn_string_pad_right",
         "wyn_string_pad_left_safe", "wyn_string_pad_right_safe",
         "wyn_array_map", "wyn_array_filter", "wyn_array_reduce", "wyn_array_find",
+        "wyn_array_find_index", "wyn_array_unique", "wyn_array_join",
+        "wyn_array_first", "wyn_array_last", "wyn_array_is_empty",
         "wyn_array_any", "wyn_array_all", "wyn_array_reverse", "wyn_array_sort",
         "wyn_array_contains", "wyn_array_index_of", "wyn_array_last_index_of",
         "wyn_array_slice", "wyn_array_concat", "wyn_array_fill",
@@ -497,10 +500,12 @@ void init_checker() {
         "wyn_time_hour", "wyn_time_minute", "wyn_time_second",
         "wyn_crypto_hash32", "wyn_crypto_hash64", "wyn_crypto_md5", "wyn_crypto_sha256",
         "wyn_crypto_base64_encode", "wyn_crypto_base64_decode",
-        "wyn_crypto_random_bytes", "wyn_crypto_random_hex", "wyn_crypto_xor_cipher"
+        "wyn_crypto_random_bytes", "wyn_crypto_random_hex", "wyn_crypto_xor_cipher",
+        "wyn_math_abs", "wyn_math_min", "wyn_math_max", "wyn_math_pow",
+        "wyn_math_sqrt", "wyn_math_floor", "wyn_math_ceil", "wyn_math_round"
     };
     
-    for (int i = 0; i < 218; i++) {  // Updated count: 216 + 2 = 218
+    for (int i = 0; i < 232; i++) {  // Updated count: 224 + 8 = 232
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
     }
@@ -593,6 +598,74 @@ void init_checker() {
     c_generate_code_type->fn_type.return_type = builtin_bool;
     Token c_generate_code_tok = {TOKEN_IDENT, "c_generate_code", 15, 0};
     add_symbol(global_scope, c_generate_code_tok, c_generate_code_type, false);
+    
+    // Add wyn_math function types
+    Type* wyn_math_abs_type = make_type(TYPE_FUNCTION);
+    wyn_math_abs_type->fn_type.param_count = 1;
+    wyn_math_abs_type->fn_type.param_types = malloc(sizeof(Type*));
+    wyn_math_abs_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_abs_type->fn_type.return_type = builtin_float;
+    Token wyn_math_abs_tok = {TOKEN_IDENT, "wyn_math_abs", 12, 0};
+    add_symbol(global_scope, wyn_math_abs_tok, wyn_math_abs_type, false);
+    
+    Type* wyn_math_min_type = make_type(TYPE_FUNCTION);
+    wyn_math_min_type->fn_type.param_count = 2;
+    wyn_math_min_type->fn_type.param_types = malloc(2 * sizeof(Type*));
+    wyn_math_min_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_min_type->fn_type.param_types[1] = builtin_float;
+    wyn_math_min_type->fn_type.return_type = builtin_float;
+    Token wyn_math_min_tok = {TOKEN_IDENT, "wyn_math_min", 12, 0};
+    add_symbol(global_scope, wyn_math_min_tok, wyn_math_min_type, false);
+    
+    Type* wyn_math_max_type = make_type(TYPE_FUNCTION);
+    wyn_math_max_type->fn_type.param_count = 2;
+    wyn_math_max_type->fn_type.param_types = malloc(2 * sizeof(Type*));
+    wyn_math_max_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_max_type->fn_type.param_types[1] = builtin_float;
+    wyn_math_max_type->fn_type.return_type = builtin_float;
+    Token wyn_math_max_tok = {TOKEN_IDENT, "wyn_math_max", 12, 0};
+    add_symbol(global_scope, wyn_math_max_tok, wyn_math_max_type, false);
+    
+    Type* wyn_math_pow_type = make_type(TYPE_FUNCTION);
+    wyn_math_pow_type->fn_type.param_count = 2;
+    wyn_math_pow_type->fn_type.param_types = malloc(2 * sizeof(Type*));
+    wyn_math_pow_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_pow_type->fn_type.param_types[1] = builtin_float;
+    wyn_math_pow_type->fn_type.return_type = builtin_float;
+    Token wyn_math_pow_tok = {TOKEN_IDENT, "wyn_math_pow", 12, 0};
+    add_symbol(global_scope, wyn_math_pow_tok, wyn_math_pow_type, false);
+    
+    Type* wyn_math_sqrt_type = make_type(TYPE_FUNCTION);
+    wyn_math_sqrt_type->fn_type.param_count = 1;
+    wyn_math_sqrt_type->fn_type.param_types = malloc(sizeof(Type*));
+    wyn_math_sqrt_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_sqrt_type->fn_type.return_type = builtin_float;
+    Token wyn_math_sqrt_tok = {TOKEN_IDENT, "wyn_math_sqrt", 13, 0};
+    add_symbol(global_scope, wyn_math_sqrt_tok, wyn_math_sqrt_type, false);
+    
+    Type* wyn_math_floor_type = make_type(TYPE_FUNCTION);
+    wyn_math_floor_type->fn_type.param_count = 1;
+    wyn_math_floor_type->fn_type.param_types = malloc(sizeof(Type*));
+    wyn_math_floor_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_floor_type->fn_type.return_type = builtin_float;
+    Token wyn_math_floor_tok = {TOKEN_IDENT, "wyn_math_floor", 14, 0};
+    add_symbol(global_scope, wyn_math_floor_tok, wyn_math_floor_type, false);
+    
+    Type* wyn_math_ceil_type = make_type(TYPE_FUNCTION);
+    wyn_math_ceil_type->fn_type.param_count = 1;
+    wyn_math_ceil_type->fn_type.param_types = malloc(sizeof(Type*));
+    wyn_math_ceil_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_ceil_type->fn_type.return_type = builtin_float;
+    Token wyn_math_ceil_tok = {TOKEN_IDENT, "wyn_math_ceil", 13, 0};
+    add_symbol(global_scope, wyn_math_ceil_tok, wyn_math_ceil_type, false);
+    
+    Type* wyn_math_round_type = make_type(TYPE_FUNCTION);
+    wyn_math_round_type->fn_type.param_count = 1;
+    wyn_math_round_type->fn_type.param_types = malloc(sizeof(Type*));
+    wyn_math_round_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_round_type->fn_type.return_type = builtin_float;
+    Token wyn_math_round_tok = {TOKEN_IDENT, "wyn_math_round", 14, 0};
+    add_symbol(global_scope, wyn_math_round_tok, wyn_math_round_type, false);
     
     Type* c_create_c_filename_type = make_type(TYPE_FUNCTION);
     c_create_c_filename_type->fn_type.param_count = 1;
@@ -2762,6 +2835,32 @@ void check_program(Program* prog) {
         file_extension_type->fn_type.param_types[0] = builtin_string;
         file_extension_type->fn_type.return_type = builtin_string;
         add_symbol(global_scope, file_extension_tok, file_extension_type, false);
+        
+        // New file system utility functions
+        Token file_move_tok = {TOKEN_IDENT, "File::move", 10, 0};
+        Type* file_move_type = make_type(TYPE_FUNCTION);
+        file_move_type->fn_type.param_count = 2;
+        file_move_type->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        file_move_type->fn_type.param_types[0] = builtin_string;
+        file_move_type->fn_type.param_types[1] = builtin_string;
+        file_move_type->fn_type.return_type = builtin_int;
+        add_symbol(global_scope, file_move_tok, file_move_type, false);
+        
+        Token file_mkdir_tok = {TOKEN_IDENT, "File::mkdir", 11, 0};
+        Type* file_mkdir_type = make_type(TYPE_FUNCTION);
+        file_mkdir_type->fn_type.param_count = 1;
+        file_mkdir_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
+        file_mkdir_type->fn_type.param_types[0] = builtin_string;
+        file_mkdir_type->fn_type.return_type = builtin_int;
+        add_symbol(global_scope, file_mkdir_tok, file_mkdir_type, false);
+        
+        Token file_rmdir_tok = {TOKEN_IDENT, "File::rmdir", 11, 0};
+        Type* file_rmdir_type = make_type(TYPE_FUNCTION);
+        file_rmdir_type->fn_type.param_count = 1;
+        file_rmdir_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
+        file_rmdir_type->fn_type.param_types[0] = builtin_string;
+        file_rmdir_type->fn_type.return_type = builtin_int;
+        add_symbol(global_scope, file_rmdir_tok, file_rmdir_type, false);
         
         // System module
         Token sys_exec_tok = {TOKEN_IDENT, "System::exec", 12, 0};
