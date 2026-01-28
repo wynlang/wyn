@@ -244,13 +244,14 @@ void codegen_for_statement(ForStmt* stmt, LLVMCodegenContext* ctx) {
     LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(ctx->builder));
     LLVMBasicBlockRef loop_header = LLVMAppendBasicBlock(function, "for.header");
     LLVMBasicBlockRef loop_body = LLVMAppendBasicBlock(function, "for.body");
+    LLVMBasicBlockRef loop_inc = LLVMAppendBasicBlock(function, "for.inc");
     LLVMBasicBlockRef loop_end = LLVMAppendBasicBlock(function, "for.end");
     
-    // Save previous loop context
+    // Save previous loop context - continue goes to increment
     LLVMBasicBlockRef prev_loop_end = ctx->current_loop_end;
     LLVMBasicBlockRef prev_loop_header = ctx->current_loop_header;
     ctx->current_loop_end = loop_end;
-    ctx->current_loop_header = loop_header;
+    ctx->current_loop_header = loop_inc;
     
     LLVMBuildBr(ctx->builder, loop_header);
     
@@ -275,14 +276,16 @@ void codegen_for_statement(ForStmt* stmt, LLVMCodegenContext* ctx) {
     // Body
     LLVMPositionBuilderAtEnd(ctx->builder, loop_body);
     codegen_statement(stmt->body, ctx);
-    
-    // Increment
     if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(ctx->builder))) {
-        if (stmt->increment) {
-            codegen_expression(stmt->increment, ctx);
-        }
-        LLVMBuildBr(ctx->builder, loop_header);
+        LLVMBuildBr(ctx->builder, loop_inc);
     }
+    
+    // Increment block
+    LLVMPositionBuilderAtEnd(ctx->builder, loop_inc);
+    if (stmt->increment) {
+        codegen_expression(stmt->increment, ctx);
+    }
+    LLVMBuildBr(ctx->builder, loop_header);
     
     // Restore previous loop context
     ctx->current_loop_end = prev_loop_end;

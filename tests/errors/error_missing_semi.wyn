@@ -1,0 +1,14 @@
+fn main() {
+    let x = 42  // Missing semicolon here
+    let y = 3.14;
+    
+    print("Hello")  // Missing semicolon here
+    print("World");
+    
+    if (x > 0) {
+        print("positive")  // Missing semicolon here
+    }
+    
+    // Multiple statements on same line
+    let a = 1 let b = 2;  // Missing semicolon between statements
+}

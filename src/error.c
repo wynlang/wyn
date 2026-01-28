@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 static WynError* errors = NULL;
 static int error_count = 0;
@@ -140,21 +141,26 @@ static const char* get_conversion_suggestion(const char* from_type, const char* 
 
 void type_error_mismatch(const char* expected_type, const char* actual_type, const char* context, int line, int column) {
     // Enhanced error message with colors and detailed information
-    printf("\n" RED BOLD "Error:" RESET " Type mismatch at line %d\n", line);
+    printf("\n" RED BOLD "Error:" RESET " Type mismatch at line %d:%d\n", line, column);
+    printf("  " BOLD "Context:" RESET "  %s\n", context);
     printf("  " BOLD "Expected:" RESET " %s (%s)\n", 
            expected_type, get_detailed_type_description(expected_type));
     printf("  " BOLD "Got:" RESET "      %s (%s)\n", 
            actual_type, get_detailed_type_description(actual_type));
-    printf("  " BOLD "Context:" RESET "  %s\n", context);
+    
+    // Show where types come from
+    printf("  " BLUE "Type origin:" RESET "\n");
+    printf("    - Expected type comes from: variable declaration or function signature\n");
+    printf("    - Actual type comes from: expression evaluation\n");
     
     // Provide helpful suggestion
     const char* suggestion = get_conversion_suggestion(actual_type, expected_type);
-    printf("\n" YELLOW "Note:" RESET " %s\n", suggestion);
+    printf("  " YELLOW "Suggestion:" RESET " %s\n", suggestion);
     
     // Add to error system for tracking
     char message[512];
-    snprintf(message, sizeof(message), "Type mismatch: expected '%s' but got '%s'", 
-             expected_type, actual_type);
+    snprintf(message, sizeof(message), "Type mismatch: expected '%s' but got '%s' in %s", 
+             expected_type, actual_type, context);
     report_error_with_suggestion(ERR_TYPE_MISMATCH, "type_checker", line, column, message, suggestion);
 }
 
@@ -168,29 +174,114 @@ void type_error_undefined_variable(const char* var_name, int line, int column) {
     report_error_with_suggestion(ERR_UNDEFINED_VARIABLE, "type_checker", line, column, message, suggestion);
 }
 
+// Helper function to calculate Levenshtein distance for typo detection
+static int levenshtein_distance(const char* s1, const char* s2) {
+    int len1 = strlen(s1);
+    int len2 = strlen(s2);
+    
+    if (len1 == 0) return len2;
+    if (len2 == 0) return len1;
+    
+    int matrix[len1 + 1][len2 + 1];
+    
+    for (int i = 0; i <= len1; i++) matrix[i][0] = i;
+    for (int j = 0; j <= len2; j++) matrix[0][j] = j;
+    
+    for (int i = 1; i <= len1; i++) {
+        for (int j = 1; j <= len2; j++) {
+            int cost = (s1[i-1] == s2[j-1]) ? 0 : 1;
+            matrix[i][j] = fmin(fmin(
+                matrix[i-1][j] + 1,      // deletion
+                matrix[i][j-1] + 1),     // insertion
+                matrix[i-1][j-1] + cost  // substitution
+            );
+        }
+    }
+    
+    return matrix[len1][len2];
+}
+
+// Common function names for typo detection
+static const char* common_functions[] = {
+    "print", "println", "str_length", "str_contains", "str_split", "str_join",
+    "arr_length", "arr_push", "arr_pop", "arr_get", "arr_set",
+    "map_get", "map_set", "map_has", "map_keys", "map_values",
+    "sqrt", "pow", "abs", "min", "max", "floor", "ceil",
+    "read_file", "write_file", "file_exists", "create_dir",
+    "parse_int", "parse_float", "to_string", "to_int", "to_float",
+    NULL
+};
+
+// Find similar function names for suggestions
+static const char* find_similar_function(const char* func_name) {
+    int min_distance = 999;
+    const char* best_match = NULL;
+    
+    for (int i = 0; common_functions[i] != NULL; i++) {
+        int distance = levenshtein_distance(func_name, common_functions[i]);
+        if (distance < min_distance && distance <= 2) { // Max 2 character difference
+            min_distance = distance;
+            best_match = common_functions[i];
+        }
+    }
+    
+    return best_match;
+}
+
 void type_error_undefined_function(const char* func_name, int line, int column) {
     char message[256];
     snprintf(message, sizeof(message), "Undefined function '%s'", func_name);
     
-    char suggestion[256];
-    snprintf(suggestion, sizeof(suggestion), "Define function '%s' or check for typos in the function name", func_name);
+    char suggestion[512];
+    const char* similar = find_similar_function(func_name);
+    if (similar) {
+        snprintf(suggestion, sizeof(suggestion), 
+                "Did you mean '%s'? Or define function '%s' before using it", 
+                similar, func_name);
+    } else {
+        snprintf(suggestion, sizeof(suggestion), 
+                "Define function '%s' or check for typos in the function name", func_name);
+    }
+    
+    // Enhanced error message with colors
+    printf("\n" RED BOLD "Error:" RESET " Undefined function at line %d\n", line);
+    printf("  " BOLD "Function:" RESET " %s\n", func_name);
+    if (similar) {
+        printf("  " YELLOW "Did you mean:" RESET " %s?\n", similar);
+    }
+    printf("  " BLUE "Help:" RESET " %s\n", suggestion);
     
     report_error_with_suggestion(ERR_UNDEFINED_FUNCTION, "type_checker", line, column, message, suggestion);
 }
 
 void type_error_wrong_arg_count(const char* func_name, int expected, int actual, int line, int column) {
+    // Enhanced error message with colors and detailed information
+    printf("\n" RED BOLD "Error:" RESET " Wrong number of arguments at line %d:%d\n", line, column);
+    printf("  " BOLD "Function:" RESET " %s\n", func_name);
+    printf("  " BOLD "Expected:" RESET " %d argument%s\n", expected, expected == 1 ? "" : "s");
+    printf("  " BOLD "Got:" RESET "      %d argument%s\n", actual, actual == 1 ? "" : "s");
+    
     char message[256];
     snprintf(message, sizeof(message), "Function '%s' expects %d arguments but got %d", 
              func_name, expected, actual);
     
     char suggestion[256];
     if (actual < expected) {
-        snprintf(suggestion, sizeof(suggestion), "Add %d more argument(s) to the function call", 
-                 expected - actual);
+        int missing = expected - actual;
+        snprintf(suggestion, sizeof(suggestion), 
+                "Add %d more argument%s to the function call", 
+                missing, missing == 1 ? "" : "s");
+        printf("  " YELLOW "Help:" RESET " Add %d more argument%s\n", missing, missing == 1 ? "" : "s");
     } else {
-        snprintf(suggestion, sizeof(suggestion), "Remove %d argument(s) from the function call", 
-                 actual - expected);
+        int extra = actual - expected;
+        snprintf(suggestion, sizeof(suggestion), 
+                "Remove %d argument%s from the function call", 
+                extra, extra == 1 ? "" : "s");
+        printf("  " YELLOW "Help:" RESET " Remove %d extra argument%s\n", extra, extra == 1 ? "" : "s");
     }
+    
+    // Show function signature hint
+    printf("  " BLUE "Note:" RESET " Check the function definition for the correct signature\n");
     
     report_error_with_suggestion(ERR_WRONG_ARG_COUNT, "type_checker", line, column, message, suggestion);
 }
@@ -227,6 +318,44 @@ void type_suggest_conversion(const char* from_type, const char* to_type) {
     report_error_with_suggestion(ERR_TYPE_MISMATCH, "type_checker", 0, 0, message, suggestion);
 }
 
+
+void parser_error_missing_semicolon(const char* filename, int line, int column) {
+    printf("\n" RED BOLD "Error:" RESET " Missing semicolon at line %d:%d\n", line, column);
+    printf("  " YELLOW "Help:" RESET " Add ';' at the end of the statement\n");
+    printf("  " BLUE "Note:" RESET " Most statements in Wyn require a semicolon\n");
+    
+    char message[256];
+    snprintf(message, sizeof(message), "Missing semicolon");
+    char suggestion[256];
+    snprintf(suggestion, sizeof(suggestion), "Add ';' at the end of the statement");
+    
+    report_error_with_suggestion(ERR_MISSING_SEMICOLON, filename, line, column, message, suggestion);
+}
+
+void parser_error_unclosed_delimiter(const char* filename, int line, int column, 
+                                    char opening_char, int opening_line, int opening_column) {
+    printf("\n" RED BOLD "Error:" RESET " Unclosed delimiter at line %d:%d\n", line, column);
+    printf("  " BOLD "Opening:" RESET " '%c' at line %d:%d\n", opening_char, opening_line, opening_column);
+    
+    char closing_char;
+    switch (opening_char) {
+        case '(': closing_char = ')'; break;
+        case '[': closing_char = ']'; break;
+        case '{': closing_char = '}'; break;
+        default: closing_char = opening_char; break;
+    }
+    
+    printf("  " YELLOW "Help:" RESET " Add '%c' to close the delimiter\n", closing_char);
+    printf("  " BLUE "Note:" RESET " Every opening delimiter must have a matching closing delimiter\n");
+    
+    char message[256];
+    snprintf(message, sizeof(message), "Unclosed '%c' from line %d:%d", 
+             opening_char, opening_line, opening_column);
+    char suggestion[256];
+    snprintf(suggestion, sizeof(suggestion), "Add '%c' to close the delimiter", closing_char);
+    
+    report_error_with_suggestion(ERR_UNMATCHED_PAREN, filename, line, column, message, suggestion);
+}
 
 // Show source code context for better error messages
 void show_error_context(const char* filename, int line, int column, const char* message, const char* suggestion) {

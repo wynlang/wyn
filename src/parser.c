@@ -1865,6 +1865,41 @@ Stmt* statement() {
     return stmt;
 }
 
+// Helper function to mark last expression as implicit return
+static void mark_implicit_return(Stmt* body) {
+    if (!body || body->type != STMT_BLOCK || body->block.count == 0) {
+        return;
+    }
+    
+    // Find the last statement in the block
+    Stmt* last_stmt = body->block.stmts[body->block.count - 1];
+    
+    // If the last statement is an expression statement, mark it as implicit return
+    if (last_stmt->type == STMT_EXPR) {
+        last_stmt->expr->is_implicit_return = true;
+    }
+    // Handle if/else expressions that could be implicit returns
+    else if (last_stmt->type == STMT_IF) {
+        // For if statements, we need to check if both branches end with expressions
+        if (last_stmt->if_stmt.then_branch && last_stmt->if_stmt.then_branch->type == STMT_BLOCK) {
+            mark_implicit_return(last_stmt->if_stmt.then_branch);
+        }
+        if (last_stmt->if_stmt.else_branch && last_stmt->if_stmt.else_branch->type == STMT_BLOCK) {
+            mark_implicit_return(last_stmt->if_stmt.else_branch);
+        }
+    }
+    // Handle match statements
+    else if (last_stmt->type == STMT_MATCH) {
+        // Mark implicit returns in all match arms
+        for (int i = 0; i < last_stmt->match_stmt.case_count; i++) {
+            if (last_stmt->match_stmt.cases[i].body && 
+                last_stmt->match_stmt.cases[i].body->type == STMT_BLOCK) {
+                mark_implicit_return(last_stmt->match_stmt.cases[i].body);
+            }
+        }
+    }
+}
+
 Stmt* function() {
     bool is_async = match(TOKEN_ASYNC);
     bool is_public = match(TOKEN_PUB);
@@ -1986,6 +2021,12 @@ Stmt* function() {
     }
     
     expect(TOKEN_RBRACE, "Expected '}' after function body");
+    
+    // Mark last expression as implicit return if function has return type
+    if (stmt->fn.return_type) {
+        mark_implicit_return(body);
+    }
+    
     stmt->fn.body = body;
     
     return stmt;

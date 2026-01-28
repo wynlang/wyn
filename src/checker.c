@@ -963,6 +963,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 fprintf(stderr, "\nError at line %d: Undefined variable '%.*s'\n", 
                         expr->token.line, expr->token.length, expr->token.start);
                 
+                // Extract variable name for enhanced error reporting
+                char var_name[256];
+                snprintf(var_name, sizeof(var_name), "%.*s", expr->token.length, expr->token.start);
+                type_error_undefined_variable(var_name, expr->token.line, 0);
+                
                 // Suggest similar names
                 fprintf(stderr, "  Available variables in scope:\n");
                 int suggestions = 0;
@@ -1185,8 +1190,9 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     char func_name[256];
                     snprintf(func_name, sizeof(func_name), "%.*s", 
                             expr->call.callee->token.length, expr->call.callee->token.start);
-                    fprintf(stderr, "Error: No matching overload found for function '%s' with %d arguments\n",
-                            func_name, expr->call.arg_count);
+                    
+                    // Use enhanced error reporting for undefined function
+                    type_error_undefined_function(func_name, expr->call.callee->token.line, 0);
                     had_error = true;
                 }
                 
@@ -1201,13 +1207,19 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // For variadic functions, allow any number of arguments >= param_count
                 if (callee_type->fn_type.is_variadic) {
                     if (expr->call.arg_count < callee_type->fn_type.param_count) {
-                        fprintf(stderr, "Error: Variadic function expects at least %d arguments, got %d\n",
-                                callee_type->fn_type.param_count, expr->call.arg_count);
+                        char func_name[256];
+                        snprintf(func_name, sizeof(func_name), "%.*s", 
+                                expr->call.callee->token.length, expr->call.callee->token.start);
+                        type_error_wrong_arg_count(func_name, callee_type->fn_type.param_count, 
+                                                  expr->call.arg_count, expr->call.callee->token.line, 0);
                         had_error = true;
                     }
                 } else if (expr->call.arg_count != callee_type->fn_type.param_count) {
-                    fprintf(stderr, "Error: Parameter count mismatch - function expects %d arguments, got %d\n",
-                            callee_type->fn_type.param_count, expr->call.arg_count);
+                    char func_name[256];
+                    snprintf(func_name, sizeof(func_name), "%.*s", 
+                            expr->call.callee->token.length, expr->call.callee->token.start);
+                    type_error_wrong_arg_count(func_name, callee_type->fn_type.param_count, 
+                                              expr->call.arg_count, expr->call.callee->token.line, 0);
                     had_error = true;
                 }
                 

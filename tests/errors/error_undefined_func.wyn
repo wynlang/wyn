@@ -1,0 +1,13 @@
+fn main() {
+    // Test undefined function with typo
+    prnt("Hello");  // Should suggest "print"
+    
+    // Test undefined function with similar name
+    str_lenght("test");  // Should suggest "str_length"
+    
+    // Test completely unknown function
+    unknown_function();
+    
+    // Test function with wrong module
+    math::squrt(4.0);  // Should suggest "sqrt"
+}

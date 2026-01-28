@@ -4313,8 +4313,21 @@ void codegen_stmt(Stmt* stmt) {
     
     switch (stmt->type) {
         case STMT_EXPR:
-            codegen_expr(stmt->expr);
-            emit(";\n");
+            // Check if this expression is marked as an implicit return
+            if (stmt->expr->is_implicit_return) {
+                if (in_async_function) {
+                    emit("*temp = ");
+                    codegen_expr(stmt->expr);
+                    emit("; goto async_return;\n");
+                } else {
+                    emit("return ");
+                    codegen_expr(stmt->expr);
+                    emit(";\n");
+                }
+            } else {
+                codegen_expr(stmt->expr);
+                emit(";\n");
+            }
             break;
         case STMT_VAR: {
             // Determine C type based on explicit type annotation or initializer

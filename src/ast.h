@@ -300,6 +300,7 @@ struct Expr {
     ExprType type;
     Token token;
     struct Type* expr_type;  // Type information populated by checker
+    bool is_implicit_return; // Mark expression as implicit return
     union {
         BinaryExpr binary;
         CallExpr call;
