@@ -1,6 +1,6 @@
 fn main() {
-    let x = 42  // Missing semicolon here
-    let y = 3.14;
+    var x = 42  // Missing semicolon here
+    var y = 3.14;
     
     print("Hello")  // Missing semicolon here
     print("World");
@@ -10,5 +10,5 @@ fn main() {
     }
     
     // Multiple statements on same line
-    let a = 1 let b = 2;  // Missing semicolon between statements
+    var a = 1 var b = 2;  // Missing semicolon between statements
 }

@@ -8,6 +8,6 @@ fn Point.distance(self) -> int {
 }
 
 fn main() -> int {
-    let p = Point { x: 3, y: 4 };
+    var p = Point { x: 3, y: 4 };
     return Point_distance(p);
 }

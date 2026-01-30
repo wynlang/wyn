@@ -898,6 +898,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             expr->expr_type = builtin_bool;
             return builtin_bool;
         case EXPR_IDENT: {
+            // Check for built-in Option/Result constants
+            if (expr->token.length == 4 && memcmp(expr->token.start, "none", 4) == 0) {
+                expr->expr_type = builtin_int;  // Return type is pointer to Option
+                return builtin_int;
+            }
+            
+            // Check for boolean literals
+            if (expr->token.length == 4 && memcmp(expr->token.start, "true", 4) == 0) {
+                expr->expr_type = builtin_int;  // Booleans are ints (1)
+                return builtin_int;
+            }
+            if (expr->token.length == 5 && memcmp(expr->token.start, "false", 5) == 0) {
+                expr->expr_type = builtin_int;  // Booleans are ints (0)
+                return builtin_int;
+            }
+            
             // T2.5.1: Handle built-in type names
             if (expr->token.length == 3 && memcmp(expr->token.start, "int", 3) == 0) {
                 expr->expr_type = builtin_int;
@@ -1077,6 +1093,230 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // T3.1.1: Enhanced generic function call handling
             if (expr->call.callee->type == EXPR_IDENT) {
                 Token func_name = expr->call.callee->token;
+                
+                // Check for built-in Option/Result constructors
+                char name_buf[256];
+                int name_len = func_name.length < 255 ? func_name.length : 255;
+                strncpy(name_buf, func_name.start, name_len);
+                name_buf[name_len] = '\0';
+                
+                if (strcmp(name_buf, "some") == 0 || strcmp(name_buf, "ok") == 0) {
+                    // some(value) or ok(value) - returns Option<T> or Result<T, E>
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: '%s' expects 1 argument, got %d\n",
+                                func_name.line, name_buf, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    Type* arg_type = check_expr(expr->call.args[0], scope);
+                    expr->expr_type = arg_type;  // Return type is pointer to Option/Result
+                    return arg_type;
+                } else if (strcmp(name_buf, "none") == 0) {
+                    // none() - returns Option<T>
+                    if (expr->call.arg_count != 0) {
+                        fprintf(stderr, "Error at line %d: 'none' expects 0 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    expr->expr_type = builtin_int;  // Return type is pointer to Option
+                    return builtin_int;
+                } else if (strcmp(name_buf, "err") == 0) {
+                    // err(error) - returns Result<T, E>
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'err' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    Type* arg_type = check_expr(expr->call.args[0], scope);
+                    expr->expr_type = arg_type;  // Return type is pointer to Result
+                    return arg_type;
+                } else if (strcmp(name_buf, "file_write") == 0 || strcmp(name_buf, "file_append") == 0) {
+                    // file_write(path, content) or file_append(path, content) - returns int
+                    if (expr->call.arg_count != 2) {
+                        fprintf(stderr, "Error at line %d: '%s' expects 2 arguments, got %d\n",
+                                func_name.line, name_buf, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    check_expr(expr->call.args[1], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "file_read") == 0 || strcmp(name_buf, "file_exists") == 0) {
+                    // file_read(path) or file_exists(path) - returns int
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: '%s' expects 1 argument, got %d\n",
+                                func_name.line, name_buf, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "print") == 0 || strcmp(name_buf, "println") == 0) {
+                    // print(value) or println(value) - accepts any number of arguments
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
+                } else if (strcmp(name_buf, "assert") == 0) {
+                    // assert(condition) or assert(condition, message)
+                    if (expr->call.arg_count < 1 || expr->call.arg_count > 2) {
+                        fprintf(stderr, "Error at line %d: 'assert' expects 1 or 2 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_void;
+                    }
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
+                }
+                
+                // Math functions
+                if (strcmp(name_buf, "min") == 0 || strcmp(name_buf, "max") == 0) {
+                    if (expr->call.arg_count != 2) {
+                        fprintf(stderr, "Error at line %d: '%s' expects 2 arguments, got %d\n",
+                                func_name.line, name_buf, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    check_expr(expr->call.args[1], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "abs") == 0) {
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'abs' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "len") == 0) {
+                    // len(array) or len(string) - returns int
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'len' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "typeof") == 0) {
+                    // typeof(value) - returns string
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'typeof' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_string;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                }
+                
+                // Utility functions
+                if (strcmp(name_buf, "exit") == 0) {
+                    // exit(code) - exits program
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'exit' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_void;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
+                } else if (strcmp(name_buf, "panic") == 0) {
+                    // panic(message) - panic with message
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'panic' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_void;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
+                } else if (strcmp(name_buf, "sleep") == 0) {
+                    // sleep(ms) - sleep for milliseconds
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'sleep' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_void;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
+                } else if (strcmp(name_buf, "rand") == 0) {
+                    // rand() - random number
+                    if (expr->call.arg_count != 0) {
+                        fprintf(stderr, "Error at line %d: 'rand' expects 0 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                }
+                
+                // String functions
+                if (strcmp(name_buf, "str_concat") == 0) {
+                    // str_concat(s1, s2) - concatenate strings
+                    if (expr->call.arg_count != 2) {
+                        fprintf(stderr, "Error at line %d: 'str_concat' expects 2 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_string;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    check_expr(expr->call.args[1], scope);
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "str_contains") == 0) {
+                    // str_contains(haystack, needle) - check if string contains substring
+                    if (expr->call.arg_count != 2) {
+                        fprintf(stderr, "Error at line %d: 'str_contains' expects 2 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    check_expr(expr->call.args[1], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "str_upper") == 0) {
+                    // str_upper(s) - convert to uppercase
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'str_upper' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_string;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "str_lower") == 0) {
+                    // str_lower(s) - convert to lowercase
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'str_lower' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_string;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                }
                 
                 // Check if this is a generic function call
                 if (wyn_is_generic_function_call(func_name)) {
@@ -1260,9 +1500,59 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 check_expr(expr->method_call.args[i], scope);
             }
             
+            Token method = expr->method_call.method;
+            char method_name[256];
+            int len = method.length < 255 ? method.length : 255;
+            memcpy(method_name, method.start, len);
+            method_name[len] = '\0';
+            
+            // Handle string methods
+            if (object_type == builtin_string) {
+                if (strcmp(method_name, "contains") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "upper") == 0 || strcmp(method_name, "lower") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "len") == 0 || strcmp(method_name, "length") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "starts_with") == 0 || strcmp(method_name, "ends_with") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "trim") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "replace") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                }
+            }
+            
+            // Handle int methods
+            if (object_type == builtin_int) {
+                if (strcmp(method_name, "abs") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "to_string") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "min") == 0 || strcmp(method_name, "max") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                }
+            }
+            
+            // Handle bool methods
+            if (object_type == builtin_bool || object_type == builtin_int) {
+                if (strcmp(method_name, "to_string") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                }
+            }
+            
             // Special handling for array.get() - return element type
             if (object_type && object_type->kind == TYPE_ARRAY) {
-                Token method = expr->method_call.method;
                 if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
                     // Return the element type if known
                     if (object_type->array_type.element_type) {
@@ -1275,9 +1565,6 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // Use method signature table for type inference (Phase 1)
             const char* receiver_type = get_receiver_type_string(object_type);
             if (receiver_type) {
-                Token method = expr->method_call.method;
-                char method_name[256];
-                int len = method.length < 255 ? method.length : 255;
                 memcpy(method_name, method.start, len);
                 method_name[len] = '\0';
                 

@@ -1,0 +1,45 @@
+// Edge Case Test: String concatenation
+fn main() -> int {
+    // Multiple concatenations
+    var s1 = "Hello";
+    var s2 = " ";
+    var s3 = "World";
+    
+    var concat1 = str_concat(s1, s2);
+    var concat2 = str_concat(concat1, s3);
+    println("Triple concat:");
+    println(concat2);
+    
+    // Concat same string
+    var double = str_concat(s1, s1);
+    println("Same string concat:");
+    println(double);
+    
+    // Concat with special chars
+    var newline = "\n";
+    var with_newline = str_concat(s1, newline);
+    var len_with_newline = len(with_newline);
+    println("Concat with newline length:");
+    println(len_with_newline);
+    
+    // Multiple concat operations
+    var a = str_concat("A", "B");
+    var b = str_concat("C", "D");
+    var c = str_concat(a, b);
+    println("Multiple concat ops:");
+    println(c);
+    
+    // Concat then use methods
+    var concat_result = str_concat("Hello", "World");
+    var contains_hw = concat_result.contains("HelloWorld");
+    var starts_h = concat_result.starts_with("Hello");
+    var ends_d = concat_result.ends_with("World");
+    println("Concat then contains:");
+    println(contains_hw);
+    println("Concat then starts:");
+    println(starts_h);
+    println("Concat then ends:");
+    println(ends_d);
+    
+    return 0;
+}

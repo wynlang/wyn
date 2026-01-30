@@ -1,0 +1,14 @@
+// Test string functions
+fn main() -> int {
+    println("Testing string functions...");
+    
+    // Test str_contains
+    var haystack = "Hello World";
+    var needle = "World";
+    var contains = str_contains(haystack, needle);
+    print("Contains 'World': ");
+    println(contains);
+    
+    println("String tests passed!");
+    return 0;
+}

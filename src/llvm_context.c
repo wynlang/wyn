@@ -13,6 +13,7 @@
 struct LLVMSymbolTableEntry {
     char* name;
     LLVMValueRef value;
+    LLVMTypeRef type;  // Track the type
     LLVMSymbolTableEntry* next;
 };
 
@@ -576,6 +577,10 @@ void symbol_table_destroy(LLVMSymbolTable* table) {
 }
 
 void symbol_table_insert(LLVMSymbolTable* table, const char* name, LLVMValueRef value) {
+    symbol_table_insert_typed(table, name, value, NULL);
+}
+
+void symbol_table_insert_typed(LLVMSymbolTable* table, const char* name, LLVMValueRef value, LLVMTypeRef type) {
     if (!table || !name) return;
     
     LLVMSymbolTableEntry* entry = (LLVMSymbolTableEntry*)malloc(sizeof(LLVMSymbolTableEntry));
@@ -583,8 +588,27 @@ void symbol_table_insert(LLVMSymbolTable* table, const char* name, LLVMValueRef 
     
     entry->name = strdup(name);
     entry->value = value;
+    entry->type = type;
     entry->next = table->entries;
     table->entries = entry;
+}
+
+LLVMTypeRef symbol_table_lookup_type(LLVMSymbolTable* table, const char* name) {
+    if (!table || !name) return NULL;
+    
+    // Search current scope
+    for (LLVMSymbolTableEntry* entry = table->entries; entry; entry = entry->next) {
+        if (strcmp(entry->name, name) == 0) {
+            return entry->type;
+        }
+    }
+    
+    // Search parent scope
+    if (table->parent) {
+        return symbol_table_lookup_type(table->parent, name);
+    }
+    
+    return NULL;
 }
 
 LLVMValueRef symbol_table_lookup(LLVMSymbolTable* table, const char* name) {

@@ -1,5 +1,5 @@
 fn main() -> int {
-    let mut x = 0;
+    var x = 0;
     while x < 10 {
         x = x + 1;
         if x == 5 {

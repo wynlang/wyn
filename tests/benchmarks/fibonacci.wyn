@@ -6,6 +6,6 @@ fn fibonacci(n: int) -> int {
 }
 
 fn main() -> int {
-    let result = fibonacci(25);
+    var result = fibonacci(25);
     return 0;
 }

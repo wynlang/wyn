@@ -1,5 +1,5 @@
 fn main() -> int {
-    let sum = 0;
+    var sum = 0;
     for i in 0..5 {
         sum = sum + i;
     }

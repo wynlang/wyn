@@ -12,7 +12,7 @@ fn Point.multiply(x: int, y: int) -> int {
 }
 
 fn main() -> int {
-    let result1 = Point_sum(10, 20);
-    let result2 = Point_multiply(3, 4);
+    var result1 = Point_sum(10, 20);
+    var result2 = Point_multiply(3, 4);
     return result1 + result2;
 }

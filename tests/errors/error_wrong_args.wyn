@@ -8,10 +8,10 @@ fn greet(name: string, age: int, city: string) {
 
 fn main() {
     // Too few arguments
-    let result = add(5);  // Expected 2, got 1
+    var result = add(5);  // Expected 2, got 1
     
     // Too many arguments  
-    let result2 = add(1, 2, 3);  // Expected 2, got 3
+    var result2 = add(1, 2, 3);  // Expected 2, got 3
     
     // Wrong count for function with multiple params
     greet("Alice");  // Expected 3, got 1

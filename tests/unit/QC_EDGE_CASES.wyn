@@ -14,13 +14,13 @@ trait Multi {
 }
 
 fn main() -> int {
-    let e = Empty {};
-    let p = Point { x: 1, y: 2 };
-    let z = nested_call();
-    let i = generic_chain(5);
-    let arr = [1];
+    var e = Empty {};
+    var p = Point { x: 1, y: 2 };
+    var z = nested_call();
+    var i = generic_chain(5);
+    var arr = [1];
     
-    let single = match 1 {
+    var single = match 1 {
         1 => 10,
         _ => 0
     };

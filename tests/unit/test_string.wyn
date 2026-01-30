@@ -1,4 +1,4 @@
 fn main() -> int {
-    let msg = "hello";
+    var msg = "hello";
     return 42;
 }

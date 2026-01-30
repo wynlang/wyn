@@ -1,0 +1,13 @@
+// Test typeof() function
+fn main() -> int {
+    var x = 42;
+    var s = "hello";
+    
+    print("Type of 42: ");
+    println(typeof(x));
+    
+    print("Type of 'hello': ");
+    println(typeof(s));
+    
+    return 0;
+}

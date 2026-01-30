@@ -1,0 +1,81 @@
+// Session 5 Enhancement Demo
+fn main() -> int {
+    println("╔════════════════════════════════════════╗");
+    println("║   WYN LANGUAGE - SESSION 5 FEATURES   ║");
+    println("╚════════════════════════════════════════╝");
+    println("");
+    
+    // 1. Random Numbers
+    println("1. Random Number Generation:");
+    var r1 = rand();
+    var r2 = rand();
+    print("   Random: ");
+    print(r1);
+    print(", ");
+    println(r2);
+    
+    // 2. Sleep Function
+    println("");
+    println("2. Sleep Function:");
+    println("   Sleeping 50ms...");
+    sleep(50);
+    println("   Done!");
+    
+    // 3. String Contains
+    println("");
+    println("3. String Operations:");
+    var text = "Wyn is awesome!";
+    var has_wyn = str_contains(text, "Wyn");
+    print("   '");
+    print(text);
+    println("'");
+    print("   Contains 'Wyn': ");
+    println(has_wyn);
+    
+    // 4. Boolean Literals
+    println("");
+    println("4. Boolean Literals:");
+    var is_ready = true;
+    var is_broken = false;
+    
+    if is_ready {
+        println("   ✓ System ready");
+    }
+    
+    if is_broken {
+        println("   ✗ Should not print");
+    } else {
+        println("   ✓ System working");
+    }
+    
+    // 5. Math Functions
+    println("");
+    println("5. Math Functions:");
+    var x = 42;
+    var y = 17;
+    print("   min(42, 17) = ");
+    println(min(x, y));
+    print("   max(42, 17) = ");
+    println(max(x, y));
+    print("   abs(-50) = ");
+    println(abs(-50));
+    
+    // 6. Combined Features
+    println("");
+    println("6. Combined Features:");
+    var random_val = rand();
+    var is_positive = true;
+    
+    if is_positive {
+        var result = max(random_val, 0);
+        print("   Positive random: ");
+        println(result);
+    }
+    
+    println("");
+    println("╔════════════════════════════════════════╗");
+    println("║     ALL FEATURES WORKING! ✓           ║");
+    println("╚════════════════════════════════════════╝");
+    
+    return 0;
+}

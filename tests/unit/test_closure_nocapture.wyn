@@ -1,5 +1,5 @@
 // Test minimal closure - no capture
 fn main() -> int {
-    let add = |x, y| x + y;
+    var add = |x, y| x + y;
     return add(3, 4);  // Should return 7
 }

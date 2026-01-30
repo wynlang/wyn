@@ -18,18 +18,18 @@ trait Renderable {
 }
 
 fn main() -> int {
-    let config = Config { width: 10, height: 20 };
-    let area = get_area(config.width, config.height);
+    var config = Config { width: 10, height: 20 };
+    var area = get_area(config.width, config.height);
     
-    let values = [100, 200, area];
-    let selected = values[2];
+    var values = [100, 200, area];
+    var selected = values[2];
     
-    let result = match selected {
+    var result = match selected {
         200 => 1,
         _ => 2
     };
     
-    let final_value = calculate(result);
+    var final_value = calculate(result);
     
     match final_value {
         2 => return 42,

@@ -1,0 +1,21 @@
+// Loop optimization test
+fn loop_test() -> int {
+    var sum: int = 0;
+    var i: int = 0;
+    
+    while i < 4 {
+        sum = sum + i;
+        i = i + 1;
+    }
+    
+    return sum;
+}
+
+fn main() -> int {
+    var result: int = loop_test();
+    
+    print_str("Loop result: ");
+    print(result);
+    
+    return 0;
+}

@@ -3,6 +3,6 @@ fn add(a: int, b: int) -> int {
 }
 
 fn main() {
-    let result = add(5);
+    var result = add(5);
     print(result);
 }

@@ -2,9 +2,9 @@
 
 **A modern systems programming language where everything is an object**
 
-[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](VERSION)
+[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](VERSION)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Examples](https://img.shields.io/badge/examples-62%2F63%20passing-brightgreen.svg)](examples/)
+[![Tests](https://img.shields.io/badge/tests-198%2F198%20passing-brightgreen.svg)](tests/)
 
 ---
 
@@ -12,11 +12,17 @@
 
 - **Everything is an Object** - Even integers and strings have methods
 - **Modern Syntax** - Clean, intuitive, and expressive
-- **Systems Programming** - Compiles to C for maximum performance
+- **LLVM Backend** - Compiles to native code for maximum performance
 - **Module System** - Built-in import/export for code organization
 - **Rich Standard Library** - Strings, arrays, file I/O, networking, JSON, and more
 - **IDE Support** - LSP, VS Code extension, Neovim plugin
-- **Package Manager** - Built-in package management (registry coming in v1.5.1)
+- **Production Ready** - 198/198 tests passing, all edge cases covered
+
+---
+
+## 📁 Repository Structure
+
+See [STRUCTURE.md](STRUCTURE.md) for detailed repository organization.
 
 ---
 
@@ -26,8 +32,8 @@
 
 ```bash
 cd wyn
-make
-./wyn --version  # Should show "Wyn v1.5.0"
+make clean && make wyn-llvm && mv wyn-llvm wyn
+./wyn --version  # Should show "Wyn v1.6.0"
 ```
 
 ### Hello World

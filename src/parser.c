@@ -2010,11 +2010,11 @@ Stmt* function() {
     Stmt* body = alloc_stmt();
     body->type = STMT_BLOCK;
     body->block.count = 0;
-    body->block.stmts = malloc(sizeof(Stmt*) * 1024); // Increased to 1024 for large functions
+    body->block.stmts = malloc(sizeof(Stmt*) * 4096); // Increased to 4096 for large functions
     
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-        if (body->block.count >= 1024) {
-            fprintf(stderr, "Error at line %d: Function body too large (max 1024 statements)\n", parser.current.line);
+        if (body->block.count >= 4096) {
+            fprintf(stderr, "Error at line %d: Function body too large (max 4096 statements)\n", parser.current.line);
             break;
         }
         body->block.stmts[body->block.count++] = statement();

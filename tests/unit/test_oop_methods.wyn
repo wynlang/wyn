@@ -1,0 +1,15 @@
+// Test object-oriented method syntax
+fn main() -> int {
+    println("Testing OOP method syntax...");
+    
+    // String methods
+    var text = "Hello World";
+    
+    // Test contains method
+    var has_world = text.contains("World");
+    print("Contains: ");
+    println(has_world);
+    
+    println("✓ OOP method syntax working!");
+    return 0;
+}

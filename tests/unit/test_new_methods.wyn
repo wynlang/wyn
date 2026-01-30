@@ -1,0 +1,13 @@
+// Test new methods
+fn main() -> int {
+    println("Testing new methods...");
+    
+    // Test int.abs()
+    var negative = -42;
+    var positive = negative.abs();
+    print("(-42).abs(): ");
+    println(positive);
+    
+    println("✓ abs() working!");
+    return 0;
+}

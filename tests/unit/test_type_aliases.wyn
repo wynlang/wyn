@@ -3,9 +3,9 @@ type Score = int;
 type Distance = int;
 
 fn main() -> int {
-    let user: UserId = 100;
-    let score: Score = 95;
-    let dist: Distance = 50;
+    var user: UserId = 100;
+    var score: Score = 95;
+    var dist: Distance = 50;
     
     return user + score + dist;  // 245
 }

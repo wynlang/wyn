@@ -1,0 +1,24 @@
+// TDD Test: Multiple method calls should not segfault
+fn main() -> int {
+    println("Test: Multiple method calls");
+    
+    var text = "Hello World";
+    
+    // First call
+    var has_hello = text.contains("Hello");
+    print("Contains 'Hello': ");
+    println(has_hello);
+    
+    // Second call - this currently causes segfault
+    var has_world = text.contains("World");
+    print("Contains 'World': ");
+    println(has_world);
+    
+    // Third call
+    var has_xyz = text.contains("xyz");
+    print("Contains 'xyz': ");
+    println(has_xyz);
+    
+    println("✓ Multiple method calls work!");
+    return 0;
+}

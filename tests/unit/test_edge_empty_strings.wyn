@@ -1,0 +1,41 @@
+// Edge Case Test: Empty strings
+fn main() -> int {
+    var empty = "";
+    var text = "Hello";
+    
+    // Empty string length
+    var len_empty = len(empty);
+    println("Empty string length:");
+    println(len_empty);
+    
+    // Contains with empty
+    var contains_empty = text.contains("");
+    println("Contains empty string:");
+    println(contains_empty);
+    
+    // Starts/ends with empty
+    var starts_empty = text.starts_with("");
+    var ends_empty = text.ends_with("");
+    println("Starts with empty:");
+    println(starts_empty);
+    println("Ends with empty:");
+    println(ends_empty);
+    
+    // Concat with empty
+    var concat1 = str_concat(empty, text);
+    var concat2 = str_concat(text, empty);
+    println("Empty + text:");
+    println(concat1);
+    println("Text + empty:");
+    println(concat2);
+    
+    // Upper/lower on empty
+    var upper_empty = empty.upper();
+    var lower_empty = empty.lower();
+    println("Empty upper:");
+    println(upper_empty);
+    println("Empty lower:");
+    println(lower_empty);
+    
+    return 0;
+}

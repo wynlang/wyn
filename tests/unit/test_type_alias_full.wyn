@@ -6,7 +6,7 @@ fn get_user_id() -> UserId {
 }
 
 fn main() -> int {
-    let id: UserId = 42;
-    let score: Score = get_user_id();
+    var id: UserId = 42;
+    var score: Score = get_user_id();
     return id + score;
 }

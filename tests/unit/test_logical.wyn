@@ -1,6 +1,6 @@
 fn main() -> int {
-    let a = true;
-    let b = false;
+    var a = true;
+    var b = false;
     if a and not b {
         return 42;
     }

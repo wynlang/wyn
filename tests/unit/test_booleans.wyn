@@ -1,0 +1,17 @@
+// Test boolean literals
+fn main() -> int {
+    var t = true;
+    var f = false;
+    
+    if t {
+        println("true works!");
+    }
+    
+    if f {
+        println("This should not print");
+    } else {
+        println("false works!");
+    }
+    
+    return 0;
+}

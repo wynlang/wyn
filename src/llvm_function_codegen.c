@@ -163,6 +163,8 @@ void codegen_function_parameters(FnStmt* fn_stmt, LLVMValueRef function, LLVMCod
         if (param_alloca) {
             // Store parameter value into local variable
             LLVMBuildStore(ctx->builder, param, param_alloca);
+            // Add to symbol table with type
+            symbol_table_insert_typed(ctx->symbol_table, param_name, param_alloca, param_type);
         }
         
         safe_free(param_name);

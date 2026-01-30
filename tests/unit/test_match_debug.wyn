@@ -1,6 +1,6 @@
 fn main() -> int {
-    let x = 5;
-    let result = match x {
+    var x = 5;
+    var result = match x {
         1 => 10,
         5 => 50,
         _ => 0

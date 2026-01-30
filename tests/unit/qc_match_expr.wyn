@@ -1,5 +1,5 @@
 fn main() -> int {
-    let x = match 5 {
+    var x = match 5 {
         5 => 50,
         _ => 0
     };

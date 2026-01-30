@@ -24,27 +24,27 @@ fn identity<T>(x: T) -> T {
 
 // Feature 5: Optional Creation
 fn maybe_value() -> int {
-    let x = some(42);
-    let y = none;
+    var x = some(42);
+    var y = none;
     return 1;
 }
 
 fn main() -> int {
     // Feature 6: Arithmetic
-    let sum = add(10, 5);
+    var sum = add(10, 5);
     
     // Feature 7: Structs with field access
-    let p = Point { x: 3, y: 4 };
+    var p = Point { x: 3, y: 4 };
     
     // Feature 8: Generics
-    let val = identity(42);
+    var val = identity(42);
     
     // Feature 9: Arrays
-    let arr = [10, 20, 30];
-    let arr_val = arr[1];
+    var arr = [10, 20, 30];
+    var arr_val = arr[1];
     
     // Feature 10: Match Expressions
-    let match_result = match sum {
+    var match_result = match sum {
         15 => arr_val,
         _ => 0
     };

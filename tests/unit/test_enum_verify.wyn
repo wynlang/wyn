@@ -5,7 +5,7 @@ enum Color {
 }
 
 fn main() -> int {
-    let c = Color::RED;
+    var c = Color::RED;
     if c == Color::RED {
         return 1;
     }

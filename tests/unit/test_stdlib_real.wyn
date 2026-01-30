@@ -1,19 +1,19 @@
 // Test REAL stdlib modules
 
 // Math functions
-fn wyn_abs(x: int) -> int {
+fn abs_stdlib(x: int) -> int {
     if x < 0 { return 0 - x; }
     return x;
 }
 
-fn wyn_max(a: int, b: int) -> int {
+fn max_stdlib(a: int, b: int) -> int {
     if a > b { return a; }
     return b;
 }
 
 fn wyn_pow(x: int, n: int) -> int {
-    let mut result = 1;
-    let mut i = 0;
+    var result = 1;
+    var i = 0;
     while i < n {
         result = result * x;
         i = i + 1;
@@ -22,9 +22,9 @@ fn wyn_pow(x: int, n: int) -> int {
 }
 
 // Array functions
-fn wyn_array_sum(arr: [int], len: int) -> int {
-    let mut total = 0;
-    let mut i = 0;
+fn array_sum_stdlib(arr: [int], len: int) -> int {
+    var total = 0;
+    var i = 0;
     while i < len {
         total = total + arr[i];
         i = i + 1;
@@ -34,13 +34,13 @@ fn wyn_array_sum(arr: [int], len: int) -> int {
 
 fn main() -> int {
     // Test math
-    let a = wyn_abs(0 - 5);
-    let m = wyn_max(10, 20);
-    let p = wyn_pow(2, 3);
+    var a = abs_stdlib(0 - 5);
+    var m = max_stdlib(10, 20);
+    var p = wyn_pow(2, 3);
     
     // Test arrays
-    let arr = [1, 2, 3, 4, 5];
-    let s = wyn_array_sum(arr, 5);
+    var arr = [1, 2, 3, 4, 5];
+    var s = array_sum_stdlib(arr, 5);
     
     // Return combined result
     return a + m + p + s;

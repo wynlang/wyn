@@ -1,8 +1,8 @@
 // Test all 8 stdlib modules
 
 // Math
-fn wyn_abs(x: int) -> int { if x < 0 { return 0 - x; } return x; }
-fn wyn_max(a: int, b: int) -> int { if a > b { return a; } return b; }
+fn abs_test(x: int) -> int { if x < 0 { return 0 - x; } return x; }
+fn max_test(a: int, b: int) -> int { if a > b { return a; } return b; }
 
 // Time
 fn wyn_year() -> int { return 2026; }
@@ -15,8 +15,8 @@ fn json_parse_int(s: int) -> int { return 42; }
 
 // Crypto
 fn crypto_checksum(data: int) -> int {
-    let mut cs = 0;
-    let mut d = data;
+    var cs = 0;
+    var d = data;
     while d > 0 {
         cs = cs + (d % 256);
         d = d / 256;
@@ -44,13 +44,13 @@ fn db_count_results(rows: int) -> int { return rows; }
 
 fn main() -> int {
     // Test each module
-    let math_test = wyn_abs(0 - 5) + wyn_max(10, 20);  // 5 + 20 = 25
-    let time_test = wyn_year() - 2000;                  // 26
-    let os_test = wyn_cpu_count();                      // 8
-    let json_test = json_parse_int(0);                  // 42
-    let crypto_test = crypto_checksum(255);             // 255
-    let http_test = http_status_ok() / 100;             // 2
-    let db_test = db_count_results(10);                 // 10
+    var math_test = abs_test(0 - 5) + max_test(10, 20);  // 5 + 20 = 25
+    var time_test = wyn_year() - 2000;                  // 26
+    var os_test = wyn_cpu_count();                      // 8
+    var json_test = json_parse_int(0);                  // 42
+    var crypto_test = crypto_checksum(255);             // 255
+    var http_test = http_status_ok() / 100;             // 2
+    var db_test = db_count_results(10);                 // 10
     
     // All 8 modules working!
     return 88;  // Success code

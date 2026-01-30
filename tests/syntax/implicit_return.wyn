@@ -79,21 +79,21 @@ fn test_struct() -> Point {
 
 // Test 12: Variable assignment then implicit return
 fn test_var_then_return() -> int {
-    let x = 15;
+    var x = 15;
     x + 5
 }
 
 // Test 13: Multiple statements then implicit return
 fn test_multiple_stmts() -> int {
-    let a = 5;
-    let b = 10;
-    let c = 15;
+    var a = 5;
+    var b = 10;
+    var c = 15;
     a + b + c
 }
 
 // Test 14: Function with no return type (void) - no implicit return
 fn test_void() {
-    let x = 42;
+    var x = 42;
 }
 
 // Test 15: Match expression implicit return
@@ -122,12 +122,12 @@ fn main() -> int {
     assert(test_mixed(-5) == -1);
     assert(test_mixed(7) == 14);
     
-    let arr = test_array();
+    var arr = test_array();
     assert(arr.len() == 5);
     assert(arr[0] == 1);
     assert(arr[4] == 5);
     
-    let point = test_struct();
+    var point = test_struct();
     assert(point.x == 10);
     assert(point.y == 20);
     

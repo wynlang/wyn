@@ -219,10 +219,10 @@ bool llvm_link_binary(const char* obj_file, const char* output, const char* wyn_
              "%s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c "
              "%s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c "
              "%s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/spawn.c %s/src/net.c "
-             "%s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c -lm 2>&1",
+             "%s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c -lm 2>&1",
              output, obj_file, root, root, root, root, root, root, root, root, root,
              root, root, root, root, root, root, root, root, root, root, root, root,
-             root, root, root, root, root);
+             root, root, root, root, root, root, root);
     
     int result = system(cmd);
     if (result != 0) {

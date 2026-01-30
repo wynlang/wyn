@@ -17,9 +17,9 @@ fn days_in_month(month: int) -> int {
 }
 
 fn is_leap_year(year: int) -> int {
-    let div4 = year % 4;
-    let div100 = year % 100;
-    let div400 = year % 400;
+    var div4 = year % 4;
+    var div100 = year % 100;
+    var div400 = year % 400;
     
     if div400 == 0 { return 1; }
     if div100 == 0 { return 0; }
@@ -37,20 +37,20 @@ fn minutes_to_seconds(minutes: int) -> int {
 
 fn main() -> int {
     // Test 1: Days in months
-    let jan = days_in_month(1);      // 31
-    let feb = days_in_month(2);      // 28
-    let apr = days_in_month(4);      // 30
-    let dec = days_in_month(12);     // 31
+    var jan = days_in_month(1);      // 31
+    var feb = days_in_month(2);      // 28
+    var apr = days_in_month(4);      // 30
+    var dec = days_in_month(12);     // 31
     
     // Test 2: Leap years
-    let leap_2024 = is_leap_year(2024);  // 1 (divisible by 4, not by 100)
-    let leap_2000 = is_leap_year(2000);  // 1 (divisible by 400)
-    let leap_1900 = is_leap_year(1900);  // 0 (divisible by 100, not by 400)
-    let leap_2023 = is_leap_year(2023);  // 0 (not divisible by 4)
+    var leap_2024 = is_leap_year(2024);  // 1 (divisible by 4, not by 100)
+    var leap_2000 = is_leap_year(2000);  // 1 (divisible by 400)
+    var leap_1900 = is_leap_year(1900);  // 0 (divisible by 100, not by 400)
+    var leap_2023 = is_leap_year(2023);  // 0 (not divisible by 4)
     
     // Test 3: Time conversions
-    let h2s = hours_to_seconds(1);       // 3600
-    let m2s = minutes_to_seconds(1);     // 60
+    var h2s = hours_to_seconds(1);       // 3600
+    var m2s = minutes_to_seconds(1);     // 60
     
     // Return sum to verify all work
     // 31+28+30+31 + 1+1+0+0 + 3600+60 = 120 + 2 + 3660 = 3782

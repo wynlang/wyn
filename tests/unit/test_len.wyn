@@ -1,0 +1,10 @@
+// Test len() function
+fn main() -> int {
+    var str = "Hello";
+    var length = len(str);
+    
+    print("Length of 'Hello': ");
+    println(length);
+    
+    return 0;
+}

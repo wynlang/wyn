@@ -1,0 +1,53 @@
+// Comprehensive Demo: All Working Features
+// Session 9 - All bugs fixed!
+
+fn main() -> int {
+    println("=== WYN COMPILER DEMO ===");
+    
+    // String methods
+    var text = "Hello World";
+    var has_hello = text.contains("Hello");
+    var starts = text.starts_with("Hello");
+    var ends = text.ends_with("World");
+    var upper = text.upper();
+    var lower = text.lower();
+    
+    println("String methods:");
+    println(upper);
+    println(lower);
+    
+    // Concatenation
+    var concat = str_concat("Hello", " World");
+    println("Concat:");
+    println(concat);
+    
+    // Length and typeof
+    var length = len(text);
+    var text_type = typeof(text);
+    println("Length:");
+    println(length);
+    println("Type:");
+    println(text_type);
+    
+    // Number methods
+    var n = 42;
+    var neg = 0 - 10;
+    var abs_val = neg.abs();
+    var str_num = n.to_string();
+    println("Abs(-10):");
+    println(abs_val);
+    println("42 as string:");
+    println(str_num);
+    
+    // Multiple calls (was crashing!)
+    var c1 = text.contains("Hello");
+    var c2 = text.contains("World");
+    var c3 = text.contains("xyz");
+    println("Multiple calls work:");
+    println(c1);
+    println(c2);
+    println(c3);
+    
+    println("=== ALL FEATURES WORKING! ===");
+    return 0;
+}

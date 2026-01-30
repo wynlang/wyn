@@ -2,7 +2,7 @@
 extern fn abs(x: int) -> int;
 
 fn main() -> int {
-    let a = abs(-42);
+    var a = abs(-42);
     if (a != 42) { return 1; }
     return 99;
 }

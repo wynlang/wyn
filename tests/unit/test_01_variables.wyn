@@ -1,1 +1,1 @@
-fn main() -> int { let x = 10; let mut y = 20; y = 30; return y; }
+fn main() -> int { var x = 10; var y = 20; y = 30; return y; }

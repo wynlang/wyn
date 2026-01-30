@@ -1,0 +1,17 @@
+// TDD Test: typeof() wrong type detection
+fn main() -> int {
+    var text = "hello";
+    var num = 42;
+    
+    var text_type = typeof(text);
+    var num_type = typeof(num);
+    
+    println("Type of text:");
+    println(text_type);
+    
+    println("Type of num:");
+    println(num_type);
+    
+    // Expected: text_type should be "string", num_type should be "int"
+    return 0;
+}

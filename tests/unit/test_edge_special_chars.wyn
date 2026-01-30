@@ -1,0 +1,40 @@
+// Edge Case Test: Special characters and long strings
+fn main() -> int {
+    // Special characters
+    var special = "Hello\nWorld\t!";
+    var len_special = len(special);
+    println("Special chars length:");
+    println(len_special);
+    
+    var contains_newline = special.contains("\n");
+    var contains_tab = special.contains("\t");
+    println("Contains newline:");
+    println(contains_newline);
+    println("Contains tab:");
+    println(contains_tab);
+    
+    // Very long string (test truncation fix)
+    var long = "This is a very long string that should test if the length function properly returns i64 values without truncation issues that were present before the fix";
+    var len_long = len(long);
+    println("Long string length:");
+    println(len_long);
+    
+    // Numbers at boundaries
+    var zero = 0;
+    var negative = 0 - 42;
+    var zero_str = zero.to_string();
+    var neg_str = negative.to_string();
+    println("Zero as string:");
+    println(zero_str);
+    println("Negative as string:");
+    println(neg_str);
+    
+    var abs_zero = zero.abs();
+    var abs_neg = negative.abs();
+    println("Abs(0):");
+    println(abs_zero);
+    println("Abs(-42):");
+    println(abs_neg);
+    
+    return 0;
+}

@@ -4,6 +4,6 @@ struct Box {
 }
 
 fn main() -> int {
-    let b = Box { value: 42 };
+    var b = Box { value: 42 };
     return b.value;
 }

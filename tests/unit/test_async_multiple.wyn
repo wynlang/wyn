@@ -12,8 +12,8 @@ async fn get_c() -> int {
 }
 
 fn main() -> int {
-    let a = await get_a();
-    let b = await get_b();
-    let c = await get_c();
+    var a = await get_a();
+    var b = await get_b();
+    var c = await get_c();
     return a + b + c;
 }

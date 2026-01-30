@@ -15,20 +15,20 @@ fn identity<T>(x: T) -> T {
 
 fn main() -> int {
     // Test 1: Basic function
-    let sum = add(10, 5);
+    var sum = add(10, 5);
     
     // Test 2: Struct
-    let p = Point { x: 3, y: 4 };
+    var p = Point { x: 3, y: 4 };
     
     // Test 3: Generic function
-    let val = identity(42);
+    var val = identity(42);
     
     // Test 4: Array
-    let arr = [100, 200, 300];
-    let arr_val = arr[2];
+    var arr = [100, 200, 300];
+    var arr_val = arr[2];
     
     // Test 5: Match expression
-    let match_result = match sum {
+    var match_result = match sum {
         15 => 1,
         _ => 0
     };

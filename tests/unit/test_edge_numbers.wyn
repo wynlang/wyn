@@ -1,0 +1,39 @@
+// Edge Case Test: Number boundaries
+fn main() -> int {
+    // Large numbers
+    var large = 2147483647;
+    var large_str = large.to_string();
+    println("Max int as string:");
+    println(large_str);
+    
+    // Negative large
+    var neg_large = 0 - 2147483647;
+    var neg_large_str = neg_large.to_string();
+    println("Min int as string:");
+    println(neg_large_str);
+    
+    // Abs of large negative
+    var abs_large = neg_large.abs();
+    println("Abs of min int:");
+    println(abs_large);
+    
+    // Min/max with negatives
+    var a = 0 - 10;
+    var b = 5;
+    var min_val = a.min(b);
+    var max_val = a.max(b);
+    println("Min(-10, 5):");
+    println(min_val);
+    println("Max(-10, 5):");
+    println(max_val);
+    
+    // Min/max with same values
+    var same_min = b.min(b);
+    var same_max = b.max(b);
+    println("Min(5, 5):");
+    println(same_min);
+    println("Max(5, 5):");
+    println(same_max);
+    
+    return 0;
+}

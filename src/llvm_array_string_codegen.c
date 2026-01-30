@@ -54,11 +54,15 @@ LLVMValueRef codegen_array_indexing(IndexExpr* expr, LLVMCodegenContext* ctx) {
         return NULL;
     }
     
-    // Generate code for array expression
-    LLVMValueRef array = codegen_expression(expr->array, ctx);
-    if (!array) {
+    // Generate code for array expression (returns the alloca pointer for variables)
+    LLVMValueRef array_var = codegen_expression(expr->array, ctx);
+    if (!array_var) {
         return NULL;
     }
+    
+    // For identifiers, we already have the loaded pointer value
+    // Don't load again - array_var is already the array pointer
+    LLVMValueRef array_ptr = array_var;
     
     // Generate code for index expression
     LLVMValueRef index = codegen_expression(expr->index, ctx);
@@ -66,26 +70,20 @@ LLVMValueRef codegen_array_indexing(IndexExpr* expr, LLVMCodegenContext* ctx) {
         return NULL;
     }
     
-    // Perform bounds checking
-    LLVMValueRef bounds_check = codegen_array_bounds_check(array, index, ctx);
-    if (!bounds_check) {
-        return NULL;
-    }
-    
-    // Get array element type
-    LLVMTypeRef array_type = LLVMTypeOf(array);
-    LLVMTypeRef element_type = LLVMGetElementType(array_type);
+    // For LLVM 21 with opaque pointers
+    LLVMTypeRef int_type = ctx->int_type;
+    LLVMTypeRef array_type = LLVMArrayType(int_type, 0);  // [0 x i32] for flexible arrays
     
     // Create GEP to access array element
     LLVMValueRef indices[] = {
         LLVMConstInt(ctx->int_type, 0, 0),  // Array base
         index                               // Element index
     };
-    LLVMValueRef element_ptr = LLVMBuildGEP2(ctx->builder, LLVMGetElementType(array_type), 
-                                            array, indices, 2, "array_element_ptr");
+    LLVMValueRef element_ptr = LLVMBuildGEP2(ctx->builder, array_type, 
+                                            array_ptr, indices, 2, "array_element_ptr");
     
     // Load the element value
-    return LLVMBuildLoad2(ctx->builder, element_type, element_ptr, "array_element");
+    return LLVMBuildLoad2(ctx->builder, int_type, element_ptr, "array_element");
 }
 
 // Generate bounds checking code

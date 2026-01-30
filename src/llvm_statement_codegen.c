@@ -308,18 +308,37 @@ void codegen_var_declaration(VarStmt* stmt, LLVMCodegenContext* ctx) {
     strncpy(var_name, stmt->name.start, stmt->name.length);
     var_name[stmt->name.length] = '\0';
     
-    // Determine variable type (for now, use int as default)
+    // Determine variable type and generate initialization
     LLVMTypeRef var_type = ctx->int_type;
+    LLVMValueRef init_value = NULL;
+    
+    if (stmt->init) {
+        if (stmt->init->type == EXPR_ARRAY) {
+            // For arrays, use pointer type
+            var_type = LLVMPointerType(ctx->int_type, 0);
+            init_value = codegen_expression(stmt->init, ctx);
+        } else if (stmt->init->type == EXPR_STRING) {
+            // For strings, use pointer type
+            var_type = LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0);
+            init_value = codegen_expression(stmt->init, ctx);
+        } else {
+            // For other expressions, generate value and infer type
+            init_value = codegen_expression(stmt->init, ctx);
+            if (init_value) {
+                var_type = LLVMTypeOf(init_value);
+            }
+        }
+    }
     
     // Create local variable (alloca)
     LLVMValueRef var_alloca = create_local_variable(var_name, var_type, ctx);
     
-    // Generate initialization if present
-    if (stmt->init) {
-        LLVMValueRef init_value = codegen_expression(stmt->init, ctx);
-        if (init_value) {
-            LLVMBuildStore(ctx->builder, init_value, var_alloca);
-        }
+    // Store in symbol table with type
+    symbol_table_insert_typed(ctx->symbol_table, var_name, var_alloca, var_type);
+    
+    // Store initialization value if present
+    if (init_value) {
+        LLVMBuildStore(ctx->builder, init_value, var_alloca);
     }
     
     safe_free(var_name);

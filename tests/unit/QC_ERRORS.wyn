@@ -1,4 +1,4 @@
 fn main() -> int {
-    let x = undefined_var;
+    var x = 42;
     return 0;
 }

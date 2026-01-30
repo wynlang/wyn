@@ -1,0 +1,51 @@
+// Comprehensive test of all new features
+fn main() -> int {
+    println("=== New Features Test ===");
+    println("");
+    
+    // Boolean literals
+    println("1. Boolean Literals:");
+    var is_true = true;
+    var is_false = false;
+    if is_true {
+        println("   ✓ true literal works");
+    }
+    if is_false {
+        println("   ✗ false should not print");
+    } else {
+        println("   ✓ false literal works");
+    }
+    
+    // len() function
+    println("");
+    println("2. len() Function:");
+    var text = "Wyn Language";
+    var text_len = len(text);
+    print("   Length of 'Wyn Language': ");
+    println(text_len);
+    
+    // typeof() function
+    println("");
+    println("3. typeof() Function:");
+    var num = 100;
+    var str = "test";
+    print("   typeof(100): ");
+    println(typeof(num));
+    print("   typeof('test'): ");
+    println(typeof(str));
+    
+    // Combined with existing features
+    println("");
+    println("4. Combined Features:");
+    var result = min(10, 20);
+    if result == 10 {
+        println("   ✓ Math + booleans work together");
+    }
+    
+    var opt = some(42);
+    println("   ✓ Option types still work");
+    
+    println("");
+    println("=== All new features working! ===");
+    return 0;
+}

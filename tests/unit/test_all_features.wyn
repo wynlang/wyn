@@ -22,45 +22,45 @@ fn generic_identity<T>(x: T) -> T {
 
 fn main() -> int {
     // Test 1: Variables
-    let x = 10;
-    let mut y = 20;
+    var x = 10;
+    var y = 20;
     y = 30;
     
     // Test 2: Functions
-    let sum = add(5, 7);
+    var sum = add(5, 7);
     
     // Test 3: Structs
-    let p = Point { x: 3, y: 4 };
-    let px = p.x;
+    var p = Point { x: 3, y: 4 };
+    var px = p.x;
     
     // Test 4: Enums with :: operator
-    let status = Status::DONE;
+    var status = Status::DONE;
     
     // Test 5: Arrays
-    let arr = [1, 2, 3, 4, 5];
-    let first = arr[0];
+    var arr = [1, 2, 3, 4, 5];
+    var first = arr[0];
     
     // Test 6: Pattern matching
-    let result = match status {
+    var result = match status {
         PENDING => 1,
         RUNNING => 2,
         DONE => 42
     };
     
     // Test 7: Control flow
-    let mut counter = 0;
+    var counter = 0;
     if result == 42 {
         counter = counter + 1;
     }
     
-    let mut i = 0;
+    var i = 0;
     while i < 3 {
         counter = counter + 1;
         i = i + 1;
     }
     
     // Test 8: Generics
-    let gen_result = generic_identity(100);
+    var gen_result = generic_identity(100);
     
     // Calculate final result
     // x=10, y=30, sum=12, px=3, result=42, counter=4, gen_result=100

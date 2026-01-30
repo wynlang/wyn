@@ -5,6 +5,6 @@ enum Status {
 }
 
 fn main() -> int {
-    let s = DONE;
+    var s = DONE;
     return 42;
 }

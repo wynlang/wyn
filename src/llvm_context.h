@@ -102,7 +102,9 @@ void llvm_context_dump_module(LLVMCodegenContext* ctx);
 LLVMSymbolTable* symbol_table_create(LLVMSymbolTable* parent);
 void symbol_table_destroy(LLVMSymbolTable* table);
 void symbol_table_insert(LLVMSymbolTable* table, const char* name, LLVMValueRef value);
+void symbol_table_insert_typed(LLVMSymbolTable* table, const char* name, LLVMValueRef value, LLVMTypeRef type);
 LLVMValueRef symbol_table_lookup(LLVMSymbolTable* table, const char* name);
+LLVMTypeRef symbol_table_lookup_type(LLVMSymbolTable* table, const char* name);
 void symbol_table_push_scope(LLVMCodegenContext* ctx);
 void symbol_table_pop_scope(LLVMCodegenContext* ctx);
 

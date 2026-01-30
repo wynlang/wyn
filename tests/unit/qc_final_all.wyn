@@ -8,12 +8,12 @@ trait Display {
 }
 
 fn main() -> int {
-    let sum = add(10, 5);
-    let p = Point { x: 3, y: 4 };
-    let val = identity(42);
-    let arr = [10, 20, 30];
+    var sum = add(10, 5);
+    var p = Point { x: 3, y: 4 };
+    var val = identity(42);
+    var arr = [10, 20, 30];
     
-    let result = match sum {
+    var result = match sum {
         15 => arr[1],
         _ => 0
     };

@@ -4,6 +4,6 @@ struct Point {
 }
 
 fn main() -> int {
-    let p = Point { x: 10, y: 20 };
+    var p = Point { x: 10, y: 20 };
     return p.x + p.y;
 }

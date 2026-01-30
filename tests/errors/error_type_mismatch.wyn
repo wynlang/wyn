@@ -1,13 +1,13 @@
 fn main() {
     // Test basic type mismatch
-    let x: int = "hello";  // string to int
+    var x: int = "hello";  // string to int
     
     // Test function argument type mismatch
-    let y: float = 3.14;
+    var y: float = 3.14;
     print_int(y);  // float to int
     
     // Test array type mismatch
-    let arr: [int] = ["a", "b", "c"];  // string array to int array
+    var arr: [int] = ["a", "b", "c"];  // string array to int array
     
     // Test struct field type mismatch
     struct Person {
@@ -15,7 +15,7 @@ fn main() {
         age: int
     }
     
-    let p = Person {
+    var p = Person {
         name: 42,      // int to string
         age: "twenty"  // string to int
     };

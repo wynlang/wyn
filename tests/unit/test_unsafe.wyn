@@ -1,10 +1,10 @@
 // Test unsafe block - just syntax, no actual unsafe operations
 fn main() -> int {
-    let x = 10;
+    var x = 10;
     unsafe {
         // In a real implementation, this would allow unsafe operations
         // For now, it's just a regular block
-        let y = x * 2;
+        var y = x * 2;
         return y;
     }
 }

@@ -1,4 +1,4 @@
 fn main() -> int {
-    let x = none;
+    var x = none;
     return 0;
 }

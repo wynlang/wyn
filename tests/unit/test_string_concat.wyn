@@ -1,14 +1,14 @@
 fn main() -> int {
-    let s1 = "hello";
-    let s2 = "world";
-    let s3 = s1 + s2;
+    var s1 = "hello";
+    var s2 = "world";
+    var s3 = s1 + s2;
     
     // Test multiple concatenations
-    let s4 = "a" + "b" + "c";
+    var s4 = "a" + "b" + "c";
     
     // Test with empty strings
-    let s5 = "" + "test";
-    let s6 = "test" + "";
+    var s5 = "" + "test";
+    var s6 = "test" + "";
     
     return 0;
 }
