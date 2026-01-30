@@ -17,5 +17,6 @@ entry:
 
 define i32 @wyn_main() {
 entry:
+  %worker = call i32 @worker()
   ret i32 99
 }

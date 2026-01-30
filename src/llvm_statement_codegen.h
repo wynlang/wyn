@@ -28,6 +28,9 @@ void codegen_block_statement(BlockStmt* stmt, LLVMCodegenContext* ctx);
 // Expression statements
 void codegen_expression_statement(Expr* expr, LLVMCodegenContext* ctx);
 
+// Spawn statements
+void codegen_spawn_statement(Stmt* stmt, LLVMCodegenContext* ctx);
+
 // Scoping utilities
 void enter_scope(LLVMCodegenContext* ctx);
 void exit_scope(LLVMCodegenContext* ctx);

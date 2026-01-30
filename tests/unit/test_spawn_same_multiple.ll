@@ -17,5 +17,10 @@ entry:
 
 define i32 @wyn_main() {
 entry:
+  %worker = call i32 @worker()
+  %worker1 = call i32 @worker()
+  %worker2 = call i32 @worker()
+  %worker3 = call i32 @worker()
+  %worker4 = call i32 @worker()
   ret i32 0
 }

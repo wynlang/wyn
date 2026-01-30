@@ -1,0 +1,16 @@
+// TDD Test: spawn keyword
+fn worker() -> int {
+    println("Worker running");
+    return 42;
+}
+
+fn main() -> int {
+    println("Testing spawn...");
+    
+    spawn worker();
+    
+    sleep(100);
+    
+    println("✓ spawn compiles!");
+    return 0;
+}

@@ -132,6 +132,7 @@ for.end:                                          ; preds = %if.then13, %for.hea
   store i32 123, ptr %id, align 4
   %identity = call i32 @identity(i32 42)
   store i32 %identity, ptr %gen, align 4
+  %worker = call i32 @worker()
   %matched17 = load i32, ptr %matched, align 4
   ret i32 %matched17
 

@@ -53,6 +53,9 @@ void codegen_statement(Stmt* stmt, LLVMCodegenContext* ctx) {
         case STMT_FN:
             codegen_function_definition(&stmt->fn, ctx);
             break;
+        case STMT_SPAWN:
+            codegen_spawn_statement(stmt, ctx);
+            break;
         default:
             report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Unsupported statement type for code generation");
             break;
@@ -443,6 +446,17 @@ void exit_scope(LLVMCodegenContext* ctx) {
     }
     
     symbol_table_pop_scope(ctx);
+}
+
+// Generate code for spawn statements
+void codegen_spawn_statement(Stmt* stmt, LLVMCodegenContext* ctx) {
+    if (!stmt || !ctx || !stmt->spawn.call) {
+        return;
+    }
+    
+    // For now, just execute the call synchronously
+    // Full async spawn requires more infrastructure
+    codegen_expression(stmt->spawn.call, ctx);
 }
 
 #endif // WITH_LLVM
