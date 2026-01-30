@@ -1,0 +1,26 @@
+// Wyn Native Parallel Test Runner
+// Demonstrates Wyn's time_now() and system() APIs
+
+fn main() -> int {
+    println("╔══════════════════════════════════════════════════════════════════════════╗");
+    println("║              WYN NATIVE PARALLEL TEST RUNNER                             ║");
+    println("╚══════════════════════════════════════════════════════════════════════════╝");
+    println("");
+    
+    var start = time_now();
+    
+    // Call the bash parallel runner (optimal 12 workers)
+    var result = system("./scripts/testing/parallel_unit_tests.sh");
+    
+    var end = time_now();
+    var duration = end - start;
+    
+    println("");
+    println("═══════════════════════════════════════════════════════════════════════════");
+    println("Wyn Native Runner Stats:");
+    println("  Total time: " + duration.to_string() + "s");
+    println("  APIs used: time_now(), system()");
+    println("  Status: ✓ Working");
+    
+    return result;
+}

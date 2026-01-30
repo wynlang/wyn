@@ -771,6 +771,28 @@ LLVMValueRef codegen_function_call(CallExpr* expr, LLVMCodegenContext* ctx) {
         LLVMValueRef result = LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(rand_fn), rand_fn, NULL, 0, "rand");
         safe_free(func_name);
         return result;
+    } else if (strcmp(func_name, "time_now") == 0) {
+        LLVMValueRef time_fn = LLVMGetNamedFunction(ctx->module, "wyn_time_now");
+        if (!time_fn) {
+            LLVMTypeRef time_type = LLVMFunctionType(LLVMInt64TypeInContext(ctx->context), NULL, 0, false);
+            time_fn = LLVMAddFunction(ctx->module, "wyn_time_now", time_type);
+        }
+        LLVMValueRef result = LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(time_fn), time_fn, NULL, 0, "time_now");
+        safe_free(func_name);
+        return result;
+    } else if (strcmp(func_name, "system") == 0) {
+        LLVMValueRef system_fn = LLVMGetNamedFunction(ctx->module, "system");
+        if (!system_fn) {
+            LLVMTypeRef str_type = LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0);
+            LLVMTypeRef system_type = LLVMFunctionType(ctx->int_type, &str_type, 1, false);
+            system_fn = LLVMAddFunction(ctx->module, "system", system_type);
+        }
+        if (expr->arg_count == 1) {
+            LLVMValueRef cmd = codegen_expression(expr->args[0], ctx);
+            LLVMValueRef result = LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(system_fn), system_fn, &cmd, 1, "system");
+            safe_free(func_name);
+            return result;
+        }
     }
     
     // Handle string functions

@@ -1267,6 +1267,27 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                     expr->expr_type = builtin_int;
                     return builtin_int;
+                } else if (strcmp(name_buf, "time_now") == 0) {
+                    // time_now() - current time in seconds
+                    if (expr->call.arg_count != 0) {
+                        fprintf(stderr, "Error at line %d: 'time_now' expects 0 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "system") == 0) {
+                    // system(cmd) - run shell command
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'system' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
                 }
                 
                 // String functions
