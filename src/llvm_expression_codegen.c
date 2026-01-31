@@ -49,6 +49,9 @@ LLVMValueRef codegen_expression(Expr* expr, LLVMCodegenContext* ctx) {
         case EXPR_CALL:
             result = codegen_function_call(&expr->call, ctx);
             break;
+        case EXPR_SPAWN:
+            result = codegen_spawn_expr(&expr->spawn, ctx);
+            break;
         case EXPR_INDEX:
             result = codegen_array_indexing(&expr->index, ctx);
             break;
@@ -927,6 +930,34 @@ LLVMValueRef codegen_method_call(MethodCallExpr* expr, LLVMCodegenContext* ctx) 
     LLVMValueRef object = codegen_expression(expr->object, ctx);
     if (!object) return NULL;
     
+    // Handle .await() method on Future
+    if (strcmp(method_name, "await") == 0) {
+        LLVMValueRef future_get_fn = LLVMGetNamedFunction(ctx->module, "future_get");
+        if (!future_get_fn) {
+            LLVMTypeRef void_ptr = LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0);
+            LLVMTypeRef params[] = { void_ptr };
+            LLVMTypeRef type = LLVMFunctionType(void_ptr, params, 1, false);
+            future_get_fn = LLVMAddFunction(ctx->module, "future_get", type);
+        }
+        
+        LLVMValueRef result_ptr = LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(future_get_fn), 
+                                                  future_get_fn, &object, 1, "result_ptr");
+        
+        LLVMValueRef int_ptr = LLVMBuildBitCast(ctx->builder, result_ptr, 
+                                                 LLVMPointerType(ctx->int_type, 0), "int_ptr");
+        LLVMValueRef result = LLVMBuildLoad2(ctx->builder, ctx->int_type, int_ptr, "result");
+        
+        LLVMValueRef free_fn = LLVMGetNamedFunction(ctx->module, "free");
+        if (!free_fn) {
+            LLVMTypeRef void_ptr = LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0);
+            LLVMTypeRef free_type = LLVMFunctionType(LLVMVoidTypeInContext(ctx->context), &void_ptr, 1, false);
+            free_fn = LLVMAddFunction(ctx->module, "free", free_type);
+        }
+        LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(free_fn), free_fn, &result_ptr, 1, "");
+        
+        return result;
+    }
+    
     // Handle string methods
     if (strcmp(method_name, "contains") == 0) {
         LLVMValueRef strstr_fn = LLVMGetNamedFunction(ctx->module, "strstr");
@@ -1113,6 +1144,89 @@ bool is_integer_type(LLVMTypeRef type) {
 bool is_float_type(LLVMTypeRef type) {
     LLVMTypeKind kind = LLVMGetTypeKind(type);
     return kind == LLVMFloatTypeKind || kind == LLVMDoubleTypeKind;
+}
+
+// Generate code for spawn expression (returns Future*)
+LLVMValueRef codegen_spawn_expr(SpawnExpr* expr, LLVMCodegenContext* ctx) {
+    if (!expr || !ctx || !expr->call) return NULL;
+    
+    Expr* call_expr = expr->call;
+    if (call_expr->type != EXPR_CALL || call_expr->call.callee->type != EXPR_IDENT) return NULL;
+    
+    // Extract function name
+    const char* func_name_start = call_expr->call.callee->token.start;
+    int func_name_len = call_expr->call.callee->token.length;
+    char func_name[256];
+    snprintf(func_name, sizeof(func_name), "%.*s", func_name_len, func_name_start);
+    
+    LLVMValueRef target_fn = LLVMGetNamedFunction(ctx->module, func_name);
+    if (!target_fn) return NULL;
+    
+    // Check if function returns a value
+    LLVMTypeRef return_type = LLVMGetReturnType(LLVMGlobalGetValueType(target_fn));
+    bool has_return = LLVMGetTypeKind(return_type) != LLVMVoidTypeKind;
+    
+    if (!has_return) {
+        report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Cannot capture Future from void function");
+        return NULL;
+    }
+    
+    // Get/declare wyn_spawn_async
+    LLVMValueRef spawn_fn = LLVMGetNamedFunction(ctx->module, "wyn_spawn_async");
+    if (!spawn_fn) {
+        LLVMTypeRef void_ptr = LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0);
+        LLVMTypeRef params[] = { void_ptr, void_ptr };
+        LLVMTypeRef type = LLVMFunctionType(void_ptr, params, 2, false);
+        spawn_fn = LLVMAddFunction(ctx->module, "wyn_spawn_async", type);
+    }
+    
+    // Create wrapper
+    char wrapper_name[256];
+    snprintf(wrapper_name, sizeof(wrapper_name), "__spawn_%s_%d", func_name, ctx->spawn_counter++);
+    
+    LLVMTypeRef void_ptr = LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0);
+    LLVMTypeRef wrapper_type = LLVMFunctionType(void_ptr, &void_ptr, 1, false);
+    LLVMValueRef wrapper_fn = LLVMAddFunction(ctx->module, wrapper_name, wrapper_type);
+    
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx->context, wrapper_fn, "entry");
+    LLVMBuilderRef builder = LLVMCreateBuilderInContext(ctx->context);
+    LLVMPositionBuilderAtEnd(builder, entry);
+    
+    // Codegen arguments
+    int arg_count = call_expr->call.arg_count;
+    LLVMValueRef* call_args = NULL;
+    if (arg_count > 0) {
+        call_args = malloc(sizeof(LLVMValueRef) * arg_count);
+        LLVMBuilderRef saved_builder = ctx->builder;
+        ctx->builder = builder;
+        
+        for (int i = 0; i < arg_count; i++) {
+            call_args[i] = codegen_expression(call_expr->call.args[i], ctx);
+        }
+        
+        ctx->builder = saved_builder;
+    }
+    
+    LLVMValueRef result = LLVMBuildCall2(builder, LLVMGlobalGetValueType(target_fn), target_fn, call_args, arg_count, "");
+    
+    if (call_args) free(call_args);
+    
+    // Allocate space for result and return pointer
+    LLVMTypeRef result_type = LLVMTypeOf(result);
+    LLVMValueRef result_alloc = LLVMBuildMalloc(builder, result_type, "result_alloc");
+    LLVMBuildStore(builder, result, result_alloc);
+    LLVMValueRef result_ptr = LLVMBuildBitCast(builder, result_alloc, void_ptr, "");
+    LLVMBuildRet(builder, result_ptr);
+    
+    LLVMDisposeBuilder(builder);
+    
+    // Call spawn function and return Future*
+    LLVMValueRef args[] = {
+        LLVMBuildBitCast(ctx->builder, wrapper_fn, void_ptr, ""),
+        LLVMConstNull(void_ptr)
+    };
+    
+    return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(spawn_fn), spawn_fn, args, 2, "future");
 }
 
 #endif // WITH_LLVM

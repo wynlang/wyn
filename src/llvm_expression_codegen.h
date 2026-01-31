@@ -32,6 +32,7 @@ LLVMValueRef codegen_assignment(AssignExpr* expr, LLVMCodegenContext* ctx);
 // Function calls
 LLVMValueRef codegen_function_call(CallExpr* expr, LLVMCodegenContext* ctx);
 LLVMValueRef codegen_method_call(MethodCallExpr* expr, LLVMCodegenContext* ctx);
+LLVMValueRef codegen_spawn_expr(SpawnExpr* expr, LLVMCodegenContext* ctx);
 
 // Array operations
 LLVMValueRef codegen_array_access(IndexExpr* expr, LLVMCodegenContext* ctx);

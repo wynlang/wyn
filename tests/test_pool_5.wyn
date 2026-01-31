@@ -1,0 +1,10 @@
+fn main() -> int {
+    pool_add_task("sleep 1");
+    pool_add_task("sleep 1");
+    pool_add_task("sleep 1");
+    pool_add_task("sleep 1");
+    pool_add_task("sleep 1");
+    pool_start(5);
+    var failures = pool_wait();
+    return failures;
+}

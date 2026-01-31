@@ -1,0 +1,38 @@
+// TDD Tests for async/await implementation
+
+// Test 1: async function declaration
+async fn simple_async() -> int {
+    return 42;
+}
+
+// Test 2: async function with parameter
+async fn compute(n: int) -> int {
+    return n * n;
+}
+
+// Test 3: Calling async function returns Future
+async fn fetch_data() -> int {
+    return 100;
+}
+
+// Test 4: Regular function
+fn regular() -> int {
+    return 1;
+}
+
+fn main() -> int {
+    // Test 1: Call async function (returns Future)
+    var f1 = simple_async();
+    
+    // Test 2: Call async with param (returns Future)
+    var f2 = compute(10);
+    
+    // Test 3: Spawn async function
+    spawn compute(20);
+    
+    // Test 4: Call regular function (returns value)
+    var r = regular();
+    
+    print(1);  // Success marker
+    return 0;
+}

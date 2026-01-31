@@ -1,0 +1,42 @@
+// Test: Spawn with return values (Future integration)
+fn compute(n: int) -> int {
+    return n * n;
+}
+
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn noop() -> int {
+    return 0;
+}
+
+fn main() -> int {
+    print(1);  // Test 1: Spawn functions with return values
+    spawn compute(10);
+    spawn compute(20);
+    spawn add(5, 7);
+    
+    print(2);  // Test 2: Mix of spawns
+    var i = 0;
+    while i < 10 {
+        spawn noop();
+        i = i + 1;
+    }
+    
+    print(3);  // Test 3: Spawn in loop
+    i = 0;
+    while i < 5 {
+        spawn compute(i);
+        i = i + 1;
+    }
+    
+    // Wait for completion
+    var wait = 0;
+    while wait < 10000000 {
+        wait = wait + 1;
+    }
+    
+    print(4);  // Success
+    return 0;
+}

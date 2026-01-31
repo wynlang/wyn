@@ -1,0 +1,10 @@
+fn compute(n: int) -> int {
+    return n * n;
+}
+
+fn main() -> int {
+    var f1 = spawn compute(5);
+    var r1 = f1.await();
+    print(r1);
+    return 0;
+}

@@ -1,0 +1,8 @@
+fn main() -> int {
+    pool_add_task("echo 1");
+    pool_add_task("echo 2");
+    pool_add_task("echo 3");
+    pool_start(3);
+    var failures = pool_wait();
+    return failures;
+}

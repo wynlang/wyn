@@ -60,6 +60,9 @@ typedef struct {
     
     // Module name for identification
     char* module_name;
+    
+    // Spawn counter for unique wrapper names
+    int spawn_counter;
 } LLVMCodegenContext;
 
 // Context lifecycle management

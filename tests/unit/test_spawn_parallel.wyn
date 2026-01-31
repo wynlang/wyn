@@ -1,0 +1,42 @@
+// TDD Test: Verify spawn runs in parallel
+fn slow_worker() -> int {
+    sleep(100);  // 100ms
+    println("Worker done");
+    return 0;
+}
+
+fn main() -> int {
+    println("Testing parallel execution...");
+    
+    var start = time_now();
+    
+    // Spawn 10 tasks that each take 100ms
+    // If parallel: ~100ms total
+    // If sequential: ~1000ms total
+    spawn slow_worker();
+    spawn slow_worker();
+    spawn slow_worker();
+    spawn slow_worker();
+    spawn slow_worker();
+    spawn slow_worker();
+    spawn slow_worker();
+    spawn slow_worker();
+    spawn slow_worker();
+    spawn slow_worker();
+    
+    sleep(500);  // Wait for completion
+    
+    var end = time_now();
+    var duration = end - start;
+    
+    println("Duration:");
+    println(duration);
+    
+    if (duration < 2) {
+        println("✓ Tasks ran in parallel!");
+        return 0;
+    } else {
+        println("✗ Tasks ran sequentially");
+        return 1;
+    }
+}

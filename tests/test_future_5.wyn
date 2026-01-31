@@ -1,0 +1,23 @@
+fn compute(n: int) -> int {
+    return n * n;
+}
+
+fn main() -> int {
+    var f1 = spawn compute(1);
+    var f2 = spawn compute(2);
+    var f3 = spawn compute(3);
+    var f4 = spawn compute(4);
+    var f5 = spawn compute(5);
+    
+    var r1 = f1.await();
+    var r2 = f2.await();
+    var r3 = f3.await();
+    var r4 = f4.await();
+    var r5 = f5.await();
+    
+    if r1 == 1 && r2 == 4 && r3 == 9 && r4 == 16 && r5 == 25 {
+        print(1);
+    }
+    
+    return 0;
+}

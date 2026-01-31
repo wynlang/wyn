@@ -52,6 +52,7 @@ typedef enum {
     EXPR_PATTERN,        // T3.3.1: Pattern expressions for destructuring
     EXPR_FN_TYPE,        // Function type: fn(T1, T2) -> R
     EXPR_BLOCK,          // Block expression: { stmt1; stmt2; expr }
+    EXPR_SPAWN,          // Spawn expression: spawn func() -> Future<T>
 } ExprType;
 
 // T3.3.1: Pattern types for destructuring
@@ -296,6 +297,10 @@ typedef struct {
     Expr* result;      // Final expression (result of the block)
 } BlockExpr;
 
+typedef struct {
+    Expr* call;        // The function call to spawn
+} SpawnExpr;
+
 struct Expr {
     ExprType type;
     Token token;
@@ -331,6 +336,7 @@ struct Expr {
         TryExpr try_expr;                // TASK-026: ? operator for error propagation
         FnTypeExpr fn_type;              // Function type: fn(T1, T2) -> R
         BlockExpr block;                 // Block expression: { stmt1; stmt2; expr }
+        SpawnExpr spawn;                 // Spawn expression: spawn func() -> Future<T>
     };
 };
 

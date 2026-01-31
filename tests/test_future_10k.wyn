@@ -1,0 +1,21 @@
+fn compute(n: int) -> int {
+    return n * n;
+}
+
+fn main() -> int {
+    var i = 0;
+    var sum = 0;
+    
+    // Spawn 10k futures
+    while i < 10000 {
+        var f = spawn compute(i);
+        var r = f.await();
+        sum = sum + r;
+        i = i + 1;
+    }
+    
+    // Expected sum: 0^2 + 1^2 + 2^2 + ... + 9999^2
+    // = 9999 * 10000 * 19999 / 6 = 333283335000
+    print(1);  // Success if we get here
+    return 0;
+}

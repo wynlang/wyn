@@ -96,6 +96,7 @@ LLVMCodegenContext* llvm_context_create(const char* module_name) {
     ctx->last_error = NULL;
     ctx->current_loop_end = NULL;
     ctx->current_loop_header = NULL;
+    ctx->spawn_counter = 0;
     
     // Initialize symbol table
     ctx->symbol_table = symbol_table_create(NULL);

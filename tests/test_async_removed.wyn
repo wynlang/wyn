@@ -1,0 +1,8 @@
+async fn compute(n: int) -> int {
+    return n * n;
+}
+
+fn main() -> int {
+    print(1);
+    return 0;
+}

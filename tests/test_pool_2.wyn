@@ -1,0 +1,7 @@
+fn main() -> int {
+    pool_add_task("timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_collection_methods.out > /dev/null 2>&1");
+    pool_add_task("timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_array_various.out > /dev/null 2>&1");
+    pool_start(2);
+    var failures = pool_wait();
+    return failures;
+}

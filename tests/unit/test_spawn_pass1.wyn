@@ -1,0 +1,28 @@
+// TDD: Test that spawn actually runs in parallel
+fn task(id: int) -> int {
+    var start = time_now();
+    while time_now() - start < 100000000 {  // 100ms busy wait
+    }
+    return id;
+}
+
+fn main() -> int {
+    var start = time_now();
+    
+    spawn task(1);
+    spawn task(2);
+    spawn task(3);
+    spawn task(4);
+    spawn task(5);
+    
+    var elapsed = time_now() - start;
+    
+    // If parallel: ~100ms
+    // If sequential: ~500ms
+    // Allow 200ms for overhead
+    if elapsed > 300000000 {
+        return 1;  // FAIL: took too long (sequential)
+    }
+    
+    return 0;  // PASS: fast enough (parallel)
+}

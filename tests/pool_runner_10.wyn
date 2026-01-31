@@ -1,0 +1,15 @@
+fn main() -> int {
+    pool_add_task("timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_01_variables.out");
+    pool_add_task("timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_02_functions.out");
+    pool_add_task("timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_03_structs.out");
+    pool_add_task("timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_04_enums.out");
+    pool_add_task("timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_05_arrays.out");
+    pool_add_task("timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_06_result_option.out");
+    pool_add_task("timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_07_pattern_matching.out");
+    pool_add_task("timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_08_control_flow.out");
+    pool_add_task("timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_09_type_aliases.out");
+    pool_add_task("timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_10_closures.out");
+    pool_start(10);
+    var failures = pool_wait();
+    return failures;
+}

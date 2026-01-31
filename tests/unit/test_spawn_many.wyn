@@ -1,0 +1,39 @@
+// TDD Test: Spawn many tasks (like goroutines)
+// This should be FAST if spawn actually works
+
+fn worker(id: int) -> int {
+    // Simulate work
+    var x = id * 2;
+    return x;
+}
+
+fn main() -> int {
+    println("Spawning 1000 tasks...");
+    
+    var start = time_now();
+    
+    // Spawn 1000 tasks
+    var i = 0;
+    while (i < 1000) {
+        spawn worker(i);
+        i = i + 1;
+    }
+    
+    // Give tasks time to complete
+    sleep(1000);
+    
+    var end = time_now();
+    var duration = end - start;
+    
+    println("Spawned 1000 tasks in:");
+    println(duration);
+    println("seconds");
+    
+    if (duration < 5) {
+        println("✓ Spawn is fast!");
+        return 0;
+    } else {
+        println("✗ Spawn is too slow");
+        return 1;
+    }
+}

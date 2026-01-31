@@ -1,0 +1,17 @@
+fn compute(n: int) -> int {
+    return n * n;
+}
+
+fn main() -> int {
+    var i = 0;
+    
+    // Spawn 100 futures
+    while i < 100 {
+        var f = spawn compute(i);
+        var r = f.await();
+        i = i + 1;
+    }
+    
+    print(1);  // Success
+    return 0;
+}

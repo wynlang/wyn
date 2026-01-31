@@ -1,0 +1,207 @@
+; ModuleID = 'wyn_program'
+source_filename = "wyn_program"
+
+@__wyn_argc = global i32 0
+@__wyn_argv = global ptr null
+@str = private unnamed_addr constant [91 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_03_structs.out > /dev/null 2>&1\00", align 1
+@str.1 = private unnamed_addr constant [101 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_11_extension_methods.out > /dev/null 2>&1\00", align 1
+@str.2 = private unnamed_addr constant [96 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_all_12_features.out > /dev/null 2>&1\00", align 1
+@str.3 = private unnamed_addr constant [89 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_arc_heap.out > /dev/null 2>&1\00", align 1
+@str.4 = private unnamed_addr constant [101 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_arc_multiple_structs.out > /dev/null 2>&1\00", align 1
+@str.5 = private unnamed_addr constant [88 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_arc_tdd.out > /dev/null 2>&1\00", align 1
+@str.6 = private unnamed_addr constant [84 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_arc.out > /dev/null 2>&1\00", align 1
+@str.7 = private unnamed_addr constant [90 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_async_tdd.out > /dev/null 2>&1\00", align 1
+@str.8 = private unnamed_addr constant [86 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_async.out > /dev/null 2>&1\00", align 1
+@str.9 = private unnamed_addr constant [86 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_basic.out > /dev/null 2>&1\00", align 1
+@str.10 = private unnamed_addr constant [89 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_booleans.out > /dev/null 2>&1\00", align 1
+@str.11 = private unnamed_addr constant [93 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_build_system.out > /dev/null 2>&1\00", align 1
+@str.12 = private unnamed_addr constant [94 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_closure_basic.out > /dev/null 2>&1\00", align 1
+@str.13 = private unnamed_addr constant [98 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_closure_nocapture.out > /dev/null 2>&1\00", align 1
+@str.14 = private unnamed_addr constant [95 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_closure_simple.out > /dev/null 2>&1\00", align 1
+@str.15 = private unnamed_addr constant [91 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_comparison.out > /dev/null 2>&1\00", align 1
+@str.16 = private unnamed_addr constant [92 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_edge_concat.out > /dev/null 2>&1\00", align 1
+@str.17 = private unnamed_addr constant [99 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_edge_empty_strings.out > /dev/null 2>&1\00", align 1
+@str.18 = private unnamed_addr constant [100 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_edge_multiple_calls.out > /dev/null 2>&1\00", align 1
+@str.19 = private unnamed_addr constant [93 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_edge_numbers.out > /dev/null 2>&1\00", align 1
+@str.20 = private unnamed_addr constant [94 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_edge_repeated.out > /dev/null 2>&1\00", align 1
+@str.21 = private unnamed_addr constant [99 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_edge_special_chars.out > /dev/null 2>&1\00", align 1
+@str.22 = private unnamed_addr constant [95 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_edge_substring.out > /dev/null 2>&1\00", align 1
+@str.23 = private unnamed_addr constant [92 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_edge_typeof.out > /dev/null 2>&1\00", align 1
+@str.24 = private unnamed_addr constant [92 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_enum_verify.out > /dev/null 2>&1\00", align 1
+@str.25 = private unnamed_addr constant [90 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_ext_parse.out > /dev/null 2>&1\00", align 1
+@str.26 = private unnamed_addr constant [91 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_ext_simple.out > /dev/null 2>&1\00", align 1
+@str.27 = private unnamed_addr constant [96 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_extension_final.out > /dev/null 2>&1\00", align 1
+@str.28 = private unnamed_addr constant [97 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_extension_method.out > /dev/null 2>&1\00", align 1
+@str.29 = private unnamed_addr constant [98 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_extension_method2.out > /dev/null 2>&1\00", align 1
+@str.30 = private unnamed_addr constant [90 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_extension.out > /dev/null 2>&1\00", align 1
+@str.31 = private unnamed_addr constant [94 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_extern_printf.out > /dev/null 2>&1\00", align 1
+@str.32 = private unnamed_addr constant [88 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_file_io.out > /dev/null 2>&1\00", align 1
+@str.33 = private unnamed_addr constant [97 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_final_validation.out > /dev/null 2>&1\00", align 1
+@str.34 = private unnamed_addr constant [88 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_hashmap.out > /dev/null 2>&1\00", align 1
+@str.35 = private unnamed_addr constant [90 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_impl_show.out > /dev/null 2>&1\00", align 1
+@str.36 = private unnamed_addr constant [92 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_impl_simple.out > /dev/null 2>&1\00", align 1
+@str.37 = private unnamed_addr constant [85 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_impl.out > /dev/null 2>&1\00", align 1
+@str.38 = private unnamed_addr constant [94 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_lambda_simple.out > /dev/null 2>&1\00", align 1
+@str.39 = private unnamed_addr constant [88 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_len_bug.out > /dev/null 2>&1\00", align 1
+@str.40 = private unnamed_addr constant [84 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_len.out > /dev/null 2>&1\00", align 1
+@str.41 = private unnamed_addr constant [88 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_logical.out > /dev/null 2>&1\00", align 1
+@str.42 = private unnamed_addr constant [86 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_macro.out > /dev/null 2>&1\00", align 1
+@str.43 = private unnamed_addr constant [92 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_match_small.out > /dev/null 2>&1\00", align 1
+@str.44 = private unnamed_addr constant [91 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_match_stmt.out > /dev/null 2>&1\00", align 1
+@str.45 = private unnamed_addr constant [86 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_match.out > /dev/null 2>&1\00", align 1
+@str.46 = private unnamed_addr constant [88 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_modules.out > /dev/null 2>&1\00", align 1
+@str.47 = private unnamed_addr constant [102 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_multiple_method_calls.out > /dev/null 2>&1\00", align 1
+@str.48 = private unnamed_addr constant [93 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_new_features.out > /dev/null 2>&1\00", align 1
+@str.49 = private unnamed_addr constant [92 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_new_methods.out > /dev/null 2>&1\00", align 1
+@str.50 = private unnamed_addr constant [95 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_number_methods.out > /dev/null 2>&1\00", align 1
+@str.51 = private unnamed_addr constant [92 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_oop_methods.out > /dev/null 2>&1\00", align 1
+@str.52 = private unnamed_addr constant [102 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_option_result_methods.out > /dev/null 2>&1\00", align 1
+@str.53 = private unnamed_addr constant [95 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_optional_basic.out > /dev/null 2>&1\00", align 1
+@str.54 = private unnamed_addr constant [97 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_optional_bracket.out > /dev/null 2>&1\00", align 1
+@str.55 = private unnamed_addr constant [94 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_optional_none.out > /dev/null 2>&1\00", align 1
+@str.56 = private unnamed_addr constant [96 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_optional_simple.out > /dev/null 2>&1\00", align 1
+@str.57 = private unnamed_addr constant [94 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_optional_type.out > /dev/null 2>&1\00", align 1
+@str.58 = private unnamed_addr constant [89 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_optional.out > /dev/null 2>&1\00", align 1
+@str.59 = private unnamed_addr constant [91 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_print_bool.out > /dev/null 2>&1\00", align 1
+@str.60 = private unnamed_addr constant [98 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_print_polymorphic.out > /dev/null 2>&1\00", align 1
+@str.61 = private unnamed_addr constant [86 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_print.out > /dev/null 2>&1\00", align 1
+@str.62 = private unnamed_addr constant [93 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_simple_match.out > /dev/null 2>&1\00", align 1
+@str.63 = private unnamed_addr constant [92 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_spawn_basic.out > /dev/null 2>&1\00", align 1
+@str.64 = private unnamed_addr constant [91 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_spawn_many.out > /dev/null 2>&1\00", align 1
+@str.65 = private unnamed_addr constant [95 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_spawn_multiple.out > /dev/null 2>&1\00", align 1
+@str.66 = private unnamed_addr constant [100 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_spawn_same_multiple.out > /dev/null 2>&1\00", align 1
+@str.67 = private unnamed_addr constant [97 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_starts_ends_with.out > /dev/null 2>&1\00", align 1
+@str.68 = private unnamed_addr constant [91 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_str_concat.out > /dev/null 2>&1\00", align 1
+@str.69 = private unnamed_addr constant [94 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_string_concat.out > /dev/null 2>&1\00", align 1
+@str.70 = private unnamed_addr constant [88 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_strings.out > /dev/null 2>&1\00", align 1
+@str.71 = private unnamed_addr constant [100 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_struct_field_assign.out > /dev/null 2>&1\00", align 1
+@str.72 = private unnamed_addr constant [88 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_structs.out > /dev/null 2>&1\00", align 1
+@str.73 = private unnamed_addr constant [92 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_thread_pool.out > /dev/null 2>&1\00", align 1
+@str.74 = private unnamed_addr constant [90 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_to_string.out > /dev/null 2>&1\00", align 1
+@str.75 = private unnamed_addr constant [91 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_trait_impl.out > /dev/null 2>&1\00", align 1
+@str.76 = private unnamed_addr constant [93 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_traits_final.out > /dev/null 2>&1\00", align 1
+@str.77 = private unnamed_addr constant [93 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_traits_multi.out > /dev/null 2>&1\00", align 1
+@str.78 = private unnamed_addr constant [96 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_traits_noparams.out > /dev/null 2>&1\00", align 1
+@str.79 = private unnamed_addr constant [92 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_traits_self.out > /dev/null 2>&1\00", align 1
+@str.80 = private unnamed_addr constant [94 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_traits_simple.out > /dev/null 2>&1\00", align 1
+@str.81 = private unnamed_addr constant [93 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_traits_typed.out > /dev/null 2>&1\00", align 1
+@str.82 = private unnamed_addr constant [87 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_traits.out > /dev/null 2>&1\00", align 1
+@str.83 = private unnamed_addr constant [90 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_two_calls.out > /dev/null 2>&1\00", align 1
+@str.84 = private unnamed_addr constant [91 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_typeof_bug.out > /dev/null 2>&1\00", align 1
+@str.85 = private unnamed_addr constant [87 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_typeof.out > /dev/null 2>&1\00", align 1
+@str.86 = private unnamed_addr constant [87 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_unsafe.out > /dev/null 2>&1\00", align 1
+@str.87 = private unnamed_addr constant [92 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_upper_lower.out > /dev/null 2>&1\00", align 1
+@str.88 = private unnamed_addr constant [90 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_utilities.out > /dev/null 2>&1\00", align 1
+@str.89 = private unnamed_addr constant [91 x i8] c"timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_validation.out > /dev/null 2>&1\00", align 1
+
+declare ptr @malloc(i64)
+
+declare void @free(ptr)
+
+declare i32 @printf(ptr, ...)
+
+define i32 @wyn_main() {
+entry:
+  %failures = alloca i32, align 4
+  %pool_add = call i32 @pool_add_task(ptr @str)
+  %pool_add1 = call i32 @pool_add_task(ptr @str.1)
+  %pool_add2 = call i32 @pool_add_task(ptr @str.2)
+  %pool_add3 = call i32 @pool_add_task(ptr @str.3)
+  %pool_add4 = call i32 @pool_add_task(ptr @str.4)
+  %pool_add5 = call i32 @pool_add_task(ptr @str.5)
+  %pool_add6 = call i32 @pool_add_task(ptr @str.6)
+  %pool_add7 = call i32 @pool_add_task(ptr @str.7)
+  %pool_add8 = call i32 @pool_add_task(ptr @str.8)
+  %pool_add9 = call i32 @pool_add_task(ptr @str.9)
+  %pool_add10 = call i32 @pool_add_task(ptr @str.10)
+  %pool_add11 = call i32 @pool_add_task(ptr @str.11)
+  %pool_add12 = call i32 @pool_add_task(ptr @str.12)
+  %pool_add13 = call i32 @pool_add_task(ptr @str.13)
+  %pool_add14 = call i32 @pool_add_task(ptr @str.14)
+  %pool_add15 = call i32 @pool_add_task(ptr @str.15)
+  %pool_add16 = call i32 @pool_add_task(ptr @str.16)
+  %pool_add17 = call i32 @pool_add_task(ptr @str.17)
+  %pool_add18 = call i32 @pool_add_task(ptr @str.18)
+  %pool_add19 = call i32 @pool_add_task(ptr @str.19)
+  %pool_add20 = call i32 @pool_add_task(ptr @str.20)
+  %pool_add21 = call i32 @pool_add_task(ptr @str.21)
+  %pool_add22 = call i32 @pool_add_task(ptr @str.22)
+  %pool_add23 = call i32 @pool_add_task(ptr @str.23)
+  %pool_add24 = call i32 @pool_add_task(ptr @str.24)
+  %pool_add25 = call i32 @pool_add_task(ptr @str.25)
+  %pool_add26 = call i32 @pool_add_task(ptr @str.26)
+  %pool_add27 = call i32 @pool_add_task(ptr @str.27)
+  %pool_add28 = call i32 @pool_add_task(ptr @str.28)
+  %pool_add29 = call i32 @pool_add_task(ptr @str.29)
+  %pool_add30 = call i32 @pool_add_task(ptr @str.30)
+  %pool_add31 = call i32 @pool_add_task(ptr @str.31)
+  %pool_add32 = call i32 @pool_add_task(ptr @str.32)
+  %pool_add33 = call i32 @pool_add_task(ptr @str.33)
+  %pool_add34 = call i32 @pool_add_task(ptr @str.34)
+  %pool_add35 = call i32 @pool_add_task(ptr @str.35)
+  %pool_add36 = call i32 @pool_add_task(ptr @str.36)
+  %pool_add37 = call i32 @pool_add_task(ptr @str.37)
+  %pool_add38 = call i32 @pool_add_task(ptr @str.38)
+  %pool_add39 = call i32 @pool_add_task(ptr @str.39)
+  %pool_add40 = call i32 @pool_add_task(ptr @str.40)
+  %pool_add41 = call i32 @pool_add_task(ptr @str.41)
+  %pool_add42 = call i32 @pool_add_task(ptr @str.42)
+  %pool_add43 = call i32 @pool_add_task(ptr @str.43)
+  %pool_add44 = call i32 @pool_add_task(ptr @str.44)
+  %pool_add45 = call i32 @pool_add_task(ptr @str.45)
+  %pool_add46 = call i32 @pool_add_task(ptr @str.46)
+  %pool_add47 = call i32 @pool_add_task(ptr @str.47)
+  %pool_add48 = call i32 @pool_add_task(ptr @str.48)
+  %pool_add49 = call i32 @pool_add_task(ptr @str.49)
+  %pool_add50 = call i32 @pool_add_task(ptr @str.50)
+  %pool_add51 = call i32 @pool_add_task(ptr @str.51)
+  %pool_add52 = call i32 @pool_add_task(ptr @str.52)
+  %pool_add53 = call i32 @pool_add_task(ptr @str.53)
+  %pool_add54 = call i32 @pool_add_task(ptr @str.54)
+  %pool_add55 = call i32 @pool_add_task(ptr @str.55)
+  %pool_add56 = call i32 @pool_add_task(ptr @str.56)
+  %pool_add57 = call i32 @pool_add_task(ptr @str.57)
+  %pool_add58 = call i32 @pool_add_task(ptr @str.58)
+  %pool_add59 = call i32 @pool_add_task(ptr @str.59)
+  %pool_add60 = call i32 @pool_add_task(ptr @str.60)
+  %pool_add61 = call i32 @pool_add_task(ptr @str.61)
+  %pool_add62 = call i32 @pool_add_task(ptr @str.62)
+  %pool_add63 = call i32 @pool_add_task(ptr @str.63)
+  %pool_add64 = call i32 @pool_add_task(ptr @str.64)
+  %pool_add65 = call i32 @pool_add_task(ptr @str.65)
+  %pool_add66 = call i32 @pool_add_task(ptr @str.66)
+  %pool_add67 = call i32 @pool_add_task(ptr @str.67)
+  %pool_add68 = call i32 @pool_add_task(ptr @str.68)
+  %pool_add69 = call i32 @pool_add_task(ptr @str.69)
+  %pool_add70 = call i32 @pool_add_task(ptr @str.70)
+  %pool_add71 = call i32 @pool_add_task(ptr @str.71)
+  %pool_add72 = call i32 @pool_add_task(ptr @str.72)
+  %pool_add73 = call i32 @pool_add_task(ptr @str.73)
+  %pool_add74 = call i32 @pool_add_task(ptr @str.74)
+  %pool_add75 = call i32 @pool_add_task(ptr @str.75)
+  %pool_add76 = call i32 @pool_add_task(ptr @str.76)
+  %pool_add77 = call i32 @pool_add_task(ptr @str.77)
+  %pool_add78 = call i32 @pool_add_task(ptr @str.78)
+  %pool_add79 = call i32 @pool_add_task(ptr @str.79)
+  %pool_add80 = call i32 @pool_add_task(ptr @str.80)
+  %pool_add81 = call i32 @pool_add_task(ptr @str.81)
+  %pool_add82 = call i32 @pool_add_task(ptr @str.82)
+  %pool_add83 = call i32 @pool_add_task(ptr @str.83)
+  %pool_add84 = call i32 @pool_add_task(ptr @str.84)
+  %pool_add85 = call i32 @pool_add_task(ptr @str.85)
+  %pool_add86 = call i32 @pool_add_task(ptr @str.86)
+  %pool_add87 = call i32 @pool_add_task(ptr @str.87)
+  %pool_add88 = call i32 @pool_add_task(ptr @str.88)
+  %pool_add89 = call i32 @pool_add_task(ptr @str.89)
+  %pool_start = call void @pool_start(i32 50)
+  %pool_wait = call i32 @pool_wait()
+  store i32 %pool_wait, ptr %failures, align 4
+  %failures90 = load i32, ptr %failures, align 4
+  ret i32 %failures90
+}
+
+declare i32 @pool_add_task(ptr)
+
+declare void @pool_start(i32)
+
+declare i32 @pool_wait()

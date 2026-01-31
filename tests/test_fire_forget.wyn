@@ -1,0 +1,11 @@
+fn task() -> int {
+    return 42;
+}
+
+fn main() -> int {
+    spawn task();  // Fire-and-forget
+    spawn task();
+    spawn task();
+    print(1);
+    return 0;
+}

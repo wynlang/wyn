@@ -157,6 +157,13 @@ static Expr* primary() {
         return expr;
     }
     
+    if (match(TOKEN_SPAWN)) {
+        Expr* expr = alloc_expr();
+        expr->type = EXPR_SPAWN;
+        expr->spawn.call = call();  // Parse call expression
+        return expr;
+    }
+    
     if (match(TOKEN_NOT) || match(TOKEN_MINUS) || match(TOKEN_BANG) || match(TOKEN_TILDE)) {
         Token op = parser.previous;
         Expr* operand = primary();

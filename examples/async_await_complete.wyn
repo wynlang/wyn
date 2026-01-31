@@ -1,0 +1,41 @@
+// Complete async/await example - Working Implementation
+
+// async functions work like regular functions
+// Use spawn to make them concurrent
+async fn compute(n: int) -> int {
+    return n * n;
+}
+
+async fn fetch_data(id: int) -> int {
+    return id * 10;
+}
+
+fn regular_function() -> int {
+    return 42;
+}
+
+fn main() -> int {
+    print(1);  // Test 1: Call async function directly
+    var r1 = compute(10);
+    print(r1);  // 100
+    
+    print(2);  // Test 2: Spawn async function
+    spawn compute(20);
+    
+    print(3);  // Test 3: Multiple async calls
+    var r2 = fetch_data(5);
+    print(r2);  // 50
+    
+    print(4);  // Test 4: Mix async and regular
+    var r3 = regular_function();
+    print(r3);  // 42
+    
+    // Wait for spawned tasks
+    var i = 0;
+    while i < 1000000 {
+        i = i + 1;
+    }
+    
+    print(5);  // Success
+    return 0;
+}
