@@ -54,6 +54,9 @@ void codegen_program(Program* prog) {
         return;
     }
     
+    // Store program in context for struct lookups
+    global_context->program = prog;
+    
     // Verify context state
     if (!llvm_context_validate_state(global_context)) {
         llvm_context_set_error(global_context, "Invalid LLVM context state");

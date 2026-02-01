@@ -61,6 +61,12 @@ LLVMValueRef codegen_expression(Expr* expr, LLVMCodegenContext* ctx) {
         case EXPR_METHOD_CALL:
             result = codegen_method_call(&expr->method_call, ctx);
             break;
+        case EXPR_FIELD_ACCESS:
+            result = codegen_field_access(&expr->field_access, ctx);
+            break;
+        case EXPR_STRUCT_INIT:
+            result = codegen_struct_init(&expr->struct_init, ctx);
+            break;
         default:
             report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Unsupported expression type for code generation");
             return NULL;
@@ -1100,6 +1106,129 @@ LLVMValueRef codegen_method_call(MethodCallExpr* expr, LLVMCodegenContext* ctx) 
 // Generate array access (implemented in llvm_array_string_codegen.c)
 LLVMValueRef codegen_array_access(IndexExpr* expr, LLVMCodegenContext* ctx) {
     return codegen_array_indexing(expr, ctx);
+}
+
+// Generate struct field access
+LLVMValueRef codegen_field_access(FieldAccessExpr* expr, LLVMCodegenContext* ctx) {
+    if (!expr || !ctx) return NULL;
+    
+    // Get the struct value
+    LLVMValueRef struct_val = codegen_expression(expr->object, ctx);
+    if (!struct_val) return NULL;
+    
+    // Get struct type from the expression
+    Type* struct_type = expr->object->expr_type;
+    if (!struct_type || struct_type->kind != TYPE_STRUCT) {
+        report_error(ERR_TYPE_MISMATCH, NULL, 0, 0, "Field access on non-struct type");
+        return NULL;
+    }
+    
+    // Find field index in the struct type
+    int field_index = -1;
+    for (int i = 0; i < struct_type->struct_type.field_count; i++) {
+        Token field_name = struct_type->struct_type.field_names[i];
+        if (field_name.length == expr->field.length &&
+            memcmp(field_name.start, expr->field.start, field_name.length) == 0) {
+            field_index = i;
+            break;
+        }
+    }
+    
+    if (field_index == -1) {
+        report_error(ERR_TYPE_MISMATCH, NULL, 0, 0, "Field not found in struct");
+        return NULL;
+    }
+    
+    // Extract field value using extractvalue
+    return LLVMBuildExtractValue(ctx->builder, struct_val, field_index, "field_val");
+}
+
+// Generate struct initialization
+LLVMValueRef codegen_struct_init(StructInitExpr* expr, LLVMCodegenContext* ctx) {
+    if (!expr || !ctx || !ctx->program) return NULL;
+    
+    // Find struct definition in program
+    StructStmt* struct_def = NULL;
+    for (int i = 0; i < ctx->program->count; i++) {
+        Stmt* stmt = ctx->program->stmts[i];
+        if (stmt->type == STMT_STRUCT) {
+            Token name = stmt->struct_decl.name;
+            if (name.length == expr->type_name.length &&
+                memcmp(name.start, expr->type_name.start, name.length) == 0) {
+                struct_def = &stmt->struct_decl;
+                break;
+            }
+        }
+    }
+    
+    if (!struct_def) {
+        report_error(ERR_TYPE_MISMATCH, NULL, 0, 0, "Struct definition not found");
+        return NULL;
+    }
+    
+    // Build LLVM struct type directly from field types
+    extern LLVMTypeRef get_llvm_type_from_wyn_type(Expr* type_expr, LLVMCodegenContext* ctx);
+    
+    LLVMTypeRef* field_types = malloc(sizeof(LLVMTypeRef) * struct_def->field_count);
+    if (!field_types) {
+        report_error(ERR_OUT_OF_MEMORY, NULL, 0, 0, "Failed to allocate field types");
+        return NULL;
+    }
+    
+    for (int i = 0; i < struct_def->field_count; i++) {
+        field_types[i] = get_llvm_type_from_wyn_type(struct_def->field_types[i], ctx);
+        if (!field_types[i]) {
+            free(field_types);
+            report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Failed to get LLVM type for struct field");
+            return NULL;
+        }
+    }
+    
+    // Create LLVM struct type
+    char struct_name[256];
+    snprintf(struct_name, sizeof(struct_name), "%.*s", expr->type_name.length, expr->type_name.start);
+    LLVMTypeRef llvm_struct_type = LLVMStructCreateNamed(ctx->context, struct_name);
+    LLVMStructSetBody(llvm_struct_type, field_types, struct_def->field_count, false);
+    
+    free(field_types);
+    
+    if (!llvm_struct_type) {
+        report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Failed to create LLVM struct type");
+        return NULL;
+    }
+    
+    // Create undef struct value
+    LLVMValueRef struct_val = LLVMGetUndef(llvm_struct_type);
+    
+    // Insert each field value
+    for (int i = 0; i < expr->field_count; i++) {
+        LLVMValueRef field_val = codegen_expression(expr->field_values[i], ctx);
+        if (!field_val) {
+            report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Failed to codegen struct field value");
+            return NULL;
+        }
+        
+        // Find the field index in the struct type
+        Token field_name = expr->field_names[i];
+        int field_index = -1;
+        for (int j = 0; j < struct_def->field_count; j++) {
+            Token def_field_name = struct_def->fields[j];
+            if (def_field_name.length == field_name.length &&
+                memcmp(def_field_name.start, field_name.start, field_name.length) == 0) {
+                field_index = j;
+                break;
+            }
+        }
+        
+        if (field_index == -1) {
+            report_error(ERR_TYPE_MISMATCH, NULL, 0, 0, "Field not found in struct type");
+            return NULL;
+        }
+        
+        struct_val = LLVMBuildInsertValue(ctx->builder, struct_val, field_val, field_index, "struct_val");
+    }
+    
+    return struct_val;
 }
 
 // Type conversion utilities

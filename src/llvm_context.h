@@ -23,6 +23,9 @@ typedef struct {
     LLVMBuilderRef builder;
     LLVMTargetMachineRef target_machine;
     
+    // Program being compiled
+    Program* program;
+    
     // Type cache for performance
     LLVMTypeRef int_type;
     LLVMTypeRef float_type;
