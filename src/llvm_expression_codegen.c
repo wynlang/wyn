@@ -1123,10 +1123,44 @@ LLVMValueRef codegen_field_access(FieldAccessExpr* expr, LLVMCodegenContext* ctx
         return NULL;
     }
     
-    // Find field index in the struct type
+    // Get the LLVM type to find the struct name
+    LLVMTypeRef llvm_type = LLVMTypeOf(struct_val);
+    const char* type_name_cstr = LLVMGetStructName(llvm_type);
+    
+    if (!type_name_cstr) {
+        report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Cannot determine struct type name");
+        return NULL;
+    }
+    
+    // Look up the struct definition to get field information
+    if (!ctx->program) {
+        report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "No program context");
+        return NULL;
+    }
+    
+    StructStmt* struct_def = NULL;
+    for (int i = 0; i < ctx->program->count; i++) {
+        Stmt* stmt = ctx->program->stmts[i];
+        if (stmt->type == STMT_STRUCT) {
+            Token name = stmt->struct_decl.name;
+            // Compare with LLVM type name
+            if (strlen(type_name_cstr) == (size_t)name.length &&
+                memcmp(type_name_cstr, name.start, name.length) == 0) {
+                struct_def = &stmt->struct_decl;
+                break;
+            }
+        }
+    }
+    
+    if (!struct_def) {
+        report_error(ERR_TYPE_MISMATCH, NULL, 0, 0, "Struct definition not found");
+        return NULL;
+    }
+    
+    // Find field index in the struct definition
     int field_index = -1;
-    for (int i = 0; i < struct_type->struct_type.field_count; i++) {
-        Token field_name = struct_type->struct_type.field_names[i];
+    for (int i = 0; i < struct_def->field_count; i++) {
+        Token field_name = struct_def->fields[i];
         if (field_name.length == expr->field.length &&
             memcmp(field_name.start, expr->field.start, field_name.length) == 0) {
             field_index = i;

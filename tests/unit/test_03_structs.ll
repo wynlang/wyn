@@ -17,5 +17,6 @@ entry:
   %p = alloca %Point, align 8
   store %Point { i32 42, i32 10 }, ptr %p, align 4
   %p1 = load %Point, ptr %p, align 4
-  ret i32 0
+  %field_val = extractvalue %Point %p1, 0
+  ret i32 %field_val
 }

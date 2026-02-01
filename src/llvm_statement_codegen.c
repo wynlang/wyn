@@ -392,6 +392,9 @@ void codegen_return_statement(ReturnStmt* stmt, LLVMCodegenContext* ctx) {
         LLVMValueRef return_value = codegen_expression(stmt->value, ctx);
         if (return_value) {
             LLVMBuildRet(ctx->builder, return_value);
+        } else {
+            // Return 0 as fallback if expression fails
+            LLVMBuildRet(ctx->builder, LLVMConstInt(ctx->int_type, 0, false));
         }
     } else {
         // Return void
