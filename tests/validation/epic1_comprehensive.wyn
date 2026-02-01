@@ -1,0 +1,121 @@
+// Epic 1 Comprehensive Validation Test
+// Tests all 8 tasks from Type System Foundation
+
+// Task 1.1: Result<T, E> Type
+fn divide(a: int, b: int) -> Result<int, string> {
+    if b == 0 {
+        return Err("Division by zero")
+    }
+    return Ok(a / b)
+}
+
+// Task 1.2: Option<T> Type
+fn find_first_positive(arr: [int]) -> Option<int> {
+    for i in 0..arr.len() {
+        if arr[i] > 0 {
+            return Some(arr[i])
+        }
+    }
+    return None
+}
+
+// Task 1.3: ? Operator (Error Propagation)
+fn safe_divide_chain(a: int, b: int, c: int) -> Result<int, string> {
+    var step1 = divide(a, b)?
+    var step2 = divide(step1, c)?
+    return Ok(step2)
+}
+
+// Task 1.4: Generic Types
+struct Box<T> {
+    value: T
+}
+
+fn make_box<T>(val: T) -> Box<T> {
+    return Box { value: val }
+}
+
+// Task 1.5: Type Aliases
+type IntResult = Result<int, string>
+type IntBox = Box<int>
+
+// Task 1.6: Traits
+trait Printable {
+    fn to_string(self) -> string
+}
+
+// Task 1.7: Extension Methods
+impl int {
+    fn double(self) -> int {
+        return self * 2
+    }
+    
+    fn is_positive(self) -> bool {
+        return self > 0
+    }
+}
+
+// Task 1.8: Struct field access (fixed in this task)
+struct Point {
+    x: int
+    y: int
+}
+
+fn test_struct_access() -> int {
+    var p = Point { x: 10, y: 20 }
+    return p.x + p.y
+}
+
+fn main() -> int {
+    // Test 1.1: Result type
+    var result1 = divide(10, 2)
+    if result1.is_ok() {
+        var val = result1.unwrap()
+        if val != 5 {
+            return 1  // FAIL: Result unwrap
+        }
+    }
+    
+    var result2 = divide(10, 0)
+    if result2.is_ok() {
+        return 2  // FAIL: Should be Err
+    }
+    
+    // Test 1.2: Option type
+    var arr = [1, 2, 3]
+    var opt1 = find_first_positive(arr)
+    if opt1.is_none() {
+        return 3  // FAIL: Should find positive
+    }
+    
+    var arr2 = [-1, -2, -3]
+    var opt2 = find_first_positive(arr2)
+    if opt2.is_some() {
+        return 4  // FAIL: Should be None
+    }
+    
+    // Test 1.4: Generics
+    var box1 = make_box(42)
+    if box1.value != 42 {
+        return 5  // FAIL: Generic box
+    }
+    
+    // Test 1.7: Extension methods
+    var num = 21
+    if num.double() != 42 {
+        return 6  // FAIL: Extension method
+    }
+    
+    if !num.is_positive() {
+        return 7  // FAIL: Extension method bool
+    }
+    
+    // Test 1.8: Struct field access
+    var sum = test_struct_access()
+    if sum != 30 {
+        return 8  // FAIL: Struct field access
+    }
+    
+    // All tests passed!
+    return 0
+}

@@ -1,0 +1,23 @@
+// Debug which tests fail
+struct Point {
+    x: int
+    y: int
+}
+
+fn main() -> int {
+    var p = Point { x: 10, y: 20 }
+    
+    // Test division
+    var div_result = p.y / 2
+    if div_result != 10 {
+        return 1  // Division failed
+    }
+    
+    // Test complex expression
+    var result = p.x * 2 + p.y / 2
+    if result != 30 {
+        return 2  // Complex expression failed
+    }
+    
+    return 0  // All passed
+}

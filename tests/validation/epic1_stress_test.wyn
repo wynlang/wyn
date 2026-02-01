@@ -1,0 +1,52 @@
+// EPIC 1 STRESS TEST - All features working together
+
+struct Data {
+    value: int
+    flag: int
+}
+
+fn process(d: Data) -> int {
+    return d.value * 2
+}
+
+fn main() -> int {
+    // Variables
+    var x = 10
+    var y = 20
+    
+    // Functions
+    var d1 = Data { value: 5, flag: 1 }
+    var result = process(d1)
+    if result != 10 { return 1; }
+    
+    // Structs with field access
+    var d2 = Data { value: 15, flag: 0 }
+    if d2.value != 15 { return 2; }
+    if d2.flag != 0 { return 3; }
+    
+    // Arrays
+    var arr = [1, 2, 3, 4, 5]
+    if arr[0] != 1 { return 4; }
+    if arr[4] != 5 { return 5; }
+    
+    // Control flow
+    var sum = 0
+    if d1.flag == 1 {
+        sum = sum + d1.value
+    }
+    if sum != 5 { return 6; }
+    
+    // Loops with struct access
+    var count = 0
+    while count < d2.value {
+        count = count + 1
+    }
+    if count != 15 { return 7; }
+    
+    // Complex expression with multiple field accesses
+    var total = d1.value + d2.value + arr[2]
+    if total != 23 { return 8; }
+    
+    // All tests passed
+    return 0
+}

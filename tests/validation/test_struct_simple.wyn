@@ -1,0 +1,27 @@
+// Simpler nested struct test
+struct Point {
+    x: int
+    y: int
+}
+
+struct Rectangle {
+    width: int
+    height: int
+}
+
+fn main() -> int {
+    var rect = Rectangle { 
+        width: 100,
+        height: 50
+    }
+    
+    if rect.width != 100 {
+        return 1
+    }
+    
+    if rect.height != 50 {
+        return 2
+    }
+    
+    return 0
+}
