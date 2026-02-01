@@ -280,7 +280,7 @@
         {
           "id": "task-2.1",
           "name": "Add Methods to Bool Type",
-          "status": "not_started",
+          "status": "complete",
           "definition_of_done": [
             "bool.to_string() works",
             "bool.to_int() works",
