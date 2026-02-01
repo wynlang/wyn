@@ -1,0 +1,14 @@
+// Test exhaustive matching - should warn if case missing
+enum Status { PENDING, RUNNING, DONE }
+
+fn main() -> int {
+    var s = PENDING
+    
+    // Missing DONE case - should warn
+    var result = match s {
+        PENDING => 1,
+        RUNNING => 2
+    }
+    
+    return result
+}

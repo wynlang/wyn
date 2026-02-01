@@ -67,6 +67,9 @@ LLVMValueRef codegen_expression(Expr* expr, LLVMCodegenContext* ctx) {
         case EXPR_STRUCT_INIT:
             result = codegen_struct_init(&expr->struct_init, ctx);
             break;
+        case EXPR_MATCH:
+            result = codegen_match_expr(&expr->match, ctx);
+            break;
         default:
             report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Unsupported expression type for code generation");
             return NULL;
@@ -1263,6 +1266,85 @@ LLVMValueRef codegen_struct_init(StructInitExpr* expr, LLVMCodegenContext* ctx) 
     }
     
     return struct_val;
+}
+
+// Generate match expression
+LLVMValueRef codegen_match_expr(MatchExpr* expr, LLVMCodegenContext* ctx) {
+    if (!expr || !ctx || expr->arm_count == 0) return NULL;
+    
+    // Evaluate the match value
+    LLVMValueRef match_val = codegen_expression(expr->value, ctx);
+    if (!match_val) return NULL;
+    
+    // Create blocks for each arm and the merge block
+    LLVMBasicBlockRef* arm_blocks = malloc(sizeof(LLVMBasicBlockRef) * expr->arm_count);
+    LLVMBasicBlockRef* next_blocks = malloc(sizeof(LLVMBasicBlockRef) * expr->arm_count);
+    LLVMBasicBlockRef merge_block = LLVMAppendBasicBlock(ctx->current_function, "match.end");
+    
+    // Create all blocks
+    for (int i = 0; i < expr->arm_count; i++) {
+        arm_blocks[i] = LLVMAppendBasicBlock(ctx->current_function, "match.arm");
+        next_blocks[i] = (i < expr->arm_count - 1) ? 
+            LLVMAppendBasicBlock(ctx->current_function, "match.next") : merge_block;
+    }
+    
+    // Allocate result variable
+    LLVMTypeRef result_type = ctx->int_type;  // Default to int
+    LLVMValueRef result_ptr = LLVMBuildAlloca(ctx->builder, result_type, "match.result");
+    
+    // Generate code for each arm
+    for (int i = 0; i < expr->arm_count; i++) {
+        Pattern* pat = expr->arms[i].pattern;
+        
+        // Check pattern
+        LLVMValueRef cond = NULL;
+        if (pat->type == PATTERN_WILDCARD) {
+            // Wildcard always matches - unconditional branch
+            LLVMBuildBr(ctx->builder, arm_blocks[i]);
+        } else if (pat->type == PATTERN_LITERAL) {
+            // Compare with literal value - parse the token
+            Token lit_token = pat->literal.value;
+            // Convert token to int (simple case)
+            char* lit_str = malloc(lit_token.length + 1);
+            memcpy(lit_str, lit_token.start, lit_token.length);
+            lit_str[lit_token.length] = '\0';
+            int lit_int = atoi(lit_str);
+            free(lit_str);
+            
+            LLVMValueRef lit_val = LLVMConstInt(ctx->int_type, lit_int, false);
+            cond = LLVMBuildICmp(ctx->builder, LLVMIntEQ, match_val, lit_val, "match.cmp");
+            LLVMBuildCondBr(ctx->builder, cond, arm_blocks[i], next_blocks[i]);
+        } else if (pat->type == PATTERN_IDENT) {
+            // Enum variant or variable binding
+            // For now, treat as wildcard
+            LLVMBuildBr(ctx->builder, arm_blocks[i]);
+        } else {
+            // Unknown pattern - skip
+            LLVMBuildBr(ctx->builder, next_blocks[i]);
+        }
+        
+        // Generate arm body
+        LLVMPositionBuilderAtEnd(ctx->builder, arm_blocks[i]);
+        LLVMValueRef arm_result = codegen_expression(expr->arms[i].result, ctx);
+        if (arm_result) {
+            LLVMBuildStore(ctx->builder, arm_result, result_ptr);
+        }
+        LLVMBuildBr(ctx->builder, merge_block);
+        
+        // Position for next comparison
+        if (i < expr->arm_count - 1) {
+            LLVMPositionBuilderAtEnd(ctx->builder, next_blocks[i]);
+        }
+    }
+    
+    // Merge block
+    LLVMPositionBuilderAtEnd(ctx->builder, merge_block);
+    LLVMValueRef result = LLVMBuildLoad2(ctx->builder, result_type, result_ptr, "match.value");
+    
+    free(arm_blocks);
+    free(next_blocks);
+    
+    return result;
 }
 
 // Type conversion utilities

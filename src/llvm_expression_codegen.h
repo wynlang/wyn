@@ -41,6 +41,9 @@ LLVMValueRef codegen_array_access(IndexExpr* expr, LLVMCodegenContext* ctx);
 LLVMValueRef codegen_field_access(FieldAccessExpr* expr, LLVMCodegenContext* ctx);
 LLVMValueRef codegen_struct_init(StructInitExpr* expr, LLVMCodegenContext* ctx);
 
+// Match expressions
+LLVMValueRef codegen_match_expr(MatchExpr* expr, LLVMCodegenContext* ctx);
+
 // Type conversion utilities
 LLVMValueRef convert_to_type(LLVMValueRef value, LLVMTypeRef target_type, LLVMCodegenContext* ctx);
 bool is_numeric_type(LLVMTypeRef type);

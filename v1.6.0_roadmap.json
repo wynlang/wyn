@@ -330,6 +330,32 @@
           }
         }
       ]
+    },
+    {
+      "id": "epic-3",
+      "name": "Pattern Matching",
+      "status": "not_started",
+      "tasks": [
+        {
+          "id": "task-3.1",
+          "name": "Exhaustive Pattern Matching",
+          "status": "not_started",
+          "depends_on": [],
+          "definition_of_done": [
+            "Compiler checks all cases are covered",
+            "Error if patterns are missing",
+            "Warning if patterns are unreachable",
+            "Works with enums, Result, Option"
+          ],
+          "tests": [
+            "tests/patterns/test_exhaustive.wyn"
+          ],
+          "validation": {
+            "tests_must_pass": true,
+            "no_regressions": true
+          }
+        }
+      ]
     }
   ]
 }
