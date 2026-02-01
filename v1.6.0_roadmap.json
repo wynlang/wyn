@@ -339,7 +339,7 @@
         {
           "id": "task-3.1",
           "name": "Exhaustive Pattern Matching",
-          "status": "not_started",
+          "status": "complete",
           "depends_on": [],
           "definition_of_done": [
             "Compiler checks all cases are covered",
