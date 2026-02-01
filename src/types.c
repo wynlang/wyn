@@ -95,6 +95,10 @@ static const MethodSignature method_signatures[] = {
     // Bool methods
     {"bool", "to_string", "string", 0},
     {"bool", "to_int", "int", 0},
+    {"bool", "not", "bool", 0},
+    {"bool", "and", "bool", 1},
+    {"bool", "or", "bool", 1},
+    {"bool", "xor", "bool", 1},
     
     // Array/Vec methods (receiver type will be "array" for now)
     {"array", "len", "int", 0},
@@ -426,6 +430,18 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "to_int") == 0 && arg_count == 0) {
             out->c_function = "bool_to_int"; return true;
+        }
+        if (strcmp(method_name, "not") == 0 && arg_count == 0) {
+            out->c_function = "bool_not"; return true;
+        }
+        if (strcmp(method_name, "and") == 0 && arg_count == 1) {
+            out->c_function = "bool_and"; return true;
+        }
+        if (strcmp(method_name, "or") == 0 && arg_count == 1) {
+            out->c_function = "bool_or"; return true;
+        }
+        if (strcmp(method_name, "xor") == 0 && arg_count == 1) {
+            out->c_function = "bool_xor"; return true;
         }
         return false;
     }

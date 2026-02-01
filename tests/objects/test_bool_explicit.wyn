@@ -1,0 +1,26 @@
+// Explicit bool method test
+fn main() -> int {
+    var t = true
+    var f = false
+    
+    // Test each method explicitly
+    var not_t = t.not()
+    if not_t != false { return 1; }
+    
+    var and_result = t.and(f)
+    if and_result != false { return 2; }
+    
+    var or_result = t.or(f)
+    if or_result != true { return 3; }
+    
+    var xor_result = t.xor(f)
+    if xor_result != true { return 4; }
+    
+    var to_int_t = t.to_int()
+    if to_int_t != 1 { return 5; }
+    
+    var to_int_f = f.to_int()
+    if to_int_f != 0 { return 6; }
+    
+    return 0  // SUCCESS
+}

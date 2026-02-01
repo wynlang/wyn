@@ -3526,6 +3526,10 @@ void codegen_c_header() {
     emit("char* float_to_string(double x) { char* r = malloc(32); sprintf(r, \"%%g\", x); return r; }\n");
     emit("char* bool_to_string(bool x) { char* r = malloc(8); strcpy(r, x ? \"true\" : \"false\"); return r; }\n");
     emit("int bool_to_int(bool x) { return x ? 1 : 0; }\n");
+    emit("bool bool_not(bool x) { return !x; }\n");
+    emit("bool bool_and(bool x, bool y) { return x && y; }\n");
+    emit("bool bool_or(bool x, bool y) { return x || y; }\n");
+    emit("bool bool_xor(bool x, bool y) { return x != y; }\n");
     emit("char* str_to_string(const char* x) { return (char*)x; }\n");
     
     emit("#define to_string(x) _Generic((x), \\\n");

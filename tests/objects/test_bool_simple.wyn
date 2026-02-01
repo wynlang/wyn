@@ -1,0 +1,10 @@
+// Test bool methods without variable assignment
+fn main() -> int {
+    var t = true
+    var f = false
+    
+    if t.not() != false { return 1; }
+    if f.not() != true { return 2; }
+    
+    return 0
+}
