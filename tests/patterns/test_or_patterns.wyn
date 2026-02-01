@@ -1,0 +1,22 @@
+// Test or patterns
+fn main() -> int {
+    var x = 2
+    
+    // Should match 1, 2, or 3
+    var result = match x {
+        1 | 2 | 3 => 100,
+        _ => 0
+    }
+    
+    if result != 100 { return 1; }
+    
+    var y = 5
+    var result2 = match y {
+        1 | 2 | 3 => 100,
+        _ => 0
+    }
+    
+    if result2 != 0 { return 2; }
+    
+    return 0
+}

@@ -354,6 +354,62 @@
             "tests_must_pass": true,
             "no_regressions": true
           }
+        },
+        {
+          "id": "task-3.2",
+          "name": "Guard Clauses in Patterns",
+          "status": "not_started",
+          "depends_on": [
+            "task-3.1"
+          ],
+          "definition_of_done": [
+            "Guard clauses work: match x { n if n > 0 => ... }"
+          ],
+          "tests": [
+            "tests/patterns/test_guards.wyn"
+          ]
+        },
+        {
+          "id": "task-3.3",
+          "name": "Or Patterns",
+          "status": "not_started",
+          "depends_on": [
+            "task-3.1"
+          ],
+          "definition_of_done": [
+            "Or patterns work: match x { 1 | 2 | 3 => ... }"
+          ],
+          "tests": [
+            "tests/patterns/test_or_patterns.wyn"
+          ]
+        },
+        {
+          "id": "task-3.4",
+          "name": "Range Patterns",
+          "status": "not_started",
+          "depends_on": [
+            "task-3.1"
+          ],
+          "definition_of_done": [
+            "Range patterns work: match x { 0..10 => ... }"
+          ],
+          "tests": [
+            "tests/patterns/test_ranges.wyn"
+          ]
+        },
+        {
+          "id": "task-3.5",
+          "name": "Destructuring Patterns",
+          "status": "not_started",
+          "depends_on": [
+            "task-3.1"
+          ],
+          "definition_of_done": [
+            "Destructuring works for structs and tuples"
+          ],
+          "tests": [
+            "tests/patterns/test_destructure.wyn"
+          ]
         }
       ]
     }
