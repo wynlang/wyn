@@ -1327,6 +1327,45 @@ LLVMValueRef codegen_match_expr(MatchExpr* expr, LLVMCodegenContext* ctx) {
             if (or_cond) {
                 LLVMBuildCondBr(ctx->builder, or_cond, arm_blocks[i], next_blocks[i]);
             }
+        } else if (pat->type == PATTERN_GUARD) {
+            // Guard pattern: check base pattern then guard condition
+            Pattern* base_pat = pat->guard.pattern;
+            
+            // For identifier patterns, bind the variable
+            if (base_pat->type == PATTERN_IDENT) {
+                // Create variable binding
+                Token name_token = base_pat->ident.name;
+                char* var_name = malloc(name_token.length + 1);
+                memcpy(var_name, name_token.start, name_token.length);
+                var_name[name_token.length] = '\0';
+                
+                // Store match value in variable
+                LLVMValueRef var_ptr = LLVMBuildAlloca(ctx->builder, ctx->int_type, var_name);
+                LLVMBuildStore(ctx->builder, match_val, var_ptr);
+                
+                // Add to symbol table
+                symbol_table_insert_typed(ctx->symbol_table, var_name, var_ptr, ctx->int_type);
+                
+                // Evaluate guard condition
+                LLVMValueRef guard_cond = codegen_expression(pat->guard.guard, ctx);
+                LLVMBuildCondBr(ctx->builder, guard_cond, arm_blocks[i], next_blocks[i]);
+                
+                free(var_name);
+            } else {
+                // Unsupported base pattern for guards
+                LLVMBuildBr(ctx->builder, next_blocks[i]);
+            }
+        } else if (pat->type == PATTERN_RANGE) {
+            // Range pattern: check if value is in range
+            LLVMValueRef start_val = codegen_expression(pat->range.start, ctx);
+            LLVMValueRef end_val = codegen_expression(pat->range.end, ctx);
+            
+            // Check: match_val >= start && match_val < end
+            LLVMValueRef ge_cond = LLVMBuildICmp(ctx->builder, LLVMIntSGE, match_val, start_val, "range.ge");
+            LLVMValueRef lt_cond = LLVMBuildICmp(ctx->builder, LLVMIntSLT, match_val, end_val, "range.lt");
+            LLVMValueRef range_cond = LLVMBuildAnd(ctx->builder, ge_cond, lt_cond, "range.check");
+            
+            LLVMBuildCondBr(ctx->builder, range_cond, arm_blocks[i], next_blocks[i]);
         } else if (pat->type == PATTERN_LITERAL) {
             // Compare with literal value - parse the token
             Token lit_token = pat->literal.value;
@@ -1344,6 +1383,9 @@ LLVMValueRef codegen_match_expr(MatchExpr* expr, LLVMCodegenContext* ctx) {
             // Enum variant or variable binding
             // For now, treat as wildcard
             LLVMBuildBr(ctx->builder, arm_blocks[i]);
+        } else if (pat->type == PATTERN_STRUCT) {
+            // Struct pattern - always matches (type checking done earlier)
+            LLVMBuildBr(ctx->builder, arm_blocks[i]);
         } else {
             // Unknown pattern - skip
             LLVMBuildBr(ctx->builder, next_blocks[i]);
@@ -1351,6 +1393,29 @@ LLVMValueRef codegen_match_expr(MatchExpr* expr, LLVMCodegenContext* ctx) {
         
         // Generate arm body
         LLVMPositionBuilderAtEnd(ctx->builder, arm_blocks[i]);
+        
+        // Bind pattern variables for struct destructuring
+        Pattern* arm_pat = expr->arms[i].pattern;
+        if (arm_pat->type == PATTERN_STRUCT) {
+            // Extract struct fields and bind to variables
+            for (int j = 0; j < arm_pat->struct_pat.field_count; j++) {
+                Token field_name = arm_pat->struct_pat.field_names[j];
+                char* name = malloc(field_name.length + 1);
+                memcpy(name, field_name.start, field_name.length);
+                name[field_name.length] = '\0';
+                
+                // Extract field value
+                LLVMValueRef field_val = LLVMBuildExtractValue(ctx->builder, match_val, j, name);
+                
+                // Allocate and store
+                LLVMValueRef var_ptr = LLVMBuildAlloca(ctx->builder, ctx->int_type, name);
+                LLVMBuildStore(ctx->builder, field_val, var_ptr);
+                symbol_table_insert_typed(ctx->symbol_table, name, var_ptr, ctx->int_type);
+                
+                free(name);
+            }
+        }
+        
         LLVMValueRef arm_result = codegen_expression(expr->arms[i].result, ctx);
         if (arm_result) {
             LLVMBuildStore(ctx->builder, arm_result, result_ptr);

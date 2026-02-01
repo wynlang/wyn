@@ -1,0 +1,33 @@
+// Test guard clauses
+fn main() -> int {
+    var x = 5
+    
+    // Guard with condition
+    var result = match x {
+        n if n > 0 => 1,
+        n if n < 0 => 2,
+        _ => 3
+    }
+    
+    if result != 1 { return 1; }
+    
+    var y = -3
+    var result2 = match y {
+        n if n > 0 => 1,
+        n if n < 0 => 2,
+        _ => 3
+    }
+    
+    if result2 != 2 { return 2; }
+    
+    var z = 0
+    var result3 = match z {
+        n if n > 0 => 1,
+        n if n < 0 => 2,
+        _ => 3
+    }
+    
+    if result3 != 3 { return 3; }
+    
+    return 0
+}

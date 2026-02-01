@@ -358,7 +358,7 @@
         {
           "id": "task-3.2",
           "name": "Guard Clauses in Patterns",
-          "status": "not_started",
+          "status": "complete",
           "depends_on": [
             "task-3.1"
           ],
@@ -386,7 +386,7 @@
         {
           "id": "task-3.4",
           "name": "Range Patterns",
-          "status": "not_started",
+          "status": "complete",
           "depends_on": [
             "task-3.1"
           ],
@@ -400,7 +400,7 @@
         {
           "id": "task-3.5",
           "name": "Destructuring Patterns",
-          "status": "not_started",
+          "status": "blocked",
           "depends_on": [
             "task-3.1"
           ],
@@ -409,7 +409,8 @@
           ],
           "tests": [
             "tests/patterns/test_destructure.wyn"
-          ]
+          ],
+          "notes": "Requires semantic analyzer updates for pattern variable bindings"
         }
       ]
     }

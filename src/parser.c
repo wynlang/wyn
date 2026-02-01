@@ -477,6 +477,16 @@ static Expr* primary() {
                 parser.had_error = true;
                 return NULL;
             }
+            
+            // Check for guard: pattern if condition
+            if (match(TOKEN_IF)) {
+                Pattern* guard_pattern = safe_malloc(sizeof(Pattern));
+                guard_pattern->type = PATTERN_GUARD;
+                guard_pattern->guard.pattern = pat;
+                guard_pattern->guard.guard = expression();
+                pat = guard_pattern;
+            }
+            
             expr->match.arms[expr->match.arm_count].pattern = pat;
             
             expect(TOKEN_FATARROW, "Expected '=>' after pattern");
@@ -3449,8 +3459,38 @@ static Pattern* parse_pattern() {
     // Handle literal patterns
     if (match(TOKEN_INT) || match(TOKEN_FLOAT) || match(TOKEN_STRING) || 
         match(TOKEN_TRUE) || match(TOKEN_FALSE)) {
+        Token first_token = parser.previous;
+        
+        // Check for range pattern: 0..10
+        if (check(TOKEN_DOTDOT)) {
+            advance(); // consume ..
+            if (!match(TOKEN_INT)) {
+                fprintf(stderr, "Error: Expected integer after '..' in range pattern\n");
+                free(pattern);
+                return NULL;
+            }
+            
+            pattern->type = PATTERN_RANGE;
+            pattern->range.inclusive = true;
+            
+            // Create start expression
+            Expr* start_expr = alloc_expr();
+            start_expr->type = EXPR_INT;
+            start_expr->token = first_token;
+            pattern->range.start = start_expr;
+            
+            // Create end expression
+            Expr* end_expr = alloc_expr();
+            end_expr->type = EXPR_INT;
+            end_expr->token = parser.previous;
+            pattern->range.end = end_expr;
+            
+            return pattern;
+        }
+        
+        // Regular literal pattern
         pattern->type = PATTERN_LITERAL;
-        pattern->literal.value = parser.previous;
+        pattern->literal.value = first_token;
         
         // Check for or pattern: 1 | 2 | 3
         if (check(TOKEN_PIPE)) {

@@ -1,0 +1,19 @@
+// Test destructuring patterns
+struct Point {
+    x: int,
+    y: int
+}
+
+fn main() -> int {
+    var p = Point { x: 10, y: 20 }
+    
+    // Destructure struct
+    var result = match p {
+        Point { x, y } => x + y,
+        _ => 0
+    }
+    
+    if result != 30 { return 1; }
+    
+    return 0
+}
