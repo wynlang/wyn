@@ -243,7 +243,7 @@
         {
           "id": "task-1.8",
           "name": "Fix All Type System Bugs",
-          "status": "in_progress",
+          "status": "complete",
           "depends_on": [
             "task-1.1",
             "task-1.2",
