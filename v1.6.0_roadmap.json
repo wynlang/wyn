@@ -4,7 +4,7 @@
   "progress": {
     "epics_complete": 0,
     "epics_total": 15,
-    "tasks_complete": 0,
+    "tasks_complete": 2,
     "tasks_total": 150,
     "tests_passing": 0,
     "tests_total": 647
@@ -21,7 +21,7 @@
         {
           "id": "task-1.1",
           "name": "Implement Result<T, E> Type",
-          "status": "not_started",
+          "status": "complete",
           "definition_of_done": [
             "Result<T, E> type defined in compiler",
             "Ok(value) constructor works",
@@ -55,7 +55,7 @@
         {
           "id": "task-1.2",
           "name": "Implement Option<T> Type",
-          "status": "not_started",
+          "status": "complete",
           "definition_of_done": [
             "Option<T> type defined in compiler",
             "Some(value) constructor works",
@@ -90,7 +90,10 @@
           "id": "task-1.3",
           "name": "Implement ? Operator",
           "status": "not_started",
-          "depends_on": ["task-1.1", "task-1.2"],
+          "depends_on": [
+            "task-1.1",
+            "task-1.2"
+          ],
           "definition_of_done": [
             "? operator parsed correctly",
             "Works with Result<T, E>",
@@ -241,7 +244,15 @@
           "id": "task-1.8",
           "name": "Fix All Type System Bugs",
           "status": "not_started",
-          "depends_on": ["task-1.1", "task-1.2", "task-1.3", "task-1.4", "task-1.5", "task-1.6", "task-1.7"],
+          "depends_on": [
+            "task-1.1",
+            "task-1.2",
+            "task-1.3",
+            "task-1.4",
+            "task-1.5",
+            "task-1.6",
+            "task-1.7"
+          ],
           "definition_of_done": [
             "All 29 failing LLVM tests pass",
             "Type inference works in all cases",
@@ -278,8 +289,13 @@
             "bool.or(other) works",
             "bool.xor(other) works"
           ],
-          "tests": ["tests/objects/test_bool_methods.wyn"],
-          "files_to_modify": ["src/codegen.c", "src/llvm_codegen.c"],
+          "tests": [
+            "tests/objects/test_bool_methods.wyn"
+          ],
+          "files_to_modify": [
+            "src/codegen.c",
+            "src/llvm_codegen.c"
+          ],
           "validation": {
             "tests_must_pass": true,
             "no_regressions": true
@@ -301,8 +317,13 @@
             "char.to_upper() works",
             "char.to_lower() works"
           ],
-          "tests": ["tests/objects/test_char_methods.wyn"],
-          "files_to_modify": ["src/codegen.c", "src/llvm_codegen.c"],
+          "tests": [
+            "tests/objects/test_char_methods.wyn"
+          ],
+          "files_to_modify": [
+            "src/codegen.c",
+            "src/llvm_codegen.c"
+          ],
           "validation": {
             "tests_must_pass": true,
             "no_regressions": true
