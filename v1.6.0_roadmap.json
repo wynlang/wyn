@@ -4,7 +4,7 @@
   "progress": {
     "epics_complete": 0,
     "epics_total": 15,
-    "tasks_complete": 3,
+    "tasks_complete": 4,
     "tasks_total": 150,
     "tests_passing": 0,
     "tests_total": 647
@@ -123,7 +123,7 @@
         {
           "id": "task-1.4",
           "name": "Complete Generic Type System",
-          "status": "not_started",
+          "status": "complete",
           "definition_of_done": [
             "Generic functions fully work",
             "Generic structs fully work",
