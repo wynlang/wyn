@@ -66,6 +66,7 @@ typedef enum {
     PATTERN_RANGE,       // Range patterns (1..10, 'a'..'z')
     PATTERN_OPTION,      // Option patterns (Some(x), None)
     PATTERN_GUARD,       // Pattern with guard clause (x if x > 0)
+    PATTERN_OR,          // Or patterns (1 | 2 | 3)
 } PatternType;
 
 typedef struct {
@@ -174,6 +175,11 @@ typedef struct {
     Expr* guard;          // Guard expression
 } GuardPattern;
 
+typedef struct {
+    Pattern** patterns;   // Array of patterns
+    int pattern_count;    // Number of patterns
+} OrPattern;
+
 struct Pattern {
     PatternType type;
     union {
@@ -185,6 +191,7 @@ struct Pattern {
         RangePattern range;
         OptionPattern option;
         GuardPattern guard;
+        OrPattern or_pat;
     };
 };
 

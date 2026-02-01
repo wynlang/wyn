@@ -1301,6 +1301,32 @@ LLVMValueRef codegen_match_expr(MatchExpr* expr, LLVMCodegenContext* ctx) {
         if (pat->type == PATTERN_WILDCARD) {
             // Wildcard always matches - unconditional branch
             LLVMBuildBr(ctx->builder, arm_blocks[i]);
+        } else if (pat->type == PATTERN_OR) {
+            // Or pattern: match any of the sub-patterns
+            LLVMValueRef or_cond = NULL;
+            for (int j = 0; j < pat->or_pat.pattern_count; j++) {
+                Pattern* sub_pat = pat->or_pat.patterns[j];
+                if (sub_pat->type == PATTERN_LITERAL) {
+                    Token lit_token = sub_pat->literal.value;
+                    char* lit_str = malloc(lit_token.length + 1);
+                    memcpy(lit_str, lit_token.start, lit_token.length);
+                    lit_str[lit_token.length] = '\0';
+                    int lit_int = atoi(lit_str);
+                    free(lit_str);
+                    
+                    LLVMValueRef lit_val = LLVMConstInt(ctx->int_type, lit_int, false);
+                    LLVMValueRef sub_cond = LLVMBuildICmp(ctx->builder, LLVMIntEQ, match_val, lit_val, "or.cmp");
+                    
+                    if (or_cond) {
+                        or_cond = LLVMBuildOr(ctx->builder, or_cond, sub_cond, "or.result");
+                    } else {
+                        or_cond = sub_cond;
+                    }
+                }
+            }
+            if (or_cond) {
+                LLVMBuildCondBr(ctx->builder, or_cond, arm_blocks[i], next_blocks[i]);
+            }
         } else if (pat->type == PATTERN_LITERAL) {
             // Compare with literal value - parse the token
             Token lit_token = pat->literal.value;

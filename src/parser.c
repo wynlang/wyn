@@ -3114,6 +3114,42 @@ static Stmt* parse_match_statement() {
         
         current_case->pattern = pattern;
         
+        // Check for or patterns: 1 | 2 | 3
+        if (match(TOKEN_PIPE)) {
+            // Create an or pattern
+            Pattern* or_pattern = safe_malloc(sizeof(Pattern));
+            or_pattern->type = PATTERN_OR;
+            or_pattern->or_pat.patterns = safe_malloc(sizeof(Pattern*) * 16);
+            or_pattern->or_pat.pattern_count = 0;
+            
+            // Add the first pattern
+            or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = pattern;
+            
+            // Parse remaining patterns
+            do {
+                Pattern* next_pattern = safe_malloc(sizeof(Pattern));
+                
+                if (check(TOKEN_INT) || check(TOKEN_FLOAT) || check(TOKEN_STRING) || check(TOKEN_TRUE) || check(TOKEN_FALSE)) {
+                    next_pattern->type = PATTERN_LITERAL;
+                    next_pattern->literal.value = parser.current;
+                    advance();
+                } else if (match(TOKEN_UNDERSCORE)) {
+                    next_pattern->type = PATTERN_WILDCARD;
+                } else if (check(TOKEN_IDENT)) {
+                    next_pattern->type = PATTERN_IDENT;
+                    next_pattern->ident.name = parser.current;
+                    advance();
+                } else {
+                    fprintf(stderr, "Error: Expected pattern after '|'\n");
+                    break;
+                }
+                
+                or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = next_pattern;
+            } while (match(TOKEN_PIPE) && or_pattern->or_pat.pattern_count < 16);
+            
+            current_case->pattern = or_pattern;
+        }
+        
         // Check for guard clause
         if (match(TOKEN_IF)) {
             current_case->guard = expression();
@@ -3415,6 +3451,33 @@ static Pattern* parse_pattern() {
         match(TOKEN_TRUE) || match(TOKEN_FALSE)) {
         pattern->type = PATTERN_LITERAL;
         pattern->literal.value = parser.previous;
+        
+        // Check for or pattern: 1 | 2 | 3
+        if (check(TOKEN_PIPE)) {
+            Pattern* first_pattern = pattern;
+            Pattern* or_pattern = safe_malloc(sizeof(Pattern));
+            or_pattern->type = PATTERN_OR;
+            or_pattern->or_pat.patterns = safe_malloc(sizeof(Pattern*) * 16);
+            or_pattern->or_pat.pattern_count = 0;
+            or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = first_pattern;
+            
+            while (match(TOKEN_PIPE)) {
+                // Parse just the literal, not full pattern
+                if (match(TOKEN_INT) || match(TOKEN_FLOAT) || match(TOKEN_STRING) || 
+                    match(TOKEN_TRUE) || match(TOKEN_FALSE)) {
+                    Pattern* next = safe_malloc(sizeof(Pattern));
+                    next->type = PATTERN_LITERAL;
+                    next->literal.value = parser.previous;
+                    or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = next;
+                } else {
+                    fprintf(stderr, "Error: Expected literal in or pattern\n");
+                    break;
+                }
+            }
+            
+            return or_pattern;
+        }
+        
         return pattern;
     }
     
@@ -3441,6 +3504,26 @@ static Pattern* parse_pattern() {
         pattern->type = PATTERN_IDENT;
         pattern->ident.name = parser.current;
         advance();
+        
+        // Check for or pattern: 1 | 2 | 3
+        if (check(TOKEN_PIPE)) {
+            Pattern* first_pattern = pattern;
+            Pattern* or_pattern = safe_malloc(sizeof(Pattern));
+            or_pattern->type = PATTERN_OR;
+            or_pattern->or_pat.patterns = safe_malloc(sizeof(Pattern*) * 16);
+            or_pattern->or_pat.pattern_count = 0;
+            or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = first_pattern;
+            
+            while (match(TOKEN_PIPE)) {
+                Pattern* next = parse_pattern();
+                if (next) {
+                    or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = next;
+                }
+            }
+            
+            return or_pattern;
+        }
+        
         return pattern;
     }
     
