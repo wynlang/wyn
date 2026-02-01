@@ -3530,6 +3530,19 @@ void codegen_c_header() {
     emit("bool bool_and(bool x, bool y) { return x && y; }\n");
     emit("bool bool_or(bool x, bool y) { return x || y; }\n");
     emit("bool bool_xor(bool x, bool y) { return x != y; }\n");
+    
+    // Char methods
+    emit("char* char_to_string(char x) { char* r = malloc(2); r[0] = x; r[1] = 0; return r; }\n");
+    emit("int char_to_int(char x) { return (int)x; }\n");
+    emit("bool char_is_alpha(char x) { return (x >= 'A' && x <= 'Z') || (x >= 'a' && x <= 'z'); }\n");
+    emit("bool char_is_numeric(char x) { return x >= '0' && x <= '9'; }\n");
+    emit("bool char_is_alphanumeric(char x) { return char_is_alpha(x) || char_is_numeric(x); }\n");
+    emit("bool char_is_whitespace(char x) { return x == ' ' || x == '\\t' || x == '\\n' || x == '\\r'; }\n");
+    emit("bool char_is_uppercase(char x) { return x >= 'A' && x <= 'Z'; }\n");
+    emit("bool char_is_lowercase(char x) { return x >= 'a' && x <= 'z'; }\n");
+    emit("char char_to_upper(char x) { return (x >= 'a' && x <= 'z') ? x - 32 : x; }\n");
+    emit("char char_to_lower(char x) { return (x >= 'A' && x <= 'Z') ? x + 32 : x; }\n");
+    
     emit("char* str_to_string(const char* x) { return (char*)x; }\n");
     
     emit("#define to_string(x) _Generic((x), \\\n");

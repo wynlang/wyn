@@ -100,6 +100,18 @@ static const MethodSignature method_signatures[] = {
     {"bool", "or", "bool", 1},
     {"bool", "xor", "bool", 1},
     
+    // Char methods
+    {"char", "to_string", "string", 0},
+    {"char", "to_int", "int", 0},
+    {"char", "is_alpha", "bool", 0},
+    {"char", "is_numeric", "bool", 0},
+    {"char", "is_alphanumeric", "bool", 0},
+    {"char", "is_whitespace", "bool", 0},
+    {"char", "is_uppercase", "bool", 0},
+    {"char", "is_lowercase", "bool", 0},
+    {"char", "to_upper", "char", 0},
+    {"char", "to_lower", "char", 0},
+    
     // Array/Vec methods (receiver type will be "array" for now)
     {"array", "len", "int", 0},
     {"array", "is_empty", "bool", 0},
@@ -442,6 +454,41 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "xor") == 0 && arg_count == 1) {
             out->c_function = "bool_xor"; return true;
+        }
+        return false;
+    }
+    
+    if (strcmp(receiver_type, "char") == 0) {
+        // Char methods
+        if (strcmp(method_name, "to_string") == 0 && arg_count == 0) {
+            out->c_function = "char_to_string"; return true;
+        }
+        if (strcmp(method_name, "to_int") == 0 && arg_count == 0) {
+            out->c_function = "char_to_int"; return true;
+        }
+        if (strcmp(method_name, "is_alpha") == 0 && arg_count == 0) {
+            out->c_function = "char_is_alpha"; return true;
+        }
+        if (strcmp(method_name, "is_numeric") == 0 && arg_count == 0) {
+            out->c_function = "char_is_numeric"; return true;
+        }
+        if (strcmp(method_name, "is_alphanumeric") == 0 && arg_count == 0) {
+            out->c_function = "char_is_alphanumeric"; return true;
+        }
+        if (strcmp(method_name, "is_whitespace") == 0 && arg_count == 0) {
+            out->c_function = "char_is_whitespace"; return true;
+        }
+        if (strcmp(method_name, "is_uppercase") == 0 && arg_count == 0) {
+            out->c_function = "char_is_uppercase"; return true;
+        }
+        if (strcmp(method_name, "is_lowercase") == 0 && arg_count == 0) {
+            out->c_function = "char_is_lowercase"; return true;
+        }
+        if (strcmp(method_name, "to_upper") == 0 && arg_count == 0) {
+            out->c_function = "char_to_upper"; return true;
+        }
+        if (strcmp(method_name, "to_lower") == 0 && arg_count == 0) {
+            out->c_function = "char_to_lower"; return true;
         }
         return false;
     }
