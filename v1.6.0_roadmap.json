@@ -304,7 +304,7 @@
         {
           "id": "task-2.2",
           "name": "Add Methods to Char Type",
-          "status": "not_started",
+          "status": "complete",
           "definition_of_done": [
             "char.to_string() works",
             "char.to_int() works",
