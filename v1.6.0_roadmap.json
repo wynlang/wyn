@@ -4,7 +4,7 @@
   "progress": {
     "epics_complete": 0,
     "epics_total": 15,
-    "tasks_complete": 6,
+    "tasks_complete": 7,
     "tasks_total": 150,
     "tests_passing": 0,
     "tests_total": 647
@@ -216,7 +216,7 @@
         {
           "id": "task-1.7",
           "name": "Implement Extension Methods",
-          "status": "not_started",
+          "status": "complete",
           "definition_of_done": [
             "fn Type.method syntax works",
             "Extension methods can be called",
