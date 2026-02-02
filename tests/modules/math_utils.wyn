@@ -1,0 +1,12 @@
+// Module: math_utils.wyn
+export fn add(a: int, b: int) -> int {
+    return a + b
+}
+
+export fn multiply(a: int, b: int) -> int {
+    return a * b
+}
+
+fn private_helper() -> int {
+    return 42
+}

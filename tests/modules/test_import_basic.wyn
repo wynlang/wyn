@@ -1,0 +1,12 @@
+// Test: Import from module
+import { add, multiply } from "./math_utils"
+
+fn main() -> int {
+    var sum = add(10, 20)
+    if sum != 30 { return 1; }
+    
+    var product = multiply(5, 6)
+    if product != 30 { return 2; }
+    
+    return 0
+}
