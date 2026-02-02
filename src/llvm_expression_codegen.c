@@ -1343,7 +1343,6 @@ LLVMValueRef codegen_match_expr(MatchExpr* expr, LLVMCodegenContext* ctx) {
             // Guard pattern: check base pattern then guard condition
             Pattern* base_pat = pat->guard.pattern;
             
-            // For identifier patterns, bind the variable
             if (base_pat->type == PATTERN_IDENT) {
                 // Create variable binding
                 Token name_token = base_pat->ident.name;
@@ -1363,6 +1362,28 @@ LLVMValueRef codegen_match_expr(MatchExpr* expr, LLVMCodegenContext* ctx) {
                 LLVMBuildCondBr(ctx->builder, guard_cond, arm_blocks[i], next_blocks[i]);
                 
                 free(var_name);
+            } else if (base_pat->type == PATTERN_STRUCT) {
+                // Struct pattern with guard - bind fields then check guard
+                for (int j = 0; j < base_pat->struct_pat.field_count; j++) {
+                    Token field_name = base_pat->struct_pat.field_names[j];
+                    char* name = malloc(field_name.length + 1);
+                    memcpy(name, field_name.start, field_name.length);
+                    name[field_name.length] = '\0';
+                    
+                    // Extract field value
+                    LLVMValueRef field_val = LLVMBuildExtractValue(ctx->builder, match_val, j, name);
+                    
+                    // Allocate and store
+                    LLVMValueRef var_ptr = LLVMBuildAlloca(ctx->builder, ctx->int_type, name);
+                    LLVMBuildStore(ctx->builder, field_val, var_ptr);
+                    symbol_table_insert_typed(ctx->symbol_table, name, var_ptr, ctx->int_type);
+                    
+                    free(name);
+                }
+                
+                // Evaluate guard condition
+                LLVMValueRef guard_cond = codegen_expression(pat->guard.guard, ctx);
+                LLVMBuildCondBr(ctx->builder, guard_cond, arm_blocks[i], next_blocks[i]);
             } else {
                 // Unsupported base pattern for guards
                 LLVMBuildBr(ctx->builder, next_blocks[i]);

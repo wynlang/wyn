@@ -2137,16 +2137,46 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 
                 // Add pattern bindings to scope
                 if (arm->pattern) {
-                    if (arm->pattern->type == PATTERN_IDENT) {
+                    Pattern* pat = arm->pattern;
+                    
+                    // Unwrap guard pattern
+                    if (pat->type == PATTERN_GUARD) {
+                        pat = pat->guard.pattern;
+                    }
+                    
+                    if (pat->type == PATTERN_IDENT) {
                         // Simple variable binding
-                        add_symbol(&arm_scope, arm->pattern->ident.name, match_value_type, false);
-                    } else if (arm->pattern->type == PATTERN_OPTION && arm->pattern->option.inner) {
+                        add_symbol(&arm_scope, pat->ident.name, match_value_type, false);
+                    } else if (pat->type == PATTERN_STRUCT) {
+                        // Struct destructuring - bind each field
+                        for (int j = 0; j < pat->struct_pat.field_count; j++) {
+                            Token field_name = pat->struct_pat.field_names[j];
+                            // Get field type from struct
+                            Type* field_type = builtin_int; // Default to int
+                            if (match_value_type->kind == TYPE_STRUCT) {
+                                for (int k = 0; k < match_value_type->struct_type.field_count; k++) {
+                                    if (match_value_type->struct_type.field_names[k].length == field_name.length &&
+                                        memcmp(match_value_type->struct_type.field_names[k].start, field_name.start, field_name.length) == 0) {
+                                        field_type = match_value_type->struct_type.field_types[k];
+                                        break;
+                                    }
+                                }
+                            }
+                            add_symbol(&arm_scope, field_name, field_type, false);
+                        }
+                    } else if (pat->type == PATTERN_OPTION && pat->option.inner) {
                         // Enum variant with inner pattern
-                        if (arm->pattern->option.inner->type == PATTERN_IDENT) {
+                        if (pat->option.inner->type == PATTERN_IDENT) {
                             // For now, assume int type for inner value
                             // TODO: Get actual type from enum variant
-                            add_symbol(&arm_scope, arm->pattern->option.inner->ident.name, builtin_int, false);
+                            add_symbol(&arm_scope, pat->option.inner->ident.name, builtin_int, false);
                         }
+                    }
+                    
+                    // If this is a guard pattern, check the guard expression with bindings in scope
+                    if (arm->pattern->type == PATTERN_GUARD) {
+                        Type* guard_type = check_expr(arm->pattern->guard.guard, &arm_scope);
+                        if (!guard_type) return NULL;
                     }
                 }
                 

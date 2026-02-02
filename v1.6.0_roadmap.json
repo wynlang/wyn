@@ -334,7 +334,7 @@
     {
       "id": "epic-3",
       "name": "Pattern Matching",
-      "status": "not_started",
+      "status": "complete",
       "tasks": [
         {
           "id": "task-3.1",
@@ -400,7 +400,7 @@
         {
           "id": "task-3.5",
           "name": "Destructuring Patterns",
-          "status": "blocked",
+          "status": "complete",
           "depends_on": [
             "task-3.1"
           ],
