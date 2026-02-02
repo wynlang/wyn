@@ -66,15 +66,30 @@ Disabled tests:
 
 ## Remaining Tasks
 
-### Task 5.4: Namespace Management
+### Task 5.4: Namespace Management (Deferred to v1.7.0)
 - Qualified names: `math::add()` or `math.add()`
 - Prevent name collisions
 - Module aliases: `import math as m`
+- **Reason for deferral**: Requires parser changes for `::` operator and whole-module imports
+- **Workaround**: Use selective imports with unique names
 
-### Task 5.5: Package System
+### Task 5.5: Package System (Deferred to v1.7.0)
 - package.wyn manifest
 - Dependency tracking
 - Version management
+- **Reason for deferral**: Requires package registry and dependency resolution
+- **Workaround**: Manual module management
+
+## Current Status
+
+**Epic 5: 60% Complete (3/5 tasks)**
+- ✅ Task 5.1: Import/Export
+- ✅ Task 5.2: Module Resolution  
+- ✅ Task 5.3: Visibility Rules (with limitations)
+- ⏸️ Task 5.4: Namespace Management (deferred)
+- ⏸️ Task 5.5: Package System (deferred)
+
+The core module system is functional and tested. Advanced features (namespaces, packages) are deferred to allow focus on other v1.6.0 priorities.
 
 ## Known Limitations
 
