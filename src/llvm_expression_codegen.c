@@ -939,6 +939,26 @@ LLVMValueRef codegen_method_call(MethodCallExpr* expr, LLVMCodegenContext* ctx) 
     LLVMValueRef object = codegen_expression(expr->object, ctx);
     if (!object) return NULL;
     
+    // Handle len/length - try array first, then string
+    if (strcmp(method_name, "len") == 0 || strcmp(method_name, "length") == 0) {
+        LLVMTypeRef obj_type = LLVMTypeOf(object);
+        if (LLVMGetTypeKind(obj_type) == LLVMPointerTypeKind) {
+            LLVMTypeRef elem_type = LLVMGetElementType(obj_type);
+            if (LLVMGetTypeKind(elem_type) == LLVMArrayTypeKind) {
+                // It's an array
+                return get_array_length(object, ctx);
+            }
+        }
+        // Not an array, treat as string
+        LLVMValueRef strlen_fn = LLVMGetNamedFunction(ctx->module, "strlen");
+        if (!strlen_fn) {
+            LLVMTypeRef strlen_type = LLVMFunctionType(LLVMInt64TypeInContext(ctx->context), 
+                                                       (LLVMTypeRef[]){ LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0) }, 1, false);
+            strlen_fn = LLVMAddFunction(ctx->module, "strlen", strlen_type);
+        }
+        return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(strlen_fn), strlen_fn, &object, 1, "strlen");
+    }
+    
     // Handle .await() method on Future
     if (strcmp(method_name, "await") == 0) {
         LLVMValueRef future_get_fn = LLVMGetNamedFunction(ctx->module, "future_get");
@@ -1001,14 +1021,6 @@ LLVMValueRef codegen_method_call(MethodCallExpr* expr, LLVMCodegenContext* ctx) 
             fn = LLVMAddFunction(ctx->module, "wyn_string_lower", fn_type);
         }
         return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(fn), fn, &object, 1, "lower");
-    } else if (strcmp(method_name, "len") == 0 || strcmp(method_name, "length") == 0) {
-        LLVMValueRef strlen_fn = LLVMGetNamedFunction(ctx->module, "strlen");
-        if (!strlen_fn) {
-            LLVMTypeRef strlen_type = LLVMFunctionType(LLVMInt64TypeInContext(ctx->context), 
-                                                       (LLVMTypeRef[]){ LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0) }, 1, false);
-            strlen_fn = LLVMAddFunction(ctx->module, "strlen", strlen_type);
-        }
-        return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(strlen_fn), strlen_fn, &object, 1, "strlen");
     } else if (strcmp(method_name, "starts_with") == 0) {
         LLVMValueRef strncmp_fn = LLVMGetNamedFunction(ctx->module, "strncmp");
         if (!strncmp_fn) {

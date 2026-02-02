@@ -1,6 +1,8 @@
 ; ModuleID = 'wyn_program'
 source_filename = "wyn_program"
 
+%Point = type { i32, i32 }
+
 @__wyn_argc = global i32 0
 @__wyn_argv = global ptr null
 
@@ -40,7 +42,7 @@ entry:
   %arr = alloca ptr, align 8
   %status = alloca i32, align 4
   %px = alloca i32, align 4
-  %p = alloca i32, align 4
+  %p = alloca %Point, align 8
   %sum = alloca i32, align 4
   %y = alloca i32, align 4
   %x = alloca i32, align 4
@@ -49,66 +51,95 @@ entry:
   store i32 30, ptr %y, align 4
   %add = call i32 @add(i32 5, i32 7)
   store i32 %add, ptr %sum, align 4
+  store %Point { i32 3, i32 4 }, ptr %p, align 4
+  %p1 = load %Point, ptr %p, align 4
+  %field_val = extractvalue %Point %p1, 0
+  store i32 %field_val, ptr %px, align 4
   %array_literal = alloca [5 x i32], align 4
   %element_ptr = getelementptr [5 x i32], ptr %array_literal, i32 0, i32 0
   store i32 1, ptr %element_ptr, align 4
-  %element_ptr1 = getelementptr [5 x i32], ptr %array_literal, i32 0, i32 1
-  store i32 2, ptr %element_ptr1, align 4
-  %element_ptr2 = getelementptr [5 x i32], ptr %array_literal, i32 0, i32 2
-  store i32 3, ptr %element_ptr2, align 4
-  %element_ptr3 = getelementptr [5 x i32], ptr %array_literal, i32 0, i32 3
-  store i32 4, ptr %element_ptr3, align 4
-  %element_ptr4 = getelementptr [5 x i32], ptr %array_literal, i32 0, i32 4
-  store i32 5, ptr %element_ptr4, align 4
+  %element_ptr2 = getelementptr [5 x i32], ptr %array_literal, i32 0, i32 1
+  store i32 2, ptr %element_ptr2, align 4
+  %element_ptr3 = getelementptr [5 x i32], ptr %array_literal, i32 0, i32 2
+  store i32 3, ptr %element_ptr3, align 4
+  %element_ptr4 = getelementptr [5 x i32], ptr %array_literal, i32 0, i32 3
+  store i32 4, ptr %element_ptr4, align 4
+  %element_ptr5 = getelementptr [5 x i32], ptr %array_literal, i32 0, i32 4
+  store i32 5, ptr %element_ptr5, align 4
   store ptr %array_literal, ptr %arr, align 8
-  %arr5 = load ptr, ptr %arr, align 8
-  %array_element_ptr = getelementptr [0 x i32], ptr %arr5, i32 0, i32 0
+  %arr6 = load ptr, ptr %arr, align 8
+  %array_element_ptr = getelementptr [0 x i32], ptr %arr6, i32 0, i32 0
   %array_element = load i32, ptr %array_element_ptr, align 4
   store i32 %array_element, ptr %first, align 4
+  %status7 = load i32, ptr %status, align 4
+  %match.result = alloca i32, align 4
+  br label %match.arm
+
+match.end:                                        ; preds = %match.arm10, %match.arm8, %match.arm
+  %match.value = load i32, ptr %match.result, align 4
+  store i32 %match.value, ptr %result, align 4
   store i32 0, ptr %counter, align 4
-  %result6 = load i32, ptr %result, align 4
-  %icmp = icmp eq i32 %result6, 42
+  %result11 = load i32, ptr %result, align 4
+  %icmp = icmp eq i32 %result11, 42
   br i1 %icmp, label %if.then, label %if.end
 
-if.then:                                          ; preds = %entry
-  %counter7 = load i32, ptr %counter, align 4
-  %add8 = add i32 %counter7, 1
-  store i32 %add8, ptr %counter, align 4
+match.arm:                                        ; preds = %entry
+  store i32 1, ptr %match.result, align 4
+  br label %match.end
+
+match.next:                                       ; No predecessors!
+  br label %match.arm8
+
+match.arm8:                                       ; preds = %match.next
+  store i32 2, ptr %match.result, align 4
+  br label %match.end
+
+match.next9:                                      ; No predecessors!
+  br label %match.arm10
+
+match.arm10:                                      ; preds = %match.next9
+  store i32 42, ptr %match.result, align 4
+  br label %match.end
+
+if.then:                                          ; preds = %match.end
+  %counter12 = load i32, ptr %counter, align 4
+  %add13 = add i32 %counter12, 1
+  store i32 %add13, ptr %counter, align 4
   br label %if.end
 
-if.end:                                           ; preds = %if.then, %entry
+if.end:                                           ; preds = %if.then, %match.end
   store i32 0, ptr %i, align 4
   br label %while.header
 
 while.header:                                     ; preds = %while.body, %if.end
-  %i9 = load i32, ptr %i, align 4
-  %icmp10 = icmp slt i32 %i9, 3
-  br i1 %icmp10, label %while.body, label %while.end
+  %i14 = load i32, ptr %i, align 4
+  %icmp15 = icmp slt i32 %i14, 3
+  br i1 %icmp15, label %while.body, label %while.end
 
 while.body:                                       ; preds = %while.header
-  %counter11 = load i32, ptr %counter, align 4
-  %add12 = add i32 %counter11, 1
-  store i32 %add12, ptr %counter, align 4
-  %i13 = load i32, ptr %i, align 4
-  %add14 = add i32 %i13, 1
-  store i32 %add14, ptr %i, align 4
+  %counter16 = load i32, ptr %counter, align 4
+  %add17 = add i32 %counter16, 1
+  store i32 %add17, ptr %counter, align 4
+  %i18 = load i32, ptr %i, align 4
+  %add19 = add i32 %i18, 1
+  store i32 %add19, ptr %i, align 4
   br label %while.header
 
 while.end:                                        ; preds = %while.header
   %generic_identity = call i32 @generic_identity(i32 100)
   store i32 %generic_identity, ptr %gen_result, align 4
-  %x15 = load i32, ptr %x, align 4
-  %y16 = load i32, ptr %y, align 4
-  %add17 = add i32 %x15, %y16
-  %sum18 = load i32, ptr %sum, align 4
-  %add19 = add i32 %add17, %sum18
-  %px20 = load i32, ptr %px, align 4
-  %add21 = add i32 %add19, %px20
-  %result22 = load i32, ptr %result, align 4
-  %add23 = add i32 %add21, %result22
-  %counter24 = load i32, ptr %counter, align 4
-  %add25 = add i32 %add23, %counter24
-  %gen_result26 = load i32, ptr %gen_result, align 4
-  %add27 = add i32 %add25, %gen_result26
-  ret i32 %add27
+  %x20 = load i32, ptr %x, align 4
+  %y21 = load i32, ptr %y, align 4
+  %add22 = add i32 %x20, %y21
+  %sum23 = load i32, ptr %sum, align 4
+  %add24 = add i32 %add22, %sum23
+  %px25 = load i32, ptr %px, align 4
+  %add26 = add i32 %add24, %px25
+  %result27 = load i32, ptr %result, align 4
+  %add28 = add i32 %add26, %result27
+  %counter29 = load i32, ptr %counter, align 4
+  %add30 = add i32 %add28, %counter29
+  %gen_result31 = load i32, ptr %gen_result, align 4
+  %add32 = add i32 %add30, %gen_result31
+  ret i32 %add32
 }
