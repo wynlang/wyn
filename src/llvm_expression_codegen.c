@@ -961,6 +961,18 @@ LLVMValueRef codegen_method_call(MethodCallExpr* expr, LLVMCodegenContext* ctx) 
             }
             return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(strlen_fn), strlen_fn, &object, 1, "strlen");
         }
+    } else if (strcmp(method_name, "first") == 0) {
+        // array.first() - return element at index 0
+        LLVMValueRef zero = LLVMConstInt(ctx->int_type, 0, false);
+        LLVMValueRef element_ptr = LLVMBuildGEP2(ctx->builder, ctx->int_type, object, &zero, 1, "first_ptr");
+        return LLVMBuildLoad2(ctx->builder, ctx->int_type, element_ptr, "first");
+    } else if (strcmp(method_name, "last") == 0) {
+        // array.last() - return element at index len-1
+        LLVMValueRef length = get_array_length(object, ctx);
+        LLVMValueRef one = LLVMConstInt(ctx->int_type, 1, false);
+        LLVMValueRef last_index = LLVMBuildSub(ctx->builder, length, one, "last_index");
+        LLVMValueRef element_ptr = LLVMBuildGEP2(ctx->builder, ctx->int_type, object, &last_index, 1, "last_ptr");
+        return LLVMBuildLoad2(ctx->builder, ctx->int_type, element_ptr, "last");
     }
     
     // Handle .await() method on Future
