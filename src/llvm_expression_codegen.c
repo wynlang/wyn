@@ -1021,6 +1021,39 @@ LLVMValueRef codegen_method_call(MethodCallExpr* expr, LLVMCodegenContext* ctx) 
             fn = LLVMAddFunction(ctx->module, "wyn_string_lower", fn_type);
         }
         return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(fn), fn, &object, 1, "lower");
+    } else if (strcmp(method_name, "substring") == 0 && expr->arg_count == 2) {
+        // substring(start, end) - use C runtime
+        LLVMValueRef fn = LLVMGetNamedFunction(ctx->module, "wyn_substring");
+        if (!fn) {
+            LLVMTypeRef str_type = LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0);
+            LLVMTypeRef param_types[] = { str_type, ctx->int_type, ctx->int_type };
+            LLVMTypeRef fn_type = LLVMFunctionType(str_type, param_types, 3, false);
+            fn = LLVMAddFunction(ctx->module, "wyn_substring", fn_type);
+        }
+        LLVMValueRef start = codegen_expression(expr->args[0], ctx);
+        LLVMValueRef end = codegen_expression(expr->args[1], ctx);
+        LLVMValueRef args[] = { object, start, end };
+        return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(fn), fn, args, 3, "substring");
+    } else if (strcmp(method_name, "trim") == 0) {
+        LLVMValueRef fn = LLVMGetNamedFunction(ctx->module, "wyn_trim");
+        if (!fn) {
+            LLVMTypeRef str_type = LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0);
+            LLVMTypeRef fn_type = LLVMFunctionType(str_type, (LLVMTypeRef[]){ str_type }, 1, false);
+            fn = LLVMAddFunction(ctx->module, "wyn_trim", fn_type);
+        }
+        return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(fn), fn, &object, 1, "trim");
+    } else if (strcmp(method_name, "replace") == 0 && expr->arg_count == 2) {
+        LLVMValueRef fn = LLVMGetNamedFunction(ctx->module, "wyn_replace");
+        if (!fn) {
+            LLVMTypeRef str_type = LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0);
+            LLVMTypeRef param_types[] = { str_type, str_type, str_type };
+            LLVMTypeRef fn_type = LLVMFunctionType(str_type, param_types, 3, false);
+            fn = LLVMAddFunction(ctx->module, "wyn_replace", fn_type);
+        }
+        LLVMValueRef old_str = codegen_expression(expr->args[0], ctx);
+        LLVMValueRef new_str = codegen_expression(expr->args[1], ctx);
+        LLVMValueRef args[] = { object, old_str, new_str };
+        return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(fn), fn, args, 3, "replace");
     } else if (strcmp(method_name, "starts_with") == 0) {
         LLVMValueRef strncmp_fn = LLVMGetNamedFunction(ctx->module, "strncmp");
         if (!strncmp_fn) {
