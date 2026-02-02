@@ -16,14 +16,43 @@ LLVMValueRef codegen_array_literal(ArrayExpr* expr, LLVMCodegenContext* ctx) {
         return NULL;
     }
     
-    // Determine element type (assume int for now, could be enhanced with type inference)
+    // Determine element type (assume int for now)
     LLVMTypeRef element_type = ctx->int_type;
     
-    // Create array type
-    LLVMTypeRef array_type = LLVMArrayType(element_type, expr->count);
+    // Allocate array with length prefix on heap
+    // Layout: [length: i64][element0][element1]...
+    LLVMTypeRef i64_type = LLVMInt64TypeInContext(ctx->context);
+    int element_count = expr->count;
     
-    // Allocate array on stack
-    LLVMValueRef array_alloca = LLVMBuildAlloca(ctx->builder, array_type, "array_literal");
+    // Calculate total size: 8 bytes (length) + element_count * element_size
+    LLVMValueRef element_size = LLVMSizeOf(element_type);
+    LLVMValueRef count_val = LLVMConstInt(i64_type, element_count, false);
+    LLVMValueRef data_size = LLVMBuildMul(ctx->builder, count_val, element_size, "data_size");
+    LLVMValueRef length_size = LLVMConstInt(i64_type, 8, false);
+    LLVMValueRef total_size = LLVMBuildAdd(ctx->builder, length_size, data_size, "total_size");
+    
+    // Allocate memory
+    LLVMValueRef malloc_fn = LLVMGetNamedFunction(ctx->module, "malloc");
+    if (!malloc_fn) {
+        LLVMTypeRef malloc_type = LLVMFunctionType(
+            LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0),
+            (LLVMTypeRef[]){ i64_type }, 1, false);
+        malloc_fn = LLVMAddFunction(ctx->module, "malloc", malloc_type);
+    }
+    
+    LLVMValueRef array_ptr = LLVMBuildCall2(ctx->builder, 
+        LLVMGlobalGetValueType(malloc_fn), malloc_fn, &total_size, 1, "array_alloc");
+    
+    // Store length at offset 0
+    LLVMValueRef length_ptr = LLVMBuildBitCast(ctx->builder, array_ptr,
+        LLVMPointerType(i64_type, 0), "length_ptr");
+    LLVMBuildStore(ctx->builder, count_val, length_ptr);
+    
+    // Get pointer to data (offset 8)
+    LLVMValueRef data_ptr = LLVMBuildGEP2(ctx->builder, LLVMInt8TypeInContext(ctx->context),
+        array_ptr, (LLVMValueRef[]){ length_size }, 1, "data_ptr");
+    LLVMValueRef typed_data_ptr = LLVMBuildBitCast(ctx->builder, data_ptr,
+        LLVMPointerType(element_type, 0), "typed_data");
     
     // Initialize array elements
     for (int i = 0; i < expr->count; i++) {
@@ -32,20 +61,15 @@ LLVMValueRef codegen_array_literal(ArrayExpr* expr, LLVMCodegenContext* ctx) {
             LLVMValueRef element_value = codegen_expression(expr->elements[i], ctx);
             if (element_value) {
                 // Get pointer to array element
-                LLVMValueRef indices[] = {
-                    LLVMConstInt(ctx->int_type, 0, 0),  // Array base
-                    LLVMConstInt(ctx->int_type, i, 0)   // Element index
-                };
-                LLVMValueRef element_ptr = LLVMBuildGEP2(ctx->builder, array_type, array_alloca, 
-                                                        indices, 2, "element_ptr");
-                
-                // Store element value
+                LLVMValueRef indices[] = { LLVMConstInt(ctx->int_type, i, false) };
+                LLVMValueRef element_ptr = LLVMBuildGEP2(ctx->builder, element_type,
+                    typed_data_ptr, indices, 1, "element_ptr");
                 LLVMBuildStore(ctx->builder, element_value, element_ptr);
             }
         }
     }
     
-    return array_alloca;
+    return typed_data_ptr;
 }
 
 // Generate code for array indexing with bounds checking
@@ -147,26 +171,37 @@ void codegen_bounds_check_failure(LLVMCodegenContext* ctx) {
     LLVMBuildCall2(ctx->builder, exit_fn_type, exit_fn, args, 1, "");
 }
 
-// Get array length (simplified implementation)
+// Get array length (reads from runtime metadata)
 LLVMValueRef get_array_length(LLVMValueRef array, LLVMCodegenContext* ctx) {
     if (!array || !ctx) {
         return NULL;
     }
     
-    // For static arrays, get the length from the type
-    LLVMTypeRef array_type = LLVMTypeOf(array);
-    if (LLVMGetTypeKind(array_type) == LLVMPointerTypeKind) {
-        array_type = LLVMGetElementType(array_type);
-    }
+    // Array pointer points to data, length is at offset -8
+    // Layout: [length: i64][data...]
+    //                      ^ array points here
     
-    if (LLVMGetTypeKind(array_type) == LLVMArrayTypeKind) {
-        unsigned length = LLVMGetArrayLength(array_type);
-        return LLVMConstInt(ctx->int_type, length, 0);
-    }
+    LLVMTypeRef i64_type = LLVMInt64TypeInContext(ctx->context);
+    LLVMTypeRef i8_type = LLVMInt8TypeInContext(ctx->context);
     
-    // For dynamic arrays, this would need to be stored with the array
-    // For now, return a default length
-    return LLVMConstInt(ctx->int_type, 10, 0);
+    // Cast array to i8*
+    LLVMValueRef i8_ptr = LLVMBuildBitCast(ctx->builder, array,
+        LLVMPointerType(i8_type, 0), "i8_ptr");
+    
+    // Go back 8 bytes to get length pointer
+    LLVMValueRef minus_8 = LLVMConstInt(i64_type, -8, true);
+    LLVMValueRef length_i8_ptr = LLVMBuildGEP2(ctx->builder, i8_type,
+        i8_ptr, (LLVMValueRef[]){ minus_8 }, 1, "length_i8_ptr");
+    
+    // Cast to i64*
+    LLVMValueRef length_ptr = LLVMBuildBitCast(ctx->builder, length_i8_ptr,
+        LLVMPointerType(i64_type, 0), "length_ptr");
+    
+    // Load length
+    LLVMValueRef length = LLVMBuildLoad2(ctx->builder, i64_type, length_ptr, "array_length");
+    
+    // Truncate to int (i32)
+    return LLVMBuildTrunc(ctx->builder, length, ctx->int_type, "length_int");
 }
 
 // Get pointer to array data

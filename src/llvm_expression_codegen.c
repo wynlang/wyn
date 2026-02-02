@@ -11,6 +11,7 @@
 #include "llvm_context.h"
 #include "llvm_array_string_codegen.h"
 #include "runtime_functions.h"
+#include "types.h"
 
 // Main expression code generation dispatcher
 LLVMValueRef codegen_expression(Expr* expr, LLVMCodegenContext* ctx) {
@@ -939,24 +940,27 @@ LLVMValueRef codegen_method_call(MethodCallExpr* expr, LLVMCodegenContext* ctx) 
     LLVMValueRef object = codegen_expression(expr->object, ctx);
     if (!object) return NULL;
     
-    // Handle len/length - try array first, then string
+    // Handle len/length - check object type to distinguish arrays from strings
     if (strcmp(method_name, "len") == 0 || strcmp(method_name, "length") == 0) {
-        LLVMTypeRef obj_type = LLVMTypeOf(object);
-        if (LLVMGetTypeKind(obj_type) == LLVMPointerTypeKind) {
-            LLVMTypeRef elem_type = LLVMGetElementType(obj_type);
-            if (LLVMGetTypeKind(elem_type) == LLVMArrayTypeKind) {
-                // It's an array
-                return get_array_length(object, ctx);
+        // Check if object is an array type
+        bool is_array = false;
+        if (expr->object && expr->object->expr_type) {
+            is_array = (expr->object->expr_type->kind == TYPE_ARRAY);
+        }
+        
+        if (is_array) {
+            // Array - use get_array_length
+            return get_array_length(object, ctx);
+        } else {
+            // String - use strlen
+            LLVMValueRef strlen_fn = LLVMGetNamedFunction(ctx->module, "strlen");
+            if (!strlen_fn) {
+                LLVMTypeRef strlen_type = LLVMFunctionType(LLVMInt64TypeInContext(ctx->context), 
+                                                           (LLVMTypeRef[]){ LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0) }, 1, false);
+                strlen_fn = LLVMAddFunction(ctx->module, "strlen", strlen_type);
             }
+            return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(strlen_fn), strlen_fn, &object, 1, "strlen");
         }
-        // Not an array, treat as string
-        LLVMValueRef strlen_fn = LLVMGetNamedFunction(ctx->module, "strlen");
-        if (!strlen_fn) {
-            LLVMTypeRef strlen_type = LLVMFunctionType(LLVMInt64TypeInContext(ctx->context), 
-                                                       (LLVMTypeRef[]){ LLVMPointerType(LLVMInt8TypeInContext(ctx->context), 0) }, 1, false);
-            strlen_fn = LLVMAddFunction(ctx->module, "strlen", strlen_type);
-        }
-        return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(strlen_fn), strlen_fn, &object, 1, "strlen");
     }
     
     // Handle .await() method on Future

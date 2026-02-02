@@ -1,0 +1,15 @@
+// TDD: Array length metadata
+fn main() -> int {
+    var arr = [1, 2, 3, 4, 5]
+    
+    // Test len
+    var len = arr.len()
+    if len != 5 { return 1; }
+    
+    // Test with different size
+    var arr2 = [10, 20]
+    var len2 = arr2.len()
+    if len2 != 2 { return 2; }
+    
+    return 0
+}
