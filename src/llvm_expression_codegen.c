@@ -887,7 +887,14 @@ LLVMValueRef codegen_function_call(CallExpr* expr, LLVMCodegenContext* ctx) {
     }
     
     // Look up function
-    LLVMValueRef function = LLVMGetNamedFunction(ctx->module, func_name);
+    // Handle qualified names: module::function -> function
+    char* lookup_name = func_name;
+    char* colon_pos = strstr(func_name, "::");
+    if (colon_pos) {
+        lookup_name = colon_pos + 2;  // Skip "::"
+    }
+    
+    LLVMValueRef function = LLVMGetNamedFunction(ctx->module, lookup_name);
     if (!function) {
         fprintf(stderr, "Error: Undefined function '%s'\n", func_name);
         safe_free(func_name);

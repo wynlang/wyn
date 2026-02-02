@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include "module.h"
+#include "package.h"
 
 static char* module_paths[16];
 static int module_path_count = 0;
@@ -219,15 +220,25 @@ char* resolve_module_path(const char* module_name) {
     snprintf(path, sizeof(path), "%s/%s.wyn", source_directory, module_name);
     if (stat(path, &st) == 0) return strdup(path);
     
-    // 2. Source file directory + modules/
+    // 2. Parent directory of source file
+    char parent_dir[512];
+    strcpy(parent_dir, source_directory);
+    char* last_slash = strrchr(parent_dir, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        snprintf(path, sizeof(path), "%s/%s.wyn", parent_dir, module_name);
+        if (stat(path, &st) == 0) return strdup(path);
+    }
+    
+    // 3. Source file directory + modules/
     snprintf(path, sizeof(path), "%s/modules/%s.wyn", source_directory, module_name);
     if (stat(path, &st) == 0) return strdup(path);
     
-    // 3. Current directory
+    // 4. Current directory
     snprintf(path, sizeof(path), "%s.wyn", module_name);
     if (stat(path, &st) == 0) return strdup(path);
     
-    // 4. ./modules/ directory
+    // 5. ./modules/ directory
     snprintf(path, sizeof(path), "./modules/%s.wyn", module_name);
     if (stat(path, &st) == 0) return strdup(path);
     
@@ -362,6 +373,16 @@ Program* load_module(const char* module_name) {
     if (prog) {
         extern void register_module(const char* name, Program* ast);
         register_module(resolved_name, prog);
+        
+        // Read package manifest if available
+        extern PackageInfo* read_package_manifest(const char* module_path);
+        PackageInfo* pkg = read_package_manifest(path);
+        if (pkg) {
+            // Package manifest found - could validate version, dependencies, etc.
+            // For now, just acknowledge it exists
+            extern void free_package_info(PackageInfo* info);
+            free_package_info(pkg);
+        }
     }
     
     // Remove from loading stack

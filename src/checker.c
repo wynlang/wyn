@@ -3486,6 +3486,45 @@ void check_program(Program* prog) {
             Program* module = load_module(module_name);
             
             if (module) {
+                // Check if this is a whole-module import (no items specified)
+                if (import->item_count == 0) {
+                    // Whole module import - register functions with module prefix
+                    char module_name_str[256];
+                    snprintf(module_name_str, sizeof(module_name_str), "%.*s", import->module.length, import->module.start);
+                    
+                    // Register all exported functions with qualified names
+                    for (int j = 0; j < module->count; j++) {
+                        Stmt* stmt = module->stmts[j];
+                        if (stmt->type == STMT_EXPORT && stmt->export.stmt && stmt->export.stmt->type == STMT_FN) {
+                            FnStmt* fn = &stmt->export.stmt->fn;
+                            
+                            // Create qualified name: module::function
+                            char* qualified_name = malloc(strlen(module_name_str) + 2 + fn->name.length + 1);
+                            sprintf(qualified_name, "%s::%.*s", module_name_str, fn->name.length, fn->name.start);
+                            
+                            Token qualified_token = fn->name;
+                            qualified_token.start = qualified_name;
+                            qualified_token.length = strlen(qualified_name);
+                            
+                            // Create function type
+                            Type* fn_type = make_type(TYPE_FUNCTION);
+                            fn_type->fn_type.param_count = fn->param_count;
+                            fn_type->fn_type.param_types = malloc(sizeof(Type*) * fn->param_count);
+                            Type* int_type = make_type(TYPE_INT);
+                            for (int k = 0; k < fn->param_count; k++) {
+                                fn_type->fn_type.param_types[k] = int_type;
+                            }
+                            fn_type->fn_type.return_type = int_type;
+                            
+                            // Register with qualified name
+                            Symbol* existing = find_symbol(global_scope, qualified_token);
+                            if (!existing) {
+                                add_symbol(global_scope, qualified_token, fn_type, false);
+                            }
+                        }
+                    }
+                }
+                
                 // Merge exported functions into current program for codegen
                 // Symbols are already registered by check_all_modules
                 merge_module_exports(module, prog, import);

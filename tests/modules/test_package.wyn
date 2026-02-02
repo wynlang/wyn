@@ -1,0 +1,8 @@
+// Test that package.wyn is recognized
+import math_utils
+
+fn main() -> int {
+    var sum = math_utils::add(5, 10)
+    if sum != 15 { return 1; }
+    return 0
+}
