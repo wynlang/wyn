@@ -1,0 +1,8 @@
+// Test that private functions cannot be called directly
+import { public_fn } from visibility_test
+
+fn main() -> int {
+    // This should fail - private_fn is not exported
+    var x = private_fn()
+    return 0
+}

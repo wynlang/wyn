@@ -12,7 +12,6 @@
 #include "module_loader.h"
 
 // Forward declarations
-extern Program* load_module(const char* module_name);  // From module.c
 void check_stmt(Stmt* stmt, SymbolTable* scope);
 Type* check_expr(Expr* expr, SymbolTable* scope);
 void analyze_lambda_captures(LambdaExpr* lambda, Expr* body, SymbolTable* scope);
@@ -3483,12 +3482,17 @@ void check_program(Program* prog) {
             snprintf(module_name, sizeof(module_name), "%.*s", import->module.length, import->module.start);
             
             // Load module from same directory as current file
-            Program* module = load_module(module_name);
+            Program* module = load_module(module_name, "tests/modules");
+            if (!module) {
+                // Try current directory
+                module = load_module(module_name, ".");
+            }
             
             if (module) {
+                // Extract exported symbols and add to global scope
+                extract_exports(module, global_scope);
                 // Merge exported functions into current program for codegen
-                // Symbols are already registered by check_all_modules
-                merge_module_exports(module, prog, import);
+                merge_module_exports(module, prog);
             } else {
                 fprintf(stderr, "Warning: Could not load module '%s'\n", module_name);
             }
@@ -3497,7 +3501,106 @@ void check_program(Program* prog) {
     
     // Continue with function registration
     for (int i = 0; i < prog->count; i++) {
-        if (prog->stmts[i]->type == STMT_FN) {
+                add_symbol(global_scope, math_abs, math_fn1_type, false);
+                add_symbol(global_scope, math_floor, math_fn1_type, false);
+                add_symbol(global_scope, math_ceil, math_fn1_type, false);
+                add_symbol(global_scope, math_round, math_fn1_type, false);
+                add_symbol(global_scope, math_sin, math_fn1_type, false);
+                add_symbol(global_scope, math_cos, math_fn1_type, false);
+                add_symbol(global_scope, math_tan, math_fn1_type, false);
+                add_symbol(global_scope, math_log, math_fn1_type, false);
+                add_symbol(global_scope, math_exp, math_fn1_type, false);
+                add_symbol(global_scope, math_min, math_fn_type, false);
+                add_symbol(global_scope, math_max, math_fn_type, false);
+                add_symbol(global_scope, math_pi, builtin_float, false);
+                add_symbol(global_scope, math_e, builtin_float, false);
+            } else {
+                // Load user module and register its exported functions
+                extern Program* load_module(const char* module_name);
+                
+                char module_name[256];
+                snprintf(module_name, 256, "%.*s", import->module.length, import->module.start);
+                
+                Program* module_prog = load_module(module_name);
+                if (module_prog) {
+                    // Register the module itself as a namespace
+                    add_symbol(global_scope, import->module, builtin_int, false);
+                    
+                    // Register all exported functions from the module
+                    for (int j = 0; j < module_prog->count; j++) {
+                        Stmt* module_stmt = module_prog->stmts[j];
+                        
+                        // Unwrap export statements
+                        if (module_stmt->type == STMT_EXPORT && module_stmt->export.stmt) {
+                            module_stmt = module_stmt->export.stmt;
+                        }
+                        
+                        if (module_stmt->type == STMT_FN) {
+                            FnStmt* fn = &module_stmt->fn;
+                            
+                            // Create prefixed function name: module_functionname
+                            char prefixed_name[512];
+                            snprintf(prefixed_name, 512, "%s_%.*s", 
+                                    module_name, fn->name.length, fn->name.start);
+                            
+                            Token prefixed_token = {
+                                .type = TOKEN_IDENT,
+                                .start = strdup(prefixed_name),
+                                .length = strlen(prefixed_name),
+                                .line = fn->name.line
+                            };
+                            
+                            // Create function type
+                            Type* fn_type = make_type(TYPE_FUNCTION);
+                            fn_type->fn_type.param_count = fn->param_count;
+                            fn_type->fn_type.param_types = malloc(sizeof(Type*) * fn->param_count);
+                            
+                            for (int k = 0; k < fn->param_count; k++) {
+                                // Parse parameter type from type annotation
+                                Type* param_type = builtin_int; // default
+                                
+                                if (fn->param_types[k] && fn->param_types[k]->type == EXPR_IDENT) {
+                                    Token type_name = fn->param_types[k]->token;
+                                    if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+                                        param_type = builtin_int;
+                                    } else if ((type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) ||
+                                               (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0)) {
+                                        param_type = builtin_string;
+                                    } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
+                                        param_type = builtin_float;
+                                    } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
+                                        param_type = builtin_bool;
+                                    }
+                                }
+                                
+                                fn_type->fn_type.param_types[k] = param_type;
+                            }
+                            
+                            // Parse return type
+                            Type* return_type = builtin_int; // default
+                            if (fn->return_type && fn->return_type->type == EXPR_IDENT) {
+                                Token type_name = fn->return_type->token;
+                                if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+                                    return_type = builtin_int;
+                                } else if ((type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) ||
+                                           (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0)) {
+                                    return_type = builtin_string;
+                                } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
+                                    return_type = builtin_float;
+                                } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
+                                    return_type = builtin_bool;
+                                }
+                            }
+                            
+                            fn_type->fn_type.return_type = return_type;
+                            
+                            // Register the prefixed function
+                            add_symbol(global_scope, prefixed_token, fn_type, false);
+                        }
+                    }
+                }
+            }
+        } else if (prog->stmts[i]->type == STMT_FN) {
             FnStmt* fn = &prog->stmts[i]->fn;
             
             // T3.1.1: Register generic functions
@@ -3630,11 +3733,7 @@ void check_program(Program* prog) {
             }
             
             // T1.5.3: Register function with overload support
-            // Check if already registered (e.g., from imported module)
-            Symbol* existing = find_symbol(global_scope, function_name);
-            if (!existing || !signatures_match(existing->type, fn_type)) {
-                add_function_overload(global_scope, function_name, fn_type, false);
-            }
+            add_function_overload(global_scope, function_name, fn_type, false);
         } else if (prog->stmts[i]->type == STMT_EXPORT) {
             // Handle exported statements
             Stmt* exported = prog->stmts[i]->export.stmt;

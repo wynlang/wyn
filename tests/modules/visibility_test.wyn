@@ -1,0 +1,8 @@
+// Test that non-exported functions cannot be imported
+export fn public_fn() -> int {
+    return private_fn() + 10
+}
+
+fn private_fn() -> int {
+    return 5
+}

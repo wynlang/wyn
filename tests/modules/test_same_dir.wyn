@@ -1,0 +1,8 @@
+// Test same directory import
+import { helper } from utils
+
+fn main() -> int {
+    var result = helper()
+    if result != 42 { return 1; }
+    return 0
+}

@@ -77,8 +77,14 @@ void codegen_program(Program* prog) {
     
     // First pass: Generate all function declarations
     for (int i = 0; i < prog->count; i++) {
-        if (prog->stmts[i] && prog->stmts[i]->type == STMT_FN) {
-            codegen_function_declaration(&prog->stmts[i]->fn, global_context);
+        if (prog->stmts[i]) {
+            if (prog->stmts[i]->type == STMT_FN) {
+                codegen_function_declaration(&prog->stmts[i]->fn, global_context);
+            } else if (prog->stmts[i]->type == STMT_EXPORT && prog->stmts[i]->export.stmt && 
+                       prog->stmts[i]->export.stmt->type == STMT_FN) {
+                // Handle exported functions
+                codegen_function_declaration(&prog->stmts[i]->export.stmt->fn, global_context);
+            }
         }
     }
     
@@ -88,6 +94,10 @@ void codegen_program(Program* prog) {
             if (prog->stmts[i]->type == STMT_FN) {
                 // Generate function body
                 codegen_function_definition(&prog->stmts[i]->fn, global_context);
+            } else if (prog->stmts[i]->type == STMT_EXPORT && prog->stmts[i]->export.stmt && 
+                       prog->stmts[i]->export.stmt->type == STMT_FN) {
+                // Generate exported function body
+                codegen_function_definition(&prog->stmts[i]->export.stmt->fn, global_context);
             } else {
                 // Other top-level statements (shouldn't happen in well-formed programs)
                 codegen_statement(prog->stmts[i], global_context);

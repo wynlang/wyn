@@ -1,0 +1,8 @@
+// Test deeply nested import
+import { deep_function } from lib.nested.deep
+
+fn main() -> int {
+    var result = deep_function()
+    if result != 99 { return 1; }
+    return 0
+}

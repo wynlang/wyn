@@ -1,12 +1,8 @@
-// Module: math_utils.wyn
+// math_utils.wyn - Simple module with exported functions
 export fn add(a: int, b: int) -> int {
     return a + b
 }
 
 export fn multiply(a: int, b: int) -> int {
     return a * b
-}
-
-fn private_helper() -> int {
-    return 42
 }

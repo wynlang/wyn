@@ -61,12 +61,53 @@ bool is_builtin_module(const char* module_name) {
 // Pre-scan source for imports and load them
 void preload_imports(const char* source) {
     const char* p = source;
+    bool in_comment = false;
+    bool in_line_comment = false;
+    
     while (*p) {
+        // Track comments
+        if (!in_comment && !in_line_comment && *p == '/' && *(p+1) == '/') {
+            in_line_comment = true;
+            p += 2;
+            continue;
+        }
+        if (!in_comment && !in_line_comment && *p == '/' && *(p+1) == '*') {
+            in_comment = true;
+            p += 2;
+            continue;
+        }
+        if (in_comment && *p == '*' && *(p+1) == '/') {
+            in_comment = false;
+            p += 2;
+            continue;
+        }
+        if (in_line_comment && *p == '\n') {
+            in_line_comment = false;
+            p++;
+            continue;
+        }
+        
+        // Skip if in comment
+        if (in_comment || in_line_comment) {
+            p++;
+            continue;
+        }
+        
         // Look for "import " keyword
         if (strncmp(p, "import ", 7) == 0) {
             p += 7;
             // Skip whitespace
             while (*p == ' ' || *p == '\t') p++;
+            
+            // Check for selective import: import { ... } from module
+            if (*p == '{') {
+                // Skip to "from"
+                while (*p && strncmp(p, " from ", 6) != 0) p++;
+                if (strncmp(p, " from ", 6) == 0) {
+                    p += 6;
+                    while (*p == ' ' || *p == '\t') p++;
+                }
+            }
             
             // Check for relative imports
             char module_name[256];

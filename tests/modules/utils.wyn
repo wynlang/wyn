@@ -1,0 +1,4 @@
+// Test same directory import
+export fn helper() -> int {
+    return 42
+}
