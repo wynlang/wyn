@@ -1,0 +1,10 @@
+// TDD: Test basic enum
+enum Color { RED, GREEN, BLUE }
+
+fn main() -> int {
+    var c = RED
+    if c == RED {
+        return 0
+    }
+    return 1
+}

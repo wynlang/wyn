@@ -75,6 +75,26 @@ void codegen_program(Program* prog) {
     LLVMSetInitializer(global_argv, LLVMConstNull(LLVMPointerType(LLVMPointerType(LLVMInt8Type(), 0), 0)));
     LLVMSetLinkage(global_argv, LLVMExternalLinkage);
     
+    // Pass 0: Generate enum constants
+    for (int i = 0; i < prog->count; i++) {
+        if (prog->stmts[i] && prog->stmts[i]->type == STMT_ENUM) {
+            EnumStmt* enum_decl = &prog->stmts[i]->enum_decl;
+            // Register each variant as a global constant
+            for (int j = 0; j < enum_decl->variant_count; j++) {
+                char variant_name[256];
+                snprintf(variant_name, sizeof(variant_name), "%.*s", 
+                        enum_decl->variants[j].length, enum_decl->variants[j].start);
+                
+                // Create global constant for enum variant
+                LLVMValueRef variant_const = LLVMAddGlobal(global_context->module, 
+                                                          global_context->int_type, variant_name);
+                LLVMSetInitializer(variant_const, LLVMConstInt(global_context->int_type, j, false));
+                LLVMSetGlobalConstant(variant_const, true);
+                LLVMSetLinkage(variant_const, LLVMInternalLinkage);
+            }
+        }
+    }
+    
     // First pass: Generate all function declarations
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]) {

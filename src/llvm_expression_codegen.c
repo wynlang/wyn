@@ -358,6 +358,15 @@ LLVMValueRef codegen_variable_ref(Expr* expr, LLVMCodegenContext* ctx) {
         return call;
     }
     
+    // Check for global constants (enum variants)
+    LLVMValueRef global_const = LLVMGetNamedGlobal(ctx->module, var_name);
+    if (global_const && LLVMIsGlobalConstant(global_const)) {
+        // Load the constant value
+        LLVMValueRef loaded = LLVMBuildLoad2(ctx->builder, ctx->int_type, global_const, var_name);
+        safe_free(var_name);
+        return loaded;
+    }
+    
     // Look up variable in symbol table
     LLVMValueRef var_ptr = symbol_table_lookup(ctx->symbol_table, var_name);
     if (!var_ptr) {
@@ -1541,9 +1550,25 @@ LLVMValueRef codegen_match_expr(MatchExpr* expr, LLVMCodegenContext* ctx) {
             cond = LLVMBuildICmp(ctx->builder, LLVMIntEQ, match_val, lit_val, "match.cmp");
             LLVMBuildCondBr(ctx->builder, cond, arm_blocks[i], next_blocks[i]);
         } else if (pat->type == PATTERN_IDENT) {
-            // Enum variant or variable binding
-            // For now, treat as wildcard
-            LLVMBuildBr(ctx->builder, arm_blocks[i]);
+            // Check if it's an enum variant (global constant) or variable binding
+            Token name_token = pat->ident.name;
+            char* var_name = malloc(name_token.length + 1);
+            memcpy(var_name, name_token.start, name_token.length);
+            var_name[name_token.length] = '\0';
+            
+            // Try to find as global constant
+            LLVMValueRef global_const = LLVMGetNamedGlobal(ctx->module, var_name);
+            if (global_const && LLVMIsGlobalConstant(global_const)) {
+                // It's an enum variant - load and compare
+                LLVMValueRef enum_val = LLVMBuildLoad2(ctx->builder, ctx->int_type, global_const, var_name);
+                cond = LLVMBuildICmp(ctx->builder, LLVMIntEQ, match_val, enum_val, "match.cmp");
+                LLVMBuildCondBr(ctx->builder, cond, arm_blocks[i], next_blocks[i]);
+            } else {
+                // Variable binding - always matches
+                LLVMBuildBr(ctx->builder, arm_blocks[i]);
+            }
+            
+            free(var_name);
         } else if (pat->type == PATTERN_STRUCT) {
             // Struct pattern - always matches (type checking done earlier)
             LLVMBuildBr(ctx->builder, arm_blocks[i]);
