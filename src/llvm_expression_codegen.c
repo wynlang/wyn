@@ -907,9 +907,22 @@ LLVMValueRef codegen_function_call(CallExpr* expr, LLVMCodegenContext* ctx) {
     // Look up function
     // Handle qualified names: module::function -> function
     char* lookup_name = func_name;
+    char runtime_name_buf[128];
     char* colon_pos = strstr(func_name, "::");
     if (colon_pos) {
         lookup_name = colon_pos + 2;  // Skip "::"
+        
+        // Map Wyn runtime function names to C runtime names
+        if (strncmp(func_name, "System::", 8) == 0) {
+            snprintf(runtime_name_buf, sizeof(runtime_name_buf), "wyn_system_%s", lookup_name);
+            lookup_name = runtime_name_buf;
+        } else if (strncmp(func_name, "File::", 6) == 0) {
+            snprintf(runtime_name_buf, sizeof(runtime_name_buf), "wyn_file_%s", lookup_name);
+            lookup_name = runtime_name_buf;
+        } else if (strncmp(func_name, "Time::", 6) == 0) {
+            snprintf(runtime_name_buf, sizeof(runtime_name_buf), "wyn_time_%s", lookup_name);
+            lookup_name = runtime_name_buf;
+        }
     }
     
     LLVMValueRef function = LLVMGetNamedFunction(ctx->module, lookup_name);

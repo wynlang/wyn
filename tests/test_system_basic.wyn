@@ -1,0 +1,15 @@
+// TDD: Test System module functions
+fn main() -> int {
+    // Test System::args (argc should be at least 1 for program name)
+    var argc = System::args()
+    if argc < 1 {
+        return 1
+    }
+    
+    // Test System::env
+    var path = System::env("PATH")
+    // PATH should exist on all systems
+    // We can't test the value, just that it doesn't crash
+    
+    return 0
+}

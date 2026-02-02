@@ -14,6 +14,7 @@
 #include "llvm_statement_codegen.h"
 #include "llvm_function_codegen.h"
 #include "llvm_array_string_codegen.h"
+#include "llvm_runtime.h"
 #include "error.h"
 #include "safe_memory.h"
 
@@ -74,6 +75,9 @@ void codegen_program(Program* prog) {
     LLVMValueRef global_argv = LLVMAddGlobal(global_context->module, LLVMPointerType(LLVMPointerType(LLVMInt8Type(), 0), 0), "__wyn_argv");
     LLVMSetInitializer(global_argv, LLVMConstNull(LLVMPointerType(LLVMPointerType(LLVMInt8Type(), 0), 0)));
     LLVMSetLinkage(global_argv, LLVMExternalLinkage);
+    
+    // Declare runtime library functions
+    llvm_declare_runtime_functions(global_context);
     
     // Pass 0: Generate enum constants
     for (int i = 0; i < prog->count; i++) {
@@ -246,16 +250,17 @@ bool llvm_link_binary(const char* obj_file, const char* output, const char* wyn_
     char cmd[4096];
     snprintf(cmd, sizeof(cmd),
              "clang -o %s %s %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
-             "%s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c "
+             "%s/src/optional.c %s/src/result.c %s/src/arc_runtime.c "
              "%s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c "
              "%s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c "
              "%s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c "
              "%s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c "
              "%s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c "
-             "%s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c -lpthread -lm 2>&1",
-             output, obj_file, root, root, root, root, root, root, root, root, root,
+             "%s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c "
+             "%s/runtime/libwyn_runtime.a -lpthread -lm 2>&1",
+             output, obj_file, root, root, root, root, root, root, root, root,
              root, root, root, root, root, root, root, root, root, root, root, root,
-             root, root, root, root, root, root, root, root, root);
+             root, root, root, root, root, root, root, root, root, root);
     
     int result = system(cmd);
     if (result != 0) {

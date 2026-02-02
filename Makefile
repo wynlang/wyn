@@ -62,7 +62,7 @@ ifeq ($(OS),Windows_NT)
 endif
 
 CFLAGS_LLVM = $(CFLAGS) $(LLVM_CFLAGS) -DWITH_LLVM=1
-LDFLAGS_LLVM = $(LLVM_LDFLAGS) $(LLVM_LIBS)
+LDFLAGS_LLVM = $(LLVM_LDFLAGS) $(LLVM_LIBS) -Lruntime -lwyn_runtime
 else
 # LLVM not available - use basic flags
 CFLAGS_LLVM = $(CFLAGS)
@@ -107,7 +107,7 @@ wyn-macos: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/g
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 # LLVM-based compiler (Phase 2) with Context Management, Target Configuration, Type Mapping, Runtime Functions, Expression Codegen, Statement Codegen, Function Codegen, and Array/String Operations
-wyn-llvm: src/main.c src/lexer.c src/parser.c src/checker.c src/llvm_codegen.c src/llvm_context.c src/target_config.c src/type_mapping.c src/runtime_functions.c src/llvm_expression_codegen.c src/llvm_statement_codegen.c src/llvm_function_codegen.c src/llvm_array_string_codegen.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/cmd_other.c src/optimize.c src/types.c src/patterns.c src/generics.c src/type_inference.c src/platform.c src/wyn_interface.c src/traits.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/result.c src/modules.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_math.c src/hashmap.c src/hashset.c src/json.c src/cmd_compile.c src/cmd_test.c src/toml.c src/file_watch.c src/package.c src/lsp.c src/spawn.c src/registry.c src/semver.c src/closures.c src/scope.c src/optional.c src/file_io_simple.c src/stdlib_enhanced.c src/stdlib_process.c src/stdlib_fs.c
+wyn-llvm: src/main.c src/lexer.c src/parser.c src/checker.c src/llvm_codegen.c src/llvm_context.c src/target_config.c src/type_mapping.c src/runtime_functions.c src/llvm_expression_codegen.c src/llvm_statement_codegen.c src/llvm_function_codegen.c src/llvm_array_string_codegen.c src/llvm_runtime.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/cmd_other.c src/optimize.c src/types.c src/patterns.c src/generics.c src/type_inference.c src/platform.c src/wyn_interface.c src/traits.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/result.c src/modules.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_math.c src/hashmap.c src/hashset.c src/json.c src/cmd_compile.c src/cmd_test.c src/toml.c src/file_watch.c src/package.c src/lsp.c src/spawn.c src/registry.c src/semver.c src/closures.c src/scope.c src/optional.c src/file_io_simple.c src/stdlib_enhanced.c src/stdlib_process.c src/stdlib_fs.c runtime/libwyn_runtime.a
 	$(CC) $(CFLAGS_LLVM) -I src -o $@ $^ $(LDFLAGS_LLVM) -lpthread
 
 # Phase 2 Integration Testing
@@ -483,3 +483,7 @@ clean:
 
 test_t2_3_1_validation: tests/test_t2_3_1_validation.c $(SOURCES)
 	$(CC) $(CFLAGS) -I src -o tests/test_t2_3_1_validation tests/test_t2_3_1_validation.c $(SOURCES) $(LDFLAGS)
+
+# Runtime library
+runtime/libwyn_runtime.a:
+	$(MAKE) -C runtime
