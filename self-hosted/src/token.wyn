@@ -1,0 +1,43 @@
+// Token Types - Using int constants instead of enum for now
+// TODO: Fix enum-in-struct compiler bug
+
+// Token type constants
+var TOKEN_INT = 0
+var TOKEN_FLOAT = 1
+var TOKEN_STRING = 2
+var TOKEN_TRUE = 3
+var TOKEN_FALSE = 4
+var TOKEN_FN = 5
+var TOKEN_VAR = 6
+var TOKEN_IF = 7
+var TOKEN_ELSE = 8
+var TOKEN_IDENT = 9
+var TOKEN_PLUS = 10
+var TOKEN_MINUS = 11
+var TOKEN_EOF = 99
+
+struct Token {
+    token_type: int,
+    line: int,
+    column: int
+}
+
+fn token_new(token_type: int, line: int, column: int) -> Token {
+    return Token {
+        token_type: token_type,
+        line: line,
+        column: column
+    }
+}
+
+fn token_equals(a: Token, b: Token) -> int {
+    if a.token_type == b.token_type {
+        return 1
+    }
+    return 0
+}
+
+fn token_to_string(token: Token) -> string {
+    // Format: "TokenType(lexeme) at line:column"
+    return ""  // TODO: Implement string formatting
+}
