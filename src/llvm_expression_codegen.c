@@ -1150,6 +1150,33 @@ LLVMValueRef codegen_method_call(MethodCallExpr* expr, LLVMCodegenContext* ctx) 
         LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(sprintf_fn), sprintf_fn, 
                       (LLVMValueRef[]){ buffer, format, object }, 3, "");
         return buffer;
+    } else if (strcmp(method_name, "floor") == 0) {
+        // float.floor() - use C floor function
+        LLVMValueRef floor_fn = LLVMGetNamedFunction(ctx->module, "floor");
+        if (!floor_fn) {
+            LLVMTypeRef double_type = LLVMDoubleTypeInContext(ctx->context);
+            LLVMTypeRef floor_type = LLVMFunctionType(double_type, (LLVMTypeRef[]){ double_type }, 1, false);
+            floor_fn = LLVMAddFunction(ctx->module, "floor", floor_type);
+        }
+        return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(floor_fn), floor_fn, &object, 1, "floor");
+    } else if (strcmp(method_name, "ceil") == 0) {
+        // float.ceil() - use C ceil function
+        LLVMValueRef ceil_fn = LLVMGetNamedFunction(ctx->module, "ceil");
+        if (!ceil_fn) {
+            LLVMTypeRef double_type = LLVMDoubleTypeInContext(ctx->context);
+            LLVMTypeRef ceil_type = LLVMFunctionType(double_type, (LLVMTypeRef[]){ double_type }, 1, false);
+            ceil_fn = LLVMAddFunction(ctx->module, "ceil", ceil_type);
+        }
+        return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(ceil_fn), ceil_fn, &object, 1, "ceil");
+    } else if (strcmp(method_name, "round") == 0) {
+        // float.round() - use C round function
+        LLVMValueRef round_fn = LLVMGetNamedFunction(ctx->module, "round");
+        if (!round_fn) {
+            LLVMTypeRef double_type = LLVMDoubleTypeInContext(ctx->context);
+            LLVMTypeRef round_type = LLVMFunctionType(double_type, (LLVMTypeRef[]){ double_type }, 1, false);
+            round_fn = LLVMAddFunction(ctx->module, "round", round_type);
+        }
+        return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(round_fn), round_fn, &object, 1, "round");
     }
     
     return NULL;

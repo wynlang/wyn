@@ -1,0 +1,15 @@
+// TDD: Float literals and operations
+fn main() -> int {
+    // Test 1: Simple float literal
+    var x = 3.14
+    
+    // Test 2: Float comparison (approximate)
+    if x < 3.0 { return 1; }
+    if x > 4.0 { return 2; }
+    
+    // Test 3: Float arithmetic
+    var y = x + 1.0
+    if y < 4.0 { return 3; }
+    
+    return 0
+}
