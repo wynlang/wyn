@@ -55,6 +55,10 @@ run_test "Match literal" "fn main() -> int { var x = 5; match x { 5 => { return 
 run_test "Match wildcard" "fn main() -> int { var x = 99; match x { 5 => { return 5; } _ => { return 42; } } }" 42
 run_test "Match or-pattern" "fn main() -> int { var x = 2; var r = match x { 1 | 2 | 3 => 100, _ => 0 }; return r; }" 100
 
+# Enums
+run_test "Enum basic" "enum Color { RED, GREEN, BLUE } fn main() -> int { var c = RED; if c == 0 { return 0; } return 1; }" 0
+run_test "Enum match" "enum Color { RED, GREEN, BLUE } fn main() -> int { var c = GREEN; var r = match c { RED => 1, GREEN => 2, BLUE => 3 }; return r; }" 2
+
 # Float methods
 run_test "Float abs" "fn main() -> int { var x = -3.14; var a = x.abs(); if a > 3.0 { return 0; } return 1; }" 0
 run_test "Float floor" "fn main() -> int { var x = 3.7; var f = x.floor(); if f == 3.0 { return 0; } return 1; }" 0
