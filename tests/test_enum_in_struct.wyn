@@ -1,0 +1,34 @@
+// TDD Test: Enum fields in structs should work
+enum Color {
+    RED,
+    GREEN,
+    BLUE
+}
+
+struct Item {
+    color: Color,
+    value: int
+}
+
+fn main() -> int {
+    // Test 1: Create struct with enum field
+    var item = Item { color: RED, value: 42 }
+    
+    // Test 2: Access int field
+    if item.value != 42 {
+        return 1
+    }
+    
+    // Test 3: Access enum field
+    if item.color != RED {
+        return 2
+    }
+    
+    // Test 4: Compare enum fields
+    var item2 = Item { color: GREEN, value: 10 }
+    if item.color == item2.color {
+        return 3
+    }
+    
+    return 0
+}

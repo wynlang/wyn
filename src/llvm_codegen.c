@@ -257,7 +257,7 @@ bool llvm_link_binary(const char* obj_file, const char* output, const char* wyn_
              "%s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c "
              "%s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c "
              "%s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c "
-             "%s/runtime/libwyn_runtime.a -lpthread -lm 2>&1",
+             "%s/runtime/libwyn_runtime.a -lpthread -lm",
              output, obj_file, root, root, root, root, root, root, root, root,
              root, root, root, root, root, root, root, root, root, root, root, root,
              root, root, root, root, root, root, root, root, root, root);
