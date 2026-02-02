@@ -1,0 +1,22 @@
+// Task 4.4: Float Methods - TDD
+fn main() -> int {
+    // Test 1: abs
+    var x = -3.14
+    var a = x.abs()
+    if a < 3.13 { return 1; }
+    if a > 3.15 { return 1; }
+    
+    // Test 2: floor
+    var f = x.floor()
+    if f != -4.0 { return 2; }
+    
+    // Test 3: ceil
+    var c = x.ceil()
+    if c != -3.0 { return 3; }
+    
+    // Test 4: round
+    var r = x.round()
+    if r != -3.0 { return 4; }
+    
+    return 0
+}
