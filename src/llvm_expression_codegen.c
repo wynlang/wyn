@@ -293,8 +293,17 @@ LLVMValueRef codegen_unary_expr(UnaryExpr* expr, LLVMCodegenContext* ctx) {
     switch (expr->op.type) {
         case TOKEN_MINUS:
             if (is_float_type(LLVMTypeOf(operand))) {
+                // For constant floats, get the value and negate it
+                if (LLVMIsConstant(operand)) {
+                    LLVMBool loses_info = 0;
+                    double val = LLVMConstRealGetDouble(operand, &loses_info);
+                    return LLVMConstReal(LLVMTypeOf(operand), -val);
+                }
                 return LLVMBuildFNeg(ctx->builder, operand, "fneg");
             } else {
+                if (LLVMIsConstant(operand)) {
+                    return LLVMConstNeg(operand);
+                }
                 return LLVMBuildNeg(ctx->builder, operand, "neg");
             }
         case TOKEN_BANG:
@@ -1129,11 +1138,47 @@ LLVMValueRef codegen_method_call(MethodCallExpr* expr, LLVMCodegenContext* ctx) 
             return LLVMBuildZExt(ctx->builder, is_equal, ctx->int_type, "ends_with");
         }
     } else if (strcmp(method_name, "abs") == 0) {
-        // For int.abs()
-        LLVMValueRef zero = LLVMConstInt(ctx->int_type, 0, false);
-        LLVMValueRef is_neg = LLVMBuildICmp(ctx->builder, LLVMIntSLT, object, zero, "is_neg");
-        LLVMValueRef neg_val = LLVMBuildNeg(ctx->builder, object, "neg");
-        return LLVMBuildSelect(ctx->builder, is_neg, neg_val, object, "abs");
+        // For int.abs() or float.abs()
+        if (is_float_type(LLVMTypeOf(object))) {
+            // Float abs: select(x < 0.0, -x, x)
+            LLVMValueRef zero = LLVMConstReal(ctx->float_type, 0.0);
+            LLVMValueRef is_neg = LLVMBuildFCmp(ctx->builder, LLVMRealOLT, object, zero, "is_neg");
+            LLVMValueRef neg_val = LLVMBuildFNeg(ctx->builder, object, "neg");
+            return LLVMBuildSelect(ctx->builder, is_neg, neg_val, object, "abs");
+        } else {
+            // Int abs: select(x < 0, -x, x)
+            LLVMValueRef zero = LLVMConstInt(ctx->int_type, 0, false);
+            LLVMValueRef is_neg = LLVMBuildICmp(ctx->builder, LLVMIntSLT, object, zero, "is_neg");
+            LLVMValueRef neg_val = LLVMBuildNeg(ctx->builder, object, "neg");
+            return LLVMBuildSelect(ctx->builder, is_neg, neg_val, object, "abs");
+        }
+    } else if (strcmp(method_name, "floor") == 0 && is_float_type(LLVMTypeOf(object))) {
+        // Float floor using LLVM intrinsic llvm.floor.f64
+        LLVMTypeRef fn_type = LLVMFunctionType(ctx->float_type, (LLVMTypeRef[]){ctx->float_type}, 1, false);
+        LLVMValueRef floor_fn = LLVMGetNamedFunction(ctx->module, "llvm.floor.f64");
+        if (!floor_fn) {
+            floor_fn = LLVMAddFunction(ctx->module, "llvm.floor.f64", fn_type);
+        }
+        LLVMValueRef args[] = { object };
+        return LLVMBuildCall2(ctx->builder, fn_type, floor_fn, args, 1, "floor");
+    } else if (strcmp(method_name, "ceil") == 0 && is_float_type(LLVMTypeOf(object))) {
+        // Float ceil using LLVM intrinsic llvm.ceil.f64
+        LLVMTypeRef fn_type = LLVMFunctionType(ctx->float_type, (LLVMTypeRef[]){ctx->float_type}, 1, false);
+        LLVMValueRef ceil_fn = LLVMGetNamedFunction(ctx->module, "llvm.ceil.f64");
+        if (!ceil_fn) {
+            ceil_fn = LLVMAddFunction(ctx->module, "llvm.ceil.f64", fn_type);
+        }
+        LLVMValueRef args[] = { object };
+        return LLVMBuildCall2(ctx->builder, fn_type, ceil_fn, args, 1, "ceil");
+    } else if (strcmp(method_name, "round") == 0 && is_float_type(LLVMTypeOf(object))) {
+        // Float round using LLVM intrinsic llvm.round.f64
+        LLVMTypeRef fn_type = LLVMFunctionType(ctx->float_type, (LLVMTypeRef[]){ctx->float_type}, 1, false);
+        LLVMValueRef round_fn = LLVMGetNamedFunction(ctx->module, "llvm.round.f64");
+        if (!round_fn) {
+            round_fn = LLVMAddFunction(ctx->module, "llvm.round.f64", fn_type);
+        }
+        LLVMValueRef args[] = { object };
+        return LLVMBuildCall2(ctx->builder, fn_type, round_fn, args, 1, "round");
     } else if (strcmp(method_name, "min") == 0) {
         // For int.min(other)
         if (expr->arg_count == 1) {

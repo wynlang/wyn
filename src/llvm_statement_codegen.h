@@ -31,6 +31,9 @@ void codegen_expression_statement(Expr* expr, LLVMCodegenContext* ctx);
 // Spawn statements
 void codegen_spawn_statement(Stmt* stmt, LLVMCodegenContext* ctx);
 
+// Match statements
+void codegen_match_statement(MatchStmt* match_stmt, LLVMCodegenContext* ctx);
+
 // Scoping utilities
 void enter_scope(LLVMCodegenContext* ctx);
 void exit_scope(LLVMCodegenContext* ctx);

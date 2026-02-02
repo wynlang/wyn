@@ -81,8 +81,7 @@ echo ""
 echo "=== Epic 3: Pattern Matching ==="
 pass=0; fail=0
 
-# Note: Match expressions have a known bug - skipping for now
-# run_test "Match expression" "fn main() -> int { var x = 5; match x { 5 => { return 10; } _ => { return 0; } } }" 10 && ((pass++)) || ((fail++))
+run_test "Match expression" "fn main() -> int { var x = 5; match x { 5 => { return 10; } _ => { return 0; } } }" 10 && ((pass++)) || ((fail++))
 run_test "If-else" "fn main() -> int { if true { return 1; } else { return 0; } }" 1 && ((pass++)) || ((fail++))
 run_test "While loop" "fn main() -> int { var i = 0; while i < 3 { i = i + 1; } return i }" 3 && ((pass++)) || ((fail++))
 

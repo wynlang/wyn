@@ -12,14 +12,16 @@ declare i32 @printf(ptr, ...)
 
 define i32 @wyn_main() {
 entry:
-  %r = alloca i32, align 4
-  %c = alloca i32, align 4
-  %f = alloca i32, align 4
+  %r = alloca double, align 8
+  %c = alloca double, align 8
+  %f = alloca double, align 8
   %x = alloca double, align 8
   store double 3.700000e+00, ptr %x, align 8
   %x1 = load double, ptr %x, align 8
-  %f2 = load i32, ptr %f, align 4
-  %fcmp = fcmp one i32 %f2, double 3.000000e+00
+  %floor = call double @llvm.floor.f64(double %x1)
+  store double %floor, ptr %f, align 8
+  %f2 = load double, ptr %f, align 8
+  %fcmp = fcmp one double %f2, 3.000000e+00
   br i1 %fcmp, label %if.then, label %if.end
 
 if.then:                                          ; preds = %entry
@@ -27,8 +29,10 @@ if.then:                                          ; preds = %entry
 
 if.end:                                           ; preds = %entry
   %x3 = load double, ptr %x, align 8
-  %c4 = load i32, ptr %c, align 4
-  %fcmp5 = fcmp one i32 %c4, double 4.000000e+00
+  %ceil = call double @llvm.ceil.f64(double %x3)
+  store double %ceil, ptr %c, align 8
+  %c4 = load double, ptr %c, align 8
+  %fcmp5 = fcmp one double %c4, 4.000000e+00
   br i1 %fcmp5, label %if.then6, label %if.end7
 
 if.then6:                                         ; preds = %if.end
@@ -36,8 +40,10 @@ if.then6:                                         ; preds = %if.end
 
 if.end7:                                          ; preds = %if.end
   %x8 = load double, ptr %x, align 8
-  %r9 = load i32, ptr %r, align 4
-  %fcmp10 = fcmp one i32 %r9, double 4.000000e+00
+  %round = call double @llvm.round.f64(double %x8)
+  store double %round, ptr %r, align 8
+  %r9 = load double, ptr %r, align 8
+  %fcmp10 = fcmp one double %r9, 4.000000e+00
   br i1 %fcmp10, label %if.then11, label %if.end12
 
 if.then11:                                        ; preds = %if.end7
@@ -46,3 +52,14 @@ if.then11:                                        ; preds = %if.end7
 if.end12:                                         ; preds = %if.end7
   ret i32 0
 }
+
+; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(none)
+declare double @llvm.floor.f64(double) #0
+
+; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(none)
+declare double @llvm.ceil.f64(double) #0
+
+; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(none)
+declare double @llvm.round.f64(double) #0
+
+attributes #0 = { nocallback nofree nosync nounwind speculatable willreturn memory(none) }

@@ -56,6 +56,9 @@ void codegen_statement(Stmt* stmt, LLVMCodegenContext* ctx) {
         case STMT_SPAWN:
             codegen_spawn_statement(stmt, ctx);
             break;
+        case STMT_MATCH:
+            codegen_match_statement(&stmt->match_stmt, ctx);
+            break;
         default:
             report_error(ERR_CODEGEN_FAILED, NULL, 0, 0, "Unsupported statement type for code generation");
             break;
@@ -460,6 +463,76 @@ void codegen_spawn_statement(Stmt* stmt, LLVMCodegenContext* ctx) {
     // For now, just execute the call synchronously
     // Full async spawn requires more infrastructure
     codegen_expression(stmt->spawn.call, ctx);
+}
+
+// Generate code for match statements
+void codegen_match_statement(MatchStmt* match_stmt, LLVMCodegenContext* ctx) {
+    if (!match_stmt || !ctx) return;
+    
+    // Evaluate the match value
+    LLVMValueRef match_value = codegen_expression(match_stmt->value, ctx);
+    if (!match_value) return;
+    
+    // Create basic blocks
+    LLVMBasicBlockRef end_block = LLVMAppendBasicBlock(ctx->current_function, "match_end");
+    LLVMBasicBlockRef* case_blocks = malloc(sizeof(LLVMBasicBlockRef) * match_stmt->case_count);
+    
+    // Create blocks for each case
+    for (int i = 0; i < match_stmt->case_count; i++) {
+        case_blocks[i] = LLVMAppendBasicBlock(ctx->current_function, "match_case");
+    }
+    
+    // Generate comparisons and branches
+    LLVMBasicBlockRef current_block = LLVMGetInsertBlock(ctx->builder);
+    
+    for (int i = 0; i < match_stmt->case_count; i++) {
+        MatchCase* match_case = &match_stmt->cases[i];
+        
+        // Position builder at current block
+        LLVMPositionBuilderAtEnd(ctx->builder, current_block);
+        
+        if (match_case->pattern->type == PATTERN_WILDCARD) {
+            // Wildcard matches everything - unconditional branch
+            LLVMBuildBr(ctx->builder, case_blocks[i]);
+        } else if (match_case->pattern->type == PATTERN_LITERAL) {
+            // Compare with literal value
+            LLVMValueRef pattern_value = NULL;
+            
+            if (match_case->pattern->literal.value.type == TOKEN_INT) {
+                char* endptr;
+                long long_val = strtol(match_case->pattern->literal.value.start, &endptr, 10);
+                pattern_value = LLVMConstInt(ctx->int_type, long_val, false);
+            }
+            
+            if (pattern_value) {
+                LLVMValueRef cmp = LLVMBuildICmp(ctx->builder, LLVMIntEQ, match_value, pattern_value, "match_cmp");
+                
+                // Create next comparison block or use end block
+                LLVMBasicBlockRef next_block = (i + 1 < match_stmt->case_count) 
+                    ? LLVMAppendBasicBlock(ctx->current_function, "match_next")
+                    : end_block;
+                
+                LLVMBuildCondBr(ctx->builder, cmp, case_blocks[i], next_block);
+                current_block = next_block;
+            }
+        }
+        
+        // Generate case body
+        LLVMPositionBuilderAtEnd(ctx->builder, case_blocks[i]);
+        if (match_case->body) {
+            codegen_statement(match_case->body, ctx);
+        }
+        
+        // Branch to end if no return was generated
+        if (!LLVMGetBasicBlockTerminator(case_blocks[i])) {
+            LLVMBuildBr(ctx->builder, end_block);
+        }
+    }
+    
+    // Position at end block
+    LLVMPositionBuilderAtEnd(ctx->builder, end_block);
+    
+    free(case_blocks);
 }
 
 #endif // WITH_LLVM

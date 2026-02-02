@@ -3555,10 +3555,23 @@ static Pattern* parse_pattern() {
             or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = first_pattern;
             
             while (match(TOKEN_PIPE)) {
-                Pattern* next = parse_pattern();
-                if (next) {
-                    or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = next;
+                // Parse only simple patterns (literals/idents), not recursive patterns
+                Pattern* next = safe_malloc(sizeof(Pattern));
+                if (match(TOKEN_INT) || match(TOKEN_FLOAT) || match(TOKEN_STRING) || 
+                    match(TOKEN_TRUE) || match(TOKEN_FALSE)) {
+                    next->type = PATTERN_LITERAL;
+                    next->literal.value = parser.previous;
+                } else if (match(TOKEN_UNDERSCORE)) {
+                    next->type = PATTERN_WILDCARD;
+                } else if (match(TOKEN_IDENT)) {
+                    next->type = PATTERN_IDENT;
+                    next->ident.name = parser.previous;
+                } else {
+                    fprintf(stderr, "Error: Expected simple pattern after '|'\n");
+                    free(next);
+                    break;
                 }
+                or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = next;
             }
             
             return or_pattern;

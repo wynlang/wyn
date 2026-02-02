@@ -12,15 +12,15 @@ declare i32 @printf(ptr, ...)
 
 define i32 @wyn_main() {
 entry:
-  %r = alloca i32, align 4
-  %c = alloca i32, align 4
-  %f = alloca i32, align 4
+  %r = alloca double, align 8
+  %c = alloca double, align 8
+  %f = alloca double, align 8
   %a = alloca double, align 8
   %x = alloca double, align 8
   store double -3.140000e+00, ptr %x, align 8
   %x1 = load double, ptr %x, align 8
-  %is_neg = icmp slt double %x1, i32 0
-  %neg = sub double 0.000000e+00, %x1
+  %is_neg = fcmp olt double %x1, 0.000000e+00
+  %neg = fneg double %x1
   %abs = select i1 %is_neg, double %neg, double %x1
   store double %abs, ptr %a, align 8
   %a2 = load double, ptr %a, align 8
@@ -40,8 +40,10 @@ if.then5:                                         ; preds = %if.end
 
 if.end6:                                          ; preds = %if.end
   %x7 = load double, ptr %x, align 8
-  %f8 = load i32, ptr %f, align 4
-  %fcmp9 = fcmp one i32 %f8, double -4.000000e+00
+  %floor = call double @llvm.floor.f64(double %x7)
+  store double %floor, ptr %f, align 8
+  %f8 = load double, ptr %f, align 8
+  %fcmp9 = fcmp one double %f8, -4.000000e+00
   br i1 %fcmp9, label %if.then10, label %if.end11
 
 if.then10:                                        ; preds = %if.end6
@@ -49,8 +51,10 @@ if.then10:                                        ; preds = %if.end6
 
 if.end11:                                         ; preds = %if.end6
   %x12 = load double, ptr %x, align 8
-  %c13 = load i32, ptr %c, align 4
-  %fcmp14 = fcmp one i32 %c13, double -3.000000e+00
+  %ceil = call double @llvm.ceil.f64(double %x12)
+  store double %ceil, ptr %c, align 8
+  %c13 = load double, ptr %c, align 8
+  %fcmp14 = fcmp one double %c13, -3.000000e+00
   br i1 %fcmp14, label %if.then15, label %if.end16
 
 if.then15:                                        ; preds = %if.end11
@@ -58,8 +62,10 @@ if.then15:                                        ; preds = %if.end11
 
 if.end16:                                         ; preds = %if.end11
   %x17 = load double, ptr %x, align 8
-  %r18 = load i32, ptr %r, align 4
-  %fcmp19 = fcmp one i32 %r18, double -3.000000e+00
+  %round = call double @llvm.round.f64(double %x17)
+  store double %round, ptr %r, align 8
+  %r18 = load double, ptr %r, align 8
+  %fcmp19 = fcmp one double %r18, -3.000000e+00
   br i1 %fcmp19, label %if.then20, label %if.end21
 
 if.then20:                                        ; preds = %if.end16
@@ -68,3 +74,14 @@ if.then20:                                        ; preds = %if.end16
 if.end21:                                         ; preds = %if.end16
   ret i32 0
 }
+
+; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(none)
+declare double @llvm.floor.f64(double) #0
+
+; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(none)
+declare double @llvm.ceil.f64(double) #0
+
+; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(none)
+declare double @llvm.round.f64(double) #0
+
+attributes #0 = { nocallback nofree nosync nounwind speculatable willreturn memory(none) }
