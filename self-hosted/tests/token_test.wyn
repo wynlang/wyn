@@ -1,11 +1,9 @@
 // Token Tests - TDD for token data structures
 
-// Token Tests - TDD for token data structures
-
 fn test_token_creation() -> int {
-    var token = token_new(TOKEN_INT, 1, 0)
+    var token = token_new(INT, 1, 0)
     
-    if token.token_type != TOKEN_INT {
+    if token.token_type != INT {
         return 0
     }
     if token.line != 1 {
@@ -19,9 +17,9 @@ fn test_token_creation() -> int {
 }
 
 fn test_token_equality() -> int {
-    var token1 = token_new(TOKEN_INT, 1, 0)
-    var token2 = token_new(TOKEN_INT, 1, 0)
-    var token3 = token_new(TOKEN_FLOAT, 1, 0)
+    var token1 = token_new(INT, 1, 0)
+    var token2 = token_new(INT, 1, 0)
+    var token3 = token_new(FLOAT, 1, 0)
     
     var eq1 = token_equals(token1, token2)
     if eq1 == 0 {
@@ -38,11 +36,11 @@ fn test_token_equality() -> int {
 
 fn test_token_types() -> int {
     // Test all token types can be created
-    var int_tok = token_new(TOKEN_INT, 1, 0)
-    var float_tok = token_new(TOKEN_FLOAT, 1, 0)
-    var string_tok = token_new(TOKEN_STRING, 1, 0)
-    var ident_tok = token_new(TOKEN_IDENT, 1, 0)
-    var keyword_tok = token_new(TOKEN_FN, 1, 0)
+    var int_tok = token_new(INT, 1, 0)
+    var float_tok = token_new(FLOAT, 1, 0)
+    var string_tok = token_new(STRING, 1, 0)
+    var ident_tok = token_new(IDENT, 1, 0)
+    var keyword_tok = token_new(FN, 1, 0)
     
     return 1
 }
