@@ -1282,11 +1282,19 @@ void codegen_expr(Expr* expr) {
             // Type-aware method dispatch (Phase 4)
             Type* object_type = expr->method_call.object->expr_type;
             
-            // Special handling for array.push() with struct elements
+            // Special handling for array.push() with struct/string elements
             if (object_type && object_type->kind == TYPE_ARRAY) {
                 Token method = expr->method_call.method;
                 if (method.length == 4 && memcmp(method.start, "push", 4) == 0) {
                     Type* elem_type = object_type->array_type.element_type;
+                    if (elem_type && elem_type->kind == TYPE_STRING) {
+                        emit("array_push_str(&(");
+                        codegen_expr(expr->method_call.object);
+                        emit("), ");
+                        codegen_expr(expr->method_call.args[0]);
+                        emit(")");
+                        break;
+                    }
                     if (elem_type && elem_type->kind == TYPE_STRUCT) {
                         // Use macro for struct push
                         emit("array_push_struct(&(");
@@ -1355,6 +1363,42 @@ void codegen_expr(Expr* expr) {
                     }
                     emit(")");
                     break;
+                }
+                // Special handling for array.contains() - use type-specific function
+                if (method.length == 8 && memcmp(method.start, "contains", 8) == 0) {
+                    Type* elem_type = object_type->array_type.element_type;
+                    if (elem_type && elem_type->kind == TYPE_STRING) {
+                        emit("array_contains_str(");
+                        codegen_expr(expr->method_call.object);
+                        emit(", ");
+                        codegen_expr(expr->method_call.args[0]);
+                        emit(")");
+                        break;
+                    }
+                }
+                // Special handling for array.index_of() - use type-specific function
+                if (method.length == 8 && memcmp(method.start, "index_of", 8) == 0) {
+                    Type* elem_type = object_type->array_type.element_type;
+                    if (elem_type && elem_type->kind == TYPE_STRING) {
+                        emit("array_index_of_str(");
+                        codegen_expr(expr->method_call.object);
+                        emit(", ");
+                        codegen_expr(expr->method_call.args[0]);
+                        emit(")");
+                        break;
+                    }
+                }
+                // Special handling for array.remove() - use type-specific function
+                if (method.length == 6 && memcmp(method.start, "remove", 6) == 0) {
+                    Type* elem_type = object_type->array_type.element_type;
+                    if (elem_type && elem_type->kind == TYPE_STRING) {
+                        emit("array_remove_str(&(");
+                        codegen_expr(expr->method_call.object);
+                        emit("), ");
+                        codegen_expr(expr->method_call.args[0]);
+                        emit(")");
+                        break;
+                    }
                 }
             }
             
@@ -2711,6 +2755,27 @@ void codegen_c_header() {
     emit("        if (arr.data[i].type == WYN_TYPE_INT && arr.data[i].data.int_val == value) return true;\n");
     emit("    }\n");
     emit("    return false;\n");
+    emit("}\n");
+    emit("bool array_contains_str(WynArray arr, const char* value) {\n");
+    emit("    for (int i = 0; i < arr.count; i++) {\n");
+    emit("        if (arr.data[i].type == WYN_TYPE_STRING && strcmp(arr.data[i].data.string_val, value) == 0) return true;\n");
+    emit("    }\n");
+    emit("    return false;\n");
+    emit("}\n");
+    emit("int array_index_of_str(WynArray arr, const char* value) {\n");
+    emit("    for (int i = 0; i < arr.count; i++) {\n");
+    emit("        if (arr.data[i].type == WYN_TYPE_STRING && strcmp(arr.data[i].data.string_val, value) == 0) return i;\n");
+    emit("    }\n");
+    emit("    return -1;\n");
+    emit("}\n");
+    emit("void array_remove_str(WynArray* arr, const char* value) {\n");
+    emit("    for (int i = 0; i < arr->count; i++) {\n");
+    emit("        if (arr->data[i].type == WYN_TYPE_STRING && strcmp(arr->data[i].data.string_val, value) == 0) {\n");
+    emit("            for (int j = i; j < arr->count - 1; j++) arr->data[j] = arr->data[j + 1];\n");
+    emit("            arr->count--;\n");
+    emit("            return;\n");
+    emit("        }\n");
+    emit("    }\n");
     emit("}\n");
     emit("void array_push(WynArray* arr, int value) {\n");
     emit("    if (arr->count >= arr->capacity) {\n");
@@ -7378,7 +7443,20 @@ void codegen_match_statement(Stmt* stmt) {
                     emit("wyn_optional_is_none(__match_val)");
                 }
             } else if (match_case->pattern->type == PATTERN_IDENT) {
-                emit("1"); // Variable binding always matches
+                // Check if this looks like an enum variant (contains underscore)
+                Token var_name = match_case->pattern->ident.name;
+                bool is_enum_variant = false;
+                for (int j = 0; j < var_name.length; j++) {
+                    if (var_name.start[j] == '_') {
+                        is_enum_variant = true;
+                        break;
+                    }
+                }
+                if (is_enum_variant) {
+                    emit("__match_val == %.*s", var_name.length, var_name.start);
+                } else {
+                    emit("1"); // Variable binding always matches
+                }
             } else {
                 emit("0"); // Unsupported pattern
             }
@@ -7395,7 +7473,17 @@ void codegen_match_statement(Stmt* stmt) {
             // Generate variable bindings for patterns that need them
             if (match_case->pattern->type == PATTERN_IDENT) {
                 Token var_name = match_case->pattern->ident.name;
-                emit("        int %.*s = __match_val;\n", var_name.length, var_name.start);
+                // Only create binding if not an enum variant
+                bool is_enum_variant = false;
+                for (int j = 0; j < var_name.length; j++) {
+                    if (var_name.start[j] == '_') {
+                        is_enum_variant = true;
+                        break;
+                    }
+                }
+                if (!is_enum_variant) {
+                    emit("        int %.*s = __match_val;\n", var_name.length, var_name.start);
+                }
             } else if (match_case->pattern->type == PATTERN_OPTION && 
                        match_case->pattern->option.inner &&
                        match_case->pattern->option.inner->type == PATTERN_IDENT) {
