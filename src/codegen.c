@@ -639,8 +639,7 @@ void codegen_expr(Expr* expr) {
                         (name.length == 4 && memcmp(name.start, "line", 4) == 0) ||
                         (name.length == 4 && memcmp(name.start, "word", 4) == 0) ||
                         (name.length == 3 && memcmp(name.start, "str", 3) == 0) ||
-                        (name.length == 1 && name.start[0] == 's') ||
-                        (name.length == 1 && name.start[0] == 'c')) {
+                        (name.length == 1 && name.start[0] == 's')) {
                         left_is_string = true;
                         left_is_int = false;
                     }
@@ -652,8 +651,7 @@ void codegen_expr(Expr* expr) {
                         (name.length == 4 && memcmp(name.start, "line", 4) == 0) ||
                         (name.length == 4 && memcmp(name.start, "word", 4) == 0) ||
                         (name.length == 3 && memcmp(name.start, "str", 3) == 0) ||
-                        (name.length == 1 && name.start[0] == 's') ||
-                        (name.length == 1 && name.start[0] == 'c')) {
+                        (name.length == 1 && name.start[0] == 's')) {
                         right_is_string = true;
                         right_is_int = false;
                     }
