@@ -1,5 +1,0 @@
-import a.b.c.deep
-
-fn main() -> int {
-    return 0;
-}

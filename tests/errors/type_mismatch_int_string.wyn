@@ -1,0 +1,5 @@
+// Test: Type mismatch should be caught by Wyn, not C compiler
+fn main() -> int {
+    var x: int = "hello"
+    return 0
+}

@@ -1,5 +1,0 @@
-import circ_b
-
-pub fn func_a() -> int {
-    return circ_b::func_b();
-}

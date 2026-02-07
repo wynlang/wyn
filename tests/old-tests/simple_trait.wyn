@@ -1,8 +1,0 @@
-// T3.2.1: Simple trait definition test
-trait Display {
-    fn show();
-}
-
-fn main() {
-    return 0;
-}

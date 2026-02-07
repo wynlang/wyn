@@ -1,8 +1,0 @@
-fn test() -> int {
-    42
-}
-
-fn main() -> int {
-    print("Testing implicit return");
-    return test();
-}

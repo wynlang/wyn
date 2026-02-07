@@ -1,0 +1,24 @@
+// Test file system methods on strings
+fn main() -> int {
+    // Test is_dir
+    var tmp = "/tmp"
+    if tmp.is_dir() == 0 {
+        print("FAIL: /tmp should be a directory\n")
+        return 1
+    }
+    
+    // Test exists
+    if tmp.exists() == 0 {
+        print("FAIL: /tmp should exist\n")
+        return 2
+    }
+    
+    // Test is_file on directory (should be 0)
+    if tmp.is_file() == 1 {
+        print("FAIL: /tmp should not be a file\n")
+        return 3
+    }
+    
+    print("All FS method tests PASS\n")
+    return 0
+}

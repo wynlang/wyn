@@ -1,6 +1,0 @@
-
-fn main() -> int {
-    var arr = [1, 2, 3]
-    print(arr[100])
-    return 0
-}

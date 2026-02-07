@@ -1,0 +1,586 @@
+// Self-Hosted Wyn Compiler
+// Generates C code from Wyn source using C Parser API
+
+// === String Helpers ===
+
+fn get_char(s: string, i: int) -> string {
+    return s[i]
+}
+
+fn is_digit(c: string) -> int {
+    if str_eq(c, "0") == 1 { return 1 }
+    if str_eq(c, "1") == 1 { return 1 }
+    if str_eq(c, "2") == 1 { return 1 }
+    if str_eq(c, "3") == 1 { return 1 }
+    if str_eq(c, "4") == 1 { return 1 }
+    if str_eq(c, "5") == 1 { return 1 }
+    if str_eq(c, "6") == 1 { return 1 }
+    if str_eq(c, "7") == 1 { return 1 }
+    if str_eq(c, "8") == 1 { return 1 }
+    if str_eq(c, "9") == 1 { return 1 }
+    return 0
+}
+
+fn is_alpha(c: string) -> int {
+    if str_eq(c, "_") == 1 { return 1 }
+    if str_eq(c, "a") == 1 { return 1 }
+    if str_eq(c, "b") == 1 { return 1 }
+    if str_eq(c, "c") == 1 { return 1 }
+    if str_eq(c, "d") == 1 { return 1 }
+    if str_eq(c, "e") == 1 { return 1 }
+    if str_eq(c, "f") == 1 { return 1 }
+    if str_eq(c, "g") == 1 { return 1 }
+    if str_eq(c, "h") == 1 { return 1 }
+    if str_eq(c, "i") == 1 { return 1 }
+    if str_eq(c, "j") == 1 { return 1 }
+    if str_eq(c, "k") == 1 { return 1 }
+    if str_eq(c, "l") == 1 { return 1 }
+    if str_eq(c, "m") == 1 { return 1 }
+    if str_eq(c, "n") == 1 { return 1 }
+    if str_eq(c, "o") == 1 { return 1 }
+    if str_eq(c, "p") == 1 { return 1 }
+    if str_eq(c, "q") == 1 { return 1 }
+    if str_eq(c, "r") == 1 { return 1 }
+    if str_eq(c, "s") == 1 { return 1 }
+    if str_eq(c, "t") == 1 { return 1 }
+    if str_eq(c, "u") == 1 { return 1 }
+    if str_eq(c, "v") == 1 { return 1 }
+    if str_eq(c, "w") == 1 { return 1 }
+    if str_eq(c, "x") == 1 { return 1 }
+    if str_eq(c, "y") == 1 { return 1 }
+    if str_eq(c, "z") == 1 { return 1 }
+    if str_eq(c, "A") == 1 { return 1 }
+    if str_eq(c, "B") == 1 { return 1 }
+    if str_eq(c, "C") == 1 { return 1 }
+    if str_eq(c, "D") == 1 { return 1 }
+    if str_eq(c, "E") == 1 { return 1 }
+    if str_eq(c, "F") == 1 { return 1 }
+    if str_eq(c, "G") == 1 { return 1 }
+    if str_eq(c, "H") == 1 { return 1 }
+    if str_eq(c, "I") == 1 { return 1 }
+    if str_eq(c, "J") == 1 { return 1 }
+    if str_eq(c, "K") == 1 { return 1 }
+    if str_eq(c, "L") == 1 { return 1 }
+    if str_eq(c, "M") == 1 { return 1 }
+    if str_eq(c, "N") == 1 { return 1 }
+    if str_eq(c, "O") == 1 { return 1 }
+    if str_eq(c, "P") == 1 { return 1 }
+    if str_eq(c, "Q") == 1 { return 1 }
+    if str_eq(c, "R") == 1 { return 1 }
+    if str_eq(c, "S") == 1 { return 1 }
+    if str_eq(c, "T") == 1 { return 1 }
+    if str_eq(c, "U") == 1 { return 1 }
+    if str_eq(c, "V") == 1 { return 1 }
+    if str_eq(c, "W") == 1 { return 1 }
+    if str_eq(c, "X") == 1 { return 1 }
+    if str_eq(c, "Y") == 1 { return 1 }
+    if str_eq(c, "Z") == 1 { return 1 }
+    return 0
+}
+
+fn is_alnum(c: string) -> int {
+    var a = is_alpha(c)
+    var d = is_digit(c)
+    if a == 1 { return 1 }
+    return d
+}
+
+// === AST Position Tracking (global simulation via return values) ===
+
+// Skip whitespace, return new position
+fn skip_ws(s: string, pos: int, len: int) -> int {
+    while pos < len {
+        var c = get_char(s, pos)
+        var is_space = str_eq(c, " ")
+        if is_space == 0 { return pos }
+        pos = pos + 1
+    }
+    return pos
+}
+
+// Read identifier/keyword, return end position
+fn read_word_end(s: string, pos: int, len: int) -> int {
+    while pos < len {
+        var c = get_char(s, pos)
+        var ok = is_alnum(c)
+        if ok == 0 { return pos }
+        pos = pos + 1
+    }
+    return pos
+}
+
+// Read number, return end position
+fn read_num_end(s: string, pos: int, len: int) -> int {
+    while pos < len {
+        var c = get_char(s, pos)
+        var ok = is_digit(c)
+        if ok == 0 { return pos }
+        pos = pos + 1
+    }
+    return pos
+}
+
+// Find matching close paren, return position
+fn find_close_paren(s: string, pos: int, len: int) -> int {
+    var depth = 1
+    while pos < len {
+        var c = get_char(s, pos)
+        if str_eq(c, "(") == 1 {
+            depth = depth + 1
+        }
+        if str_eq(c, ")") == 1 {
+            depth = depth - 1
+            if depth == 0 { return pos }
+        }
+        pos = pos + 1
+    }
+    return pos
+}
+
+// Check if string at pos starts with prefix
+fn starts_with(s: string, pos: int, prefix: string) -> int {
+    var plen = string_length(prefix)
+    var slen = string_length(s)
+    var i = 0
+    while i < plen {
+        var si = pos + i
+        if si >= slen { return 0 }
+        var sc = get_char(s, si)
+        var pc = get_char(prefix, i)
+        var eq = str_eq(sc, pc)
+        if eq == 0 { return 0 }
+        i = i + 1
+    }
+    return 1
+}
+
+// === Code Generation ===
+
+fn gen_expr(ast: string, pos: int, len: int) -> string {
+    var p = skip_ws(ast, pos, len)
+    var c = get_char(ast, p)
+    
+    // Check for (Int N)
+    if str_eq(c, "(") == 1 {
+        var p1 = p + 1
+        if starts_with(ast, p1, "Int ") == 1 {
+            var num_start = p1 + 4
+            var num_end = read_num_end(ast, num_start, len)
+            var num: string = wyn_str_substring(ast, num_start, num_end)
+            return num
+        }
+        
+        // Check for (Ident name)
+        if starts_with(ast, p1, "Ident ") == 1 {
+            var name_start = p1 + 6
+            var name_end = read_word_end(ast, name_start, len)
+            var name: string = wyn_str_substring(ast, name_start, name_end)
+            return name
+        }
+        
+        // Check for (String "...")
+        if starts_with(ast, p1, "String ") == 1 {
+            var str_start = p1 + 7
+            // Find closing quote and paren
+            var str_end = str_start
+            while str_end < len {
+                var sc = get_char(ast, str_end)
+                if str_eq(sc, ")") == 1 { break }
+                str_end = str_end + 1
+            }
+            var str_val: string = wyn_str_substring(ast, str_start, str_end)
+            return str_val
+        }
+        
+        // Check for (Binary left op right)
+        if starts_with(ast, p1, "Binary ") == 1 {
+            var inner_start = p1 + 7
+            // Find the left expr (starts with paren)
+            var left_start = skip_ws(ast, inner_start, len)
+            var left_end = find_close_paren(ast, left_start + 1, len) + 1
+            var left_code = gen_expr(ast, left_start, left_end)
+            
+            // Skip to operator
+            var op_start = skip_ws(ast, left_end, len)
+            var op_end = op_start
+            while op_end < len {
+                var oc = get_char(ast, op_end)
+                var is_sp = str_eq(oc, " ")
+                if is_sp == 1 { break }
+                op_end = op_end + 1
+            }
+            var op: string = wyn_str_substring(ast, op_start, op_end)
+            
+            // Get right expr
+            var right_start = skip_ws(ast, op_end, len)
+            var right_end = find_close_paren(ast, right_start + 1, len) + 1
+            var right_code = gen_expr(ast, right_start, right_end)
+            
+            return "(" + left_code + " " + op + " " + right_code + ")"
+        }
+        
+        // Check for (Call (Ident name)(args))
+        if starts_with(ast, p1, "Call ") == 1 {
+            var call_start = p1 + 5
+            // Get function name from (Ident name)
+            var ident_start = skip_ws(ast, call_start, len)
+            if starts_with(ast, ident_start + 1, "Ident ") == 1 {
+                var fname_start = ident_start + 7
+                var fname_end = read_word_end(ast, fname_start, len)
+                var fname: string = wyn_str_substring(ast, fname_start, fname_end)
+                
+                // Find the arguments list
+                var args_start = find_close_paren(ast, ident_start + 1, len) + 1
+                var args_end = find_close_paren(ast, args_start + 1, len)
+                
+                // Map Wyn functions to C
+                if str_eq(fname, "print") == 1 {
+                    var arg_start = args_start + 1
+                    var arg_end = find_close_paren(ast, arg_start + 1, len) + 1
+                    var arg_code = gen_expr(ast, arg_start, arg_end)
+                    return "printf(\"%s\", " + arg_code + ")"
+                }
+                
+                // Generate function call with arguments
+                var out = "wyn_" + fname + "("
+                var apos = args_start + 1
+                var first = 1
+                while apos < args_end {
+                    apos = skip_ws(ast, apos, len)
+                    var ac = get_char(ast, apos)
+                    if str_eq(ac, "(") == 1 {
+                        var arg_end = find_close_paren(ast, apos + 1, len) + 1
+                        var arg_code = gen_expr(ast, apos, arg_end)
+                        if first == 0 {
+                            out = out + ", "
+                        }
+                        out = out + arg_code
+                        first = 0
+                        apos = arg_end
+                    } else {
+                        apos = apos + 1
+                    }
+                }
+                out = out + ")"
+                return out
+            }
+        }
+    }
+    
+    return "/* unknown expr */"
+}
+
+fn gen_stmt(ast: string, pos: int, len: int, indent: string) -> string {
+    var p = skip_ws(ast, pos, len)
+    
+    // Check for (Return expr)
+    if starts_with(ast, p + 1, "Return ") == 1 {
+        var expr_start = p + 8
+        var expr_end = find_close_paren(ast, expr_start, len)
+        var expr_code = gen_expr(ast, expr_start, expr_end)
+        return indent + "return " + expr_code + ";\n"
+    }
+    
+    // Check for (Var name=expr)
+    if starts_with(ast, p + 1, "Var ") == 1 {
+        var var_start = p + 5
+        var eq_pos = var_start
+        while eq_pos < len {
+            var ec = get_char(ast, eq_pos)
+            if str_eq(ec, "=") == 1 { break }
+            eq_pos = eq_pos + 1
+        }
+        var vname: string = wyn_str_substring(ast, var_start, eq_pos)
+        var expr_start = eq_pos + 1
+        var expr_end = find_close_paren(ast, expr_start, len)
+        var expr_code = gen_expr(ast, expr_start, expr_end)
+        // Check if it's a string literal
+        var is_str = starts_with(ast, expr_start + 1, "String ")
+        if is_str == 1 {
+            return indent + "const char* " + vname + " = " + expr_code + ";\n"
+        }
+        return indent + "int " + vname + " = " + expr_code + ";\n"
+    }
+    
+    // Check for (ExprStmt expr)
+    if starts_with(ast, p + 1, "ExprStmt ") == 1 {
+        var expr_start = p + 10
+        var expr_end = find_close_paren(ast, expr_start, len)
+        var expr_code = gen_expr(ast, expr_start, expr_end)
+        return indent + expr_code + ";\n"
+    }
+    
+    // Check for (If cond (Block ...))
+    if starts_with(ast, p + 1, "If ") == 1 {
+        var cond_start = p + 4
+        var cond_end = find_close_paren(ast, cond_start + 1, len) + 1
+        var cond_code = gen_expr(ast, cond_start, cond_end)
+        
+        // Find the block
+        var block_start = skip_ws(ast, cond_end, len)
+        var block_end = find_close_paren(ast, block_start + 1, len) + 1
+        var block_code = gen_block(ast, block_start, block_end, indent + "    ")
+        
+        return indent + "if " + cond_code + " {\n" + block_code + indent + "}\n"
+    }
+    
+    // Check for (While cond (Block ...))
+    if starts_with(ast, p + 1, "While ") == 1 {
+        var cond_start = p + 7
+        var cond_end = find_close_paren(ast, cond_start + 1, len) + 1
+        var cond_code = gen_expr(ast, cond_start, cond_end)
+        
+        var block_start = skip_ws(ast, cond_end, len)
+        var block_end = find_close_paren(ast, block_start + 1, len) + 1
+        var block_code = gen_block(ast, block_start, block_end, indent + "    ")
+        
+        return indent + "while " + cond_code + " {\n" + block_code + indent + "}\n"
+    }
+    
+    return indent + "/* unknown stmt */\n"
+}
+
+fn gen_block(ast: string, pos: int, len: int, indent: string) -> string {
+    var out = ""
+    var p = skip_ws(ast, pos, len)
+    
+    // Skip "(Block "
+    if starts_with(ast, p + 1, "Block ") == 1 {
+        p = p + 7
+    }
+    
+    // Process statements until closing paren
+    while p < len {
+        p = skip_ws(ast, p, len)
+        var c = get_char(ast, p)
+        if str_eq(c, ")") == 1 { return out }
+        if str_eq(c, "(") == 1 {
+            var stmt_end = find_close_paren(ast, p + 1, len) + 1
+            var stmt_code = gen_stmt(ast, p, stmt_end, indent)
+            out = out + stmt_code
+            p = stmt_end
+        } else {
+            p = p + 1
+        }
+    }
+    return out
+}
+
+fn gen_fn(ast: string, pos: int, len: int) -> string {
+    var p = skip_ws(ast, pos, len)
+    
+    // Skip "(Fn "
+    var name_start = p + 4
+    var name_end = read_word_end(ast, name_start, len)
+    var fname: string = wyn_str_substring(ast, name_start, name_end)
+    
+    // Check for parameters - look for (Params ...) before (Block ...)
+    var after_name = skip_ws(ast, name_end, len)
+    var params = ""
+    var block_start = after_name
+    
+    if starts_with(ast, after_name + 1, "Params ") == 1 {
+        // Has parameters - extract them
+        var params_end = find_close_paren(ast, after_name + 1, len)
+        var ppos = after_name + 8
+        var first = 1
+        while ppos < params_end {
+            ppos = skip_ws(ast, ppos, len)
+            var pc = get_char(ast, ppos)
+            if str_eq(pc, "(") == 1 {
+                // Found a param - extract name
+                if starts_with(ast, ppos + 1, "Param ") == 1 {
+                    var pname_start = ppos + 7
+                    var pname_end = read_word_end(ast, pname_start, len)
+                    var pname: string = wyn_str_substring(ast, pname_start, pname_end)
+                    if first == 0 {
+                        params = params + ", "
+                    }
+                    params = params + "int " + pname
+                    first = 0
+                }
+                var param_end = find_close_paren(ast, ppos + 1, len) + 1
+                ppos = param_end
+            } else {
+                ppos = ppos + 1
+            }
+        }
+        block_start = skip_ws(ast, params_end + 1, len)
+    }
+    
+    // Find the block
+    var block_end = find_close_paren(ast, block_start + 1, len) + 1
+    var block_code = gen_block(ast, block_start, block_end, "    ")
+    
+    // Generate C function
+    var out = "int wyn_" + fname + "(" + params + ") {\n"
+    out = out + block_code
+    out = out + "}\n\n"
+    return out
+}
+
+fn compile_to_c(source: string) -> string {
+    C_Parser::init_lexer(source)
+    C_Parser::init_parser()
+    
+    var ast = C_Parser::parse_program()
+    if ast == 0 {
+        return "// Parse error\n"
+    }
+    
+    var ast_str: string = C_Parser::ast_to_string(ast)
+    C_Parser::free_ast(ast)
+    
+    var len = string_length(ast_str)
+    
+    // Generate C header
+    var out = "#include <stdio.h>\n#include <stdlib.h>\n\n"
+    
+    // Find and generate functions
+    var pos = 0
+    while pos < len {
+        pos = skip_ws(ast_str, pos, len)
+        if pos >= len { break }
+        var c = get_char(ast_str, pos)
+        if str_eq(c, "(") == 1 {
+            var p1 = pos + 1
+            if starts_with(ast_str, p1, "Fn ") == 1 {
+                var fn_end = find_close_paren(ast_str, p1, len) + 1
+                var fn_code = gen_fn(ast_str, pos, fn_end)
+                out = out + fn_code
+                pos = fn_end
+            } else {
+                pos = pos + 1
+            }
+        } else {
+            pos = pos + 1
+        }
+    }
+    
+    // Add main wrapper
+    out = out + "int main(int argc, char** argv) {\n"
+    out = out + "    return wyn_main();\n"
+    out = out + "}\n"
+    
+    return out
+}
+
+// === Tests ===
+
+fn test_return_int() -> int {
+    print("Test 1: return int... ")
+    var src = "fn main() -> int { return 42 }"
+    var c = compile_to_c(src)
+    if str_contains(c, "return 42") == 0 {
+        print("FAIL\n")
+        return 1
+    }
+    print("PASS\n")
+    return 0
+}
+
+fn test_var_decl() -> int {
+    print("Test 2: var decl... ")
+    var src = "fn main() -> int { var x = 5 return x }"
+    var c = compile_to_c(src)
+    if str_contains(c, "int x = 5") == 0 {
+        print("FAIL\n")
+        print(c)
+        return 1
+    }
+    print("PASS\n")
+    return 0
+}
+
+fn test_binary_expr() -> int {
+    print("Test 3: binary expr... ")
+    var src = "fn main() -> int { return 1 + 2 }"
+    var c = compile_to_c(src)
+    if str_contains(c, "1 + 2") == 0 {
+        print("FAIL\n")
+        print(c)
+        return 1
+    }
+    print("PASS\n")
+    return 0
+}
+
+fn test_if_stmt() -> int {
+    print("Test 4: if stmt... ")
+    var src = "fn main() -> int { if 1 == 1 { return 1 } return 0 }"
+    var c = compile_to_c(src)
+    if str_contains(c, "if (") == 0 {
+        print("FAIL\n")
+        print(c)
+        return 1
+    }
+    print("PASS\n")
+    return 0
+}
+
+fn test_while_loop() -> int {
+    print("Test 5: while loop... ")
+    var src = "fn main() -> int { var i = 0 while i < 10 { i = i + 1 } return i }"
+    var c = compile_to_c(src)
+    if str_contains(c, "while (") == 0 {
+        print("FAIL\n")
+        print(c)
+        return 1
+    }
+    print("PASS\n")
+    return 0
+}
+
+fn test_fn_call() -> int {
+    print("Test 6: fn call... ")
+    var src = "fn add(a: int, b: int) -> int { return a + b } fn main() -> int { return add(40, 2) }"
+    var c = compile_to_c(src)
+    if str_contains(c, "wyn_add(40, 2)") == 0 {
+        print("FAIL\n")
+        print(c)
+        return 1
+    }
+    print("PASS\n")
+    return 0
+}
+
+fn test_string_var() -> int {
+    print("Test 7: string var... ")
+    var src = "fn main() -> int { var s = \"hello\" return 0 }"
+    var c = compile_to_c(src)
+    if str_contains(c, "const char* s") == 0 {
+        print("FAIL\n")
+        print(c)
+        return 1
+    }
+    print("PASS\n")
+    return 0
+}
+
+fn main() -> int {
+    print("=== Self-Hosted Compiler Tests ===\n\n")
+    
+    var r = test_return_int()
+    if r != 0 { return r }
+    
+    r = test_var_decl()
+    if r != 0 { return r }
+    
+    r = test_binary_expr()
+    if r != 0 { return r }
+    
+    r = test_if_stmt()
+    if r != 0 { return r }
+    
+    r = test_while_loop()
+    if r != 0 { return r }
+    
+    r = test_fn_call()
+    if r != 0 { return r }
+    
+    r = test_string_var()
+    if r != 0 { return r }
+    
+    print("\n=== All Tests PASS ===\n")
+    return 0
+}

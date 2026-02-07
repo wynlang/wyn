@@ -1,9 +1,0 @@
-
-fn main() -> int {
-    fn inner() -> int {
-        return 42
-    }
-    var result = inner()
-    print(result)
-    return 0
-}

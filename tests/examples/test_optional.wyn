@@ -1,8 +1,0 @@
-fn test_optional(x: int?) -> int? {
-    return x
-}
-
-fn main() -> int {
-    print("Testing optional types")
-    return 0
-}

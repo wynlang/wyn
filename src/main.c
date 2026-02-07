@@ -725,18 +725,33 @@ int main(int argc, char** argv) {
         codegen_program(prog);
         fclose(out);
         
-        // Get WYN_ROOT or auto-detect
+        // Get WYN_ROOT or auto-detect from executable path
         char wyn_root[1024] = ".";
         char* root_env = getenv("WYN_ROOT");
         if (root_env) {
             snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
         } else {
-            // Auto-detect: check if src/wyn_wrapper.c exists, if not try ./wyn
-            FILE* test = fopen("./src/wyn_wrapper.c", "r");
+            // Derive from executable path
+            char exe_path[1024];
+            strncpy(exe_path, argv[0], sizeof(exe_path) - 1);
+            exe_path[sizeof(exe_path) - 1] = '\0';
+            char* last_slash = strrchr(exe_path, '/');
+            if (last_slash) {
+                *last_slash = '\0';
+                if (exe_path[0] != '\0') {
+                    snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path);
+                }
+            }
+            // Verify
+            char test_path[1100];
+            snprintf(test_path, sizeof(test_path), "%s/src/wyn_wrapper.c", wyn_root);
+            FILE* test = fopen(test_path, "r");
             if (!test) {
-                test = fopen("./wyn/src/wyn_wrapper.c", "r");
-                if (test) {
-                    snprintf(wyn_root, sizeof(wyn_root), "./wyn");
+                test = fopen("./src/wyn_wrapper.c", "r");
+                if (test) strcpy(wyn_root, ".");
+                else {
+                    test = fopen("./wyn/src/wyn_wrapper.c", "r");
+                    if (test) strcpy(wyn_root, "./wyn");
                 }
             }
             if (test) fclose(test);
@@ -744,9 +759,8 @@ int main(int argc, char** argv) {
         
         char compile_cmd[4096];
         snprintf(compile_cmd, sizeof(compile_cmd), 
-                 "gcc -std=c11 -O2 -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c -lpthread -lm", 
-                 wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
-        fprintf(stderr, "DEBUG: Compile command: %s\n", compile_cmd);
+                 "gcc -std=c11 -O2 -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s/runtime/libwyn_runtime.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm", 
+                 wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
         int result = system(compile_cmd);
         
         if (result != 0) {
@@ -756,9 +770,17 @@ int main(int argc, char** argv) {
         }
         
         char run_cmd[512];
-        snprintf(run_cmd, 512, "./%s.out", file);
+        if (file[0] == '/') {
+            snprintf(run_cmd, 512, "%s.out", file);
+        } else {
+            snprintf(run_cmd, 512, "./%s.out", file);
+        }
         result = system(run_cmd);
         free(source);
+        // Extract actual exit code from system() result
+        if (WIFEXITED(result)) {
+            return WEXITSTATUS(result);
+        }
         return result;
     }
     
@@ -936,18 +958,33 @@ int main(int argc, char** argv) {
     // Free AST
     free_program(prog);
     
-    // Get WYN_ROOT or auto-detect
+    // Get WYN_ROOT or auto-detect from executable path
     char wyn_root[1024] = ".";
     char* root_env = getenv("WYN_ROOT");
     if (root_env) {
         snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
     } else {
-        // Auto-detect: check if src/wyn_wrapper.c exists, if not try ./wyn
-        FILE* test = fopen("./src/wyn_wrapper.c", "r");
+        // Derive from executable path
+        char exe_path[1024];
+        strncpy(exe_path, argv[0], sizeof(exe_path) - 1);
+        exe_path[sizeof(exe_path) - 1] = '\0';
+        char* last_slash = strrchr(exe_path, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            if (exe_path[0] != '\0') {
+                snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path);
+            }
+        }
+        // Verify
+        char test_path[1100];
+        snprintf(test_path, sizeof(test_path), "%s/src/wyn_wrapper.c", wyn_root);
+        FILE* test = fopen(test_path, "r");
         if (!test) {
-            test = fopen("./wyn/src/wyn_wrapper.c", "r");
-            if (test) {
-                snprintf(wyn_root, sizeof(wyn_root), "./wyn");
+            test = fopen("./src/wyn_wrapper.c", "r");
+            if (test) strcpy(wyn_root, ".");
+            else {
+                test = fopen("./wyn/src/wyn_wrapper.c", "r");
+                if (test) strcpy(wyn_root, "./wyn");
             }
         }
         if (test) fclose(test);
@@ -963,8 +1000,8 @@ int main(int argc, char** argv) {
     }
     
     snprintf(compile_cmd, sizeof(compile_cmd),
-             "gcc %s -std=c11 -I %s/src -o %s %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c -lm", 
-             opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
+             "gcc %s -std=c11 -I %s/src -o %s %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s/runtime/libwyn_runtime.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm", 
+             opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
     
     int result = system(compile_cmd);
     if (result != 0) {

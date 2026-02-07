@@ -138,6 +138,31 @@ void emit_fs_api() {
     emit("    if (stat(path, &st) != 0) return 0;\n");
     emit("    return S_ISDIR(st.st_mode);\n");
     emit("}\n\n");
+    
+    // Fs::read_file - read entire file as string
+    emit("const char* Fs_read_file(const char* path) {\n");
+    emit("    FILE* f = fopen(path, \"r\");\n");
+    emit("    if (!f) return \"\";\n");
+    emit("    \n");
+    emit("    // Get file size\n");
+    emit("    fseek(f, 0, SEEK_END);\n");
+    emit("    long size = ftell(f);\n");
+    emit("    fseek(f, 0, SEEK_SET);\n");
+    emit("    \n");
+    emit("    // Allocate buffer\n");
+    emit("    char* buffer = malloc(size + 1);\n");
+    emit("    if (!buffer) {\n");
+    emit("        fclose(f);\n");
+    emit("        return \"\";\n");
+    emit("    }\n");
+    emit("    \n");
+    emit("    // Read file\n");
+    emit("    size_t read = fread(buffer, 1, size, f);\n");
+    emit("    buffer[read] = '\\\\0';\n");
+    emit("    fclose(f);\n");
+    emit("    \n");
+    emit("    return buffer;\n");
+    emit("}\n\n");
 }
 
 // Time API

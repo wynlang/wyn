@@ -1,5 +1,0 @@
-// Hello World - The simplest Wyn program
-fn main() -> int {
-    print_str("Hello, World!");
-    return 0;
-}

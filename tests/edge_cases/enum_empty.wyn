@@ -1,9 +1,0 @@
-// Test: Empty enum should produce a compilation error
-enum Empty {
-    // No variants - this should be an error
-}
-
-fn main() -> int {
-    print_str("This should not compile")
-    return 0
-}

@@ -1,9 +1,0 @@
-// Test: Three-way collision
-import network.http
-import storage.http
-import api.http
-
-fn main() -> int {
-    var x = http::get("test");
-    return 0;
-}

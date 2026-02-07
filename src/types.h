@@ -59,6 +59,7 @@ typedef enum {
     TYPE_UNION,     // T2.5.2: Union Type Support
     TYPE_RESULT,    // TASK-026: Result<T,E> Type Implementation
     TYPE_GENERIC,   // T3.1.2: Generic type parameter
+    TYPE_JSON,      // JSON object type for method syntax
 } TypeKind;
 
 // Type already forward declared above

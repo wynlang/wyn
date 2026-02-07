@@ -1,0 +1,387 @@
+// Error Module for Wyn Self-Hosted Parser
+// Manages error collection, formatting, and recovery
+
+// ============================================================================
+// Span Type (from AST module)
+// ============================================================================
+
+// Span represents a location in source code
+struct Span {
+    line: int,      // Line number (1-indexed)
+    column: int,    // Column number (1-indexed)
+    len: int        // Length of the span in characters
+}
+
+// Create a new span
+fn span_new(line: int, column: int, len: int) -> Span {
+    return Span {
+        line: line,
+        column: column,
+        len: len
+    }
+}
+
+// ============================================================================
+// Parse Error Type
+// ============================================================================
+
+// ParseError represents a syntax error encountered during parsing
+// Requirement 6.1: Errors must include line and column numbers
+struct ParseError {
+    message: string,    // Error description
+    span: Span,         // Location of the error
+    context: string     // Parsing context (e.g., "while parsing function declaration")
+}
+
+// Create a new parse error
+// Requirement 6.1, 6.2: Report error with location and description
+fn error_new(message: string, span: Span, context: string) -> ParseError {
+    return ParseError {
+        message: message,
+        span: span,
+        context: context
+    }
+}
+
+// Create a simple parse error without context
+fn error_simple(message: string, span: Span) -> ParseError {
+    return ParseError {
+        message: message,
+        span: span,
+        context: ""
+    }
+}
+
+// ============================================================================
+// Error Formatting
+// ============================================================================
+
+// Check string length (placeholder - would be provided by standard library)
+fn string_length(s: string) -> int {
+    // For now, return 0 for empty string check
+    // In real implementation, this would return actual string length
+    if s == "" {
+        return 0
+    }
+    return 1
+}
+
+// Format a single parse error as a human-readable string
+// Requirement 6.4, 6.5: Consistent, human-readable format with context
+fn error_format(error: ParseError) -> string {
+    // For now, return a simple formatted string
+    // Full implementation would use int_to_str for line/column numbers
+    var msg = error.message
+    var ctx = error.context
+    
+    // Build basic error message
+    var result = "Parse error: " + msg
+    
+    // Add context if present
+    // Requirement 6.4: Provide contextual error messages
+    if string_length(ctx) > 0 {
+        result = result + " (Context: " + ctx + ")"
+    }
+    
+    return result
+}
+
+// ============================================================================
+// Error Collection (Using Parallel Arrays)
+// ============================================================================
+
+// Error collection structure using parallel arrays to manage multiple errors
+// Requirement 6.3: Collect and report all errors found during parsing
+// Note: Uses parallel arrays instead of [ParseError] due to Wyn limitations
+struct ErrorCollection {
+    error_messages: [string],   // Array of error messages
+    error_lines: [int],         // Array of line numbers
+    error_cols: [int],          // Array of column numbers
+    error_lens: [int],          // Array of span lengths
+    error_contexts: [string],   // Array of parsing contexts
+    count: int,                 // Number of errors stored
+    capacity: int               // Maximum capacity
+}
+
+// Create a new error collection with initial capacity
+fn error_collection_new(capacity: int) -> ErrorCollection {
+    // Initialize parallel arrays directly
+    var messages = ["", "", "", "", "", "", "", "", "", ""]
+    var lines = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var cols = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var lens = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var contexts = ["", "", "", "", "", "", "", "", "", ""]
+    
+    return ErrorCollection {
+        error_messages: messages,
+        error_lines: lines,
+        error_cols: cols,
+        error_lens: lens,
+        error_contexts: contexts,
+        count: 0,
+        capacity: capacity
+    }
+}
+
+// Add an error to the collection using parallel arrays
+// Requirement 6.3: Multiple error collection
+fn error_collection_add(collection: ErrorCollection, error: ParseError) -> ErrorCollection {
+    var count = collection.count
+    var capacity = collection.capacity
+    
+    // Check if we need to grow the array
+    if count >= capacity {
+        // For now, just don't add more errors if at capacity
+        // In a real implementation, we'd resize the array
+        return collection
+    }
+    
+    // Add error components to parallel arrays
+    var messages = collection.error_messages
+    var lines = collection.error_lines
+    var cols = collection.error_cols
+    var lens = collection.error_lens
+    var contexts = collection.error_contexts
+    
+    messages[count] = error.message
+    lines[count] = error.span.line
+    cols[count] = error.span.column
+    lens[count] = error.span.len
+    contexts[count] = error.context
+    
+    return ErrorCollection {
+        error_messages: messages,
+        error_lines: lines,
+        error_cols: cols,
+        error_lens: lens,
+        error_contexts: contexts,
+        count: count + 1,
+        capacity: capacity
+    }
+}
+
+// Get the number of errors in the collection
+fn error_collection_count(collection: ErrorCollection) -> int {
+    return collection.count
+}
+
+// Check if the collection is empty
+fn error_collection_is_empty(collection: ErrorCollection) -> int {
+    var count = collection.count
+    if count == 0 {
+        return 1
+    }
+    return 0
+}
+
+// Format all errors in the collection
+fn error_collection_format(collection: ErrorCollection) -> string {
+    var count = collection.count
+    if count == 0 {
+        return ""
+    }
+    
+    var result = ""
+    var i = 0
+    
+    // Format each error from parallel arrays
+    while i < count {
+        var message = collection.error_messages[i]
+        var line = collection.error_lines[i]
+        var col = collection.error_cols[i]
+        var len = collection.error_lens[i]
+        var context = collection.error_contexts[i]
+        
+        // Reconstruct ParseError for formatting
+        var span = span_new(line, col, len)
+        var error = error_new(message, span, context)
+        var formatted = error_format(error)
+        
+        if i > 0 {
+            result = result + "\n"
+        }
+        
+        result = result + formatted
+        i = i + 1
+    }
+    
+    return result
+}
+
+// Get error at specific index (returns ParseError for compatibility)
+fn error_collection_get(collection: ErrorCollection, index: int) -> ParseError {
+    var message = collection.error_messages[index]
+    var line = collection.error_lines[index]
+    var col = collection.error_cols[index]
+    var len = collection.error_lens[index]
+    var context = collection.error_contexts[index]
+    
+    var span = span_new(line, col, len)
+    return error_new(message, span, context)
+}
+
+// ============================================================================
+// Error Context Tracking
+// ============================================================================
+
+// Error context helps provide better error messages
+// Requirement 6.4: Contextual error messages
+
+// Context types for different parsing scenarios
+var CONTEXT_NONE = 0
+var CONTEXT_FUNCTION_DECL = 1
+var CONTEXT_VAR_DECL = 2
+var CONTEXT_EXPRESSION = 3
+var CONTEXT_STATEMENT = 4
+var CONTEXT_PATTERN = 5
+var CONTEXT_TYPE = 6
+var CONTEXT_PARAMETER_LIST = 7
+var CONTEXT_ARGUMENT_LIST = 8
+var CONTEXT_BLOCK = 9
+
+// Get context string from context type
+fn context_to_string(context_type: int) -> string {
+    if context_type == 1 {  // CONTEXT_FUNCTION_DECL
+        return "while parsing function declaration"
+    }
+    if context_type == 2 {  // CONTEXT_VAR_DECL
+        return "while parsing variable declaration"
+    }
+    if context_type == 3 {  // CONTEXT_EXPRESSION
+        return "while parsing expression"
+    }
+    if context_type == 4 {  // CONTEXT_STATEMENT
+        return "while parsing statement"
+    }
+    if context_type == 5 {  // CONTEXT_PATTERN
+        return "while parsing pattern"
+    }
+    if context_type == 6 {  // CONTEXT_TYPE
+        return "while parsing type"
+    }
+    if context_type == 7 {  // CONTEXT_PARAMETER_LIST
+        return "while parsing parameter list"
+    }
+    if context_type == 8 {  // CONTEXT_ARGUMENT_LIST
+        return "while parsing argument list"
+    }
+    if context_type == 9 {  // CONTEXT_BLOCK
+        return "while parsing block"
+    }
+    return ""
+}
+
+// ============================================================================
+// Error Recovery Support
+// ============================================================================
+
+// Token types for synchronization (matching lexer TokenType enum)
+var TOKEN_SEMICOLON = 11
+var TOKEN_FN = 5
+var TOKEN_VAR = 6
+var TOKEN_IF = 7
+var TOKEN_WHILE = 12
+var TOKEN_FOR = 13
+var TOKEN_RETURN = 14
+var TOKEN_MATCH = 15
+var TOKEN_LEFT_BRACE = 16
+var TOKEN_RIGHT_BRACE = 17
+var TOKEN_EOF = 10
+
+// Check if a token type is a statement keyword (synchronization point)
+// Requirement 7.1: Synchronize to next statement boundary
+fn is_statement_keyword(token_type: int) -> int {
+    if token_type == 5 {   // TOKEN_FN
+        return 1
+    }
+    if token_type == 6 {   // TOKEN_VAR
+        return 1
+    }
+    if token_type == 7 {   // TOKEN_IF
+        return 1
+    }
+    if token_type == 12 {  // TOKEN_WHILE
+        return 1
+    }
+    if token_type == 13 {  // TOKEN_FOR
+        return 1
+    }
+    if token_type == 14 {  // TOKEN_RETURN
+        return 1
+    }
+    if token_type == 15 {  // TOKEN_MATCH
+        return 1
+    }
+    return 0
+}
+
+// Check if a token type is a synchronization point
+// Requirement 7.1, 7.4: Panic mode recovery synchronization
+fn is_sync_point(token_type: int) -> int {
+    // Semicolons are sync points (end of statement)
+    if token_type == 11 {  // TOKEN_SEMICOLON
+        return 1
+    }
+    
+    // Statement keywords are sync points
+    if is_statement_keyword(token_type) {
+        return 1
+    }
+    
+    // EOF is a sync point
+    if token_type == 10 {  // TOKEN_EOF
+        return 1
+    }
+    
+    return 0
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+// (array_new_parse_error moved to Error Collection section above)
+
+// ============================================================================
+// Main Function (for testing)
+// ============================================================================
+
+fn main() -> int {
+    // Test error creation
+    var span = span_new(10, 5, 3)
+    var error = error_new("Unexpected token", span, "while parsing expression")
+    
+    // Test error formatting
+    var formatted = error_format(error)
+    
+    // Test error collection
+    var collection = error_collection_new(10)
+    collection = error_collection_add(collection, error)
+    
+    var count = error_collection_count(collection)
+    if count != 1 {
+        return 1
+    }
+    
+    // Test is_empty
+    if error_collection_is_empty(collection) != 0 {
+        return 2
+    }
+    
+    // Test synchronization point detection
+    if is_sync_point(11) != 1 {  // SEMICOLON should be sync point
+        return 3
+    }
+    
+    if is_statement_keyword(5) != 1 {  // FN should be statement keyword
+        return 4
+    }
+    
+    // Test context string
+    var ctx = context_to_string(1)  // CONTEXT_FUNCTION_DECL
+    if string_length(ctx) == 0 {
+        return 5
+    }
+    
+    return 0  // All tests passed
+}

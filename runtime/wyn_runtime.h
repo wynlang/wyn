@@ -92,4 +92,35 @@ size_t wyn_array_len(WynArray* arr);
 // Free array
 void wyn_array_free(WynArray* arr);
 
+// ============================================================================
+// C Parser API Module
+// ============================================================================
+
+// Initialize C lexer with source code
+// Returns 1 on success, 0 on failure
+int wyn_c_init_lexer(const char* source);
+
+// Initialize C parser
+void wyn_c_init_parser(void);
+
+// Parse program and return AST pointer (as int)
+// Returns 0 on failure
+int wyn_c_parse_program(void);
+
+// Get number of parse errors
+int wyn_c_get_error_count(void);
+
+// Get error message at index (returns empty string if out of bounds)
+char* wyn_c_get_error_message(int index);
+
+// Convert AST to canonical string format for comparison
+// Returns string representation (caller should not free)
+char* wyn_c_ast_to_string(int ast_ptr);
+
+// Free AST memory
+void wyn_c_free_ast(int ast_ptr);
+
+// Cleanup function (called at program exit)
+void wyn_c_parser_cleanup(void);
+
 #endif // WYN_RUNTIME_H

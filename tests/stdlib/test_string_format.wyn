@@ -1,0 +1,30 @@
+// Test string format method
+fn main() -> int {
+    // Test %s for strings
+    var s1 = "Hello %s".format("World")
+    if s1.contains("World") == 0 {
+        print("FAIL: %s format\n")
+        return 1
+    }
+    
+    // Test %d for integers
+    var s2 = "Count: %d".format(42)
+    if s2.contains("42") == 0 {
+        print("FAIL: %d format\n")
+        return 2
+    }
+    
+    // Test multiple args
+    var s3 = "%s has %d items".format("Alice", 5)
+    if s3.contains("Alice") == 0 {
+        print("FAIL: multiple args\n")
+        return 3
+    }
+    if s3.contains("5") == 0 {
+        print("FAIL: multiple args int\n")
+        return 4
+    }
+    
+    print("String format tests PASS\n")
+    return 0
+}

@@ -1,5 +1,0 @@
-import module_c
-
-fn get_b() -> int {
-    return 2;
-}

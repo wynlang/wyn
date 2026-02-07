@@ -453,10 +453,11 @@ void init_checker() {
     
     // Add built-in functions
     const char* stdlib_funcs[] = {
-        "print", "print_float", "print_str", "print_bool", "print_hex", "print_bin", "println", "print_debug", "input", "input_float", "input_line", "printf_wyn", "sin_approx", "cos_approx", "pi_const", "e_const",
+        "print", "print_float", "print_str", "print_bool", "print_hex", "print_bin", "println", "print_debug", "input", "input_float", "input_line", "printf_wyn", "string_format", "sin_approx", "cos_approx", "pi_const", "e_const",
         "str_len", "str_eq", "str_concat", "str_upper", "str_lower", "str_contains", "str_starts_with", "str_ends_with", "str_trim",
         "str_replace", "str_split", "str_join", "int_to_str", "str_to_int", "str_repeat", "str_reverse", "str_parse_int", "str_parse_float", "str_free",
         "split_get", "split_count", "char_at", "is_numeric", "str_count", "str_contains_substr",
+        "string_char_at", "string_length",
         "abs_val", "min", "max", "pow_int", "clamp", "sign", "gcd", "lcm", "is_even", "is_odd",
         "sqrt_int", "ceil_int", "floor_int", "round_int", "abs_float",
         "swap", "clamp_float", "lerp", "map_range",
@@ -789,7 +790,12 @@ static char* generate_mangled_name(Token name, Type* type) {
 // T1.5.3: Find best matching overload for function call
 static Symbol* find_function_overload(SymbolTable* scope, Token name, Type** arg_types, int arg_count) {
     Symbol* symbol = find_symbol(scope, name);
-    if (!symbol || symbol->type->kind != TYPE_FUNCTION) return symbol;
+    if (!symbol) {
+        return NULL;
+    }
+    if (symbol->type->kind != TYPE_FUNCTION) {
+        return symbol;
+    }
     
     Symbol* best_match = NULL;
     int best_score = -1;
@@ -1339,6 +1345,28 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     check_expr(expr->call.args[0], scope);
                     expr->expr_type = builtin_string;
                     return builtin_string;
+                } else if (strcmp(name_buf, "wyn_str_substring") == 0) {
+                    // wyn_str_substring(s, start, end) - returns substring
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "str_eq") == 0 || strcmp(name_buf, "string_length") == 0 ||
+                           strcmp(name_buf, "str_len") == 0) {
+                    // str_eq(a, b), string_length(s), str_len(s) - returns int
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "str_concat") == 0) {
+                    // str_concat(a, b) - returns string
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
                 }
                 
                 // Check if this is a generic function call
@@ -1425,7 +1453,24 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
                 
                 if (is_qualified && !best_match) {
-                    // Module-qualified function - assume it's valid if visibility passed
+                    // Module-qualified function - check for known return types
+                    if (strcmp(qual_module, "C_Parser") == 0) {
+                        // C_Parser module functions
+                        if (strcmp(qual_func, "ast_to_string") == 0) {
+                            expr->expr_type = builtin_string;
+                            free(arg_types);
+                            return builtin_string;
+                        }
+                        // Other C_Parser functions return int/void
+                    }
+                    if (strcmp(qual_module, "HashMap") == 0) {
+                        if (strcmp(qual_func, "new") == 0) {
+                            Type* map_type = make_type(TYPE_MAP);
+                            expr->expr_type = map_type;
+                            free(arg_types);
+                            return map_type;
+                        }
+                    }
                     expr->expr_type = builtin_int;  // Default return type
                     free(arg_types);
                     return builtin_int;
@@ -1530,7 +1575,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             method_name[len] = '\0';
             
             // Handle string methods
-            if (object_type == builtin_string) {
+            if (object_type && object_type->kind == TYPE_STRING) {
                 if (strcmp(method_name, "contains") == 0) {
                     expr->expr_type = builtin_int;
                     return builtin_int;
@@ -1607,8 +1652,27 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         expr->expr_type = builtin_bool;
                         return builtin_bool;
                     } else if (strcmp(return_type_str, "array") == 0) {
+                        // Check if this is a string method that returns string array
+                        if (object_type && object_type->kind == TYPE_STRING) {
+                            if (strcmp(method_name, "split") == 0 ||
+                                strcmp(method_name, "chars") == 0 ||
+                                strcmp(method_name, "words") == 0 ||
+                                strcmp(method_name, "lines") == 0) {
+                                Type* string_array = make_type(TYPE_ARRAY);
+                                string_array->array_type.element_type = builtin_string;
+                                expr->expr_type = string_array;
+                                return string_array;
+                            }
+                        }
                         expr->expr_type = builtin_array;
                         return builtin_array;
+                    } else if (strcmp(return_type_str, "json") == 0) {
+                        Type* json_type = make_type(TYPE_JSON);
+                        expr->expr_type = json_type;
+                        return json_type;
+                    } else if (strcmp(return_type_str, "void") == 0) {
+                        expr->expr_type = builtin_void;
+                        return builtin_void;
                     }
                 }
             }
@@ -1787,11 +1851,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
         }
         case EXPR_IF_EXPR: {
             check_expr(expr->if_expr.condition, scope);
+            Type* then_type = NULL;
+            Type* else_type = NULL;
             if (expr->if_expr.then_expr) {
-                check_expr(expr->if_expr.then_expr, scope);
+                then_type = check_expr(expr->if_expr.then_expr, scope);
             }
             if (expr->if_expr.else_expr) {
-                check_expr(expr->if_expr.else_expr, scope);
+                else_type = check_expr(expr->if_expr.else_expr, scope);
+            }
+            // Return the type of the then branch (or else if no then)
+            if (then_type) {
+                expr->expr_type = then_type;
+                return then_type;
+            }
+            if (else_type) {
+                expr->expr_type = else_type;
+                return else_type;
             }
             return builtin_int;
         }
@@ -2295,7 +2370,16 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 // IMPORTANT: Still check the init expression to resolve method calls
                 // and propagate type information, even though we have an explicit type
                 if (stmt->var.init) {
-                    check_expr(stmt->var.init, scope);
+                    Type* actual_type = check_expr(stmt->var.init, scope);
+                    // Task 1.1: Check type mismatch between declared and actual type
+                    if (init_type && actual_type && !types_equal(init_type, actual_type)) {
+                        char expected_str[128], actual_str[128];
+                        snprintf(expected_str, sizeof(expected_str), "%s", type_to_string(init_type));
+                        snprintf(actual_str, sizeof(actual_str), "%s", type_to_string(actual_type));
+                        type_error_mismatch(expected_str, actual_str, "variable declaration",
+                            stmt->var.name.line, 0);
+                        had_error = true;
+                    }
                 }
             } else if (stmt->var.init) {
                 // Always check the expression to populate expr_type
@@ -2346,7 +2430,11 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         // Allow returning Result from any function
                         break;
                     }
-                    if (current_function_return_type->kind != return_expr_type->kind) {
+                    // Allow int/bool interchangeability (comparisons return int but work as bool)
+                    bool types_match = (current_function_return_type->kind == return_expr_type->kind) ||
+                        (current_function_return_type->kind == TYPE_BOOL && return_expr_type->kind == TYPE_INT) ||
+                        (current_function_return_type->kind == TYPE_INT && return_expr_type->kind == TYPE_BOOL);
+                    if (!types_match) {
                         fprintf(stderr, "Error: Return type mismatch. Expected ");
                         print_type_name(current_function_return_type);
                         fprintf(stderr, ", got ");
@@ -2382,7 +2470,13 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             
             // For array iteration, add the loop variable to scope
             if (stmt->for_stmt.array_expr) {
-                add_symbol(scope, stmt->for_stmt.loop_var, builtin_int, false);
+                // Determine element type from array expression
+                Type* array_type = check_expr(stmt->for_stmt.array_expr, scope);
+                Type* elem_type = builtin_int; // default
+                if (array_type && array_type->kind == TYPE_ARRAY && array_type->array_type.element_type) {
+                    elem_type = array_type->array_type.element_type;
+                }
+                add_symbol(scope, stmt->for_stmt.loop_var, elem_type, false);
             }
             
             check_stmt(stmt->for_stmt.body, scope);
@@ -3356,8 +3450,16 @@ void check_program(Program* prog) {
         Type* hashmap_new_type = make_type(TYPE_FUNCTION);
         hashmap_new_type->fn_type.param_count = 0;
         hashmap_new_type->fn_type.param_types = NULL;
-        hashmap_new_type->fn_type.return_type = builtin_int;
+        hashmap_new_type->fn_type.return_type = make_type(TYPE_MAP);
         add_symbol(global_scope, hashmap_new_tok, hashmap_new_type, false);
+        
+        // HashSet module
+        Token hashset_new_tok = {TOKEN_IDENT, "HashSet::new", 12, 0};
+        Type* hashset_new_type = make_type(TYPE_FUNCTION);
+        hashset_new_type->fn_type.param_count = 0;
+        hashset_new_type->fn_type.param_types = NULL;
+        hashset_new_type->fn_type.return_type = make_type(TYPE_SET);
+        add_symbol(global_scope, hashset_new_tok, hashset_new_type, false);
         
         Token hashmap_insert_tok = {TOKEN_IDENT, "HashMap::insert", 15, 0};
         Type* hashmap_insert_type = make_type(TYPE_FUNCTION);
@@ -3587,7 +3689,29 @@ void check_program(Program* prog) {
                         }
                     } else if (fn->param_types[j]->type == EXPR_ARRAY) {
                         // Handle array types [type]
-                        param_type = builtin_array;
+                        Type* array_type = make_type(TYPE_ARRAY);
+                        if (fn->param_types[j]->array.count > 0 && fn->param_types[j]->array.elements[0]) {
+                            Expr* elem_type_expr = fn->param_types[j]->array.elements[0];
+                            if (elem_type_expr->type == EXPR_IDENT) {
+                                Token elem_type_name = elem_type_expr->token;
+                                if (elem_type_name.length == 3 && memcmp(elem_type_name.start, "int", 3) == 0) {
+                                    array_type->array_type.element_type = builtin_int;
+                                } else if (elem_type_name.length == 6 && memcmp(elem_type_name.start, "string", 6) == 0) {
+                                    array_type->array_type.element_type = builtin_string;
+                                } else if (elem_type_name.length == 5 && memcmp(elem_type_name.start, "float", 5) == 0) {
+                                    array_type->array_type.element_type = builtin_float;
+                                } else if (elem_type_name.length == 4 && memcmp(elem_type_name.start, "bool", 4) == 0) {
+                                    array_type->array_type.element_type = builtin_bool;
+                                } else {
+                                    // Check if it's a user-defined type (struct or enum)
+                                    Symbol* type_symbol = find_symbol(global_scope, elem_type_name);
+                                    if (type_symbol && type_symbol->type) {
+                                        array_type->array_type.element_type = type_symbol->type;
+                                    }
+                                }
+                            }
+                        }
+                        param_type = array_type;
                     }
                 }
                 fn_type->fn_type.param_types[j] = param_type;
@@ -3823,26 +3947,7 @@ void check_program(Program* prog) {
                 // Determine parameter type from type annotation
                 Type* param_type = builtin_int; // default
                 if (fn->param_types[j]) {
-                    if (fn->param_types[j]->type == EXPR_ARRAY) {
-                        // Array type like [int] or [string]
-                        Type* array_type = make_type(TYPE_ARRAY);
-                        if (fn->param_types[j]->array.count > 0 && fn->param_types[j]->array.elements[0]) {
-                            Expr* elem_type_expr = fn->param_types[j]->array.elements[0];
-                            if (elem_type_expr->type == EXPR_IDENT) {
-                                Token elem_type_name = elem_type_expr->token;
-                                if (elem_type_name.length == 3 && memcmp(elem_type_name.start, "int", 3) == 0) {
-                                    array_type->array_type.element_type = builtin_int;
-                                } else if (elem_type_name.length == 6 && memcmp(elem_type_name.start, "string", 6) == 0) {
-                                    array_type->array_type.element_type = builtin_string;
-                                } else if (elem_type_name.length == 5 && memcmp(elem_type_name.start, "float", 5) == 0) {
-                                    array_type->array_type.element_type = builtin_float;
-                                } else if (elem_type_name.length == 4 && memcmp(elem_type_name.start, "bool", 4) == 0) {
-                                    array_type->array_type.element_type = builtin_bool;
-                                }
-                            }
-                        }
-                        param_type = array_type;
-                    } else if (fn->param_types[j]->type == EXPR_IDENT) {
+                    if (fn->param_types[j]->type == EXPR_IDENT) {
                         Token type_name = fn->param_types[j]->token;
                         if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                             param_type = builtin_int;
@@ -3864,7 +3969,29 @@ void check_program(Program* prog) {
                         }
                     } else if (fn->param_types[j]->type == EXPR_ARRAY) {
                         // Handle array types [type]
-                        param_type = builtin_array;
+                        Type* array_type = make_type(TYPE_ARRAY);
+                        if (fn->param_types[j]->array.count > 0 && fn->param_types[j]->array.elements[0]) {
+                            Expr* elem_type_expr = fn->param_types[j]->array.elements[0];
+                            if (elem_type_expr->type == EXPR_IDENT) {
+                                Token elem_type_name = elem_type_expr->token;
+                                if (elem_type_name.length == 3 && memcmp(elem_type_name.start, "int", 3) == 0) {
+                                    array_type->array_type.element_type = builtin_int;
+                                } else if (elem_type_name.length == 6 && memcmp(elem_type_name.start, "string", 6) == 0) {
+                                    array_type->array_type.element_type = builtin_string;
+                                } else if (elem_type_name.length == 5 && memcmp(elem_type_name.start, "float", 5) == 0) {
+                                    array_type->array_type.element_type = builtin_float;
+                                } else if (elem_type_name.length == 4 && memcmp(elem_type_name.start, "bool", 4) == 0) {
+                                    array_type->array_type.element_type = builtin_bool;
+                                } else {
+                                    // Check if it's a user-defined type (struct or enum)
+                                    Symbol* type_symbol = find_symbol(global_scope, elem_type_name);
+                                    if (type_symbol && type_symbol->type) {
+                                        array_type->array_type.element_type = type_symbol->type;
+                                    }
+                                }
+                            }
+                        }
+                        param_type = array_type;
                     }
                 }
                 

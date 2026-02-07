@@ -1,5 +1,0 @@
-import network::http
-
-fn main() -> int {
-    return 0;
-}

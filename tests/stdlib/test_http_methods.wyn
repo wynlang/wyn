@@ -1,0 +1,18 @@
+// Test HTTP methods on strings
+fn main() -> int {
+    var url = "http://httpbin.org/get"
+    var response = url.http_get()
+    
+    if response.len() == 0 {
+        print("FAIL: Response should have content\n")
+        return 1
+    }
+    
+    if response.contains("httpbin") == 0 {
+        print("FAIL: Response should contain 'httpbin'\n")
+        return 2
+    }
+    
+    print("HTTP method test PASS\n")
+    return 0
+}

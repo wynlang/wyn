@@ -1,6 +1,0 @@
-
-fn main() -> int {
-    var path = "C:\\Users\\test"
-    print(path)
-    return 0
-}

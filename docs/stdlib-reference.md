@@ -266,6 +266,99 @@ Alias for parse_int.
 #### `.to_float() -> float`
 Alias for parse_float.
 
+### HTTP Methods (v1.6.0+)
+
+#### `.http_get() -> string`
+Performs HTTP GET request on URL string.
+```wyn
+var response = "http://api.example.com/data".http_get();
+print(response);
+```
+
+#### `.http_post(body: string) -> string`
+Performs HTTP POST request with body.
+```wyn
+var response = "http://api.example.com/submit".http_post("{\"key\": \"value\"}");
+```
+
+### File System Methods (v1.6.0+)
+
+Path strings can use these methods directly.
+
+#### `.exists() -> bool`
+Checks if path exists.
+```wyn
+if "/tmp/myfile.txt".exists() { }
+```
+
+#### `.is_file() -> bool`
+Checks if path is a file.
+```wyn
+if path.is_file() { }
+```
+
+#### `.is_dir() -> bool`
+Checks if path is a directory.
+```wyn
+if "/tmp".is_dir() { }
+```
+
+### Formatting (v1.6.0+)
+
+#### `.format(...args) -> string`
+Printf-style string formatting.
+```wyn
+var msg = "Hello %s, you have %d messages".format("Alice", 5);
+// "Hello Alice, you have 5 messages"
+```
+
+Supported format specifiers:
+- `%s` - string
+- `%d` - integer
+- `%f` - float
+
+### JSON Parsing (v1.6.0+)
+
+#### `.parse_json() -> json`
+Parses JSON string into a json object.
+```wyn
+var obj = "{\"name\": \"test\"}".parse_json();
+```
+
+## JSON Methods
+
+Methods available on json objects returned by `parse_json()`.
+
+#### `.get_string(key: string) -> string`
+Gets a string value by key.
+```wyn
+var name = obj.get_string("name");
+```
+
+#### `.get_int(key: string) -> int`
+Gets an integer value by key.
+```wyn
+var count = obj.get_int("count");
+```
+
+#### `.get_float(key: string) -> float`
+Gets a float value by key.
+```wyn
+var price = obj.get_float("price");
+```
+
+#### `.get_bool(key: string) -> bool`
+Gets a boolean value by key.
+```wyn
+var active = obj.get_bool("active");
+```
+
+#### `.free() -> void`
+Frees the JSON object memory.
+```wyn
+obj.free();
+```
+
 ---
 
 ## Array Methods

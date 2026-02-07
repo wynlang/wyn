@@ -1,0 +1,7 @@
+fn get_name() -> string {
+    return 42
+}
+
+fn main() -> int {
+    return 0
+}

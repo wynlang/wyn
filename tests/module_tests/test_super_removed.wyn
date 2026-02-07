@@ -1,5 +1,0 @@
-import super::config
-
-fn main() -> int {
-    return 0;
-}

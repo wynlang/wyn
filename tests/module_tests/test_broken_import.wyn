@@ -1,5 +1,0 @@
-import broken_module
-
-fn main() -> int {
-    return 0;
-}

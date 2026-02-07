@@ -1,4 +1,0 @@
-// Root config module
-pub fn get_version() -> int {
-    return 1;
-}

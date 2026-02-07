@@ -1,7 +1,7 @@
 # Wyn Examples
 
-![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)
-**Latest: v1.4.0**
+![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)
+**Latest: v1.6.0**
 
 This page provides an overview of all examples available in the [`../examples/`](../examples/) directory, with explanations of what each example demonstrates.
 
@@ -811,4 +811,4 @@ To contribute a new example:
 
 ---
 
-*These examples are for Wyn v1.4.0. All examples are tested and verified to work correctly.*
+*These examples are for Wyn v1.6.0. All examples are tested and verified to work correctly.*

@@ -1,7 +1,0 @@
-// Test flat import
-import http_flat
-
-fn main() -> int {
-    print("Test\n");
-    return 0;
-}

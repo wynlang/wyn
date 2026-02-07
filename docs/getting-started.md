@@ -1,9 +1,23 @@
 # Getting Started with Wyn
 
-![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)
-**Latest: v1.4.0**
+![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)
+**Latest: v1.6.0**
 
 Welcome to Wyn! This guide will help you install Wyn and write your first program.
+
+## Philosophy: Everything is an Object
+
+Wyn follows a simple principle: **everything is an object**. Instead of calling functions on data, you call methods on objects:
+
+```wyn
+// The Wyn way - method syntax
+var clean = text.trim().lower()
+var response = url.http_get()
+var exists = path.exists()
+
+// NOT the Wyn way - avoid function syntax
+var clean = lower(trim(text))  // Don't do this!
+```
 
 ## Installation
 
@@ -229,21 +243,24 @@ fn main() -> int {
 
 ```wyn
 fn main() -> int {
-    let text = "  Hello World  ";
+    var text = "  Hello World  ";
     
-    // String operations
-    let len = str_len(text);
-    let upper = str_upper(text);
-    let trimmed = str_trim(text);
+    // String methods (Wyn way!)
+    var len = text.len();
+    var upper = text.upper();
+    var trimmed = text.trim();
     
     print(len);           // Output: 15
     print(upper);         // Output:   HELLO WORLD  
     print(trimmed);       // Output: Hello World
     
-    // String comparison
-    if str_eq(trimmed, "Hello World") {
-        print("Strings match!");
-    }
+    // Method chaining
+    var clean = text.trim().lower();
+    print(clean);         // Output: hello world
+    
+    // String formatting
+    var msg = "Hello %s, you have %d messages".format("Alice", 5);
+    print(msg);           // Output: Hello Alice, you have 5 messages
     
     return 0;
 }
@@ -253,20 +270,38 @@ fn main() -> int {
 
 ```wyn
 fn main() -> int {
-    // Write to file
-    let content = "Hello from Wyn!";
-    let success = file_write("/tmp/test.txt", content);
+    var path = "/tmp/test.txt";
     
-    if success == 1 {
-        print("File written successfully");
-        
-        // Read from file
-        let data = file_read("/tmp/test.txt");
-        print("File contents:");
-        print(data);
-    } else {
-        print("Failed to write file");
+    // Check if file exists (method on path string!)
+    if path.exists() {
+        print("File already exists");
     }
+    
+    // Write to file
+    var content = "Hello from Wyn!";
+    File::write(path, content);
+    
+    // Read from file
+    var data = File::read(path);
+    print(data);          // Output: Hello from Wyn!
+    
+    // Check file type
+    if path.is_file() {
+        print("It's a file!");
+    }
+    
+    return 0;
+}
+```
+
+### HTTP Requests
+
+```wyn
+fn main() -> int {
+    // HTTP GET (method on URL string!)
+    var url = "http://httpbin.org/get";
+    var response = url.http_get();
+    print(response);
     
     return 0;
 }
@@ -417,4 +452,4 @@ fn main() -> int {
 
 **Congratulations!** You're now ready to start programming in Wyn. Check out the [examples](examples.md) for more inspiration, or dive into the [language guide](language-guide.md) for advanced features.
 
-*This guide covers Wyn v1.4.0. For the latest updates, see the [GitHub repository](https://github.com/wyn-lang/wyn).*
+*This guide covers Wyn v1.6.0. For the latest updates, see the [GitHub repository](https://github.com/wyn-lang/wyn).*

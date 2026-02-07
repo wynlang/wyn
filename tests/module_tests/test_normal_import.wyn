@@ -1,5 +1,0 @@
-import simple_module
-
-fn main() -> int {
-    return 0;
-}

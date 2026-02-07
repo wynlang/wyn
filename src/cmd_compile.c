@@ -110,12 +110,13 @@ static int compile_file_with_output(const char* filename, const char* output_nam
              "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c "
              "%s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c "
              "%s/src/spawn.c %s/src/net.c %s/src/net_runtime.c "
-             "%s/src/test_runtime.c %s/src/net_advanced.c -lm 2>&1",
+             "%s/src/test_runtime.c %s/src/net_advanced.c "
+             "-L%s/runtime/parser_lib -lwyn_c_parser -lm 2>&1",
              wyn_dir, output_bin, output_c,
              wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir,
              wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir,
              wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir,
-             wyn_dir, wyn_dir, wyn_dir, wyn_dir);
+             wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir);
     
     int result = system(cmd);
     if (result != 0) {

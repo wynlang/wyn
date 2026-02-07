@@ -1,7 +1,0 @@
-var g_test = ""
-
-fn main() -> int {
-    g_test = "hello"
-    print(g_test)
-    return 0
-}

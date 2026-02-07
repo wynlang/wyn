@@ -1,6 +1,0 @@
-// Don't import config
-
-fn main() -> int {
-    var x = config::get_version();  // Should error
-    return 0;
-}

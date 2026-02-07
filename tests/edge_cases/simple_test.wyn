@@ -1,6 +1,0 @@
-fn main() -> int {
-    print("Testing basic string")
-    var str = "hello"
-    print(str)
-    return 0
-}

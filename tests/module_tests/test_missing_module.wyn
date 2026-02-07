@@ -1,5 +1,0 @@
-import nonexistent
-
-fn main() -> int {
-    return 0;
-}

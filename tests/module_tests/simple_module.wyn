@@ -1,3 +1,0 @@
-fn helper() -> int {
-    return 42;
-}

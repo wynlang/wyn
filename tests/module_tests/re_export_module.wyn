@@ -1,5 +1,0 @@
-import base_module
-
-pub fn get_value() -> int {
-    return base_module::compute();
-}

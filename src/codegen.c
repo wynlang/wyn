@@ -191,6 +191,7 @@ typedef struct {
 static LambdaFunction lambda_functions[256];
 static int lambda_count = 0;
 static int lambda_id_counter = 0;
+static int lambda_ref_counter = 0;
 
 // Track lambda variable names and their captures for call site injection
 typedef struct {
@@ -205,10 +206,13 @@ static int lambda_var_count = 0;
 // Spawn wrapper collection
 typedef struct {
     char func_name[256];
+    int arg_count;
+    int spawn_id;
 } SpawnWrapper;
 
 static SpawnWrapper spawn_wrappers[256];
 static int spawn_wrapper_count = 0;
+static int spawn_id_counter = 0;
 
 // Forward declaration
 static void emit(const char* fmt, ...);
@@ -469,6 +473,80 @@ void codegen_expr(Expr* expr) {
                 strcpy(function_part, colon + 2);  // Save function name
                 *colon = '\0';  // Split at ::
                 
+                // Special handling for C_Parser:: module - map to wyn_c_ prefix
+                if (strcmp(temp_ident, "C_Parser") == 0) {
+                    snprintf(temp_ident, sizeof(temp_ident), "wyn_c_%s", function_part);
+                    // Skip the normal :: to _ conversion
+                    strcpy(ident + offset, temp_ident);
+                    emit("%s", ident);
+                    free(ident);
+                    break;
+                }
+                
+                // Special handling for HashMap:: module - map to hashmap_ prefix
+                if (strcmp(temp_ident, "HashMap") == 0) {
+                    snprintf(temp_ident, sizeof(temp_ident), "hashmap_%s", function_part);
+                    strcpy(ident + offset, temp_ident);
+                    emit("%s", ident);
+                    free(ident);
+                    break;
+                }
+                
+                // Special handling for HashSet:: module - map to hashset_ prefix
+                if (strcmp(temp_ident, "HashSet") == 0) {
+                    snprintf(temp_ident, sizeof(temp_ident), "hashset_%s", function_part);
+                    strcpy(ident + offset, temp_ident);
+                    emit("%s", ident);
+                    free(ident);
+                    break;
+                }
+                
+                // Special handling for Random:: module - map to random_ prefix
+                if (strcmp(temp_ident, "Random") == 0) {
+                    snprintf(temp_ident, sizeof(temp_ident), "random_%s", function_part);
+                    strcpy(ident + offset, temp_ident);
+                    emit("%s", ident);
+                    free(ident);
+                    break;
+                }
+                
+                // Special handling for Time:: module - map to time_ prefix
+                if (strcmp(temp_ident, "Time") == 0) {
+                    snprintf(temp_ident, sizeof(temp_ident), "time_%s", function_part);
+                    strcpy(ident + offset, temp_ident);
+                    emit("%s", ident);
+                    free(ident);
+                    break;
+                }
+                
+                // Special handling for System:: module - map to System_ prefix
+                if (strcmp(temp_ident, "System") == 0) {
+                    snprintf(temp_ident, sizeof(temp_ident), "System_%s", function_part);
+                    strcpy(ident + offset, temp_ident);
+                    emit("%s", ident);
+                    free(ident);
+                    break;
+                }
+                
+                // Special handling for File:: module - some functions use File_, some use file_
+                if (strcmp(temp_ident, "File") == 0) {
+                    // Functions that use file_ prefix (lowercase)
+                    if (strcmp(function_part, "append") == 0 ||
+                        strcmp(function_part, "copy") == 0 ||
+                        strcmp(function_part, "move") == 0 ||
+                        strcmp(function_part, "size") == 0 ||
+                        strcmp(function_part, "modified_time") == 0) {
+                        snprintf(temp_ident, sizeof(temp_ident), "file_%s", function_part);
+                    } else {
+                        // Functions that use File_ prefix (capitalized)
+                        snprintf(temp_ident, sizeof(temp_ident), "File_%s", function_part);
+                    }
+                    strcpy(ident + offset, temp_ident);
+                    emit("%s", ident);
+                    free(ident);
+                    break;
+                }
+                
                 // Resolve short name (http -> network/http)
                 const char* full_path = resolve_short_module_name(temp_ident);
                 const char* resolved = resolve_module_alias(full_path);
@@ -532,8 +610,8 @@ void codegen_expr(Expr* expr) {
             codegen_expr(expr->unary.operand);
             break;
         case EXPR_AWAIT:
-            // Await: call async function, block on future, cast result
-            emit("*(int*)wyn_block_on(");
+            // Await: block on future and cast result
+            emit("*(int*)future_get(");
             codegen_expr(expr->await.expr);
             emit(")");
             break;
@@ -548,6 +626,38 @@ void codegen_expr(Expr* expr) {
                 
                 bool left_is_int = (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_INT);
                 bool right_is_int = (expr->binary.right->expr_type && expr->binary.right->expr_type->kind == TYPE_INT);
+                
+                // Also check if it's an int literal
+                if (!left_is_int && expr->binary.left->type == EXPR_INT) left_is_int = true;
+                if (!right_is_int && expr->binary.right->type == EXPR_INT) right_is_int = true;
+                
+                // Check if variable name suggests string type
+                if (!left_is_string && expr->binary.left->type == EXPR_IDENT) {
+                    Token name = expr->binary.left->token;
+                    if ((name.length == 4 && memcmp(name.start, "name", 4) == 0) ||
+                        (name.length == 4 && memcmp(name.start, "text", 4) == 0) ||
+                        (name.length == 4 && memcmp(name.start, "line", 4) == 0) ||
+                        (name.length == 4 && memcmp(name.start, "word", 4) == 0) ||
+                        (name.length == 3 && memcmp(name.start, "str", 3) == 0) ||
+                        (name.length == 1 && name.start[0] == 's') ||
+                        (name.length == 1 && name.start[0] == 'c')) {
+                        left_is_string = true;
+                        left_is_int = false;
+                    }
+                }
+                if (!right_is_string && expr->binary.right->type == EXPR_IDENT) {
+                    Token name = expr->binary.right->token;
+                    if ((name.length == 4 && memcmp(name.start, "name", 4) == 0) ||
+                        (name.length == 4 && memcmp(name.start, "text", 4) == 0) ||
+                        (name.length == 4 && memcmp(name.start, "line", 4) == 0) ||
+                        (name.length == 4 && memcmp(name.start, "word", 4) == 0) ||
+                        (name.length == 3 && memcmp(name.start, "str", 3) == 0) ||
+                        (name.length == 1 && name.start[0] == 's') ||
+                        (name.length == 1 && name.start[0] == 'c')) {
+                        right_is_string = true;
+                        right_is_int = false;
+                    }
+                }
                 
                 if (left_is_string || right_is_string) {
                     // Use ARC-managed string concatenation with automatic conversion
@@ -1252,12 +1362,81 @@ void codegen_expr(Expr* expr) {
             
             const char* receiver_type = get_receiver_type_string(object_type);
             
+            // Fallback: if no type info, try to infer from expression
+            if (!receiver_type && expr->method_call.object->type == EXPR_IDENT) {
+                // Check if it's a known string parameter (heuristic)
+                Token obj_name = expr->method_call.object->token;
+                if ((obj_name.length == 1 && obj_name.start[0] == 's') ||
+                    (obj_name.length == 1 && obj_name.start[0] == 'c') ||
+                    (obj_name.length == 3 && memcmp(obj_name.start, "str", 3) == 0) ||
+                    (obj_name.length == 4 && memcmp(obj_name.start, "text", 4) == 0) ||
+                    (obj_name.length == 4 && memcmp(obj_name.start, "name", 4) == 0) ||
+                    (obj_name.length == 4 && memcmp(obj_name.start, "line", 4) == 0) ||
+                    (obj_name.length == 4 && memcmp(obj_name.start, "word", 4) == 0) ||
+                    (obj_name.length == 4 && memcmp(obj_name.start, "part", 4) == 0) ||
+                    (obj_name.length == 4 && memcmp(obj_name.start, "item", 4) == 0) ||
+                    (obj_name.length == 5 && memcmp(obj_name.start, "input", 5) == 0)) {
+                    receiver_type = "string";
+                }
+            }
+            
             // Debug: print what we got
             if (object_type) {
             } else {
             }
             if (receiver_type) {
             } else {
+            }
+            
+            // Special handling for map.set() - need to determine insert function from value type
+            if (receiver_type && strcmp(receiver_type, "map") == 0) {
+                char method_name[256];
+                int len = method.length < 255 ? method.length : 255;
+                memcpy(method_name, method.start, len);
+                method_name[len] = '\0';
+                
+                if ((strcmp(method_name, "set") == 0 || strcmp(method_name, "insert") == 0) && 
+                    expr->method_call.arg_count == 2) {
+                    // Determine insert function based on value type
+                    Expr* value_expr = expr->method_call.args[1];
+                    const char* insert_func = "hashmap_insert_int";
+                    if (value_expr->type == EXPR_STRING) {
+                        insert_func = "hashmap_insert_string";
+                    } else if (value_expr->type == EXPR_FLOAT) {
+                        insert_func = "hashmap_insert_float";
+                    } else if (value_expr->type == EXPR_BOOL) {
+                        insert_func = "hashmap_insert_bool";
+                    } else if (value_expr->expr_type) {
+                        if (value_expr->expr_type->kind == TYPE_STRING) {
+                            insert_func = "hashmap_insert_string";
+                        } else if (value_expr->expr_type->kind == TYPE_FLOAT) {
+                            insert_func = "hashmap_insert_float";
+                        } else if (value_expr->expr_type->kind == TYPE_BOOL) {
+                            insert_func = "hashmap_insert_bool";
+                        }
+                    }
+                    emit("%s(", insert_func);
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[1]);
+                    emit(")");
+                    break;
+                }
+                
+                // For map.get(), we need to use hashmap_get_string if the result is used as string
+                // For now, use a generic approach that returns the value
+                if (strcmp(method_name, "get") == 0 && expr->method_call.arg_count == 1) {
+                    // Use hashmap_get which returns HashMapValue, then extract based on context
+                    // For simplicity, use hashmap_get_string since that's most common
+                    emit("hashmap_get_string(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                    break;
+                }
             }
             
             if (receiver_type) {
@@ -1276,9 +1455,24 @@ void codegen_expr(Expr* expr) {
                     } else {
                         codegen_expr(expr->method_call.object);
                     }
-                    for (int i = 0; i < expr->method_call.arg_count; i++) {
+                    // Special handling for reduce: swap args (initial, fn) -> (fn, initial)
+                    if (strcmp(method_name, "reduce") == 0 && expr->method_call.arg_count == 2) {
                         emit(", ");
-                        codegen_expr(expr->method_call.args[i]);
+                        codegen_expr(expr->method_call.args[1]); // fn
+                        emit(", ");
+                        codegen_expr(expr->method_call.args[0]); // initial
+                    } else if (strcmp(method_name, "format") == 0) {
+                        // Convert all args to strings using to_string macro
+                        for (int i = 0; i < expr->method_call.arg_count; i++) {
+                            emit(", to_string(");
+                            codegen_expr(expr->method_call.args[i]);
+                            emit(")");
+                        }
+                    } else {
+                        for (int i = 0; i < expr->method_call.arg_count; i++) {
+                            emit(", ");
+                            codegen_expr(expr->method_call.args[i]);
+                        }
                     }
                     emit(")");
                     break;
@@ -1702,6 +1896,9 @@ void codegen_expr(Expr* expr) {
             if (match_type && match_type->kind == TYPE_ENUM && match_type->name.length > 0) {
                 type_name = match_type->name.start;
                 type_name_len = match_type->name.length;
+            } else if (match_type && match_type->kind == TYPE_STRING) {
+                type_name = "const char*";
+                type_name_len = 12;
             }
             
             // Store match value in temp variable
@@ -1709,8 +1906,25 @@ void codegen_expr(Expr* expr) {
             codegen_expr(expr->match.value);
             emit("; ");
             
-            // Generate result variable
-            emit("int __match_result_%d; ", match_id);
+            // Determine result type from first arm's expression
+            const char* result_type = "int";
+            if (expr->match.arm_count > 0 && expr->match.arms[0].result) {
+                Expr* first_result = expr->match.arms[0].result;
+                if (first_result->type == EXPR_STRING) {
+                    result_type = "const char*";
+                } else if (first_result->expr_type) {
+                    if (first_result->expr_type->kind == TYPE_STRING) {
+                        result_type = "const char*";
+                    } else if (first_result->expr_type->kind == TYPE_FLOAT) {
+                        result_type = "double";
+                    } else if (first_result->expr_type->kind == TYPE_BOOL) {
+                        result_type = "bool";
+                    }
+                }
+            }
+            
+            // Generate result variable with correct type
+            emit("%s __match_result_%d; ", result_type, match_id);
             
             // Generate if-else chain for each arm
             for (int i = 0; i < expr->match.arm_count; i++) {
@@ -1723,10 +1937,20 @@ void codegen_expr(Expr* expr) {
                     // Wildcard always matches
                     emit("{ ");
                 } else if (pat->type == PATTERN_LITERAL) {
-                    emit("if (__match_val_%d == %.*s) { ",
-                         match_id,
-                         pat->literal.value.length,
-                         pat->literal.value.start);
+                    // Check if matching against a string
+                    bool is_string_match = (match_type && match_type->kind == TYPE_STRING) ||
+                                          (pat->literal.value.start[0] == '"');
+                    if (is_string_match) {
+                        emit("if (strcmp(__match_val_%d, %.*s) == 0) { ",
+                             match_id,
+                             pat->literal.value.length,
+                             pat->literal.value.start);
+                    } else {
+                        emit("if (__match_val_%d == %.*s) { ",
+                             match_id,
+                             pat->literal.value.length,
+                             pat->literal.value.start);
+                    }
                 } else if (pat->type == PATTERN_IDENT) {
                     // Check if this looks like an enum variant (contains underscore)
                     bool is_enum_variant = false;
@@ -1751,6 +1975,15 @@ void codegen_expr(Expr* expr) {
                              pat->ident.name.start,
                              match_id);
                     }
+                } else if (pat->type == PATTERN_OPTION && !pat->option.is_some) {
+                    // Simple enum variant without data: Color::Red
+                    // Generate: EnumName_VariantName
+                    emit("if (__match_val_%d == %.*s_%.*s) { ",
+                         match_id,
+                         pat->option.enum_name.length,
+                         pat->option.enum_name.start,
+                         pat->option.variant_name.length,
+                         pat->option.variant_name.start);
                 } else if (pat->type == PATTERN_OPTION && pat->option.is_some) {
                     // Enum variant with data: Some(x), Ok(x), etc.
                     // Check tag matches variant
@@ -1976,12 +2209,46 @@ void codegen_expr(Expr* expr) {
             codegen_expr(expr->range.end);
             emit("}; __range; })");
             break;
+        case EXPR_SPAWN: {
+            // Spawn expression: spawn fn(args) returns a future
+            if (expr->spawn.call && expr->spawn.call->type == EXPR_CALL &&
+                expr->spawn.call->call.callee->type == EXPR_IDENT) {
+                Expr* call = expr->spawn.call;
+                Expr* callee = call->call.callee;
+                char func_name[256];
+                int len = callee->token.length < 255 ? callee->token.length : 255;
+                memcpy(func_name, callee->token.start, len);
+                func_name[len] = '\0';
+                
+                int arg_count = call->call.arg_count;
+                
+                if (arg_count == 0) {
+                    emit("wyn_spawn_async((TaskFuncWithReturn)__spawn_wrapper_%s, NULL)", func_name);
+                } else {
+                    // Create args struct and pass to wrapper
+                    spawn_id_counter++;
+                    int sid = spawn_id_counter;
+                    emit("({ struct __spawn_args_%d { ", sid);
+                    for (int i = 0; i < arg_count; i++) {
+                        emit("int a%d; ", i);
+                    }
+                    emit("} *__sa_%d = malloc(sizeof(struct __spawn_args_%d)); ", sid, sid);
+                    for (int i = 0; i < arg_count; i++) {
+                        emit("__sa_%d->a%d = ", sid, i);
+                        codegen_expr(call->call.args[i]);
+                        emit("; ");
+                    }
+                    emit("wyn_spawn_async((TaskFuncWithReturn)__spawn_wrapper_%s_%d, __sa_%d); })", 
+                         func_name, arg_count, sid);
+                }
+            } else {
+                emit("NULL /* spawn fallback */");
+            }
+            break;
+        }
         case EXPR_LAMBDA: {
             // Lambda function was already emitted in pre-scan
-            // Just emit the function pointer reference
-            // Find which lambda this is by matching the expression
-            // For now, use a simple counter approach
-            static int lambda_ref_counter = 0;
+            // Just emit the function pointer reference using the global counter
             lambda_ref_counter++;
             emit("__lambda_%d", lambda_ref_counter);
             break;
@@ -2038,8 +2305,25 @@ void codegen_expr(Expr* expr) {
             }
             
             if (is_map_assign) {
-                // Map assignment: map["key"] = value -> hashmap_insert_int(map, "key", value)
-                emit("hashmap_insert_int(");
+                // Map assignment: map["key"] = value -> hashmap_insert_*(map, "key", value)
+                // Determine insert function based on value type
+                const char* insert_func = "hashmap_insert_int";
+                if (expr->index_assign.value->type == EXPR_STRING) {
+                    insert_func = "hashmap_insert_string";
+                } else if (expr->index_assign.value->type == EXPR_FLOAT) {
+                    insert_func = "hashmap_insert_float";
+                } else if (expr->index_assign.value->type == EXPR_BOOL) {
+                    insert_func = "hashmap_insert_bool";
+                } else if (expr->index_assign.value->expr_type) {
+                    if (expr->index_assign.value->expr_type->kind == TYPE_STRING) {
+                        insert_func = "hashmap_insert_string";
+                    } else if (expr->index_assign.value->expr_type->kind == TYPE_FLOAT) {
+                        insert_func = "hashmap_insert_float";
+                    } else if (expr->index_assign.value->expr_type->kind == TYPE_BOOL) {
+                        insert_func = "hashmap_insert_bool";
+                    }
+                }
+                emit("%s(", insert_func);
                 codegen_expr(expr->index_assign.object);
                 emit(", ");
                 codegen_expr(expr->index_assign.index);
@@ -2119,6 +2403,7 @@ void codegen_c_header() {
     emit("#include \"io.h\"\n");
     emit("#include \"arc_runtime.h\"\n");
     emit("#include \"spawn.h\"\n");  // Spawn runtime
+    emit("#include \"future.h\"\n");  // Future for spawn_async
     emit("#include \"optional.h\"\n");
     emit("#include \"result.h\"\n");
     emit("#include \"hashmap.h\"\n");
@@ -2141,9 +2426,13 @@ void codegen_c_header() {
     emit("int wyn_get_content_valid(void);\n");
     
     // Compiler function declarations
-    emit("bool wyn_c_init_lexer(const char* source);\n");
+    emit("int wyn_c_init_lexer(const char* source);\n");
     emit("void wyn_c_init_parser();\n");
-    emit("int wyn_c_parse_program();\n");
+    emit("int64_t wyn_c_parse_program();\n");
+    emit("int wyn_c_get_error_count();\n");
+    emit("char* wyn_c_get_error_message(int index);\n");
+    emit("char* wyn_c_ast_to_string(int64_t ast_ptr);\n");
+    emit("void wyn_c_free_ast(int64_t ast_ptr);\n");
     emit("void wyn_c_init_checker();\n");
     emit("void wyn_c_check_program(int ast_ptr);\n");
     emit("bool wyn_c_checker_had_error();\n");
@@ -2539,6 +2828,13 @@ void codegen_c_header() {
     emit("        }\n");
     emit("    }\n");
     emit("    arr->count = write_idx;\n");
+    emit("}\n");
+    emit("void array_remove_at(WynArray* arr, int index) {\n");
+    emit("    if (index < 0 || index >= arr->count) return;\n");
+    emit("    for (int i = index; i < arr->count - 1; i++) {\n");
+    emit("        arr->data[i] = arr->data[i+1];\n");
+    emit("    }\n");
+    emit("    arr->count--;\n");
     emit("}\n");
     
     emit("void array_insert(WynArray* arr, int index, int value) {\n");
@@ -3017,6 +3313,7 @@ void codegen_c_header() {
     emit("int int_is_positive(int n) { return n > 0; }\n");
     emit("int int_is_negative(int n) { return n < 0; }\n");
     emit("int int_is_zero(int n) { return n == 0; }\n");
+    emit("int int_sign(int n) { return (n > 0) - (n < 0); }\n");
     emit("char* int_to_binary(int n) {\n");
     emit("    if (n == 0) return \"0\";\n");
     emit("    char* result = malloc(33);\n");
@@ -3043,6 +3340,7 @@ void codegen_c_header() {
     // Phase 3 Task 3.2: Float methods (conversion methods already exist for interpolation)
     emit("int float_to_int(double f) { return (int)f; }\n");
     emit("double float_round(double f) { return round(f); }\n");
+    emit("double float_round_to(double f, int decimals) { double m = pow(10, decimals); return round(f * m) / m; }\n");
     emit("double float_floor(double f) { return floor(f); }\n");
     emit("double float_ceil(double f) { return ceil(f); }\n");
     emit("double float_abs(double f) { return fabs(f); }\n");
@@ -3060,10 +3358,16 @@ void codegen_c_header() {
     emit("int float_is_finite(double f) { return isfinite(f); }\n");
     emit("int float_is_positive(double f) { return f > 0.0; }\n");
     emit("int float_is_negative(double f) { return f < 0.0; }\n");
+    emit("double float_sign(double f) { return (f > 0.0) - (f < 0.0); }\n");
     emit("double float_sin(double f) { return sin(f); }\n");
     emit("double float_cos(double f) { return cos(f); }\n");
     emit("double float_tan(double f) { return tan(f); }\n");
+    emit("double float_asin(double f) { return asin(f); }\n");
+    emit("double float_acos(double f) { return acos(f); }\n");
+    emit("double float_atan(double f) { return atan(f); }\n");
     emit("double float_log(double f) { return log(f); }\n");
+    emit("double float_log10(double f) { return log10(f); }\n");
+    emit("double float_log2(double f) { return log2(f); }\n");
     emit("double float_exp(double f) { return exp(f); }\n\n");
     
     // Map utility functions
@@ -3505,6 +3809,20 @@ void codegen_c_header() {
     emit("float input_float() { float x = 0.0f; if (scanf(\"%%f\", &x) != 1) { while(getchar() != '\\n') { /* clear input buffer */ } return 0.0f; } return x; }\n");
     emit("char* input_line() { static char buffer[1024]; if (fgets(buffer, sizeof(buffer), stdin)) { size_t len = strlen(buffer); if (len > 0 && buffer[len-1] == '\\n') buffer[len-1] = '\\0'; return buffer; } return \"\"; }\n");
     emit("void printf_wyn(const char* format, ...) { va_list args; va_start(args, format); vprintf(format, args); va_end(args); }\n");
+    emit("char* string_format(const char* format, ...) {\n");
+    emit("    va_list args; va_start(args, format);\n");
+    emit("    // First pass: calculate length\n");
+    emit("    char temp[4096]; int pos = 0;\n");
+    emit("    for (int i = 0; format[i] && pos < 4000; i++) {\n");
+    emit("        if (format[i] == '{' && format[i+1] == '}') {\n");
+    emit("            const char* s = va_arg(args, const char*);\n");
+    emit("            pos += snprintf(temp + pos, 4000 - pos, \"%%s\", s ? s : \"(null)\");\n");
+    emit("            i++;\n");
+    emit("        } else { temp[pos++] = format[i]; }\n");
+    emit("    }\n");
+    emit("    temp[pos] = '\\0'; va_end(args);\n");
+    emit("    return strdup(temp);\n");
+    emit("}\n");
     emit("double sin_approx(double x) { return x - (x*x*x)/6 + (x*x*x*x*x)/120; }\n");
     emit("double cos_approx(double x) { return 1 - (x*x)/2 + (x*x*x*x)/24; }\n");
     emit("double pi_const() { return 3.14159265359; }\n");
@@ -3518,6 +3836,21 @@ void codegen_c_header() {
     emit("int str_starts_with(const char* s, const char* prefix) { return strncmp(s, prefix, strlen(prefix)) == 0; }\n");
     emit("int str_ends_with(const char* s, const char* suffix) { int sl = strlen(s); int pl = strlen(suffix); return sl >= pl && strcmp(s + sl - pl, suffix) == 0; }\n");
     emit("char* str_trim(const char* s) { while(*s == ' ') s++; int len = strlen(s); while(len > 0 && s[len-1] == ' ') len--; char* r = malloc(len + 1); strncpy(r, s, len); r[len] = 0; return r; }\n");
+    
+    // File I/O functions
+    emit("const char* Fs_read_file(const char* path) {\n");
+    emit("    FILE* f = fopen(path, \"r\");\n");
+    emit("    if (!f) return \"\";\n");
+    emit("    fseek(f, 0, SEEK_END);\n");
+    emit("    long size = ftell(f);\n");
+    emit("    fseek(f, 0, SEEK_SET);\n");
+    emit("    char* buffer = malloc(size + 1);\n");
+    emit("    if (!buffer) { fclose(f); return \"\"; }\n");
+    emit("    size_t read = fread(buffer, 1, size, f);\n");
+    emit("    buffer[read] = '\\0';\n");
+    emit("    fclose(f);\n");
+    emit("    return buffer;\n");
+    emit("}\n");
     emit("char* str_repeat(const char* s, int count) { int len = strlen(s); char* r = malloc(len * count + 1); r[0] = 0; for(int i = 0; i < count; i++) strcat(r, s); return r; }\n");
     emit("char* str_reverse(const char* s) { int len = strlen(s); char* r = malloc(len + 1); for(int i = 0; i < len; i++) r[i] = s[len-1-i]; r[len] = 0; return r; }\n");
     
@@ -4410,6 +4743,13 @@ void codegen_stmt(Stmt* stmt) {
                     c_type = "double";
                 } else if (stmt->var.init->type == EXPR_BOOL) {
                     c_type = "bool";
+                } else if (stmt->var.init->type == EXPR_UNARY) {
+                    // Handle unary expressions like -3.5
+                    if (stmt->var.init->unary.operand->type == EXPR_FLOAT) {
+                        c_type = "double";
+                    } else if (stmt->var.init->unary.operand->type == EXPR_INT) {
+                        c_type = "int";
+                    }
                 } else if (stmt->var.init->type == EXPR_ARRAY) {
                     c_type = "WynArray";
                     needs_arc_management = false;  // Array expression already returns proper value
@@ -4439,8 +4779,13 @@ void codegen_stmt(Stmt* stmt) {
                                 c_type = "WynArray";
                                 break;
                             case TYPE_MAP:
-                                c_type = "WynMap";
-                                needs_arc_management = true;
+                                c_type = "WynHashMap*";
+                                break;
+                            case TYPE_SET:
+                                c_type = "WynHashSet*";
+                                break;
+                            case TYPE_JSON:
+                                c_type = "WynJson*";
                                 break;
                             default:
                                 c_type = "int";
@@ -4470,6 +4815,9 @@ void codegen_stmt(Stmt* stmt) {
                                     break;
                                 case TYPE_MAP:
                                     receiver_type = "map";
+                                    break;
+                                case TYPE_SET:
+                                    receiver_type = "set";
                                     break;
                                 default:
                                     receiver_type = "int";
@@ -4517,9 +4865,34 @@ void codegen_stmt(Stmt* stmt) {
                                 needs_arc_management = true;
                             } else if (strcmp(return_type, "void") == 0) {
                                 c_type = "void";
+                            } else if (strcmp(return_type, "json") == 0) {
+                                c_type = "WynJson*";
                             }
                         }
                     }
+                } else if (stmt->var.init->type == EXPR_MATCH) {
+                    // Infer type from match expression's first arm
+                    if (stmt->var.init->match.arm_count > 0 && stmt->var.init->match.arms[0].result) {
+                        Expr* first_result = stmt->var.init->match.arms[0].result;
+                        if (first_result->type == EXPR_STRING) {
+                            c_type = "const char*";
+                            is_already_const = true;
+                        } else if (first_result->type == EXPR_FLOAT) {
+                            c_type = "double";
+                        } else if (first_result->type == EXPR_BOOL) {
+                            c_type = "bool";
+                        } else if (first_result->expr_type) {
+                            if (first_result->expr_type->kind == TYPE_STRING) {
+                                c_type = "const char*";
+                                is_already_const = true;
+                            } else if (first_result->expr_type->kind == TYPE_FLOAT) {
+                                c_type = "double";
+                            }
+                        }
+                    }
+                } else if (stmt->var.init->type == EXPR_SPAWN) {
+                    // Spawn returns a future
+                    c_type = "Future*";
                 } else if (stmt->var.init->type == EXPR_STRUCT_INIT) {
                     // Use the struct type name (monomorphic if available)
                     static char struct_type[128];
@@ -4585,6 +4958,16 @@ void codegen_stmt(Stmt* stmt) {
                             case TYPE_BOOL:
                                 c_type = "bool";
                                 break;
+                            case TYPE_STRUCT: {
+                                // Use the struct type name
+                                static char struct_type_buf[256];
+                                int len = stmt->var.init->expr_type->struct_type.name.length < 255 ? 
+                                         stmt->var.init->expr_type->struct_type.name.length : 255;
+                                memcpy(struct_type_buf, stmt->var.init->expr_type->struct_type.name.start, len);
+                                struct_type_buf[len] = '\0';
+                                c_type = struct_type_buf;
+                                break;
+                            }
                             default:
                                 c_type = "int";
                         }
@@ -4629,8 +5012,25 @@ void codegen_stmt(Stmt* stmt) {
                     // Tuple type - use __auto_type (GCC/Clang extension)
                     c_type = "__auto_type";
                 } else if (stmt->var.init->type == EXPR_CALL) {
-                    // Function call - use __auto_type to infer return type
-                    c_type = "__auto_type";
+                    // Function call - check expr_type first, then use __auto_type
+                    if (stmt->var.init->expr_type) {
+                        switch (stmt->var.init->expr_type->kind) {
+                            case TYPE_MAP:
+                                c_type = "WynHashMap*";
+                                break;
+                            case TYPE_SET:
+                                c_type = "WynHashSet*";
+                                break;
+                            case TYPE_STRING:
+                                c_type = "const char*";
+                                is_already_const = true;
+                                break;
+                            default:
+                                c_type = "__auto_type";
+                        }
+                    } else {
+                        c_type = "__auto_type";
+                    }
                 } else if (stmt->var.init->type == EXPR_BINARY) {
                     // Binary expression - check if it's string concatenation or arithmetic
                     if (stmt->var.init->binary.op.type == TOKEN_PLUS) {
@@ -4650,6 +5050,67 @@ void codegen_stmt(Stmt* stmt) {
                     } else {
                         // Other binary operations (-, *, /, ==, etc.) - use __auto_type
                         c_type = "__auto_type";
+                    }
+                } else if (stmt->var.init->type == EXPR_IF_EXPR) {
+                    // If expression - use expr_type from checker
+                    if (stmt->var.init->expr_type) {
+                        switch (stmt->var.init->expr_type->kind) {
+                            case TYPE_STRING:
+                                c_type = "const char*";
+                                is_already_const = true;
+                                break;
+                            case TYPE_INT:
+                                c_type = "int";
+                                break;
+                            case TYPE_FLOAT:
+                                c_type = "double";
+                                break;
+                            case TYPE_BOOL:
+                                c_type = "bool";
+                                break;
+                            default:
+                                c_type = "__auto_type";
+                        }
+                    }
+                } else if (stmt->var.init->type == EXPR_IDENT || stmt->var.init->type == EXPR_FIELD_ACCESS) {
+                    // Variable reference or field access - use expr_type from checker
+                    if (stmt->var.init->expr_type) {
+                        switch (stmt->var.init->expr_type->kind) {
+                            case TYPE_STRING:
+                                c_type = "const char*";
+                                is_already_const = true;
+                                break;
+                            case TYPE_INT:
+                                c_type = "int";
+                                break;
+                            case TYPE_FLOAT:
+                                c_type = "double";
+                                break;
+                            case TYPE_BOOL:
+                                c_type = "bool";
+                                break;
+                            case TYPE_STRUCT: {
+                                // Use struct type name
+                                static char struct_type_buf[128];
+                                Token type_name = stmt->var.init->expr_type->struct_type.name;
+                                snprintf(struct_type_buf, 128, "%.*s", type_name.length, type_name.start);
+                                c_type = struct_type_buf;
+                                break;
+                            }
+                            case TYPE_ENUM: {
+                                // Use enum type name
+                                static char enum_type_buf[128];
+                                Token type_name = stmt->var.init->expr_type->name;
+                                snprintf(enum_type_buf, 128, "%.*s", type_name.length, type_name.start);
+                                c_type = enum_type_buf;
+                                break;
+                            }
+                            case TYPE_ARRAY:
+                                c_type = "WynArray";
+                                break;
+                            default:
+                                c_type = "int";
+                        }
                     }
                 }
                 // ... rest of type determination logic
@@ -5548,17 +6009,50 @@ void codegen_stmt(Stmt* stmt) {
                 // Use a generic approach - check element type at runtime
                 emit("        WynValue __elem = __iter_array.data[__i];\n");
                 emit("        ");
-                // Determine variable type based on heuristics
-                const char* var_name = stmt->for_stmt.loop_var.start;
-                int var_len = stmt->for_stmt.loop_var.length;
-                if ((var_len >= 4 && strncmp(var_name, "name", 4) == 0) ||
-                    (var_len >= 3 && strncmp(var_name, "str", 3) == 0) ||
-                    (var_len >= 4 && strncmp(var_name, "text", 4) == 0)) {
-                    // Likely a string variable
+                
+                // Determine variable type based on array expression type or heuristics
+                bool is_string_array = false;
+                
+                // Check if array expression has type info
+                if (stmt->for_stmt.array_expr->expr_type && 
+                    stmt->for_stmt.array_expr->expr_type->kind == TYPE_ARRAY &&
+                    stmt->for_stmt.array_expr->expr_type->array_type.element_type &&
+                    stmt->for_stmt.array_expr->expr_type->array_type.element_type->kind == TYPE_STRING) {
+                    is_string_array = true;
+                }
+                
+                // Check if it's a method call that returns string array
+                if (!is_string_array && stmt->for_stmt.array_expr->type == EXPR_METHOD_CALL) {
+                    Token method = stmt->for_stmt.array_expr->method_call.method;
+                    if ((method.length == 5 && memcmp(method.start, "split", 5) == 0) ||
+                        (method.length == 5 && memcmp(method.start, "lines", 5) == 0) ||
+                        (method.length == 5 && memcmp(method.start, "words", 5) == 0) ||
+                        (method.length == 5 && memcmp(method.start, "chars", 5) == 0)) {
+                        is_string_array = true;
+                    }
+                }
+                
+                // Fallback: check variable name heuristics
+                if (!is_string_array) {
+                    const char* var_name = stmt->for_stmt.loop_var.start;
+                    int var_len = stmt->for_stmt.loop_var.length;
+                    if ((var_len >= 4 && strncmp(var_name, "name", 4) == 0) ||
+                        (var_len >= 3 && strncmp(var_name, "str", 3) == 0) ||
+                        (var_len >= 4 && strncmp(var_name, "text", 4) == 0) ||
+                        (var_len >= 4 && strncmp(var_name, "line", 4) == 0) ||
+                        (var_len >= 4 && strncmp(var_name, "word", 4) == 0) ||
+                        (var_len >= 4 && strncmp(var_name, "part", 4) == 0) ||
+                        (var_len >= 4 && strncmp(var_name, "char", 4) == 0) ||
+                        (var_len == 1 && var_name[0] == 'c') ||
+                        (var_len == 1 && var_name[0] == 's')) {
+                        is_string_array = true;
+                    }
+                }
+                
+                if (is_string_array) {
                     emit("const char* %.*s = (__elem.type == WYN_TYPE_STRING) ? __elem.data.string_val : \"\";\n",
                          stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
                 } else {
-                    // Default to int
                     emit("int %.*s = (__elem.type == WYN_TYPE_INT) ? __elem.data.int_val : 0;\n",
                          stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
                 }
@@ -5993,16 +6487,19 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                 memcpy(func_name, callee->token.start, len);
                 func_name[len] = '\0';
                 
-                // Add to spawn wrappers (avoid duplicates)
+                // Add to spawn wrappers (track by func_name + arg_count)
+                int arg_count = stmt->spawn.call->call.arg_count;
                 bool already_added = false;
                 for (int i = 0; i < spawn_wrapper_count; i++) {
-                    if (strcmp(spawn_wrappers[i].func_name, func_name) == 0) {
+                    if (strcmp(spawn_wrappers[i].func_name, func_name) == 0 &&
+                        spawn_wrappers[i].arg_count == arg_count) {
                         already_added = true;
                         break;
                     }
                 }
                 if (!already_added && spawn_wrapper_count < 256) {
                     strcpy(spawn_wrappers[spawn_wrapper_count].func_name, func_name);
+                    spawn_wrappers[spawn_wrapper_count].arg_count = arg_count;
                     spawn_wrapper_count++;
                 }
             }
@@ -6010,6 +6507,96 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
         default:
             break;
     }
+}
+
+// Helper to generate lambda body expression to string
+static int lambda_expr_to_string(Expr* expr, char* buf, int max_len) {
+    if (!expr) return 0;
+    int pos = 0;
+    
+    switch (expr->type) {
+        case EXPR_INT:
+        case EXPR_IDENT:
+            pos += snprintf(buf + pos, max_len - pos, "%.*s", expr->token.length, expr->token.start);
+            break;
+        case EXPR_BINARY: {
+            pos += snprintf(buf + pos, max_len - pos, "(");
+            pos += lambda_expr_to_string(expr->binary.left, buf + pos, max_len - pos);
+            const char* op = " ? ";
+            switch (expr->binary.op.type) {
+                case TOKEN_PLUS: op = " + "; break;
+                case TOKEN_MINUS: op = " - "; break;
+                case TOKEN_STAR: op = " * "; break;
+                case TOKEN_SLASH: op = " / "; break;
+                case TOKEN_PERCENT: op = " % "; break;
+                case TOKEN_EQEQ: op = " == "; break;
+                case TOKEN_BANGEQ: op = " != "; break;
+                case TOKEN_LT: op = " < "; break;
+                case TOKEN_GT: op = " > "; break;
+                case TOKEN_LTEQ: op = " <= "; break;
+                case TOKEN_GTEQ: op = " >= "; break;
+                case TOKEN_AND: case TOKEN_AMPAMP: op = " && "; break;
+                case TOKEN_OR: case TOKEN_PIPEPIPE: op = " || "; break;
+                default: break;
+            }
+            pos += snprintf(buf + pos, max_len - pos, "%s", op);
+            pos += lambda_expr_to_string(expr->binary.right, buf + pos, max_len - pos);
+            pos += snprintf(buf + pos, max_len - pos, ")");
+            break;
+        }
+        case EXPR_UNARY:
+            if (expr->unary.op.type == TOKEN_BANG || expr->unary.op.type == TOKEN_NOT) {
+                pos += snprintf(buf + pos, max_len - pos, "!");
+            } else if (expr->unary.op.type == TOKEN_MINUS) {
+                pos += snprintf(buf + pos, max_len - pos, "-");
+            }
+            pos += lambda_expr_to_string(expr->unary.operand, buf + pos, max_len - pos);
+            break;
+        case EXPR_IF_EXPR:
+            pos += snprintf(buf + pos, max_len - pos, "(");
+            pos += lambda_expr_to_string(expr->if_expr.condition, buf + pos, max_len - pos);
+            pos += snprintf(buf + pos, max_len - pos, " ? ");
+            if (expr->if_expr.then_expr) {
+                pos += lambda_expr_to_string(expr->if_expr.then_expr, buf + pos, max_len - pos);
+            } else {
+                pos += snprintf(buf + pos, max_len - pos, "0");
+            }
+            pos += snprintf(buf + pos, max_len - pos, " : ");
+            if (expr->if_expr.else_expr) {
+                pos += lambda_expr_to_string(expr->if_expr.else_expr, buf + pos, max_len - pos);
+            } else {
+                pos += snprintf(buf + pos, max_len - pos, "0");
+            }
+            pos += snprintf(buf + pos, max_len - pos, ")");
+            break;
+        case EXPR_METHOD_CALL: {
+            // Generate method call: obj.method(args) -> c_function(obj, args)
+            Token method = expr->method_call.method;
+            char method_name[64];
+            snprintf(method_name, sizeof(method_name), "%.*s", method.length, method.start);
+            
+            // Map common string methods
+            const char* c_func = NULL;
+            if (strcmp(method_name, "upper") == 0) c_func = "string_upper";
+            else if (strcmp(method_name, "lower") == 0) c_func = "string_lower";
+            else if (strcmp(method_name, "trim") == 0) c_func = "string_trim";
+            else if (strcmp(method_name, "len") == 0) c_func = "string_len";
+            else if (strcmp(method_name, "reverse") == 0) c_func = "string_reverse";
+            
+            if (c_func) {
+                pos += snprintf(buf + pos, max_len - pos, "%s(", c_func);
+                pos += lambda_expr_to_string(expr->method_call.object, buf + pos, max_len - pos);
+                pos += snprintf(buf + pos, max_len - pos, ")");
+            } else {
+                pos += snprintf(buf + pos, max_len - pos, "0");
+            }
+            break;
+        }
+        default:
+            pos += snprintf(buf + pos, max_len - pos, "0");
+            break;
+    }
+    return pos;
 }
 
 static void scan_expr_for_lambdas(Expr* expr) {
@@ -6095,45 +6682,8 @@ static void scan_expr_for_lambdas(Expr* expr) {
             }
             pos += snprintf(func_code + pos, 8192 - pos, ") {\n    return ");
             
-            // For the body, we'll generate a simple expression
-            // This is a simplified version - just handle basic cases
-            if (expr->lambda.body->type == EXPR_BINARY) {
-                Expr* bin = expr->lambda.body;
-                // Left operand
-                if (bin->binary.left->type == EXPR_IDENT) {
-                    pos += snprintf(func_code + pos, 8192 - pos, "%.*s", 
-                                   bin->binary.left->token.length, bin->binary.left->token.start);
-                } else if (bin->binary.left->type == EXPR_INT) {
-                    pos += snprintf(func_code + pos, 8192 - pos, "%.*s", 
-                                   bin->binary.left->token.length, bin->binary.left->token.start);
-                }
-                // Operator
-                if (bin->binary.op.type == TOKEN_PLUS) {
-                    pos += snprintf(func_code + pos, 8192 - pos, " + ");
-                } else if (bin->binary.op.type == TOKEN_STAR) {
-                    pos += snprintf(func_code + pos, 8192 - pos, " * ");
-                } else if (bin->binary.op.type == TOKEN_MINUS) {
-                    pos += snprintf(func_code + pos, 8192 - pos, " - ");
-                } else if (bin->binary.op.type == TOKEN_SLASH) {
-                    pos += snprintf(func_code + pos, 8192 - pos, " / ");
-                }
-                // Right operand
-                if (bin->binary.right->type == EXPR_IDENT) {
-                    pos += snprintf(func_code + pos, 8192 - pos, "%.*s", 
-                                   bin->binary.right->token.length, bin->binary.right->token.start);
-                } else if (bin->binary.right->type == EXPR_INT) {
-                    pos += snprintf(func_code + pos, 8192 - pos, "%.*s", 
-                                   bin->binary.right->token.length, bin->binary.right->token.start);
-                }
-            } else if (expr->lambda.body->type == EXPR_IDENT) {
-                // Simple identifier
-                pos += snprintf(func_code + pos, 8192 - pos, "%.*s", 
-                               expr->lambda.body->token.length, expr->lambda.body->token.start);
-            } else if (expr->lambda.body->type == EXPR_INT) {
-                // Simple integer
-                pos += snprintf(func_code + pos, 8192 - pos, "%.*s", 
-                               expr->lambda.body->token.length, expr->lambda.body->token.start);
-            }
+            // Generate lambda body using recursive helper
+            pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
             pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
             
             if (lambda_count < 256) {
@@ -6157,6 +6707,39 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 scan_expr_for_lambdas(expr->call.args[i]);
             }
             break;
+        case EXPR_METHOD_CALL:
+            scan_expr_for_lambdas(expr->method_call.object);
+            for (int i = 0; i < expr->method_call.arg_count; i++) {
+                scan_expr_for_lambdas(expr->method_call.args[i]);
+            }
+            break;
+        case EXPR_SPAWN:
+            // Collect spawn wrapper for this spawn expression
+            if (expr->spawn.call && expr->spawn.call->type == EXPR_CALL &&
+                expr->spawn.call->call.callee->type == EXPR_IDENT) {
+                Expr* callee = expr->spawn.call->call.callee;
+                char func_name[256];
+                int len = callee->token.length < 255 ? callee->token.length : 255;
+                memcpy(func_name, callee->token.start, len);
+                func_name[len] = '\0';
+                
+                // Add to spawn wrappers (track by func_name + arg_count)
+                int arg_count = expr->spawn.call->call.arg_count;
+                bool already_added = false;
+                for (int i = 0; i < spawn_wrapper_count; i++) {
+                    if (strcmp(spawn_wrappers[i].func_name, func_name) == 0 &&
+                        spawn_wrappers[i].arg_count == arg_count) {
+                        already_added = true;
+                        break;
+                    }
+                }
+                if (!already_added && spawn_wrapper_count < 256) {
+                    strcpy(spawn_wrappers[spawn_wrapper_count].func_name, func_name);
+                    spawn_wrappers[spawn_wrapper_count].arg_count = arg_count;
+                    spawn_wrapper_count++;
+                }
+            }
+            break;
         default:
             break;
     }
@@ -6176,6 +6759,7 @@ void codegen_program(Program* prog) {
     // Reset lambda collection
     lambda_count = 0;
     lambda_id_counter = 0;
+    lambda_ref_counter = 0;
     
     // Reset spawn wrapper collection
     spawn_wrapper_count = 0;
@@ -6579,9 +7163,29 @@ void codegen_program(Program* prog) {
     if (spawn_wrapper_count > 0) {
         emit("// Spawn wrapper functions\n");
         for (int i = 0; i < spawn_wrapper_count; i++) {
-            emit("void __spawn_wrapper_%s(void* arg) {\n", spawn_wrappers[i].func_name);
-            emit("    %s();\n", spawn_wrappers[i].func_name);
-            emit("}\n\n");
+            int ac = spawn_wrappers[i].arg_count;
+            if (ac == 0) {
+                emit("void* __spawn_wrapper_%s(void* arg) {\n", spawn_wrappers[i].func_name);
+                emit("    int* result = malloc(sizeof(int));\n");
+                emit("    *result = %s();\n", spawn_wrappers[i].func_name);
+                emit("    return result;\n");
+                emit("}\n\n");
+            } else {
+                emit("void* __spawn_wrapper_%s_%d(void* arg) {\n", spawn_wrappers[i].func_name, ac);
+                emit("    struct { ");
+                for (int j = 0; j < ac; j++) emit("int a%d; ", j);
+                emit("} *args = arg;\n");
+                emit("    int* result = malloc(sizeof(int));\n");
+                emit("    *result = %s(", spawn_wrappers[i].func_name);
+                for (int j = 0; j < ac; j++) {
+                    if (j > 0) emit(", ");
+                    emit("args->a%d", j);
+                }
+                emit(");\n");
+                emit("    free(args);\n");
+                emit("    return result;\n");
+                emit("}\n\n");
+            }
         }
     }
     
@@ -6748,9 +7352,17 @@ void codegen_match_statement(Stmt* stmt) {
                 emit("1"); // Always true for wildcard
             } else if (match_case->pattern->type == PATTERN_OPTION) {
                 if (match_case->pattern->option.variant_name.length > 0) {
-                    // Enum variant match: check tag
-                    if (match_case->pattern->option.enum_name.length > 0) {
-                        // Full enum name available: Result::Ok
+                    // Check if this is a simple enum (no data) or tagged union
+                    if (!match_case->pattern->option.is_some && 
+                        match_case->pattern->option.enum_name.length > 0) {
+                        // Simple enum variant: Color::Red -> Color_Red
+                        emit("__match_val == %.*s_%.*s",
+                             match_case->pattern->option.enum_name.length,
+                             match_case->pattern->option.enum_name.start,
+                             match_case->pattern->option.variant_name.length,
+                             match_case->pattern->option.variant_name.start);
+                    } else if (match_case->pattern->option.enum_name.length > 0) {
+                        // Tagged union with full name: Result::Ok(x)
                         emit("__match_val.tag == %.*s_%.*s_TAG",
                              match_case->pattern->option.enum_name.length,
                              match_case->pattern->option.enum_name.start,

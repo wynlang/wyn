@@ -73,8 +73,9 @@ int cmd_fmt(const char* file, int argc, char** argv) {
 }
 
 int cmd_repl(int argc, char** argv) {
+    (void)argc; (void)argv;
     // Read version from VERSION file
-    char version[32] = "1.2.1";
+    char version[32] = "1.6.0";
     FILE* vf = fopen("VERSION", "r");
     if (!vf) vf = fopen("../VERSION", "r");
     if (vf) {
@@ -85,57 +86,82 @@ int cmd_repl(int argc, char** argv) {
         fclose(vf);
     }
     printf("Wyn REPL v%s\n", version);
-    printf("Type expressions to evaluate, or 'exit' to quit\n\n");
+    printf("Type expressions or statements. 'exit' to quit.\n\n");
     
     char line[1024];
     int line_num = 1;
+    
+    // Get wyn executable path
+    char exe_path[2048];
+    #ifdef __APPLE__
+    uint32_t size = sizeof(exe_path);
+    if (_NSGetExecutablePath(exe_path, &size) != 0) {
+        strcpy(exe_path, "wyn");
+    }
+    #elif defined(__linux__)
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len == -1) strcpy(exe_path, "wyn");
+    else exe_path[len] = '\0';
+    #else
+    strcpy(exe_path, "wyn");
+    #endif
     
     while (1) {
         printf("wyn[%d]> ", line_num);
         fflush(stdout);
         
-        if (!fgets(line, sizeof(line), stdin)) {
-            break;
-        }
-        
-        // Remove newline
+        if (!fgets(line, sizeof(line), stdin)) break;
         line[strcspn(line, "\n")] = 0;
         
-        // Check for exit
         if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) {
             printf("Goodbye!\n");
             break;
         }
+        if (strlen(line) == 0) continue;
         
-        // Skip empty lines
-        if (strlen(line) == 0) {
-            continue;
-        }
-        
-        // Create a temporary file with the expression wrapped in main
         FILE* tmp = fopen("/tmp/wyn_repl.wyn", "w");
         if (!tmp) {
             fprintf(stderr, "Error: Cannot create temp file\n");
             continue;
         }
         
+        // Check if it's a statement (contains print, var, if, etc.) or expression
+        int is_statement = strstr(line, "print") || strstr(line, "var ") || 
+                          strstr(line, "if ") || strstr(line, "while ") ||
+                          strstr(line, "for ") || strchr(line, '=');
+        
         fprintf(tmp, "fn main() -> int {\n");
-        fprintf(tmp, "    return %s;\n", line);
+        if (is_statement) {
+            fprintf(tmp, "    %s\n", line);
+            fprintf(tmp, "    return 0\n");
+        } else {
+            fprintf(tmp, "    print(%s)\n", line);
+            fprintf(tmp, "    return 0\n");
+        }
         fprintf(tmp, "}\n");
         fclose(tmp);
         
-        // Compile and run
-        if (system("cd /tmp && wyn /tmp/wyn_repl.wyn > /dev/null 2>&1") == 0) {
-            int result = system("/tmp/wyn_repl.wyn.out 2>/dev/null");
-            int exit_code = WEXITSTATUS(result);
-            printf("=> %d\n", exit_code);
-        } else {
-            printf("Error: Invalid expression\n");
+        char cmd[4096];
+        snprintf(cmd, sizeof(cmd), "%s /tmp/wyn_repl.wyn 2>&1", exe_path);
+        FILE* compile = popen(cmd, "r");
+        if (compile) {
+            char output[4096] = {0};
+            fread(output, 1, sizeof(output)-1, compile);
+            int status = pclose(compile);
+            if (status == 0 && strstr(output, "Compiled successfully")) {
+                system("/tmp/wyn_repl.wyn.out 2>&1");
+            } else {
+                // Show error without "Compiled successfully" line
+                char* err = output;
+                if (strncmp(err, "Compiled", 8) != 0) {
+                    printf("%s", err);
+                } else {
+                    printf("Error: Invalid expression\n");
+                }
+            }
         }
-        
         line_num++;
     }
-    
     return 0;
 }
 
@@ -566,17 +592,20 @@ int cmd_watch(const char* file, int argc, char** argv) {
     #endif
     
     printf("Watching %s for changes (Ctrl+C to stop)...\n", file);
+    fflush(stdout);
     
     // Initial build
     printf("\n[%s] Building...\n", file);
+    fflush(stdout);
     char cmd[4096];
-    snprintf(cmd, sizeof(cmd), "%s run %s 2>&1", exe_path, file);
+    snprintf(cmd, sizeof(cmd), "%s %s 2>&1", exe_path, file);
     int result = system(cmd);
     if (result == 0) {
         printf("[%s] ✓ Build successful\n", file);
     } else {
         printf("[%s] ✗ Build failed\n", file);
     }
+    fflush(stdout);
     
     // Watch for changes
     struct stat last_stat;

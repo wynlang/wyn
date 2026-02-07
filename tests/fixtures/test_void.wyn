@@ -1,8 +1,0 @@
-fn do_something() {
-    print("test\n")
-}
-
-fn main() -> int {
-    do_something()
-    return 0
-}

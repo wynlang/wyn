@@ -922,6 +922,9 @@ LLVMValueRef codegen_function_call(CallExpr* expr, LLVMCodegenContext* ctx) {
         } else if (strncmp(func_name, "Time::", 6) == 0) {
             snprintf(runtime_name_buf, sizeof(runtime_name_buf), "wyn_time_%s", lookup_name);
             lookup_name = runtime_name_buf;
+        } else if (strncmp(func_name, "C_Parser::", 10) == 0) {
+            snprintf(runtime_name_buf, sizeof(runtime_name_buf), "wyn_c_%s", lookup_name);
+            lookup_name = runtime_name_buf;
         }
     }
     
