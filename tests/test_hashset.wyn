@@ -1,0 +1,66 @@
+// Test: HashSet operations
+
+fn test_hashset_new() -> int {
+    var set = HashSet::new()
+    print("PASS: HashSet::new\n")
+    return 0
+}
+
+fn test_hashset_add() -> int {
+    var set = HashSet::new()
+    set.add("item1")
+    var has = set.contains("item1")
+    if has == 1 {
+        print("PASS: add and contains\n")
+        return 0
+    }
+    print("FAIL: add and contains\n")
+    return 1
+}
+
+fn test_hashset_remove() -> int {
+    var set = HashSet::new()
+    set.add("item1")
+    set.remove("item1")
+    var has = set.contains("item1")
+    if has == 0 {
+        print("PASS: remove\n")
+        return 0
+    }
+    print("FAIL: remove\n")
+    return 1
+}
+
+fn test_hashset_len() -> int {
+    var set = HashSet::new()
+    set.add("item1")
+    set.add("item2")
+    var size = set.len()
+    if size == 2 {
+        print("PASS: len\n")
+        return 0
+    }
+    print("FAIL: len\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== HashSet Tests ===\n")
+    var failures = 0
+    
+    failures = failures + test_hashset_new()
+    failures = failures + test_hashset_add()
+    failures = failures + test_hashset_remove()
+    failures = failures + test_hashset_len()
+    
+    print("\n=== Summary ===\n")
+    if failures == 0 {
+        print("All tests PASSED!\n")
+        return 0
+    }
+    
+    print("FAILED: ")
+    print(failures)
+    print(" tests\n")
+    return 1
+}
