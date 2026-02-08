@@ -3866,6 +3866,7 @@ void codegen_c_header() {
     // Generic print function for backward compatibility with method calls
     emit("#define print(x) _Generic((x), \\\n");
     emit("    int: print_int, \\\n");
+    emit("    float: print_float, \\\n");
     emit("    double: print_float, \\\n");
     emit("    char*: print_str, \\\n");
     emit("    const char*: print_str, \\\n");
