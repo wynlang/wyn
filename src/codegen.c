@@ -1642,8 +1642,8 @@ void codegen_expr(Expr* expr) {
             }
             
             if (is_map_index) {
-                // Map indexing: map["key"] -> hashmap_get_int(map, "key")
-                emit("hashmap_get_int(");
+                // Map indexing: map["key"] -> hashmap_get_string(map, "key")
+                emit("hashmap_get_string(");
                 codegen_expr(expr->index.array);
                 emit(", ");
                 codegen_expr(expr->index.index);
