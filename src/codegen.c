@@ -2960,6 +2960,8 @@ void codegen_c_header() {
     emit("    for (int i = 0; i < arr.count; i++) {\n");
     emit("        if (arr.data[i].type == WYN_TYPE_STRING) {\n");
     emit("            total_len += strlen(arr.data[i].data.string_val);\n");
+    emit("        } else if (arr.data[i].type == WYN_TYPE_INT) {\n");
+    emit("            total_len += 12;\n");
     emit("        }\n");
     emit("        if (i < arr.count - 1) total_len += sep_len;\n");
     emit("    }\n");
@@ -2968,6 +2970,9 @@ void codegen_c_header() {
     emit("    for (int i = 0; i < arr.count; i++) {\n");
     emit("        if (arr.data[i].type == WYN_TYPE_STRING) {\n");
     emit("            strcat(result, arr.data[i].data.string_val);\n");
+    emit("        } else if (arr.data[i].type == WYN_TYPE_INT) {\n");
+    emit("            char buf[16]; sprintf(buf, \"%%d\", arr.data[i].data.int_val);\n");
+    emit("            strcat(result, buf);\n");
     emit("        }\n");
     emit("        if (i < arr.count - 1) strcat(result, sep);\n");
     emit("    }\n");
