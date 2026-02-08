@@ -6078,19 +6078,25 @@ void codegen_stmt(Stmt* stmt) {
                 emit("        WynValue __elem = __iter_array.data[__i];\n");
                 emit("        ");
                 
-                // Determine variable type based on array expression type or heuristics
+                // Determine variable type based on array expression type
                 bool is_string_array = false;
+                bool is_struct_array = false;
+                Type* elem_type = NULL;
                 
                 // Check if array expression has type info
                 if (stmt->for_stmt.array_expr->expr_type && 
                     stmt->for_stmt.array_expr->expr_type->kind == TYPE_ARRAY &&
-                    stmt->for_stmt.array_expr->expr_type->array_type.element_type &&
-                    stmt->for_stmt.array_expr->expr_type->array_type.element_type->kind == TYPE_STRING) {
-                    is_string_array = true;
+                    stmt->for_stmt.array_expr->expr_type->array_type.element_type) {
+                    elem_type = stmt->for_stmt.array_expr->expr_type->array_type.element_type;
+                    if (elem_type->kind == TYPE_STRING) {
+                        is_string_array = true;
+                    } else if (elem_type->kind == TYPE_STRUCT) {
+                        is_struct_array = true;
+                    }
                 }
                 
                 // Check if it's a method call that returns string array
-                if (!is_string_array && stmt->for_stmt.array_expr->type == EXPR_METHOD_CALL) {
+                if (!is_string_array && !is_struct_array && stmt->for_stmt.array_expr->type == EXPR_METHOD_CALL) {
                     Token method = stmt->for_stmt.array_expr->method_call.method;
                     if ((method.length == 5 && memcmp(method.start, "split", 5) == 0) ||
                         (method.length == 5 && memcmp(method.start, "lines", 5) == 0) ||
@@ -6101,7 +6107,7 @@ void codegen_stmt(Stmt* stmt) {
                 }
                 
                 // Fallback: check variable name heuristics
-                if (!is_string_array) {
+                if (!is_string_array && !is_struct_array) {
                     const char* var_name = stmt->for_stmt.loop_var.start;
                     int var_len = stmt->for_stmt.loop_var.length;
                     if ((var_len >= 4 && strncmp(var_name, "name", 4) == 0) ||
@@ -6111,13 +6117,18 @@ void codegen_stmt(Stmt* stmt) {
                         (var_len >= 4 && strncmp(var_name, "word", 4) == 0) ||
                         (var_len >= 4 && strncmp(var_name, "part", 4) == 0) ||
                         (var_len >= 4 && strncmp(var_name, "char", 4) == 0) ||
-                        (var_len == 1 && var_name[0] == 'c') ||
                         (var_len == 1 && var_name[0] == 's')) {
                         is_string_array = true;
                     }
                 }
                 
-                if (is_string_array) {
+                if (is_struct_array && elem_type) {
+                    Token type_name = elem_type->struct_type.name;
+                    emit("%.*s %.*s = *(%.*s*)__elem.data.struct_val;\n",
+                         type_name.length, type_name.start,
+                         stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start,
+                         type_name.length, type_name.start);
+                } else if (is_string_array) {
                     emit("const char* %.*s = (__elem.type == WYN_TYPE_STRING) ? __elem.data.string_val : \"\";\n",
                          stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
                 } else {
