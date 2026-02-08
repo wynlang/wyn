@@ -1,0 +1,49 @@
+// Test: Time module
+
+fn test_time_now() -> int {
+    var t1 = Time::now()
+    var t2 = Time::now()
+    
+    if t2 >= t1 {
+        print("PASS: Time::now\n")
+        return 0
+    }
+    print("FAIL: Time::now\n")
+    return 1
+}
+
+fn test_time_sleep() -> int {
+    var start = Time::now()
+    var i = 0
+    while i < 1000000 {
+        i = i + 1
+    }
+    var end = Time::now()
+    
+    var elapsed = end - start
+    if elapsed >= 0 {
+        print("PASS: Time elapsed\n")
+        return 0
+    }
+    print("FAIL: Time elapsed\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Time Module Tests ===\n")
+    var failures = 0
+    
+    failures = failures + test_time_now()
+    failures = failures + test_time_sleep()
+    
+    print("\n=== Summary ===\n")
+    if failures == 0 {
+        print("All tests PASSED!\n")
+        return 0
+    }
+    
+    print("FAILED: ")
+    print(failures)
+    print(" tests\n")
+    return 1
+}
