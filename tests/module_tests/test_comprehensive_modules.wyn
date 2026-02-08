@@ -1,0 +1,25 @@
+// Comprehensive module system test
+// Tests: re-exports, variables, aliases, constants, structs
+
+import counter_module as cm
+import re_export_module
+import geometry
+
+fn main() -> int {
+    // Test 1: Module aliases
+    cm::increment();
+    cm::increment();
+    var count1 = cm::get_count();
+    print(count1);  // Should print 2
+    
+    // Test 2: Re-exports
+    var value = re_export_module::get_value();
+    print(value);  // Should print 100
+    
+    // Test 3: Structs from modules
+    var p = geometry::create_point(10, 20);
+    print(p.x);  // Should print 10
+    print(p.y);  // Should print 20
+    
+    return 0;
+}

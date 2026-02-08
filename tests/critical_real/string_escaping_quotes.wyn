@@ -1,0 +1,6 @@
+
+fn main() -> int {
+    var quote_string = "He said \"Hello\""
+    print(quote_string)
+    return 0
+}

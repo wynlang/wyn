@@ -1,0 +1,6 @@
+// Test root:: from deep nesting
+import root::root::root::config
+
+pub fn test_deep_super() -> int {
+    return config::get_version();
+}

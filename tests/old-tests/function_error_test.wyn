@@ -1,0 +1,8 @@
+fn test_function(x: int, y: string) -> int {
+    return x + 1
+}
+
+fn main() -> int {
+    test_function("hello", 42)  // Wrong argument types
+    return 0
+}

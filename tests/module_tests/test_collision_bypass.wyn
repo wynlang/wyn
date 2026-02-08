@@ -1,0 +1,10 @@
+// Test: Can we bypass collision by using full path?
+import network.http
+import storage.http
+
+fn main() -> int {
+    // Should work - using full path
+    var x = network_http::get("test");
+    var y = storage_http::get("test");
+    return 0;
+}

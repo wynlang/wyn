@@ -1,0 +1,46 @@
+// Parallel Test Runner for Wyn
+// Uses spawn for parallel execution
+
+fn main() -> int {
+    print("╔══════════════════════════════════════════════════════════════════════════╗\n")
+    print("║                                                                          ║\n")
+    print("║                  WYN PARALLEL TEST RUNNER                                ║\n")
+    print("║                                                                          ║\n")
+    print("╚══════════════════════════════════════════════════════════════════════════╝\n")
+    print("\n")
+    
+    // For now, just demonstrate spawn works
+    print("Testing spawn functionality...\n")
+    print("\n")
+    
+    var num_workers = 8
+    print("Spawning " + num_workers.to_string() + " test workers...\n")
+    
+    var i = 0
+    while i < num_workers {
+        spawn test_worker(i)
+        i = i + 1
+    }
+    
+    print("✓ All workers spawned!\n")
+    print("\n")
+    print("Note: Full parallel test runner requires:\n")
+    print("  - Process::exec_timeout() for running tests\n")
+    print("  - Fs::read_dir() for finding test files\n")
+    print("  - Task API for collecting results\n")
+    print("\n")
+    print("Use parallel_test_runner.sh for now (5-8x speedup)\n")
+    
+    return 0
+}
+
+fn test_worker(id: int) {
+    // Simulate test work
+    var x = id * 100
+    var j = 0
+    while j < 1000 {
+        x = x + 1
+        j = j + 1
+    }
+}
+

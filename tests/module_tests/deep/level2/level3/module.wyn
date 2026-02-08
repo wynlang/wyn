@@ -1,0 +1,3 @@
+pub fn level3() -> int {
+    return 333;
+}

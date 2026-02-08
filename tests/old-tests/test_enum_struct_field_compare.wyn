@@ -1,0 +1,22 @@
+enum Color {
+    Red,
+    Blue
+}
+
+struct Box {
+    color: Color
+}
+
+fn check_color(b: Box, expected: Color) -> int {
+    if b.color == expected {
+        return 1
+    }
+    return 0
+}
+
+fn main() -> int {
+    var b = Box { color: Color_Red }
+    var result = check_color(b, Color_Red)
+    print(result)
+    return 0
+}

@@ -1,0 +1,31 @@
+// Test for lexer_module.wyn
+// Following TDD: Write test first, then implement
+
+import lib/lexer_module
+
+fn main() -> int {
+    // Test 1: Simple variable declaration
+    var tokens1 = lexer_module_tokenize("var x = 42")
+    if tokens1 != 5 {
+        print("FAIL: Expected 5 tokens for 'var x = 42', got ")
+        print(tokens1)
+        return 1
+    }
+    
+    // Test 2: Function declaration
+    var tokens2 = lexer_module_tokenize("fn add(a: int) -> int")
+    if tokens2 < 8 {
+        print("FAIL: Expected at least 8 tokens for function declaration")
+        return 1
+    }
+    
+    // Test 3: Empty string
+    var tokens3 = lexer_module_tokenize("")
+    if tokens3 != 1 {
+        print("FAIL: Expected 1 token (EOF) for empty string")
+        return 1
+    }
+    
+    print("✓ All lexer_module tests passed!")
+    return 0
+}

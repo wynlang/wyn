@@ -1,0 +1,8 @@
+fn check(c: int) -> int {
+    if c == 1 { return 1 }
+    return 0
+}
+
+fn main() -> int {
+    return check(1)
+}

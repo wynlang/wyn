@@ -1,0 +1,12 @@
+import math
+
+pub fn sum_of_squares(a: int, b: int) -> int {
+    var a_sq = math.multiply(a, a)
+    var b_sq = math.multiply(b, b)
+    return math.add(a_sq, b_sq)
+}
+
+pub fn average(a: int, b: int) -> int {
+    var sum = math.add(a, b)
+    return sum / 2
+}

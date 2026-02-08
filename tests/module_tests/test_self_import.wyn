@@ -1,0 +1,5 @@
+import self_import
+
+fn main() -> int {
+    return 0;
+}

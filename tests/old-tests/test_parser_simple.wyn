@@ -1,0 +1,9 @@
+// Simple test for parser
+fn add(x: int, y: int) -> int {
+    return x + y
+}
+
+fn main() -> int {
+    var result = add(1, 2)
+    return result
+}

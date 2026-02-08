@@ -1,0 +1,8 @@
+import root::config
+import self::sibling
+
+pub fn test_mixed() -> int {
+    var a = config::get_version();
+    var c = sibling::get_data();
+    return a + c;
+}

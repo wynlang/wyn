@@ -1,0 +1,19 @@
+// Test: Struct field assignment inside if blocks - minimal case
+// This reproduces the exact pattern from the TODO
+
+struct ASTNode {
+    node_type: int,
+    value: string
+}
+
+const NodeType_Int: int = 1
+
+fn main() -> int {
+    var node: ASTNode = ASTNode { node_type: 0, value: "" }
+    
+    if true {
+        node.node_type = NodeType_Int
+    }
+    
+    return node.node_type
+}

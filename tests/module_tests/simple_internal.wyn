@@ -1,0 +1,12 @@
+// Simpler test - just two functions
+fn first() -> int {
+    return 42;
+}
+
+fn second() -> int {
+    return first();  // Should work if functions are registered
+}
+
+fn main() -> int {
+    return second();
+}

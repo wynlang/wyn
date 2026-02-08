@@ -1,0 +1,13 @@
+// wildcard_example.wyn - Demonstrating wildcard imports
+import utils.*
+
+fn main() {
+    var result1 = helper1()
+    var result2 = helper2()
+    var config = Config{name: "MyApp", version: 1}
+    
+    println("Helper1 result: {}", result1)
+    println("Helper2 result: {}", result2)
+    println("Max size: {}", MAX_SIZE)
+    println("Config: {} v{}", config.name, config.version)
+}

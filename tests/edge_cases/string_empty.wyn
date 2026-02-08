@@ -1,0 +1,68 @@
+fn main() -> int {
+    print("=== Empty String Edge Cases ===")
+    
+    // Test empty string creation and operations
+    var empty = ""
+    print("Empty string length:")
+    print(wyn_string_len(empty))
+    
+    // Test split on empty string
+    var count = split_count(empty, ",")
+    print("Split empty string count:")
+    print(count)
+    
+    // Test replace on empty string
+    var replaced = wyn_str_replace(empty, "x", "y")
+    print("Replace on empty string:")
+    print(replaced)
+    
+    // Test substring on empty string
+    var sub = wyn_str_substring(empty, 0, 1)
+    print("Substring on empty string:")
+    print(sub)
+    
+    // Test contains with empty string
+    var contains1 = wyn_string_contains(empty, "")
+    var contains2 = wyn_string_contains("hello", "")
+    print("Empty contains empty:")
+    print(contains1)
+    print("Non-empty contains empty:")
+    print(contains2)
+    
+    // Test starts_with and ends_with with empty
+    var starts = wyn_string_starts_with(empty, "")
+    var ends = wyn_string_ends_with(empty, "")
+    print("Empty starts with empty:")
+    print(starts)
+    print("Empty ends with empty:")
+    print(ends)
+    
+    // Test indexing operations
+    var idx1 = wyn_string_index_of(empty, "x")
+    var idx2 = wyn_string_index_of("hello", "")
+    print("Index of 'x' in empty:")
+    print(idx1)
+    print("Index of empty in 'hello':")
+    print(idx2)
+    
+    // Test trim on empty
+    var trimmed = wyn_string_trim(empty)
+    print("Trim empty string:")
+    print(trimmed)
+    
+    // Test repeat empty string
+    var repeated = wyn_string_repeat(empty, 5)
+    print("Repeat empty string 5 times:")
+    print(repeated)
+    
+    // Test padding empty string
+    var padded_left = wyn_string_pad_left(empty, 5, "*")
+    var padded_right = wyn_string_pad_right(empty, 5, "*")
+    print("Pad left empty to 5 with '*':")
+    print(padded_left)
+    print("Pad right empty to 5 with '*':")
+    print(padded_right)
+    
+    print("=== Empty String Tests Complete ===")
+    return 0
+}

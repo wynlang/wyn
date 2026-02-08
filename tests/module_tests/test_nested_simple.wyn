@@ -1,0 +1,7 @@
+// Simple nested module test
+import network::http
+
+fn main() -> int {
+    print("Test\n");
+    return 0;
+}

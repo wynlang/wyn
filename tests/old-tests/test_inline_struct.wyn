@@ -1,0 +1,26 @@
+enum TokenType {
+    EndOfFile,
+    Int
+}
+
+struct Token {
+    tok_type: TokenType,
+    value: string
+}
+
+struct Parser {
+    tokens: [Token],
+    current: int
+}
+
+fn parser_peek(mut p: Parser) -> Token {
+    var len = p.tokens.len()
+    return Token { tok_type: TokenType_EndOfFile, value: "" }
+}
+
+fn main() -> int {
+    var tokens: [Token] = []
+    var p = Parser { tokens: tokens, current: 0 }
+    var tok = parser_peek(p)
+    return 0
+}

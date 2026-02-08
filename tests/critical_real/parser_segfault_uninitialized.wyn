@@ -1,0 +1,6 @@
+
+fn main() -> int {
+    var uninitialized
+    print("Should not reach here")
+    return 0
+}

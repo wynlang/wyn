@@ -1,0 +1,8 @@
+// Nested module: network/http.wyn
+pub fn get(url: string) -> string {
+    return "HTTP GET response";
+}
+
+pub fn post(url: string, data: string) -> string {
+    return "HTTP POST response";
+}

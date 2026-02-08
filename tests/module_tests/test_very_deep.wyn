@@ -1,0 +1,9 @@
+import a.b.c.d.e.f.deep
+
+fn main() -> int {
+    var x = deep::test();
+    print("Very deep: ");
+    print(x);
+    print("\n");
+    return 0;
+}

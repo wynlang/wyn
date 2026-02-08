@@ -1,0 +1,9 @@
+// Test: Just struct definition
+struct ASTNode {
+    node_type: int,
+    value: string
+}
+
+fn wyn_main() -> int {
+    return 0
+}

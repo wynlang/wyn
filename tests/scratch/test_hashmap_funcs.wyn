@@ -1,0 +1,15 @@
+fn main() -> int { 
+    var map = wyn_hashmap_new(); 
+    wyn_hashmap_insert_int(map, "test", 42); 
+    var val = wyn_hashmap_get_int(map, "test"); 
+    print(val); 
+    print("\n"); 
+    var has = wyn_hashmap_has(map, "test"); 
+    print(has); 
+    print("\n"); 
+    var len = wyn_hashmap_len(map); 
+    print(len); 
+    print("\n"); 
+    wyn_hashmap_free(map); 
+    return 0; 
+}

@@ -1,0 +1,6 @@
+fn main() -> int {
+    var numbers = [1, 2, 3, 4, 5];
+    var sum = numbers.reduce(fn(acc, x) => acc + x, 0);
+    // sum should be 15
+    return 0;
+}

@@ -1,0 +1,67 @@
+fn main() -> int {
+    // Create two sets for testing
+    var set1 = HashSet[int]::new();
+    var set2 = HashSet[int]::new();
+    
+    // Add elements to set1
+    set1.insert(1);
+    set1.insert(2);
+    set1.insert(3);
+    
+    // Add elements to set2
+    set2.insert(2);
+    set2.insert(3);
+    set2.insert(4);
+    
+    // Test basic operations
+    assert(set1.len() == 3);
+    assert(set2.len() == 3);
+    assert(set1.contains(1));
+    assert(set2.contains(4));
+    assert(!set1.contains(4));
+    assert(!set2.contains(1));
+    
+    // Test union
+    var union_set = set1.union(set2);
+    assert(union_set.len() == 4);
+    assert(union_set.contains(1));
+    assert(union_set.contains(2));
+    assert(union_set.contains(3));
+    assert(union_set.contains(4));
+    
+    // Test intersection
+    var intersection_set = set1.intersection(set2);
+    assert(intersection_set.len() == 2);
+    assert(intersection_set.contains(2));
+    assert(intersection_set.contains(3));
+    assert(!intersection_set.contains(1));
+    assert(!intersection_set.contains(4));
+    
+    // Test difference
+    var diff_set = set1.difference(set2);
+    assert(diff_set.len() == 1);
+    assert(diff_set.contains(1));
+    assert(!diff_set.contains(2));
+    assert(!diff_set.contains(3));
+    assert(!diff_set.contains(4));
+    
+    // Test subset/superset
+    var subset = HashSet[int]::new();
+    subset.insert(1);
+    subset.insert(2);
+    
+    assert(subset.is_subset(set1));
+    assert(set1.is_superset(subset));
+    assert(!set1.is_subset(subset));
+    assert(!subset.is_superset(set1));
+    
+    // Test disjoint
+    var disjoint_set = HashSet[int]::new();
+    disjoint_set.insert(5);
+    disjoint_set.insert(6);
+    
+    assert(set1.is_disjoint(disjoint_set));
+    assert(!set1.is_disjoint(set2));
+    
+    return 0;
+}

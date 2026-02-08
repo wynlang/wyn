@@ -1,0 +1,30 @@
+// Test complete module system
+import math_basic
+
+fn main() -> int {
+    // Test 1: Multi-letter parameters work
+    var sum = math_basic::add(10, 20);
+    print("Sum: ");
+    print(sum);
+    print("\n");
+    
+    // Test 2: Internal calls work
+    var doubled = math_basic::double(15);
+    print("Doubled: ");
+    print(doubled);
+    print("\n");
+    
+    // Test 3: Multiple parameters
+    var product = math_basic::multiply(5, 6);
+    print("Product: ");
+    print(product);
+    print("\n");
+    
+    if (sum == 30 && doubled == 30 && product == 30) {
+        print("All tests passed!\n");
+        return 0;
+    } else {
+        print("Tests failed!\n");
+        return 1;
+    }
+}

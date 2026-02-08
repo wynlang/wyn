@@ -1,0 +1,18 @@
+struct ASTNode {
+    node_type: int,
+    value: string
+}
+
+var g_nodes: [ASTNode] = []
+
+fn test_global_access(idx: int) -> string {
+    var node = g_nodes[idx]
+    return node.value
+}
+
+fn main() -> int {
+    g_nodes.push(ASTNode { node_type: 1, value: "test" })
+    var result = test_global_access(0)
+    print(result)
+    return 0
+}

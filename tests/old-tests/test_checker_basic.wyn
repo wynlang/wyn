@@ -1,0 +1,12 @@
+// Test basic type checker functionality
+
+fn test_checker_basic() -> int {
+    // This would be tested by creating AST nodes and checking them
+    // For now, just verify the checker compiles
+    print("Checker basic test\n")
+    return 0
+}
+
+fn main() -> int {
+    return test_checker_basic()
+}

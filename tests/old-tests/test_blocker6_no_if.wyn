@@ -1,0 +1,14 @@
+// Test: Just the field assignment part
+struct ASTNode {
+    node_type: int,
+    value: string
+}
+
+const NodeType_Int: int = 1
+
+fn main() -> int {
+    var node: ASTNode = ASTNode { node_type: 0, value: "" }
+    node.node_type = NodeType_Int
+    return node.node_type
+}
+

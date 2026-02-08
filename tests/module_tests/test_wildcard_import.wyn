@@ -1,0 +1,13 @@
+// Test 5: Wildcard imports - import all public functions
+import calculator::*
+
+fn main() -> int {
+    // Can use functions without module prefix
+    var sum = add(10, 5);
+    print(sum);
+    
+    var product = multiply(4, 3);
+    print(product);
+    
+    return 0;
+}

@@ -1,0 +1,15 @@
+var src = ""
+var pos = 0
+
+fn peek_char() -> int {
+    if pos >= src.len() { return 0 }
+    return src.char_at(pos)
+}
+
+fn main() -> int {
+    src = "test"
+    pos = 0
+    var c = peek_char()
+    print("First char code: ")
+    return 0
+}

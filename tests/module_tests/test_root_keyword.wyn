@@ -1,0 +1,9 @@
+import root::config
+
+fn main() -> int {
+    var v = config::get_version();
+    print("root:: works: ");
+    print(v);
+    print("\n");
+    return 0;
+}

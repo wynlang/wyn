@@ -1,0 +1,9 @@
+import deep.test_root
+
+fn main() -> int {
+    var v = test_root::test_from_nested();
+    print("root:: from nested: ");
+    print(v);
+    print("\n");
+    return 0;
+}

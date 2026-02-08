@@ -1,0 +1,6 @@
+// Test root:: from nested module
+import root::config
+
+pub fn test_from_nested() -> int {
+    return config::get_version();
+}

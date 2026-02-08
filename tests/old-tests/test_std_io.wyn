@@ -1,0 +1,23 @@
+// Test for std/io module
+import std/io
+
+fn main() -> int {
+    // Test 1: println
+    io::println("Hello from std/io");
+    
+    // Test 2: print
+    io::print_str("Count: ");
+    io::println("42");
+    
+    // Test 3: read_file
+    var content = io::read_file("test.txt");
+    io::println("File content: " + content);
+    
+    // Test 4: write_file
+    var result = io::write_file("output.txt", "Test content");
+    if result == 0 {
+        io::println("Write successful");
+    }
+    
+    return 0;
+}

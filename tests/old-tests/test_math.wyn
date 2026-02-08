@@ -1,0 +1,54 @@
+// Test file for Math module
+// Tests all 8 math functions
+
+fn main() -> int {
+    // Test wyn_math_abs
+    var abs_result = wyn_math_abs(-5.5);
+    print("abs(-5.5) = ");
+    print(abs_result);
+    print("\n");
+    
+    // Test wyn_math_min
+    var min_result = wyn_math_min(3.2, 7.8);
+    print("min(3.2, 7.8) = ");
+    print(min_result);
+    print("\n");
+    
+    // Test wyn_math_max
+    var max_result = wyn_math_max(3.2, 7.8);
+    print("max(3.2, 7.8) = ");
+    print(max_result);
+    print("\n");
+    
+    // Test wyn_math_pow
+    var pow_result = wyn_math_pow(2.0, 3.0);
+    print("pow(2.0, 3.0) = ");
+    print(pow_result);
+    print("\n");
+    
+    // Test wyn_math_sqrt
+    var sqrt_result = wyn_math_sqrt(16.0);
+    print("sqrt(16.0) = ");
+    print(sqrt_result);
+    print("\n");
+    
+    // Test wyn_math_floor
+    var floor_result = wyn_math_floor(4.7);
+    print("floor(4.7) = ");
+    print(floor_result);
+    print("\n");
+    
+    // Test wyn_math_ceil
+    var ceil_result = wyn_math_ceil(4.2);
+    print("ceil(4.2) = ");
+    print(ceil_result);
+    print("\n");
+    
+    // Test wyn_math_round
+    var round_result = wyn_math_round(4.6);
+    print("round(4.6) = ");
+    print(round_result);
+    print("\n");
+    
+    return 0;
+}

@@ -1,0 +1,5 @@
+import empty_module
+
+fn main() -> int {
+    return 0;
+}

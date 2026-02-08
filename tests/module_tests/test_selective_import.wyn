@@ -1,0 +1,12 @@
+// Test selective imports (like TypeScript)
+import { get } from network.http
+
+fn main() -> int {
+    var response = get("test.com");  // Use directly!
+    print("Response: ");
+    print(response);
+    print("\n");
+    
+    print("PASS: Selective imports work!\n");
+    return 0;
+}

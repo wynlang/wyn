@@ -1,0 +1,9 @@
+import nested.main
+
+fn main() -> int {
+    var x = main::test_self();
+    print("self:: in nested dir: ");
+    print(x);
+    print("\n");
+    return 0;
+}

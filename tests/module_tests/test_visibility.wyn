@@ -1,0 +1,14 @@
+// Test: Should error when calling private function
+import private_module
+
+fn main() -> int {
+    // This should work - public
+    var x = private_module::public_api();
+    print(x);
+    
+    // This should ERROR - private!
+    var y = private_module::private_helper();
+    print(y);
+    
+    return 0;
+}

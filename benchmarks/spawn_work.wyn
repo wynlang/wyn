@@ -1,0 +1,20 @@
+// Benchmark with actual work
+fn fib(n: int) -> int {
+    if n < 2 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn main() -> int {
+    var start = time_now();
+    
+    var i = 0;
+    while i < 1000 {
+        spawn fib(20);
+        i = i + 1;
+    }
+    
+    var elapsed = time_now() - start;
+    return elapsed / 1000000;  // Return ms
+}

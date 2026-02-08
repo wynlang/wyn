@@ -1,0 +1,14 @@
+var src = ""
+var pos = 0
+
+fn peek_c() -> int {
+    if pos >= src.len() { return 0 }
+    return src.char_at(pos)
+}
+
+fn main() -> int {
+    src = "test"
+    pos = 0
+    var c = peek_c()
+    return 0
+}

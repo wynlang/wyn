@@ -1,0 +1,3 @@
+pub fn compute() -> int {
+    return 100;
+}

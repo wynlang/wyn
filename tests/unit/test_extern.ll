@@ -1,0 +1,19 @@
+; ModuleID = 'wyn_program'
+source_filename = "wyn_program"
+
+@__wyn_argc = global i32 0
+@__wyn_argv = global ptr null
+
+declare ptr @malloc(i64)
+
+declare void @free(ptr)
+
+declare i32 @printf(ptr, ...)
+
+define i32 @wyn_main() {
+entry:
+  %wyn_abs = call i32 @wyn_abs(i32 -42)
+  ret i32 %wyn_abs
+}
+
+declare i32 @wyn_abs(i32)

@@ -1,0 +1,3 @@
+pub fn test() -> int {
+    return 42;
+}

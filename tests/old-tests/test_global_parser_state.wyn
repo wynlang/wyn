@@ -1,0 +1,38 @@
+// Test global variables with parser-like state
+struct Token {
+    tok_type: int,
+    value: string
+}
+
+var tokens: [Token] = []
+var current: int = 0
+
+fn add_token(tok_type: int, value: string) {
+    tokens.push(Token { tok_type: tok_type, value: value })
+}
+
+fn peek() -> Token {
+    if current < tokens.len() {
+        return tokens[current]
+    }
+    return Token { tok_type: 0, value: "" }
+}
+
+fn advance() {
+    current = current + 1
+}
+
+fn main() -> int {
+    add_token(1, "var")
+    add_token(2, "x")
+    add_token(3, "=")
+    add_token(4, "42")
+    
+    print(peek().value)  // Should print "var"
+    advance()
+    print(peek().value)  // Should print "x"
+    advance()
+    print(peek().value)  // Should print "="
+    
+    return 0
+}

@@ -1,0 +1,6 @@
+import config
+
+fn main() -> int {
+    // Never use config
+    return 0;
+}

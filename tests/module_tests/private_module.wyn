@@ -1,0 +1,10 @@
+// Test: Private function access
+// Should fail - calling private function from outside module
+
+fn private_helper() -> int {
+    return 42;
+}
+
+pub fn public_api() -> int {
+    return private_helper();
+}

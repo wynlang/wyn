@@ -1,0 +1,19 @@
+// Test: Struct initialization with enum constants in function return
+// This is the ACTUAL blocker described in TODO
+
+struct Token {
+    tok_type: int,
+    value: string
+}
+
+const TokenType_EndOfFile: int = 0
+const TokenType_Int: int = 1
+
+fn test() -> Token {
+    return Token { tok_type: TokenType_EndOfFile, value: "" }
+}
+
+fn main() -> int {
+    var tok = test()
+    return tok.tok_type
+}

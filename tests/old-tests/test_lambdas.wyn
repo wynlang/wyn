@@ -1,0 +1,9 @@
+fn main() -> int {
+    // Simple lambda
+    var double = fn(x: int) => x * 2;
+    
+    // No parameters lambda  
+    var get_pi = fn() => 3;
+    
+    return 0;
+}

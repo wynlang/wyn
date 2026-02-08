@@ -1,0 +1,12 @@
+fn main() -> int {
+    var opt = some(42);
+    var doubled = opt.map(fn(x) => x * 2);  // some(84)
+    var result = doubled.and_then(fn(x) => {
+        if x > 50 {
+            return some(x);
+        } else {
+            return none;
+        }
+    });
+    return 0;
+}

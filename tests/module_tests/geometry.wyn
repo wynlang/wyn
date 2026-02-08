@@ -1,0 +1,15 @@
+pub struct Point {
+    x: int,
+    y: int
+}
+
+pub enum Direction {
+    NORTH,
+    SOUTH,
+    EAST,
+    WEST
+}
+
+pub fn create_point(x: int, y: int) -> Point {
+    return Point { x: x, y: y };
+}

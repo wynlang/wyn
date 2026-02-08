@@ -1,0 +1,23 @@
+// Benchmark: 10,000 spawns
+fn worker(id: int) -> int {
+    return id;
+}
+
+fn main() -> int {
+    var start = time_now();
+    
+    var i = 0;
+    while i < 10000 {
+        spawn worker(i);
+        i = i + 1;
+    }
+    
+    var elapsed = time_now() - start;
+    
+    // Print elapsed time in milliseconds
+    print("10,000 spawns: ");
+    print(elapsed / 1000000);
+    print("ms\n");
+    
+    return 0;
+}

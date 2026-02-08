@@ -1,0 +1,9 @@
+// Test without struct definition
+fn test() -> int {
+    var x = 5
+    return x
+}
+
+fn main() -> int {
+    return 0
+}

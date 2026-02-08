@@ -1,0 +1,9 @@
+fn get_name() -> string {
+    return "test"
+}
+
+fn main() -> int {
+    var n = get_name()
+    print(n)
+    return 0
+}

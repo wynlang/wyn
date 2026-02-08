@@ -1,0 +1,9 @@
+import mutual_b
+
+pub fn func_a() -> int {
+    return 1;
+}
+
+pub fn call_b() -> int {
+    return mutual_b::func_b();
+}

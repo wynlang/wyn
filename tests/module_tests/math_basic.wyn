@@ -1,0 +1,21 @@
+// Test: Complete module system with all features
+// Tests: scope tracking, nested modules, module paths, internal calls
+
+// Module: math/basic.wyn
+
+// Helper function (private)
+fn helper(value: int) -> int {
+    return value * 2;
+}
+
+pub fn add(first: int, second: int) -> int {
+    return first + second;
+}
+
+pub fn multiply(first: int, second: int) -> int {
+    return first * second;
+}
+
+pub fn double(value: int) -> int {
+    return helper(value);  // Internal call without prefix
+}

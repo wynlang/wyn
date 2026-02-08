@@ -1,0 +1,24 @@
+// Test relative imports
+import company.product.main
+
+fn main() -> int {
+    print("Testing relative imports:\n");
+    
+    var info = main::get_product_info();
+    print("Product: ");
+    print(info);
+    print("\n");
+    
+    var company = main::test_company_info();
+    print("Company (via root::): ");
+    print(company);
+    print("\n");
+    
+    var version = main::test_root();
+    print("Version (via root::): ");
+    print(version);
+    print("\n");
+    
+    print("\nPASS: Relative imports work!\n");
+    return 0;
+}

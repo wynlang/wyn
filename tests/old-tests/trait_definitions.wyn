@@ -1,0 +1,55 @@
+// T3.2.1: Trait Definitions and Implementation Test
+// Basic trait system with trait definitions and implementations
+
+// Define a simple trait
+trait Display {
+    fn show(self) -> string;
+}
+
+// Define a trait with default implementation
+trait Debug {
+    fn debug(self) -> string {
+        return "Debug output";
+    }
+    
+    fn verbose_debug(self) -> string;
+}
+
+// Define a generic trait
+trait Comparable<T> {
+    fn compare(self, other: T) -> int;
+    fn equals(self, other: T) -> bool {
+        return self.compare(other) == 0;
+    }
+}
+
+// Define a struct to implement traits on
+struct Point {
+    x: int,
+    y: int
+}
+
+// Implement Display trait for Point
+impl Display for Point {
+    fn show(self) -> string {
+        return "Point";
+    }
+}
+
+// Implement Debug trait for Point (with default method)
+impl Debug for Point {
+    fn verbose_debug(self) -> string {
+        return "Point debug info";
+    }
+}
+
+fn main() {
+    var p = Point { x: 1, y: 2 };
+    
+    // Use trait methods
+    var display_str = p.show();
+    var debug_str = p.debug();  // Uses default implementation
+    var verbose_str = p.verbose_debug();
+    
+    return 0;
+}

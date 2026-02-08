@@ -1,0 +1,6 @@
+// Test self:: in nested directory
+import self::sibling
+
+pub fn test_self() -> int {
+    return sibling::get_data();
+}

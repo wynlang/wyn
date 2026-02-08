@@ -1,0 +1,6 @@
+import circ_a
+
+fn main() -> int {
+    print("Testing circular imports\n");
+    return 0;
+}

@@ -1,0 +1,129 @@
+// Direct test of lexer_module tokenize function
+// Tests without using import system
+
+fn is_digit(ch: string) -> int {
+    if ch == "0" { return 1 }
+    if ch == "1" { return 1 }
+    if ch == "2" { return 1 }
+    if ch == "3" { return 1 }
+    if ch == "4" { return 1 }
+    if ch == "5" { return 1 }
+    if ch == "6" { return 1 }
+    if ch == "7" { return 1 }
+    if ch == "8" { return 1 }
+    if ch == "9" { return 1 }
+    return 0
+}
+
+fn is_alpha(ch: string) -> int {
+    if ch == "a" { return 1 }
+    if ch == "b" { return 1 }
+    if ch == "c" { return 1 }
+    if ch == "d" { return 1 }
+    if ch == "e" { return 1 }
+    if ch == "f" { return 1 }
+    if ch == "g" { return 1 }
+    if ch == "h" { return 1 }
+    if ch == "i" { return 1 }
+    if ch == "j" { return 1 }
+    if ch == "k" { return 1 }
+    if ch == "l" { return 1 }
+    if ch == "m" { return 1 }
+    if ch == "n" { return 1 }
+    if ch == "o" { return 1 }
+    if ch == "p" { return 1 }
+    if ch == "q" { return 1 }
+    if ch == "r" { return 1 }
+    if ch == "s" { return 1 }
+    if ch == "t" { return 1 }
+    if ch == "u" { return 1 }
+    if ch == "v" { return 1 }
+    if ch == "w" { return 1 }
+    if ch == "x" { return 1 }
+    if ch == "y" { return 1 }
+    if ch == "z" { return 1 }
+    return 0
+}
+
+fn is_whitespace(ch: string) -> int {
+    if ch == " " { return 1 }
+    if ch == "\n" { return 1 }
+    if ch == "\t" { return 1 }
+    return 0
+}
+
+fn tokenize(input: string) -> int {
+    var pos = 0
+    var count = 0
+    
+    while pos < input.len() {
+        var ch = input[pos]
+        
+        if is_whitespace(ch) {
+            pos = pos + 1
+        } else if is_digit(ch) {
+            while pos < input.len() {
+                if is_digit(input[pos]) {
+                    pos = pos + 1
+                } else {
+                    break
+                }
+            }
+            count = count + 1
+        } else if is_alpha(ch) {
+            while pos < input.len() {
+                if is_alpha(input[pos]) {
+                    pos = pos + 1
+                } else {
+                    break
+                }
+            }
+            count = count + 1
+        } else {
+            count = count + 1
+            pos = pos + 1
+        }
+    }
+    
+    count = count + 1
+    return count
+}
+
+fn main() -> int {
+    // Test 1: Simple variable declaration
+    var tokens1 = tokenize("var x = 42")
+    if tokens1 != 5 {
+        print("FAIL: Expected 5 tokens for 'var x = 42', got ")
+        print(tokens1)
+        return 1
+    }
+    
+    // Test 2: Function declaration
+    var tokens2 = tokenize("fn add(a: int) -> int")
+    print("Function declaration tokens: ")
+    print(tokens2)
+    if tokens2 != 11 {
+        print("FAIL: Expected 11 tokens for function declaration, got ")
+        print(tokens2)
+        return 1
+    }
+    
+    // Test 3: Empty string
+    var tokens3 = tokenize("")
+    if tokens3 != 1 {
+        print("FAIL: Expected 1 token (EOF) for empty string, got ")
+        print(tokens3)
+        return 1
+    }
+    
+    // Test 4: Complex expression
+    var tokens4 = tokenize("x = a + b * c")
+    if tokens4 != 8 {
+        print("FAIL: Expected 8 tokens for expression, got ")
+        print(tokens4)
+        return 1
+    }
+    
+    print("✓ All lexer tests passed!")
+    return 0
+}

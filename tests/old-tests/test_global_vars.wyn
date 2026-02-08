@@ -1,0 +1,19 @@
+// Test global variable support
+var global_counter: int = 0
+
+fn increment() {
+    global_counter = global_counter + 1
+}
+
+fn get_counter() -> int {
+    return global_counter
+}
+
+fn main() -> int {
+    print(get_counter())  // Should print 0
+    increment()
+    print(get_counter())  // Should print 1
+    increment()
+    print(get_counter())  // Should print 2
+    return 0
+}

@@ -1,0 +1,14 @@
+// Test without struct init
+struct MyStruct {
+    x: int,
+    y: string
+}
+
+fn test() -> int {
+    var x = 5
+    return x
+}
+
+fn main() -> int {
+    return 0
+}

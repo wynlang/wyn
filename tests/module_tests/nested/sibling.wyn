@@ -1,0 +1,3 @@
+pub fn get_data() -> int {
+    return 777;
+}

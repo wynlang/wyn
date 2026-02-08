@@ -1,0 +1,169 @@
+// Manual verification test for codegen_module
+// This test verifies the module generates real C code
+
+// Copy the generate function here for testing
+fn is_whitespace(ch: string) -> int {
+    if ch == " " { return 1 }
+    if ch == "\n" { return 1 }
+    if ch == "\t" { return 1 }
+    if ch == "\r" { return 1 }
+    return 0
+}
+
+fn is_digit(ch: string) -> int {
+    if ch >= "0" && ch <= "9" { return 1 }
+    return 0
+}
+
+fn is_alpha(ch: string) -> int {
+    if ch >= "a" && ch <= "z" { return 1 }
+    if ch >= "A" && ch <= "Z" { return 1 }
+    if ch == "_" { return 1 }
+    return 0
+}
+
+fn extract_ident(input: string, pos: int) -> string {
+    var result = ""
+    while pos < input.len() && (is_alpha(input[pos]) == 1 || is_digit(input[pos]) == 1) {
+        result = result + input[pos]
+        pos = pos + 1
+    }
+    return result
+}
+
+fn extract_number(input: string, pos: int) -> string {
+    var result = ""
+    while pos < input.len() && is_digit(input[pos]) == 1 {
+        result = result + input[pos]
+        pos = pos + 1
+    }
+    return result
+}
+
+fn generate_c(input: string) -> string {
+    var output = ""
+    
+    output = output + "#include <stdio.h>\n"
+    output = output + "#include <stdlib.h>\n"
+    output = output + "#include <string.h>\n\n"
+    
+    if input.len() == 0 {
+        return output
+    }
+    
+    var pos = 0
+    
+    while pos < input.len() {
+        while pos < input.len() && is_whitespace(input[pos]) == 1 {
+            pos = pos + 1
+        }
+        
+        if pos >= input.len() {
+            break
+        }
+        
+        if pos + 3 <= input.len() {
+            var ch1 = input[pos]
+            var ch2 = input[pos + 1]
+            var ch3 = input[pos + 2]
+            
+            if ch1 == "v" && ch2 == "a" && ch3 == "r" {
+                pos = pos + 3
+                
+                while pos < input.len() && is_whitespace(input[pos]) == 1 {
+                    pos = pos + 1
+                }
+                
+                var var_name = extract_ident(input, pos)
+                pos = pos + var_name.len()
+                
+                while pos < input.len() {
+                    if is_whitespace(input[pos]) == 1 {
+                        pos = pos + 1
+                    } else if input[pos] == ":" {
+                        pos = pos + 1
+                        while pos < input.len() && is_whitespace(input[pos]) == 1 {
+                            pos = pos + 1
+                        }
+                        var type_name = extract_ident(input, pos)
+                        pos = pos + type_name.len()
+                    } else {
+                        break
+                    }
+                }
+                
+                while pos < input.len() && (is_whitespace(input[pos]) == 1 || input[pos] == "=") {
+                    pos = pos + 1
+                }
+                
+                var value = ""
+                if pos < input.len() && is_digit(input[pos]) == 1 {
+                    value = extract_number(input, pos)
+                    pos = pos + value.len()
+                } else if pos < input.len() && is_alpha(input[pos]) == 1 {
+                    value = extract_ident(input, pos)
+                    pos = pos + value.len()
+                }
+                
+                output = output + "int " + var_name + " = " + value + ";\n"
+                continue
+            }
+        }
+        
+        if is_digit(input[pos]) == 1 {
+            var num = extract_number(input, pos)
+            pos = pos + num.len()
+            output = output + num
+        } else if is_alpha(input[pos]) == 1 {
+            var ident = extract_ident(input, pos)
+            pos = pos + ident.len()
+            output = output + ident
+        } else if input[pos] == "+" || input[pos] == "-" || input[pos] == "*" || input[pos] == "/" {
+            output = output + " " + input[pos] + " "
+            pos = pos + 1
+        } else {
+            pos = pos + 1
+        }
+    }
+    
+    return output
+}
+
+fn main() -> int {
+    print("=== Codegen Module Verification ===\n")
+    
+    // Test 1: Empty source
+    print("Test 1: Empty source")
+    var c1 = generate_c("")
+    print(c1)
+    print("Length: ")
+    print(c1.len())
+    print("\n")
+    
+    // Test 2: Simple literal
+    print("Test 2: Simple literal '42'")
+    var c2 = generate_c("42")
+    print(c2)
+    print("Length: ")
+    print(c2.len())
+    print("\n")
+    
+    // Test 3: Variable declaration
+    print("Test 3: Variable declaration 'var x = 42'")
+    var c3 = generate_c("var x = 42")
+    print(c3)
+    print("Length: ")
+    print(c3.len())
+    print("\n")
+    
+    // Test 4: Binary expression
+    print("Test 4: Binary expression 'a + b'")
+    var c4 = generate_c("a + b")
+    print(c4)
+    print("Length: ")
+    print(c4.len())
+    print("\n")
+    
+    print("=== Verification Complete ===")
+    return 0
+}

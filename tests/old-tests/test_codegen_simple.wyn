@@ -1,0 +1,22 @@
+// Simple test for codegen
+struct Point {
+    x: int,
+    y: int
+}
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+fn add(a: int, b: int) -> int {
+    return a + b
+}
+
+fn main() -> int {
+    var x = 5
+    var y = 10
+    var sum = add(x, y)
+    return sum
+}

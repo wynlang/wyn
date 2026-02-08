@@ -1,0 +1,13 @@
+var src = ""
+var pos = 0
+
+fn get_pos() -> int {
+    return pos
+}
+
+fn main() -> int {
+    src = "test"
+    pos = 5
+    var p = get_pos()
+    return 0
+}

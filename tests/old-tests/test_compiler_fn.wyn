@@ -1,0 +1,9 @@
+// Test function compilation
+fn add(a: int, b: int) -> int {
+    return a + b
+}
+
+fn main() -> int {
+    var result = add(10, 20)
+    return result
+}

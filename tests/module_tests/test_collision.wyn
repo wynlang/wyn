@@ -1,0 +1,12 @@
+// Test: Module name collision
+// Both modules have same short name "http"
+
+import network.http
+import storage.http
+
+fn main() -> int {
+    // Which http? Ambiguous!
+    var x = http::get("test");
+    print(x);
+    return 0;
+}

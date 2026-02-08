@@ -1,0 +1,12 @@
+// Test nested modules with . syntax (like Java/TypeScript)
+import network.http
+
+fn main() -> int {
+    var response = http::get("test.com");  // Use short name!
+    print("Response: ");
+    print(response);
+    print("\n");
+    
+    print("PASS: Nested modules work!\n");
+    return 0;
+}

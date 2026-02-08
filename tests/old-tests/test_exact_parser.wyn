@@ -1,0 +1,20 @@
+struct Token {
+    value: int
+}
+
+struct Parser {
+    tokens: [Token],
+    current: int
+}
+
+fn parser_peek(mut p: Parser) -> Token {
+    var len: int = p.tokens.len()
+    return Token { value: 0 }
+}
+
+fn main() -> int {
+    var tokens: [Token] = []
+    var p = Parser { tokens: tokens, current: 0 }
+    var tok = parser_peek(p)
+    return 0
+}

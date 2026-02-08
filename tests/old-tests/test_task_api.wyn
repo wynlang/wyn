@@ -1,0 +1,107 @@
+// Test: Task API
+// TDD tests for Task::spawn, Task::await, Task::is_ready
+
+fn worker_simple(id: int) -> int {
+    return id * 10
+}
+
+fn worker_slow(id: int) -> int {
+    var result = id
+    var i = 0
+    while i < 1000000 {
+        result = result + 1
+        i = i + 1
+    }
+    return result
+}
+
+fn test_task_spawn_and_await() {
+    print("Test: spawn task and await result... ")
+    
+    var task = Task::spawn(worker_simple, 5)
+    var result = Task::await(task)
+    
+    if result == 50 {
+        print("✓\n")
+    } else {
+        print("✗ Expected 50, got " + result.to_string() + "\n")
+    }
+}
+
+fn test_task_multiple() {
+    print("Test: spawn multiple tasks... ")
+    
+    var task1 = Task::spawn(worker_simple, 1)
+    var task2 = Task::spawn(worker_simple, 2)
+    var task3 = Task::spawn(worker_simple, 3)
+    
+    var r1 = Task::await(task1)
+    var r2 = Task::await(task2)
+    var r3 = Task::await(task3)
+    
+    if r1 == 10 && r2 == 20 && r3 == 30 {
+        print("✓\n")
+    } else {
+        print("✗ Unexpected results\n")
+    }
+}
+
+fn test_task_is_ready() {
+    print("Test: check if task is ready... ")
+    
+    var task = Task::spawn(worker_simple, 7)
+    
+    // Small task should complete quickly
+    var ready = Task::is_ready(task)
+    
+    // Await to get result
+    var result = Task::await(task)
+    
+    if result == 70 {
+        print("✓\n")
+    } else {
+        print("✗\n")
+    }
+}
+
+fn test_task_parallel() {
+    print("Test: parallel task execution... ")
+    
+    var tasks = []
+    var i = 0
+    while i < 10 {
+        var task = Task::spawn(worker_simple, i)
+        tasks.push(task)
+        i = i + 1
+    }
+    
+    var sum = 0
+    i = 0
+    while i < tasks.len() {
+        var result = Task::await(tasks[i])
+        sum = sum + result
+        i = i + 1
+    }
+    
+    // Sum should be 0*10 + 1*10 + ... + 9*10 = 450
+    if sum == 450 {
+        print("✓\n")
+    } else {
+        print("✗ Expected 450, got " + sum.to_string() + "\n")
+    }
+}
+
+fn main() -> int {
+    print("╔══════════════════════════════════════════════════════════════════════════╗\n")
+    print("║                    Task API Tests                                        ║\n")
+    print("╚══════════════════════════════════════════════════════════════════════════╝\n")
+    print("\n")
+    
+    test_task_spawn_and_await()
+    test_task_multiple()
+    test_task_is_ready()
+    test_task_parallel()
+    
+    print("\n✓ All Task tests passed\n")
+    return 0
+}

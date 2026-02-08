@@ -1,0 +1,3 @@
+pub fn get(url: string) -> string {
+    return "STORAGE HTTP GET";
+}

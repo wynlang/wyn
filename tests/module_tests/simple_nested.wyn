@@ -1,0 +1,6 @@
+import network::http
+
+fn main() -> int {
+    print("Loaded\n");
+    return 0;
+}

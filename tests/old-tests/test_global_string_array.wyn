@@ -1,0 +1,8 @@
+var g_strings: [string] = []
+
+fn main() -> int {
+    g_strings.push("hello")
+    var s = g_strings[0]
+    print(s)
+    return 0
+}

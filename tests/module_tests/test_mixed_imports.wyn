@@ -1,0 +1,9 @@
+import nested.test_mixed
+
+fn main() -> int {
+    var x = test_mixed::test_mixed();
+    print("Mixed imports: ");
+    print(x);
+    print("\n");
+    return 0;
+}

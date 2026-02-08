@@ -1,0 +1,13 @@
+// Simpler test - just the function declaration
+struct Token {
+    tok_type: int,
+    value: string
+}
+
+fn test() -> Token {
+    return Token { tok_type: 0, value: "" }
+}
+
+fn main() -> int {
+    return 0
+}

@@ -1,0 +1,13 @@
+// Test: Private functions calling each other within same module
+
+fn helper1() -> int {
+    return helper2();
+}
+
+fn helper2() -> int {
+    return 42;
+}
+
+pub fn public_api() -> int {
+    return helper1();
+}

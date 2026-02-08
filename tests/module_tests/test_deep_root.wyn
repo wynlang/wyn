@@ -1,0 +1,9 @@
+import root::company.product.main
+
+fn main() -> int {
+    var x = main::get_product_info();
+    print("Deep root:: path: ");
+    print(x);
+    print("\n");
+    return 0;
+}

@@ -1,0 +1,5 @@
+import module_b
+
+fn get_a() -> int {
+    return 1;
+}

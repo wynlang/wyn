@@ -1,0 +1,14 @@
+// Test with function body on different line
+struct Token {
+    tok_type: int,
+    value: string
+}
+
+fn test() -> Token 
+{
+    return Token { tok_type: 0, value: "" }
+}
+
+fn main() -> int {
+    return 0
+}

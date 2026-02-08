@@ -1,0 +1,7 @@
+import return
+
+fn main() -> int {
+    var x = return::test();
+    print(x);
+    return 0;
+}

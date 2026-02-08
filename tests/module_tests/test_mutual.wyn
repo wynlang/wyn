@@ -1,0 +1,7 @@
+import mutual_a
+
+fn main() -> int {
+    var x = mutual_a::call_b();
+    print(x);
+    return 0;
+}

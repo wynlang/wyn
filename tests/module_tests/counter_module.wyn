@@ -1,0 +1,10 @@
+var count = 0;
+
+pub fn increment() -> int {
+    count = count + 1;
+    return count;
+}
+
+pub fn get_count() -> int {
+    return count;
+}

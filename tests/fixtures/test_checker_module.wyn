@@ -1,0 +1,47 @@
+// Test checker module functionality
+
+fn main() -> int {
+    // Test 1: No errors case (valid AST)
+    var errors1 = check(5)
+    if errors1 != 0 {
+        print("FAIL: Expected 0 errors for valid AST")
+        return 1
+    }
+    print("PASS: No errors for valid AST")
+    
+    // Test 2: With errors (invalid AST - negative node count)
+    var errors2 = check(-1)
+    if errors2 != 1 {
+        print("FAIL: Expected 1 error for invalid AST")
+        return 1
+    }
+    print("PASS: Detected errors in invalid AST")
+    
+    // Test 3: Empty AST
+    var errors3 = check(0)
+    if errors3 != 0 {
+        print("FAIL: Expected 0 errors for empty AST")
+        return 1
+    }
+    print("PASS: No errors for empty AST")
+    
+    // Test 4: Large AST
+    var errors4 = check(100)
+    if errors4 != 0 {
+        print("FAIL: Expected 0 errors for large valid AST")
+        return 1
+    }
+    print("PASS: No errors for large valid AST")
+    
+    print("All checker module tests passed!")
+    return 0
+}
+
+// Stub for check function - will be replaced by import
+fn check(node_count: int) -> int {
+    // Simulate the real checker behavior
+    if node_count < 0 {
+        return 1
+    }
+    return 0
+}

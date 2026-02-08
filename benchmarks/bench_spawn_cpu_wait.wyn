@@ -1,0 +1,23 @@
+// CPU benchmark with explicit wait
+fn fib(n: int) -> int {
+    if n < 2 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn main() -> int {
+    var start = time_now();
+    
+    var i = 0;
+    while i < 100 {
+        spawn fib(25);
+        i = i + 1;
+    }
+    
+    spawn_wait();  // Wait for all spawns
+    
+    var elapsed = time_now() - start;
+    print(elapsed);
+    return 0;
+}

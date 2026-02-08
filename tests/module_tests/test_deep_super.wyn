@@ -1,0 +1,9 @@
+import deep.level2.level3.test
+
+fn main() -> int {
+    var x = test::test_deep_super();
+    print("Deep root:: = ");
+    print(x);
+    print("\n");
+    return 0;
+}

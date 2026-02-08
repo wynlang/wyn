@@ -1,0 +1,20 @@
+// Test struct array indexing type preservation
+
+struct Token {
+    value: string
+}
+
+fn process(tok: Token) -> string {
+    return tok.value
+}
+
+fn main() -> int {
+    var tokens: [Token] = []
+    tokens.push(Token { value: "hello" })
+    
+    var tok = tokens[0]
+    var result = process(tok)
+    print(result)
+    
+    return 0
+}

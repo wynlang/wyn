@@ -1,0 +1,5 @@
+import self_import
+
+fn get_self() -> int {
+    return 1;
+}

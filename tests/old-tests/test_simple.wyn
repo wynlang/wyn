@@ -1,0 +1,3 @@
+// Simple test program for compiler
+var x = 42
+var y = 100

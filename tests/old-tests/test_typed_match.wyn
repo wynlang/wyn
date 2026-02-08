@@ -1,0 +1,12 @@
+enum Status { PENDING, RUNNING, DONE }
+
+fn main() -> int {
+    var status: Status = PENDING;
+    
+    match status {
+        PENDING => print_str("pending"),
+        RUNNING => print_str("running")
+    }
+    
+    return 0;
+}

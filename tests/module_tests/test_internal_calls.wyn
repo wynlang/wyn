@@ -1,0 +1,22 @@
+// Test internal calls
+import internal_calls
+
+fn main() -> int {
+    var result = internal_calls::double(5);
+    print("Double: ");
+    print(result);
+    print("\n");
+    
+    var result2 = internal_calls::triple(5);
+    print("Triple: ");
+    print(result2);
+    print("\n");
+    
+    if (result == 10 && result2 == 15) {
+        print("PASS: Internal calls work!\n");
+        return 0;
+    } else {
+        print("FAIL: Expected 10 and 15\n");
+        return 1;
+    }
+}

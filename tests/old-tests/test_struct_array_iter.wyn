@@ -1,0 +1,23 @@
+// Test struct array iteration
+
+struct Token {
+    value: string
+}
+
+fn process_token(tok: Token) {
+    print(tok.value)
+}
+
+fn main() {
+    var tokens: [Token] = []
+    tokens.push(Token { value: "hello" })
+    tokens.push(Token { value: "world" })
+    
+    var i = 0
+    var len = tokens.len()
+    while i < len {
+        var tok = tokens[i]
+        process_token(tok)
+        i = i + 1
+    }
+}

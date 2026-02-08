@@ -1,0 +1,8 @@
+// Test self:: import
+import self::test_helper
+
+fn main() -> int {
+    var x = test_helper::get_value();
+    print(x);
+    return 0;
+}

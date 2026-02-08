@@ -1,0 +1,14 @@
+// Test T2.5.3: Enhanced Struct System
+// Test basic struct definitions with ARC integration
+
+struct Point {
+    x: int
+    y: int
+}
+
+fn test_enhanced_structs() {
+    var point: Point = Point { x: 10, y: 20 }
+    print("Enhanced struct system test completed")
+}
+
+test_enhanced_structs()

@@ -1,0 +1,24 @@
+fn main() -> int {
+    // Test basic Result operations
+    var ok_val = Ok(42);
+    var err_val = Err("Something went wrong");
+    
+    // Test is_ok and is_err
+    assert(ok_val.is_ok());
+    assert(!ok_val.is_err());
+    assert(!err_val.is_ok());
+    assert(err_val.is_err());
+    
+    // Test unwrap and unwrap_or
+    assert(ok_val.unwrap() == 42);
+    assert(ok_val.unwrap_or(0) == 42);
+    assert(err_val.unwrap_or(99) == 99);
+    
+    // Test expect method
+    assert(ok_val.expect("Should have value") == 42);
+    
+    // Note: map_err and or_else require lambda support, so we'll test them later
+    // For now, just test that the methods exist and compile
+    
+    return 0;
+}

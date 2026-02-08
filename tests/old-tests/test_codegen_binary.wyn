@@ -1,0 +1,61 @@
+// Test codegen with binary operations
+// This tests the full expression codegen implementation
+
+fn test_binary() -> int {
+    print("Testing binary operations codegen...")
+    
+    // Create AST for: 1 + 2
+    var node1 = ASTNode {
+        node_type: NodeType_NodeInt,
+        value: "1",
+        left: -1,
+        right: -1,
+        extra: -1
+    }
+    g_nodes.push(node1)
+    
+    var node2 = ASTNode {
+        node_type: NodeType_NodeInt,
+        value: "2",
+        left: -1,
+        right: -1,
+        extra: -1
+    }
+    g_nodes.push(node2)
+    
+    var node3 = ASTNode {
+        node_type: NodeType_NodeBinary,
+        value: "+",
+        left: 0,
+        right: 1,
+        extra: -1
+    }
+    g_nodes.push(node3)
+    
+    var node4 = ASTNode {
+        node_type: NodeType_NodeReturn,
+        value: "",
+        left: 2,
+        right: -1,
+        extra: -1
+    }
+    g_nodes.push(node4)
+    
+    var node5 = ASTNode {
+        node_type: NodeType_NodeFnDecl,
+        value: "add_test",
+        left: 3,
+        right: -1,
+        extra: -1
+    }
+    g_nodes.push(node5)
+    
+    var dummy1 = codegen_program()
+    var dummy2 = print_output()
+    
+    return 0
+}
+
+fn main() -> int {
+    return test_binary()
+}

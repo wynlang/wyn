@@ -1,0 +1,26 @@
+// Test full compiler pipeline: Parser -> Checker -> Codegen
+// This tests if we can compile a simple Wyn program using Wyn-written components
+
+fn test_simple_function() -> int {
+    var x = 10
+    var y = 20
+    return x + y
+}
+
+fn main() -> int {
+    print("Testing full Wyn compiler pipeline\n")
+    
+    var result = test_simple_function()
+    
+    print("Result: ")
+    print(result)
+    print("\n")
+    
+    if result == 30 {
+        print("Pipeline test PASSED!\n")
+        return 0
+    }
+    
+    print("Pipeline test FAILED!\n")
+    return 1
+}

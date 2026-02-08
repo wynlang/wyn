@@ -1,0 +1,14 @@
+// Test with int return type
+struct MyStruct {
+    x: int,
+    y: string
+}
+
+fn test() -> int {
+    var s = MyStruct { x: 0, y: "" }
+    return 0
+}
+
+fn main() -> int {
+    return 0
+}

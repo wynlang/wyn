@@ -1,0 +1,16 @@
+// Test compiler with function example
+import File
+
+fn main() -> int {
+    print("Testing compiler on function example...")
+    
+    var source = File::read("tests/test_compiler_fn.wyn")
+    print("Source code:")
+    print(source)
+    print("")
+    
+    // For now, just verify we can read the file
+    // Full compilation test would require modifying lib/compiler.wyn
+    
+    return 0
+}

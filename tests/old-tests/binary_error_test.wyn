@@ -1,0 +1,6 @@
+fn main() -> int {
+    var x: int = 42
+    var y: float = 3.14
+    var result = x - y  // This should trigger binary operation type error
+    return 0
+}

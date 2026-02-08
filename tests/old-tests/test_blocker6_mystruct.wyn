@@ -1,0 +1,13 @@
+// Test with different struct name
+struct MyStruct {
+    x: int,
+    y: string
+}
+
+fn test() -> MyStruct {
+    return MyStruct { x: 0, y: "" }
+}
+
+fn main() -> int {
+    return 0
+}

@@ -1,0 +1,14 @@
+trait Display {
+    fn display(self) -> string;
+}
+
+// Note: No impl Display for float
+
+fn show<T: Display>(x: T) {
+    x.display();
+}
+
+fn main() -> int {
+    show(3.14);  // Should error: float doesn't implement Display
+    return 0;
+}

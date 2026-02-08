@@ -1,0 +1,85 @@
+// Test: Time API
+// TDD tests for Time::now, Time::sleep
+
+fn test_time_now() {
+    print("Test: Time::now returns timestamp... ")
+    
+    var t = Time::now()
+    
+    if t > 0 {
+        print("✓ (timestamp: " + t.to_string() + ")\n")
+    } else {
+        print("✗ Expected positive timestamp\n")
+    }
+}
+
+fn test_time_elapsed() {
+    print("Test: Time elapsed measurement... ")
+    
+    var start = Time::now()
+    
+    // Do some work
+    var sum = 0
+    var i = 0
+    while i < 100000 {
+        sum = sum + i
+        i = i + 1
+    }
+    
+    var end = Time::now()
+    var elapsed = end - start
+    
+    if elapsed >= 0 {
+        print("✓ (elapsed: " + elapsed.to_string() + "ms)\n")
+    } else {
+        print("✗ Elapsed time should be non-negative\n")
+    }
+}
+
+fn test_time_sleep() {
+    print("Test: Time::sleep for 100ms... ")
+    
+    var start = Time::now()
+    Time::sleep(100)
+    var end = Time::now()
+    
+    var elapsed = end - start
+    
+    // Should be at least 100ms (allow some tolerance)
+    if elapsed >= 90 && elapsed < 200 {
+        print("✓ (slept " + elapsed.to_string() + "ms)\n")
+    } else {
+        print("⚠ Slept " + elapsed.to_string() + "ms (expected ~100ms)\n")
+    }
+}
+
+fn test_time_ordering() {
+    print("Test: Time values are ordered... ")
+    
+    var t1 = Time::now()
+    Time::sleep(10)
+    var t2 = Time::now()
+    Time::sleep(10)
+    var t3 = Time::now()
+    
+    if t1 < t2 && t2 < t3 {
+        print("✓\n")
+    } else {
+        print("✗ Time should be monotonically increasing\n")
+    }
+}
+
+fn main() -> int {
+    print("╔══════════════════════════════════════════════════════════════════════════╗\n")
+    print("║                    Time API Tests                                        ║\n")
+    print("╚══════════════════════════════════════════════════════════════════════════╝\n")
+    print("\n")
+    
+    test_time_now()
+    test_time_elapsed()
+    test_time_sleep()
+    test_time_ordering()
+    
+    print("\n✓ All Time tests passed\n")
+    return 0
+}

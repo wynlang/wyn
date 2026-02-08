@@ -1,0 +1,8 @@
+// Test 3: Module aliases
+import base_module as bm
+
+fn main() -> int {
+    var result = bm::compute();
+    print(result);
+    return 0;
+}

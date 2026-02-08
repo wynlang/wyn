@@ -1,0 +1,5 @@
+import root
+
+fn main() -> int {
+    return 0;
+}

@@ -1,0 +1,10 @@
+// Test 2: Module-level variables (mutable state)
+import counter_module
+
+fn main() -> int {
+    counter_module::increment();
+    counter_module::increment();
+    var count = counter_module::get_count();
+    print(count);
+    return 0;
+}

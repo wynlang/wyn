@@ -1,0 +1,15 @@
+// Product level module - tests root::
+import root::company.info
+import root::config
+
+pub fn get_product_info() -> int {
+    return 100;
+}
+
+pub fn test_company_info() -> int {
+    return info::get_name();
+}
+
+pub fn test_root() -> int {
+    return config::get_version();
+}

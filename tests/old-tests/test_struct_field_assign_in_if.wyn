@@ -1,0 +1,31 @@
+// Test: Struct field assignment inside if blocks
+// This should compile without parser errors
+
+struct Node {
+    node_type: int,
+    value: string
+}
+
+const NodeType_Int: int = 1
+const NodeType_String: int = 2
+
+fn test_field_assign() -> int {
+    var node: Node = Node { node_type: 0, value: "" }
+    
+    if true {
+        node.node_type = NodeType_Int
+        node.value = "test"
+    }
+    
+    return node.node_type
+}
+
+fn wyn_main() -> int {
+    var result: int = test_field_assign()
+    if result == 1 {
+        print("PASS: Struct field assignment in if block works")
+        return 0
+    }
+    print("FAIL: Expected 1")
+    return 1
+}

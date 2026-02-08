@@ -1,0 +1,16 @@
+fn main() {
+    var arr = [1, 2, 3, 4, 5];
+    
+    // Test contains - should return 1 (true)
+    var has_3 = wyn_array_contains(arr.data, arr.count, 3);
+    
+    // Test is_empty - should return 0 (false)
+    var empty = wyn_array_is_empty(arr.data, arr.count);
+    
+    // Test reverse
+    wyn_array_reverse(arr.data, arr.count);
+    
+    print("Array methods test completed");
+    
+    return 0;
+}

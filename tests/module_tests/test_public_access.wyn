@@ -1,0 +1,10 @@
+// Test: Public functions should work
+import private_module
+
+fn main() -> int {
+    var x = private_module::public_api();
+    print(x);
+    print("\n");
+    print("PASS: Public function accessible\n");
+    return 0;
+}

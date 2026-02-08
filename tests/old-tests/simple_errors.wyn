@@ -1,0 +1,5 @@
+fn main() {
+    var x: int = "hello"
+    var y: string = 42
+    var z = x + "world"
+}

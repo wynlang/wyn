@@ -1,0 +1,25 @@
+struct Box {
+    value: int
+}
+
+trait Display {
+    fn display(self) -> string;
+}
+
+impl Display for int {
+    fn display(self) -> string {
+        return "42";
+    }
+}
+
+impl<T: Display> Display for Box {
+    fn display(self) -> string {
+        return "Box with value";
+    }
+}
+
+fn main() -> int {
+    var int_box = Box { value: 42 };
+    int_box.display();
+    return 0;
+}

@@ -1,0 +1,7 @@
+import internal_calls_test
+
+fn main() -> int {
+    var x = internal_calls_test::public_api();
+    print(x);
+    return 0;
+}

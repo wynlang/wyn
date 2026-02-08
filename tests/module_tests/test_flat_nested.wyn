@@ -1,0 +1,8 @@
+import network_http_flat
+
+fn main() -> int {
+    var response = network_http_flat::get("test");
+    print(response);
+    print("\n");
+    return 0;
+}

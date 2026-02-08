@@ -1,0 +1,5 @@
+// TCO test - simple version
+fn main() -> int {
+    print_str("TCO test completed");
+    return 0;
+}

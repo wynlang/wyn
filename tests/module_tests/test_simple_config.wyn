@@ -1,0 +1,7 @@
+import config
+
+fn main() -> int {
+    var v = config::get_version();
+    print(v);
+    return 0;
+}

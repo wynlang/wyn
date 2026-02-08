@@ -1,0 +1,14 @@
+// Test: Internal module calls without forward declaration
+// Should compile and run successfully
+
+fn helper(x: int) -> int {
+    return x * 2;
+}
+
+pub fn double(value: int) -> int {
+    return helper(value);  // Internal call - should work
+}
+
+pub fn triple(value: int) -> int {
+    return helper(value) + value;  // Multiple uses
+}

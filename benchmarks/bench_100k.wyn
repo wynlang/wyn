@@ -1,0 +1,17 @@
+fn noop() -> int {
+    return 0;
+}
+
+fn main() -> int {
+    var start = time_now();
+    
+    var i = 0;
+    while i < 100000 {
+        spawn noop();
+        i = i + 1;
+    }
+    
+    var elapsed = time_now() - start;
+    print(elapsed);
+    return 0;
+}

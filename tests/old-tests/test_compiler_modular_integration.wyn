@@ -1,0 +1,15 @@
+// Test for integrated compiler with file I/O
+// This test verifies the compiler can read a file, compile it, and write output
+
+fn main() -> int {
+    print("Testing integrated compiler with file I/O...")
+    
+    // Test will be run by shell script that:
+    // 1. Creates test input file
+    // 2. Runs compiler on it
+    // 3. Verifies output file exists
+    // 4. Verifies output is valid C code
+    
+    print("Test structure ready")
+    return 0
+}

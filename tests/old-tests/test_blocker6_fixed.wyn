@@ -1,0 +1,19 @@
+// Test: Struct initialization with enum constants in function return
+// Using a different function name (not 'test')
+
+struct Token {
+    tok_type: int,
+    value: string
+}
+
+const TokenType_EndOfFile: int = 0
+const TokenType_Int: int = 1
+
+fn make_token() -> Token {
+    return Token { tok_type: TokenType_EndOfFile, value: "" }
+}
+
+fn main() -> int {
+    var tok = make_token()
+    return tok.tok_type
+}

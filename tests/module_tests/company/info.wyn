@@ -1,0 +1,4 @@
+// Company level module
+pub fn get_name() -> int {
+    return 42;
+}

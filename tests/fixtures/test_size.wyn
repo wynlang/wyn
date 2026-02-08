@@ -1,0 +1,14 @@
+fn a() -> int { return 1 }
+fn b() -> int { return 2 }
+fn c() -> int { return 3 }
+fn d() -> int { return 4 }
+fn e() -> int { return 5 }
+fn f() -> int { return 6 }
+fn g() -> int { return 7 }
+fn h() -> int { return 8 }
+fn i() -> int { return 9 }
+fn j() -> int { return 10 }
+
+fn main() -> int {
+    return a() + b() + c() + d() + e() + f() + g() + h() + i() + j()
+}

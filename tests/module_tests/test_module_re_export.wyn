@@ -1,0 +1,8 @@
+// Test 1: Module re-exports
+import re_export_module
+
+fn main() -> int {
+    var result = re_export_module::get_value();
+    print(result);
+    return 0;
+}

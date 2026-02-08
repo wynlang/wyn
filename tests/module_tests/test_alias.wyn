@@ -1,0 +1,12 @@
+// Test import aliases
+import network.http as net
+
+fn main() -> int {
+    var response = net::get("test.com");
+    print("Response: ");
+    print(response);
+    print("\n");
+    
+    print("PASS: Import aliases work!\n");
+    return 0;
+}

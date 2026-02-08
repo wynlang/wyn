@@ -1,0 +1,25 @@
+// Test struct array field access without mut
+
+struct Token {
+    value: int
+}
+
+struct Parser {
+    tokens: [Token],
+    current: int
+}
+
+fn parser_peek(mut p: Parser) -> Token {
+    var len = p.tokens.len()
+    return Token { value: len }
+}
+
+fn main() -> int {
+    var tokens: [Token] = []
+    tokens.push(Token { value: 1 })
+    tokens.push(Token { value: 2 })
+    tokens.push(Token { value: 3 })
+    var p = Parser { tokens: tokens, current: 0 }
+    var tok = parser_peek(p)
+    return tok.value
+}

@@ -1,0 +1,17 @@
+// Test BLOCKER #7: Mutable struct parameters lose type information
+
+struct Parser {
+    tokens: [int],
+    current: int
+}
+
+fn parse_expr(mut p: Parser) -> int {
+    var len = p.tokens.len()
+    return len
+}
+
+fn main() -> int {
+    var tokens: [int] = [1, 2, 3]
+    var p = Parser { tokens: tokens, current: 0 }
+    return parse_expr(p)
+}

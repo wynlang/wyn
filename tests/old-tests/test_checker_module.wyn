@@ -1,0 +1,79 @@
+// Test for checker_module.wyn
+// Tests real type checking functionality
+
+import checker_module
+
+fn test_empty_program() -> int {
+    print("Test 1: Empty program")
+    var errors = checker_module.check("")
+    if errors != 0 {
+        print("FAIL: Expected 0 errors for empty program")
+        return 1
+    }
+    print("PASS")
+    return 0
+}
+
+fn test_simple_int() -> int {
+    print("Test 2: Simple integer")
+    var errors = checker_module.check("42")
+    if errors != 0 {
+        print("FAIL: Expected 0 errors for '42'")
+        return 1
+    }
+    print("PASS")
+    return 0
+}
+
+fn test_var_decl() -> int {
+    print("Test 3: Variable declaration")
+    var errors = checker_module.check("var x: int = 42")
+    if errors != 0 {
+        print("FAIL: Expected 0 errors for 'var x: int = 42'")
+        return 1
+    }
+    print("PASS")
+    return 0
+}
+
+fn test_type_mismatch() -> int {
+    print("Test 4: Type mismatch")
+    var errors = checker_module.check("var x: int = \"hello\"")
+    if errors == 0 {
+        print("FAIL: Expected errors for type mismatch")
+        return 1
+    }
+    print("PASS")
+    return 0
+}
+
+fn test_undefined_var() -> int {
+    print("Test 5: Undefined variable")
+    var errors = checker_module.check("x + 1")
+    if errors == 0 {
+        print("FAIL: Expected errors for undefined variable")
+        return 1
+    }
+    print("PASS")
+    return 0
+}
+
+fn main() -> int {
+    print("=== Checker Module Tests ===")
+    
+    var failed = 0
+    
+    failed = failed + test_empty_program()
+    failed = failed + test_simple_int()
+    failed = failed + test_var_decl()
+    failed = failed + test_type_mismatch()
+    failed = failed + test_undefined_var()
+    
+    if failed == 0 {
+        print("=== All tests passed! ===")
+        return 0
+    } else {
+        print("=== Some tests failed ===")
+        return 1
+    }
+}

@@ -1,0 +1,23 @@
+// Test struct arrays
+struct Point {
+    x: int,
+    y: int
+}
+
+fn main() -> int {
+    var points: [Point] = []
+    
+    var p1: Point = Point { x: 1, y: 2 }
+    points.push(p1)
+    
+    var p2: Point = Point { x: 3, y: 4 }
+    points.push(p2)
+    
+    if points.len() == 2 {
+        print("✓ Struct array works!")
+        return 0
+    }
+    
+    print("✗ Failed")
+    return 1
+}

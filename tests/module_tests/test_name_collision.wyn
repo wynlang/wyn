@@ -1,0 +1,7 @@
+import config
+
+fn main() -> int {
+    var config = 42;  // Same name as module
+    print(config);
+    return 0;
+}
