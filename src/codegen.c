@@ -4546,7 +4546,7 @@ void codegen_c_header() {
     emit("    return result;\n");
     emit("}\n");
     
-    emit("int random_int(int max) { return rand() %% max; }\n");
+    emit("int random_int(int min, int max) { return min + rand() %% (max - min + 1); }\n");
     emit("int random_range(int min, int max) { return min + rand() %% (max - min + 1); }\n");
     emit("double random_float() { return (double)rand() / RAND_MAX; }\n");
     emit("void seed_random(int seed) { srand(seed); }\n");
