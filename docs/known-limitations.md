@@ -9,7 +9,7 @@
 
 ### ✅ Array Operations
 - `.len()`, `.push()`, `.pop()`, `.contains()`, `.is_empty()`, `.index_of()`
-- `.sort()`, `.reverse()`, `.get()`
+- `.sort()`, `.reverse()`, `.get()`, `.first()`, `.last()`, `.clear()`
 - Array indexing: `arr[0]`, `arr[1]`, etc.
 
 ### ✅ HashMap Operations
@@ -27,23 +27,21 @@
 
 ## Known Limitations
 
-### 1. Array `.first()` and `.last()` Return Optional
-**Issue:** These methods return `WynOptional*` which can't be directly printed or used.
+### ~~1. Array `.first()` and `.last()` Return Optional~~ ✅ FIXED
+**Status:** RESOLVED - These methods now work correctly and return values directly.
 
-**Workaround:** Use array indexing instead:
 ```wyn
 var nums = [1, 2, 3];
-var first = nums[0];              // Instead of nums.first()
-var last = nums[nums.len() - 1];  // Instead of nums.last()
+var first = nums.first();  // Works! Returns 1
+var last = nums.last();    // Works! Returns 3
 ```
 
-### 2. No Array `.clear()` Method
-**Issue:** Arrays don't have a `.clear()` method.
+### ~~2. No Array `.clear()` Method~~ ✅ FIXED
+**Status:** RESOLVED - Array `.clear()` method now works correctly.
 
-**Workaround:** Create a new empty array:
 ```wyn
 var items = [1, 2, 3];
-items = [];  // Clear by reassigning
+items.clear();  // Works! Array is now empty
 ```
 
 ### 3. String Indexing Not Supported
