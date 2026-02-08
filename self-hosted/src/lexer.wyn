@@ -183,6 +183,20 @@ fn lex(source: string) -> Tokens {
             cnt = cnt + 1
             pos = pos + 1
             cl = cl + 1
+        } else if str_eq(c, "/") == 1 {
+            types[cnt] = 26
+            lines[cnt] = ln
+            cols[cnt] = cl
+            cnt = cnt + 1
+            pos = pos + 1
+            cl = cl + 1
+        } else if str_eq(c, "%") == 1 {
+            types[cnt] = 27
+            lines[cnt] = ln
+            cols[cnt] = cl
+            cnt = cnt + 1
+            pos = pos + 1
+            cl = cl + 1
         } else if str_eq(c, "(") == 1 {
             types[cnt] = 18
             lines[cnt] = ln
@@ -225,6 +239,135 @@ fn lex(source: string) -> Tokens {
             cnt = cnt + 1
             pos = pos + 1
             cl = cl + 1
+        } else if str_eq(c, ";") == 1 {
+            types[cnt] = 11
+            lines[cnt] = ln
+            cols[cnt] = cl
+            cnt = cnt + 1
+            pos = pos + 1
+            cl = cl + 1
+        } else if str_eq(c, "[") == 1 {
+            types[cnt] = 20
+            lines[cnt] = ln
+            cols[cnt] = cl
+            cnt = cnt + 1
+            pos = pos + 1
+            cl = cl + 1
+        } else if str_eq(c, "]") == 1 {
+            types[cnt] = 21
+            lines[cnt] = ln
+            cols[cnt] = cl
+            cnt = cnt + 1
+            pos = pos + 1
+            cl = cl + 1
+        } else if str_eq(c, ".") == 1 {
+            types[cnt] = 43
+            lines[cnt] = ln
+            cols[cnt] = cl
+            cnt = cnt + 1
+            pos = pos + 1
+            cl = cl + 1
+        } else if str_eq(c, "=") == 1 {
+            // Check for ==
+            if pos + 1 < slen {
+                var next = source.char_at(pos + 1)
+                if str_eq(next, "=") == 1 {
+                    types[cnt] = 28  // EQUAL_EQUAL
+                    lines[cnt] = ln
+                    cols[cnt] = cl
+                    cnt = cnt + 1
+                    pos = pos + 2
+                    cl = cl + 2
+                } else {
+                    // Single = (not a token in parser, skip)
+                    pos = pos + 1
+                    cl = cl + 1
+                }
+            } else {
+                pos = pos + 1
+                cl = cl + 1
+            }
+        } else if str_eq(c, "!") == 1 {
+            // Check for !=
+            if pos + 1 < slen {
+                var next = source.char_at(pos + 1)
+                if str_eq(next, "=") == 1 {
+                    types[cnt] = 29  // BANG_EQUAL
+                    lines[cnt] = ln
+                    cols[cnt] = cl
+                    cnt = cnt + 1
+                    pos = pos + 2
+                    cl = cl + 2
+                } else {
+                    types[cnt] = 36  // BANG
+                    lines[cnt] = ln
+                    cols[cnt] = cl
+                    cnt = cnt + 1
+                    pos = pos + 1
+                    cl = cl + 1
+                }
+            } else {
+                types[cnt] = 36  // BANG
+                lines[cnt] = ln
+                cols[cnt] = cl
+                cnt = cnt + 1
+                pos = pos + 1
+                cl = cl + 1
+            }
+        } else if str_eq(c, "<") == 1 {
+            // Check for <=
+            if pos + 1 < slen {
+                var next = source.char_at(pos + 1)
+                if str_eq(next, "=") == 1 {
+                    types[cnt] = 31  // LESS_EQUAL
+                    lines[cnt] = ln
+                    cols[cnt] = cl
+                    cnt = cnt + 1
+                    pos = pos + 2
+                    cl = cl + 2
+                } else {
+                    types[cnt] = 30  // LESS
+                    lines[cnt] = ln
+                    cols[cnt] = cl
+                    cnt = cnt + 1
+                    pos = pos + 1
+                    cl = cl + 1
+                }
+            } else {
+                types[cnt] = 30  // LESS
+                lines[cnt] = ln
+                cols[cnt] = cl
+                cnt = cnt + 1
+                pos = pos + 1
+                cl = cl + 1
+            }
+        } else if str_eq(c, ">") == 1 {
+            // Check for >=
+            if pos + 1 < slen {
+                var next = source.char_at(pos + 1)
+                if str_eq(next, "=") == 1 {
+                    types[cnt] = 33  // GREATER_EQUAL
+                    lines[cnt] = ln
+                    cols[cnt] = cl
+                    cnt = cnt + 1
+                    pos = pos + 2
+                    cl = cl + 2
+                } else {
+                    types[cnt] = 32  // GREATER
+                    lines[cnt] = ln
+                    cols[cnt] = cl
+                    cnt = cnt + 1
+                    pos = pos + 1
+                    cl = cl + 1
+                }
+            } else {
+                types[cnt] = 32  // GREATER
+                lines[cnt] = ln
+                cols[cnt] = cl
+                cnt = cnt + 1
+                pos = pos + 1
+                cl = cl + 1
+            }
         } else {
             pos = pos + 1
             cl = cl + 1
@@ -271,12 +414,70 @@ fn test_lex_keyword() -> int {
     return 0
 }
 
+fn test_lex_semicolon() -> int {
+    var tokens = lex("x;")
+    if tokens.count != 3 { return 1 }
+    if tokens.types[0] != 9 { return 1 }  // IDENT
+    if tokens.types[1] != 11 { return 1 } // SEMICOLON
+    return 0
+}
+
+fn test_lex_brackets() -> int {
+    var tokens = lex("[1]")
+    if tokens.count != 4 { return 1 }
+    if tokens.types[0] != 20 { return 1 } // LEFT_BRACKET
+    if tokens.types[1] != 0 { return 1 }  // INT
+    if tokens.types[2] != 21 { return 1 } // RIGHT_BRACKET
+    return 0
+}
+
+fn test_lex_dot() -> int {
+    var tokens = lex("x.y")
+    if tokens.count != 4 { return 1 }
+    if tokens.types[0] != 9 { return 1 }  // IDENT
+    if tokens.types[1] != 43 { return 1 } // DOT
+    if tokens.types[2] != 9 { return 1 }  // IDENT
+    return 0
+}
+
+fn test_lex_operators() -> int {
+    var tokens = lex("==")
+    if tokens.count != 2 { return 1 }
+    if tokens.types[0] != 28 { return 1 } // EQUAL_EQUAL
+    
+    tokens = lex("!=")
+    if tokens.count != 2 { return 1 }
+    if tokens.types[0] != 29 { return 1 } // BANG_EQUAL
+    
+    tokens = lex("<")
+    if tokens.count != 2 { return 1 }
+    if tokens.types[0] != 30 { return 1 } // LESS
+    
+    tokens = lex(">")
+    if tokens.count != 2 { return 1 }
+    if tokens.types[0] != 32 { return 1 } // GREATER
+    
+    tokens = lex("/")
+    if tokens.count != 2 { return 1 }
+    if tokens.types[0] != 26 { return 1 } // SLASH
+    
+    tokens = lex("%")
+    if tokens.count != 2 { return 1 }
+    if tokens.types[0] != 27 { return 1 } // PERCENT
+    
+    return 0
+}
+
 fn main() -> int {
     var f = 0
     f = f + test_lex_number()
     f = f + test_lex_add()
     f = f + test_lex_ident()
     f = f + test_lex_keyword()
+    f = f + test_lex_semicolon()
+    f = f + test_lex_brackets()
+    f = f + test_lex_dot()
+    f = f + test_lex_operators()
     
     if f == 0 {
         print("All lexer tests PASS\n")
