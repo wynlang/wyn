@@ -1,0 +1,4 @@
+# Compiled artifacts
+*.c
+*.out
+*.o
