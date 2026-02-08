@@ -63,7 +63,7 @@ fn tokenize(source: string) -> Tokens {
     var count = 0
     
     while pos < len {
-        var c: string = string_char_at(source, pos)
+        var c = source.char_at(pos)
         
         // Skip whitespace
         if str_eq(c, " ") == 1 { 
@@ -79,7 +79,7 @@ fn tokenize(source: string) -> Tokens {
                 while done == 0 {
                     if pos >= len { done = 1 }
                     else {
-                        var d: string = string_char_at(source, pos)
+                        var d = source.char_at(pos)
                         if check_digit(d) == 1 { pos = pos + 1 }
                         else { done = 1 }
                     }
