@@ -1,0 +1,68 @@
+// Test: File operations
+
+fn test_file_write_read() -> int {
+    var content = "Hello, World!"
+    var result = File::write("test_file.txt", content)
+    
+    if result == 1 {
+        var read_content = File::read("test_file.txt")
+        if str_eq(read_content, content) == 1 {
+            File::delete("test_file.txt")
+            print("PASS: write and read\n")
+            return 0
+        }
+    }
+    print("FAIL: write and read\n")
+    return 1
+}
+
+fn test_file_exists() -> int {
+    File::write("test_exists.txt", "test")
+    var exists = File::exists("test_exists.txt")
+    
+    if exists == 1 {
+        File::delete("test_exists.txt")
+        var not_exists = File::exists("test_exists.txt")
+        if not_exists == 0 {
+            print("PASS: exists\n")
+            return 0
+        }
+    }
+    print("FAIL: exists\n")
+    return 1
+}
+
+fn test_file_delete() -> int {
+    File::write("test_delete.txt", "test")
+    var result = File::delete("test_delete.txt")
+    
+    if result == 1 {
+        var exists = File::exists("test_delete.txt")
+        if exists == 0 {
+            print("PASS: delete\n")
+            return 0
+        }
+    }
+    print("FAIL: delete\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== File Operations Tests ===\n")
+    var failures = 0
+    
+    failures = failures + test_file_write_read()
+    failures = failures + test_file_exists()
+    failures = failures + test_file_delete()
+    
+    print("\n=== Summary ===\n")
+    if failures == 0 {
+        print("All tests PASSED!\n")
+        return 0
+    }
+    
+    print("FAILED: ")
+    print(failures)
+    print(" tests\n")
+    return 1
+}
