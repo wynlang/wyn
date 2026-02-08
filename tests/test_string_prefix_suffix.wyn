@@ -1,0 +1,66 @@
+// Test: String starts_with and ends_with methods
+
+fn test_starts_with_true() -> int {
+    var s = "hello world"
+    var result = s.starts_with("hello")
+    if result == 1 {
+        print("PASS: starts_with true\n")
+        return 0
+    }
+    print("FAIL: starts_with true\n")
+    return 1
+}
+
+fn test_starts_with_false() -> int {
+    var s = "hello world"
+    var result = s.starts_with("world")
+    if result == 0 {
+        print("PASS: starts_with false\n")
+        return 0
+    }
+    print("FAIL: starts_with false\n")
+    return 1
+}
+
+fn test_ends_with_true() -> int {
+    var s = "hello world"
+    var result = s.ends_with("world")
+    if result == 1 {
+        print("PASS: ends_with true\n")
+        return 0
+    }
+    print("FAIL: ends_with true\n")
+    return 1
+}
+
+fn test_ends_with_false() -> int {
+    var s = "hello world"
+    var result = s.ends_with("hello")
+    if result == 0 {
+        print("PASS: ends_with false\n")
+        return 0
+    }
+    print("FAIL: ends_with false\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== String Prefix/Suffix Tests ===\n")
+    var failures = 0
+    
+    failures = failures + test_starts_with_true()
+    failures = failures + test_starts_with_false()
+    failures = failures + test_ends_with_true()
+    failures = failures + test_ends_with_false()
+    
+    print("\n=== Summary ===\n")
+    if failures == 0 {
+        print("All tests PASSED!\n")
+        return 0
+    }
+    
+    print("FAILED: ")
+    print(failures)
+    print(" tests\n")
+    return 1
+}
