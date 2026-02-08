@@ -1,0 +1,101 @@
+// Test: Known limitations - verify and resolve
+
+// Limitation 1: Array indexing (should work)
+fn test_array_first_last() -> int {
+    var nums = [1, 2, 3, 4, 5]
+    var first = nums[0]
+    var last = nums[nums.len() - 1]
+    
+    if first == 1 {
+        if last == 5 {
+            print("PASS: array first/last via indexing\n")
+            return 0
+        }
+    }
+    print("FAIL: array first/last\n")
+    return 1
+}
+
+// Limitation 2: Array clear (workaround works)
+fn test_array_clear() -> int {
+    var items = [1, 2, 3]
+    items = []
+    
+    if items.len() == 0 {
+        print("PASS: array clear via reassignment\n")
+        return 0
+    }
+    print("FAIL: array clear\n")
+    return 1
+}
+
+// Limitation 3: String slice (should work)
+fn test_string_slice() -> int {
+    var text = "hello"
+    var first_char = text.slice(0, 1)
+    
+    if str_eq(first_char, "h") == 1 {
+        print("PASS: string slice\n")
+        return 0
+    }
+    print("FAIL: string slice\n")
+    return 1
+}
+
+// Limitation 4: Parse int validation
+fn test_parse_int_validation() -> int {
+    var valid = "123"
+    var invalid = "abc"
+    
+    var num1 = str_parse_int(valid)
+    var num2 = str_parse_int(invalid)
+    
+    if num1 == 123 {
+        if num2 == 0 {
+            print("PASS: parse int with validation\n")
+            return 0
+        }
+    }
+    print("FAIL: parse int\n")
+    return 1
+}
+
+// Limitation 6: Reserved keywords workaround
+fn test_reserved_keywords() -> int {
+    var scores = HashMap::new()
+    scores.set("a", 1)
+    
+    var tags = HashSet::new()
+    tags.add("x")
+    
+    if scores.has("a") == 1 {
+        if tags.contains("x") == 1 {
+            print("PASS: reserved keywords workaround\n")
+            return 0
+        }
+    }
+    print("FAIL: reserved keywords\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Known Limitations Tests ===\n")
+    var failures = 0
+    
+    failures = failures + test_array_first_last()
+    failures = failures + test_array_clear()
+    failures = failures + test_string_slice()
+    failures = failures + test_parse_int_validation()
+    failures = failures + test_reserved_keywords()
+    
+    print("\n=== Summary ===\n")
+    if failures == 0 {
+        print("All workarounds VALIDATED!\n")
+        return 0
+    }
+    
+    print("FAILED: ")
+    print(failures)
+    print(" tests\n")
+    return 1
+}
