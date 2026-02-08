@@ -1,0 +1,62 @@
+// Test: Array .clear() method - PROPER FIX
+
+fn test_array_clear_method() -> int {
+    var nums = [1, 2, 3, 4, 5]
+    nums.clear()
+    
+    if nums.len() == 0 {
+        print("PASS: array.clear()\n")
+        return 0
+    }
+    print("FAIL: array.clear() - length is ")
+    print(nums.len())
+    print("\n")
+    return 1
+}
+
+fn test_array_clear_empty() -> int {
+    var nums = []
+    nums.clear()
+    
+    if nums.len() == 0 {
+        print("PASS: array.clear() on empty\n")
+        return 0
+    }
+    print("FAIL: array.clear() on empty\n")
+    return 1
+}
+
+fn test_array_clear_then_add() -> int {
+    var nums = [1, 2, 3]
+    nums.clear()
+    nums.push(10)
+    
+    if nums.len() == 1 {
+        if nums[0] == 10 {
+            print("PASS: array.clear() then add\n")
+            return 0
+        }
+    }
+    print("FAIL: array.clear() then add\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Array Clear Method Tests ===\n")
+    var failures = 0
+    
+    failures = failures + test_array_clear_method()
+    failures = failures + test_array_clear_empty()
+    failures = failures + test_array_clear_then_add()
+    
+    print("\n=== Summary ===\n")
+    if failures == 0 {
+        print("All tests PASSED!\n")
+        return 0
+    }
+    
+    print("FAILED: ")
+    print(failures)
+    print(" tests\n")
+    return 1
+}

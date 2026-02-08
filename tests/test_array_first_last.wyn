@@ -1,0 +1,74 @@
+// Test: Array .first() and .last() methods - PROPER FIX
+
+fn test_array_first_method() -> int {
+    var nums = [10, 20, 30]
+    var first = nums.first()
+    
+    if first == 10 {
+        print("PASS: array.first()\n")
+        return 0
+    }
+    print("FAIL: array.first() - expected 10, got ")
+    print(first)
+    print("\n")
+    return 1
+}
+
+fn test_array_last_method() -> int {
+    var nums = [10, 20, 30]
+    var last = nums.last()
+    
+    if last == 30 {
+        print("PASS: array.last()\n")
+        return 0
+    }
+    print("FAIL: array.last() - expected 30, got ")
+    print(last)
+    print("\n")
+    return 1
+}
+
+fn test_array_first_single() -> int {
+    var nums = [42]
+    var first = nums.first()
+    
+    if first == 42 {
+        print("PASS: array.first() single element\n")
+        return 0
+    }
+    print("FAIL: array.first() single element\n")
+    return 1
+}
+
+fn test_array_last_single() -> int {
+    var nums = [42]
+    var last = nums.last()
+    
+    if last == 42 {
+        print("PASS: array.last() single element\n")
+        return 0
+    }
+    print("FAIL: array.last() single element\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Array First/Last Methods Tests ===\n")
+    var failures = 0
+    
+    failures = failures + test_array_first_method()
+    failures = failures + test_array_last_method()
+    failures = failures + test_array_first_single()
+    failures = failures + test_array_last_single()
+    
+    print("\n=== Summary ===\n")
+    if failures == 0 {
+        print("All tests PASSED!\n")
+        return 0
+    }
+    
+    print("FAILED: ")
+    print(failures)
+    print(" tests\n")
+    return 1
+}
