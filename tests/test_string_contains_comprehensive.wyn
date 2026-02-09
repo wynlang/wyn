@@ -1,0 +1,32 @@
+// TDD Test: String contains comprehensive
+
+fn test_contains_true() -> int {
+    var s: string = "hello world"
+    var result = s.contains("world")
+    if result == 1 {
+        print("PASS: contains true\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_contains_false() -> int {
+    var s: string = "hello"
+    var result = s.contains("xyz")
+    if result == 0 {
+        print("PASS: contains false\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== String Contains Tests ===\n")
+    var failures = 0
+    failures = failures + test_contains_true()
+    failures = failures + test_contains_false()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
