@@ -1,0 +1,47 @@
+// TDD Test: Array boundary operations
+
+fn test_array_first_element() -> int {
+    var arr = [10, 20, 30]
+    var val = arr[0]
+    if val == 10 {
+        print("PASS: array first element\n")
+        return 0
+    }
+    print("FAIL: array first element\n")
+    return 1
+}
+
+fn test_array_last_element() -> int {
+    var arr = [10, 20, 30]
+    var val = arr[2]
+    if val == 30 {
+        print("PASS: array last element\n")
+        return 0
+    }
+    print("FAIL: array last element\n")
+    return 1
+}
+
+fn test_array_single_element_access() -> int {
+    var arr = [42]
+    var val = arr[0]
+    if val == 42 {
+        print("PASS: array single element access\n")
+        return 0
+    }
+    print("FAIL: array single element access\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Array Boundary Tests ===\n")
+    var failures = 0
+    failures = failures + test_array_first_element()
+    failures = failures + test_array_last_element()
+    failures = failures + test_array_single_element_access()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
