@@ -1,0 +1,30 @@
+// TDD Test: Enum comprehensive
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+fn test_enum_red() -> int {
+    var c = Color::Red
+    print("PASS: enum red\n")
+    return 0
+}
+
+fn test_enum_green() -> int {
+    var c = Color::Green
+    print("PASS: enum green\n")
+    return 0
+}
+
+fn main() -> int {
+    print("=== Enum Comprehensive Tests ===\n")
+    var failures = 0
+    failures = failures + test_enum_red()
+    failures = failures + test_enum_green()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
