@@ -1,0 +1,73 @@
+// TDD Test: Array length operations
+
+fn test_array_len_empty() -> int {
+    var arr = []
+    var size = arr.len()
+    if size == 0 {
+        print("PASS: array.len() empty\n")
+        return 0
+    }
+    print("FAIL: array.len() empty\n")
+    return 1
+}
+
+fn test_array_len_single() -> int {
+    var arr = [1]
+    var size = arr.len()
+    if size == 1 {
+        print("PASS: array.len() single\n")
+        return 0
+    }
+    print("FAIL: array.len() single\n")
+    return 1
+}
+
+fn test_array_len_multiple() -> int {
+    var arr = [1, 2, 3, 4, 5]
+    var size = arr.len()
+    if size == 5 {
+        print("PASS: array.len() multiple\n")
+        return 0
+    }
+    print("FAIL: array.len() multiple\n")
+    return 1
+}
+
+fn test_array_len_after_push() -> int {
+    var arr = [1, 2]
+    arr.push(3)
+    var size = arr.len()
+    if size == 3 {
+        print("PASS: array.len() after push\n")
+        return 0
+    }
+    print("FAIL: array.len() after push\n")
+    return 1
+}
+
+fn test_array_len_after_pop() -> int {
+    var arr = [1, 2, 3]
+    arr.pop()
+    var size = arr.len()
+    if size == 2 {
+        print("PASS: array.len() after pop\n")
+        return 0
+    }
+    print("FAIL: array.len() after pop\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Array Length Tests ===\n")
+    var failures = 0
+    failures = failures + test_array_len_empty()
+    failures = failures + test_array_len_single()
+    failures = failures + test_array_len_multiple()
+    failures = failures + test_array_len_after_push()
+    failures = failures + test_array_len_after_pop()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}

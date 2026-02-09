@@ -1,0 +1,59 @@
+// TDD Test: Array get operations
+
+fn test_array_get_first() -> int {
+    var arr = [10, 20, 30]
+    var val = arr.get(0)
+    if val == 10 {
+        print("PASS: array.get() first\n")
+        return 0
+    }
+    print("FAIL: array.get() first\n")
+    return 1
+}
+
+fn test_array_get_middle() -> int {
+    var arr = [10, 20, 30]
+    var val = arr.get(1)
+    if val == 20 {
+        print("PASS: array.get() middle\n")
+        return 0
+    }
+    print("FAIL: array.get() middle\n")
+    return 1
+}
+
+fn test_array_get_last() -> int {
+    var arr = [10, 20, 30]
+    var val = arr.get(2)
+    if val == 30 {
+        print("PASS: array.get() last\n")
+        return 0
+    }
+    print("FAIL: array.get() last\n")
+    return 1
+}
+
+fn test_array_indexing() -> int {
+    var arr = [5, 10, 15]
+    var val = arr[1]
+    if val == 10 {
+        print("PASS: array indexing\n")
+        return 0
+    }
+    print("FAIL: array indexing\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Array Get Tests ===\n")
+    var failures = 0
+    failures = failures + test_array_get_first()
+    failures = failures + test_array_get_middle()
+    failures = failures + test_array_get_last()
+    failures = failures + test_array_indexing()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
