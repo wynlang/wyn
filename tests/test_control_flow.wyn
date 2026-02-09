@@ -1,0 +1,71 @@
+// TDD Test: Control flow operations
+
+fn test_if_true() -> int {
+    var result = 0
+    if 1 == 1 {
+        result = 1
+    }
+    if result == 1 {
+        print("PASS: if true\n")
+        return 0
+    }
+    print("FAIL: if true\n")
+    return 1
+}
+
+fn test_if_false() -> int {
+    var result = 0
+    if 1 == 2 {
+        result = 1
+    }
+    if result == 0 {
+        print("PASS: if false\n")
+        return 0
+    }
+    print("FAIL: if false\n")
+    return 1
+}
+
+fn test_if_else_true() -> int {
+    var result = 0
+    if 1 == 1 {
+        result = 1
+    } else {
+        result = 2
+    }
+    if result == 1 {
+        print("PASS: if-else true\n")
+        return 0
+    }
+    print("FAIL: if-else true\n")
+    return 1
+}
+
+fn test_if_else_false() -> int {
+    var result = 0
+    if 1 == 2 {
+        result = 1
+    } else {
+        result = 2
+    }
+    if result == 2 {
+        print("PASS: if-else false\n")
+        return 0
+    }
+    print("FAIL: if-else false\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Control Flow Tests ===\n")
+    var failures = 0
+    failures = failures + test_if_true()
+    failures = failures + test_if_false()
+    failures = failures + test_if_else_true()
+    failures = failures + test_if_else_false()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}

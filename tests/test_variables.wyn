@@ -1,0 +1,71 @@
+// TDD Test: Variable operations
+
+fn test_var_assignment() -> int {
+    var x = 42
+    if x == 42 {
+        print("PASS: var assignment\n")
+        return 0
+    }
+    print("FAIL: var assignment\n")
+    return 1
+}
+
+fn test_var_reassignment() -> int {
+    var x = 10
+    x = 20
+    if x == 20 {
+        print("PASS: var reassignment\n")
+        return 0
+    }
+    print("FAIL: var reassignment\n")
+    return 1
+}
+
+fn test_var_string() -> int {
+    var s = "hello"
+    var expected = "hello"
+    if s == expected {
+        print("PASS: var string\n")
+        return 0
+    }
+    print("FAIL: var string\n")
+    return 1
+}
+
+fn test_var_multiple() -> int {
+    var a = 1
+    var b = 2
+    var c = 3
+    var sum = a + b + c
+    if sum == 6 {
+        print("PASS: var multiple\n")
+        return 0
+    }
+    print("FAIL: var multiple\n")
+    return 1
+}
+
+fn test_const_value() -> int {
+    const x = 100
+    if x == 100 {
+        print("PASS: const value\n")
+        return 0
+    }
+    print("FAIL: const value\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Variable Operations Tests ===\n")
+    var failures = 0
+    failures = failures + test_var_assignment()
+    failures = failures + test_var_reassignment()
+    failures = failures + test_var_string()
+    failures = failures + test_var_multiple()
+    failures = failures + test_const_value()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
