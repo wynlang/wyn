@@ -1,0 +1,21 @@
+// TDD Test: Comment operations
+
+fn test_single_line_comment() -> int {
+    // This is a comment
+    var x = 42
+    if x == 42 {
+        print("PASS: single line comment\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Comment Tests ===\n")
+    var failures = 0
+    failures = failures + test_single_line_comment()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
