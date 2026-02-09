@@ -1,0 +1,37 @@
+// TDD Test: System module operations
+
+fn test_system_args() -> int {
+    var args = System::args()
+    var count = args.len()
+    
+    if count >= 1 {
+        print("PASS: System::args()\n")
+        return 0
+    }
+    print("FAIL: System::args() should have at least 1 arg\n")
+    return 1
+}
+
+fn test_system_env() -> int {
+    var path = System::env("PATH")
+    var path_len = path.len()
+    
+    if path_len > 0 {
+        print("PASS: System::env()\n")
+        return 0
+    }
+    print("FAIL: System::env('PATH') should return value\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== System Module Tests ===\n")
+    var failures = 0
+    failures = failures + test_system_args()
+    failures = failures + test_system_env()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
