@@ -1,0 +1,56 @@
+// TDD Test: Edge cases - string operations
+
+fn test_contains_empty_substring() -> int {
+    var s: string = "hello"
+    var result = s.contains("")
+    if result == 1 {
+        print("PASS: contains empty substring\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_contains_self() -> int {
+    var s: string = "test"
+    var result = s.contains("test")
+    if result == 1 {
+        print("PASS: contains self\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_upper_already_upper() -> int {
+    var s: string = "HELLO"
+    var result = s.upper()
+    var expected: string = "HELLO"
+    if result == expected {
+        print("PASS: upper already upper\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_lower_already_lower() -> int {
+    var s: string = "hello"
+    var result = s.lower()
+    var expected: string = "hello"
+    if result == expected {
+        print("PASS: lower already lower\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Edge Cases: String Operations ===\n")
+    var failures = 0
+    failures = failures + test_contains_empty_substring()
+    failures = failures + test_contains_self()
+    failures = failures + test_upper_already_upper()
+    failures = failures + test_lower_already_lower()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
