@@ -1,0 +1,33 @@
+// TDD Test: Expression operations
+
+fn test_expression_arithmetic() -> int {
+    var result = 2 + 3 * 4
+    if result == 14 {
+        print("PASS: expression arithmetic\n")
+        return 0
+    }
+    print("FAIL: expression arithmetic\n")
+    return 1
+}
+
+fn test_expression_parentheses() -> int {
+    var result = (2 + 3) * 4
+    if result == 20 {
+        print("PASS: expression parentheses\n")
+        return 0
+    }
+    print("FAIL: expression parentheses\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Expression Tests ===\n")
+    var failures = 0
+    failures = failures + test_expression_arithmetic()
+    failures = failures + test_expression_parentheses()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
