@@ -1,0 +1,42 @@
+// TDD Test: Edge cases - empty HashSet
+
+fn test_empty_hashset_len() -> int {
+    var set = HashSet::new()
+    if set.len() == 0 {
+        print("PASS: empty hashset len\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_empty_hashset_contains() -> int {
+    var set = HashSet::new()
+    var has_item = set.contains("item")
+    if has_item == 0 {
+        print("PASS: empty hashset contains\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_empty_hashset_remove() -> int {
+    var set = HashSet::new()
+    set.remove("nonexistent")
+    if set.len() == 0 {
+        print("PASS: empty hashset remove\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Edge Cases: Empty HashSet ===\n")
+    var failures = 0
+    failures = failures + test_empty_hashset_len()
+    failures = failures + test_empty_hashset_contains()
+    failures = failures + test_empty_hashset_remove()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
