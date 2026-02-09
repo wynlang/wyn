@@ -528,19 +528,9 @@ void codegen_expr(Expr* expr) {
                     break;
                 }
                 
-                // Special handling for File:: module - some functions use File_, some use file_
+                // Special handling for File:: module - all functions use file_ prefix (lowercase)
                 if (strcmp(temp_ident, "File") == 0) {
-                    // Functions that use file_ prefix (lowercase)
-                    if (strcmp(function_part, "append") == 0 ||
-                        strcmp(function_part, "copy") == 0 ||
-                        strcmp(function_part, "move") == 0 ||
-                        strcmp(function_part, "size") == 0 ||
-                        strcmp(function_part, "modified_time") == 0) {
-                        snprintf(temp_ident, sizeof(temp_ident), "file_%s", function_part);
-                    } else {
-                        // Functions that use File_ prefix (capitalized)
-                        snprintf(temp_ident, sizeof(temp_ident), "File_%s", function_part);
-                    }
+                    snprintf(temp_ident, sizeof(temp_ident), "file_%s", function_part);
                     strcpy(ident + offset, temp_ident);
                     emit("%s", ident);
                     free(ident);
