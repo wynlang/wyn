@@ -45,7 +45,9 @@ fn main() -> int {
     }
     
     if failed == 0 {
+        print("All tests PASSED")
         return 0
     }
+    print("Some tests FAILED")
     return 1
 }

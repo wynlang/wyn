@@ -3990,6 +3990,11 @@ void codegen_c_header() {
     emit("    if(val < INT_MIN || val > INT_MAX) return INT_MIN;\n");
     emit("    return (int)val;\n");
     emit("}\n");
+    
+    // Helper to check if parse failed
+    emit("int str_parse_int_failed(int result) {\n");
+    emit("    return result == INT_MIN;\n");
+    emit("}\n");
     emit("double str_parse_float(const char* s) { return atof(s); }\n");
     emit("int abs_val(int x) { return x < 0 ? -x : x; }\n");
     emit("int min(int a, int b) { return a < b ? a : b; }\n");
