@@ -1,0 +1,34 @@
+// TDD Test: HashSet comprehensive
+
+fn test_hashset_add() -> int {
+    var set = HashSet::new()
+    set.add("item1")
+    set.add("item2")
+    if set.len() == 2 {
+        print("PASS: hashset add\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_hashset_contains() -> int {
+    var set = HashSet::new()
+    set.add("test")
+    var has_test = set.contains("test")
+    if has_test == 1 {
+        print("PASS: hashset contains\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== HashSet Comprehensive Tests ===\n")
+    var failures = 0
+    failures = failures + test_hashset_add()
+    failures = failures + test_hashset_contains()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
