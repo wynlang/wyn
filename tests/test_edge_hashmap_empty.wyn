@@ -1,0 +1,42 @@
+// TDD Test: Edge cases - empty HashMap
+
+fn test_empty_hashmap_len() -> int {
+    var map = HashMap::new()
+    if map.len() == 0 {
+        print("PASS: empty hashmap len\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_empty_hashmap_has() -> int {
+    var map = HashMap::new()
+    var has_key = map.has("key")
+    if has_key == 0 {
+        print("PASS: empty hashmap has\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_empty_hashmap_remove() -> int {
+    var map = HashMap::new()
+    map.remove("nonexistent")
+    if map.len() == 0 {
+        print("PASS: empty hashmap remove\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Edge Cases: Empty HashMap ===\n")
+    var failures = 0
+    failures = failures + test_empty_hashmap_len()
+    failures = failures + test_empty_hashmap_has()
+    failures = failures + test_empty_hashmap_remove()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
