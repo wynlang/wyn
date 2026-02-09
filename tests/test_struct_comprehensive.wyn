@@ -1,0 +1,35 @@
+// TDD Test: Struct field access
+
+struct Point {
+    x: int,
+    y: int
+}
+
+fn test_struct_create() -> int {
+    var p = Point { x: 10, y: 20 }
+    if p.x == 10 {
+        print("PASS: struct create\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_struct_field_access() -> int {
+    var p = Point { x: 5, y: 15 }
+    if p.y == 15 {
+        print("PASS: struct field access\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Struct Tests ===\n")
+    var failures = 0
+    failures = failures + test_struct_create()
+    failures = failures + test_struct_field_access()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
