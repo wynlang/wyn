@@ -1,0 +1,40 @@
+// TDD Test: Array indexing comprehensive
+
+fn test_index_first() -> int {
+    var arr: [int] = [10, 20, 30]
+    if arr[0] == 10 {
+        print("PASS: index first\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_index_middle() -> int {
+    var arr: [int] = [10, 20, 30]
+    if arr[1] == 20 {
+        print("PASS: index middle\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_index_last() -> int {
+    var arr: [int] = [10, 20, 30]
+    if arr[2] == 30 {
+        print("PASS: index last\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Array Indexing Comprehensive Tests ===\n")
+    var failures = 0
+    failures = failures + test_index_first()
+    failures = failures + test_index_middle()
+    failures = failures + test_index_last()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
