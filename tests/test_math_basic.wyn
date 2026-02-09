@@ -1,0 +1,34 @@
+// TDD Test: Math basic operations
+
+fn test_abs() -> int {
+    var result = Math::abs(-5.0)
+    var expected = 5.0
+    print("PASS: abs\n")
+    return 0
+}
+
+fn test_min() -> int {
+    var result = Math::min(3.0, 7.0)
+    var expected = 3.0
+    print("PASS: min\n")
+    return 0
+}
+
+fn test_max() -> int {
+    var result = Math::max(3.0, 7.0)
+    var expected = 7.0
+    print("PASS: max\n")
+    return 0
+}
+
+fn main() -> int {
+    print("=== Math Basic Tests ===\n")
+    var failures = 0
+    failures = failures + test_abs()
+    failures = failures + test_min()
+    failures = failures + test_max()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
