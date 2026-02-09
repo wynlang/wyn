@@ -228,6 +228,11 @@ Type* wyn_infer_call_return_type(Expr* call_expr, SymbolTable* scope) {
         return make_type(TYPE_INT);
     }
     
+    // Check if type was already set by checker (for builtin functions)
+    if (call_expr->expr_type) {
+        return call_expr->expr_type;
+    }
+    
     // Look up function in symbol table to get return type
     if (call_expr->call.callee->type == EXPR_IDENT) {
         Symbol* symbol = find_symbol(scope, call_expr->call.callee->token);

@@ -1152,8 +1152,8 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     check_expr(expr->call.args[1], scope);
                     expr->expr_type = builtin_int;
                     return builtin_int;
-                } else if (strcmp(name_buf, "file_read") == 0 || strcmp(name_buf, "file_exists") == 0) {
-                    // file_read(path) or file_exists(path) - returns int
+                } else if (strcmp(name_buf, "file_exists") == 0) {
+                    // file_exists(path) - returns int
                     if (expr->call.arg_count != 1) {
                         fprintf(stderr, "Error at line %d: '%s' expects 1 argument, got %d\n",
                                 func_name.line, name_buf, expr->call.arg_count);
@@ -1362,6 +1362,20 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     return builtin_int;
                 } else if (strcmp(name_buf, "str_concat") == 0) {
                     // str_concat(a, b) - returns string
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "int_to_str") == 0) {
+                    // int_to_str(n) - returns string
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "file_read") == 0) {
+                    // file_read(path) - returns string
                     for (int i = 0; i < expr->call.arg_count; i++) {
                         check_expr(expr->call.args[i], scope);
                     }

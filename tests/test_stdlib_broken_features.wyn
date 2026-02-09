@@ -1,0 +1,34 @@
+// Test broken stdlib features
+fn main() -> int {
+    var failures = 0
+    
+    // Test 1: String concat with int_to_str
+    var num = 42
+    var msg = "Number: " + int_to_str(num)
+    if !str_contains(msg, "42") {
+        print("FAIL: String concat with int_to_str")
+        failures = failures + 1
+    }
+    
+    // Test 2: file_exists
+    if !file_exists("/tmp") {
+        print("FAIL: file_exists")
+        failures = failures + 1
+    }
+    
+    // Test 3: file_write and file_read
+    file_write("/tmp/wyn_test.txt", "test content")
+    var content = file_read("/tmp/wyn_test.txt")
+    if !str_contains(content, "test") {
+        print("FAIL: file I/O")
+        failures = failures + 1
+    }
+    
+    if failures == 0 {
+        print("All tests PASSED")
+        return 0
+    }
+    
+    print("FAILED: " + int_to_str(failures) + " tests")
+    return 1
+}

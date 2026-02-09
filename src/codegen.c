@@ -4006,7 +4006,7 @@ void codegen_c_header() {
     emit("int lcm(int a, int b) { return a * b / gcd(a, b); }\n");
     emit("int is_even(int x) { return x %% 2 == 0; }\n");
     emit("int is_odd(int x) { return x %% 2 != 0; }\n");
-    emit("char* File_read(const char* path) {\n");
+    emit("char* file_read(const char* path) {\n");
     emit("    last_error[0] = 0;\n");
     emit("    FILE* f = fopen(path, \"r\");\n");
     emit("    if(!f) { snprintf(last_error, 256, \"Cannot open file: %%s\", path); return NULL; }\n");
@@ -4021,7 +4021,7 @@ void codegen_c_header() {
     emit("    return buf;\n");
     emit("}\n");
     
-    emit("WynArray File_list_dir(const char* path) {\n");
+    emit("WynArray file_list_dir(const char* path) {\n");
     emit("    WynArray arr = array_new();\n");
     emit("    DIR* dir = opendir(path);\n");
     emit("    if (!dir) return arr;\n");
@@ -4036,35 +4036,35 @@ void codegen_c_header() {
     emit("    return arr;\n");
     emit("}\n");
     
-    emit("int File_is_file(const char* path) {\n");
+    emit("int file_is_file(const char* path) {\n");
     emit("    struct stat st;\n");
     emit("    if (stat(path, &st) != 0) return 0;\n");
     emit("    return S_ISREG(st.st_mode);\n");
     emit("}\n");
     
-    emit("int File_is_dir(const char* path) {\n");
+    emit("int file_is_dir(const char* path) {\n");
     emit("    struct stat st;\n");
     emit("    if (stat(path, &st) != 0) return 0;\n");
     emit("    return S_ISDIR(st.st_mode);\n");
     emit("}\n");
     
-    emit("char* File_get_cwd() {\n");
+    emit("char* file_get_cwd() {\n");
     emit("    char* buf = malloc(1024);\n");
     emit("    if (getcwd(buf, 1024) == NULL) { free(buf); return \"\"; }\n");
     emit("    return buf;\n");
     emit("}\n");
     
-    emit("int File_create_dir(const char* path) {\n");
+    emit("int file_create_dir(const char* path) {\n");
     emit("    return mkdir(path, 0755) == 0;\n");
     emit("}\n");
     
-    emit("int File_file_size(const char* path) {\n");
+    emit("int file_file_size(const char* path) {\n");
     emit("    struct stat st;\n");
     emit("    if (stat(path, &st) != 0) return -1;\n");
     emit("    return (int)st.st_size;\n");
     emit("}\n");
     
-    emit("char* File_path_join(const char* a, const char* b) {\n");
+    emit("char* file_path_join(const char* a, const char* b) {\n");
     emit("    int len_a = strlen(a);\n");
     emit("    int len_b = strlen(b);\n");
     emit("    int needs_sep = (len_a > 0 && a[len_a-1] != '/') ? 1 : 0;\n");
@@ -4075,7 +4075,7 @@ void codegen_c_header() {
     emit("    return result;\n");
     emit("}\n");
     
-    emit("char* File_basename(const char* path) {\n");
+    emit("char* file_basename(const char* path) {\n");
     emit("    const char* last_slash = strrchr(path, '/');\n");
     emit("    if (last_slash == NULL) {\n");
     emit("        char* result = malloc(strlen(path) + 1);\n");
@@ -4087,7 +4087,7 @@ void codegen_c_header() {
     emit("    return result;\n");
     emit("}\n");
     
-    emit("char* File_dirname(const char* path) {\n");
+    emit("char* file_dirname(const char* path) {\n");
     emit("    const char* last_slash = strrchr(path, '/');\n");
     emit("    if (last_slash == NULL) return \".\";\n");
     emit("    int len = last_slash - path;\n");
@@ -4098,7 +4098,7 @@ void codegen_c_header() {
     emit("    return result;\n");
     emit("}\n");
     
-    emit("char* File_extension(const char* path) {\n");
+    emit("char* file_extension(const char* path) {\n");
     emit("    const char* last_dot = strrchr(path, '.');\n");
     emit("    const char* last_slash = strrchr(path, '/');\n");
     emit("    if (last_dot == NULL || (last_slash != NULL && last_dot < last_slash)) return \"\";\n");
@@ -4107,7 +4107,7 @@ void codegen_c_header() {
     emit("    return result;\n");
     emit("}\n");
     
-    emit("int File_write(const char* path, const char* data) {\n");
+    emit("int file_write(const char* path, const char* data) {\n");
     emit("    last_error[0] = 0;\n");
     emit("    FILE* f = fopen(path, \"w\");\n");
     emit("    if(!f) { snprintf(last_error, 256, \"Cannot write file: %%s\", path); return 0; }\n");
@@ -4115,11 +4115,11 @@ void codegen_c_header() {
     emit("    fclose(f);\n");
     emit("    return 1;\n");
     emit("}\n");
-    emit("int File_exists(const char* path) { FILE* f = fopen(path, \"r\"); if(f) { fclose(f); return 1; } return 0; }\n");
-    emit("int File_delete(const char* path) { return remove(path) == 0; }\n");
+    emit("int file_exists(const char* path) { FILE* f = fopen(path, \"r\"); if(f) { fclose(f); return 1; } return 0; }\n");
+    emit("int file_delete(const char* path) { return remove(path) == 0; }\n");
     
     // File::copy - copy file from src to dst
-    emit("int File_copy(const char* src, const char* dst) {\n");
+    emit("int file_copy(const char* src, const char* dst) {\n");
     emit("    FILE* fsrc = fopen(src, \"rb\");\n");
     emit("    if(!fsrc) return 0;\n");
     emit("    FILE* fdst = fopen(dst, \"wb\");\n");
@@ -4134,10 +4134,10 @@ void codegen_c_header() {
     emit("}\n");
     
     // File::move - move/rename file
-    emit("int File_move(const char* src, const char* dst) { return rename(src, dst) == 0; }\n");
+    emit("int file_move(const char* src, const char* dst) { return rename(src, dst) == 0; }\n");
     
     // File::size - get file size
-    emit("int File_size(const char* path) {\n");
+    emit("int file_size(const char* path) {\n");
     emit("    FILE* f = fopen(path, \"rb\");\n");
     emit("    if(!f) return -1;\n");
     emit("    fseek(f, 0, SEEK_END);\n");
@@ -4146,51 +4146,7 @@ void codegen_c_header() {
     emit("    return (int)sz;\n");
     emit("}\n");
     
-    emit("int file_size(const char* path) {\n");
-    emit("    last_error[0] = 0;\n");
-    emit("    FILE* f = fopen(path, \"r\");\n");
-    emit("    if(!f) { snprintf(last_error, 256, \"Cannot open file: %%s\", path); return -1; }\n");
-    emit("    fseek(f, 0, SEEK_END);\n");
-    emit("    long sz = ftell(f);\n");
-    emit("    fclose(f);\n");
-    emit("    return (int)sz;\n");
-    emit("}\n");
-    emit("int file_delete(const char* path) {\n");
-    emit("    last_error[0] = 0;\n");
-    emit("    int result = remove(path);\n");
-    emit("    if(result != 0) snprintf(last_error, 256, \"Cannot delete file: %%s\", path);\n");
-    emit("    return result == 0;\n");
-    emit("}\n");
-    emit("int file_append(const char* path, const char* data) {\n");
-    emit("    last_error[0] = 0;\n");
-    emit("    FILE* f = fopen(path, \"a\");\n");
-    emit("    if(!f) { snprintf(last_error, 256, \"Cannot append to file: %%s\", path); return 0; }\n");
-    emit("    fputs(data, f);\n");
-    emit("    fclose(f);\n");
-    emit("    return 1;\n");
-    emit("}\n");
-    emit("int file_copy(const char* src, const char* dst) {\n");
-    emit("    last_error[0] = 0;\n");
-    emit("    FILE* s = fopen(src, \"r\");\n");
-    emit("    if(!s) { snprintf(last_error, 256, \"Cannot open source: %%s\", src); return 0; }\n");
-    emit("    FILE* d = fopen(dst, \"w\");\n");
-    emit("    if(!d) { snprintf(last_error, 256, \"Cannot open destination: %%s\", dst); fclose(s); return 0; }\n");
-    emit("    char buf[4096];\n");
-    emit("    size_t n;\n");
-    emit("    while((n = fread(buf, 1, 4096, s)) > 0) fwrite(buf, 1, n, d);\n");
-    emit("    fclose(s);\n");
-    emit("    fclose(d);\n");
-    emit("    return 1;\n");
-    emit("}\n");
-    
     // New file system utility functions
-    emit("int file_move(const char* src, const char* dst) {\n");
-    emit("    last_error[0] = 0;\n");
-    emit("    int result = rename(src, dst);\n");
-    emit("    if(result != 0) snprintf(last_error, 256, \"Cannot move file: %%s to %%s\", src, dst);\n");
-    emit("    return result == 0;\n");
-    emit("}\n");
-    
     emit("int file_mkdir(const char* path) {\n");
     emit("    last_error[0] = 0;\n");
     emit("#ifdef _WIN32\n");
@@ -4209,27 +4165,15 @@ void codegen_c_header() {
     emit("    return result == 0;\n");
     emit("}\n");
     
-    emit("int file_is_file(const char* path) {\n");
-    emit("    struct stat st;\n");
-    emit("    if (stat(path, &st) != 0) return 0;\n");
-    emit("    return S_ISREG(st.st_mode);\n");
-    emit("}\n");
-    
-    emit("int file_is_dir(const char* path) {\n");
-    emit("    struct stat st;\n");
-    emit("    if (stat(path, &st) != 0) return 0;\n");
-    emit("    return S_ISDIR(st.st_mode);\n");
-    emit("}\n");
-    
     // File::modified_time - get file modification timestamp
-    emit("long File_modified_time(const char* path) {\n");
+    emit("long file_modified_time(const char* path) {\n");
     emit("    struct stat st;\n");
     emit("    if (stat(path, &st) != 0) return -1;\n");
     emit("    return (long)st.st_mtime;\n");
     emit("}\n\n");
     
     // File::create_dir_all - recursive mkdir (like mkdir -p)
-    emit("int File_create_dir_all(const char* path) {\n");
+    emit("int file_create_dir_all(const char* path) {\n");
     emit("    if (!path || !*path) return 0;\n");
     emit("    char tmp[1024];\n");
     emit("    char *p = NULL;\n");
@@ -4256,7 +4200,7 @@ void codegen_c_header() {
     emit("}\n\n");
     
     // File::remove_dir_all - recursive rmdir (like rm -rf)
-    emit("int File_remove_dir_all(const char* path) {\n");
+    emit("int file_remove_dir_all(const char* path) {\n");
     emit("    if (!path || !*path) return 0;\n");
     emit("    DIR *d = opendir(path);\n");
     emit("    if (!d) return remove(path) == 0;\n");
@@ -4269,7 +4213,7 @@ void codegen_c_header() {
     emit("        struct stat st;\n");
     emit("        if (stat(buf, &st) == 0) {\n");
     emit("            if (S_ISDIR(st.st_mode)) {\n");
-    emit("                r = !File_remove_dir_all(buf);\n");
+    emit("                r = !file_remove_dir_all(buf);\n");
     emit("            } else {\n");
     emit("                r = remove(buf) != 0;\n");
     emit("            }\n");
