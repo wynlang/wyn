@@ -1,0 +1,99 @@
+// TDD Test: HashMap comprehensive operations
+
+fn test_hashmap_new() -> int {
+    var map = HashMap::new()
+    var size = map.len()
+    if size == 0 {
+        print("PASS: HashMap::new()\n")
+        return 0
+    }
+    print("FAIL: new map should have len 0\n")
+    return 1
+}
+
+fn test_hashmap_set_get() -> int {
+    var map = HashMap::new()
+    map.set("key1", "value1")
+    map.set("key2", "value2")
+    
+    var has1 = map.has("key1")
+    var has2 = map.has("key2")
+    
+    if has1 == 1 {
+        if has2 == 1 {
+            print("PASS: HashMap set/get\n")
+            return 0
+        }
+    }
+    print("FAIL: HashMap set/get\n")
+    return 1
+}
+
+fn test_hashmap_has() -> int {
+    var map = HashMap::new()
+    map.set("exists", "yes")
+    
+    var has_exists = map.has("exists")
+    if has_exists == 1 {
+        var has_missing = map.has("missing")
+        if has_missing == 0 {
+            print("PASS: HashMap.has()\n")
+            return 0
+        }
+    }
+    print("FAIL: HashMap.has()\n")
+    return 1
+}
+
+fn test_hashmap_remove() -> int {
+    var map = HashMap::new()
+    map.set("key1", "val1")
+    map.set("key2", "val2")
+    
+    map.remove("key1")
+    
+    var has_key1 = map.has("key1")
+    if has_key1 == 0 {
+        var has_key2 = map.has("key2")
+        if has_key2 == 1 {
+            print("PASS: HashMap.remove()\n")
+            return 0
+        }
+    }
+    print("FAIL: HashMap.remove()\n")
+    return 1
+}
+
+fn test_hashmap_len() -> int {
+    var map = HashMap::new()
+    
+    var len0 = map.len()
+    if len0 == 0 {
+        map.set("a", "1")
+        map.set("b", "2")
+        map.set("c", "3")
+        
+        var len3 = map.len()
+        if len3 == 3 {
+            print("PASS: HashMap.len()\n")
+            return 0
+        }
+    }
+    print("FAIL: HashMap.len()\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== HashMap Tests ===\n")
+    var failures = 0
+    failures = failures + test_hashmap_new()
+    failures = failures + test_hashmap_set_get()
+    failures = failures + test_hashmap_has()
+    failures = failures + test_hashmap_remove()
+    failures = failures + test_hashmap_len()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}

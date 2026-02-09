@@ -1,0 +1,103 @@
+// TDD Test: HashSet comprehensive operations
+
+fn test_hashset_new() -> int {
+    var set = HashSet::new()
+    var size = set.len()
+    if size == 0 {
+        print("PASS: HashSet::new()\n")
+        return 0
+    }
+    print("FAIL: new set should have len 0\n")
+    return 1
+}
+
+fn test_hashset_add_contains() -> int {
+    var set = HashSet::new()
+    set.add("item1")
+    set.add("item2")
+    set.add("item3")
+    
+    var has1 = set.contains("item1")
+    var has2 = set.contains("item2")
+    var has3 = set.contains("item3")
+    
+    if has1 == 1 {
+        if has2 == 1 {
+            if has3 == 1 {
+                print("PASS: HashSet add/contains\n")
+                return 0
+            }
+        }
+    }
+    print("FAIL: HashSet add/contains\n")
+    return 1
+}
+
+fn test_hashset_remove() -> int {
+    var set = HashSet::new()
+    set.add("keep")
+    set.add("remove")
+    
+    set.remove("remove")
+    
+    var has_keep = set.contains("keep")
+    var has_remove = set.contains("remove")
+    
+    if has_keep == 1 {
+        if has_remove == 0 {
+            print("PASS: HashSet.remove()\n")
+            return 0
+        }
+    }
+    print("FAIL: HashSet.remove()\n")
+    return 1
+}
+
+fn test_hashset_len() -> int {
+    var set = HashSet::new()
+    
+    var len0 = set.len()
+    if len0 == 0 {
+        set.add("a")
+        set.add("b")
+        set.add("c")
+        
+        var len3 = set.len()
+        if len3 == 3 {
+            print("PASS: HashSet.len()\n")
+            return 0
+        }
+    }
+    print("FAIL: HashSet.len()\n")
+    return 1
+}
+
+fn test_hashset_duplicates() -> int {
+    var set = HashSet::new()
+    set.add("item")
+    set.add("item")
+    set.add("item")
+    
+    var size = set.len()
+    if size == 1 {
+        print("PASS: HashSet no duplicates\n")
+        return 0
+    }
+    print("FAIL: HashSet should not have duplicates\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== HashSet Tests ===\n")
+    var failures = 0
+    failures = failures + test_hashset_new()
+    failures = failures + test_hashset_add_contains()
+    failures = failures + test_hashset_remove()
+    failures = failures + test_hashset_len()
+    failures = failures + test_hashset_duplicates()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
