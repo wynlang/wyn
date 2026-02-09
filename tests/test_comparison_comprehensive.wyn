@@ -1,0 +1,37 @@
+// TDD Test: Comparison comprehensive
+
+fn test_less_than() -> int {
+    if 3 < 5 {
+        print("PASS: less than\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_greater_than() -> int {
+    if 10 > 7 {
+        print("PASS: greater than\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_less_equal() -> int {
+    if 5 <= 5 {
+        print("PASS: less equal\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Comparison Comprehensive Tests ===\n")
+    var failures = 0
+    failures = failures + test_less_than()
+    failures = failures + test_greater_than()
+    failures = failures + test_less_equal()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
