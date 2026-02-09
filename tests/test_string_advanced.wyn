@@ -1,0 +1,75 @@
+// TDD Test: String repeat, reverse, concat
+
+fn test_repeat() -> int {
+    var text = "ab"
+    var repeated = text.repeat(3)
+    var expected = "ababab"
+    if repeated == expected {
+        print("PASS: string.repeat()\n")
+        return 0
+    }
+    print("FAIL: repeat(3) expected 'ababab'\n")
+    return 1
+}
+
+fn test_reverse() -> int {
+    var text = "hello"
+    var reversed = text.reverse()
+    var expected = "olleh"
+    if reversed == expected {
+        print("PASS: string.reverse()\n")
+        return 0
+    }
+    print("FAIL: reverse() expected 'olleh'\n")
+    return 1
+}
+
+fn test_concat() -> int {
+    var a = "hello"
+    var b = " world"
+    var result = a.concat(b)
+    var expected = "hello world"
+    if result == expected {
+        print("PASS: string.concat()\n")
+        return 0
+    }
+    print("FAIL: concat() expected 'hello world'\n")
+    return 1
+}
+
+fn test_index_of() -> int {
+    var text = "hello world"
+    var pos = text.index_of("world")
+    if pos == 6 {
+        print("PASS: string.index_of()\n")
+        return 0
+    }
+    print("FAIL: index_of('world') expected 6\n")
+    return 1
+}
+
+fn test_last_index_of() -> int {
+    var text = "hello hello"
+    var pos = text.last_index_of("hello")
+    if pos == 6 {
+        print("PASS: string.last_index_of()\n")
+        return 0
+    }
+    print("FAIL: last_index_of('hello') expected 6\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== String Methods Tests ===\n")
+    var failures = 0
+    failures = failures + test_repeat()
+    failures = failures + test_reverse()
+    failures = failures + test_concat()
+    failures = failures + test_index_of()
+    failures = failures + test_last_index_of()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
