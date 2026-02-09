@@ -1,0 +1,30 @@
+// TDD Test: Literal values
+
+fn test_int_literal() -> int {
+    if 42 == 42 {
+        print("PASS: int literal\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_string_literal() -> int {
+    var s = "hello"
+    var e = "hello"
+    if s == e {
+        print("PASS: string literal\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Literal Tests ===\n")
+    var failures = 0
+    failures = failures + test_int_literal()
+    failures = failures + test_string_literal()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
