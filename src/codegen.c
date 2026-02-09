@@ -726,17 +726,31 @@ void codegen_expr(Expr* expr) {
                 codegen_expr(expr->binary.right);
                 emit(")");
             } else {
-                emit("(");
-                codegen_expr(expr->binary.left);
-                if (expr->binary.op.type == TOKEN_AND || expr->binary.op.type == TOKEN_AMPAMP) {
-                    emit(" && ");
-                } else if (expr->binary.op.type == TOKEN_OR || expr->binary.op.type == TOKEN_PIPEPIPE) {
-                    emit(" || ");
+                // Check for division or modulo - add runtime check
+                if (expr->binary.op.type == TOKEN_SLASH || expr->binary.op.type == TOKEN_PERCENT) {
+                    // Generate: wyn_safe_div(left, right) or wyn_safe_mod(left, right)
+                    if (expr->binary.op.type == TOKEN_SLASH) {
+                        emit("wyn_safe_div(");
+                    } else {
+                        emit("wyn_safe_mod(");
+                    }
+                    codegen_expr(expr->binary.left);
+                    emit(", ");
+                    codegen_expr(expr->binary.right);
+                    emit(")");
                 } else {
-                    emit(" %.*s ", expr->binary.op.length, expr->binary.op.start);
+                    emit("(");
+                    codegen_expr(expr->binary.left);
+                    if (expr->binary.op.type == TOKEN_AND || expr->binary.op.type == TOKEN_AMPAMP) {
+                        emit(" && ");
+                    } else if (expr->binary.op.type == TOKEN_OR || expr->binary.op.type == TOKEN_PIPEPIPE) {
+                        emit(" || ");
+                    } else {
+                        emit(" %.*s ", expr->binary.op.length, expr->binary.op.start);
+                    }
+                    codegen_expr(expr->binary.right);
+                    emit(")");
                 }
-                codegen_expr(expr->binary.right);
-                emit(")");
             }
             break;
         case EXPR_CALL:
@@ -3933,6 +3947,22 @@ void codegen_c_header() {
     emit("bool bool_and(bool x, bool y) { return x && y; }\n");
     emit("bool bool_or(bool x, bool y) { return x || y; }\n");
     emit("bool bool_xor(bool x, bool y) { return x != y; }\n");
+    
+    // Safe division and modulo with zero checking
+    emit("int wyn_safe_div(int a, int b) {\n");
+    emit("    if (b == 0) {\n");
+    emit("        fprintf(stderr, \"Warning: Division by zero\\n\");\n");
+    emit("        return 0;\n");
+    emit("    }\n");
+    emit("    return a / b;\n");
+    emit("}\n");
+    emit("int wyn_safe_mod(int a, int b) {\n");
+    emit("    if (b == 0) {\n");
+    emit("        fprintf(stderr, \"Warning: Modulo by zero\\n\");\n");
+    emit("        return 0;\n");
+    emit("    }\n");
+    emit("    return a %% b;\n");
+    emit("}\n");
     
     // Char methods
     emit("char* char_to_string(char x) { char* r = malloc(2); r[0] = x; r[1] = 0; return r; }\n");
