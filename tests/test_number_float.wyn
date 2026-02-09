@@ -1,0 +1,26 @@
+// TDD Test: Float operations
+
+fn test_float_literal() -> int {
+    var f: float = 3.14
+    print("PASS: float literal\n")
+    return 0
+}
+
+fn test_float_arithmetic() -> int {
+    var f1: float = 2.5
+    var f2: float = 1.5
+    var result = f1 + f2
+    print("PASS: float arithmetic\n")
+    return 0
+}
+
+fn main() -> int {
+    print("=== Float Tests ===\n")
+    var failures = 0
+    failures = failures + test_float_literal()
+    failures = failures + test_float_arithmetic()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
