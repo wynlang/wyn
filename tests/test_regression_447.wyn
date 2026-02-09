@@ -1,0 +1,20 @@
+// TDD Test: Regression test 447
+
+fn test_regression_447() -> int {
+    var x = 447
+    var y = x * 2
+    if y == 894 {
+        print("PASS: regression 447\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Regression Test 447 ===\n")
+    var failures = test_regression_447()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
