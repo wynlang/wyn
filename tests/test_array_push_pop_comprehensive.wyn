@@ -1,0 +1,45 @@
+// TDD Test: Array push/pop comprehensive
+
+fn test_push_single() -> int {
+    var arr: [int] = []
+    arr.push(42)
+    if arr.len() == 1 {
+        print("PASS: push single\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_push_multiple() -> int {
+    var arr: [int] = []
+    arr.push(1)
+    arr.push(2)
+    arr.push(3)
+    if arr.len() == 3 {
+        print("PASS: push multiple\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_pop_after_push() -> int {
+    var arr: [int] = [1, 2, 3]
+    arr.pop()
+    if arr.len() == 2 {
+        print("PASS: pop after push\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Array Push/Pop Comprehensive Tests ===\n")
+    var failures = 0
+    failures = failures + test_push_single()
+    failures = failures + test_push_multiple()
+    failures = failures + test_pop_after_push()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
