@@ -1,0 +1,30 @@
+// TDD Test: Division and modulo
+
+fn test_division() -> int {
+    var result = 20 / 4
+    if result == 5 {
+        print("PASS: division\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_modulo() -> int {
+    var result = 17 % 5
+    if result == 2 {
+        print("PASS: modulo\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Division/Modulo Tests ===\n")
+    var failures = 0
+    failures = failures + test_division()
+    failures = failures + test_modulo()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
