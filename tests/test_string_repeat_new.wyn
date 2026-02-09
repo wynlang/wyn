@@ -1,0 +1,46 @@
+// TDD Test: String repeat (NEW FEATURE)
+
+fn test_repeat_simple() -> int {
+    var s: string = "ab"
+    var result = s.repeat(3)
+    var expected: string = "ababab"
+    if result == expected {
+        print("PASS: repeat simple\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_repeat_once() -> int {
+    var s: string = "test"
+    var result = s.repeat(1)
+    var expected: string = "test"
+    if result == expected {
+        print("PASS: repeat once\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_repeat_zero() -> int {
+    var s: string = "x"
+    var result = s.repeat(0)
+    var expected: string = ""
+    if result == expected {
+        print("PASS: repeat zero\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== String Repeat Tests (NEW FEATURE) ===\n")
+    var failures = 0
+    failures = failures + test_repeat_simple()
+    failures = failures + test_repeat_once()
+    failures = failures + test_repeat_zero()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
