@@ -1,0 +1,21 @@
+// TDD Test: Quality test 140
+
+fn test_operation_140() -> int {
+    var a = 140
+    var b = 150
+    var sum = a + b
+    if sum == 290 {
+        print("PASS: operation 140\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Quality Test 140 ===\n")
+    var failures = test_operation_140()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
