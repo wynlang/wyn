@@ -1730,14 +1730,18 @@ void codegen_expr(Expr* expr) {
                     }
                 } else {
                     // Single indexing: arr[i]
-                    // Check if this is a struct array
+                    // Check element type from type annotation
                     bool is_struct_array = false;
                     Type* elem_type = NULL;
                     if (expr->index.array->expr_type && 
                         expr->index.array->expr_type->kind == TYPE_ARRAY) {
                         elem_type = expr->index.array->expr_type->array_type.element_type;
-                        if (elem_type && elem_type->kind == TYPE_STRUCT) {
-                            is_struct_array = true;
+                        if (elem_type) {
+                            if (elem_type->kind == TYPE_STRUCT) {
+                                is_struct_array = true;
+                            } else if (elem_type->kind == TYPE_STRING) {
+                                is_string_array = true;
+                            }
                         }
                     }
                     
@@ -2426,6 +2430,7 @@ void codegen_c_header() {
     emit("#include <stdint.h>\n");
     emit("#include <stdbool.h>\n");
     emit("#include <string.h>\n");
+    emit("#include <limits.h>\n");
     emit("#include <math.h>\n");
     emit("#include <time.h>\n");
     emit("#include <ctype.h>\n");
@@ -3974,7 +3979,17 @@ void codegen_c_header() {
     emit("char** str_lines(const char* s) { char** lines = malloc(sizeof(char*)); lines[0] = malloc(strlen(s) + 1); strcpy(lines[0], s); return lines; }\n");
     emit("char** str_words(const char* s) { char** words = malloc(sizeof(char*)); words[0] = malloc(strlen(s) + 1); strcpy(words[0], s); return words; }\n");
     emit("void str_free(char* s) { if(s) free(s); }\n");
-    emit("int str_parse_int(const char* s) { return atoi(s); }\n");
+    // FIXED: str_parse_int now returns special error value
+    // Returns INT_MIN on parse error (can be distinguished from valid values)
+    emit("int str_parse_int(const char* s) {\n");
+    emit("    if(!s || !*s) return INT_MIN;\n");
+    emit("    char* end;\n");
+    emit("    errno = 0;\n");
+    emit("    long val = strtol(s, &end, 10);\n");
+    emit("    if(errno != 0 || end == s || *end != 0) return INT_MIN;\n");
+    emit("    if(val < INT_MIN || val > INT_MAX) return INT_MIN;\n");
+    emit("    return (int)val;\n");
+    emit("}\n");
     emit("double str_parse_float(const char* s) { return atof(s); }\n");
     emit("int abs_val(int x) { return x < 0 ? -x : x; }\n");
     emit("int min(int a, int b) { return a < b ? a : b; }\n");
