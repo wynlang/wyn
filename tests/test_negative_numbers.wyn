@@ -1,0 +1,30 @@
+// TDD Test: Negative numbers
+
+fn test_negative_literal() -> int {
+    var n = -5
+    if n == -5 {
+        print("PASS: negative literal\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_negative_arithmetic() -> int {
+    var result = -10 + 3
+    if result == -7 {
+        print("PASS: negative arithmetic\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Negative Numbers Tests ===\n")
+    var failures = 0
+    failures = failures + test_negative_literal()
+    failures = failures + test_negative_arithmetic()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
