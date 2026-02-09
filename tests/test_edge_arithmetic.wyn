@@ -1,0 +1,50 @@
+// TDD Test: Edge cases - arithmetic operations
+
+fn test_multiply_by_zero() -> int {
+    var result = 42 * 0
+    if result == 0 {
+        print("PASS: multiply by zero\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_add_negative() -> int {
+    var result = 10 + (-5)
+    if result == 5 {
+        print("PASS: add negative\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_subtract_larger() -> int {
+    var result = 5 - 10
+    if result == -5 {
+        print("PASS: subtract larger\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_multiply_negatives() -> int {
+    var result = (-3) * (-4)
+    if result == 12 {
+        print("PASS: multiply negatives\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Edge Cases: Arithmetic ===\n")
+    var failures = 0
+    failures = failures + test_multiply_by_zero()
+    failures = failures + test_add_negative()
+    failures = failures + test_subtract_larger()
+    failures = failures + test_multiply_negatives()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
