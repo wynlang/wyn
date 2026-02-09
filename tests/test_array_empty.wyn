@@ -1,0 +1,31 @@
+// TDD Test: Empty array operations
+
+fn test_empty_array_len() -> int {
+    var arr: [int] = []
+    if arr.len() == 0 {
+        print("PASS: empty array len\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_empty_array_push() -> int {
+    var arr: [int] = []
+    arr.push(42)
+    if arr.len() == 1 {
+        print("PASS: empty array push\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Empty Array Tests ===\n")
+    var failures = 0
+    failures = failures + test_empty_array_len()
+    failures = failures + test_empty_array_push()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
