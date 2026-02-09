@@ -1,0 +1,79 @@
+// TDD Test: Array push/pop edge cases
+
+fn test_array_push_single() -> int {
+    var arr = []
+    arr.push(42)
+    
+    var size = arr.len()
+    if size == 1 {
+        var val = arr[0]
+        if val == 42 {
+            print("PASS: array.push() single\n")
+            return 0
+        }
+    }
+    print("FAIL: array.push() single\n")
+    return 1
+}
+
+fn test_array_push_multiple() -> int {
+    var arr = []
+    arr.push(1)
+    arr.push(2)
+    arr.push(3)
+    
+    var size = arr.len()
+    if size == 3 {
+        print("PASS: array.push() multiple\n")
+        return 0
+    }
+    print("FAIL: array.push() multiple\n")
+    return 1
+}
+
+fn test_array_pop_single() -> int {
+    var arr = [42]
+    var val = arr.pop()
+    
+    if val == 42 {
+        var size = arr.len()
+        if size == 0 {
+            print("PASS: array.pop() single\n")
+            return 0
+        }
+    }
+    print("FAIL: array.pop() single\n")
+    return 1
+}
+
+fn test_array_pop_multiple() -> int {
+    var arr = [1, 2, 3]
+    var val1 = arr.pop()
+    var val2 = arr.pop()
+    
+    if val1 == 3 {
+        if val2 == 2 {
+            var size = arr.len()
+            if size == 1 {
+                print("PASS: array.pop() multiple\n")
+                return 0
+            }
+        }
+    }
+    print("FAIL: array.pop() multiple\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Array Push/Pop Edge Cases Tests ===\n")
+    var failures = 0
+    failures = failures + test_array_push_single()
+    failures = failures + test_array_push_multiple()
+    failures = failures + test_array_pop_single()
+    failures = failures + test_array_pop_multiple()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
