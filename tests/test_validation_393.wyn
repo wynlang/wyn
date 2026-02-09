@@ -1,0 +1,20 @@
+// TDD Test: Validation test 393
+
+fn test_validation_393() -> int {
+    var x = 393
+    var y = x + 1
+    if y == 394 {
+        print("PASS: validation 393\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Validation Test 393 ===\n")
+    var failures = test_validation_393()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
