@@ -1,0 +1,46 @@
+// TDD Test: String case conversion
+
+fn test_upper() -> int {
+    var s: string = "hello"
+    var result = s.upper()
+    var expected: string = "HELLO"
+    if result == expected {
+        print("PASS: upper\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_lower() -> int {
+    var s: string = "WORLD"
+    var result = s.lower()
+    var expected: string = "world"
+    if result == expected {
+        print("PASS: lower\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_upper_mixed() -> int {
+    var s: string = "HeLLo"
+    var result = s.upper()
+    var expected: string = "HELLO"
+    if result == expected {
+        print("PASS: upper mixed\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== String Case Tests ===\n")
+    var failures = 0
+    failures = failures + test_upper()
+    failures = failures + test_lower()
+    failures = failures + test_upper_mixed()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
