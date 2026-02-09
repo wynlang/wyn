@@ -1,0 +1,73 @@
+// TDD Test: Function operations
+
+fn add_two(x: int) -> int {
+    return x + 2
+}
+
+fn multiply(a: int, b: int) -> int {
+    return a * b
+}
+
+fn no_params() -> int {
+    return 42
+}
+
+fn test_function_single_param() -> int {
+    var result = add_two(5)
+    if result == 7 {
+        print("PASS: function single param\n")
+        return 0
+    }
+    print("FAIL: function single param\n")
+    return 1
+}
+
+fn test_function_multiple_params() -> int {
+    var result = multiply(3, 4)
+    if result == 12 {
+        print("PASS: function multiple params\n")
+        return 0
+    }
+    print("FAIL: function multiple params\n")
+    return 1
+}
+
+fn test_function_no_params() -> int {
+    var result = no_params()
+    if result == 42 {
+        print("PASS: function no params\n")
+        return 0
+    }
+    print("FAIL: function no params\n")
+    return 1
+}
+
+fn test_function_call_multiple_times() -> int {
+    var r1 = add_two(1)
+    var r2 = add_two(2)
+    var r3 = add_two(3)
+    if r1 == 3 {
+        if r2 == 4 {
+            if r3 == 5 {
+                print("PASS: function call multiple times\n")
+                return 0
+            }
+        }
+    }
+    print("FAIL: function call multiple times\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Function Tests ===\n")
+    var failures = 0
+    failures = failures + test_function_single_param()
+    failures = failures + test_function_multiple_params()
+    failures = failures + test_function_no_params()
+    failures = failures + test_function_call_multiple_times()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
