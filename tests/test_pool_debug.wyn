@@ -1,6 +1,0 @@
-fn main() -> int {
-    pool_add_task("cd /Users/aoaws/src/ao/wyn-lang/wyn && ls tests/unit/test_add.wyn");
-    pool_start(1);
-    var failures = pool_wait();
-    return failures;
-}

@@ -1,9 +1,0 @@
-fn main() -> int {
-    pool_add_task("/Users/aoaws/src/ao/wyn-lang/wyn/wyn /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_01_variables.wyn && timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_01_variables.out");
-    pool_add_task("/Users/aoaws/src/ao/wyn-lang/wyn/wyn /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_02_functions.wyn && timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_02_functions.out");
-    pool_add_task("/Users/aoaws/src/ao/wyn-lang/wyn/wyn /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_03_structs.wyn && timeout 2 /Users/aoaws/src/ao/wyn-lang/wyn/tests/unit/test_03_structs.out");
-    
-    pool_start(3);
-    var failures = pool_wait();
-    return failures;
-}
