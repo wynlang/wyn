@@ -1,0 +1,21 @@
+// TDD Test: Comprehensive test 255
+
+fn test_comprehensive_255() -> int {
+    var a = 255
+    var b = 510
+    var c = a + b
+    if c == 765 {
+        print("PASS: comprehensive 255\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Comprehensive Test 255 ===\n")
+    var failures = test_comprehensive_255()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
