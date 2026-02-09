@@ -1,0 +1,45 @@
+// TDD Test: HashMap size operations
+
+fn test_empty_size() -> int {
+    var map = HashMap::new()
+    if map.len() == 0 {
+        print("PASS: empty size\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_size_after_set() -> int {
+    var map = HashMap::new()
+    map.set("key1", "val1")
+    map.set("key2", "val2")
+    if map.len() == 2 {
+        print("PASS: size after set\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_size_after_remove() -> int {
+    var map = HashMap::new()
+    map.set("k1", "v1")
+    map.set("k2", "v2")
+    map.remove("k1")
+    if map.len() == 1 {
+        print("PASS: size after remove\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== HashMap Size Tests ===\n")
+    var failures = 0
+    failures = failures + test_empty_size()
+    failures = failures + test_size_after_set()
+    failures = failures + test_size_after_remove()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
