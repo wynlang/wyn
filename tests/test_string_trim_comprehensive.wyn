@@ -1,0 +1,46 @@
+// TDD Test: String trim comprehensive
+
+fn test_trim_spaces() -> int {
+    var s: string = "  hello  "
+    var result = s.trim()
+    var expected: string = "hello"
+    if result == expected {
+        print("PASS: trim spaces\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_trim_left() -> int {
+    var s: string = "  test"
+    var result = s.trim()
+    var expected: string = "test"
+    if result == expected {
+        print("PASS: trim left\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_trim_right() -> int {
+    var s: string = "test  "
+    var result = s.trim()
+    var expected: string = "test"
+    if result == expected {
+        print("PASS: trim right\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== String Trim Comprehensive Tests ===\n")
+    var failures = 0
+    failures = failures + test_trim_spaces()
+    failures = failures + test_trim_left()
+    failures = failures + test_trim_right()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
