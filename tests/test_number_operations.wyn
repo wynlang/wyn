@@ -1,0 +1,40 @@
+// TDD Test: Number operations
+
+fn test_addition() -> int {
+    var result = 5 + 3
+    if result == 8 {
+        print("PASS: addition\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_subtraction() -> int {
+    var result = 10 - 4
+    if result == 6 {
+        print("PASS: subtraction\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_multiplication() -> int {
+    var result = 6 * 7
+    if result == 42 {
+        print("PASS: multiplication\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Number Operations Tests ===\n")
+    var failures = 0
+    failures = failures + test_addition()
+    failures = failures + test_subtraction()
+    failures = failures + test_multiplication()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
