@@ -1,0 +1,61 @@
+// Edge Case Test: String operations with special characters
+
+fn test_string_with_newline() -> int {
+    var s: string = "hello\nworld"
+    if s.len() == 11 {
+        print("PASS: string with newline\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_string_with_tab() -> int {
+    var s: string = "hello\tworld"
+    if s.len() == 11 {
+        print("PASS: string with tab\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_string_with_quotes() -> int {
+    var s: string = "hello"
+    if s.len() == 5 {
+        print("PASS: string with quotes\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_string_numbers() -> int {
+    var s: string = "12345"
+    if s.len() == 5 {
+        print("PASS: string numbers\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_string_mixed() -> int {
+    var s: string = "abc123xyz"
+    if s.len() == 9 {
+        print("PASS: string mixed\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Edge Cases: String Special Characters ===\n")
+    var failures = 0
+    failures = failures + test_string_with_newline()
+    failures = failures + test_string_with_tab()
+    failures = failures + test_string_with_quotes()
+    failures = failures + test_string_numbers()
+    failures = failures + test_string_mixed()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}

@@ -1,0 +1,70 @@
+// Edge Case Test: Array operations with large arrays
+
+fn test_array_large() -> int {
+    var arr: [int] = []
+    var i = 0
+    
+    while i < 100 {
+        arr.push(i)
+        i = i + 1
+    }
+    
+    if arr.len() == 100 {
+        print("PASS: array large\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_array_push_pop_many() -> int {
+    var arr: [int] = []
+    var i = 0
+    
+    while i < 50 {
+        arr.push(i)
+        i = i + 1
+    }
+    
+    var j = 0
+    while j < 25 {
+        arr.pop()
+        j = j + 1
+    }
+    
+    if arr.len() == 25 {
+        print("PASS: array push pop many\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_array_clear_large() -> int {
+    var arr: [int] = []
+    var i = 0
+    
+    while i < 50 {
+        arr.push(i)
+        i = i + 1
+    }
+    
+    arr.clear()
+    
+    if arr.len() == 0 {
+        print("PASS: array clear large\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Edge Cases: Array Large Operations ===\n")
+    var failures = 0
+    failures = failures + test_array_large()
+    failures = failures + test_array_push_pop_many()
+    failures = failures + test_array_clear_large()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
