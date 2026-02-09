@@ -310,6 +310,7 @@ static void emit(const char* fmt, ...) {
     va_start(args, fmt);
     vfprintf(out, fmt, args);
     va_end(args);
+    fflush(out);  // Flush after every emit to prevent buffer truncation
 }
 
 // Global emit function for use by other modules
