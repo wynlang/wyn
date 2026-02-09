@@ -1,0 +1,32 @@
+// TDD Test: Array reverse comprehensive
+
+fn test_reverse_array() -> int {
+    var arr: [int] = [1, 2, 3]
+    arr.reverse()
+    if arr[0] == 3 {
+        print("PASS: reverse array\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_reverse_single() -> int {
+    var arr: [int] = [42]
+    arr.reverse()
+    if arr[0] == 42 {
+        print("PASS: reverse single\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Array Reverse Comprehensive Tests ===\n")
+    var failures = 0
+    failures = failures + test_reverse_array()
+    failures = failures + test_reverse_single()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
