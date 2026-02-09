@@ -1,0 +1,98 @@
+// TDD Test: Array edge cases
+
+fn test_empty_array_len() -> int {
+    var arr = []
+    var size = arr.len()
+    if size == 0 {
+        print("PASS: empty array len\n")
+        return 0
+    }
+    print("FAIL: empty array should have len 0\n")
+    return 1
+}
+
+fn test_empty_array_is_empty() -> int {
+    var arr = []
+    var empty = arr.is_empty()
+    if empty == 1 {
+        print("PASS: empty array is_empty\n")
+        return 0
+    }
+    print("FAIL: empty array should be empty\n")
+    return 1
+}
+
+fn test_single_element() -> int {
+    var arr = [42]
+    var size = arr.len()
+    if size == 1 {
+        var val = arr[0]
+        if val == 42 {
+            print("PASS: single element array\n")
+            return 0
+        }
+    }
+    print("FAIL: single element array\n")
+    return 1
+}
+
+fn test_array_contains_true() -> int {
+    var arr = [1, 2, 3, 4, 5]
+    var has = arr.contains(3)
+    if has == 1 {
+        print("PASS: array.contains() true\n")
+        return 0
+    }
+    print("FAIL: array.contains(3) should be true\n")
+    return 1
+}
+
+fn test_array_contains_false() -> int {
+    var arr = [1, 2, 3]
+    var has = arr.contains(99)
+    if has == 0 {
+        print("PASS: array.contains() false\n")
+        return 0
+    }
+    print("FAIL: array.contains(99) should be false\n")
+    return 1
+}
+
+fn test_array_index_of_found() -> int {
+    var arr = [10, 20, 30, 40]
+    var idx = arr.index_of(30)
+    if idx == 2 {
+        print("PASS: array.index_of() found\n")
+        return 0
+    }
+    print("FAIL: array.index_of(30) should be 2\n")
+    return 1
+}
+
+fn test_array_index_of_not_found() -> int {
+    var arr = [1, 2, 3]
+    var idx = arr.index_of(99)
+    if idx == -1 {
+        print("PASS: array.index_of() not found\n")
+        return 0
+    }
+    print("FAIL: array.index_of(99) should be -1\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Array Edge Cases Tests ===\n")
+    var failures = 0
+    failures = failures + test_empty_array_len()
+    failures = failures + test_empty_array_is_empty()
+    failures = failures + test_single_element()
+    failures = failures + test_array_contains_true()
+    failures = failures + test_array_contains_false()
+    failures = failures + test_array_index_of_found()
+    failures = failures + test_array_index_of_not_found()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
