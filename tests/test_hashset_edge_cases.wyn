@@ -1,0 +1,81 @@
+// TDD Test: HashSet edge cases
+
+fn test_hashset_empty_len() -> int {
+    var set = HashSet::new()
+    var size = set.len()
+    if size == 0 {
+        print("PASS: empty HashSet len\n")
+        return 0
+    }
+    print("FAIL: empty HashSet should have len 0\n")
+    return 1
+}
+
+fn test_hashset_add_duplicate() -> int {
+    var set = HashSet::new()
+    set.add("item")
+    set.add("item")
+    set.add("item")
+    
+    var size = set.len()
+    if size == 1 {
+        print("PASS: HashSet add duplicate\n")
+        return 0
+    }
+    print("FAIL: HashSet should not add duplicates\n")
+    return 1
+}
+
+fn test_hashset_remove_nonexistent() -> int {
+    var set = HashSet::new()
+    set.add("item1")
+    set.remove("nonexistent")
+    
+    var size = set.len()
+    if size == 1 {
+        print("PASS: HashSet remove nonexistent\n")
+        return 0
+    }
+    print("FAIL: HashSet remove nonexistent\n")
+    return 1
+}
+
+fn test_hashset_contains_after_remove() -> int {
+    var set = HashSet::new()
+    set.add("item")
+    set.remove("item")
+    
+    var has = set.contains("item")
+    if has == 0 {
+        print("PASS: HashSet contains after remove\n")
+        return 0
+    }
+    print("FAIL: HashSet should not contain removed item\n")
+    return 1
+}
+
+fn test_hashset_empty_contains() -> int {
+    var set = HashSet::new()
+    var has = set.contains("anything")
+    if has == 0 {
+        print("PASS: empty HashSet contains\n")
+        return 0
+    }
+    print("FAIL: empty HashSet should not contain anything\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== HashSet Edge Cases Tests ===\n")
+    var failures = 0
+    failures = failures + test_hashset_empty_len()
+    failures = failures + test_hashset_add_duplicate()
+    failures = failures + test_hashset_remove_nonexistent()
+    failures = failures + test_hashset_contains_after_remove()
+    failures = failures + test_hashset_empty_contains()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
