@@ -455,7 +455,7 @@ void init_checker() {
     const char* stdlib_funcs[] = {
         "print", "print_float", "print_str", "print_bool", "print_hex", "print_bin", "println", "print_debug", "input", "input_float", "input_line", "printf_wyn", "string_format", "sin_approx", "cos_approx", "pi_const", "e_const",
         "str_len", "str_eq", "str_concat", "str_upper", "str_lower", "str_contains", "str_starts_with", "str_ends_with", "str_trim",
-        "str_replace", "str_split", "str_join", "int_to_str", "str_to_int", "str_repeat", "str_reverse", "str_parse_int", "str_parse_float", "str_free",
+        "str_replace", "str_split", "str_join", "int_to_str", "str_to_int", "str_repeat", "str_reverse", "str_parse_int", "str_parse_int_failed", "str_parse_float", "str_free",
         "split_get", "split_count", "char_at", "is_numeric", "str_count", "str_contains_substr",
         "string_char_at", "string_length",
         "abs_val", "min", "max", "pow_int", "clamp", "sign", "gcd", "lcm", "is_even", "is_odd",
