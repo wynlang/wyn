@@ -1,0 +1,33 @@
+// TDD Test: Variable reassignment
+
+fn test_reassign_int() -> int {
+    var x = 5
+    x = 10
+    if x == 10 {
+        print("PASS: reassign int\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_reassign_multiple() -> int {
+    var y = 1
+    y = 2
+    y = 3
+    if y == 3 {
+        print("PASS: reassign multiple\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Variable Reassignment Tests ===\n")
+    var failures = 0
+    failures = failures + test_reassign_int()
+    failures = failures + test_reassign_multiple()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
