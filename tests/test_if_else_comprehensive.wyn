@@ -1,0 +1,38 @@
+// TDD Test: If/else comprehensive
+
+fn test_if_true() -> int {
+    var result = 0
+    if 1 == 1 {
+        result = 1
+    }
+    if result == 1 {
+        print("PASS: if true\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_if_else() -> int {
+    var result = 0
+    if 1 == 2 {
+        result = 1
+    } else {
+        result = 2
+    }
+    if result == 2 {
+        print("PASS: if else\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== If/Else Tests ===\n")
+    var failures = 0
+    failures = failures + test_if_true()
+    failures = failures + test_if_else()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
