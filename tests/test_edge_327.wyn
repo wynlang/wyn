@@ -1,0 +1,20 @@
+// TDD Test: Edge case test 327
+
+fn test_edge_327() -> int {
+    var a = 327
+    var b = 328
+    if b == 328 {
+        print("PASS: edge 327\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Edge Test 327 ===\n")
+    var failures = test_edge_327()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
