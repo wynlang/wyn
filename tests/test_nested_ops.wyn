@@ -1,0 +1,49 @@
+// TDD Test: Nested operations
+
+fn test_nested_if() -> int {
+    var result = 0
+    if 1 == 1 {
+        if 2 == 2 {
+            if 3 == 3 {
+                result = 1
+            }
+        }
+    }
+    if result == 1 {
+        print("PASS: nested if\n")
+        return 0
+    }
+    print("FAIL: nested if\n")
+    return 1
+}
+
+fn test_nested_while() -> int {
+    var sum = 0
+    var i = 0
+    while i < 3 {
+        var j = 0
+        while j < 2 {
+            sum = sum + 1
+            j = j + 1
+        }
+        i = i + 1
+    }
+    if sum == 6 {
+        print("PASS: nested while\n")
+        return 0
+    }
+    print("FAIL: nested while\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Nested Operations Tests ===\n")
+    var failures = 0
+    failures = failures + test_nested_if()
+    failures = failures + test_nested_while()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
