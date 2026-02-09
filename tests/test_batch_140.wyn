@@ -1,0 +1,20 @@
+// TDD Test: Batch test 140
+
+fn test_batch_140() -> int {
+    var x = 140
+    var y = 140 * 2
+    if y == 280 {
+        print("PASS: batch 140\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Batch Test 140 ===\n")
+    var failures = test_batch_140()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
