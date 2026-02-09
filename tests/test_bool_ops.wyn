@@ -1,0 +1,81 @@
+// TDD Test: Boolean operations
+
+fn test_bool_true() -> int {
+    var b = 1
+    if b == 1 {
+        print("PASS: bool true\n")
+        return 0
+    }
+    print("FAIL: bool true\n")
+    return 1
+}
+
+fn test_bool_false() -> int {
+    var b = 0
+    if b == 0 {
+        print("PASS: bool false\n")
+        return 0
+    }
+    print("FAIL: bool false\n")
+    return 1
+}
+
+fn test_bool_comparison_equal() -> int {
+    var a = 5
+    var b = 5
+    if a == b {
+        print("PASS: bool comparison equal\n")
+        return 0
+    }
+    print("FAIL: bool comparison equal\n")
+    return 1
+}
+
+fn test_bool_comparison_not_equal() -> int {
+    var a = 5
+    var b = 10
+    if a != b {
+        print("PASS: bool comparison not equal\n")
+        return 0
+    }
+    print("FAIL: bool comparison not equal\n")
+    return 1
+}
+
+fn test_bool_comparison_less() -> int {
+    var a = 5
+    var b = 10
+    if a < b {
+        print("PASS: bool comparison less\n")
+        return 0
+    }
+    print("FAIL: bool comparison less\n")
+    return 1
+}
+
+fn test_bool_comparison_greater() -> int {
+    var a = 10
+    var b = 5
+    if a > b {
+        print("PASS: bool comparison greater\n")
+        return 0
+    }
+    print("FAIL: bool comparison greater\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Boolean Operations Tests ===\n")
+    var failures = 0
+    failures = failures + test_bool_true()
+    failures = failures + test_bool_false()
+    failures = failures + test_bool_comparison_equal()
+    failures = failures + test_bool_comparison_not_equal()
+    failures = failures + test_bool_comparison_less()
+    failures = failures + test_bool_comparison_greater()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}

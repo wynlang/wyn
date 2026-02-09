@@ -1,0 +1,77 @@
+// TDD Test: Arithmetic operations
+
+fn test_add() -> int {
+    var result = 5 + 3
+    if result == 8 {
+        print("PASS: addition\n")
+        return 0
+    }
+    print("FAIL: addition\n")
+    return 1
+}
+
+fn test_subtract() -> int {
+    var result = 10 - 3
+    if result == 7 {
+        print("PASS: subtraction\n")
+        return 0
+    }
+    print("FAIL: subtraction\n")
+    return 1
+}
+
+fn test_multiply() -> int {
+    var result = 4 * 5
+    if result == 20 {
+        print("PASS: multiplication\n")
+        return 0
+    }
+    print("FAIL: multiplication\n")
+    return 1
+}
+
+fn test_divide() -> int {
+    var result = 20 / 4
+    if result == 5 {
+        print("PASS: division\n")
+        return 0
+    }
+    print("FAIL: division\n")
+    return 1
+}
+
+fn test_modulo() -> int {
+    var result = 10 % 3
+    if result == 1 {
+        print("PASS: modulo\n")
+        return 0
+    }
+    print("FAIL: modulo\n")
+    return 1
+}
+
+fn test_negative() -> int {
+    var result = -5
+    if result == -5 {
+        print("PASS: negative\n")
+        return 0
+    }
+    print("FAIL: negative\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Arithmetic Operations Tests ===\n")
+    var failures = 0
+    failures = failures + test_add()
+    failures = failures + test_subtract()
+    failures = failures + test_multiply()
+    failures = failures + test_divide()
+    failures = failures + test_modulo()
+    failures = failures + test_negative()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
