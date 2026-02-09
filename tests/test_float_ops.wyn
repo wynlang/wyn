@@ -1,0 +1,83 @@
+// TDD Test: Float operations comprehensive
+
+fn test_float_sqrt() -> int {
+    var n = 16.0
+    var result = n.sqrt()
+    if result == 4.0 {
+        print("PASS: float.sqrt()\n")
+        return 0
+    }
+    print("FAIL: float.sqrt()\n")
+    return 1
+}
+
+fn test_float_floor() -> int {
+    var n = 3.7
+    var result = n.floor()
+    if result == 3.0 {
+        print("PASS: float.floor()\n")
+        return 0
+    }
+    print("FAIL: float.floor()\n")
+    return 1
+}
+
+fn test_float_ceil() -> int {
+    var n = 3.2
+    var result = n.ceil()
+    if result == 4.0 {
+        print("PASS: float.ceil()\n")
+        return 0
+    }
+    print("FAIL: float.ceil()\n")
+    return 1
+}
+
+fn test_float_round_up() -> int {
+    var n = 3.6
+    var result = n.round()
+    if result == 4.0 {
+        print("PASS: float.round() up\n")
+        return 0
+    }
+    print("FAIL: float.round() up\n")
+    return 1
+}
+
+fn test_float_round_down() -> int {
+    var n = 3.4
+    var result = n.round()
+    if result == 3.0 {
+        print("PASS: float.round() down\n")
+        return 0
+    }
+    print("FAIL: float.round() down\n")
+    return 1
+}
+
+fn test_float_negative() -> int {
+    var n = -5.5
+    var result = n.floor()
+    if result == -6.0 {
+        print("PASS: float.floor() negative\n")
+        return 0
+    }
+    print("FAIL: float.floor() negative\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Float Operations Tests ===\n")
+    var failures = 0
+    failures = failures + test_float_sqrt()
+    failures = failures + test_float_floor()
+    failures = failures + test_float_ceil()
+    failures = failures + test_float_round_up()
+    failures = failures + test_float_round_down()
+    failures = failures + test_float_negative()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
