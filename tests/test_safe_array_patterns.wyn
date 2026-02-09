@@ -1,0 +1,78 @@
+// Safe array access patterns for production
+fn main() -> int {
+    var failures = 0
+    
+    print("=== SAFE ARRAY ACCESS PATTERNS ===")
+    
+    // Pattern 1: Safe iteration with len()
+    var numbers: [int] = [10, 20, 30, 40, 50]
+    var sum = 0
+    var i = 0
+    var length = len(numbers)
+    while i < length {
+        sum = sum + numbers[i]
+        i = i + 1
+    }
+    if sum != 150 {
+        print("✗ Safe iteration")
+        failures = failures + 1
+    } else {
+        print("✓ Safe iteration with len()")
+    }
+    
+    // Pattern 2: Bounds checking before access
+    var names: [string] = ["Alice", "Bob", "Charlie"]
+    var index = 1
+    var name_count = len(names)
+    if index >= 0 {
+        if index < name_count {
+            var name = names[index]
+            if name != "Bob" {
+                print("✗ Bounds check")
+                failures = failures + 1
+            } else {
+                print("✓ Bounds checking before access")
+            }
+        }
+    }
+    
+    // Pattern 3: Safe array processing
+    var data: [string] = ["apple", "banana", "cherry"]
+    var data_len = len(data)
+    var j = 0
+    var processed = 0
+    while j < data_len {
+        var item = data[j]
+        var upper = str_upper(item)
+        if str_len(upper) > 0 {
+            processed = processed + 1
+        }
+        j = j + 1
+    }
+    if processed != 3 {
+        print("✗ Safe processing")
+        failures = failures + 1
+    } else {
+        print("✓ Safe array processing")
+    }
+    
+    // Pattern 4: Empty array handling
+    var empty: [int] = []
+    var empty_len = len(empty)
+    if empty_len != 0 {
+        print("✗ Empty array len")
+        failures = failures + 1
+    } else {
+        print("✓ Empty array handling")
+    }
+    
+    print("=================================")
+    
+    if failures == 0 {
+        print("✅ ALL SAFE PATTERNS WORK")
+        return 0
+    }
+    
+    print("❌ FAILED: " + int_to_str(failures))
+    return 1
+}
