@@ -1,0 +1,51 @@
+// TDD Test: Number comparison operations
+
+fn test_number_less_than() -> int {
+    if 5 < 10 {
+        print("PASS: number less than\n")
+        return 0
+    }
+    print("FAIL: number less than\n")
+    return 1
+}
+
+fn test_number_greater_than() -> int {
+    if 10 > 5 {
+        print("PASS: number greater than\n")
+        return 0
+    }
+    print("FAIL: number greater than\n")
+    return 1
+}
+
+fn test_number_less_equal() -> int {
+    if 5 <= 5 {
+        print("PASS: number less equal\n")
+        return 0
+    }
+    print("FAIL: number less equal\n")
+    return 1
+}
+
+fn test_number_greater_equal() -> int {
+    if 10 >= 10 {
+        print("PASS: number greater equal\n")
+        return 0
+    }
+    print("FAIL: number greater equal\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Number Comparison Tests ===\n")
+    var failures = 0
+    failures = failures + test_number_less_than()
+    failures = failures + test_number_greater_than()
+    failures = failures + test_number_less_equal()
+    failures = failures + test_number_greater_equal()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
