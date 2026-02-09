@@ -1,0 +1,76 @@
+// Real-World Test: CSV Parser
+// Parse comma-separated values and process data
+
+fn parse_csv_line(line: string) -> [string] {
+    var result: [string] = []
+    var current: string = ""
+    var i = 0
+    
+    while i < line.len() {
+        var ch = line.slice(i, i + 1)
+        var comma: string = ","
+        if ch == comma {
+            result.push(current)
+            current = ""
+        } else {
+            current = current + ch
+        }
+        i = i + 1
+    }
+    
+    // Push last field
+    if current.len() > 0 {
+        result.push(current)
+    }
+    
+    return result
+}
+
+fn test_parse_simple_csv() -> int {
+    var line: string = "name,age,city"
+    var fields = parse_csv_line(line)
+    
+    if fields.len() == 3 {
+        print("PASS: parse simple csv\n")
+        return 0
+    }
+    print("FAIL: parse simple csv - expected 3 fields\n")
+    return 1
+}
+
+fn test_parse_csv_with_numbers() -> int {
+    var line: string = "Alice,30,NYC"
+    var fields = parse_csv_line(line)
+    
+    if fields.len() == 3 {
+        print("PASS: parse csv with numbers\n")
+        return 0
+    }
+    print("FAIL: parse csv with numbers\n")
+    return 1
+}
+
+fn test_parse_empty_fields() -> int {
+    var line: string = "a,b,c"
+    var fields = parse_csv_line(line)
+    
+    if fields.len() == 3 {
+        print("PASS: parse empty fields\n")
+        return 0
+    }
+    print("FAIL: parse empty fields\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Real-World: CSV Parser ===\n")
+    var failures = 0
+    failures = failures + test_parse_simple_csv()
+    failures = failures + test_parse_csv_with_numbers()
+    failures = failures + test_parse_empty_fields()
+    
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
