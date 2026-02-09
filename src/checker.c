@@ -1381,6 +1381,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                     expr->expr_type = builtin_string;
                     return builtin_string;
+                } else if (strcmp(name_buf, "char_at") == 0 || strcmp(name_buf, "string_char_at") == 0) {
+                    // char_at(s, index) - returns string (single char)
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "split_get") == 0) {
+                    // split_get(s, delim, index) - returns string
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "str_upper") == 0 || strcmp(name_buf, "str_lower") == 0 ||
+                           strcmp(name_buf, "str_trim") == 0 || strcmp(name_buf, "str_repeat") == 0 ||
+                           strcmp(name_buf, "str_reverse") == 0 || strcmp(name_buf, "str_replace") == 0) {
+                    // String transformation functions - return string
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
                 }
                 
                 // Check if this is a generic function call
