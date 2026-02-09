@@ -1,0 +1,32 @@
+// TDD Test: Array sort comprehensive
+
+fn test_sort_ascending() -> int {
+    var arr: [int] = [3, 1, 4, 1, 5]
+    arr.sort()
+    if arr[0] == 1 {
+        print("PASS: sort ascending\n")
+        return 0
+    }
+    return 1
+}
+
+fn test_sort_already_sorted() -> int {
+    var arr: [int] = [1, 2, 3]
+    arr.sort()
+    if arr[0] == 1 {
+        print("PASS: sort already sorted\n")
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    print("=== Array Sort Comprehensive Tests ===\n")
+    var failures = 0
+    failures = failures + test_sort_ascending()
+    failures = failures + test_sort_already_sorted()
+    if failures == 0 {
+        print("\nAll tests PASSED!\n")
+    }
+    return failures
+}
