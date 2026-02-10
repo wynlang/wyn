@@ -451,6 +451,15 @@ void init_checker() {
     Token set_tok = {TOKEN_IDENT, "HashSet", 7, 0};
     add_symbol(global_scope, set_tok, builtin_set, false);
     
+    // Register Result types
+    Type* result_int_type = make_type(TYPE_STRUCT);
+    Token result_int_tok = {TOKEN_IDENT, "ResultInt", 9, 0};
+    add_symbol(global_scope, result_int_tok, result_int_type, false);
+    
+    Type* result_string_type = make_type(TYPE_STRUCT);
+    Token result_string_tok = {TOKEN_IDENT, "ResultString", 12, 0};
+    add_symbol(global_scope, result_string_tok, result_string_type, false);
+    
     // Add built-in functions
     const char* stdlib_funcs[] = {
         "print", "print_float", "print_str", "print_bool", "print_hex", "print_bin", "println", "print_debug", "input", "input_float", "input_line", "printf_wyn", "string_format", "sin_approx", "cos_approx", "pi_const", "e_const",
@@ -694,6 +703,71 @@ void init_checker() {
     c_remove_file_type->fn_type.return_type = builtin_bool;
     Token c_remove_file_tok = {TOKEN_IDENT, "c_remove_file", 13, 0};
     add_symbol(global_scope, c_remove_file_tok, c_remove_file_type, false);
+    
+    // Register Result functions
+    Type* result_int_ok_type = make_type(TYPE_FUNCTION);
+    result_int_ok_type->fn_type.param_count = 1;
+    result_int_ok_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_int_ok_type->fn_type.param_types[0] = builtin_int;
+    result_int_ok_type->fn_type.return_type = result_int_type;
+    Token result_int_ok_tok = {TOKEN_IDENT, "ResultInt_Ok", 12, 0};
+    add_symbol(global_scope, result_int_ok_tok, result_int_ok_type, false);
+    
+    Type* result_int_err_type = make_type(TYPE_FUNCTION);
+    result_int_err_type->fn_type.param_count = 1;
+    result_int_err_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_int_err_type->fn_type.param_types[0] = builtin_string;
+    result_int_err_type->fn_type.return_type = result_int_type;
+    Token result_int_err_tok = {TOKEN_IDENT, "ResultInt_Err", 13, 0};
+    add_symbol(global_scope, result_int_err_tok, result_int_err_type, false);
+    
+    Type* result_int_is_ok_type = make_type(TYPE_FUNCTION);
+    result_int_is_ok_type->fn_type.param_count = 1;
+    result_int_is_ok_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_int_is_ok_type->fn_type.param_types[0] = result_int_type;
+    result_int_is_ok_type->fn_type.return_type = builtin_int;
+    Token result_int_is_ok_tok = {TOKEN_IDENT, "ResultInt_is_ok", 15, 0};
+    add_symbol(global_scope, result_int_is_ok_tok, result_int_is_ok_type, false);
+    
+    Type* result_int_is_err_type = make_type(TYPE_FUNCTION);
+    result_int_is_err_type->fn_type.param_count = 1;
+    result_int_is_err_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_int_is_err_type->fn_type.param_types[0] = result_int_type;
+    result_int_is_err_type->fn_type.return_type = builtin_int;
+    Token result_int_is_err_tok = {TOKEN_IDENT, "ResultInt_is_err", 16, 0};
+    add_symbol(global_scope, result_int_is_err_tok, result_int_is_err_type, false);
+    
+    Type* result_string_ok_type = make_type(TYPE_FUNCTION);
+    result_string_ok_type->fn_type.param_count = 1;
+    result_string_ok_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_string_ok_type->fn_type.param_types[0] = builtin_string;
+    result_string_ok_type->fn_type.return_type = result_string_type;
+    Token result_string_ok_tok = {TOKEN_IDENT, "ResultString_Ok", 15, 0};
+    add_symbol(global_scope, result_string_ok_tok, result_string_ok_type, false);
+    
+    Type* result_string_err_type = make_type(TYPE_FUNCTION);
+    result_string_err_type->fn_type.param_count = 1;
+    result_string_err_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_string_err_type->fn_type.param_types[0] = builtin_string;
+    result_string_err_type->fn_type.return_type = result_string_type;
+    Token result_string_err_tok = {TOKEN_IDENT, "ResultString_Err", 16, 0};
+    add_symbol(global_scope, result_string_err_tok, result_string_err_type, false);
+    
+    Type* result_string_is_ok_type = make_type(TYPE_FUNCTION);
+    result_string_is_ok_type->fn_type.param_count = 1;
+    result_string_is_ok_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_string_is_ok_type->fn_type.param_types[0] = result_string_type;
+    result_string_is_ok_type->fn_type.return_type = builtin_int;
+    Token result_string_is_ok_tok = {TOKEN_IDENT, "ResultString_is_ok", 18, 0};
+    add_symbol(global_scope, result_string_is_ok_tok, result_string_is_ok_type, false);
+    
+    Type* result_string_is_err_type = make_type(TYPE_FUNCTION);
+    result_string_is_err_type->fn_type.param_count = 1;
+    result_string_is_err_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_string_is_err_type->fn_type.param_types[0] = result_string_type;
+    result_string_is_err_type->fn_type.return_type = builtin_int;
+    Token result_string_is_err_tok = {TOKEN_IDENT, "ResultString_is_err", 19, 0};
+    add_symbol(global_scope, result_string_is_err_tok, result_string_is_err_type, false);
 }
 
 Symbol* find_symbol(SymbolTable* scope, Token name) {

@@ -4623,6 +4623,25 @@ void codegen_c_header() {
     
     // ARC function implementations are in arc_runtime.c - just declare what we need
     emit("// ARC functions are provided by arc_runtime.c\n\n");
+    
+    // Result type implementations
+    emit("// Result type implementations\n");
+    emit("typedef struct { int tag; union { int ok_value; const char* err_value; } data; } ResultInt;\n");
+    emit("typedef struct { int tag; union { const char* ok_value; const char* err_value; } data; } ResultString;\n\n");
+    
+    emit("ResultInt ResultInt_Ok(int value) { ResultInt r; r.tag = 0; r.data.ok_value = value; return r; }\n");
+    emit("ResultInt ResultInt_Err(const char* msg) { ResultInt r; r.tag = 1; r.data.err_value = msg; return r; }\n");
+    emit("int ResultInt_is_ok(ResultInt r) { return r.tag == 0; }\n");
+    emit("int ResultInt_is_err(ResultInt r) { return r.tag == 1; }\n");
+    emit("int ResultInt_unwrap(ResultInt r) { if (r.tag == 1) { fprintf(stderr, \"Error: unwrap() called on Err: %%s\\n\", r.data.err_value); exit(1); } return r.data.ok_value; }\n");
+    emit("const char* ResultInt_unwrap_err(ResultInt r) { if (r.tag == 0) { fprintf(stderr, \"Error: unwrap_err() called on Ok\\n\"); exit(1); } return r.data.err_value; }\n\n");
+    
+    emit("ResultString ResultString_Ok(const char* value) { ResultString r; r.tag = 0; r.data.ok_value = value; return r; }\n");
+    emit("ResultString ResultString_Err(const char* msg) { ResultString r; r.tag = 1; r.data.err_value = msg; return r; }\n");
+    emit("int ResultString_is_ok(ResultString r) { return r.tag == 0; }\n");
+    emit("int ResultString_is_err(ResultString r) { return r.tag == 1; }\n");
+    emit("const char* ResultString_unwrap(ResultString r) { if (r.tag == 1) { fprintf(stderr, \"Error: unwrap() called on Err: %%s\\n\", r.data.err_value); exit(1); } return r.data.ok_value; }\n");
+    emit("const char* ResultString_unwrap_err(ResultString r) { if (r.tag == 0) { fprintf(stderr, \"Error: unwrap_err() called on Ok\\n\"); exit(1); } return r.data.err_value; }\n\n");
 }
 
 // Track async function context
