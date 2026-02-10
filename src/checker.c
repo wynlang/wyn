@@ -768,6 +768,39 @@ void init_checker() {
     result_string_is_err_type->fn_type.return_type = builtin_int;
     Token result_string_is_err_tok = {TOKEN_IDENT, "ResultString_is_err", 19, 0};
     add_symbol(global_scope, result_string_is_err_tok, result_string_is_err_type, false);
+    
+    // Register Result unwrap functions
+    Type* result_int_unwrap_type = make_type(TYPE_FUNCTION);
+    result_int_unwrap_type->fn_type.param_count = 1;
+    result_int_unwrap_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_int_unwrap_type->fn_type.param_types[0] = result_int_type;
+    result_int_unwrap_type->fn_type.return_type = builtin_int;
+    Token result_int_unwrap_tok = {TOKEN_IDENT, "ResultInt_unwrap", 16, 0};
+    add_symbol(global_scope, result_int_unwrap_tok, result_int_unwrap_type, false);
+    
+    Type* result_int_unwrap_err_type = make_type(TYPE_FUNCTION);
+    result_int_unwrap_err_type->fn_type.param_count = 1;
+    result_int_unwrap_err_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_int_unwrap_err_type->fn_type.param_types[0] = result_int_type;
+    result_int_unwrap_err_type->fn_type.return_type = builtin_string;
+    Token result_int_unwrap_err_tok = {TOKEN_IDENT, "ResultInt_unwrap_err", 20, 0};
+    add_symbol(global_scope, result_int_unwrap_err_tok, result_int_unwrap_err_type, false);
+    
+    Type* result_string_unwrap_type = make_type(TYPE_FUNCTION);
+    result_string_unwrap_type->fn_type.param_count = 1;
+    result_string_unwrap_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_string_unwrap_type->fn_type.param_types[0] = result_string_type;
+    result_string_unwrap_type->fn_type.return_type = builtin_string;
+    Token result_string_unwrap_tok = {TOKEN_IDENT, "ResultString_unwrap", 19, 0};
+    add_symbol(global_scope, result_string_unwrap_tok, result_string_unwrap_type, false);
+    
+    Type* result_string_unwrap_err_type = make_type(TYPE_FUNCTION);
+    result_string_unwrap_err_type->fn_type.param_count = 1;
+    result_string_unwrap_err_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_string_unwrap_err_type->fn_type.param_types[0] = result_string_type;
+    result_string_unwrap_err_type->fn_type.return_type = builtin_string;
+    Token result_string_unwrap_err_tok = {TOKEN_IDENT, "ResultString_unwrap_err", 23, 0};
+    add_symbol(global_scope, result_string_unwrap_err_tok, result_string_unwrap_err_type, false);
 }
 
 Symbol* find_symbol(SymbolTable* scope, Token name) {

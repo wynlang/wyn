@@ -3912,7 +3912,7 @@ void codegen_c_header() {
     emit("    default: print_int_no_nl)(x)\n\n");
     emit("void print_hex(int x) { printf(\"0x%%x\\n\", x); }\n");
     emit("void print_bin(int x) { for(int i = 31; i >= 0; i--) printf(\"%%d\", (x >> i) & 1); printf(\"\\n\"); }\n");
-    emit("void println() { printf(\"\\n\"); }\n");
+    emit("#define println(x) do { print(x); printf(\"\\n\"); } while(0)\n");
     emit("void print_debug(const char* label, int val) { printf(\"%%s: %%d\\n\", label, val); }\n");
     
     // Generic print function for backward compatibility with method calls
