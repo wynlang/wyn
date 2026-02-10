@@ -1590,13 +1590,38 @@ void codegen_expr(Expr* expr) {
             int arr_id = arr_counter++;
             emit("({ WynArray __arr_%d = array_new(); ", arr_id);
             for (int i = 0; i < expr->array.count; i++) {
-                if (expr->array.elements[i]->type == EXPR_STRING) {
+                Expr* elem = expr->array.elements[i];
+                if (elem->type == EXPR_STRING) {
                     emit("array_push_str(&__arr_%d, ", arr_id);
-                    codegen_expr(expr->array.elements[i]);
+                    codegen_expr(elem);
+                    emit("); ");
+                } else if (elem->type == EXPR_STRUCT_INIT) {
+                    // Struct literal
+                    Token type_name = elem->struct_init.type_name;
+                    emit("array_push_struct(&__arr_%d, ", arr_id);
+                    codegen_expr(elem);
+                    emit(", ");
+                    if (current_module_prefix) {
+                        emit("%s_%.*s", current_module_prefix, type_name.length, type_name.start);
+                    } else {
+                        emit("%.*s", type_name.length, type_name.start);
+                    }
+                    emit("); ");
+                } else if (elem->expr_type && elem->expr_type->kind == TYPE_STRUCT) {
+                    // Variable or function call returning struct
+                    Token type_name = elem->expr_type->struct_type.name;
+                    emit("array_push_struct(&__arr_%d, ", arr_id);
+                    codegen_expr(elem);
+                    emit(", ");
+                    if (current_module_prefix) {
+                        emit("%s_%.*s", current_module_prefix, type_name.length, type_name.start);
+                    } else {
+                        emit("%.*s", type_name.length, type_name.start);
+                    }
                     emit("); ");
                 } else {
                     emit("array_push_int(&__arr_%d, ", arr_id);
-                    codegen_expr(expr->array.elements[i]);
+                    codegen_expr(elem);
                     emit("); ");
                 }
             }
