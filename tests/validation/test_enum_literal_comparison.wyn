@@ -1,0 +1,66 @@
+// Test: Enum literal comparison
+// This was broken - parser treated Status.Ok differently in different contexts
+// Fixed: Disabled module.Type { } pattern that caused false positives
+
+enum Status {
+    Ok,
+    Err,
+    Pending
+}
+
+fn main() -> int {
+    var s1 = Status.Ok;
+    var s2 = Status.Err;
+    var s3 = Status.Ok;
+    
+    // Test 1: Variable to variable
+    if s1 == s3 {
+        // OK
+    } else {
+        println("FAIL: var == var");
+        return 1;
+    }
+    
+    // Test 2: Variable to literal
+    if s1 == Status.Ok {
+        // OK
+    } else {
+        println("FAIL: var == literal");
+        return 2;
+    }
+    
+    // Test 3: Literal to variable
+    if Status.Err == s2 {
+        // OK
+    } else {
+        println("FAIL: literal == var");
+        return 3;
+    }
+    
+    // Test 4: Literal to literal
+    if Status.Pending == Status.Pending {
+        // OK
+    } else {
+        println("FAIL: literal == literal");
+        return 4;
+    }
+    
+    // Test 5: Inequality
+    if s1 != s2 {
+        // OK
+    } else {
+        println("FAIL: var != var");
+        return 5;
+    }
+    
+    // Test 6: Inequality with literal
+    if s1 != Status.Err {
+        // OK
+    } else {
+        println("FAIL: var != literal");
+        return 6;
+    }
+    
+    println("✅ Enum literal comparison works");
+    return 0;
+}

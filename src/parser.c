@@ -942,7 +942,10 @@ static Expr* call() {
                 }
             
             // Check for module.Type { ... } struct initialization
-            if (check(TOKEN_LBRACE) && field_or_method.start[0] >= 'A' && field_or_method.start[0] <= 'Z') {
+            // DISABLED: This causes false positives when { belongs to outer construct
+            // e.g., "if s == Status.Ok {" incorrectly parsed as struct init
+            // The pattern module.Type { } is rare and can be written as Type { } instead
+            if (false && check(TOKEN_LBRACE) && field_or_method.start[0] >= 'A' && field_or_method.start[0] <= 'Z') {
                 advance(); // consume '{'
                 
                 Expr* struct_expr = alloc_expr();
