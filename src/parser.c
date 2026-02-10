@@ -3262,8 +3262,6 @@ static Expr* parse_type() {
                 // Built-in string type
                 base_type = alloc_expr();
                 base_type->type = EXPR_IDENT;
-                base_type = alloc_expr();
-                base_type->type = EXPR_IDENT;
                 base_type->token = type_token;
             } else if (type_token.length == 3 && memcmp(type_token.start, "int", 3) == 0) {
                 // Built-in int type

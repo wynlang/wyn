@@ -1,0 +1,41 @@
+// Comprehensive Production Readiness Test
+// Tests all critical features fixed today
+
+struct Point {
+    x: int,
+    y: int
+}
+
+enum Status {
+    Success,
+    Failure
+}
+
+fn main() -> int {
+    // Test 1: Struct initialization
+    var p = Point { x: 10, y: 20 };
+    if p.x != 10 {
+        return 1;
+    }
+    
+    // Test 2: Enum usage
+    var s = Status.Success;
+    
+    // Test 3: HashMap
+    var map = hashmap_new();
+    hashmap_insert_int(map, "test", 42);
+    var val = hashmap_get_int(map, "test");
+    if val != 42 {
+        return 2;
+    }
+    
+    // Test 4: Array bounds safety (should warn but not crash)
+    var arr: [int] = [1, 2, 3];
+    var x = arr[100];  // Warning, returns 0
+    
+    // Test 5: Division by zero safety (should warn but not crash)
+    var y = 10 / 0;  // Warning, returns 0
+    
+    // All tests passed
+    return 0;
+}

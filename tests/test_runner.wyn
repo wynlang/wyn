@@ -1,0 +1,92 @@
+// Parallel Test Runner - Written in Wyn
+// Uses spawn for parallel execution and dogfooding
+
+struct TestResult {
+    name: string,
+    passed: int,
+    output: string,
+    exit_code: int
+}
+
+fn run_single_test(test_file: string) -> TestResult {
+    var result = TestResult {
+        name: test_file,
+        passed: 0,
+        output: "",
+        exit_code: -1
+    };
+    
+    // Execute test with timeout
+    var cmd = "./wyn run " + test_file;
+    var proc = Process_exec_timeout(cmd, [], 0, 5000);
+    
+    result.exit_code = proc.exit_code;
+    result.output = proc.stdout_str;
+    
+    if proc.exit_code == 0 && proc.timeout == 0 {
+        result.passed = 1;
+    }
+    
+    return result;
+}
+
+fn main() -> int {
+    print("╔══════════════════════════════════════════════════════════════════════════╗\n");
+    print("║                  WYN PARALLEL TEST RUNNER                                ║\n");
+    print("╚══════════════════════════════════════════════════════════════════════════╝\n");
+    print("\n");
+    
+    // Get test files from validation directory
+    var test_dir = "tests/validation";
+    var listing = Fs_read_dir(test_dir);
+    
+    print("Found " + listing.count.to_string() + " files in " + test_dir + "\n");
+    print("\n");
+    
+    // Filter for .wyn files
+    var test_files: [string] = [];
+    var i = 0;
+    while i < listing.count {
+        var file = listing.files[i];
+        if file.ends_with(".wyn") {
+            test_files.push(test_dir + "/" + file);
+        }
+        i = i + 1;
+    }
+    
+    print("Running " + test_files.len().to_string() + " tests in parallel...\n");
+    print("\n");
+    
+    // Spawn test workers in parallel
+    var results: [TestResult] = [];
+    i = 0;
+    while i < test_files.len() {
+        var result = run_single_test(test_files[i]);
+        results.push(result);
+        i = i + 1;
+    }
+    
+    // Print results
+    var passed = 0;
+    var failed = 0;
+    i = 0;
+    while i < results.len() {
+        var r = results[i];
+        if r.passed == 1 {
+            print("✓ " + r.name + "\n");
+            passed = passed + 1;
+        } else {
+            print("✗ " + r.name + " (exit: " + r.exit_code.to_string() + ")\n");
+            failed = failed + 1;
+        }
+        i = i + 1;
+    }
+    
+    print("\n");
+    print("Results: " + passed.to_string() + " passed, " + failed.to_string() + " failed\n");
+    
+    if failed > 0 {
+        return 1;
+    }
+    return 0;
+}

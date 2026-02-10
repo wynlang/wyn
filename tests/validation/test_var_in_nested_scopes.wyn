@@ -1,0 +1,38 @@
+// Test: Variable declarations in nested scopes
+// This was causing a segfault due to NULL expr in STMT_EXPR
+
+fn get_value() -> int {
+    return 42;
+}
+
+fn main() -> int {
+    // Test 1: var in if block
+    if 1 {
+        var x = get_value();
+        if x != 42 {
+            return 1;
+        }
+    }
+    
+    // Test 2: var in while loop
+    var count = 0;
+    while count < 3 {
+        var y = count * 2;
+        if y != count * 2 {
+            return 2;
+        }
+        count = count + 1;
+    }
+    
+    // Test 3: var in nested if
+    if 1 {
+        if 1 {
+            var z = 100;
+            if z != 100 {
+                return 3;
+            }
+        }
+    }
+    
+    return 0;  // All tests passed
+}

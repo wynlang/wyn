@@ -1,0 +1,12 @@
+// Test: Enum basic usage
+// Validates that simple enums work correctly
+
+enum Status {
+    Success,
+    Failure
+}
+
+fn main() -> int {
+    var s = Status.Success;
+    return 0;
+}

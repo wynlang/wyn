@@ -1,0 +1,12 @@
+// Test: Struct initialization with null field values should not crash
+// This tests the fix for null field value handling in codegen_expr
+
+struct Point {
+    x: int
+}
+
+fn main() -> int {
+    var p = Point { x: 10 };
+    assert(p.x == 10);
+    return 0;
+}

@@ -239,6 +239,14 @@ static void push_scope() {
     if (scope_depth < 32) {
         scopes[scope_depth].count = 0;
         scopes[scope_depth].string_count = 0;
+        // Initialize arrays to NULL
+        for (int i = 0; i < 256; i++) {
+            scopes[scope_depth].vars[i] = NULL;
+            scopes[scope_depth].types[i] = NULL;
+        }
+        for (int i = 0; i < 64; i++) {
+            scopes[scope_depth].string_objects[i] = NULL;
+        }
         scope_depth++;
     }
 }
@@ -252,13 +260,18 @@ static void pop_scope() {
             const char* var_name = scopes[scope_depth].vars[i];
             const char* var_type = scopes[scope_depth].types[i];
             
+            // Safety check: skip if var_name is NULL
+            if (!var_name) {
+                continue;
+            }
+            
             if (var_type && strcmp(var_type, "WynArray") == 0) {
                 // For WynArray, free the internal data array if it exists
                 emit("    if(%s.data) free(%s.data);\n", var_name, var_name);
             } else if (var_type && (strcmp(var_type, "char*") == 0 || strcmp(var_type, "const char*") == 0)) {
                 // For string pointers, only free if they're not string literals
                 emit("    /* String cleanup handled by ARC */\n");
-            } else {
+            } else if (var_type) {
                 // For other pointer types, use regular free
                 emit("    if(%s) free(%s);\n", var_name, var_name);
             }
@@ -275,24 +288,47 @@ static void pop_scope() {
 }
 
 static void track_var_with_type(const char* name, int len, const char* type) {
-    if (scope_depth > 0 && scopes[scope_depth - 1].count < 256) {
-        char* var = malloc(len + 1);
-        strncpy(var, name, len);
-        var[len] = 0;
-        scopes[scope_depth - 1].vars[scopes[scope_depth - 1].count] = var;
-        
-        // Store the type for proper cleanup
-        if (type) {
-            int type_len = strlen(type);
-            char* var_type = malloc(type_len + 1);
-            strcpy(var_type, type);
-            scopes[scope_depth - 1].types[scopes[scope_depth - 1].count] = var_type;
-        } else {
-            scopes[scope_depth - 1].types[scopes[scope_depth - 1].count] = NULL;
-        }
-        
-        scopes[scope_depth - 1].count++;
+    // Safety check: ensure scope_depth is valid
+    if (scope_depth == 0) {
+        fprintf(stderr, "WARNING: track_var_with_type called with scope_depth=0\n");
+        return;
     }
+    if (scope_depth > 32) {
+        fprintf(stderr, "ERROR: scope_depth=%d exceeds maximum (32)\n", scope_depth);
+        return;
+    }
+    
+    int scope_idx = scope_depth - 1;
+    if (scopes[scope_idx].count >= 256) {
+        fprintf(stderr, "WARNING: scope %d has %d vars (max 256)\n", scope_idx, scopes[scope_idx].count);
+        return;
+    }
+    
+    char* var = malloc(len + 1);
+    if (!var) {
+        fprintf(stderr, "ERROR: malloc failed for var name\n");
+        return;
+    }
+    strncpy(var, name, len);
+    var[len] = 0;
+    scopes[scope_idx].vars[scopes[scope_idx].count] = var;
+    
+    // Store the type for proper cleanup
+    if (type) {
+        int type_len = strlen(type);
+        char* var_type = malloc(type_len + 1);
+        if (!var_type) {
+            fprintf(stderr, "ERROR: malloc failed for var type\n");
+            free(var);
+            return;
+        }
+        strcpy(var_type, type);
+        scopes[scope_idx].types[scopes[scope_idx].count] = var_type;
+    } else {
+        scopes[scope_idx].types[scopes[scope_idx].count] = NULL;
+    }
+    
+    scopes[scope_idx].count++;
 }
 
 static void track_string_var(const char* name, int len) {
@@ -4723,6 +4759,9 @@ void codegen_stmt(Stmt* stmt) {
     
     switch (stmt->type) {
         case STMT_EXPR:
+            if (!stmt->expr) {
+                break;  // Skip NULL expressions
+            }
             // Check if this expression is marked as an implicit return
             if (stmt->expr->is_implicit_return) {
                 if (in_async_function) {

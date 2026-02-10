@@ -1,0 +1,182 @@
+// Comprehensive Real-World Test Suite
+// Tests practical use cases
+
+struct Config {
+    host: string,
+    port: int,
+    debug: int
+}
+
+fn test_config_parser() -> int {
+    var config = Config {
+        host: "localhost",
+        port: 8080,
+        debug: 1
+    };
+    
+    if config.port != 8080 {
+        return 1;
+    }
+    
+    return 0;
+}
+
+fn test_csv_parser() -> int {
+    var csv = "Alice,30,NYC";
+    var name = split_get(csv, ",", 0);
+    var age_str = split_get(csv, ",", 1);
+    var city = split_get(csv, ",", 2);
+    
+    var age = str_to_int(age_str);
+    
+    if age != 30 {
+        return 2;
+    }
+    
+    return 0;
+}
+
+fn test_file_processor() -> int {
+    var path = "/tmp/wyn_real_world_test.txt";
+    var content = "Line 1\nLine 2\nLine 3";
+    
+    file_write(path, content);
+    
+    if file_exists(path) == 0 {
+        return 3;
+    }
+    
+    var read = file_read(path);
+    file_delete(path);
+    
+    return 0;
+}
+
+fn test_calculator() -> int {
+    var a = 10;
+    var b = 5;
+    
+    var sum = a + b;
+    var diff = a - b;
+    var prod = a * b;
+    var quot = a / b;
+    
+    if sum != 15 {
+        return 4;
+    }
+    if diff != 5 {
+        return 5;
+    }
+    if prod != 50 {
+        return 6;
+    }
+    if quot != 2 {
+        return 7;
+    }
+    
+    return 0;
+}
+
+fn test_string_processor() -> int {
+    var text = "Hello, World!";
+    
+    var len = str_len(text);
+    if len != 13 {
+        return 8;
+    }
+    
+    if str_contains(text, "World") == 0 {
+        return 9;
+    }
+    
+    var upper = str_upper(text);
+    var lower = str_lower(text);
+    
+    return 0;
+}
+
+fn test_array_processor() -> int {
+    var arr: [int] = [1, 2, 3, 4, 5];
+    
+    var len = arr.len();
+    if len != 5 {
+        return 10;
+    }
+    
+    var first = arr[0];
+    if first != 1 {
+        return 11;
+    }
+    
+    arr.push(6);
+    if arr.len() != 6 {
+        return 12;
+    }
+    
+    var popped = arr.pop();
+    if popped != 6 {
+        return 13;
+    }
+    
+    return 0;
+}
+
+fn test_hashmap_store() -> int {
+    var store = hashmap_new();
+    
+    hashmap_insert_int(store, "count", 42);
+    hashmap_insert_int(store, "total", 100);
+    
+    var count = hashmap_get_int(store, "count");
+    if count != 42 {
+        return 14;
+    }
+    
+    var total = hashmap_get_int(store, "total");
+    if total != 100 {
+        return 15;
+    }
+    
+    return 0;
+}
+
+fn main() -> int {
+    var result = 0;
+    
+    result = test_config_parser();
+    if result != 0 {
+        return result;
+    }
+    
+    result = test_csv_parser();
+    if result != 0 {
+        return result;
+    }
+    
+    result = test_file_processor();
+    if result != 0 {
+        return result;
+    }
+    
+    result = test_calculator();
+    if result != 0 {
+        return result;
+    }
+    
+    result = test_string_processor();
+    if result != 0 {
+        return result;
+    }
+    
+    result = test_array_processor();
+    if result != 0 {
+        return result;
+    }
+    
+    result = test_hashmap_store();
+    if result != 0 {
+        return result;
+    }
+    
+    return 0;
+}
