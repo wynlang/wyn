@@ -1039,8 +1039,8 @@ char** map_keys(WynMap map) {
 }
 
 int map_get_or_default(WynHashMap* map, const char* key, int default_value) {
-    int result = hashmap_get_int(map, key);
-    return (result == -1) ? default_value : result;
+    if (!hashmap_has(map, key)) return default_value;
+    return hashmap_get_int(map, key);
 }
 void map_merge(WynHashMap* dest, WynHashMap* src) {
     // Merge src into dest by iterating all buckets

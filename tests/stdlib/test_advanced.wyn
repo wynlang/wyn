@@ -1,0 +1,138 @@
+// Test: Terminal and ANSI capabilities (non-interactive subset)
+// Verifies Terminal.cols/rows work and string formatting for TUI apps
+
+fn test_terminal_info() {
+    Test.init("Terminal Info")
+    
+    var cols = Terminal.cols()
+    var rows = Terminal.rows()
+    Test.assert_gt(cols, 0, "cols > 0")
+    Test.assert_gt(rows, 0, "rows > 0")
+    Test.assert_lt(cols, 10000, "cols < 10000")
+    Test.assert_lt(rows, 10000, "rows < 10000")
+    
+    Test.summary()
+}
+
+fn test_ansi_strings() {
+    Test.init("ANSI String Building")
+    
+    // Test that ANSI escape codes can be embedded in strings
+    var red = "\x1b[31m"
+    var reset = "\x1b[0m"
+    var colored = red + "hello" + reset
+    Test.assert(colored.contains("hello"), "colored contains text")
+    Test.assert_gt(colored.len(), 5, "colored longer than plain text")
+    
+    // Progress bar building
+    var bar = ""
+    for i in 0..10 { bar = bar + "█" }
+    Test.assert_eq_int(bar.len(), 30, "10 block chars = 30 bytes (UTF-8)")
+    
+    Test.summary()
+}
+
+fn test_system_exec_patterns() {
+    Test.init("System.exec Patterns")
+    
+    // Pipe chains
+    var result = System.exec("echo 'a b c' | wc -w").trim()
+    Test.assert_eq_str(result, "3", "pipe wc -w")
+    
+    // Exit codes
+    Test.assert_eq_int(System.exec_code("test -d /tmp"), 0, "/tmp exists")
+    Test.assert_eq_int(System.exec_code("test -d /nonexistent_dir_xyz"), 1, "nonexistent dir")
+    
+    // Env vars
+    var user = System.exec("whoami").trim()
+    Test.assert(user.len() > 0, "whoami returns something")
+    
+    // Subshell
+    var calc = System.exec("echo $((2 + 3))").trim()
+    Test.assert_eq_str(calc, "5", "shell arithmetic")
+    
+    Test.summary()
+}
+
+fn test_file_operations() {
+    Test.init("File Operations")
+    
+    var dir = "/tmp/wyn_test_dir"
+    System.exec("mkdir -p " + dir)
+    
+    // Write and read
+    File.write(dir + "/test.txt", "line1\nline2\nline3\n")
+    var content = File.read(dir + "/test.txt")
+    Test.assert(content.contains("line1"), "write/read line1")
+    Test.assert(content.contains("line3"), "write/read line3")
+    
+    // File exists
+    Test.assert(File.exists(dir + "/test.txt"), "file exists")
+    Test.assert_eq_int(File.exists(dir + "/nope.txt"), 0, "file not exists")
+    
+    // Cleanup
+    System.exec("rm -rf " + dir)
+    Test.assert_eq_int(File.exists(dir + "/test.txt"), 0, "cleaned up")
+    
+    Test.summary()
+}
+
+fn test_string_edge_cases() {
+    Test.init("String Edge Cases")
+    
+    // Empty string
+    Test.assert_eq_int("".len(), 0, "empty string len")
+    Test.assert_eq_str("".trim(), "", "empty trim")
+    Test.assert_eq_str("".upper(), "", "empty upper")
+    
+    // Single char
+    Test.assert_eq_int("x".len(), 1, "single char len")
+    Test.assert_eq_str("x".upper(), "X", "single char upper")
+    
+    // Repeated operations
+    var s = "hello"
+    s = s.upper()
+    s = s.lower()
+    Test.assert_eq_str(s, "hello", "upper then lower roundtrip")
+    
+    // index_of not found
+    Test.assert_eq_int("abc".index_of("xyz"), -1, "index_of not found")
+    
+    // substring edge
+    Test.assert_eq_str("hello".substring(0, 0), "", "substring empty")
+    Test.assert_eq_str("hello".substring(0, 5), "hello", "substring full")
+    
+    Test.summary()
+}
+
+fn test_hashmap_patterns() {
+    Test.init("HashMap Patterns")
+    
+    var config = HashMap.new()
+    config.insert_string("host", "localhost")
+    config.insert_int("port", 8080)
+    config.insert_string("env", "production")
+    
+    Test.assert_eq_str(config.get("host"), "localhost", "get host")
+    Test.assert_eq_int(config.get_int("port"), 8080, "get port")
+    
+    // Overwrite
+    config.insert_string("env", "staging")
+    Test.assert_eq_str(config.get("env"), "staging", "overwrite string")
+    
+    // Missing key returns default
+    Test.assert_eq_int(config.get_int("missing"), 0, "missing int = 0")
+    Test.assert_eq_str(config.get("missing"), "", "missing string = empty")
+    
+    Test.summary()
+}
+
+fn main() -> int {
+    test_terminal_info()
+    test_ansi_strings()
+    test_system_exec_patterns()
+    test_file_operations()
+    test_string_edge_cases()
+    test_hashmap_patterns()
+    return 0
+}

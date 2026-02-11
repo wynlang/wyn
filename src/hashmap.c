@@ -127,7 +127,7 @@ HashMapValue hashmap_get(WynHashMap* map, const char* key) {
     if (!map || !key) {
         HashMapValue default_val;
         default_val.type = HASHMAP_INT;
-        default_val.value.as_int = -1;
+        default_val.value.as_int = 0;
         return default_val;
     }
     
@@ -144,7 +144,7 @@ HashMapValue hashmap_get(WynHashMap* map, const char* key) {
     // Return default value (int 0) if not found
     HashMapValue default_val;
     default_val.type = HASHMAP_INT;
-    default_val.value.as_int = -1;
+    default_val.value.as_int = 0;
     return default_val;
 }
 
@@ -153,7 +153,7 @@ int hashmap_get_int(WynHashMap* map, const char* key) {
     if (val.type == HASHMAP_INT) {
         return val.value.as_int;
     }
-    return -1;
+    return 0;
 }
 
 double hashmap_get_float(WynHashMap* map, const char* key) {
