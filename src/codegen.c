@@ -190,18 +190,24 @@ typedef struct {
     int param_count;
     char captured_vars[16][64];
     int capture_count;
+    bool is_closure; // true if this lambda is returned (uses WynClosure)
 } LambdaFunction;
 
 static LambdaFunction lambda_functions[256];
 static int lambda_count = 0;
 static int lambda_id_counter = 0;
 static int lambda_ref_counter = 0;
+static bool in_return_lambda = false;
+static Program* current_program = NULL;
 
 // Track lambda variable names and their captures for call site injection
 typedef struct {
     char var_name[64];
+    char name[64];      // same as var_name, for lookup
+    int name_len;
     char captured_vars[16][64];
     int capture_count;
+    bool is_closure;    // true if this var holds a WynClosure
 } LambdaVarInfo;
 
 static LambdaVarInfo lambda_var_info[256];
@@ -795,6 +801,31 @@ void codegen_expr(Expr* expr) {
             }
             break;
         case EXPR_CALL:
+            // Check if callee is a closure variable (WynClosure)
+            // Heuristic: if callee is an identifier that starts with lowercase
+            // and is not a known built-in function, it might be a closure variable
+            if (expr->call.callee->type == EXPR_IDENT && expr->call.arg_count >= 1) {
+                Token fn_name = expr->call.callee->token;
+                // Check if this is a variable holding a closure (assigned from a function returning WynClosure)
+                // Simple check: if the identifier is tracked as a closure variable
+                bool is_closure_var = false;
+                for (int li = 0; li < lambda_var_count; li++) {
+                    if (lambda_var_info[li].name_len == fn_name.length &&
+                        memcmp(lambda_var_info[li].name, fn_name.start, fn_name.length) == 0 &&
+                        lambda_var_info[li].is_closure) {
+                        is_closure_var = true;
+                        break;
+                    }
+                }
+                if (is_closure_var && expr->call.arg_count == 1) {
+                    emit("wyn_closure_call_int(");
+                    codegen_expr(expr->call.callee);
+                    emit(", ");
+                    codegen_expr(expr->call.args[0]);
+                    emit(")");
+                    break;
+                }
+            }
             // TASK-040: Special handling for higher-order functions
             if (expr->call.callee->type == EXPR_IDENT) {
                 Token func_name = expr->call.callee->token;
@@ -2363,10 +2394,27 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_LAMBDA: {
-            // Lambda function was already emitted in pre-scan
-            // Just emit the function pointer reference using the global counter
             lambda_ref_counter++;
-            emit("__lambda_%d", lambda_ref_counter);
+            int lid = lambda_ref_counter;
+            // Check if this lambda is a closure (returned from function)
+            bool is_closure_lambda = false;
+            for (int i = 0; i < lambda_count; i++) {
+                if (lambda_functions[i].id == lid && lambda_functions[i].is_closure) {
+                    is_closure_lambda = true;
+                    // Emit closure construction: allocate env, fill captured vars, return WynClosure
+                    emit("({ __closure_env_%d* __env = malloc(sizeof(__closure_env_%d)); ", lid, lid);
+                    for (int j = 0; j < lambda_functions[i].capture_count; j++) {
+                        emit("__env->%s = %s; ", 
+                            lambda_functions[i].captured_vars[j],
+                            lambda_functions[i].captured_vars[j]);
+                    }
+                    emit("wyn_closure_new((void*)__lambda_%d, __env); })", lid);
+                    break;
+                }
+            }
+            if (!is_closure_lambda) {
+                emit("__lambda_%d", lid);
+            }
             break;
         }
         case EXPR_MAP: {
@@ -2528,6 +2576,12 @@ void codegen_c_header() {
     emit("\n// Global argc/argv for System::args()\n");
     emit("int __wyn_argc = 0;\n");
     emit("char** __wyn_argv = NULL;\n\n");
+    
+    // Closure runtime type
+    emit("typedef struct { void* fn; void* env; } WynClosure;\n");
+    emit("WynClosure wyn_closure_new(void* fn, void* env) { return (WynClosure){fn, env}; }\n");
+    emit("int wyn_closure_call_int(WynClosure c, int arg) { return ((int(*)(void*,int))c.fn)(c.env, arg); }\n\n");
+    
     emit("#include \"json.h\"\n");
     emit("#include \"async_runtime.h\"\n\n");
     
@@ -5236,6 +5290,30 @@ void codegen_stmt(Stmt* stmt) {
                     } else {
                         c_type = "__auto_type";
                     }
+                    // Track if this variable holds a closure (from a function returning fn type)
+                    if (stmt->var.init->call.callee->type == EXPR_IDENT && lambda_var_count < 256) {
+                        Token call_name = stmt->var.init->call.callee->token;
+                        if (current_program) {
+                            for (int fi = 0; fi < current_program->count; fi++) {
+                                Stmt* fs = current_program->stmts[fi];
+                                if (fs->type == STMT_FN && 
+                                    fs->fn.name.length == call_name.length &&
+                                    memcmp(fs->fn.name.start, call_name.start, call_name.length) == 0 &&
+                                    fs->fn.return_type && fs->fn.return_type->type == EXPR_FN_TYPE) {
+                                    // This function returns a closure!
+                                    snprintf(lambda_var_info[lambda_var_count].var_name, 64, "%.*s",
+                                            stmt->var.name.length, stmt->var.name.start);
+                                    snprintf(lambda_var_info[lambda_var_count].name, 64, "%.*s",
+                                            stmt->var.name.length, stmt->var.name.start);
+                                    lambda_var_info[lambda_var_count].name_len = stmt->var.name.length;
+                                    lambda_var_info[lambda_var_count].is_closure = true;
+                                    lambda_var_info[lambda_var_count].capture_count = 0;
+                                    lambda_var_count++;
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 } else if (stmt->var.init->type == EXPR_BINARY) {
                     // Binary expression - check if it's string concatenation or arithmetic
                     if (stmt->var.init->binary.op.type == TOKEN_PLUS) {
@@ -5517,8 +5595,9 @@ void codegen_stmt(Stmt* stmt) {
                         return_type = return_type_buf;
                     }
                 } else if (stmt->fn.return_type->type == EXPR_OPTIONAL_TYPE) {
-                    // T2.5.1: Handle optional return types - use WynOptional* for proper optional handling
                     return_type = "WynOptional*";
+                } else if (stmt->fn.return_type->type == EXPR_FN_TYPE) {
+                    return_type = "WynClosure";
                 }
             }
             
@@ -6733,7 +6812,11 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
             if (stmt->const_stmt.init) scan_expr_for_lambdas(stmt->const_stmt.init);
             break;
         case STMT_RETURN:
-            if (stmt->ret.value) scan_expr_for_lambdas(stmt->ret.value);
+            if (stmt->ret.value) {
+                in_return_lambda = true;
+                scan_expr_for_lambdas(stmt->ret.value);
+                in_return_lambda = false;
+            }
             break;
         case STMT_EXPR:
             scan_expr_for_lambdas(stmt->expr);
@@ -6945,29 +7028,55 @@ static void scan_expr_for_lambdas(Expr* expr) {
             char* func_code = malloc(8192);
             int pos = 0;
             
-            pos += snprintf(func_code + pos, 8192 - pos, "int __lambda_%d(", lambda_id);
-            // Add captured variables as first parameters
-            for (int i = 0; i < capture_count; i++) {
-                if (i > 0) pos += snprintf(func_code + pos, 8192 - pos, ", ");
-                pos += snprintf(func_code + pos, 8192 - pos, "int %s", captured_vars[i]);
+            if (in_return_lambda && capture_count > 0) {
+                // Generate closure-style: env struct + function taking void* env
+                pos += snprintf(func_code + pos, 8192 - pos, 
+                    "typedef struct { ");
+                for (int i = 0; i < capture_count; i++) {
+                    pos += snprintf(func_code + pos, 8192 - pos, "int %s; ", captured_vars[i]);
+                }
+                pos += snprintf(func_code + pos, 8192 - pos, 
+                    "} __closure_env_%d;\n", lambda_id);
+                pos += snprintf(func_code + pos, 8192 - pos, 
+                    "int __lambda_%d(void* __env", lambda_id);
+                for (int i = 0; i < expr->lambda.param_count; i++) {
+                    pos += snprintf(func_code + pos, 8192 - pos, ", int %.*s",
+                        expr->lambda.params[i].length, expr->lambda.params[i].start);
+                }
+                pos += snprintf(func_code + pos, 8192 - pos, ") {\n");
+                pos += snprintf(func_code + pos, 8192 - pos, 
+                    "    __closure_env_%d* __e = (__closure_env_%d*)__env;\n", lambda_id, lambda_id);
+                // Unpack captured vars from env
+                for (int i = 0; i < capture_count; i++) {
+                    pos += snprintf(func_code + pos, 8192 - pos, 
+                        "    int %s = __e->%s;\n", captured_vars[i], captured_vars[i]);
+                }
+                pos += snprintf(func_code + pos, 8192 - pos, "    return ");
+                pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
+                pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
+            } else {
+                // Original style: captured vars as extra params
+                pos += snprintf(func_code + pos, 8192 - pos, "int __lambda_%d(", lambda_id);
+                for (int i = 0; i < capture_count; i++) {
+                    if (i > 0) pos += snprintf(func_code + pos, 8192 - pos, ", ");
+                    pos += snprintf(func_code + pos, 8192 - pos, "int %s", captured_vars[i]);
+                }
+                for (int i = 0; i < expr->lambda.param_count; i++) {
+                    if (i > 0 || capture_count > 0) pos += snprintf(func_code + pos, 8192 - pos, ", ");
+                    pos += snprintf(func_code + pos, 8192 - pos, "int %.*s", 
+                                   expr->lambda.params[i].length, expr->lambda.params[i].start);
+                }
+                pos += snprintf(func_code + pos, 8192 - pos, ") {\n    return ");
+                pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
+                pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
             }
-            // Add regular parameters
-            for (int i = 0; i < expr->lambda.param_count; i++) {
-                if (i > 0 || capture_count > 0) pos += snprintf(func_code + pos, 8192 - pos, ", ");
-                pos += snprintf(func_code + pos, 8192 - pos, "int %.*s", 
-                               expr->lambda.params[i].length, expr->lambda.params[i].start);
-            }
-            pos += snprintf(func_code + pos, 8192 - pos, ") {\n    return ");
-            
-            // Generate lambda body using recursive helper
-            pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
-            pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
             
             if (lambda_count < 256) {
                 lambda_functions[lambda_count].code = func_code;
                 lambda_functions[lambda_count].id = lambda_id;
                 lambda_functions[lambda_count].param_count = expr->lambda.param_count;
                 lambda_functions[lambda_count].capture_count = capture_count;
+                lambda_functions[lambda_count].is_closure = (in_return_lambda && capture_count > 0);
                 for (int i = 0; i < capture_count; i++) {
                     strcpy(lambda_functions[lambda_count].captured_vars[i], captured_vars[i]);
                 }
@@ -7027,6 +7136,7 @@ static void scan_for_lambdas(Stmt* body) {
 }
 
 void codegen_program(Program* prog) {
+    current_program = prog;
     bool has_main = false;
     bool has_math_import = false;
     
@@ -7292,8 +7402,10 @@ void codegen_program(Program* prog) {
                         return_type = return_type_buf;
                     }
                 } else if (fn->return_type->type == EXPR_OPTIONAL_TYPE) {
-                    // T2.5.1: Handle optional return types - use WynOptional* for proper optional handling
                     return_type = "WynOptional*";
+                } else if (fn->return_type->type == EXPR_FN_TYPE) {
+                    // Function type: fn(int) -> int becomes WynClosure
+                    return_type = "WynClosure";
                 }
             }
             
