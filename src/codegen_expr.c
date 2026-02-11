@@ -960,8 +960,18 @@ void codegen_expr(Expr* expr) {
                 // BUT NOT if it's a local variable or parameter
                 bool is_local = is_parameter(module_name) || is_local_variable(module_name);
                 if (!is_local && (is_module_loaded(module_name) || is_builtin_module(module_name))) {
-                    // Emit as: modulename_methodname(args)
-                    emit("%.*s_%.*s(", obj_name.length, obj_name.start, method.length, method.start);
+                    // Special case: some modules use lowercase C functions
+                    if (strcmp(module_name, "Http") == 0) {
+                        emit("http_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Regex") == 0) {
+                        emit("regex_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "HashMap") == 0) {
+                        emit("hashmap_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "HashSet") == 0) {
+                        emit("hashset_%.*s(", method.length, method.start);
+                    } else {
+                        emit("%.*s_%.*s(", obj_name.length, obj_name.start, method.length, method.start);
+                    }
                     for (int i = 0; i < expr->method_call.arg_count; i++) {
                         if (i > 0) emit(", ");
                         codegen_expr(expr->method_call.args[i]);
@@ -1162,14 +1172,65 @@ void codegen_expr(Expr* expr) {
                 // For map.get(), we need to use hashmap_get_string if the result is used as string
                 // For now, use a generic approach that returns the value
                 if (strcmp(method_name, "get") == 0 && expr->method_call.arg_count == 1) {
-                    // Use hashmap_get which returns HashMapValue, then extract based on context
-                    // For simplicity, use hashmap_get_string since that's most common
                     emit("hashmap_get_string(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
                     codegen_expr(expr->method_call.args[0]);
                     emit(")");
                     break;
+                }
+                // Json-style methods on map-typed objects
+                if (strcmp(method_name, "set_string") == 0 && expr->method_call.arg_count == 2) {
+                    emit("json_set_string(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(", "); codegen_expr(expr->method_call.args[1]);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "set_int") == 0 && expr->method_call.arg_count == 2) {
+                    emit("json_set_int(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(", "); codegen_expr(expr->method_call.args[1]);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "get_string") == 0 && expr->method_call.arg_count == 1) {
+                    emit("hashmap_get_string(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "get_int") == 0 && expr->method_call.arg_count == 1) {
+                    emit("hashmap_get_int(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "stringify") == 0 && expr->method_call.arg_count == 0) {
+                    emit("json_stringify(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")"); break;
+                }
+                // HashMap typed methods
+                if (strcmp(method_name, "insert_int") == 0 && expr->method_call.arg_count == 2) {
+                    emit("hashmap_insert_int(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(", "); codegen_expr(expr->method_call.args[1]);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "insert_string") == 0 && expr->method_call.arg_count == 2) {
+                    emit("hashmap_insert_string(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(", "); codegen_expr(expr->method_call.args[1]);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "get_int") == 0 && expr->method_call.arg_count == 1) {
+                    emit("hashmap_get_int(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(")"); break;
                 }
             }
             

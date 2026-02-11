@@ -88,7 +88,7 @@ int Test_summary();
 
 // Http module
 typedef struct HttpResponse HttpResponse;
-HttpResponse* Http_get(const char* url);
+// Http_get defined below
 HttpResponse* Http_post(const char* url, const char* body, const char* content_type);
 int Http_status(HttpResponse* resp);
 const char* Http_body(HttpResponse* resp);
@@ -175,7 +175,7 @@ unsigned int Crypto_hash32(const char* data);
 unsigned long long Crypto_hash64(const char* data);
 
 // HashMap module
-int HashMap_new();
+// HashMap_new defined below
 void HashMap_insert(int map, const char* key, int value);
 int HashMap_get(int map, const char* key);
 int HashMap_contains(int map, const char* key);
@@ -1663,6 +1663,25 @@ int File_exists(const char* p) { return file_exists(p); }
 int File_delete(const char* p) { return file_delete(p); }
 int File_copy(const char* s, const char* d) { return file_copy(s, d); }
 int File_move(const char* s, const char* d) { return file_move(s, d); }
+
+// HashMap/HashSet: codegen maps HashMap.new() -> hashmap_new(), HashSet.new() -> hashset_new()
+// HashSet namespace: HashSet.new() -> hashset_new()
+WynHashSet* HashSet_new() { return hashset_new(); }
+
+// Json namespace: Json.new() -> Json_new(), j.set_string() -> json_set_string()
+// Note: Json_get_string/Json_get_int defined in json_runtime.c
+WynJson* Json_new() { return json_new(); }
+void Json_set_string(WynJson* j, const char* k, const char* v) { json_set_string(j, k, v); }
+void Json_set_int(WynJson* j, const char* k, int v) { json_set_int(j, k, v); }
+char* Json_stringify(WynJson* j) { return json_stringify(j); }
+
+// Http: Http.get() maps to http_get() (lowercase, returns string)
+// Note: Http_get in net_advanced.c returns HttpResponse* (different API)
+
+// Regex namespace aliases
+int Regex_match(const char* s, const char* p) { return regex_match(s, p); }
+char* Regex_replace(const char* s, const char* p, const char* r) { return regex_replace(s, p, r); }
+
 int file_size(const char* path) {
     FILE* f = fopen(path, "rb");
     if(!f) return -1;

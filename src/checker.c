@@ -1042,8 +1042,8 @@ void init_checker() {
         {"json_get_string", 15, 2, json_obj_type, builtin_string, NULL, builtin_string},
         {"json_get_int", 12, 2, json_obj_type, builtin_string, NULL, builtin_int},
         {"json_stringify", 14, 1, json_obj_type, NULL, NULL, builtin_string},
-        {"regex_match", 11, 2, builtin_string, builtin_string, NULL, builtin_int},
-        {"regex_replace", 13, 3, builtin_string, builtin_string, builtin_string, builtin_string},
+        {"Regex_match", 11, 2, builtin_string, builtin_string, NULL, builtin_int},
+        {"Regex_replace", 13, 3, builtin_string, builtin_string, builtin_string, builtin_string},
     };
     for (int i = 0; i < 8; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
@@ -1059,7 +1059,7 @@ void init_checker() {
 
     // Register namespace identifiers so checker doesn't reject File.read() etc.
     // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", NULL};
+    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", NULL};
     for (int i = 0; namespaces[i]; i++) {
         Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
         if (!find_symbol(global_scope, ns_tok)) {
@@ -1084,6 +1084,84 @@ void init_checker() {
         if (file_ns_fns[i].p2) ft->fn_type.param_types[1] = file_ns_fns[i].p2;
         ft->fn_type.return_type = file_ns_fns[i].ret;
         Token tok = {TOKEN_IDENT, file_ns_fns[i].name, file_ns_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // HashMap namespace: HashMap.new() -> HashMap_new()
+    Type* map_type = make_type(TYPE_MAP);
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 0;
+        ft->fn_type.param_types = NULL;
+        ft->fn_type.return_type = map_type;
+        Token tok = {TOKEN_IDENT, "HashMap_new", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // HashSet namespace: HashSet.new() -> HashSet_new()
+    Type* set_type = make_type(TYPE_SET);
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 0;
+        ft->fn_type.param_types = NULL;
+        ft->fn_type.return_type = set_type;
+        Token tok = {TOKEN_IDENT, "HashSet_new", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Json namespace
+    Type* json_type = make_type(TYPE_MAP); // opaque pointer
+    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } json_ns_fns[] = {
+        {"Json_new", 8, 0, NULL, NULL, NULL, json_type},
+        {"Json_set_string", 15, 3, json_type, builtin_string, builtin_string, builtin_void},
+        {"Json_set_int", 12, 3, json_type, builtin_string, builtin_int, builtin_void},
+        {"Json_get_string", 15, 2, json_type, builtin_string, NULL, builtin_string},
+        {"Json_get_int", 12, 2, json_type, builtin_string, NULL, builtin_int},
+        {"Json_stringify", 14, 1, json_type, NULL, NULL, builtin_string},
+    };
+    for (int i = 0; i < 6; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = json_ns_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
+        if (json_ns_fns[i].p1) ft->fn_type.param_types[0] = json_ns_fns[i].p1;
+        if (json_ns_fns[i].p2) ft->fn_type.param_types[1] = json_ns_fns[i].p2;
+        if (json_ns_fns[i].p3) ft->fn_type.param_types[2] = json_ns_fns[i].p3;
+        ft->fn_type.return_type = json_ns_fns[i].ret;
+        Token tok = {TOKEN_IDENT, json_ns_fns[i].name, json_ns_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Http namespace
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Http_get", 8, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Regex namespace
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 2;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Regex_match", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 3;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.param_types[2] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Regex_replace", 13, 0};
         add_symbol(global_scope, tok, ft, false);
     }
 
