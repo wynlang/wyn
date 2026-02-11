@@ -1,0 +1,17 @@
+// TDD: JSON parsing and stringification
+
+fn main() -> int {
+    // Test JSON parsing
+    var json_str = "{\"name\": \"Alice\", \"age\": 30}"
+    var parsed = JSON_parse(json_str)
+    println("Parsed JSON")
+    
+    // Test JSON stringify
+    var obj = JSON_object()
+    JSON_set(obj, "name", "Bob")
+    JSON_set(obj, "age", "25")
+    var stringified = JSON_stringify(obj)
+    println(stringified)
+    
+    return 0
+}

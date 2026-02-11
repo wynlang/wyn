@@ -1028,6 +1028,31 @@ void init_checker() {
         Token tok = {TOKEN_IDENT, path_fns[i].name, path_fns[i].nlen, 0};
         add_symbol(global_scope, tok, ft, false);
     }
+    
+    // DateTime stdlib
+    Type* dt_now_t = make_type(TYPE_FUNCTION);
+    dt_now_t->fn_type.param_count = 0;
+    dt_now_t->fn_type.param_types = NULL;
+    dt_now_t->fn_type.return_type = builtin_int;
+    Token dt_now_tok = {TOKEN_IDENT, "DateTime_now", 12, 0};
+    add_symbol(global_scope, dt_now_tok, dt_now_t, false);
+    
+    Type* dt_format_t = make_type(TYPE_FUNCTION);
+    dt_format_t->fn_type.param_count = 2;
+    dt_format_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
+    dt_format_t->fn_type.param_types[0] = builtin_int;
+    dt_format_t->fn_type.param_types[1] = builtin_string;
+    dt_format_t->fn_type.return_type = builtin_string;
+    Token dt_format_tok = {TOKEN_IDENT, "DateTime_format", 15, 0};
+    add_symbol(global_scope, dt_format_tok, dt_format_t, false);
+    
+    Type* dt_sleep_t = make_type(TYPE_FUNCTION);
+    dt_sleep_t->fn_type.param_count = 1;
+    dt_sleep_t->fn_type.param_types = malloc(sizeof(Type*));
+    dt_sleep_t->fn_type.param_types[0] = builtin_int;
+    dt_sleep_t->fn_type.return_type = builtin_void;
+    Token dt_sleep_tok = {TOKEN_IDENT, "DateTime_sleep", 14, 0};
+    add_symbol(global_scope, dt_sleep_tok, dt_sleep_t, false);
 }
 
 Symbol* find_symbol(SymbolTable* scope, Token name) {

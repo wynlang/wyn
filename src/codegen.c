@@ -4425,6 +4425,17 @@ void codegen_c_header() {
     emit("const float Math_PI = 3.14159265358979323846f;\n");
     emit("const float Math_E = 2.71828182845904523536f;\n\n");
     
+    // DateTime module - time operations
+    emit("int DateTime_now() { return (int)time(NULL); }\n");
+    emit("char* DateTime_format(int timestamp, const char* fmt) {\n");
+    emit("    time_t t = (time_t)timestamp;\n");
+    emit("    struct tm* tm_info = localtime(&t);\n");
+    emit("    char* buffer = malloc(256);\n");
+    emit("    strftime(buffer, 256, fmt, tm_info);\n");
+    emit("    return buffer;\n");
+    emit("}\n");
+    emit("void DateTime_sleep(int seconds) { sleep(seconds); }\n\n");
+    
     // Queue module - FIFO (First In, First Out)
     emit("typedef struct { WynArray arr; } Queue;\n\n");
     
