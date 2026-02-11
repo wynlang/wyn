@@ -52,7 +52,7 @@ static void print_circular_import_error(const char* module_name) {
 bool is_builtin_module(const char* module_name) {
     const char* builtins[] = {
         "math", "Math", "File", "System", "Path", "DateTime", 
-        "Json", "Http", "Regex", "Random", "HashMap", "HashSet", NULL
+        "Json", "Http", "Regex", "Random", "HashMap", "HashSet", "Terminal", NULL
     };
     for (int i = 0; builtins[i] != NULL; i++) {
         if (strcmp(module_name, builtins[i]) == 0) {

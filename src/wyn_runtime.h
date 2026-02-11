@@ -1367,9 +1367,9 @@ void print_args_impl(int count, ...) {
     va_end(args);
 }
 
-void print_int(int x) { printf("%d\n", x); }
+void print_int(int x) { printf("%d", x); }
 void print_float(double x) { printf("%f\n", x); }
-void print_str(const char* s) { printf("%s\n", s); }
+void print_str(const char* s) { printf("%s", s); fflush(stdout); }
 void print_bool(bool b) { printf("%s\n", b ? "true" : "false"); }
 void print_int_no_nl(int x) { printf("%d", x); }
 void print_float_no_nl(double x) { printf("%f", x); }
@@ -1674,6 +1674,19 @@ WynJson* Json_new() { return json_new(); }
 void Json_set_string(WynJson* j, const char* k, const char* v) { json_set_string(j, k, v); }
 void Json_set_int(WynJson* j, const char* k, int v) { json_set_int(j, k, v); }
 char* Json_stringify(WynJson* j) { return json_stringify(j); }
+
+// Terminal module: Terminal.cols(), Terminal.rows()
+#include <sys/ioctl.h>
+int Terminal_cols() {
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0) return w.ws_col;
+    return 80;
+}
+int Terminal_rows() {
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0) return w.ws_row;
+    return 24;
+}
 
 // Http: Http.get() maps to http_get() (lowercase, returns string)
 // Note: Http_get in net_advanced.c returns HttpResponse* (different API)

@@ -1059,7 +1059,7 @@ void init_checker() {
 
     // Register namespace identifiers so checker doesn't reject File.read() etc.
     // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", NULL};
+    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", NULL};
     for (int i = 0; namespaces[i]; i++) {
         Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
         if (!find_symbol(global_scope, ns_tok)) {
@@ -1162,6 +1162,24 @@ void init_checker() {
         ft->fn_type.param_types[2] = builtin_string;
         ft->fn_type.return_type = builtin_string;
         Token tok = {TOKEN_IDENT, "Regex_replace", 13, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Terminal namespace
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 0;
+        ft->fn_type.param_types = NULL;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Terminal_cols", 13, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 0;
+        ft->fn_type.param_types = NULL;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Terminal_rows", 13, 0};
         add_symbol(global_scope, tok, ft, false);
     }
 
