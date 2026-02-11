@@ -986,6 +986,33 @@ void init_checker() {
         add_symbol(global_scope, tok, ft, false);
     }
 
+    // String stdlib - function-style str_ functions
+    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } str_fns[] = {
+        {"str_len", 7, 1, builtin_string, NULL, NULL, builtin_int},
+        {"str_upper", 9, 1, builtin_string, NULL, NULL, builtin_string},
+        {"str_lower", 9, 1, builtin_string, NULL, NULL, builtin_string},
+        {"str_trim", 8, 1, builtin_string, NULL, NULL, builtin_string},
+        {"str_contains", 12, 2, builtin_string, builtin_string, NULL, builtin_int},
+        {"str_starts_with", 15, 2, builtin_string, builtin_string, NULL, builtin_int},
+        {"str_ends_with", 13, 2, builtin_string, builtin_string, NULL, builtin_int},
+        {"str_index_of", 12, 2, builtin_string, builtin_string, NULL, builtin_int},
+        {"str_replace", 11, 3, builtin_string, builtin_string, builtin_string, builtin_string},
+        {"str_substring", 13, 3, builtin_string, builtin_int, builtin_int, builtin_string},
+        {"str_repeat", 10, 2, builtin_string, builtin_int, NULL, builtin_string},
+        {"str_concat", 10, 2, builtin_string, builtin_string, NULL, builtin_string},
+    };
+    for (int i = 0; i < 12; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = str_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
+        if (str_fns[i].p1) ft->fn_type.param_types[0] = str_fns[i].p1;
+        if (str_fns[i].p2) ft->fn_type.param_types[1] = str_fns[i].p2;
+        if (str_fns[i].p3) ft->fn_type.param_types[2] = str_fns[i].p3;
+        ft->fn_type.return_type = str_fns[i].ret;
+        Token tok = {TOKEN_IDENT, str_fns[i].name, str_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
     // Path stdlib
     struct { const char* name; int nlen; } path_fns[] = {
         {"Path_basename", 13}, {"Path_dirname", 12},
