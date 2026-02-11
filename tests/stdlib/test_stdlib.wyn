@@ -1,0 +1,146 @@
+// Wyn Standard Library Test Suite
+// TDD: Verify all stdlib features work correctly
+
+struct Server { name: string, port: int, healthy: int }
+
+fn test_string_methods() {
+    Test.init("String Methods")
+    
+    var s = "Hello, World!"
+    Test.assert_eq_int(s.len(), 13, "string length")
+    Test.assert_eq_str(s.upper(), "HELLO, WORLD!", "upper")
+    Test.assert_eq_str(s.lower(), "hello, world!", "lower")
+    Test.assert_eq_str("  hi  ".trim(), "hi", "trim spaces")
+    Test.assert(s.contains("World"), "contains true")
+    Test.assert(s.starts_with("Hello"), "starts_with true")
+    Test.assert(s.ends_with("!"), "ends_with true")
+    Test.assert_eq_str(s.replace("World", "Wyn"), "Hello, Wyn!", "replace")
+    Test.assert_eq_int(s.index_of("World"), 7, "index_of")
+    Test.assert_eq_str(s.substring(0, 5), "Hello", "substring")
+    Test.assert_eq_str("abc".pad_left(6, " "), "   abc", "pad_left")
+    Test.assert_eq_str("abc".pad_right(6, "."), "abc...", "pad_right")
+    Test.assert_eq_str("a,b,c".split_at(",", 0), "a", "split_at 0")
+    Test.assert_eq_str("a,b,c".split_at(",", 2), "c", "split_at 2")
+    Test.assert_eq_int("42".to_int(), 42, "to_int")
+    Test.assert_eq_int("-7".to_int(), -7, "to_int negative")
+    
+    Test.summary()
+}
+
+fn test_array_ops() {
+    Test.init("Array Operations")
+    
+    var nums = [10, 20, 30, 40, 50]
+    Test.assert_eq_int(nums.len(), 5, "array length")
+    Test.assert_eq_int(nums[0], 10, "index 0")
+    Test.assert_eq_int(nums[4], 50, "index 4")
+    nums[2] = 99
+    Test.assert_eq_int(nums[2], 99, "array set int")
+    
+    var names = ["alice", "bob", "charlie"]
+    Test.assert_eq_str(names[1], "bob", "string array get")
+    names[1] = "dave"
+    Test.assert_eq_str(names[1], "dave", "string array set")
+    
+    Test.summary()
+}
+
+fn test_struct_arrays() {
+    Test.init("Struct Arrays")
+    
+    var servers = [
+        Server { name: "web-1", port: 8080, healthy: 1 },
+        Server { name: "web-2", port: 8081, healthy: 0 }
+    ]
+    Test.assert_eq_str(servers[0].name, "web-1", "struct array field")
+    Test.assert_eq_int(servers[1].port, 8081, "struct array int field")
+    
+    servers[0] = Server { name: "web-3", port: 9090, healthy: 1 }
+    Test.assert_eq_str(servers[0].name, "web-3", "struct array assign literal")
+    Test.assert_eq_int(servers[0].port, 9090, "struct array assign field")
+    
+    Test.summary()
+}
+
+fn test_hashmap() {
+    Test.init("HashMap")
+    
+    var m = HashMap.new()
+    m.insert_int("count", 42)
+    m.insert_string("name", "test")
+    Test.assert_eq_int(m.get_int("count"), 42, "get_int")
+    Test.assert_eq_str(m.get("name"), "test", "get string")
+    m.insert_int("count", 100)
+    Test.assert_eq_int(m.get_int("count"), 100, "overwrite int")
+    
+    Test.summary()
+}
+
+fn test_file_io() {
+    Test.init("File I/O")
+    
+    var path = "/tmp/wyn_test_file.txt"
+    File.write(path, "hello wyn\nsecond line\n")
+    Test.assert(File.exists(path), "file exists after write")
+    var content = File.read(path)
+    Test.assert(content.contains("hello wyn"), "read contains data")
+    File.delete(path)
+    Test.assert_eq_int(File.exists(path), 0, "file deleted")
+    
+    Test.summary()
+}
+
+fn test_system() {
+    Test.init("System")
+    
+    var result = System.exec("echo hello")
+    Test.assert_eq_str(result.trim(), "hello", "exec echo")
+    var code = System.exec_code("true")
+    Test.assert_eq_int(code, 0, "exec_code true")
+    var home = System.env("HOME")
+    Test.assert(home.len() > 0, "env HOME not empty")
+    
+    Test.summary()
+}
+
+fn test_math() {
+    Test.init("Math")
+    
+    Test.assert_eq_int(Math.abs(-5), 5, "abs negative")
+    Test.assert_eq_int(Math.abs(5), 5, "abs positive")
+    Test.assert_eq_int(Math.max(3, 7), 7, "max")
+    Test.assert_eq_int(Math.min(3, 7), 3, "min")
+    
+    Test.summary()
+}
+
+fn test_result_option() {
+    Test.init("Result and Option")
+    
+    var ok: ResultInt = Ok(42)
+    Test.assert(ok.is_ok(), "Ok is_ok")
+    Test.assert_eq_int(ok.unwrap(), 42, "Ok unwrap")
+    var err: ResultInt = Err("bad")
+    Test.assert(err.is_err(), "Err is_err")
+    
+    var some: OptionInt = Some(10)
+    Test.assert(some.is_some(), "Some is_some")
+    Test.assert_eq_int(some.unwrap(), 10, "Some unwrap")
+    var none: OptionInt = None()
+    Test.assert(none.is_none(), "None is_none")
+    Test.assert_eq_int(none.unwrap_or(99), 99, "None unwrap_or")
+    
+    Test.summary()
+}
+
+fn main() -> int {
+    test_string_methods()
+    test_array_ops()
+    test_struct_arrays()
+    test_hashmap()
+    test_file_io()
+    test_system()
+    test_math()
+    test_result_option()
+    return 0
+}
