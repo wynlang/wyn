@@ -454,10 +454,12 @@ void init_checker() {
     
     // Register Result types
     Type* result_int_type = make_type(TYPE_STRUCT);
+    result_int_type->struct_type.name = (Token){TOKEN_IDENT, "ResultInt", 9, 0};
     Token result_int_tok = {TOKEN_IDENT, "ResultInt", 9, 0};
     add_symbol(global_scope, result_int_tok, result_int_type, false);
     
     Type* result_string_type = make_type(TYPE_STRUCT);
+    result_string_type->struct_type.name = (Token){TOKEN_IDENT, "ResultString", 12, 0};
     Token result_string_tok = {TOKEN_IDENT, "ResultString", 12, 0};
     add_symbol(global_scope, result_string_tok, result_string_type, false);
     
@@ -2065,18 +2067,25 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             method_name[len] = '\0';
             
             // Check for namespace method calls: File.read() -> File_read
+            // Only for known namespaces, not regular variables
             if (expr->method_call.object->type == EXPR_IDENT) {
-                char ns_method[256];
-                snprintf(ns_method, sizeof(ns_method), "%.*s_%s",
+                char obj_name[256];
+                snprintf(obj_name, sizeof(obj_name), "%.*s",
                     expr->method_call.object->token.length,
-                    expr->method_call.object->token.start, method_name);
-                Token ns_tok = {TOKEN_IDENT, ns_method, (int)strlen(ns_method), 0};
-                Symbol* ns_sym = find_symbol(global_scope, ns_tok);
-                if (ns_sym && ns_sym->type && ns_sym->type->kind == TYPE_FUNCTION) {
-                    Type* ret = ns_sym->type->fn_type.return_type;
-                    if (ret) {
-                        expr->expr_type = ret;
-                        return ret;
+                    expr->method_call.object->token.start);
+                // Only treat as namespace if it's a known builtin module
+                extern bool is_builtin_module(const char* name);
+                if (is_builtin_module(obj_name)) {
+                    char ns_method[256];
+                    snprintf(ns_method, sizeof(ns_method), "%s_%s", obj_name, method_name);
+                    Token ns_tok = {TOKEN_IDENT, ns_method, (int)strlen(ns_method), 0};
+                    Symbol* ns_sym = find_symbol(global_scope, ns_tok);
+                    if (ns_sym && ns_sym->type && ns_sym->type->kind == TYPE_FUNCTION) {
+                        Type* ret = ns_sym->type->fn_type.return_type;
+                        if (ret) {
+                            expr->expr_type = ret;
+                            return ret;
+                        }
                     }
                 }
             }

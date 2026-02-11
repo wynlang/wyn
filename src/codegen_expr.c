@@ -1213,7 +1213,37 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
-            // Fallback: unknown method
+            // Fallback: try Result/Option method dispatch
+            // When type info is missing, check if method matches known Result/Option API
+            {
+                bool is_result_method = (
+                    (method.length == 5 && memcmp(method.start, "is_ok", 5) == 0) ||
+                    (method.length == 6 && memcmp(method.start, "is_err", 6) == 0) ||
+                    (method.length == 6 && memcmp(method.start, "unwrap", 6) == 0) ||
+                    (method.length == 10 && memcmp(method.start, "unwrap_err", 10) == 0));
+                bool is_option_method = (
+                    (method.length == 7 && memcmp(method.start, "is_some", 7) == 0) ||
+                    (method.length == 7 && memcmp(method.start, "is_none", 7) == 0) ||
+                    (method.length == 6 && memcmp(method.start, "unwrap", 6) == 0) ||
+                    (method.length == 9 && memcmp(method.start, "unwrap_or", 9) == 0));
+                
+                if (is_result_method) {
+                    emit("ResultInt_%.*s(", method.length, method.start);
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                    break;
+                }
+                if (is_option_method) {
+                    emit("OptionInt_%.*s(", method.length, method.start);
+                    codegen_expr(expr->method_call.object);
+                    for (int i = 0; i < expr->method_call.arg_count; i++) {
+                        emit(", ");
+                        codegen_expr(expr->method_call.args[i]);
+                    }
+                    emit(")");
+                    break;
+                }
+            }
             if (receiver_type) {
                 fprintf(stderr, "Error: Unknown method '%.*s' for type '%s'\n", 
                         method.length, method.start, receiver_type);
