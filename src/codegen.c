@@ -4486,6 +4486,19 @@ void codegen_c_header() {
     // Math module functions
     emit("double Math_pow(double x, double y) { return pow(x, y); }\n");
     emit("double Math_sqrt(double x) { return sqrt(x); }\n");
+    emit("int Math_abs(int x) { return x < 0 ? -x : x; }\n");
+    emit("double Math_fabs(double x) { return fabs(x); }\n");
+    emit("int Math_max(int a, int b) { return a > b ? a : b; }\n");
+    emit("int Math_min(int a, int b) { return a < b ? a : b; }\n");
+    emit("double Math_floor(double x) { return floor(x); }\n");
+    emit("double Math_ceil(double x) { return ceil(x); }\n");
+    emit("double Math_round(double x) { return round(x); }\n");
+    emit("double Math_sin(double x) { return sin(x); }\n");
+    emit("double Math_cos(double x) { return cos(x); }\n");
+    emit("double Math_tan(double x) { return tan(x); }\n");
+    emit("double Math_log(double x) { return log(x); }\n");
+    emit("double Math_pi() { return 3.14159265358979323846; }\n");
+    emit("int Math_random(int max) { return rand() %% max; }\n");
     
     // Net module functions
     emit("int Net_listen(int port) {\n");

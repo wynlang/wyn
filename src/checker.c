@@ -959,6 +959,35 @@ void init_checker() {
     ftos_t->fn_type.return_type = builtin_string;
     Token ftos_tok = {TOKEN_IDENT, "float_to_string", 15, 0};
     add_symbol(global_scope, ftos_tok, ftos_t, false);
+
+    // Math stdlib - register all Math_ functions
+    struct { const char* name; int nlen; int param_count; Type* p1; Type* p2; Type* ret; } math_fns[] = {
+        {"Math_abs", 8, 1, builtin_int, NULL, builtin_int},
+        {"Math_fabs", 9, 1, builtin_float, NULL, builtin_float},
+        {"Math_max", 8, 2, builtin_int, builtin_int, builtin_int},
+        {"Math_min", 8, 2, builtin_int, builtin_int, builtin_int},
+        {"Math_pow", 8, 2, builtin_float, builtin_float, builtin_float},
+        {"Math_sqrt", 9, 1, builtin_float, NULL, builtin_float},
+        {"Math_floor", 10, 1, builtin_float, NULL, builtin_float},
+        {"Math_ceil", 9, 1, builtin_float, NULL, builtin_float},
+        {"Math_round", 10, 1, builtin_float, NULL, builtin_float},
+        {"Math_sin", 8, 1, builtin_float, NULL, builtin_float},
+        {"Math_cos", 8, 1, builtin_float, NULL, builtin_float},
+        {"Math_tan", 8, 1, builtin_float, NULL, builtin_float},
+        {"Math_log", 8, 1, builtin_float, NULL, builtin_float},
+        {"Math_pi", 7, 0, NULL, NULL, builtin_float},
+        {"Math_random", 11, 1, builtin_int, NULL, builtin_int},
+    };
+    for (int i = 0; i < 15; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = math_fns[i].param_count;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        if (math_fns[i].p1) ft->fn_type.param_types[0] = math_fns[i].p1;
+        if (math_fns[i].p2) ft->fn_type.param_types[1] = math_fns[i].p2;
+        ft->fn_type.return_type = math_fns[i].ret;
+        Token tok = {TOKEN_IDENT, math_fns[i].name, math_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
 }
 
 Symbol* find_symbol(SymbolTable* scope, Token name) {
@@ -4246,7 +4275,10 @@ void check_program(Program* prog) {
             // Set current function return type for return statement validation
             current_function_return_type = builtin_int; // default
             if (fn->return_type) {
-                if (fn->return_type->type == EXPR_CALL) {
+                if (fn->return_type->type == EXPR_FN_TYPE) {
+                    // Function type: fn(T1, T2) -> R
+                    current_function_return_type = check_expr(fn->return_type, &local_scope);
+                } else if (fn->return_type->type == EXPR_CALL) {
                     // Generic type instantiation: HashMap<K,V>, Option<T>, etc.
                     if (fn->return_type->call.callee->type == EXPR_IDENT) {
                         Token type_name = fn->return_type->call.callee->token;

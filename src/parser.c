@@ -768,7 +768,7 @@ static Expr* primary() {
         return lambda_expr;
     }
 
-    // TASK-7.1: Lambda expression parsing fn(x) => x * 2
+    // TASK-7.1: Lambda expression parsing fn(x) => x * 2 or fn(x: int) -> int { return x * 2 }
     if (match(TOKEN_FN)) {
         Expr* lambda_expr = alloc_expr();
         lambda_expr->type = EXPR_LAMBDA;
@@ -791,7 +791,7 @@ static Expr* primary() {
                         advance(); // Skip type name
                     }
                 }
-            } while (match(TOKEN_COMMA) && !check(TOKEN_PIPE));
+            } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
         }
         
         expect(TOKEN_RPAREN, "Expected ')' after lambda parameters");
@@ -804,15 +804,38 @@ static Expr* primary() {
             }
         }
         
-        expect(TOKEN_FATARROW, "Expected '=>' after lambda signature");
-        
-        // Parse body - can be expression or block
-        if (check(TOKEN_LBRACE)) {
-            // Block body: { var y = x * 2; return y + 1; }
+        // Support both => and { } syntax
+        if (match(TOKEN_FATARROW)) {
+            // Arrow syntax: fn(x) => x * 2
+            if (check(TOKEN_LBRACE)) {
+                // Block body: { var y = x * 2; return y + 1; }
+                advance(); // consume '{'
+                
+                // For now, skip all statements until we find a return or reach the end
+                // This is a simplified implementation for Task 7.1
+                while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                    if (match(TOKEN_RETURN)) {
+                        lambda_expr->lambda.body = expression();
+                        expect(TOKEN_SEMI, "Expected ';' after return expression");
+                        break;
+                    } else {
+                        // Skip other statements for now
+                        while (!check(TOKEN_SEMI) && !check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                            advance();
+                        }
+                        if (check(TOKEN_SEMI)) advance();
+                    }
+                }
+                
+                expect(TOKEN_RBRACE, "Expected '}' after lambda block body");
+            } else {
+                // Expression body: x * 2
+                lambda_expr->lambda.body = expression();
+            }
+        } else if (check(TOKEN_LBRACE)) {
+            // Block syntax: fn(x: int) -> int { return x * 2 }
             advance(); // consume '{'
             
-            // For now, skip all statements until we find a return or reach the end
-            // This is a simplified implementation for Task 7.1
             while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                 if (match(TOKEN_RETURN)) {
                     lambda_expr->lambda.body = expression();
@@ -829,8 +852,8 @@ static Expr* primary() {
             
             expect(TOKEN_RBRACE, "Expected '}' after lambda block body");
         } else {
-            // Expression body: x * 2
-            lambda_expr->lambda.body = expression();
+            fprintf(stderr, "Error at line %d: Expected '=>' or '{' after lambda signature\n", parser.current.line);
+            parser.had_error = true;
         }
         
         // Initialize capture fields (will be filled by capture analysis)
