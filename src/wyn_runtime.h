@@ -959,7 +959,7 @@ char* int_to_hex(int n) {
     return result;
 }
 
-int float_to_int(double f) { return (int)f; }
+long long float_to_int(double f) { return (long long)f; }
 double float_round(double f) { return round(f); }
 double float_round_to(double f, int decimals) { double m = pow(10, decimals); return round(f * m) / m; }
 double float_floor(double f) { return floor(f); }
@@ -1455,7 +1455,7 @@ const char* Fs_read_file(const char* path) {
 }
 char* str_repeat(const char* s, int count) { int len = strlen(s); char* r = malloc(len * count + 1); r[0] = 0; for(int i = 0; i < count; i++) strcat(r, s); return r; }
 char* str_reverse(const char* s) { int len = strlen(s); char* r = malloc(len + 1); for(int i = 0; i < len; i++) r[i] = s[len-1-i]; r[len] = 0; return r; }
-char* int_to_string(int x) { char* r = malloc(32); sprintf(r, "%d", x); return r; }
+char* int_to_string(long long x) { char* r = malloc(32); sprintf(r, "%lld", x); return r; }
 char* float_to_string(double x) { char* r = malloc(32); sprintf(r, "%g", x); return r; }
 char* bool_to_string(bool x) { char* r = malloc(8); strcpy(r, x ? "true" : "false"); return r; }
 int bool_to_int(bool x) { return x ? 1 : 0; }
@@ -1463,14 +1463,14 @@ bool bool_not(bool x) { return !x; }
 bool bool_and(bool x, bool y) { return x && y; }
 bool bool_or(bool x, bool y) { return x || y; }
 bool bool_xor(bool x, bool y) { return x != y; }
-int wyn_safe_div(int a, int b) {
+long long wyn_safe_div(long long a, long long b) {
     if (b == 0) {
         fprintf(stderr, "Warning: Division by zero\n");
         return 0;
     }
     return a / b;
 }
-int wyn_safe_mod(int a, int b) {
+long long wyn_safe_mod(long long a, long long b) {
     if (b == 0) {
         fprintf(stderr, "Warning: Modulo by zero\n");
         return 0;
@@ -1490,6 +1490,8 @@ char char_to_lower(char x) { return (x >= 'A' && x <= 'Z') ? x + 32 : x; }
 char* str_to_string(const char* x) { return (char*)x; }
 #define to_string(x) _Generic((x), \
     int: int_to_string, \
+    long: int_to_string, \
+    long long: int_to_string, \
     double: float_to_string, \
     char*: str_to_string, \
     const char*: str_to_string, \
@@ -1513,17 +1515,16 @@ char* str_center(const char* s, int width) { int len = strlen(s); if(len >= widt
 char** str_lines(const char* s) { char** lines = malloc(sizeof(char*)); lines[0] = malloc(strlen(s) + 1); strcpy(lines[0], s); return lines; }
 char** str_words(const char* s) { char** words = malloc(sizeof(char*)); words[0] = malloc(strlen(s) + 1); strcpy(words[0], s); return words; }
 void str_free(char* s) { if(s) free(s); }
-int str_parse_int(const char* s) {
-    if(!s || !*s) return INT_MIN;
+long long str_parse_int(const char* s) {
+    if(!s || !*s) return 0;
     char* end;
     errno = 0;
-    long val = strtol(s, &end, 10);
-    if(errno != 0 || end == s || *end != 0) return INT_MIN;
-    if(val < INT_MIN || val > INT_MAX) return INT_MIN;
-    return (int)val;
+    long long val = strtoll(s, &end, 10);
+    if(errno != 0 || end == s) return 0;
+    return val;
 }
 int str_parse_int_failed(int result) {
-    return result == INT_MIN;
+    return result == 0;
 }
 double str_parse_float(const char* s) { return atof(s); }
 int abs_val(int x) { return x < 0 ? -x : x; }
@@ -2126,7 +2127,7 @@ int random_int(int min, int max) { return min + rand() % (max - min + 1); }
 int random_range(int min, int max) { return min + rand() % (max - min + 1); }
 double random_float() { return (double)rand() / RAND_MAX; }
 void seed_random(int seed) { srand(seed); }
-int time_now() { return (int)time(NULL); }
+long long time_now() { return (long long)time(NULL); }
 char* time_format(int timestamp, const char* fmt) {
     time_t t = (time_t)timestamp;
     struct tm* tm_info = localtime(&t);
@@ -2158,7 +2159,7 @@ int str_count(const char* s, const char* substr) { if (!s || !substr || !*substr
 int str_contains_substr(const char* s, const char* substr) { return strstr(s, substr) != NULL; }
 char* str_join(char** arr, int len, const char* sep) { int total = 0; for(int i = 0; i < len; i++) total += strlen(arr[i]); total += (len - 1) * strlen(sep) + 1; char* r = malloc(total); r[0] = 0; for(int i = 0; i < len; i++) { if(i > 0) strcat(r, sep); strcat(r, arr[i]); } return r; }
 char* int_to_str(int n) { char* r = malloc(12); sprintf(r, "%d", n); return r; }
-int str_to_int(const char* s) { return atoi(s); }
+long long str_to_int(const char* s) { return atoll(s); }
 double str_to_float(const char* s) { return atof(s); }
 void swap(int* a, int* b) { int t = *a; *a = *b; *b = t; }
 double clamp_float(double x, double min_val, double max_val) { return x < min_val ? min_val : (x > max_val ? max_val : x); }

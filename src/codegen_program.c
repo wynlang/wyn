@@ -78,14 +78,14 @@ void codegen_program(Program* prog) {
         if (prog->stmts[i]->type == STMT_VAR) {
             Stmt* var_stmt = prog->stmts[i];
             // Determine C type from initializer
-            const char* c_type = "int";
+            const char* c_type = "long long";
             if (var_stmt->var.init) {
                 if (var_stmt->var.init->type == EXPR_STRING) {
                     c_type = "const char*";
                 } else if (var_stmt->var.init->type == EXPR_FLOAT) {
                     c_type = "double";
                 } else if (var_stmt->var.init->type == EXPR_BOOL) {
-                    c_type = "int";
+                    c_type = "long long";
                 } else if (var_stmt->var.init->type == EXPR_ARRAY) {
                     c_type = "WynArray";
                 } else if (var_stmt->var.init->type == EXPR_STRUCT_INIT) {
@@ -106,7 +106,7 @@ void codegen_program(Program* prog) {
                     Token tn = var_stmt->var.type->token;
                     if (tn.length == 6 && memcmp(tn.start, "string", 6) == 0) c_type = "const char*";
                     else if (tn.length == 5 && memcmp(tn.start, "float", 5) == 0) c_type = "double";
-                    else if (tn.length == 4 && memcmp(tn.start, "bool", 4) == 0) c_type = "int";
+                    else if (tn.length == 4 && memcmp(tn.start, "bool", 4) == 0) c_type = "long long";
                 }
             }
             emit("\n");
@@ -253,7 +253,7 @@ void codegen_program(Program* prog) {
             }
             
             // Determine return type
-            const char* return_type = "int"; // default
+            const char* return_type = "long long"; // default
             char return_type_buf[256] = {0};  // Buffer for custom return types
             bool is_async = fn->is_async;
             
@@ -296,7 +296,7 @@ void codegen_program(Program* prog) {
                 } else if (fn->return_type->type == EXPR_IDENT) {
                     Token type_name = fn->return_type->token;
                     if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-                        return_type = "int";
+                        return_type = "long long";
                     } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
                         return_type = "char*";
                     } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
@@ -437,11 +437,11 @@ void codegen_program(Program* prog) {
                 FnStmt* method = stmt->impl.methods[j];
                 
                 // Determine return type
-                const char* return_type = "int";
+                const char* return_type = "long long";
                 if (method->return_type && method->return_type->type == EXPR_IDENT) {
                     Token ret_type = method->return_type->token;
                     if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
-                        return_type = "int";
+                        return_type = "long long";
                     } else if (ret_type.length == 5 && memcmp(ret_type.start, "float", 5) == 0) {
                         return_type = "double";
                     } else if (ret_type.length == 4 && memcmp(ret_type.start, "bool", 4) == 0) {

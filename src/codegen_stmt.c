@@ -29,7 +29,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     }
     
     // Determine return type
-    const char* return_type = "int";
+    const char* return_type = "long long";
     static char custom_return_type[128];
     if (fn_stmt->fn.return_type) {
         if (fn_stmt->fn.return_type->type == EXPR_IDENT) {
@@ -41,7 +41,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
             } else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) {
                 return_type = "bool";
             } else if (rt.length == 3 && memcmp(rt.start, "int", 3) == 0) {
-                return_type = "int";
+                return_type = "long long";
             } else if (rt.length == 7 && memcmp(rt.start, "HashMap", 7) == 0) {
                 return_type = "WynHashMap*";
             } else if (rt.length == 7 && memcmp(rt.start, "HashSet", 7) == 0) {
@@ -70,7 +70,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
             if (param_type->type == EXPR_IDENT) {
                 // Convert Wyn types to C types
                 Token type_token = param_type->token;
-                const char* c_type = "int";
+                const char* c_type = "long long";
                 
                 if (type_token.length == 6 && memcmp(type_token.start, "string", 6) == 0) {
                     c_type = "const char*";
@@ -81,7 +81,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                 } else if (type_token.length == 5 && memcmp(type_token.start, "array", 5) == 0) {
                     c_type = "WynArray";
                 } else if (type_token.length == 3 && memcmp(type_token.start, "int", 3) == 0) {
-                    c_type = "int";
+                    c_type = "long long";
                 } else if (type_token.length == 7 && memcmp(type_token.start, "HashMap", 7) == 0) {
                     c_type = "WynHashMap*";
                 } else if (type_token.length == 7 && memcmp(type_token.start, "HashSet", 7) == 0) {
@@ -98,10 +98,10 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                 
                 emit("%s ", c_type);
             } else {
-                emit("int ");
+                emit("long long ");
             }
         } else {
-            emit("int ");
+            emit("long long ");
         }
         
         emit_param_name:
@@ -153,7 +153,7 @@ void codegen_stmt(Stmt* stmt) {
             break;
         case STMT_VAR: {
             // Determine C type based on explicit type annotation or initializer
-            const char* c_type = "int";
+            const char* c_type = "long long";
             bool is_already_const = false;  // Track if type already has const
             bool needs_arc_management = false;
             
@@ -186,7 +186,7 @@ void codegen_stmt(Stmt* stmt) {
                 } else if (stmt->var.type->type == EXPR_IDENT) {
                     Token type_name = stmt->var.type->token;
                     if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-                        c_type = "int";
+                        c_type = "long long";
                     } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
                         c_type = "const char*";
                         is_already_const = true;  // String type already has const
@@ -220,7 +220,7 @@ void codegen_stmt(Stmt* stmt) {
                     if (stmt->var.init->unary.operand->type == EXPR_FLOAT) {
                         c_type = "double";
                     } else if (stmt->var.init->unary.operand->type == EXPR_INT) {
-                        c_type = "int";
+                        c_type = "long long";
                     }
                 } else if (stmt->var.init->type == EXPR_ARRAY) {
                     c_type = "WynArray";
@@ -239,7 +239,7 @@ void codegen_stmt(Stmt* stmt) {
                                 is_already_const = true;
                                 break;
                             case TYPE_INT:
-                                c_type = "int";
+                                c_type = "long long";
                                 break;
                             case TYPE_FLOAT:
                                 c_type = "double";
@@ -267,7 +267,7 @@ void codegen_stmt(Stmt* stmt) {
                                 break;
                             }
                             default:
-                                c_type = "int";
+                                c_type = "long long";
                         }
                     } else {
                         // Fallback: Determine receiver type from expr_type (populated by checker)
@@ -332,7 +332,7 @@ void codegen_stmt(Stmt* stmt) {
                                 c_type = "char*";
                                 needs_arc_management = false;  // Disable ARC for now (Phase 1 focus)
                             } else if (strcmp(return_type, "int") == 0) {
-                                c_type = "int";
+                                c_type = "long long";
                             } else if (strcmp(return_type, "float") == 0) {
                                 c_type = "double";
                             } else if (strcmp(return_type, "bool") == 0) {
@@ -429,7 +429,7 @@ void codegen_stmt(Stmt* stmt) {
                                 is_already_const = true;
                                 break;
                             case TYPE_INT:
-                                c_type = "int";
+                                c_type = "long long";
                                 break;
                             case TYPE_FLOAT:
                                 c_type = "double";
@@ -448,7 +448,7 @@ void codegen_stmt(Stmt* stmt) {
                                 break;
                             }
                             default:
-                                c_type = "int";
+                                c_type = "long long";
                         }
                     } else {
                         // Fallback to heuristics
@@ -563,7 +563,7 @@ void codegen_stmt(Stmt* stmt) {
                                 is_already_const = true;
                                 break;
                             case TYPE_INT:
-                                c_type = "int";
+                                c_type = "long long";
                                 break;
                             case TYPE_FLOAT:
                                 c_type = "double";
@@ -584,7 +584,7 @@ void codegen_stmt(Stmt* stmt) {
                                 is_already_const = true;
                                 break;
                             case TYPE_INT:
-                                c_type = "int";
+                                c_type = "long long";
                                 break;
                             case TYPE_FLOAT:
                                 c_type = "double";
@@ -612,7 +612,7 @@ void codegen_stmt(Stmt* stmt) {
                                 c_type = "WynArray";
                                 break;
                             default:
-                                c_type = "int";
+                                c_type = "long long";
                         }
                     }
                 }
@@ -754,7 +754,7 @@ void codegen_stmt(Stmt* stmt) {
             break;
         case STMT_FN: {
             // Determine return type
-            const char* return_type = "int"; // default
+            const char* return_type = "long long"; // default
             char return_type_buf[256] = {0};  // Buffer for custom return types
             bool is_async = stmt->fn.is_async;
             
@@ -795,7 +795,7 @@ void codegen_stmt(Stmt* stmt) {
                 } else if (stmt->fn.return_type->type == EXPR_IDENT) {
                     Token type_name = stmt->fn.return_type->token;
                     if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-                        return_type = "int";
+                        return_type = "long long";
                     } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
                         return_type = "char*";
                     } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
@@ -995,11 +995,11 @@ void codegen_stmt(Stmt* stmt) {
         }
         case STMT_EXTERN: {
             // Generate extern function declaration
-            const char* return_type = "int"; // default
+            const char* return_type = "long long"; // default
             if (stmt->extern_fn.return_type && stmt->extern_fn.return_type->type == EXPR_IDENT) {
                 Token ret_type = stmt->extern_fn.return_type->token;
                 if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
-                    return_type = "int";
+                    return_type = "long long";
                 } else if (ret_type.length == 6 && memcmp(ret_type.start, "string", 6) == 0) {
                     return_type = "char*";
                 } else if (ret_type.length == 4 && memcmp(ret_type.start, "void", 4) == 0) {
@@ -1052,12 +1052,12 @@ void codegen_stmt(Stmt* stmt) {
             emit("typedef struct {\n");
             for (int i = 0; i < stmt->struct_decl.field_count; i++) {
                 // Convert Wyn type to C type
-                const char* c_type = "int"; // default
+                const char* c_type = "long long"; // default
                 if (stmt->struct_decl.field_types[i]) {
                     if (stmt->struct_decl.field_types[i]->type == EXPR_IDENT) {
                         Token type_name = stmt->struct_decl.field_types[i]->token;
                         if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-                            c_type = "int";
+                            c_type = "long long";
                         } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
                             c_type = "float";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
@@ -1434,11 +1434,11 @@ void codegen_stmt(Stmt* stmt) {
                 FnStmt* method = stmt->impl.methods[i];
                 
                 // Determine return type
-                const char* return_type = "int";
+                const char* return_type = "long long";
                 if (method->return_type && method->return_type->type == EXPR_IDENT) {
                     Token ret_type = method->return_type->token;
                     if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
-                        return_type = "int";
+                        return_type = "long long";
                     } else if (ret_type.length == 5 && memcmp(ret_type.start, "float", 5) == 0) {
                         return_type = "double";
                     } else if (ret_type.length == 4 && memcmp(ret_type.start, "bool", 4) == 0) {
@@ -1629,7 +1629,7 @@ void codegen_stmt(Stmt* stmt) {
                     emit("const char* %.*s = (__elem.type == WYN_TYPE_STRING) ? __elem.data.string_val : \"\";\n",
                          stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
                 } else {
-                    emit("int %.*s = (__elem.type == WYN_TYPE_INT) ? __elem.data.int_val : 0;\n",
+                    emit("long long %.*s = (__elem.type == WYN_TYPE_INT) ? __elem.data.int_val : 0;\n",
                          stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
                 }
                 codegen_stmt(stmt->for_stmt.body);
@@ -1640,7 +1640,7 @@ void codegen_stmt(Stmt* stmt) {
                 // Regular for loop
                 emit("for (");
                 if (stmt->for_stmt.init) {
-                    emit("int %.*s = ", stmt->for_stmt.init->var.name.length, stmt->for_stmt.init->var.name.start);
+                    emit("long long %.*s = ", stmt->for_stmt.init->var.name.length, stmt->for_stmt.init->var.name.start);
                     codegen_expr(stmt->for_stmt.init->var.init);
                 }
                 emit("; ");
@@ -1760,7 +1760,7 @@ void codegen_stmt(Stmt* stmt) {
                                 }
                                 
                                 // Determine return type
-                                const char* return_type = "int";
+                                const char* return_type = "long long";
                                 static char custom_ret_type[128];
                                 if (s->fn.return_type) {
                                     if (s->fn.return_type->type == EXPR_IDENT) {
@@ -1772,7 +1772,7 @@ void codegen_stmt(Stmt* stmt) {
                                         } else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) {
                                             return_type = "bool";
                                         } else if (rt.length == 3 && memcmp(rt.start, "int", 3) == 0) {
-                                            return_type = "int";
+                                            return_type = "long long";
                                         } else if (rt.length == 7 && memcmp(rt.start, "HashMap", 7) == 0) {
                                             return_type = "WynHashMap*";
                                         } else if (rt.length == 7 && memcmp(rt.start, "HashSet", 7) == 0) {
@@ -1984,7 +1984,7 @@ void codegen_stmt(Stmt* stmt) {
             break;
         case STMT_CONST: {
             // Module-level constants - emit as static const
-            const char* c_type = "int";
+            const char* c_type = "long long";
             bool type_has_const = false;
             
             // Determine type from initializer
@@ -1996,7 +1996,7 @@ void codegen_stmt(Stmt* stmt) {
                 } else if (stmt->const_stmt.init->type == EXPR_BOOL) {
                     c_type = "bool";
                 } else if (stmt->const_stmt.init->type == EXPR_INT) {
-                    c_type = "int";
+                    c_type = "long long";
                 }
             }
             
