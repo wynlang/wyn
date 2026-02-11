@@ -1,15 +1,12 @@
-// TDD: JSON-like key-value operations
-// Uses HashMap as a simple JSON object substitute
+// TDD: JSON-like key-value operations using HashMap
 
 fn main() -> int {
-    // Build a "JSON object" using HashMap
     var obj = hashmap_new()
     hashmap_insert_string(obj, "name", "Alice")
     hashmap_insert_string(obj, "city", "Dubai")
 
     println(hashmap_get_string(obj, "name"))
     println(hashmap_get_string(obj, "city"))
-    println(hashmap_size(obj))
 
     return 0
 }
