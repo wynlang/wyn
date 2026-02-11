@@ -219,7 +219,7 @@ static const char* find_similar_function(const char* func_name) {
     
     for (int i = 0; common_functions[i] != NULL; i++) {
         int distance = levenshtein_distance(func_name, common_functions[i]);
-        if (distance < min_distance && distance <= 2) { // Max 2 character difference
+        if (distance < min_distance && distance <= 2) {
             min_distance = distance;
             best_match = common_functions[i];
         }

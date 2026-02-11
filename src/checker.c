@@ -1801,7 +1801,38 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     snprintf(func_name, sizeof(func_name), "%.*s", 
                             expr->call.callee->token.length, expr->call.callee->token.start);
                     
-                    // Use enhanced error reporting for undefined function
+                    // Search scope for similar names (typo detection)
+                    int min_dist = 999;
+                    char closest[256] = {0};
+                    SymbolTable* s = scope;
+                    while (s) {
+                        for (int si = 0; si < s->count; si++) {
+                            char sn[256];
+                            int sl = s->symbols[si].name.length < 255 ? s->symbols[si].name.length : 255;
+                            memcpy(sn, s->symbols[si].name.start, sl);
+                            sn[sl] = '\0';
+                            // Simple distance: count differing chars
+                            int fl = strlen(func_name);
+                            int diff = abs(fl - sl);
+                            if (diff <= 2 && sl > 1) {
+                                int match_chars = 0;
+                                int ml = fl < sl ? fl : sl;
+                                for (int ci = 0; ci < ml; ci++) {
+                                    if (func_name[ci] == sn[ci]) match_chars++;
+                                }
+                                int d = (ml - match_chars) + diff;
+                                if (d < min_dist && d <= 2 && d > 0) {
+                                    min_dist = d;
+                                    strcpy(closest, sn);
+                                }
+                            }
+                        }
+                        s = s->parent;
+                    }
+                    if (closest[0]) {
+                        fprintf(stderr, "\n  Did you mean: %s?\n", closest);
+                    }
+                    
                     type_error_undefined_function(func_name, expr->call.callee->token.line, 0);
                     had_error = true;
                 }

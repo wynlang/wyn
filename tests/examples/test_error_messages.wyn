@@ -1,0 +1,15 @@
+// TDD: Error message quality test
+// This file intentionally has errors to test error reporting
+// Run with: ./wyn run tests/validation/test_error_messages.wyn
+// Expected: clear error messages with line numbers and context
+
+fn add(a: int, b: int) -> int {
+    return a + b
+}
+
+fn main() -> int {
+    // This should produce a clear "undefined function" error with suggestion
+    var x = ad(1, 2)
+    println(x)
+    return 0
+}
