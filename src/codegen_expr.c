@@ -2231,19 +2231,70 @@ void codegen_expr(Expr* expr) {
                 // Set new value with proper type
                 {
                     int is_string = 0;
+                    int is_struct = 0;
+                    int is_float = 0;
+                    Token struct_name = {0};
+                    
+                    // Check value expression type
                     if (expr->index_assign.value->type == EXPR_STRING) {
                         is_string = 1;
-                    } else if (expr->index_assign.value->expr_type && expr->index_assign.value->expr_type->kind == TYPE_STRING) {
-                        is_string = 1;
+                    } else if (expr->index_assign.value->type == EXPR_STRUCT_INIT) {
+                        is_struct = 1;
+                        struct_name = expr->index_assign.value->struct_init.type_name;
+                    } else if (expr->index_assign.value->expr_type) {
+                        if (expr->index_assign.value->expr_type->kind == TYPE_STRING) {
+                            is_string = 1;
+                        } else if (expr->index_assign.value->expr_type->kind == TYPE_STRUCT) {
+                            is_struct = 1;
+                            if (expr->index_assign.value->expr_type->struct_type.name.start) {
+                                struct_name = expr->index_assign.value->expr_type->struct_type.name;
+                            } else {
+                                struct_name = expr->index_assign.value->expr_type->name;
+                            }
+                        } else if (expr->index_assign.value->expr_type->kind == TYPE_FLOAT) {
+                            is_float = 1;
+                        }
                     }
+                    
+                    // If value type unknown, check the array's element type
+                    if (!is_string && !is_struct && !is_float) {
+                        Type* obj_type = expr->index_assign.object->expr_type;
+                        if (obj_type && obj_type->kind == TYPE_ARRAY && obj_type->array_type.element_type) {
+                            Type* elem = obj_type->array_type.element_type;
+                            if (elem->kind == TYPE_STRING) {
+                                is_string = 1;
+                            } else if (elem->kind == TYPE_STRUCT) {
+                                is_struct = 1;
+                                // Try struct_type.name first, then type->name
+                                if (elem->struct_type.name.start && elem->struct_type.name.length > 0) {
+                                    struct_name = elem->struct_type.name;
+                                } else if (elem->name.start && elem->name.length > 0) {
+                                    struct_name = elem->name;
+                                }
+                            } else if (elem->kind == TYPE_FLOAT) {
+                                is_float = 1;
+                            }
+                        }
+                    }
+                    
                     if (is_string) {
                         emit("__arr_ptr->data[__idx].type = WYN_TYPE_STRING; __arr_ptr->data[__idx].data.string_val = ");
+                    } else if (is_struct && struct_name.start && struct_name.length > 0) {
+                        emit("__arr_ptr->data[__idx].type = WYN_TYPE_STRUCT; { ");
+                        emit("%.*s __temp_struct = ", struct_name.length, struct_name.start);
+                        codegen_expr(expr->index_assign.value);
+                        emit("; __arr_ptr->data[__idx].data.struct_val = malloc(sizeof(%.*s)); ", struct_name.length, struct_name.start);
+                        emit("memcpy(__arr_ptr->data[__idx].data.struct_val, &__temp_struct, sizeof(%.*s)); } } }", struct_name.length, struct_name.start);
+                    } else if (is_float) {
+                        emit("__arr_ptr->data[__idx].type = WYN_TYPE_FLOAT; __arr_ptr->data[__idx].data.float_val = ");
                     } else {
                         emit("__arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = ");
                     }
+                    if (!(is_struct && struct_name.start && struct_name.length > 0)) {
+                        codegen_expr(expr->index_assign.value);
+                        emit("; } }");
+                    }
                 }
-                codegen_expr(expr->index_assign.value);
-                emit("; } }");
             }
             break;
         }
