@@ -1675,8 +1675,13 @@ void Json_set_string(WynJson* j, const char* k, const char* v) { json_set_string
 void Json_set_int(WynJson* j, const char* k, int v) { json_set_int(j, k, v); }
 char* Json_stringify(WynJson* j) { return json_stringify(j); }
 
-// Terminal module: Terminal.cols(), Terminal.rows()
+// Terminal module: POSIX terminal control
 #include <sys/ioctl.h>
+#include <termios.h>
+
+static struct termios __wyn_orig_termios;
+static int __wyn_raw_mode_active = 0;
+
 int Terminal_cols() {
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0) return w.ws_col;
@@ -1686,6 +1691,54 @@ int Terminal_rows() {
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0) return w.ws_row;
     return 24;
+}
+void Terminal_raw_mode() {
+    if (__wyn_raw_mode_active) return;
+    tcgetattr(STDIN_FILENO, &__wyn_orig_termios);
+    struct termios raw = __wyn_orig_termios;
+    raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw.c_oflag &= ~(OPOST);
+    raw.c_cflag |= (CS8);
+    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+    raw.c_cc[VMIN] = 0;   // Non-blocking
+    raw.c_cc[VTIME] = 1;  // 100ms timeout
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    __wyn_raw_mode_active = 1;
+}
+void Terminal_restore() {
+    if (!__wyn_raw_mode_active) return;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &__wyn_orig_termios);
+    __wyn_raw_mode_active = 0;
+}
+int Terminal_read_key() {
+    char c = 0;
+    int n = read(STDIN_FILENO, &c, 1);
+    if (n <= 0) return 0;
+    // Handle escape sequences (arrow keys etc)
+    if (c == '\x1b') {
+        char seq[3];
+        if (read(STDIN_FILENO, &seq[0], 1) != 1) return 27; // bare ESC
+        if (read(STDIN_FILENO, &seq[1], 1) != 1) return 27;
+        if (seq[0] == '[') {
+            if (seq[1] == 'A') return 1000; // Up
+            if (seq[1] == 'B') return 1001; // Down
+            if (seq[1] == 'C') return 1002; // Right
+            if (seq[1] == 'D') return 1003; // Left
+        }
+        return 27;
+    }
+    return (int)c;
+}
+void Terminal_clear() {
+    write(STDOUT_FILENO, "\x1b[2J\x1b[H", 7);
+}
+void Terminal_move(int row, int col) {
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "\x1b[%d;%dH", row, col);
+    write(STDOUT_FILENO, buf, len);
+}
+void Terminal_write(const char* s) {
+    write(STDOUT_FILENO, s, strlen(s));
 }
 
 // Http: Http.get() maps to http_get() (lowercase, returns string)

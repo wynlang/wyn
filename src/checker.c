@@ -1166,20 +1166,24 @@ void init_checker() {
     }
 
     // Terminal namespace
-    {
+    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* ret; } term_fns[] = {
+        {"Terminal_cols", 13, 0, NULL, NULL, builtin_int},
+        {"Terminal_rows", 13, 0, NULL, NULL, builtin_int},
+        {"Terminal_raw_mode", 17, 0, NULL, NULL, builtin_void},
+        {"Terminal_restore", 16, 0, NULL, NULL, builtin_void},
+        {"Terminal_read_key", 17, 0, NULL, NULL, builtin_int},
+        {"Terminal_clear", 14, 0, NULL, NULL, builtin_void},
+        {"Terminal_write", 14, 1, builtin_string, NULL, builtin_void},
+        {"Terminal_move", 13, 2, builtin_int, builtin_int, builtin_void},
+    };
+    for (int i = 0; i < 8; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 0;
-        ft->fn_type.param_types = NULL;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Terminal_cols", 13, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 0;
-        ft->fn_type.param_types = NULL;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Terminal_rows", 13, 0};
+        ft->fn_type.param_count = term_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        if (term_fns[i].p1) ft->fn_type.param_types[0] = term_fns[i].p1;
+        if (term_fns[i].p2) ft->fn_type.param_types[1] = term_fns[i].p2;
+        ft->fn_type.return_type = term_fns[i].ret;
+        Token tok = {TOKEN_IDENT, term_fns[i].name, term_fns[i].nlen, 0};
         add_symbol(global_scope, tok, ft, false);
     }
 

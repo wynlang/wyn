@@ -2229,7 +2229,19 @@ void codegen_expr(Expr* expr) {
                 emit("/* ARC release old string */ } ");
                 
                 // Set new value with proper type
-                emit("__arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = ");
+                {
+                    int is_string = 0;
+                    if (expr->index_assign.value->type == EXPR_STRING) {
+                        is_string = 1;
+                    } else if (expr->index_assign.value->expr_type && expr->index_assign.value->expr_type->kind == TYPE_STRING) {
+                        is_string = 1;
+                    }
+                    if (is_string) {
+                        emit("__arr_ptr->data[__idx].type = WYN_TYPE_STRING; __arr_ptr->data[__idx].data.string_val = ");
+                    } else {
+                        emit("__arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = ");
+                    }
+                }
                 codegen_expr(expr->index_assign.value);
                 emit("; } }");
             }
