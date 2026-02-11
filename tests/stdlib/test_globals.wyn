@@ -1,0 +1,52 @@
+// Test: Global variables
+// Verifies top-level var declarations are accessible from all functions
+
+var g_counter = 0
+var g_name = "initial"
+var g_flag = 0
+
+fn inc_counter() {
+    g_counter = g_counter + 1
+}
+
+fn set_name(n: string) {
+    g_name = n
+}
+
+fn toggle_flag() {
+    if g_flag == 0 {
+        g_flag = 1
+    } else {
+        g_flag = 0
+    }
+}
+
+fn main() -> int {
+    Test.init("Global Variables")
+    
+    // Initial values
+    Test.assert_eq_int(g_counter, 0, "initial counter = 0")
+    Test.assert_eq_str(g_name, "initial", "initial name")
+    Test.assert_eq_int(g_flag, 0, "initial flag = 0")
+    
+    // Mutation from functions
+    inc_counter()
+    inc_counter()
+    inc_counter()
+    Test.assert_eq_int(g_counter, 3, "counter after 3 increments")
+    
+    set_name("updated")
+    Test.assert_eq_str(g_name, "updated", "name after set")
+    
+    toggle_flag()
+    Test.assert_eq_int(g_flag, 1, "flag after toggle")
+    toggle_flag()
+    Test.assert_eq_int(g_flag, 0, "flag after double toggle")
+    
+    // Direct mutation from main
+    g_counter = 100
+    Test.assert_eq_int(g_counter, 100, "direct set from main")
+    
+    Test.summary()
+    return 0
+}

@@ -73,6 +73,54 @@ void codegen_program(Program* prog) {
         }
     }
     
+    // Generate global variables
+    for (int i = 0; i < prog->count; i++) {
+        if (prog->stmts[i]->type == STMT_VAR) {
+            Stmt* var_stmt = prog->stmts[i];
+            // Determine C type from initializer
+            const char* c_type = "int";
+            if (var_stmt->var.init) {
+                if (var_stmt->var.init->type == EXPR_STRING) {
+                    c_type = "const char*";
+                } else if (var_stmt->var.init->type == EXPR_FLOAT) {
+                    c_type = "double";
+                } else if (var_stmt->var.init->type == EXPR_BOOL) {
+                    c_type = "int";
+                } else if (var_stmt->var.init->type == EXPR_ARRAY) {
+                    c_type = "WynArray";
+                } else if (var_stmt->var.init->type == EXPR_STRUCT_INIT) {
+                    // Use struct type name
+                    emit("\n");
+                    Token sname = var_stmt->var.init->struct_init.type_name;
+                    emit("%.*s %.*s = ", sname.length, sname.start,
+                         var_stmt->var.name.length, var_stmt->var.name.start);
+                    codegen_expr(var_stmt->var.init);
+                    emit(";\n");
+                    continue;
+                } else if (var_stmt->var.init->type == EXPR_CALL) {
+                    // Function call init — check for HashMap.new() etc.
+                    c_type = "WynHashMap*";
+                }
+                // Check explicit type annotation
+                if (var_stmt->var.type && var_stmt->var.type->type == EXPR_IDENT) {
+                    Token tn = var_stmt->var.type->token;
+                    if (tn.length == 6 && memcmp(tn.start, "string", 6) == 0) c_type = "const char*";
+                    else if (tn.length == 5 && memcmp(tn.start, "float", 5) == 0) c_type = "double";
+                    else if (tn.length == 4 && memcmp(tn.start, "bool", 4) == 0) c_type = "int";
+                }
+            }
+            emit("\n");
+            emit("%s %.*s", c_type, var_stmt->var.name.length, var_stmt->var.name.start);
+            if (var_stmt->var.init) {
+                emit(" = ");
+                codegen_expr(var_stmt->var.init);
+            } else {
+                emit(" = 0");
+            }
+            emit(";\n");
+        }
+    }
+    
     // Generate forward declarations for struct methods
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_STRUCT) {
