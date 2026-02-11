@@ -60,10 +60,13 @@ fn main() -> int {
         "tests/validation/test_generic_syntax.wyn",
         "tests/validation/test_array_params.wyn",
         "tests/validation/test_method_chaining.wyn",
-        "tests/validation/test_split_operations.wyn"
+        "tests/validation/test_split_operations.wyn",
+        "tests/validation/test_json.wyn",
+        "tests/validation/test_regex.wyn",
+        "tests/validation/test_http.wyn"
     ]
 
-    for i in 0..36 {
+    for i in 0..39 {
         var path = tests[i]
         var result = run_test(path)
         if result == 1 {

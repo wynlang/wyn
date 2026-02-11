@@ -1,0 +1,13 @@
+// TDD: Basic regex/pattern matching operations
+
+fn main() -> int {
+    // Test 1: regex_match - check if string matches pattern
+    println(regex_match("hello123", "[a-z]+[0-9]+"))
+    println(regex_match("hello", "[0-9]+"))
+
+    // Test 2: regex_replace - replace pattern with string
+    var result = regex_replace("hello world", "world", "Wyn")
+    println(result)
+
+    return 0
+}

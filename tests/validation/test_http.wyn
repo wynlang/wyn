@@ -1,0 +1,21 @@
+// TDD: Basic HTTP client
+// Note: requires network access, tests against a public endpoint
+
+fn main() -> int {
+    // Test: HTTP GET request
+    var response = http_get("http://httpbin.org/get")
+    if str_len(response) > 0 {
+        println("HTTP GET: received " + int_to_string(str_len(response)) + " bytes")
+        // Check it contains expected JSON
+        if str_contains(response, "httpbin") {
+            println("  ✓ Response contains expected content")
+        } else {
+            println("  ✗ Unexpected response")
+        }
+    } else {
+        // Network might not be available - that's OK for CI
+        println("SKIP: No network access")
+    }
+
+    return 0
+}

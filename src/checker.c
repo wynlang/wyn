@@ -1031,6 +1031,30 @@ void init_checker() {
         add_symbol(global_scope, tok, ft, false);
     }
     
+    // JSON stdlib
+    Type* json_obj_type = make_type(TYPE_MAP);
+    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } json_fns[] = {
+        {"json_new", 8, 0, NULL, NULL, NULL, json_obj_type},
+        {"json_set_string", 15, 3, json_obj_type, builtin_string, builtin_string, builtin_void},
+        {"json_set_int", 12, 3, json_obj_type, builtin_string, builtin_int, builtin_void},
+        {"json_get_string", 15, 2, json_obj_type, builtin_string, NULL, builtin_string},
+        {"json_get_int", 12, 2, json_obj_type, builtin_string, NULL, builtin_int},
+        {"json_stringify", 14, 1, json_obj_type, NULL, NULL, builtin_string},
+        {"regex_match", 11, 2, builtin_string, builtin_string, NULL, builtin_int},
+        {"regex_replace", 13, 3, builtin_string, builtin_string, builtin_string, builtin_string},
+    };
+    for (int i = 0; i < 8; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = json_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
+        if (json_fns[i].p1) ft->fn_type.param_types[0] = json_fns[i].p1;
+        if (json_fns[i].p2) ft->fn_type.param_types[1] = json_fns[i].p2;
+        if (json_fns[i].p3) ft->fn_type.param_types[2] = json_fns[i].p3;
+        ft->fn_type.return_type = json_fns[i].ret;
+        Token tok = {TOKEN_IDENT, json_fns[i].name, json_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
     // DateTime stdlib
     Type* dt_now_t = make_type(TYPE_FUNCTION);
     dt_now_t->fn_type.param_count = 0;

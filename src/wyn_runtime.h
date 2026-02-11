@@ -40,7 +40,7 @@ typedef struct { void* fn; void* env; } WynClosure;
 WynClosure wyn_closure_new(void* fn, void* env) { return (WynClosure){fn, env}; }
 int wyn_closure_call_int(WynClosure c, int arg) { return ((int(*)(void*,int))c.fn)(c.env, arg); }
 
-#include "json.h"
+// json.h included below in Json module section
 #include "async_runtime.h"
 
 int wyn_get_argc(void);
@@ -131,12 +131,39 @@ char* wyn_string_reverse(const char* str);
 char* wyn_string_pad_left(const char* str, int width, const char* pad_char);
 char* wyn_string_pad_right(const char* str, int width, const char* pad_char);
 
-// Json module
-typedef struct WynJson WynJson;
-WynJson* Json_parse(const char* text);
-char* Json_get_string(WynJson* json, const char* key);
-int Json_get_int(WynJson* json, const char* key);
-void Json_free(WynJson* json);
+// Json module - simple key-value JSON using parallel arrays
+// Implementation in json.c, declarations in json.h
+#include "json.h"
+WynJson* json_new();
+void json_set_string(WynJson* json, const char* key, const char* value);
+void json_set_int(WynJson* json, const char* key, int value);
+char* json_stringify(WynJson* json);
+
+// Regex module - POSIX regex
+#include <regex.h>
+int regex_match(const char* str, const char* pattern) {
+    regex_t re;
+    if (regcomp(&re, pattern, REG_EXTENDED | REG_NOSUB) != 0) return 0;
+    int result = regexec(&re, str, 0, NULL, 0) == 0 ? 1 : 0;
+    regfree(&re);
+    return result;
+}
+char* regex_replace(const char* str, const char* pattern, const char* replacement) {
+    // Simple literal replacement (not full regex replace)
+    int slen = strlen(str), plen = strlen(pattern), rlen = strlen(replacement);
+    char* result = malloc(slen * 2 + 1);
+    int ri = 0;
+    for (int i = 0; i < slen; ) {
+        if (i + plen <= slen && memcmp(str + i, pattern, plen) == 0) {
+            memcpy(result + ri, replacement, rlen);
+            ri += rlen; i += plen;
+        } else {
+            result[ri++] = str[i++];
+        }
+    }
+    result[ri] = '\0';
+    return result;
+}
 
 // Time module wrappers
 long Time_now();
