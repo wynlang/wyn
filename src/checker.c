@@ -2188,6 +2188,27 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 } else if (strcmp(method_name, "replace") == 0) {
                     expr->expr_type = builtin_string;
                     return builtin_string;
+                } else if (strcmp(method_name, "substring") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "split_at") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "repeat") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "index_of") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "split_count") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "to_int") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "to_float") == 0) {
+                    expr->expr_type = builtin_float;
+                    return builtin_float;
                 }
             }
             

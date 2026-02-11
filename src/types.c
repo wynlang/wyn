@@ -448,6 +448,18 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "delete") == 0 && arg_count == 0) {
             out->c_function = "file_delete"; return true;
         }
+        if (strcmp(method_name, "split_at") == 0 && arg_count == 2) {
+            out->c_function = "split_get"; return true;
+        }
+        if (strcmp(method_name, "split_count") == 0 && arg_count == 1) {
+            out->c_function = "split_count"; return true;
+        }
+        if (strcmp(method_name, "to_int") == 0 && arg_count == 0) {
+            out->c_function = "str_to_int"; return true;
+        }
+        if (strcmp(method_name, "to_float") == 0 && arg_count == 0) {
+            out->c_function = "str_to_float"; return true;
+        }
         return false;
     }
     

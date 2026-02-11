@@ -2093,6 +2093,7 @@ int str_contains_substr(const char* s, const char* substr) { return strstr(s, su
 char* str_join(char** arr, int len, const char* sep) { int total = 0; for(int i = 0; i < len; i++) total += strlen(arr[i]); total += (len - 1) * strlen(sep) + 1; char* r = malloc(total); r[0] = 0; for(int i = 0; i < len; i++) { if(i > 0) strcat(r, sep); strcat(r, arr[i]); } return r; }
 char* int_to_str(int n) { char* r = malloc(12); sprintf(r, "%d", n); return r; }
 int str_to_int(const char* s) { return atoi(s); }
+double str_to_float(const char* s) { return atof(s); }
 void swap(int* a, int* b) { int t = *a; *a = *b; *b = t; }
 double clamp_float(double x, double min_val, double max_val) { return x < min_val ? min_val : (x > max_val ? max_val : x); }
 double lerp(double a, double b, double t) { return a + t * (b - a); }

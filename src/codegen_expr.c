@@ -1108,18 +1108,33 @@ void codegen_expr(Expr* expr) {
             
             // Fallback: if no type info, try to infer from expression
             if (!receiver_type && expr->method_call.object->type == EXPR_IDENT) {
-                // Check if it's a known string parameter (heuristic)
-                Token obj_name = expr->method_call.object->token;
-                if ((obj_name.length == 1 && obj_name.start[0] == 's') ||
-                    (obj_name.length == 1 && obj_name.start[0] == 'c') ||
-                    (obj_name.length == 3 && memcmp(obj_name.start, "str", 3) == 0) ||
-                    (obj_name.length == 4 && memcmp(obj_name.start, "text", 4) == 0) ||
-                    (obj_name.length == 4 && memcmp(obj_name.start, "name", 4) == 0) ||
-                    (obj_name.length == 4 && memcmp(obj_name.start, "line", 4) == 0) ||
-                    (obj_name.length == 4 && memcmp(obj_name.start, "word", 4) == 0) ||
-                    (obj_name.length == 4 && memcmp(obj_name.start, "part", 4) == 0) ||
-                    (obj_name.length == 4 && memcmp(obj_name.start, "item", 4) == 0) ||
-                    (obj_name.length == 5 && memcmp(obj_name.start, "input", 5) == 0)) {
+                char mname[64];
+                int mlen = method.length < 63 ? method.length : 63;
+                memcpy(mname, method.start, mlen);
+                mname[mlen] = '\0';
+                if (strcmp(mname, "len") == 0 || strcmp(mname, "upper") == 0 ||
+                    strcmp(mname, "lower") == 0 || strcmp(mname, "trim") == 0 ||
+                    strcmp(mname, "contains") == 0 || strcmp(mname, "starts_with") == 0 ||
+                    strcmp(mname, "ends_with") == 0 || strcmp(mname, "replace") == 0 ||
+                    strcmp(mname, "repeat") == 0 || strcmp(mname, "index_of") == 0 ||
+                    strcmp(mname, "substring") == 0 || strcmp(mname, "split_at") == 0 ||
+                    strcmp(mname, "split_count") == 0 || strcmp(mname, "to_int") == 0 ||
+                    strcmp(mname, "to_float") == 0) {
+                    receiver_type = "string";
+                }
+            }
+            // Also override int type when method is clearly a string method
+            if (receiver_type && strcmp(receiver_type, "int") == 0) {
+                char mname[64];
+                int mlen = method.length < 63 ? method.length : 63;
+                memcpy(mname, method.start, mlen);
+                mname[mlen] = '\0';
+                if (strcmp(mname, "to_int") == 0 || strcmp(mname, "to_float") == 0 ||
+                    strcmp(mname, "split_at") == 0 || strcmp(mname, "split_count") == 0 ||
+                    strcmp(mname, "upper") == 0 || strcmp(mname, "lower") == 0 ||
+                    strcmp(mname, "trim") == 0 || strcmp(mname, "contains") == 0 ||
+                    strcmp(mname, "starts_with") == 0 || strcmp(mname, "ends_with") == 0 ||
+                    strcmp(mname, "substring") == 0 || strcmp(mname, "replace") == 0) {
                     receiver_type = "string";
                 }
             }
