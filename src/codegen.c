@@ -4199,6 +4199,12 @@ void codegen_c_header() {
     emit("    return result;\n");
     emit("}\n");
     
+    // Path_ aliases
+    emit("char* Path_basename(const char* p) { return file_basename(p); }\n");
+    emit("char* Path_dirname(const char* p) { return file_dirname(p); }\n");
+    emit("char* Path_extension(const char* p) { return file_extension(p); }\n");
+    emit("char* Path_join(const char* a, const char* b) { return file_path_join(a, b); }\n");
+
     emit("int file_write(const char* path, const char* data) {\n");
     emit("    last_error[0] = 0;\n");
     emit("    FILE* f = fopen(path, \"w\");\n");
@@ -4399,6 +4405,24 @@ void codegen_c_header() {
     emit("    return arr;\n");
     emit("}\n\n");
     
+    // Math module - mathematical functions
+    emit("float Math_sin(float x) { return sinf(x); }\n");
+    emit("float Math_cos(float x) { return cosf(x); }\n");
+    emit("float Math_tan(float x) { return tanf(x); }\n");
+    emit("float Math_sqrt(float x) { return sqrtf(x); }\n");
+    emit("float Math_pow(float base, float exp) { return powf(base, exp); }\n");
+    emit("float Math_floor(float x) { return floorf(x); }\n");
+    emit("float Math_ceil(float x) { return ceilf(x); }\n");
+    emit("float Math_round(float x) { return roundf(x); }\n");
+    emit("float Math_abs(float x) { return fabsf(x); }\n");
+    emit("float Math_random() {\n");
+    emit("    static int initialized = 0;\n");
+    emit("    if (!initialized) { srand(time(NULL)); initialized = 1; }\n");
+    emit("    return (float)rand() / (float)RAND_MAX;\n");
+    emit("}\n");
+    emit("const float Math_PI = 3.14159265358979323846f;\n");
+    emit("const float Math_E = 2.71828182845904523536f;\n\n");
+    
     // Queue module - FIFO (First In, First Out)
     emit("typedef struct { WynArray arr; } Queue;\n\n");
     
@@ -4482,23 +4506,6 @@ void codegen_c_header() {
     emit("int Stack_is_empty(Stack* s) {\n");
     emit("    return s->arr.count == 0;\n");
     emit("}\n\n");
-    
-    // Math module functions
-    emit("double Math_pow(double x, double y) { return pow(x, y); }\n");
-    emit("double Math_sqrt(double x) { return sqrt(x); }\n");
-    emit("int Math_abs(int x) { return x < 0 ? -x : x; }\n");
-    emit("double Math_fabs(double x) { return fabs(x); }\n");
-    emit("int Math_max(int a, int b) { return a > b ? a : b; }\n");
-    emit("int Math_min(int a, int b) { return a < b ? a : b; }\n");
-    emit("double Math_floor(double x) { return floor(x); }\n");
-    emit("double Math_ceil(double x) { return ceil(x); }\n");
-    emit("double Math_round(double x) { return round(x); }\n");
-    emit("double Math_sin(double x) { return sin(x); }\n");
-    emit("double Math_cos(double x) { return cos(x); }\n");
-    emit("double Math_tan(double x) { return tan(x); }\n");
-    emit("double Math_log(double x) { return log(x); }\n");
-    emit("double Math_pi() { return 3.14159265358979323846; }\n");
-    emit("int Math_random(int max) { return rand() %% max; }\n");
     
     // Net module functions
     emit("int Net_listen(int port) {\n");

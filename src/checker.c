@@ -962,10 +962,7 @@ void init_checker() {
 
     // Math stdlib - register all Math_ functions
     struct { const char* name; int nlen; int param_count; Type* p1; Type* p2; Type* ret; } math_fns[] = {
-        {"Math_abs", 8, 1, builtin_int, NULL, builtin_int},
-        {"Math_fabs", 9, 1, builtin_float, NULL, builtin_float},
-        {"Math_max", 8, 2, builtin_int, builtin_int, builtin_int},
-        {"Math_min", 8, 2, builtin_int, builtin_int, builtin_int},
+        {"Math_abs", 8, 1, builtin_float, NULL, builtin_float},
         {"Math_pow", 8, 2, builtin_float, builtin_float, builtin_float},
         {"Math_sqrt", 9, 1, builtin_float, NULL, builtin_float},
         {"Math_floor", 10, 1, builtin_float, NULL, builtin_float},
@@ -974,11 +971,9 @@ void init_checker() {
         {"Math_sin", 8, 1, builtin_float, NULL, builtin_float},
         {"Math_cos", 8, 1, builtin_float, NULL, builtin_float},
         {"Math_tan", 8, 1, builtin_float, NULL, builtin_float},
-        {"Math_log", 8, 1, builtin_float, NULL, builtin_float},
-        {"Math_pi", 7, 0, NULL, NULL, builtin_float},
-        {"Math_random", 11, 1, builtin_int, NULL, builtin_int},
+        {"Math_random", 11, 0, NULL, NULL, builtin_float},
     };
-    for (int i = 0; i < 15; i++) {
+    for (int i = 0; i < 11; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = math_fns[i].param_count;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
@@ -986,6 +981,22 @@ void init_checker() {
         if (math_fns[i].p2) ft->fn_type.param_types[1] = math_fns[i].p2;
         ft->fn_type.return_type = math_fns[i].ret;
         Token tok = {TOKEN_IDENT, math_fns[i].name, math_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Path stdlib
+    struct { const char* name; int nlen; } path_fns[] = {
+        {"Path_basename", 13}, {"Path_dirname", 12},
+        {"Path_extension", 14}, {"Path_join", 9},
+    };
+    for (int i = 0; i < 4; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = (i == 3) ? 2 : 1; // Path_join takes 2
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_string;
+        if (i == 3) ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, path_fns[i].name, path_fns[i].nlen, 0};
         add_symbol(global_scope, tok, ft, false);
     }
 }

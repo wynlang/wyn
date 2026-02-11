@@ -1,0 +1,33 @@
+// TDD: Math module - basic mathematical functions
+
+fn main() -> int {
+    // Test basic math functions
+    var pi = 3.14159
+    var angle = 1.57  // ~90 degrees in radians
+    
+    // Trigonometric functions
+    var sin_val = Math_sin(angle)
+    var cos_val = Math_cos(angle)
+    println("sin(1.57) ≈ " + float_to_string(sin_val))
+    println("cos(1.57) ≈ " + float_to_string(cos_val))
+    
+    // Power and roots
+    var squared = Math_pow(5.0, 2.0)
+    var sqrt_val = Math_sqrt(25.0)
+    println("5^2 = " + float_to_string(squared))
+    println("√25 = " + float_to_string(sqrt_val))
+    
+    // Rounding
+    var floor_val = Math_floor(3.7)
+    var ceil_val = Math_ceil(3.2)
+    println("floor(3.7) = " + float_to_string(floor_val))
+    println("ceil(3.2) = " + float_to_string(ceil_val))
+    
+    // Random
+    var rand1 = Math_random()
+    var rand2 = Math_random()
+    println("random1 = " + float_to_string(rand1))
+    println("random2 = " + float_to_string(rand2))
+    
+    return 0
+}

@@ -1,0 +1,12 @@
+// TDD: Path stdlib functions
+
+fn main() -> int {
+    // Test path operations
+    var p = "/home/user/docs/file.txt"
+    println(Path_basename(p))
+    println(Path_dirname(p))
+    println(Path_extension(p))
+    println(Path_join("/home/user", "file.txt"))
+
+    return 0
+}
