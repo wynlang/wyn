@@ -1630,6 +1630,7 @@ char* Path_basename(const char* p) { return file_basename(p); }
 char* Path_dirname(const char* p) { return file_dirname(p); }
 char* Path_extension(const char* p) { return file_extension(p); }
 char* Path_join(const char* a, const char* b) { return file_path_join(a, b); }
+
 int file_write(const char* path, const char* data) {
     last_error[0] = 0;
     FILE* f = fopen(path, "w");
@@ -1654,6 +1655,14 @@ int file_copy(const char* src, const char* dst) {
     return 1;
 }
 int file_move(const char* src, const char* dst) { return rename(src, dst) == 0; }
+
+// File namespace aliases: File.read(path) -> File_read(path)
+char* File_read(const char* p) { return file_read(p); }
+int File_write(const char* p, const char* d) { return file_write(p, d); }
+int File_exists(const char* p) { return file_exists(p); }
+int File_delete(const char* p) { return file_delete(p); }
+int File_copy(const char* s, const char* d) { return file_copy(s, d); }
+int File_move(const char* s, const char* d) { return file_move(s, d); }
 int file_size(const char* path) {
     FILE* f = fopen(path, "rb");
     if(!f) return -1;

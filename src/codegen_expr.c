@@ -957,7 +957,9 @@ void codegen_expr(Expr* expr) {
                 module_name[len] = '\0';
                 
                 // Treat as module if it's loaded OR if it's a built-in
-                if (is_module_loaded(module_name) || is_builtin_module(module_name)) {
+                // BUT NOT if it's a local variable or parameter
+                bool is_local = is_parameter(module_name) || is_local_variable(module_name);
+                if (!is_local && (is_module_loaded(module_name) || is_builtin_module(module_name))) {
                     // Emit as: modulename_methodname(args)
                     emit("%.*s_%.*s(", obj_name.length, obj_name.start, method.length, method.start);
                     for (int i = 0; i < expr->method_call.arg_count; i++) {

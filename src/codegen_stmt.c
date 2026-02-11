@@ -672,8 +672,8 @@ void codegen_stmt(Stmt* stmt) {
                 emit("%s %.*s = ", c_type, stmt->var.name.length, stmt->var.name.start);
             }
             
-            // Register local variable for scope tracking (if inside a function)
-            if (current_module_prefix) {
+            // Register local variable for scope tracking
+            {
                 char var_name[256];
                 snprintf(var_name, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
                 register_local_variable(var_name);

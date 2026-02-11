@@ -50,7 +50,10 @@ static void print_circular_import_error(const char* module_name) {
 
 // Check if module is built-in (has C implementation)
 bool is_builtin_module(const char* module_name) {
-    const char* builtins[] = {"math", NULL};
+    const char* builtins[] = {
+        "math", "Math", "File", "System", "Path", "DateTime", 
+        "Json", "Http", "Regex", "Random", NULL
+    };
     for (int i = 0; builtins[i] != NULL; i++) {
         if (strcmp(module_name, builtins[i]) == 0) {
             return true;

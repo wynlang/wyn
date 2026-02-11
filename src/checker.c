@@ -1055,6 +1055,36 @@ void init_checker() {
         add_symbol(global_scope, tok, ft, false);
     }
 
+    // Register namespace identifiers so checker doesn't reject File.read() etc.
+    // Also register their methods with proper return types
+    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", NULL};
+    for (int i = 0; namespaces[i]; i++) {
+        Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
+        if (!find_symbol(global_scope, ns_tok)) {
+            add_symbol(global_scope, ns_tok, builtin_int, false);
+        }
+    }
+
+    // File namespace methods
+    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* ret; } file_ns_fns[] = {
+        {"File_read", 9, 1, builtin_string, NULL, builtin_string},
+        {"File_write", 10, 2, builtin_string, builtin_string, builtin_int},
+        {"File_exists", 11, 1, builtin_string, NULL, builtin_int},
+        {"File_delete", 11, 1, builtin_string, NULL, builtin_int},
+        {"File_copy", 9, 2, builtin_string, builtin_string, builtin_int},
+        {"File_move", 9, 2, builtin_string, builtin_string, builtin_int},
+    };
+    for (int i = 0; i < 6; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = file_ns_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = file_ns_fns[i].p1;
+        if (file_ns_fns[i].p2) ft->fn_type.param_types[1] = file_ns_fns[i].p2;
+        ft->fn_type.return_type = file_ns_fns[i].ret;
+        Token tok = {TOKEN_IDENT, file_ns_fns[i].name, file_ns_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
     // DateTime stdlib
     Type* dt_now_t = make_type(TYPE_FUNCTION);
     dt_now_t->fn_type.param_count = 0;
@@ -2033,6 +2063,23 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             int len = method.length < 255 ? method.length : 255;
             memcpy(method_name, method.start, len);
             method_name[len] = '\0';
+            
+            // Check for namespace method calls: File.read() -> File_read
+            if (expr->method_call.object->type == EXPR_IDENT) {
+                char ns_method[256];
+                snprintf(ns_method, sizeof(ns_method), "%.*s_%s",
+                    expr->method_call.object->token.length,
+                    expr->method_call.object->token.start, method_name);
+                Token ns_tok = {TOKEN_IDENT, ns_method, (int)strlen(ns_method), 0};
+                Symbol* ns_sym = find_symbol(global_scope, ns_tok);
+                if (ns_sym && ns_sym->type && ns_sym->type->kind == TYPE_FUNCTION) {
+                    Type* ret = ns_sym->type->fn_type.return_type;
+                    if (ret) {
+                        expr->expr_type = ret;
+                        return ret;
+                    }
+                }
+            }
             
             // Handle string methods
             if (object_type && object_type->kind == TYPE_STRING) {
