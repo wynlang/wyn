@@ -2207,5 +2207,44 @@ int OptionString_is_none(OptionString o) { return o.tag == 0; }
 const char* OptionString_unwrap(OptionString o) { if (o.tag == 0) { fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
 const char* OptionString_unwrap_or(OptionString o, const char* def) { return o.tag == 1 ? o.value : def; }
 
+// Task channel wrappers — handle-based API (like HashMap)
+#define MAX_TASKS 64
+static WynTask* task_registry[MAX_TASKS] = {0};
+static int task_registry_count = 0;
+
+long long wyn_task_new_handle(int capacity) {
+    WynTask* task = wyn_task_new(capacity);
+    for (int i = 1; i < MAX_TASKS; i++) {
+        if (!task_registry[i]) {
+            task_registry[i] = task;
+            return i;
+        }
+    }
+    task_registry[++task_registry_count] = task;
+    return task_registry_count;
+}
+void wyn_task_send_handle(long long handle, long long value) {
+    if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return;
+    long long* boxed = malloc(sizeof(long long));
+    *boxed = value;
+    wyn_task_send(task_registry[handle], boxed);
+}
+long long wyn_task_recv_handle(long long handle) {
+    if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return 0;
+    void* ptr = wyn_task_recv(task_registry[handle]);
+    if (!ptr) return 0;
+    long long val = *(long long*)ptr;
+    free(ptr);
+    return val;
+}
+void wyn_task_close_handle(long long handle) {
+    if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return;
+    wyn_task_close(task_registry[handle]);
+}
+void wyn_task_free_handle(long long handle) {
+    if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return;
+    wyn_task_free(task_registry[handle]);
+    task_registry[handle] = NULL;
+}
 
 #endif // WYN_RUNTIME_H

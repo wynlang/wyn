@@ -978,6 +978,21 @@ void codegen_expr(Expr* expr) {
                         emit("hashmap_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "HashSet") == 0) {
                         emit("hashset_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Task") == 0) {
+                        // Handle-based Task API
+                        if (method.length == 3 && memcmp(method.start, "new", 3) == 0) {
+                            emit("wyn_task_new_handle(");
+                        } else if (method.length == 4 && memcmp(method.start, "send", 4) == 0) {
+                            emit("wyn_task_send_handle(");
+                        } else if (method.length == 4 && memcmp(method.start, "recv", 4) == 0) {
+                            emit("wyn_task_recv_handle(");
+                        } else if (method.length == 5 && memcmp(method.start, "close", 5) == 0) {
+                            emit("wyn_task_close_handle(");
+                        } else if (method.length == 4 && memcmp(method.start, "free", 4) == 0) {
+                            emit("wyn_task_free_handle(");
+                        } else {
+                            emit("wyn_task_%.*s(", method.length, method.start);
+                        }
                     } else {
                         emit("%.*s_%.*s(", obj_name.length, obj_name.start, method.length, method.start);
                     }
