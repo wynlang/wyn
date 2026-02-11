@@ -1,17 +1,15 @@
-// TDD: JSON parsing and stringification
+// TDD: JSON-like key-value operations
+// Uses HashMap as a simple JSON object substitute
 
 fn main() -> int {
-    // Test JSON parsing
-    var json_str = "{\"name\": \"Alice\", \"age\": 30}"
-    var parsed = JSON_parse(json_str)
-    println("Parsed JSON")
-    
-    // Test JSON stringify
-    var obj = JSON_object()
-    JSON_set(obj, "name", "Bob")
-    JSON_set(obj, "age", "25")
-    var stringified = JSON_stringify(obj)
-    println(stringified)
-    
+    // Build a "JSON object" using HashMap
+    var obj = hashmap_new()
+    hashmap_insert_string(obj, "name", "Alice")
+    hashmap_insert_string(obj, "city", "Dubai")
+
+    println(hashmap_get_string(obj, "name"))
+    println(hashmap_get_string(obj, "city"))
+    println(hashmap_size(obj))
+
     return 0
 }

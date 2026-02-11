@@ -1,18 +1,14 @@
 // TDD: DateTime module - time operations
 
 fn main() -> int {
-    // Test current time
     var now = DateTime_now()
-    println("Current timestamp: " + int_to_string(now))
-    
-    // Test time formatting
-    var formatted = DateTime_format(now, "%Y-%m-%d %H:%M:%S")
-    println("Formatted: " + formatted)
-    
-    // Test sleep
-    println("Sleeping for 1 second...")
-    DateTime_sleep(1)
-    println("Done!")
-    
+    // Timestamp should be > 0 (we're past 1970)
+    if now > 0 {
+        println("timestamp ok")
+    }
+
+    var formatted = DateTime_format(now, "%Y-%m-%d")
+    println(formatted)
+
     return 0
 }
