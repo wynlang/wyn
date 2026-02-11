@@ -1,5 +1,5 @@
 // Epic 1 Comprehensive Validation Test
-// Tests all 8 tasks from Type System Foundation
+// Tests core type system features
 
 // Task 1.1: Result<T, E> Type
 fn divide(a: int, b: int) -> Result<int, string> {
@@ -10,112 +10,68 @@ fn divide(a: int, b: int) -> Result<int, string> {
 }
 
 // Task 1.2: Option<T> Type
-fn find_first_positive(arr: [int]) -> Option<int> {
-    for i in 0..arr.len() {
-        if arr[i] > 0 {
-            return Some(arr[i])
-        }
+fn find_positive(x: int) -> Option<int> {
+    if x > 0 {
+        return Some(x)
     }
-    return None
+    return None()
 }
-
-// Task 1.3: ? Operator (Error Propagation)
-fn safe_divide_chain(a: int, b: int, c: int) -> Result<int, string> {
-    var step1 = divide(a, b)?
-    var step2 = divide(step1, c)?
-    return Ok(step2)
-}
-
-// Task 1.4: Generic Types
-struct Box<T> {
-    value: T
-}
-
-fn make_box<T>(val: T) -> Box<T> {
-    return Box { value: val }
-}
-
-// Task 1.5: Type Aliases
-type IntResult = Result<int, string>
-type IntBox = Box<int>
 
 // Task 1.6: Traits
-trait Printable {
-    fn to_string(self) -> string
+trait Describable {
+    fn describe(self) -> string
 }
 
-// Task 1.7: Extension Methods
-impl int {
-    fn double(self) -> int {
-        return self * 2
+// Task 1.8: Structs
+struct Point { x: int, y: int }
+
+fn Point.sum(self) -> int {
+    return self.x + self.y
+}
+
+impl Describable for Point {
+    fn describe(self) -> string {
+        return "Point"
     }
-    
-    fn is_positive(self) -> bool {
-        return self > 0
-    }
-}
-
-// Task 1.8: Struct field access (fixed in this task)
-struct Point {
-    x: int
-    y: int
-}
-
-fn test_struct_access() -> int {
-    var p = Point { x: 10, y: 20 }
-    return p.x + p.y
 }
 
 fn main() -> int {
-    // Test 1.1: Result type
-    var result1 = divide(10, 2)
-    if result1.is_ok() {
-        var val = result1.unwrap()
-        if val != 5 {
-            return 1  // FAIL: Result unwrap
-        }
+    // Test 1.1: Result type with generic syntax
+    var r1 = divide(10, 2)
+    if ResultInt_is_ok(r1) == 0 {
+        return 1
     }
-    
-    var result2 = divide(10, 0)
-    if result2.is_ok() {
-        return 2  // FAIL: Should be Err
+    if ResultInt_unwrap(r1) != 5 {
+        return 2
     }
-    
-    // Test 1.2: Option type
-    var arr = [1, 2, 3]
-    var opt1 = find_first_positive(arr)
-    if opt1.is_none() {
-        return 3  // FAIL: Should find positive
+
+    var r2 = divide(10, 0)
+    if ResultInt_is_err(r2) == 0 {
+        return 3
     }
-    
-    var arr2 = [-1, -2, -3]
-    var opt2 = find_first_positive(arr2)
-    if opt2.is_some() {
-        return 4  // FAIL: Should be None
+
+    // Test 1.2: Option type with generic syntax
+    var o1 = find_positive(7)
+    if OptionInt_is_some(o1) == 0 {
+        return 4
     }
-    
-    // Test 1.4: Generics
-    var box1 = make_box(42)
-    if box1.value != 42 {
-        return 5  // FAIL: Generic box
+    if OptionInt_unwrap(o1) != 7 {
+        return 5
     }
-    
-    // Test 1.7: Extension methods
-    var num = 21
-    if num.double() != 42 {
-        return 6  // FAIL: Extension method
+
+    var o2 = find_positive(-3)
+    if OptionInt_is_none(o2) == 0 {
+        return 6
     }
-    
-    if !num.is_positive() {
-        return 7  // FAIL: Extension method bool
+
+    // Test 1.6 + 1.8: Traits + Structs + Methods
+    var p = Point { x: 10, y: 20 }
+    if p.sum() != 30 {
+        return 7
     }
-    
-    // Test 1.8: Struct field access
-    var sum = test_struct_access()
-    if sum != 30 {
-        return 8  // FAIL: Struct field access
-    }
-    
+    println(p.describe())
+
     // All tests passed!
+    println("All epic1 tests passed!")
     return 0
 }

@@ -4182,13 +4182,29 @@ void check_program(Program* prog) {
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             fn_type->fn_type.return_type = make_type(TYPE_SET);
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
-                            fn_type->fn_type.return_type = builtin_int; // Simplified
-                        } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
-                            // Check if it's an enum type
-                            Symbol* type_symbol = find_symbol(global_scope, type_name);
-                            if (type_symbol && type_symbol->type) {
-                                fn_type->fn_type.return_type = type_symbol->type;
+                            // Resolve Option<int> -> OptionInt, Option<string> -> OptionString
+                            Token concrete = {TOKEN_IDENT, "OptionInt", 9, 0};
+                            if (fn->return_type->call.arg_count > 0 &&
+                                fn->return_type->call.args[0]->type == EXPR_IDENT) {
+                                Token inner = fn->return_type->call.args[0]->token;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0) {
+                                    concrete = (Token){TOKEN_IDENT, "OptionString", 12, 0};
+                                }
                             }
+                            Symbol* sym = find_symbol(global_scope, concrete);
+                            fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
+                        } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
+                            // Resolve Result<int, string> -> ResultInt, Result<string, string> -> ResultString
+                            Token concrete = {TOKEN_IDENT, "ResultInt", 9, 0};
+                            if (fn->return_type->call.arg_count > 0 &&
+                                fn->return_type->call.args[0]->type == EXPR_IDENT) {
+                                Token inner = fn->return_type->call.args[0]->token;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0) {
+                                    concrete = (Token){TOKEN_IDENT, "ResultString", 12, 0};
+                                }
+                            }
+                            Symbol* sym = find_symbol(global_scope, concrete);
+                            fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
                         }
                     }
                 } else if (fn->return_type->type == EXPR_ARRAY) {
@@ -4352,9 +4368,25 @@ void check_program(Program* prog) {
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             current_function_return_type = make_type(TYPE_SET);
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
-                            current_function_return_type = make_type(TYPE_OPTIONAL);
+                            Token concrete = {TOKEN_IDENT, "OptionInt", 9, 0};
+                            if (fn->return_type->call.arg_count > 0 &&
+                                fn->return_type->call.args[0]->type == EXPR_IDENT &&
+                                fn->return_type->call.args[0]->token.length == 6 &&
+                                memcmp(fn->return_type->call.args[0]->token.start, "string", 6) == 0) {
+                                concrete = (Token){TOKEN_IDENT, "OptionString", 12, 0};
+                            }
+                            Symbol* sym = find_symbol(global_scope, concrete);
+                            current_function_return_type = sym ? sym->type : make_type(TYPE_OPTIONAL);
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
-                            current_function_return_type = make_type(TYPE_RESULT);
+                            Token concrete = {TOKEN_IDENT, "ResultInt", 9, 0};
+                            if (fn->return_type->call.arg_count > 0 &&
+                                fn->return_type->call.args[0]->type == EXPR_IDENT &&
+                                fn->return_type->call.args[0]->token.length == 6 &&
+                                memcmp(fn->return_type->call.args[0]->token.start, "string", 6) == 0) {
+                                concrete = (Token){TOKEN_IDENT, "ResultString", 12, 0};
+                            }
+                            Symbol* sym = find_symbol(global_scope, concrete);
+                            current_function_return_type = sym ? sym->type : make_type(TYPE_RESULT);
                         }
                     }
                 } else if (fn->return_type->type == EXPR_ARRAY) {

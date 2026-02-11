@@ -1,0 +1,36 @@
+// TDD: Generic Result/Option syntax as return types
+// This is the test that needs to pass for 100% test suite
+
+fn divide(a: int, b: int) -> Result<int, string> {
+    if b == 0 {
+        return Err("Division by zero")
+    }
+    return Ok(a / b)
+}
+
+fn find_positive(x: int) -> Option<int> {
+    if x > 0 {
+        return Some(x)
+    }
+    return None()
+}
+
+fn main() -> int {
+    // Test Result<int, string>
+    var r1 = divide(10, 2)
+    println(ResultInt_is_ok(r1))
+    println(ResultInt_unwrap(r1))
+
+    var r2 = divide(10, 0)
+    println(ResultInt_is_err(r2))
+
+    // Test Option<int>
+    var o1 = find_positive(5)
+    println(OptionInt_is_some(o1))
+    println(OptionInt_unwrap(o1))
+
+    var o2 = find_positive(-3)
+    println(OptionInt_is_none(o2))
+
+    return 0
+}

@@ -56,10 +56,11 @@ fn main() -> int {
         "tests/validation/test_path_stdlib.wyn",
         "tests/validation/test_string_stdlib.wyn",
         "tests/validation/test_json_module.wyn",
-        "tests/validation/test_runtime_extraction.wyn"
+        "tests/validation/test_runtime_extraction.wyn",
+        "tests/validation/test_generic_syntax.wyn"
     ]
 
-    for i in 0..32 {
+    for i in 0..33 {
         var path = tests[i]
         var result = run_test(path)
         if result == 1 {
