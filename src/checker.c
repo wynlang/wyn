@@ -801,6 +801,164 @@ void init_checker() {
     result_string_unwrap_err_type->fn_type.return_type = builtin_string;
     Token result_string_unwrap_err_tok = {TOKEN_IDENT, "ResultString_unwrap_err", 23, 0};
     add_symbol(global_scope, result_string_unwrap_err_tok, result_string_unwrap_err_type, false);
+
+    // OptionInt type and functions
+    Type* option_int_type = make_type(TYPE_STRUCT);
+    Token option_int_name = {TOKEN_IDENT, "OptionInt", 9, 0};
+    option_int_type->struct_type.name = option_int_name;
+    add_symbol(global_scope, option_int_name, option_int_type, false);
+
+    Type* oi_some_t = make_type(TYPE_FUNCTION);
+    oi_some_t->fn_type.param_count = 1;
+    oi_some_t->fn_type.param_types = malloc(sizeof(Type*));
+    oi_some_t->fn_type.param_types[0] = builtin_int;
+    oi_some_t->fn_type.return_type = option_int_type;
+    Token oi_some_tok = {TOKEN_IDENT, "OptionInt_Some", 14, 0};
+    add_symbol(global_scope, oi_some_tok, oi_some_t, false);
+
+    Type* oi_none_t = make_type(TYPE_FUNCTION);
+    oi_none_t->fn_type.param_count = 0;
+    oi_none_t->fn_type.param_types = NULL;
+    oi_none_t->fn_type.return_type = option_int_type;
+    Token oi_none_tok = {TOKEN_IDENT, "OptionInt_None", 14, 0};
+    add_symbol(global_scope, oi_none_tok, oi_none_t, false);
+
+    Type* oi_is_some_t = make_type(TYPE_FUNCTION);
+    oi_is_some_t->fn_type.param_count = 1;
+    oi_is_some_t->fn_type.param_types = malloc(sizeof(Type*));
+    oi_is_some_t->fn_type.param_types[0] = option_int_type;
+    oi_is_some_t->fn_type.return_type = builtin_int;
+    Token oi_is_some_tok = {TOKEN_IDENT, "OptionInt_is_some", 17, 0};
+    add_symbol(global_scope, oi_is_some_tok, oi_is_some_t, false);
+
+    Type* oi_is_none_t = make_type(TYPE_FUNCTION);
+    oi_is_none_t->fn_type.param_count = 1;
+    oi_is_none_t->fn_type.param_types = malloc(sizeof(Type*));
+    oi_is_none_t->fn_type.param_types[0] = option_int_type;
+    oi_is_none_t->fn_type.return_type = builtin_int;
+    Token oi_is_none_tok = {TOKEN_IDENT, "OptionInt_is_none", 17, 0};
+    add_symbol(global_scope, oi_is_none_tok, oi_is_none_t, false);
+
+    Type* oi_unwrap_t = make_type(TYPE_FUNCTION);
+    oi_unwrap_t->fn_type.param_count = 1;
+    oi_unwrap_t->fn_type.param_types = malloc(sizeof(Type*));
+    oi_unwrap_t->fn_type.param_types[0] = option_int_type;
+    oi_unwrap_t->fn_type.return_type = builtin_int;
+    Token oi_unwrap_tok = {TOKEN_IDENT, "OptionInt_unwrap", 16, 0};
+    add_symbol(global_scope, oi_unwrap_tok, oi_unwrap_t, false);
+
+    Type* oi_unwrap_or_t = make_type(TYPE_FUNCTION);
+    oi_unwrap_or_t->fn_type.param_count = 2;
+    oi_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
+    oi_unwrap_or_t->fn_type.param_types[0] = option_int_type;
+    oi_unwrap_or_t->fn_type.param_types[1] = builtin_int;
+    oi_unwrap_or_t->fn_type.return_type = builtin_int;
+    Token oi_unwrap_or_tok = {TOKEN_IDENT, "OptionInt_unwrap_or", 19, 0};
+    add_symbol(global_scope, oi_unwrap_or_tok, oi_unwrap_or_t, false);
+
+    // OptionString type and functions
+    Type* option_string_type = make_type(TYPE_STRUCT);
+    Token option_string_name = {TOKEN_IDENT, "OptionString", 12, 0};
+    option_string_type->struct_type.name = option_string_name;
+    add_symbol(global_scope, option_string_name, option_string_type, false);
+
+    Type* os_some_t = make_type(TYPE_FUNCTION);
+    os_some_t->fn_type.param_count = 1;
+    os_some_t->fn_type.param_types = malloc(sizeof(Type*));
+    os_some_t->fn_type.param_types[0] = builtin_string;
+    os_some_t->fn_type.return_type = option_string_type;
+    Token os_some_tok = {TOKEN_IDENT, "OptionString_Some", 17, 0};
+    add_symbol(global_scope, os_some_tok, os_some_t, false);
+
+    Type* os_none_t = make_type(TYPE_FUNCTION);
+    os_none_t->fn_type.param_count = 0;
+    os_none_t->fn_type.param_types = NULL;
+    os_none_t->fn_type.return_type = option_string_type;
+    Token os_none_tok = {TOKEN_IDENT, "OptionString_None", 17, 0};
+    add_symbol(global_scope, os_none_tok, os_none_t, false);
+
+    Type* os_is_some_t = make_type(TYPE_FUNCTION);
+    os_is_some_t->fn_type.param_count = 1;
+    os_is_some_t->fn_type.param_types = malloc(sizeof(Type*));
+    os_is_some_t->fn_type.param_types[0] = option_string_type;
+    os_is_some_t->fn_type.return_type = builtin_int;
+    Token os_is_some_tok = {TOKEN_IDENT, "OptionString_is_some", 20, 0};
+    add_symbol(global_scope, os_is_some_tok, os_is_some_t, false);
+
+    Type* os_is_none_t = make_type(TYPE_FUNCTION);
+    os_is_none_t->fn_type.param_count = 1;
+    os_is_none_t->fn_type.param_types = malloc(sizeof(Type*));
+    os_is_none_t->fn_type.param_types[0] = option_string_type;
+    os_is_none_t->fn_type.return_type = builtin_int;
+    Token os_is_none_tok = {TOKEN_IDENT, "OptionString_is_none", 20, 0};
+    add_symbol(global_scope, os_is_none_tok, os_is_none_t, false);
+
+    Type* os_unwrap_t = make_type(TYPE_FUNCTION);
+    os_unwrap_t->fn_type.param_count = 1;
+    os_unwrap_t->fn_type.param_types = malloc(sizeof(Type*));
+    os_unwrap_t->fn_type.param_types[0] = option_string_type;
+    os_unwrap_t->fn_type.return_type = builtin_string;
+    Token os_unwrap_tok = {TOKEN_IDENT, "OptionString_unwrap", 19, 0};
+    add_symbol(global_scope, os_unwrap_tok, os_unwrap_t, false);
+
+    Type* os_unwrap_or_t = make_type(TYPE_FUNCTION);
+    os_unwrap_or_t->fn_type.param_count = 2;
+    os_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
+    os_unwrap_or_t->fn_type.param_types[0] = option_string_type;
+    os_unwrap_or_t->fn_type.param_types[1] = builtin_string;
+    os_unwrap_or_t->fn_type.return_type = builtin_string;
+    Token os_unwrap_or_tok = {TOKEN_IDENT, "OptionString_unwrap_or", 22, 0};
+    add_symbol(global_scope, os_unwrap_or_tok, os_unwrap_or_t, false);
+
+    // System functions
+    Type* sys_exec_t = make_type(TYPE_FUNCTION);
+    sys_exec_t->fn_type.param_count = 1;
+    sys_exec_t->fn_type.param_types = malloc(sizeof(Type*));
+    sys_exec_t->fn_type.param_types[0] = builtin_string;
+    sys_exec_t->fn_type.return_type = builtin_string;
+    Token sys_exec_tok = {TOKEN_IDENT, "System_exec", 11, 0};
+    add_symbol(global_scope, sys_exec_tok, sys_exec_t, false);
+
+    Type* sys_exec_code_t = make_type(TYPE_FUNCTION);
+    sys_exec_code_t->fn_type.param_count = 1;
+    sys_exec_code_t->fn_type.param_types = malloc(sizeof(Type*));
+    sys_exec_code_t->fn_type.param_types[0] = builtin_string;
+    sys_exec_code_t->fn_type.return_type = builtin_int;
+    Token sys_exec_code_tok = {TOKEN_IDENT, "System_exec_code", 16, 0};
+    add_symbol(global_scope, sys_exec_code_tok, sys_exec_code_t, false);
+
+    Type* sys_exit_t = make_type(TYPE_FUNCTION);
+    sys_exit_t->fn_type.param_count = 1;
+    sys_exit_t->fn_type.param_types = malloc(sizeof(Type*));
+    sys_exit_t->fn_type.param_types[0] = builtin_int;
+    sys_exit_t->fn_type.return_type = builtin_void;
+    Token sys_exit_tok = {TOKEN_IDENT, "System_exit", 11, 0};
+    add_symbol(global_scope, sys_exit_tok, sys_exit_t, false);
+
+    Type* sys_env_t = make_type(TYPE_FUNCTION);
+    sys_env_t->fn_type.param_count = 1;
+    sys_env_t->fn_type.param_types = malloc(sizeof(Type*));
+    sys_env_t->fn_type.param_types[0] = builtin_string;
+    sys_env_t->fn_type.return_type = builtin_string;
+    Token sys_env_tok = {TOKEN_IDENT, "System_env", 10, 0};
+    add_symbol(global_scope, sys_env_tok, sys_env_t, false);
+
+    // Conversion functions
+    Type* itos_t = make_type(TYPE_FUNCTION);
+    itos_t->fn_type.param_count = 1;
+    itos_t->fn_type.param_types = malloc(sizeof(Type*));
+    itos_t->fn_type.param_types[0] = builtin_int;
+    itos_t->fn_type.return_type = builtin_string;
+    Token itos_tok = {TOKEN_IDENT, "int_to_string", 13, 0};
+    add_symbol(global_scope, itos_tok, itos_t, false);
+
+    Type* ftos_t = make_type(TYPE_FUNCTION);
+    ftos_t->fn_type.param_count = 1;
+    ftos_t->fn_type.param_types = malloc(sizeof(Type*));
+    ftos_t->fn_type.param_types[0] = builtin_float;
+    ftos_t->fn_type.return_type = builtin_string;
+    Token ftos_tok = {TOKEN_IDENT, "float_to_string", 15, 0};
+    add_symbol(global_scope, ftos_tok, ftos_t, false);
 }
 
 Symbol* find_symbol(SymbolTable* scope, Token name) {
@@ -1821,6 +1979,24 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
             }
             
+            // Look up user-defined extension methods: Type_method in symbol table
+            if (object_type && object_type->kind == TYPE_STRUCT) {
+                Token type_name = object_type->struct_type.name;
+                char ext_fn_name[256];
+                snprintf(ext_fn_name, sizeof(ext_fn_name), "%.*s_%.*s",
+                        type_name.length, type_name.start,
+                        (int)method.length, method.start);
+                Token ext_tok = {TOKEN_IDENT, ext_fn_name, (int)strlen(ext_fn_name), 0};
+                Symbol* ext_sym = find_symbol(global_scope, ext_tok);
+                if (ext_sym && ext_sym->type && ext_sym->type->kind == TYPE_FUNCTION) {
+                    Type* ret = ext_sym->type->fn_type.return_type;
+                    if (ret) {
+                        expr->expr_type = ret;
+                        return ret;
+                    }
+                }
+            }
+
             // Fallback to int
             expr->expr_type = builtin_int;
             return builtin_int;
@@ -2227,34 +2403,36 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return union_type;
         }
         case EXPR_OK: {
-            // TASK-026: Ok(value) expression - creates Result type
             if (!expr->option.value) {
                 fprintf(stderr, "Error: Ok() requires a value\n");
                 had_error = true;
                 return NULL;
             }
-            
             Type* value_type = check_expr(expr->option.value, scope);
             if (!value_type) return NULL;
-            
-            // Create Result<T, String> type (default error type is string)
-            Type* result_type = make_result_type(value_type, builtin_string);
+            // Resolve to concrete ResultInt or ResultString
+            Token concrete_name;
+            if (value_type == builtin_string) {
+                concrete_name = (Token){TOKEN_IDENT, "ResultString", 12, 0};
+            } else {
+                concrete_name = (Token){TOKEN_IDENT, "ResultInt", 9, 0};
+            }
+            Symbol* sym = find_symbol(global_scope, concrete_name);
+            Type* result_type = sym ? sym->type : make_result_type(value_type, builtin_string);
             expr->expr_type = result_type;
             return result_type;
         }
         case EXPR_ERR: {
-            // TASK-026: Err(error) expression - creates Result type
             if (!expr->option.value) {
                 fprintf(stderr, "Error: Err() requires an error value\n");
                 had_error = true;
                 return NULL;
             }
-            
-            Type* error_type = check_expr(expr->option.value, scope);
-            if (!error_type) return NULL;
-            
-            // Create Result<void, E> type (default success type is void for errors)
-            Type* result_type = make_result_type(builtin_void, error_type);
+            check_expr(expr->option.value, scope);
+            // Default to ResultInt (Err always takes string, result type from context)
+            Token concrete_name = {TOKEN_IDENT, "ResultInt", 9, 0};
+            Symbol* sym = find_symbol(global_scope, concrete_name);
+            Type* result_type = sym ? sym->type : make_result_type(builtin_void, builtin_string);
             expr->expr_type = result_type;
             return result_type;
         }
@@ -2289,30 +2467,31 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return result_type;
         }
         case EXPR_SOME: {
-            // T2.5.1: Some(value) expression - creates optional type
             if (!expr->option.value) {
                 fprintf(stderr, "Error: Some() requires a value\n");
                 had_error = true;
                 return NULL;
             }
-            
             Type* inner_type = check_expr(expr->option.value, scope);
             if (!inner_type) return NULL;
-            
-            // Create optional type containing the inner type
-            Type* optional_type = make_type(TYPE_OPTIONAL);
-            optional_type->optional_type.inner_type = inner_type;
-            expr->expr_type = optional_type;
-            return optional_type;
+            Token concrete_name;
+            if (inner_type == builtin_string) {
+                concrete_name = (Token){TOKEN_IDENT, "OptionString", 12, 0};
+            } else {
+                concrete_name = (Token){TOKEN_IDENT, "OptionInt", 9, 0};
+            }
+            Symbol* sym = find_symbol(global_scope, concrete_name);
+            Type* opt_type = sym ? sym->type : make_type(TYPE_OPTIONAL);
+            expr->expr_type = opt_type;
+            return opt_type;
         }
         case EXPR_NONE: {
-            // T2.5.1: None expression - creates empty optional type
-            // For now, create a generic optional type - in a full implementation,
-            // this would be inferred from context
-            Type* optional_type = make_type(TYPE_OPTIONAL);
-            optional_type->optional_type.inner_type = builtin_void; // Generic None
-            expr->expr_type = optional_type;
-            return optional_type;
+            // Default to OptionInt - context would refine this
+            Token concrete_name = {TOKEN_IDENT, "OptionInt", 9, 0};
+            Symbol* sym = find_symbol(global_scope, concrete_name);
+            Type* opt_type = sym ? sym->type : make_type(TYPE_OPTIONAL);
+            expr->expr_type = opt_type;
+            return opt_type;
         }
         case EXPR_UNARY: {
             // Type-check unary expressions (!, -, etc.)
@@ -2571,7 +2750,12 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 if (current_function_return_type && return_expr_type) {
                     // Skip type checking for Result types (allows implicit conversion)
                     if (return_expr_type->kind == TYPE_RESULT) {
-                        // Allow returning Result from any function
+                        break;
+                    }
+                    // Allow returning concrete Result/Option structs from generic-typed functions
+                    if ((current_function_return_type->kind == TYPE_RESULT ||
+                         current_function_return_type->kind == TYPE_OPTIONAL) &&
+                        return_expr_type->kind == TYPE_STRUCT) {
                         break;
                     }
                     // Allow int/bool interchangeability (comparisons return int but work as bool)

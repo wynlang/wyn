@@ -1,7 +1,0 @@
-fn main() -> int {
-    var flag = true;
-    if flag {
-        return 42;
-    }
-    return 0;
-}

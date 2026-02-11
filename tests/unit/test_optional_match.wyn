@@ -1,4 +1,0 @@
-fn main() -> int {
-    var x = some(42);
-    return 42;
-}

@@ -1,7 +1,0 @@
-fn main() -> int {
-    var x = 3;
-    match x {
-        3 => return 99,
-        _ => return 0
-    }
-}

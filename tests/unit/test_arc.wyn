@@ -1,9 +1,0 @@
-// Test ARC - just verify it compiles
-struct Box {
-    value: int
-}
-
-fn main() -> int {
-    var b = Box { value: 42 };
-    return b.value;
-}

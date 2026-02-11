@@ -1,0 +1,38 @@
+// TDD: Generic Result/Option syntax
+// Tests Ok/Err/Some/None keywords with explicit type names
+
+fn divide(a: int, b: int) -> ResultInt {
+    if b == 0 {
+        return Err("division by zero")
+    }
+    return Ok(a / b)
+}
+
+fn find_even(x: int) -> OptionInt {
+    if x % 2 == 0 {
+        return Some(x)
+    }
+    return None()
+}
+
+fn main() -> int {
+    // Test 1: Result with Ok
+    var r1 = divide(10, 2)
+    println(ResultInt_is_ok(r1))
+    println(ResultInt_unwrap(r1))
+
+    // Test 2: Result with Err
+    var r2 = divide(10, 0)
+    println(ResultInt_is_err(r2))
+
+    // Test 3: Option with Some
+    var o1 = find_even(4)
+    println(OptionInt_is_some(o1))
+    println(OptionInt_unwrap(o1))
+
+    // Test 4: Option with None
+    var o2 = find_even(3)
+    println(OptionInt_is_none(o2))
+
+    return 0
+}

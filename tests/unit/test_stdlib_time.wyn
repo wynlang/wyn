@@ -1,9 +1,0 @@
-// Test time module
-fn now() -> int { return 1705147200; }
-fn year() -> int { return 2026; }
-
-fn main() -> int {
-    var timestamp = now();
-    var y = year();
-    return y - 2000;  // Should return 26
-}

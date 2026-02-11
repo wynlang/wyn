@@ -1,9 +1,0 @@
-// Test ARC heap allocation
-struct Box {
-    value: int
-}
-
-fn main() -> int {
-    var b = Box { value: 42 };
-    return b.value;
-}

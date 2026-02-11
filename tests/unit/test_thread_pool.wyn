@@ -1,7 +1,0 @@
-fn main() -> int {
-    pool_add_task("echo test1");
-    pool_add_task("echo test2");
-    pool_start(2);
-    var failures = pool_wait();
-    return failures;
-}

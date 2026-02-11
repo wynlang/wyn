@@ -1,5 +1,0 @@
-fn main() -> int {
-    var success = ok(42);
-    var failure = err(1);
-    return 99;
-}

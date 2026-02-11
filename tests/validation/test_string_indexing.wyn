@@ -1,0 +1,22 @@
+// TDD: String indexing regression test
+// Tests str[i] to get character at index
+
+fn main() -> int {
+    var s = "hello"
+
+    // Test 1: basic indexing
+    println(s[0])
+    println(s[1])
+    println(s[4])
+
+    // Test 2: use in expressions
+    var first = s[0]
+    println(first)
+
+    // Test 3: string length with indexing
+    var word = "Wyn"
+    println(word[0])
+    println(word[2])
+
+    return 0
+}

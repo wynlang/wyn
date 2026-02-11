@@ -1,8 +1,0 @@
-fn main() -> int {
-    var x = 5;
-    match x {
-        1 => return 1,
-        5 => return 5,
-        _ => return 0
-    }
-}

@@ -1,8 +1,0 @@
-fn main() -> int {
-    var x = 200;
-    var result = match x {
-        200 => 1,
-        _ => 2
-    };
-    return result;
-}

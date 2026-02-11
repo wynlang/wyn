@@ -1,1 +1,0 @@
-fn main() -> int { var map = wyn_hashmap_new(); print(map); print("\n"); return 0; }

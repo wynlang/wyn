@@ -1,4 +1,0 @@
-fn main() -> int {
-    print("Works\n")
-    return 0
-}

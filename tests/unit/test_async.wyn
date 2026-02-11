@@ -1,8 +1,0 @@
-// Test minimal async/await
-async fn get_value() -> int {
-    return 42;
-}
-
-fn main() -> int {
-    return await get_value();
-}

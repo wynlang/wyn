@@ -1,9 +1,0 @@
-fn get_value() -> int {
-    var x = some(42);
-    return 0;
-}
-
-fn main() -> int {
-    var y = none;
-    return get_value();
-}

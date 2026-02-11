@@ -7,7 +7,6 @@
 #include "memory.h"
 #include "security.h"
 #include "platform.h"
-#include "llvm_codegen.h"
 #include "optimize.h"
 #include "module.h"
 #include "commands.h"
@@ -759,14 +758,26 @@ int main(int argc, char** argv) {
         
         char compile_cmd[4096];
         snprintf(compile_cmd, sizeof(compile_cmd), 
-                 "gcc -std=c11 -O2 -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s/runtime/libwyn_runtime.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm", 
+                 "gcc -std=c11 -O2 -w -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s/runtime/libwyn_runtime.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm 2>/tmp/wyn_cc_err.txt", 
                  wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
         int result = system(compile_cmd);
         
         if (result != 0) {
-            fprintf(stderr, "C compilation failed\n");
+            fprintf(stderr, "Error: compilation failed (internal codegen error)\n");
+            fprintf(stderr, "Run with WYN_DEBUG=1 for details\n");
+            if (getenv("WYN_DEBUG")) {
+                // Show raw C compiler output only in debug mode
+                FILE* err_file = fopen("/tmp/wyn_cc_err.txt", "r");
+                if (err_file) {
+                    char line[1024];
+                    while (fgets(line, sizeof(line), err_file)) {
+                        fprintf(stderr, "  %s", line);
+                    }
+                    fclose(err_file);
+                }
+            }
             free(source);
-            return result;
+            return 1;
         }
         
         char run_cmd[512];

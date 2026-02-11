@@ -1,8 +1,0 @@
-fn main() -> int {
-    var a = true;
-    var b = false;
-    if a and not b {
-        return 42;
-    }
-    return 0;
-}

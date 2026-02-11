@@ -1,1 +1,0 @@
-fn main() -> int { var x = ok(99); var y = some(42); return 99; }

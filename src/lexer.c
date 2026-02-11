@@ -112,7 +112,7 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 5 && memcmp(start, "catch", 5) == 0) return TOKEN_CATCH;
             break;
         case 'E':
-            // Removed TOKEN_ERR - let Err be a regular identifier for enum variants
+            // Err is a regular identifier (can be enum variant)
             break;
         case 'e':
             if (length == 4 && memcmp(start, "else", 4) == 0) return TOKEN_ELSE;
@@ -151,9 +151,10 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 4 && memcmp(start, "null", 4) == 0) return TOKEN_NULL;
             break;
         case 'N':
+            if (length == 4 && memcmp(start, "None", 4) == 0) return TOKEN_NONE;
             break;
         case 'O':
-            // Removed TOKEN_OK - let Ok be a regular identifier for enum variants
+            // Ok is a regular identifier (can be enum variant)
             break;
         case 'o': 
             if (length == 2 && memcmp(start, "or", 2) == 0) return TOKEN_OR;
@@ -171,6 +172,7 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 4 && memcmp(start, "self", 4) == 0) return TOKEN_SELF;
             break;
         case 'S':
+            if (length == 4 && memcmp(start, "Some", 4) == 0) return TOKEN_SOME;
             break;
         case 't':
             if (length == 4 && memcmp(start, "true", 4) == 0) return TOKEN_TRUE;

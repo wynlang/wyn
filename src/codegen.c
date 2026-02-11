@@ -89,6 +89,10 @@ static int current_param_count = 0;
 static char* current_function_locals[256];
 static int current_local_count = 0;
 
+// Track current function return type for Ok/Err/Some/None resolution
+// Values: "ResultInt", "ResultString", "OptionInt", "OptionString", or NULL
+static const char* current_fn_return_kind = NULL;
+
 static void register_module_function(const char* name) {
     if (module_function_count < 256) {
         module_functions[module_function_count++] = strdup(name);
@@ -2180,41 +2184,41 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_SOME: {
-            // Generate Some constructor using generic some() function
-            if (expr->option.value) {
-                emit("some(");
-                codegen_expr(expr->option.value);
-                emit(")");
+            if (current_fn_return_kind && strncmp(current_fn_return_kind, "Option", 6) == 0) {
+                emit("%s_Some(", current_fn_return_kind);
             } else {
-                emit("wyn_none()");
+                emit("OptionInt_Some(");
             }
+            if (expr->option.value) codegen_expr(expr->option.value);
+            emit(")");
             break;
         }
         case EXPR_NONE: {
-            // Generate None constructor
-            emit("wyn_none()");
+            if (current_fn_return_kind && strncmp(current_fn_return_kind, "Option", 6) == 0) {
+                emit("%s_None()", current_fn_return_kind);
+            } else {
+                emit("OptionInt_None()");
+            }
             break;
         }
         case EXPR_OK: {
-            // Generate Ok value using ok_int() constructor
-            if (expr->option.value) {
-                emit("ok_int(");
-                codegen_expr(expr->option.value);
-                emit(")");
+            if (current_fn_return_kind && strncmp(current_fn_return_kind, "Result", 6) == 0) {
+                emit("%s_Ok(", current_fn_return_kind);
             } else {
-                emit("ok_void()");
+                emit("ResultInt_Ok(");
             }
+            if (expr->option.value) codegen_expr(expr->option.value);
+            emit(")");
             break;
         }
         case EXPR_ERR: {
-            // Generate Err value using err_int() constructor
-            if (expr->option.value) {
-                emit("err_int(");
-                codegen_expr(expr->option.value);
-                emit(")");
+            if (current_fn_return_kind && strncmp(current_fn_return_kind, "Result", 6) == 0) {
+                emit("%s_Err(", current_fn_return_kind);
             } else {
-                emit("err_int(0)");
+                emit("ResultInt_Err(");
             }
+            if (expr->option.value) codegen_expr(expr->option.value);
+            emit(")");
             break;
         }
         case EXPR_TRY: {
@@ -4667,6 +4671,24 @@ void codegen_c_header() {
     emit("int ResultString_is_err(ResultString r) { return r.tag == 1; }\n");
     emit("const char* ResultString_unwrap(ResultString r) { if (r.tag == 1) { fprintf(stderr, \"Error: unwrap() called on Err: %%s\\n\", r.data.err_value); exit(1); } return r.data.ok_value; }\n");
     emit("const char* ResultString_unwrap_err(ResultString r) { if (r.tag == 0) { fprintf(stderr, \"Error: unwrap_err() called on Ok\\n\"); exit(1); } return r.data.err_value; }\n\n");
+
+    // OptionInt
+    emit("typedef struct { int tag; int value; } OptionInt;\n");
+    emit("OptionInt OptionInt_Some(int value) { OptionInt o; o.tag = 1; o.value = value; return o; }\n");
+    emit("OptionInt OptionInt_None() { OptionInt o; o.tag = 0; o.value = 0; return o; }\n");
+    emit("int OptionInt_is_some(OptionInt o) { return o.tag == 1; }\n");
+    emit("int OptionInt_is_none(OptionInt o) { return o.tag == 0; }\n");
+    emit("int OptionInt_unwrap(OptionInt o) { if (o.tag == 0) { fprintf(stderr, \"Error: unwrap() called on None\\n\"); exit(1); } return o.value; }\n");
+    emit("int OptionInt_unwrap_or(OptionInt o, int def) { return o.tag == 1 ? o.value : def; }\n\n");
+
+    // OptionString
+    emit("typedef struct { int tag; const char* value; } OptionString;\n");
+    emit("OptionString OptionString_Some(const char* value) { OptionString o; o.tag = 1; o.value = value; return o; }\n");
+    emit("OptionString OptionString_None() { OptionString o; o.tag = 0; o.value = NULL; return o; }\n");
+    emit("int OptionString_is_some(OptionString o) { return o.tag == 1; }\n");
+    emit("int OptionString_is_none(OptionString o) { return o.tag == 0; }\n");
+    emit("const char* OptionString_unwrap(OptionString o) { if (o.tag == 0) { fprintf(stderr, \"Error: unwrap() called on None\\n\"); exit(1); } return o.value; }\n");
+    emit("const char* OptionString_unwrap_or(OptionString o, const char* def) { return o.tag == 1 ? o.value : def; }\n\n");
 }
 
 // Track async function context
@@ -4930,6 +4952,13 @@ void codegen_stmt(Stmt* stmt) {
                             case TYPE_JSON:
                                 c_type = "WynJson*";
                                 break;
+                            case TYPE_STRUCT: {
+                                static char method_struct_buf[256];
+                                Token sn = stmt->var.init->expr_type->struct_type.name;
+                                snprintf(method_struct_buf, sizeof(method_struct_buf), "%.*s", sn.length, sn.start);
+                                c_type = method_struct_buf;
+                                break;
+                            }
                             default:
                                 c_type = "int";
                         }
@@ -5400,7 +5429,7 @@ void codegen_stmt(Stmt* stmt) {
             
             if (stmt->fn.return_type) {
                 if (stmt->fn.return_type->type == EXPR_CALL) {
-                    // Generic type instantiation: HashMap<K,V>, Option<T>, etc.
+                    // Generic type instantiation: HashMap<K,V>, Option<T>, Result<T,E>
                     if (stmt->fn.return_type->call.callee->type == EXPR_IDENT) {
                         Token type_name = stmt->fn.return_type->call.callee->token;
                         if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
@@ -5408,9 +5437,25 @@ void codegen_stmt(Stmt* stmt) {
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             return_type = "WynHashSet*";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
-                            return_type = "WynOptional*";
+                            if (stmt->fn.return_type->call.arg_count > 0 &&
+                                stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
+                                Token inner = stmt->fn.return_type->call.args[0]->token;
+                                if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)
+                                    return_type = "OptionInt";
+                                else if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                    return_type = "OptionString";
+                                else return_type = "OptionInt";
+                            } else return_type = "OptionInt";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
-                            return_type = "WynResult*";
+                            if (stmt->fn.return_type->call.arg_count > 0 &&
+                                stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
+                                Token inner = stmt->fn.return_type->call.args[0]->token;
+                                if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)
+                                    return_type = "ResultInt";
+                                else if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                    return_type = "ResultString";
+                                else return_type = "ResultInt";
+                            } else return_type = "ResultInt";
                         }
                     }
                 } else if (stmt->fn.return_type->type == EXPR_ARRAY) {
@@ -5549,6 +5594,44 @@ void codegen_stmt(Stmt* stmt) {
             emit(") {\n");
             push_scope();  // Track allocations in this function
             
+            // Set current function return kind for Ok/Err/Some/None resolution
+            const char* prev_fn_return_kind = current_fn_return_kind;
+            current_fn_return_kind = NULL;
+            if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_CALL &&
+                stmt->fn.return_type->call.callee->type == EXPR_IDENT) {
+                Token rt = stmt->fn.return_type->call.callee->token;
+                if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) {
+                    // Result<T, E> - check T to determine ResultInt or ResultString
+                    if (stmt->fn.return_type->call.arg_count > 0 &&
+                        stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
+                        Token inner = stmt->fn.return_type->call.args[0]->token;
+                        if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)
+                            current_fn_return_kind = "ResultInt";
+                        else if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                            current_fn_return_kind = "ResultString";
+                    }
+                } else if (rt.length == 6 && memcmp(rt.start, "Option", 6) == 0) {
+                    if (stmt->fn.return_type->call.arg_count > 0 &&
+                        stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
+                        Token inner = stmt->fn.return_type->call.args[0]->token;
+                        if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)
+                            current_fn_return_kind = "OptionInt";
+                        else if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                            current_fn_return_kind = "OptionString";
+                    }
+                }
+            } else if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_IDENT) {
+                Token rt = stmt->fn.return_type->token;
+                if (rt.length == 9 && memcmp(rt.start, "ResultInt", 9) == 0)
+                    current_fn_return_kind = "ResultInt";
+                else if (rt.length == 12 && memcmp(rt.start, "ResultString", 12) == 0)
+                    current_fn_return_kind = "ResultString";
+                else if (rt.length == 9 && memcmp(rt.start, "OptionInt", 9) == 0)
+                    current_fn_return_kind = "OptionInt";
+                else if (rt.length == 12 && memcmp(rt.start, "OptionString", 12) == 0)
+                    current_fn_return_kind = "OptionString";
+            }
+
             // For async functions, wrap the body in a future
             if (is_async) {
                 emit("    WynFuture* future = wyn_future_new();\n");
@@ -5565,9 +5648,16 @@ void codegen_stmt(Stmt* stmt) {
                 emit("    return future;\n");
             } else {
                 codegen_stmt(stmt->fn.body);
+                // Ensure main function always returns 0 if no explicit return
+                bool is_main = (stmt->fn.name.length == 4 && 
+                               memcmp(stmt->fn.name.start, "main", 4) == 0);
+                if (is_main && !stmt->fn.return_type) {
+                    emit("    return 0;\n");
+                }
             }
             
             pop_scope();   // Auto-cleanup before function end
+            current_fn_return_kind = prev_fn_return_kind;
             emit("}\n\n");
             break;
         }
@@ -7112,7 +7202,7 @@ void codegen_program(Program* prog) {
             
             if (fn->return_type) {
                 if (fn->return_type->type == EXPR_CALL) {
-                    // Generic type instantiation: HashMap<K,V>, Option<T>, etc.
+                    // Generic type instantiation: HashMap<K,V>, Option<T>, Result<T,E>
                     if (fn->return_type->call.callee->type == EXPR_IDENT) {
                         Token type_name = fn->return_type->call.callee->token;
                         if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
@@ -7120,9 +7210,27 @@ void codegen_program(Program* prog) {
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             return_type = "WynHashSet*";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
-                            return_type = "WynOptional*";
+                            // Resolve Option<int> -> OptionInt, Option<string> -> OptionString
+                            if (fn->return_type->call.arg_count > 0 &&
+                                fn->return_type->call.args[0]->type == EXPR_IDENT) {
+                                Token inner = fn->return_type->call.args[0]->token;
+                                if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)
+                                    return_type = "OptionInt";
+                                else if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                    return_type = "OptionString";
+                                else return_type = "OptionInt";
+                            } else return_type = "OptionInt";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
-                            return_type = "WynResult*";
+                            // Resolve Result<int, string> -> ResultInt, Result<string, string> -> ResultString
+                            if (fn->return_type->call.arg_count > 0 &&
+                                fn->return_type->call.args[0]->type == EXPR_IDENT) {
+                                Token inner = fn->return_type->call.args[0]->token;
+                                if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)
+                                    return_type = "ResultInt";
+                                else if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                    return_type = "ResultString";
+                                else return_type = "ResultInt";
+                            } else return_type = "ResultInt";
                         }
                     }
                 } else if (fn->return_type->type == EXPR_ARRAY) {
@@ -7182,7 +7290,13 @@ void codegen_program(Program* prog) {
                 char struct_type_name[256] = {0};
                 bool is_struct_type = false;
                 
-                if (fn->param_types[j]) {
+                // Extension method self parameter: use receiver type
+                if (fn->is_extension && j == 0 && !fn->param_types[j]) {
+                    snprintf(struct_type_name, sizeof(struct_type_name), "%.*s",
+                            fn->receiver_type.length, fn->receiver_type.start);
+                    param_type = struct_type_name;
+                    is_struct_type = true;
+                } else if (fn->param_types[j]) {
                     if (fn->param_types[j]->type == EXPR_FN_TYPE) {
                         // Function type: fn(T) -> R becomes function pointer
                         FnTypeExpr* fn_type = &fn->param_types[j]->fn_type;

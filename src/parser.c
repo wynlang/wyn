@@ -286,6 +286,14 @@ static Expr* primary() {
         return expr;
     }
     
+    // Treat 'self' as an identifier in expression context
+    if (match(TOKEN_SELF)) {
+        Expr* expr = alloc_expr();
+        expr->type = EXPR_IDENT;
+        expr->token = parser.previous;
+        return expr;
+    }
+
     if (match(TOKEN_IDENT)) {
         Token name = parser.previous;
         
@@ -889,6 +897,19 @@ static Expr* call() {
             }
             
             expect(TOKEN_RPAREN, "Expected ')' after arguments");
+            
+            // Convert Ok(x)/Err(x) calls to EXPR_OK/EXPR_ERR
+            if (call_expr->call.callee->type == EXPR_IDENT) {
+                Token fn_name = call_expr->call.callee->token;
+                if (fn_name.length == 2 && memcmp(fn_name.start, "Ok", 2) == 0 && call_expr->call.arg_count == 1) {
+                    call_expr->type = EXPR_OK;
+                    call_expr->option.value = call_expr->call.args[0];
+                } else if (fn_name.length == 3 && memcmp(fn_name.start, "Err", 3) == 0 && call_expr->call.arg_count == 1) {
+                    call_expr->type = EXPR_ERR;
+                    call_expr->option.value = call_expr->call.args[0];
+                }
+            }
+            
             expr = call_expr;
         } else if (match(TOKEN_LBRACKET)) {
             // Check if this is a slice (arr[1..3]) or index (arr[1])
@@ -1991,7 +2012,10 @@ Stmt* function() {
             }
             stmt->fn.param_mutable[stmt->fn.param_count] = match(TOKEN_MUT);
             stmt->fn.params[stmt->fn.param_count] = parser.current;
-            expect(TOKEN_IDENT, "Expected parameter name");
+            // Accept TOKEN_SELF as a valid parameter name (for extension methods)
+            if (!match(TOKEN_SELF)) {
+                expect(TOKEN_IDENT, "Expected parameter name");
+            }
             
             // Allow optional type for 'self' parameter (for impl blocks)
             bool is_self = (parser.previous.length == 4 && 
