@@ -1,0 +1,15 @@
+// TDD: str_split returns array, .len() works on result
+
+fn main() -> int {
+    var csv = "a,b,c,d,e"
+    var count = split_count(csv, ",")
+    println(count)
+
+    var first = split_get(csv, ",", 0)
+    println(first)
+
+    var last = split_get(csv, ",", 4)
+    println(last)
+
+    return 0
+}

@@ -28,6 +28,7 @@ static Type* builtin_void = NULL;
 static Type* builtin_array = NULL;
 static bool had_error = false;
 static Type* current_function_return_type = NULL;
+static Type* current_self_type = NULL; // receiver type for extension methods
 
 // Module visibility tracking
 static char current_module_name[256] = "";
@@ -1266,6 +1267,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             expr->expr_type = builtin_bool;
             return builtin_bool;
         case EXPR_IDENT: {
+            // Handle 'self' in extension methods
+            if (current_self_type && expr->token.length == 4 && 
+                memcmp(expr->token.start, "self", 4) == 0) {
+                expr->expr_type = current_self_type;
+                return current_self_type;
+            }
+            
             // Check for built-in Option/Result constants
             if (expr->token.length == 4 && memcmp(expr->token.start, "none", 4) == 0) {
                 expr->expr_type = builtin_int;  // Return type is pointer to Option
@@ -4518,8 +4526,15 @@ void check_program(Program* prog) {
                 register_function_visibility(current_module_name, func_name, fn->is_public);
             }
             
+            // Set self type for extension methods
+            if (fn->is_extension) {
+                Symbol* recv = find_symbol(global_scope, fn->receiver_type);
+                current_self_type = (recv && recv->type) ? recv->type : NULL;
+            }
+            
             check_stmt(fn->body, &local_scope);
-            current_function_return_type = NULL; // Reset after function
+            current_function_return_type = NULL;
+            current_self_type = NULL;
             free(local_scope.symbols);
         } else {
             check_stmt(prog->stmts[i], global_scope);
