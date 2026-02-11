@@ -1,0 +1,40 @@
+// Test: Spawn and Await (concurrency)
+// Verifies spawn/await with futures works correctly
+
+fn add(a: int, b: int) -> int {
+    return a + b
+}
+
+fn double_val(x: int) -> int {
+    return x * 2
+}
+
+fn fib(n: int) -> int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() -> int {
+    Test.init("Spawn and Await")
+    
+    // Basic spawn/await
+    var f1 = spawn add(10, 20)
+    var result = await f1
+    Test.assert_eq_int(result, 30, "spawn add(10,20) = 30")
+    
+    // Multiple spawns
+    var f2 = spawn double_val(21)
+    var f3 = spawn add(100, 200)
+    var r2 = await f2
+    var r3 = await f3
+    Test.assert_eq_int(r2, 42, "spawn double(21) = 42")
+    Test.assert_eq_int(r3, 300, "spawn add(100,200) = 300")
+    
+    // Spawn with computation
+    var f4 = spawn fib(10)
+    var r4 = await f4
+    Test.assert_eq_int(r4, 55, "spawn fib(10) = 55")
+    
+    Test.summary()
+    return 0
+}
