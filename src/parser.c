@@ -2504,7 +2504,10 @@ Stmt* trait_decl() {
                 do {
                     method->param_mutable[method->param_count] = false;
                     method->params[method->param_count] = parser.current;
-                    expect(TOKEN_IDENT, "Expected parameter name");
+                    // Accept TOKEN_SELF as parameter name (for trait methods)
+                    if (!match(TOKEN_SELF)) {
+                        expect(TOKEN_IDENT, "Expected parameter name");
+                    }
                     
                     // Handle optional type annotation
                     if (match(TOKEN_COLON)) {

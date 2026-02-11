@@ -1,0 +1,32 @@
+// TDD: Basic trait system
+// Tests trait definition, impl blocks, and trait method calls
+
+trait Display {
+    fn to_string(self) -> string
+}
+
+struct Point { x: int, y: int }
+
+impl Display for Point {
+    fn to_string(self) -> string {
+        return "Point(" + int_to_string(self.x) + ", " + int_to_string(self.y) + ")"
+    }
+}
+
+struct Color { r: int, g: int, b: int }
+
+impl Display for Color {
+    fn to_string(self) -> string {
+        return "Color(" + int_to_string(self.r) + "," + int_to_string(self.g) + "," + int_to_string(self.b) + ")"
+    }
+}
+
+fn main() -> int {
+    var p = Point { x: 10, y: 20 }
+    println(p.to_string())
+
+    var c = Color { r: 255, g: 128, b: 0 }
+    println(c.to_string())
+
+    return 0
+}
