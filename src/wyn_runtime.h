@@ -1672,6 +1672,7 @@ WynHashSet* HashSet_new() { return hashset_new(); }
 // Json namespace: Json.new() -> Json_new(), j.set_string() -> json_set_string()
 // Note: Json_get_string/Json_get_int defined in json_runtime.c
 WynJson* Json_new() { return json_new(); }
+void Json_set(WynJson* j, const char* k, const char* v) { json_set_string(j, k, v); }
 void Json_set_string(WynJson* j, const char* k, const char* v) { json_set_string(j, k, v); }
 void Json_set_int(WynJson* j, const char* k, int v) { json_set_int(j, k, v); }
 char* Json_stringify(WynJson* j) { return json_stringify(j); }
