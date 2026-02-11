@@ -345,7 +345,7 @@ void codegen_program(Program* prog) {
                 if (j > 0) emit(", ");
                 
                 // Determine parameter type
-                const char* param_type = "int"; // default
+                const char* param_type = "long long"; // default
                 char struct_type_name[256] = {0};
                 bool is_struct_type = false;
                 
@@ -392,7 +392,7 @@ void codegen_program(Program* prog) {
                     } else if (fn->param_types[j]->type == EXPR_IDENT) {
                         Token type_name = fn->param_types[j]->token;
                         if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-                            param_type = "int";
+                            param_type = "long long";
                         } else if (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0) {
                             param_type = "const char*";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
@@ -423,7 +423,13 @@ void codegen_program(Program* prog) {
                     }
                 }
                 
-                emit("%s %.*s", param_type, fn->params[j].length, fn->params[j].start);
+                // Emit with pointer for mut params
+                bool is_mut_param = fn->param_mutable && fn->param_mutable[j];
+                if (is_mut_param) {
+                    emit("%s *%.*s", param_type, fn->params[j].length, fn->params[j].start);
+                } else {
+                    emit("%s %.*s", param_type, fn->params[j].length, fn->params[j].start);
+                }
             }
             emit(");\n");
         }

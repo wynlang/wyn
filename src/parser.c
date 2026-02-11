@@ -164,7 +164,7 @@ static Expr* primary() {
         return expr;
     }
     
-    if (match(TOKEN_NOT) || match(TOKEN_MINUS) || match(TOKEN_BANG) || match(TOKEN_TILDE)) {
+    if (match(TOKEN_NOT) || match(TOKEN_MINUS) || match(TOKEN_BANG) || match(TOKEN_TILDE) || match(TOKEN_AMP)) {
         Token op = parser.previous;
         Expr* operand = primary();
         Expr* unary = alloc_expr();

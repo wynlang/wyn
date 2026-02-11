@@ -83,8 +83,12 @@ void codegen_expr(Expr* expr) {
             if (current_module_prefix && !strchr(temp_ident, ':') && !strchr(temp_ident, '.')) {
                 // Check if this is a parameter - never prefix parameters
                 if (is_parameter(temp_ident)) {
-                    // This is a parameter, emit as-is
-                    emit("%s", temp_ident);
+                    // Dereference mut parameters
+                    if (is_mut_parameter(temp_ident)) {
+                        emit("(*%s)", temp_ident);
+                    } else {
+                        emit("%s", temp_ident);
+                    }
                     free(ident);
                     break;
                 }
@@ -245,7 +249,12 @@ void codegen_expr(Expr* expr) {
                 ident[len-1] = '_';
             }
             
-            emit("%s", ident);
+            // Check if this is a mut parameter that needs dereferencing
+            if (is_mut_parameter(ident)) {
+                emit("(*%s)", ident);
+            } else {
+                emit("%s", ident);
+            }
             free(ident);
             break;
         }
@@ -1604,7 +1613,11 @@ void codegen_expr(Expr* expr) {
             if (current_module_prefix && !strchr(target_name, ':') && !strchr(target_name, '.')) {
                 // Check if this is a parameter - never prefix parameters
                 if (is_parameter(target_name)) {
-                    emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
+                    if (is_mut_parameter(target_name)) {
+                        emit("(*%.*s) = ", expr->assign.name.length, expr->assign.name.start);
+                    } else {
+                        emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
+                    }
                     codegen_expr(expr->assign.value);
                     break;
                 }
@@ -1635,7 +1648,11 @@ void codegen_expr(Expr* expr) {
                     emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
                 }
             } else {
-                emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
+                if (is_mut_parameter(target_name)) {
+                    emit("(*%.*s) = ", expr->assign.name.length, expr->assign.name.start);
+                } else {
+                    emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
+                }
             }
             codegen_expr(expr->assign.value);
             break;

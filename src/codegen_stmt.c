@@ -19,7 +19,8 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
         char param_name[256];
         snprintf(param_name, 256, "%.*s", fn_stmt->fn.params[i].length, fn_stmt->fn.params[i].start);
-        register_parameter(param_name);
+        bool is_mut = fn_stmt->fn.param_mutable && fn_stmt->fn.param_mutable[i];
+        register_parameter_mut(param_name, is_mut);
     }
     
     // Emit function signature with module prefix
@@ -105,7 +106,11 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
         }
         
         emit_param_name:
-        // Emit parameter name
+        // Emit parameter name (with pointer for mut params)
+        {
+            bool is_mut = fn_stmt->fn.param_mutable && fn_stmt->fn.param_mutable[i];
+            if (is_mut) emit("*");
+        }
         Token param_name = fn_stmt->fn.params[i];
         emit("%.*s", param_name.length, param_name.start);
     }
@@ -842,7 +847,7 @@ void codegen_stmt(Stmt* stmt) {
                 if (i > 0) emit(", ");
                 
                 // Determine parameter type
-                const char* param_type = "int"; // default
+                const char* param_type = "long long"; // default
                 char custom_type_buf[256] = {0};  // Buffer for custom types
                 
                 // FIX: For extension methods, first parameter (self) gets receiver type
@@ -891,7 +896,7 @@ void codegen_stmt(Stmt* stmt) {
                     } else if (stmt->fn.param_types[i]->type == EXPR_IDENT) {
                         Token type_name = stmt->fn.param_types[i]->token;
                         if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-                            param_type = "int";
+                            param_type = "long long";
                         } else if (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0) {
                             param_type = "const char*";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
@@ -921,10 +926,26 @@ void codegen_stmt(Stmt* stmt) {
                     }
                 }
                 
-                emit("%s %.*s", param_type, stmt->fn.params[i].length, stmt->fn.params[i].start);
+                // Emit with pointer for mut params
+                bool is_mut_p = stmt->fn.param_mutable && stmt->fn.param_mutable[i];
+                if (is_mut_p) {
+                    emit("%s *%.*s", param_type, stmt->fn.params[i].length, stmt->fn.params[i].start);
+                } else {
+                    emit("%s %.*s", param_type, stmt->fn.params[i].length, stmt->fn.params[i].start);
+                }
             }
             emit(") {\n");
             push_scope();  // Track allocations in this function
+            
+            // Register parameters for mut tracking
+            clear_parameters();
+            clear_local_variables();
+            for (int i = 0; i < stmt->fn.param_count; i++) {
+                char pname[256];
+                snprintf(pname, 256, "%.*s", stmt->fn.params[i].length, stmt->fn.params[i].start);
+                bool is_mut_p = stmt->fn.param_mutable && stmt->fn.param_mutable[i];
+                register_parameter_mut(pname, is_mut_p);
+            }
             
             // Set current function return kind for Ok/Err/Some/None resolution
             const char* prev_fn_return_kind = current_fn_return_kind;

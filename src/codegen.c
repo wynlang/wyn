@@ -83,6 +83,7 @@ static const char* resolve_short_module_name(const char* short_name) {
 
 // Parameter tracking for current function
 static char* current_function_params[64];
+static bool current_param_mut[64];
 static int current_param_count = 0;
 
 // Local variable tracking for current function
@@ -117,6 +118,14 @@ static void clear_module_functions() {
 
 static void register_parameter(const char* name) {
     if (current_param_count < 64) {
+        current_param_mut[current_param_count] = false;
+        current_function_params[current_param_count++] = strdup(name);
+    }
+}
+
+static void register_parameter_mut(const char* name, bool is_mut) {
+    if (current_param_count < 64) {
+        current_param_mut[current_param_count] = is_mut;
         current_function_params[current_param_count++] = strdup(name);
     }
 }
@@ -125,6 +134,15 @@ static bool is_parameter(const char* name) {
     for (int i = 0; i < current_param_count; i++) {
         if (strcmp(current_function_params[i], name) == 0) {
             return true;
+        }
+    }
+    return false;
+}
+
+static bool is_mut_parameter(const char* name) {
+    for (int i = 0; i < current_param_count; i++) {
+        if (strcmp(current_function_params[i], name) == 0) {
+            return current_param_mut[i];
         }
     }
     return false;
