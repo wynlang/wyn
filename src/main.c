@@ -187,14 +187,11 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "install") == 0) {
+        extern int package_install(const char*);
         if (argc < 3) {
-            // wyn install - install packages from wyn.toml
-            extern int package_install(const char*);
             return package_install(".");
         } else {
-            // wyn install <package> - install from registry
-            extern int registry_install(const char*);
-            return registry_install(argv[2]);
+            return package_install(argv[2]);
         }
     }
     
