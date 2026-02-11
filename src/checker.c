@@ -1000,8 +1000,9 @@ void init_checker() {
         {"str_substring", 13, 3, builtin_string, builtin_int, builtin_int, builtin_string},
         {"str_repeat", 10, 2, builtin_string, builtin_int, NULL, builtin_string},
         {"str_concat", 10, 2, builtin_string, builtin_string, NULL, builtin_string},
+        {"str_to_int", 10, 1, builtin_string, NULL, NULL, builtin_int},
     };
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < 13; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = str_fns[i].pc;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
