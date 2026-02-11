@@ -170,7 +170,15 @@ static const MethodSignature method_signatures[] = {
     // HashMap methods
     {"map", "insert", "void", 2},
     {"map", "set", "void", 2},
-    {"map", "get", "int", 1},          // Returns value (type depends on map)
+    {"map", "get", "string", 1},
+    {"map", "get_int", "int", 1},
+    {"map", "get_string", "string", 1},
+    {"map", "insert", "void", 2},
+    {"map", "insert_int", "void", 2},
+    {"map", "insert_string", "void", 2},
+    {"map", "set_string", "void", 2},
+    {"map", "set_int", "void", 2},
+    {"map", "stringify", "string", 0},
     {"map", "remove", "void", 1},
     {"map", "contains", "bool", 1},
     {"map", "len", "int", 0},
