@@ -4415,6 +4415,8 @@ void codegen_c_header() {
     emit("float Math_ceil(float x) { return ceilf(x); }\n");
     emit("float Math_round(float x) { return roundf(x); }\n");
     emit("float Math_abs(float x) { return fabsf(x); }\n");
+    emit("float Math_max(float a, float b) { return a > b ? a : b; }\n");
+    emit("float Math_min(float a, float b) { return a < b ? a : b; }\n");
     emit("float Math_random() {\n");
     emit("    static int initialized = 0;\n");
     emit("    if (!initialized) { srand(time(NULL)); initialized = 1; }\n");

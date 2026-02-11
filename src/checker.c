@@ -963,6 +963,8 @@ void init_checker() {
     // Math stdlib - register all Math_ functions
     struct { const char* name; int nlen; int param_count; Type* p1; Type* p2; Type* ret; } math_fns[] = {
         {"Math_abs", 8, 1, builtin_float, NULL, builtin_float},
+        {"Math_max", 8, 2, builtin_float, builtin_float, builtin_float},
+        {"Math_min", 8, 2, builtin_float, builtin_float, builtin_float},
         {"Math_pow", 8, 2, builtin_float, builtin_float, builtin_float},
         {"Math_sqrt", 9, 1, builtin_float, NULL, builtin_float},
         {"Math_floor", 10, 1, builtin_float, NULL, builtin_float},
@@ -973,7 +975,7 @@ void init_checker() {
         {"Math_tan", 8, 1, builtin_float, NULL, builtin_float},
         {"Math_random", 11, 0, NULL, NULL, builtin_float},
     };
-    for (int i = 0; i < 11; i++) {
+    for (int i = 0; i < 13; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = math_fns[i].param_count;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
