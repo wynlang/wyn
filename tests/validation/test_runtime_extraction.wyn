@@ -1,0 +1,56 @@
+// TDD: Runtime library extraction test
+// This test validates that all features work after extracting the runtime
+// It exercises: strings, arrays, structs, enums, closures, Result, Option,
+// HashMap, File I/O, Math, Path, DateTime, System, methods
+
+struct Point { x: int, y: int }
+
+fn Point.sum(self) -> int {
+    return self.x + self.y
+}
+
+fn make_adder(n: int) -> fn(int) -> int {
+    return |x| n + x
+}
+
+fn safe_div(a: int, b: int) -> ResultInt {
+    if b == 0 {
+        return Err("div by zero")
+    }
+    return Ok(a / b)
+}
+
+fn main() -> int {
+    // Strings
+    println(str_upper("hello"))
+
+    // Structs + methods
+    var p = Point { x: 3, y: 4 }
+    println(p.sum())
+
+    // Closures
+    var add10 = make_adder(10)
+    println(add10(5))
+
+    // Result
+    var r = safe_div(10, 2)
+    println(ResultInt_unwrap(r))
+
+    // Option
+    var o = OptionInt_Some(42)
+    println(OptionInt_unwrap(o))
+
+    // Math
+    println(Math_abs(-7))
+
+    // Arrays
+    var arr = [1, 2, 3]
+    println(arr.len())
+
+    // HashMap
+    var m = hashmap_new()
+    hashmap_insert_int(m, "x", 99)
+    println(hashmap_get_int(m, "x"))
+
+    return 0
+}

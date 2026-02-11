@@ -2542,6 +2542,11 @@ void codegen_expr(Expr* expr) {
 }
 
 void codegen_c_header() {
+    // Use precompiled runtime header instead of emitting 2000+ lines inline
+    emit("#include \"wyn_runtime.h\"\n\n");
+    return;
+    
+    // Legacy inline emission below (kept for reference, unreachable)
     emit("#define _POSIX_C_SOURCE 200809L\n");
     emit("#include <stdio.h>\n");
     emit("#include <stdlib.h>\n");
