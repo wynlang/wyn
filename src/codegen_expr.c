@@ -1011,6 +1011,14 @@ void codegen_expr(Expr* expr) {
                         emit("Audio_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "StringBuilder") == 0) {
                         emit("StringBuilder_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Crypto") == 0) {
+                        emit("Crypto_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Encoding") == 0) {
+                        emit("Encoding_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Os") == 0) {
+                        emit("Os_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Uuid") == 0) {
+                        emit("Uuid_%.*s(", method.length, method.start);
                     } else {
                         emit("%.*s_%.*s(", obj_name.length, obj_name.start, method.length, method.start);
                     }
@@ -1149,6 +1157,45 @@ void codegen_expr(Expr* expr) {
                     codegen_expr(expr->method_call.args[0]);
                     emit(")");
                     break;
+                }
+                // arr.pop()
+                if (method.length == 3 && memcmp(method.start, "pop", 3) == 0 && expr->method_call.arg_count == 0) {
+                    emit("array_pop_int(&("); codegen_expr(expr->method_call.object); emit("))"); break;
+                }
+                // arr.slice(start, end)
+                if (method.length == 5 && memcmp(method.start, "slice", 5) == 0 && expr->method_call.arg_count == 2) {
+                    emit("wyn_array_slice_range("); codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(", "); codegen_expr(expr->method_call.args[1]); emit(")"); break;
+                }
+                // arr.reverse()
+                if (method.length == 7 && memcmp(method.start, "reverse", 7) == 0 && expr->method_call.arg_count == 0) {
+                    emit("array_reverse_copy("); codegen_expr(expr->method_call.object); emit(")"); break;
+                }
+                // arr.join(sep)
+                if (method.length == 4 && memcmp(method.start, "join", 4) == 0 && expr->method_call.arg_count == 1) {
+                    emit("array_join_str("); codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                }
+                // arr.index_of(val)
+                if (method.length == 8 && memcmp(method.start, "index_of", 8) == 0 && expr->method_call.arg_count == 1) {
+                    emit("array_index_of_int("); codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                }
+                // arr.remove(index)
+                if (method.length == 6 && memcmp(method.start, "remove", 6) == 0 && expr->method_call.arg_count == 1) {
+                    emit("array_remove_at(&("); codegen_expr(expr->method_call.object);
+                    emit("), "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                }
+                // arr.insert(index, val)
+                if (method.length == 6 && memcmp(method.start, "insert", 6) == 0 && expr->method_call.arg_count == 2) {
+                    emit("array_insert_at(&("); codegen_expr(expr->method_call.object);
+                    emit("), "); codegen_expr(expr->method_call.args[0]);
+                    emit(", "); codegen_expr(expr->method_call.args[1]); emit(")"); break;
+                }
+                // arr.unique()
+                if (method.length == 6 && memcmp(method.start, "unique", 6) == 0 && expr->method_call.arg_count == 0) {
+                    emit("array_unique_int("); codegen_expr(expr->method_call.object); emit(")"); break;
                 }
                 
                 if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
@@ -1376,6 +1423,22 @@ void codegen_expr(Expr* expr) {
                     emit(", "); codegen_expr(expr->method_call.args[0]);
                     emit(")"); break;
                 }
+                if (strcmp(method_name, "remove") == 0 && expr->method_call.arg_count == 1) {
+                    emit("hashmap_remove(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "clear") == 0 && expr->method_call.arg_count == 0) {
+                    emit("hashmap_clear(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "values") == 0 && expr->method_call.arg_count == 0) {
+                    emit("hashmap_values_string(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")"); break;
+                }
             }
             
             if (receiver_type) {
@@ -1484,6 +1547,16 @@ void codegen_expr(Expr* expr) {
                         emit("hashmap_insert_string("); codegen_expr(expr->method_call.object);
                         emit(", "); codegen_expr(expr->method_call.args[0]);
                         emit(", "); codegen_expr(expr->method_call.args[1]); emit(")"); break;
+                    }
+                    if (strcmp(method_name, "remove") == 0) {
+                        emit("hashmap_remove("); codegen_expr(expr->method_call.object);
+                        emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                    }
+                    if (strcmp(method_name, "clear") == 0) {
+                        emit("hashmap_clear("); codegen_expr(expr->method_call.object); emit(")"); break;
+                    }
+                    if (strcmp(method_name, "values") == 0) {
+                        emit("hashmap_values_string("); codegen_expr(expr->method_call.object); emit(")"); break;
                     }
                 }
                 

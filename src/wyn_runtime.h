@@ -541,7 +541,7 @@ WynArray array_skip(WynArray arr, int n) {
     }
     return result;
 }
-WynArray array_slice(WynArray arr, int start, int end) {
+WynArray wyn_array_slice_range(WynArray arr, int start, int end) {
     WynArray result = array_new();
     if (start < 0) start = 0;
     if (end > arr.count) end = arr.count;
@@ -2746,6 +2746,441 @@ void StringBuilder_free(long long handle) {
     sb_pool[handle].data = NULL;
     sb_pool[handle].len = 0;
     sb_pool[handle].cap = 0;
+}
+
+// === JSON Parsing ===
+// Simple recursive descent JSON parser returning handle-based access
+#define MAX_JSON_NODES 4096
+typedef struct { char type; /* o=object, a=array, s=string, n=number, b=bool, x=null */ char* key; char* str_val; double num_val; int parent; int next_sibling; int first_child; } JsonNode;
+static JsonNode json_nodes[MAX_JSON_NODES];
+static int json_node_count = 0;
+
+static int json_alloc_node() { if (json_node_count >= MAX_JSON_NODES) return -1; int i = json_node_count++; json_nodes[i] = (JsonNode){0}; json_nodes[i].parent = -1; json_nodes[i].next_sibling = -1; json_nodes[i].first_child = -1; return i; }
+
+static const char* json_skip_ws(const char* p) { while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++; return p; }
+
+static const char* json_parse_value(const char* p, int parent);
+
+static const char* json_parse_string_raw(const char* p, char** out) {
+    if (*p != '"') return p;
+    p++;
+    const char* start = p;
+    while (*p && *p != '"') { if (*p == '\\') p++; p++; }
+    int len = p - start;
+    *out = malloc(len + 1);
+    memcpy(*out, start, len);
+    (*out)[len] = 0;
+    if (*p == '"') p++;
+    return p;
+}
+
+static const char* json_parse_value(const char* p, int parent) {
+    p = json_skip_ws(p);
+    int node = json_alloc_node();
+    if (node < 0) return p;
+    json_nodes[node].parent = parent;
+    
+    if (*p == '"') {
+        json_nodes[node].type = 's';
+        p = json_parse_string_raw(p, &json_nodes[node].str_val);
+    } else if (*p == '{') {
+        json_nodes[node].type = 'o';
+        p++;
+        int last_child = -1;
+        p = json_skip_ws(p);
+        while (*p && *p != '}') {
+            p = json_skip_ws(p);
+            char* key = NULL;
+            p = json_parse_string_raw(p, &key);
+            p = json_skip_ws(p);
+            if (*p == ':') p++;
+            int before = json_node_count;
+            p = json_parse_value(p, node);
+            if (before < json_node_count) {
+                json_nodes[before].key = key;
+                if (last_child >= 0) json_nodes[last_child].next_sibling = before;
+                else json_nodes[node].first_child = before;
+                last_child = before;
+            }
+            p = json_skip_ws(p);
+            if (*p == ',') p++;
+        }
+        if (*p == '}') p++;
+    } else if (*p == '[') {
+        json_nodes[node].type = 'a';
+        p++;
+        int last_child = -1;
+        p = json_skip_ws(p);
+        while (*p && *p != ']') {
+            int before = json_node_count;
+            p = json_parse_value(p, node);
+            if (before < json_node_count) {
+                if (last_child >= 0) json_nodes[last_child].next_sibling = before;
+                else json_nodes[node].first_child = before;
+                last_child = before;
+            }
+            p = json_skip_ws(p);
+            if (*p == ',') p++;
+        }
+        if (*p == ']') p++;
+    } else if (*p == 't') { json_nodes[node].type = 'b'; json_nodes[node].num_val = 1; p += 4; }
+    else if (*p == 'f') { json_nodes[node].type = 'b'; json_nodes[node].num_val = 0; p += 5; }
+    else if (*p == 'n') { json_nodes[node].type = 'x'; p += 4; }
+    else { json_nodes[node].type = 'n'; json_nodes[node].num_val = strtod(p, (char**)&p); }
+    return p;
+}
+
+long long Json_parse(const char* text) {
+    json_node_count = 0;
+    json_parse_value(text, -1);
+    return 0; // root node is always 0
+}
+
+static int json_find_child(int parent, const char* key) {
+    int c = json_nodes[parent].first_child;
+    while (c >= 0) {
+        if (json_nodes[c].key && strcmp(json_nodes[c].key, key) == 0) return c;
+        c = json_nodes[c].next_sibling;
+    }
+    return -1;
+}
+
+char* Json_get(long long root, const char* key) {
+    int c = json_find_child((int)root, key);
+    if (c < 0) return "";
+    if (json_nodes[c].type == 's') return json_nodes[c].str_val ? json_nodes[c].str_val : "";
+    if (json_nodes[c].type == 'n') { char* buf = malloc(32); snprintf(buf, 32, "%g", json_nodes[c].num_val); return buf; }
+    if (json_nodes[c].type == 'b') return json_nodes[c].num_val ? "true" : "false";
+    return "";
+}
+
+long long Json_get_int(long long root, const char* key) {
+    int c = json_find_child((int)root, key);
+    if (c < 0) return 0;
+    return (long long)json_nodes[c].num_val;
+}
+
+long long Json_has(long long root, const char* key) {
+    return json_find_child((int)root, key) >= 0 ? 1 : 0;
+}
+
+long long Json_array_len(long long node) {
+    int n = (int)node;
+    if (json_nodes[n].type != 'a') return 0;
+    int count = 0;
+    int c = json_nodes[n].first_child;
+    while (c >= 0) { count++; c = json_nodes[c].next_sibling; }
+    return count;
+}
+
+long long Json_array_get(long long node, long long index) {
+    int c = json_nodes[(int)node].first_child;
+    for (int i = 0; i < (int)index && c >= 0; i++) c = json_nodes[c].next_sibling;
+    return c >= 0 ? c : -1;
+}
+
+char* Json_node_str(long long node) {
+    int n = (int)node;
+    if (n < 0 || n >= json_node_count) return "";
+    if (json_nodes[n].type == 's') return json_nodes[n].str_val ? json_nodes[n].str_val : "";
+    if (json_nodes[n].type == 'n') { char* buf = malloc(32); snprintf(buf, 32, "%g", json_nodes[n].num_val); return buf; }
+    return "";
+}
+
+char* Json_keys(long long root) {
+    char* result = malloc(4096); result[0] = 0;
+    int c = json_nodes[(int)root].first_child;
+    while (c >= 0) {
+        if (json_nodes[c].key) { strcat(result, json_nodes[c].key); strcat(result, "\n"); }
+        c = json_nodes[c].next_sibling;
+    }
+    return result;
+}
+
+// === Base64 ===
+static const char b64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+char* Encoding_base64_encode(const char* data) {
+    int len = strlen(data);
+    int out_len = 4 * ((len + 2) / 3);
+    char* out = malloc(out_len + 1);
+    int j = 0;
+    for (int i = 0; i < len; i += 3) {
+        int a = data[i], b = (i+1 < len) ? data[i+1] : 0, c = (i+2 < len) ? data[i+2] : 0;
+        int triple = (a << 16) | (b << 8) | c;
+        out[j++] = b64_table[(triple >> 18) & 0x3F];
+        out[j++] = b64_table[(triple >> 12) & 0x3F];
+        out[j++] = (i+1 < len) ? b64_table[(triple >> 6) & 0x3F] : '=';
+        out[j++] = (i+2 < len) ? b64_table[triple & 0x3F] : '=';
+    }
+    out[j] = 0;
+    return out;
+}
+
+static int b64_decode_char(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62; if (c == '/') return 63;
+    return -1;
+}
+
+char* Encoding_base64_decode(const char* data) {
+    int len = strlen(data);
+    char* out = malloc(len);
+    int j = 0;
+    for (int i = 0; i < len; i += 4) {
+        int a = b64_decode_char(data[i]), b = b64_decode_char(data[i+1]);
+        int c = (i+2 < len && data[i+2] != '=') ? b64_decode_char(data[i+2]) : 0;
+        int d = (i+3 < len && data[i+3] != '=') ? b64_decode_char(data[i+3]) : 0;
+        int triple = (a << 18) | (b << 12) | (c << 6) | d;
+        out[j++] = (triple >> 16) & 0xFF;
+        if (i+2 < len && data[i+2] != '=') out[j++] = (triple >> 8) & 0xFF;
+        if (i+3 < len && data[i+3] != '=') out[j++] = triple & 0xFF;
+    }
+    out[j] = 0;
+    return out;
+}
+
+char* Encoding_hex_encode(const char* data) {
+    int len = strlen(data);
+    char* out = malloc(len * 2 + 1);
+    for (int i = 0; i < len; i++) sprintf(out + i*2, "%02x", (unsigned char)data[i]);
+    out[len*2] = 0;
+    return out;
+}
+
+// === Crypto (SHA-256) ===
+char* Crypto_sha256(const char* data) {
+    // Use openssl command (POSIX)
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd), "printf '%%s' '%s' | openssl dgst -sha256 -hex 2>/dev/null | awk '{print $NF}'", data);
+    FILE* fp = popen(cmd, "r");
+    if (!fp) return "";
+    char* result = malloc(65); result[0] = 0;
+    fgets(result, 65, fp);
+    pclose(fp);
+    // Trim newline
+    int len = strlen(result);
+    if (len > 0 && result[len-1] == '\n') result[len-1] = 0;
+    return result;
+}
+
+char* Crypto_md5(const char* data) {
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd), "printf '%%s' '%s' | openssl dgst -md5 -hex 2>/dev/null | awk '{print $NF}'", data);
+    FILE* fp = popen(cmd, "r");
+    if (!fp) return "";
+    char* result = malloc(33); result[0] = 0;
+    fgets(result, 33, fp);
+    pclose(fp);
+    int len = strlen(result);
+    if (len > 0 && result[len-1] == '\n') result[len-1] = 0;
+    return result;
+}
+
+// === Os module ===
+char* Os_platform() {
+    #ifdef __APPLE__
+    return "macos";
+    #elif __linux__
+    return "linux";
+    #elif _WIN32
+    return "windows";
+    #else
+    return "unknown";
+    #endif
+}
+
+char* Os_arch() {
+    #ifdef __aarch64__
+    return "arm64";
+    #elif __x86_64__
+    return "x86_64";
+    #elif __i386__
+    return "x86";
+    #else
+    return "unknown";
+    #endif
+}
+
+char* Os_hostname() { static char buf[256]; gethostname(buf, sizeof(buf)); return buf; }
+long long Os_pid() { return (long long)getpid(); }
+char* Os_temp_dir() { return "/tmp"; }
+char* Os_home_dir() { char* h = getenv("HOME"); return h ? h : "/tmp"; }
+
+// === UUID v4 ===
+char* Uuid_generate() {
+    char* uuid = malloc(37);
+    unsigned char bytes[16];
+    FILE* f = fopen("/dev/urandom", "rb");
+    if (f) { fread(bytes, 1, 16, f); fclose(f); }
+    else { for (int i = 0; i < 16; i++) bytes[i] = rand() & 0xFF; }
+    bytes[6] = (bytes[6] & 0x0F) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3F) | 0x80; // variant
+    snprintf(uuid, 37, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7],
+        bytes[8],bytes[9],bytes[10],bytes[11],bytes[12],bytes[13],bytes[14],bytes[15]);
+    return uuid;
+}
+
+// === Array extensions ===
+long long array_pop_int(WynArray* arr) {
+    if (arr->count <= 0) return 0;
+    arr->count--;
+    return arr->data[arr->count].data.int_val;
+}
+
+
+WynArray array_reverse_copy(WynArray arr) {
+    WynArray result = array_new();
+    for (int i = arr.count - 1; i >= 0; i--) array_push_int(&result, array_get_int(arr, i));
+    return result;
+}
+
+char* array_join_str(WynArray arr, const char* sep) {
+    char* result = malloc(65536); result[0] = 0;
+    for (int i = 0; i < arr.count; i++) {
+        if (i > 0) strcat(result, sep);
+        if (arr.data[i].type == WYN_TYPE_STRING) strcat(result, arr.data[i].data.string_val);
+        else { char buf[32]; snprintf(buf, 32, "%lld", (long long)arr.data[i].data.int_val); strcat(result, buf); }
+    }
+    return result;
+}
+
+long long array_index_of_int(WynArray arr, long long val) {
+    for (int i = 0; i < arr.count; i++) if (array_get_int(arr, i) == val) return i;
+    return -1;
+}
+
+void array_insert_at(WynArray* arr, int index, long long val) {
+    if (index < 0) index = 0;
+    if (index > arr->count) index = arr->count;
+    array_push_int(arr, 0); // grow
+    for (int i = arr->count - 1; i > index; i--) arr->data[i] = arr->data[i-1];
+    arr->data[index].type = WYN_TYPE_INT;
+    arr->data[index].data.int_val = val;
+}
+
+WynArray array_unique_int(WynArray arr) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        long long val = array_get_int(arr, i);
+        int found = 0;
+        for (int j = 0; j < result.count; j++) if (array_get_int(result, j) == val) { found = 1; break; }
+        if (!found) array_push_int(&result, val);
+    }
+    return result;
+}
+
+// === HashMap extensions ===
+extern void hashmap_remove(WynHashMap* map, const char* key);
+extern void hashmap_clear(WynHashMap* map);
+
+char* hashmap_values_string(WynHashMap* map) {
+    if (!map) return "";
+    char* result = malloc(65536); result[0] = 0;
+    for (int i = 0; i < 128; i++) {
+        void* entry = ((void**)map)[i]; // bucket
+        // Walk chain — simplified, just use keys and get
+    }
+    // Use keys + get approach
+    char* keys = hashmap_keys_string(map);
+    const char* p = keys;
+    while (*p) {
+        const char* nl = strchr(p, '\n');
+        if (!nl) break;
+        int klen = nl - p;
+        char key[256]; memcpy(key, p, klen); key[klen] = 0;
+        char* val = hashmap_get_string(map, key);
+        if (val && *val) { strcat(result, val); strcat(result, "\n"); }
+        else {
+            int ival = hashmap_get_int(map, key);
+            char buf[32]; snprintf(buf, 32, "%d", ival);
+            strcat(result, buf); strcat(result, "\n");
+        }
+        p = nl + 1;
+    }
+    return result;
+}
+
+// === Math extensions ===
+double Math_log(double x) { return log(x); }
+double Math_log10(double x) { return log10(x); }
+double Math_exp(double x) { return exp(x); }
+long long Math_clamp(long long x, long long lo, long long hi) { return x < lo ? lo : (x > hi ? hi : x); }
+long long Math_sign(long long x) { return x > 0 ? 1 : (x < 0 ? -1 : 0); }
+
+// === DateTime extensions ===
+long long DateTime_diff(long long a, long long b) { return a - b; }
+long long DateTime_add_seconds(long long t, long long n) { return t + n; }
+char* DateTime_to_iso(long long timestamp) {
+    time_t t = (time_t)timestamp;
+    struct tm* tm = gmtime(&t);
+    char* buf = malloc(32);
+    strftime(buf, 32, "%Y-%m-%dT%H:%M:%SZ", tm);
+    return buf;
+}
+
+// === Regex extensions ===
+long long regex_find(const char* str, const char* pattern) {
+    regex_t re;
+    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return -1;
+    regmatch_t match;
+    int result = regexec(&re, str, 1, &match, 0) == 0 ? match.rm_so : -1;
+    regfree(&re);
+    return result;
+}
+
+char* regex_find_all(const char* str, const char* pattern) {
+    regex_t re;
+    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return "";
+    char* result = malloc(65536); result[0] = 0;
+    const char* p = str;
+    regmatch_t match;
+    while (regexec(&re, p, 1, &match, 0) == 0) {
+        int len = match.rm_eo - match.rm_so;
+        char* m = malloc(len + 1); memcpy(m, p + match.rm_so, len); m[len] = 0;
+        strcat(result, m); strcat(result, "\n"); free(m);
+        p += match.rm_eo;
+    }
+    regfree(&re);
+    return result;
+}
+
+// === File extensions ===
+int File_rename(const char* old_path, const char* new_path) { return rename(old_path, new_path) == 0; }
+
+// === Test extensions ===
+void Test_assert_eq_float(double actual, double expected, double epsilon, const char* msg) {
+    extern void Test_assert(int condition, const char* message);
+    double diff = actual - expected;
+    if (diff < 0) diff = -diff;
+    Test_assert(diff < epsilon, msg);
+}
+
+// === Net extensions ===
+char* Net_resolve(const char* hostname) {
+    struct addrinfo hints = {0}, *res;
+    hints.ai_family = AF_INET;
+    if (getaddrinfo(hostname, NULL, &hints, &res) != 0) return "";
+    char* ip = malloc(INET_ADDRSTRLEN);
+    struct sockaddr_in* addr = (struct sockaddr_in*)res->ai_addr;
+    inet_ntop(AF_INET, &addr->sin_addr, ip, INET_ADDRSTRLEN);
+    freeaddrinfo(res);
+    return ip;
+}
+
+// === Db extensions ===
+char* Db_escape(const char* str) {
+    int len = strlen(str);
+    char* out = malloc(len * 2 + 1);
+    int j = 0;
+    for (int i = 0; i < len; i++) {
+        if (str[i] == '\'') { out[j++] = '\''; out[j++] = '\''; }
+        else out[j++] = str[i];
+    }
+    out[j] = 0;
+    return out;
 }
 
 #endif // WYN_RUNTIME_H

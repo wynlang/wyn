@@ -1059,7 +1059,7 @@ void init_checker() {
 
     // Register namespace identifiers so checker doesn't reject File.read() etc.
     // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", NULL};
+    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", NULL};
     for (int i = 0; namespaces[i]; i++) {
         Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
         if (!find_symbol(global_scope, ns_tok)) {
@@ -1452,6 +1452,48 @@ void init_checker() {
         ft->fn_type.param_count = reg_db_fns[i].pc;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
         ft->fn_type.param_types[0] = reg_db_fns[i].p1;
+
+    // New module registrations
+    struct { const char* name; int nlen; Type* ret; } new_fns[] = {
+        {"Json_parse", 10, builtin_int},
+        {"Json_get", 8, builtin_string},
+        {"Json_get_int", 12, builtin_int},
+        {"Json_has", 8, builtin_int},
+        {"Json_keys", 9, builtin_string},
+        {"Json_array_len", 14, builtin_int},
+        {"Json_array_get", 14, builtin_int},
+        {"Json_node_str", 13, builtin_string},
+        {"Encoding_base64_encode", 22, builtin_string},
+        {"Encoding_base64_decode", 22, builtin_string},
+        {"Encoding_hex_encode", 19, builtin_string},
+        {"Crypto_sha256", 13, builtin_string},
+        {"Crypto_md5", 10, builtin_string},
+        {"Os_platform", 11, builtin_string},
+        {"Os_arch", 7, builtin_string},
+        {"Os_hostname", 11, builtin_string},
+        {"Os_pid", 6, builtin_int},
+        {"Os_temp_dir", 11, builtin_string},
+        {"Os_home_dir", 11, builtin_string},
+        {"Uuid_generate", 13, builtin_string},
+        {"Math_clamp", 10, builtin_int},
+        {"Math_sign", 9, builtin_int},
+        {"DateTime_diff", 13, builtin_int},
+        {"DateTime_add_seconds", 20, builtin_int},
+        {"DateTime_to_iso", 15, builtin_string},
+        {"regex_find", 10, builtin_int},
+        {"regex_find_all", 14, builtin_string},
+        {"Net_resolve", 11, builtin_string},
+        {"Db_escape", 9, builtin_string},
+    };
+    for (int i = 0; i < 30; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = new_fns[i].ret;
+        Token tok = {TOKEN_IDENT, new_fns[i].name, new_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
 
     // Gui namespace
     struct { const char* name; int nlen; Type* ret; int pc; } reg_gui_fns[] = {

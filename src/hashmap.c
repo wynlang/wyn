@@ -284,3 +284,18 @@ int hashmap_count(WynHashMap* map) {
     }
     return count;
 }
+
+void hashmap_clear(WynHashMap* map) {
+    if (!map) return;
+    for (int i = 0; i < HASHMAP_SIZE; i++) {
+        Entry* entry = map->buckets[i];
+        while (entry) {
+            Entry* next = entry->next;
+            free(entry->key);
+            if (entry->value.type == HASHMAP_STRING) free(entry->value.value.as_string);
+            free(entry);
+            entry = next;
+        }
+        map->buckets[i] = NULL;
+    }
+}
