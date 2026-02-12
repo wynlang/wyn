@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include "common.h"
 #include "ast.h"
 #include "types.h"
@@ -104,6 +105,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  wyn test                 Run tests\n");
         fprintf(stderr, "  wyn fmt <file.wyn>       Validate file\n");
         fprintf(stderr, "  wyn clean                Clean artifacts\n");
+        fprintf(stderr, "  wyn build-runtime        Precompile runtime for fast builds\n");
         fprintf(stderr, "  wyn cross <os> <file>    Cross-compile (linux/macos/windows)\n");
         fprintf(stderr, "  wyn llvm <file.wyn>      Compile with LLVM backend\n");
         fprintf(stderr, "  wyn version              Show version\n");
@@ -134,6 +136,7 @@ int main(int argc, char** argv) {
         printf("  wyn test                 Run tests\n");
         printf("  wyn fmt <file.wyn>       Validate file\n");
         printf("  wyn clean                Clean artifacts\n");
+        printf("  wyn build-runtime        Precompile runtime for fast builds\n");
         printf("  wyn cross <os> <file>    Cross-compile\n");
         printf("  wyn llvm <file.wyn>      Compile with LLVM backend\n");
         printf("  wyn search <query>       Search package registry\n");
@@ -437,6 +440,48 @@ int main(int argc, char** argv) {
         }
     }
     
+    if (strcmp(command, "build-runtime") == 0) {
+        // Precompile runtime library for fast compilation
+        printf("Building runtime library...\n");
+        char cmd[4096];
+        snprintf(cmd, sizeof(cmd),
+            "cd %s && mkdir -p runtime/obj && "
+            "for f in src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c "
+            "src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c "
+            "src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c "
+            "src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c "
+            "src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c "
+            "src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c "
+            "src/file_io_simple.c src/stdlib_enhanced.c; do "
+            "gcc -std=c11 -O2 -w -I src -c $f -o runtime/obj/$(basename $f .c).o; done && "
+            "ar rcs runtime/libwyn_rt.a runtime/obj/*.o",
+            argv[0] && strchr(argv[0], '/') ? "" : ".");
+        // Use wyn_root
+        char wyn_root[1024] = ".";
+        char* root_env = getenv("WYN_ROOT");
+        if (root_env) strncpy(wyn_root, root_env, sizeof(wyn_root)-1);
+        else {
+            char exe_path[1024];
+            strncpy(exe_path, argv[0], sizeof(exe_path)-1);
+            char* last_slash = strrchr(exe_path, '/');
+            if (last_slash) { *last_slash = 0; strncpy(wyn_root, exe_path, sizeof(wyn_root)-1); }
+        }
+        snprintf(cmd, sizeof(cmd),
+            "mkdir -p %s/runtime/obj && cd %s && "
+            "for f in src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c "
+            "src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c "
+            "src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c "
+            "src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c "
+            "src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c "
+            "src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c "
+            "src/file_io_simple.c src/stdlib_enhanced.c; do "
+            "gcc -std=c11 -O2 -w -I src -c $f -o runtime/obj/$(basename $f .c).o 2>/dev/null; done && "
+            "ar rcs runtime/libwyn_rt.a runtime/obj/*.o && "
+            "echo 'Built runtime/libwyn_rt.a'",
+            wyn_root, wyn_root);
+        return system(cmd);
+    }
+    
     if (strcmp(command, "clean") == 0) {
         printf("Cleaning build artifacts...\n");
         system("find examples -name '*.c' -delete 2>/dev/null");
@@ -685,6 +730,22 @@ int main(int argc, char** argv) {
             return 1;
         }
         char* file = argv[2];
+        
+        // Incremental: skip recompilation if binary is newer than source
+        {
+            char out_path[512];
+            snprintf(out_path, sizeof(out_path), "%s.out", file);
+            struct stat src_st, out_st;
+            if (stat(file, &src_st) == 0 && stat(out_path, &out_st) == 0) {
+                if (out_st.st_mtime >= src_st.st_mtime) {
+                    char run_cmd[2048];
+                    snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
+                    for (int i = 3; i < argc; i++) { strcat(run_cmd, " "); strcat(run_cmd, argv[i]); }
+                    return system(run_cmd);
+                }
+            }
+        }
+        
         char* source = read_file(file);
         
         // Pre-load all imports before parsing
@@ -758,9 +819,22 @@ int main(int argc, char** argv) {
         const char* gui_flags = strstr(source, "Gui.") ? " -DWYN_USE_GUI $(pkg-config --cflags --libs sdl2 2>/dev/null || echo '-lSDL2') " : "";
         
         char compile_cmd[8192];
-        int n = snprintf(compile_cmd, sizeof(compile_cmd), 
-                 "gcc -std=c11 -O2 -w -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s/runtime/libwyn_runtime.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm 2>/tmp/wyn_cc_err.txt", 
-                 wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
+        // Use precompiled runtime library for fast compilation
+        // Falls back to source compilation if libwyn_rt.a doesn't exist
+        char rt_lib[512];
+        snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
+        FILE* rt_check = fopen(rt_lib, "r");
+        if (rt_check) {
+            fclose(rt_check);
+            snprintf(compile_cmd, sizeof(compile_cmd),
+                     "gcc -std=c11 -O2 -w -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm 2>/tmp/wyn_cc_err.txt",
+                     wyn_root, file, file, wyn_root, wyn_root);
+        } else {
+            // Fallback: compile from source
+            snprintf(compile_cmd, sizeof(compile_cmd),
+                     "gcc -std=c11 -O2 -w -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s/runtime/libwyn_runtime.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm 2>/tmp/wyn_cc_err.txt",
+                     wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
+        }
         // Append optional flags before the redirect
         if (sqlite_flags[0] || gui_flags[0]) {
             char* redirect = strstr(compile_cmd, " 2>/tmp");

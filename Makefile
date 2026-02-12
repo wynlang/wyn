@@ -473,6 +473,16 @@ fmt-tool: tools/formatter.wyn.out
 tools/formatter.wyn.out: tools/formatter.wyn wyn
 	./wyn tools/formatter.wyn
 
+
+# Precompile runtime library for fast compilation
+runtime: wyn$(EXE_EXT)
+	@echo "Building runtime library..."
+	@mkdir -p runtime/obj
+	@for f in src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c; do $(CC) -std=c11 -O2 -w -I src -c $$f -o runtime/obj/$$(basename $$f .c).o 2>/dev/null; done
+	@if [ -f runtime/libwyn_runtime.a ]; then cd runtime/obj && ar x ../libwyn_runtime.a 2>/dev/null; cd ../..; fi
+	@ar rcs runtime/libwyn_rt.a runtime/obj/*.o
+	@echo "Built runtime/libwyn_rt.a"
+
 clean:
 	rm -f wyn wyn.exe wyn-windows.exe wyn-linux wyn-macos wyn-llvm tests/test_lexer tests/test_parser tests/test_checker tests/test_codegen tests/test_operators tests/test_default_parameters tests/test_function_overloading tests/test_generic_functions tests/test_parameter_validation tests/test_function_integration tests/test_syntax_design tests/test_system_integration tests/phase2_integration tests/test_llvm_context tests/phase2_integration_simple tests/test_wasm_support tests/test_self_compilation tests/test_documentation_system tests/test_container_support tests/test_lexer_rewrite tools/formatter.wyn.out
 	rm -rf temp
