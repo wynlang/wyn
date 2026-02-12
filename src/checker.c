@@ -3714,7 +3714,12 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             }
             break;
         case STMT_TRAIT:
-            // T3.2.1: Trait definition handling
+            // Register trait as a type (for dynamic dispatch parameters)
+            {
+                Type* trait_type = make_type(TYPE_STRUCT);
+                trait_type->struct_type.name = stmt->trait_decl.name;
+                add_symbol(scope, stmt->trait_decl.name, trait_type, false);
+            }
             wyn_register_trait(&stmt->trait_decl);
             
             // Check trait methods

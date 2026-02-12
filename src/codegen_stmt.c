@@ -1503,51 +1503,66 @@ void codegen_stmt(Stmt* stmt) {
                 pop_scope();
                 emit("}\n\n");
             }
+            // Generate vtable wrappers and instance if this is a trait impl
+            if (stmt->impl.trait_name.start && stmt->impl.trait_name.length > 0) {
+                Token tname = stmt->impl.trait_name;
+                Token itype = stmt->impl.type_name;
+                for (int i = 0; i < stmt->impl.method_count; i++) {
+                    FnStmt* method = stmt->impl.methods[i];
+                    const char* ret = "long long";
+                    if (method->return_type && method->return_type->type == EXPR_IDENT) {
+                        Token rt = method->return_type->token;
+                        if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) ret = "const char*";
+                        else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) ret = "double";
+                    }
+                    emit("%s %.*s_%.*s_%.*s_wrap(void* __d) { return %.*s_%.*s(*(%.*s*)__d); }\n",
+                         ret, tname.length, tname.start, method->name.length, method->name.start,
+                         itype.length, itype.start, itype.length, itype.start,
+                         method->name.length, method->name.start, itype.length, itype.start);
+                }
+                emit("%.*s_vtable %.*s_%.*s_vt = { ", tname.length, tname.start,
+                     tname.length, tname.start, itype.length, itype.start);
+                for (int i = 0; i < stmt->impl.method_count; i++) {
+                    if (i > 0) emit(", ");
+                    FnStmt* method = stmt->impl.methods[i];
+                    emit("%.*s_%.*s_%.*s_wrap", tname.length, tname.start,
+                         method->name.length, method->name.start, itype.length, itype.start);
+                }
+                emit(" };\n\n");
+            }
             break;
         case STMT_TRAIT:
-            // Generate trait definition as C interface
-            emit("// trait %.*s\n", stmt->trait_decl.name.length, stmt->trait_decl.name.start);
-            for (int i = 0; i < stmt->trait_decl.method_count; i++) {
-                FnStmt* method = stmt->trait_decl.methods[i];
-                if (!stmt->trait_decl.method_has_default[i]) {
-                    // Generate function pointer typedef for trait method
-                    emit("typedef ");
-                    if (method->return_type) {
-                        if (method->return_type->type == EXPR_IDENT) {
-                            Token ret_type = method->return_type->token;
-                            if (ret_type.length == 3 && memcmp(ret_type.start, "str", 3) == 0) {
-                                emit("char*");
-                            } else if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
-                                emit("int");
-                            } else {
-                                emit("void*");
-                            }
-                        } else {
-                            emit("void*");
-                        }
-                    } else {
-                        emit("void");
+            // Generate trait vtable and trait object
+            {
+                Token tname = stmt->trait_decl.name;
+                emit("// trait %.*s\n", tname.length, tname.start);
+                
+                // 1. Function pointer typedefs
+                for (int i = 0; i < stmt->trait_decl.method_count; i++) {
+                    FnStmt* method = stmt->trait_decl.methods[i];
+                    const char* ret = "long long";
+                    if (method->return_type && method->return_type->type == EXPR_IDENT) {
+                        Token rt = method->return_type->token;
+                        if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) ret = "const char*";
+                        else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) ret = "double";
                     }
-                    emit(" (*%.*s_%.*s_fn)(void*", 
-                         stmt->trait_decl.name.length, stmt->trait_decl.name.start,
-                         method->name.length, method->name.start);
-                    for (int j = 0; j < method->param_count; j++) {
-                        emit(", ");
-                        if (method->param_types && method->param_types[j] && method->param_types[j]->type == EXPR_IDENT) {
-                            Token param_type = method->param_types[j]->token;
-                            if (param_type.length == 3 && memcmp(param_type.start, "str", 3) == 0) {
-                                emit("char*");
-                            } else if (param_type.length == 3 && memcmp(param_type.start, "int", 3) == 0) {
-                                emit("int");
-                            } else {
-                                emit("void*");
-                            }
-                        } else {
-                            emit("void*");
-                        }
-                    }
-                    emit(");\n");
+                    emit("typedef %s (*%.*s_%.*s_fn)(void*);\n", ret,
+                         tname.length, tname.start, method->name.length, method->name.start);
                 }
+                
+                // 2. Vtable struct
+                emit("typedef struct {\n");
+                for (int i = 0; i < stmt->trait_decl.method_count; i++) {
+                    FnStmt* method = stmt->trait_decl.methods[i];
+                    emit("    %.*s_%.*s_fn %.*s;\n",
+                         tname.length, tname.start, method->name.length, method->name.start,
+                         method->name.length, method->name.start);
+                }
+                emit("} %.*s_vtable;\n", tname.length, tname.start);
+                
+                // 3. Trait object struct
+                emit("typedef struct { void* data; %.*s_vtable* vtable; } %.*s;\n",
+                     tname.length, tname.start, tname.length, tname.start);
             }
             break;
         case STMT_IF:

@@ -749,7 +749,7 @@ static Expr* primary() {
             // Skip to return statement
             if (match(TOKEN_RETURN)) {
                 lambda_expr->lambda.body = expression();
-                expect(TOKEN_SEMI, "Expected ';' after return expression");
+                match(TOKEN_SEMI); // optional semi after return in lambda ';' after return expression");
             } else {
                 // No return, just parse expression
                 lambda_expr->lambda.body = expression();
@@ -816,7 +816,7 @@ static Expr* primary() {
                 while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                     if (match(TOKEN_RETURN)) {
                         lambda_expr->lambda.body = expression();
-                        expect(TOKEN_SEMI, "Expected ';' after return expression");
+                        match(TOKEN_SEMI);
                         break;
                     } else {
                         // Skip other statements for now
@@ -839,7 +839,7 @@ static Expr* primary() {
             while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                 if (match(TOKEN_RETURN)) {
                     lambda_expr->lambda.body = expression();
-                    expect(TOKEN_SEMI, "Expected ';' after return expression");
+                    match(TOKEN_SEMI);
                     break;
                 } else {
                     // Skip other statements for now

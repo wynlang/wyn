@@ -61,7 +61,7 @@ void codegen_program(Program* prog) {
     
     // Generate all structs, enums, and type aliases first
     for (int i = 0; i < prog->count; i++) {
-        if (prog->stmts[i]->type == STMT_STRUCT || prog->stmts[i]->type == STMT_ENUM || prog->stmts[i]->type == STMT_TYPE_ALIAS) {
+        if (prog->stmts[i]->type == STMT_STRUCT || prog->stmts[i]->type == STMT_ENUM || prog->stmts[i]->type == STMT_TYPE_ALIAS || prog->stmts[i]->type == STMT_TRAIT) {
             codegen_stmt(prog->stmts[i]);
         }
     }
@@ -491,6 +491,9 @@ void codegen_program(Program* prog) {
         }
     }
     emit("\n");
+    
+    // Vtable wrappers and instances are generated inline during main codegen
+    // (after trait and impl statements have been processed)
     
     // Emit spawn wrapper functions (after forward declarations)
     if (spawn_wrapper_count > 0) {
