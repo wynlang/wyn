@@ -2525,4 +2525,96 @@ void Task_close(long long handle) {
     wyn_task_close(task_registry[handle]);
 }
 
+// === SQLite Database Module ===
+// Only compiled when WYN_USE_SQLITE is defined (set by codegen when Db. is used)
+#ifdef WYN_USE_SQLITE
+#include <sqlite3.h>
+
+#define MAX_DB_HANDLES 16
+static sqlite3* db_handles[MAX_DB_HANDLES] = {0};
+
+long long Db_open(const char* path) {
+    sqlite3* db;
+    if (sqlite3_open(path, &db) != SQLITE_OK) {
+        if (db) sqlite3_close(db);
+        return -1;
+    }
+    for (int i = 1; i < MAX_DB_HANDLES; i++) {
+        if (!db_handles[i]) { db_handles[i] = db; return i; }
+    }
+    sqlite3_close(db);
+    return -1;
+}
+
+int Db_exec(long long handle, const char* sql) {
+    if (handle <= 0 || handle >= MAX_DB_HANDLES || !db_handles[handle]) return -1;
+    char* err = NULL;
+    int rc = sqlite3_exec(db_handles[handle], sql, NULL, NULL, &err);
+    if (err) sqlite3_free(err);
+    return rc == SQLITE_OK ? 0 : -1;
+}
+
+char* Db_query(long long handle, const char* sql) {
+    if (handle <= 0 || handle >= MAX_DB_HANDLES || !db_handles[handle]) return "";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db_handles[handle], sql, -1, &stmt, NULL) != SQLITE_OK) return "";
+    
+    char* result = malloc(65536);
+    result[0] = 0;
+    int first_row = 1;
+    
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        if (!first_row) strcat(result, "\n");
+        first_row = 0;
+        int cols = sqlite3_column_count(stmt);
+        for (int i = 0; i < cols; i++) {
+            if (i > 0) strcat(result, "|");
+            const char* val = (const char*)sqlite3_column_text(stmt, i);
+            if (val) strcat(result, val);
+        }
+    }
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+char* Db_query_one(long long handle, const char* sql) {
+    if (handle <= 0 || handle >= MAX_DB_HANDLES || !db_handles[handle]) return "";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db_handles[handle], sql, -1, &stmt, NULL) != SQLITE_OK) return "";
+    char* result = "";
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* val = (const char*)sqlite3_column_text(stmt, 0);
+        result = val ? strdup(val) : "";
+    }
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+long long Db_last_insert_id(long long handle) {
+    if (handle <= 0 || handle >= MAX_DB_HANDLES || !db_handles[handle]) return 0;
+    return (long long)sqlite3_last_insert_rowid(db_handles[handle]);
+}
+
+char* Db_error(long long handle) {
+    if (handle <= 0 || handle >= MAX_DB_HANDLES || !db_handles[handle]) return "invalid handle";
+    return (char*)sqlite3_errmsg(db_handles[handle]);
+}
+
+void Db_close(long long handle) {
+    if (handle <= 0 || handle >= MAX_DB_HANDLES || !db_handles[handle]) return;
+    sqlite3_close(db_handles[handle]);
+    db_handles[handle] = NULL;
+}
+
+#else
+// SQLite not available — stub functions
+long long Db_open(const char* path) { fprintf(stderr, "Error: SQLite not available. Install libsqlite3-dev.\n"); return -1; }
+int Db_exec(long long h, const char* sql) { return -1; }
+char* Db_query(long long h, const char* sql) { return ""; }
+char* Db_query_one(long long h, const char* sql) { return ""; }
+long long Db_last_insert_id(long long h) { return 0; }
+char* Db_error(long long h) { return "sqlite not available"; }
+void Db_close(long long h) {}
+#endif // WYN_USE_SQLITE
+
 #endif // WYN_RUNTIME_H

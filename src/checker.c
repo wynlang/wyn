@@ -1059,7 +1059,7 @@ void init_checker() {
 
     // Register namespace identifiers so checker doesn't reject File.read() etc.
     // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", NULL};
+    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", NULL};
     for (int i = 0; namespaces[i]; i++) {
         Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
         if (!find_symbol(global_scope, ns_tok)) {
@@ -1420,6 +1420,27 @@ void init_checker() {
         ft->fn_type.param_types[1] = builtin_int;
         ft->fn_type.return_type = reg_task_fns[i].ret;
         Token tok = {TOKEN_IDENT, reg_task_fns[i].name, reg_task_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Db namespace
+    struct { const char* name; int nlen; Type* ret; int pc; Type* p1; } reg_db_fns[] = {
+        {"Db_open", 7, builtin_int, 1, builtin_string},
+        {"Db_exec", 7, builtin_int, 2, builtin_int},
+        {"Db_query", 8, builtin_string, 2, builtin_int},
+        {"Db_query_one", 12, builtin_string, 2, builtin_int},
+        {"Db_last_insert_id", 17, builtin_int, 1, builtin_int},
+        {"Db_error", 8, builtin_string, 1, builtin_int},
+        {"Db_close", 8, builtin_void, 1, builtin_int},
+    };
+    for (int i = 0; i < 7; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = reg_db_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = reg_db_fns[i].p1;
+        ft->fn_type.param_types[1] = (reg_db_fns[i].pc > 1) ? builtin_string : NULL;
+        ft->fn_type.return_type = reg_db_fns[i].ret;
+        Token tok = {TOKEN_IDENT, reg_db_fns[i].name, reg_db_fns[i].nlen, 0};
         add_symbol(global_scope, tok, ft, false);
     }
 }

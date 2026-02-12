@@ -1003,6 +1003,8 @@ void codegen_expr(Expr* expr) {
                         emit("Net_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "Url") == 0) {
                         emit("Url_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Db") == 0) {
+                        emit("Db_%.*s(", method.length, method.start);
                     } else {
                         emit("%.*s_%.*s(", obj_name.length, obj_name.start, method.length, method.start);
                     }

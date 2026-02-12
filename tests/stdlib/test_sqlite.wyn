@@ -1,0 +1,47 @@
+fn main() -> int {
+    Test.init("SQLite Database")
+    
+    // Open in-memory database
+    var db = Db.open(":memory:")
+    Test.assert(db > 0, "open returns handle")
+    
+    // Create table
+    var rc = Db.exec(db, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
+    Test.assert_eq_int(rc, 0, "create table")
+    
+    // Insert
+    Db.exec(db, "INSERT INTO users (name, age) VALUES ('Alice', 30)")
+    Db.exec(db, "INSERT INTO users (name, age) VALUES ('Bob', 25)")
+    Db.exec(db, "INSERT INTO users (name, age) VALUES ('Charlie', 35)")
+    
+    var last_id = Db.last_insert_id(db)
+    Test.assert_eq_int(last_id, 3, "last_insert_id = 3")
+    
+    // Query single value
+    var count = Db.query_one(db, "SELECT COUNT(*) FROM users")
+    Test.assert_eq_str(count, "3", "count = 3")
+    
+    // Query rows (pipe-separated columns, newline-separated rows)
+    var rows = Db.query(db, "SELECT name, age FROM users ORDER BY age")
+    Test.assert(rows.contains("Bob|25"), "query contains Bob|25")
+    Test.assert(rows.contains("Alice|30"), "query contains Alice|30")
+    Test.assert(rows.contains("Charlie|35"), "query contains Charlie|35")
+    
+    // Query with WHERE
+    var alice = Db.query_one(db, "SELECT age FROM users WHERE name='Alice'")
+    Test.assert_eq_str(alice, "30", "Alice age = 30")
+    
+    // Update
+    Db.exec(db, "UPDATE users SET age=31 WHERE name='Alice'")
+    var new_age = Db.query_one(db, "SELECT age FROM users WHERE name='Alice'")
+    Test.assert_eq_str(new_age, "31", "Alice age updated to 31")
+    
+    // Delete
+    Db.exec(db, "DELETE FROM users WHERE name='Bob'")
+    var count2 = Db.query_one(db, "SELECT COUNT(*) FROM users")
+    Test.assert_eq_str(count2, "2", "count after delete = 2")
+    
+    Db.close(db)
+    Test.summary()
+    return 0
+}
