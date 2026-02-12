@@ -995,6 +995,13 @@ void codegen_expr(Expr* expr) {
                     } else if (strcmp(module_name, "Task") == 0) {
                         // Task API maps directly to Task_ prefix
                         emit("Task_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "File") == 0) {
+                        // File maps to File_ prefix (wrappers in runtime)
+                        emit("File_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Net") == 0) {
+                        emit("Net_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Url") == 0) {
+                        emit("Url_%.*s(", method.length, method.start);
                     } else {
                         emit("%.*s_%.*s(", obj_name.length, obj_name.start, method.length, method.start);
                     }

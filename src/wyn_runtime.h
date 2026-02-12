@@ -1248,31 +1248,71 @@ char* http_request(const char* method, const char* url, const char* body) {
 }
 
 char* https_get(const char* url) {
-    // For HTTPS, we'll use a simple approach - call curl if available
-    char cmd[1024];
-    snprintf(cmd, 1024, "curl -s '%s' 2>/dev/null", url);
+    // POSIX HTTPS via openssl s_client (no curl dependency)
+    char hostname[256], path[1024];
+    const char* p = url + 8; // skip "https://"
+    const char* slash = strchr(p, '/');
+    if (slash) {
+        int hlen = slash - p; if (hlen > 255) hlen = 255;
+        memcpy(hostname, p, hlen); hostname[hlen] = 0;
+        strncpy(path, slash, 1023); path[1023] = 0;
+    } else {
+        strncpy(hostname, p, 255); hostname[255] = 0;
+        strcpy(path, "/");
+    }
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd),
+        "printf 'GET %s HTTP/1.1\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n' | "
+        "openssl s_client -quiet -connect %s:443 2>/dev/null",
+        path, hostname, hostname);
     FILE* fp = popen(cmd, "r");
-    if (!fp) return NULL;
-    
-    char* response = malloc(65536);
-    size_t len = fread(response, 1, 65535, fp);
+    if (!fp) return "";
+    char* response = malloc(131072);
+    size_t len = fread(response, 1, 131071, fp);
     response[len] = 0;
     pclose(fp);
-    
-    return len > 0 ? response : NULL;
+    // Skip HTTP headers — find \r\n\r\n
+    char* body = strstr(response, "\r\n\r\n");
+    if (body) {
+        body += 4;
+        char* result = strdup(body);
+        free(response);
+        return result;
+    }
+    return response;
 }
 char* https_post(const char* url, const char* data) {
-    char cmd[2048];
-    snprintf(cmd, 2048, "curl -s -X POST -d '%s' '%s' 2>/dev/null", data, url);
+    char hostname[256], path[1024];
+    const char* p = url + 8;
+    const char* slash = strchr(p, '/');
+    if (slash) {
+        int hlen = slash - p; if (hlen > 255) hlen = 255;
+        memcpy(hostname, p, hlen); hostname[hlen] = 0;
+        strncpy(path, slash, 1023); path[1023] = 0;
+    } else {
+        strncpy(hostname, p, 255); hostname[255] = 0;
+        strcpy(path, "/");
+    }
+    int dlen = data ? (int)strlen(data) : 0;
+    char cmd[8192];
+    snprintf(cmd, sizeof(cmd),
+        "printf 'POST %s HTTP/1.1\\r\\nHost: %s\\r\\nContent-Length: %d\\r\\nContent-Type: application/x-www-form-urlencoded\\r\\nConnection: close\\r\\n\\r\\n%s' | "
+        "openssl s_client -quiet -connect %s:443 2>/dev/null",
+        path, hostname, dlen, data ? data : "", hostname);
     FILE* fp = popen(cmd, "r");
-    if (!fp) return NULL;
-    
-    char* response = malloc(65536);
-    size_t len = fread(response, 1, 65535, fp);
+    if (!fp) return "";
+    char* response = malloc(131072);
+    size_t len = fread(response, 1, 131071, fp);
     response[len] = 0;
     pclose(fp);
-    
-    return len > 0 ? response : NULL;
+    char* body = strstr(response, "\r\n\r\n");
+    if (body) {
+        body += 4;
+        char* result = strdup(body);
+        free(response);
+        return result;
+    }
+    return response;
 }
 
 char* http_get(const char* url) {
@@ -1288,25 +1328,45 @@ char* http_post(const char* url, const char* data) {
     return result ? result : "";
 }
 char* http_put(const char* url, const char* data) {
-    char* result;
     if (strncmp(url, "https://", 8) == 0) {
-        char cmd[4096];
-        snprintf(cmd, sizeof(cmd), "curl -s -X PUT -d '%s' '%s' 2>/dev/null", data, url);
-        { FILE* fp = popen(cmd, "r"); if (fp) { result = malloc(65536); size_t len = fread(result, 1, 65535, fp); result[len] = 0; pclose(fp); } else { result = NULL; } }
-    } else {
-        result = http_request("PUT", url, data);
+        // POSIX HTTPS PUT via openssl
+        char hostname[256], path[1024];
+        const char* p = url + 8;
+        const char* slash = strchr(p, '/');
+        if (slash) { int h = slash-p; if(h>255)h=255; memcpy(hostname,p,h); hostname[h]=0; strncpy(path,slash,1023); path[1023]=0; }
+        else { strncpy(hostname,p,255); hostname[255]=0; strcpy(path,"/"); }
+        int dlen = data ? (int)strlen(data) : 0;
+        char cmd[8192];
+        snprintf(cmd, sizeof(cmd),
+            "printf 'PUT %s HTTP/1.1\\r\\nHost: %s\\r\\nContent-Length: %d\\r\\nConnection: close\\r\\n\\r\\n%s' | openssl s_client -quiet -connect %s:443 2>/dev/null",
+            path, hostname, dlen, data?data:"", hostname);
+        FILE* fp = popen(cmd, "r"); if (!fp) return "";
+        char* resp = malloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
+        char* body = strstr(resp, "\r\n\r\n");
+        if (body) { body+=4; char* r=strdup(body); free(resp); return r; }
+        return resp;
     }
+    char* result = http_request("PUT", url, data);
     return result ? result : "";
 }
 char* http_delete(const char* url) {
-    char* result;
     if (strncmp(url, "https://", 8) == 0) {
-        char cmd[2048];
-        snprintf(cmd, sizeof(cmd), "curl -s -X DELETE '%s' 2>/dev/null", url);
-        { FILE* fp = popen(cmd, "r"); if (fp) { result = malloc(65536); size_t len = fread(result, 1, 65535, fp); result[len] = 0; pclose(fp); } else { result = NULL; } }
-    } else {
-        result = http_request("DELETE", url, NULL);
+        char hostname[256], path[1024];
+        const char* p = url + 8;
+        const char* slash = strchr(p, '/');
+        if (slash) { int h = slash-p; if(h>255)h=255; memcpy(hostname,p,h); hostname[h]=0; strncpy(path,slash,1023); path[1023]=0; }
+        else { strncpy(hostname,p,255); hostname[255]=0; strcpy(path,"/"); }
+        char cmd[4096];
+        snprintf(cmd, sizeof(cmd),
+            "printf 'DELETE %s HTTP/1.1\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n' | openssl s_client -quiet -connect %s:443 2>/dev/null",
+            path, hostname, hostname);
+        FILE* fp = popen(cmd, "r"); if (!fp) return "";
+        char* resp = malloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
+        char* body = strstr(resp, "\r\n\r\n");
+        if (body) { body+=4; char* r=strdup(body); free(resp); return r; }
+        return resp;
     }
+    char* result = http_request("DELETE", url, NULL);
     return result ? result : "";
 }
 
@@ -1699,6 +1759,13 @@ int file_copy(const char* src, const char* dst) {
 }
 int file_move(const char* src, const char* dst) { return rename(src, dst) == 0; }
 
+// Forward declarations for file functions
+int file_size(const char* path);
+int file_is_dir(const char* path);
+int file_is_file(const char* path);
+int file_mkdir(const char* path);
+char* file_get_cwd();
+
 // File namespace aliases: File.read(path) -> File_read(path)
 char* File_read(const char* p) { return file_read(p); }
 int File_write(const char* p, const char* d) { return file_write(p, d); }
@@ -1706,6 +1773,32 @@ int File_exists(const char* p) { return file_exists(p); }
 int File_delete(const char* p) { return file_delete(p); }
 int File_copy(const char* s, const char* d) { return file_copy(s, d); }
 int File_move(const char* s, const char* d) { return file_move(s, d); }
+long long File_size(const char* p) { return file_size(p); }
+int File_is_dir(const char* p) { return file_is_dir(p); }
+int File_is_file(const char* p) { return file_is_file(p); }
+int File_mkdir(const char* p) { return file_mkdir(p); }
+char* File_list_dir(const char* p) {
+    DIR* dir = opendir(p);
+    if (!dir) return "";
+    char* result = malloc(65536);
+    result[0] = 0;
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        strcat(result, entry->d_name);
+        strcat(result, "\n");
+    }
+    closedir(dir);
+    return result;
+}
+int File_append(const char* p, const char* d) {
+    FILE* f = fopen(p, "a");
+    if (!f) return 0;
+    fputs(d, f);
+    fclose(f);
+    return 1;
+}
+char* File_cwd() { return file_get_cwd(); }
 
 // HashMap/HashSet: codegen maps HashMap.new() -> hashmap_new(), HashSet.new() -> hashset_new()
 // HashSet namespace: HashSet.new() -> hashset_new()

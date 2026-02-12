@@ -1075,8 +1075,15 @@ void init_checker() {
         {"File_delete", 11, 1, builtin_string, NULL, builtin_int},
         {"File_copy", 9, 2, builtin_string, builtin_string, builtin_int},
         {"File_move", 9, 2, builtin_string, builtin_string, builtin_int},
+        {"File_size", 9, 1, builtin_string, NULL, builtin_int},
+        {"File_is_dir", 11, 1, builtin_string, NULL, builtin_int},
+        {"File_is_file", 12, 1, builtin_string, NULL, builtin_int},
+        {"File_mkdir", 10, 1, builtin_string, NULL, builtin_int},
+        {"File_list_dir", 13, 1, builtin_string, NULL, builtin_string},
+        {"File_append", 11, 2, builtin_string, builtin_string, builtin_int},
+        {"File_cwd", 8, 0, NULL, NULL, builtin_string},
     };
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 13; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = file_ns_fns[i].pc;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
