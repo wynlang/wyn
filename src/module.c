@@ -53,7 +53,7 @@ bool is_builtin_module(const char* module_name) {
     const char* builtins[] = {
         "math", "Math", "File", "System", "Path", "DateTime", 
         "Json", "Http", "Regex", "Random", "HashMap", "HashSet", "Terminal",
-        "Test", "Env", "Net", "Url", "Task", "Db", NULL
+        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", NULL
     };
     for (int i = 0; builtins[i] != NULL; i++) {
         if (strcmp(module_name, builtins[i]) == 0) {

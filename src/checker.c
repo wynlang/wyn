@@ -1059,7 +1059,7 @@ void init_checker() {
 
     // Register namespace identifiers so checker doesn't reject File.read() etc.
     // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", NULL};
+    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", NULL};
     for (int i = 0; namespaces[i]; i++) {
         Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
         if (!find_symbol(global_scope, ns_tok)) {
@@ -1438,6 +1438,36 @@ void init_checker() {
         ft->fn_type.param_count = reg_db_fns[i].pc;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
         ft->fn_type.param_types[0] = reg_db_fns[i].p1;
+
+    // Gui namespace
+    struct { const char* name; int nlen; Type* ret; int pc; } reg_gui_fns[] = {
+        {"Gui_create", 10, builtin_int, 3},
+        {"Gui_clear", 9, builtin_void, 3},
+        {"Gui_color", 9, builtin_void, 3},
+        {"Gui_rect", 8, builtin_void, 4},
+        {"Gui_line", 8, builtin_void, 4},
+        {"Gui_point", 9, builtin_void, 2},
+        {"Gui_present", 11, builtin_void, 0},
+        {"Gui_poll", 8, builtin_string, 0},
+        {"Gui_running", 11, builtin_int, 0},
+        {"Gui_delay", 9, builtin_void, 1},
+        {"Gui_width", 9, builtin_int, 0},
+        {"Gui_height", 10, builtin_int, 0},
+        {"Gui_destroy", 11, builtin_void, 0},
+        {"Gui_text", 8, builtin_void, 4},
+    };
+    for (int i = 0; i < 14; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = reg_gui_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
+        for (int j = 0; j < 4; j++) ft->fn_type.param_types[j] = builtin_int;
+        if (i == 0) ft->fn_type.param_types[0] = builtin_string; // create(title, w, h)
+        if (i == 7) ft->fn_type.param_types[0] = NULL; // poll()
+        if (i == 13) { ft->fn_type.param_types[2] = builtin_string; } // text(x, y, str, scale)
+        ft->fn_type.return_type = reg_gui_fns[i].ret;
+        Token tok = {TOKEN_IDENT, reg_gui_fns[i].name, reg_gui_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
         ft->fn_type.param_types[1] = (reg_db_fns[i].pc > 1) ? builtin_string : NULL;
         ft->fn_type.return_type = reg_db_fns[i].ret;
         Token tok = {TOKEN_IDENT, reg_db_fns[i].name, reg_db_fns[i].nlen, 0};

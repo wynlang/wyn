@@ -26,6 +26,7 @@
 #include "io.h"
 #include "arc_runtime.h"
 #include "spawn.h"
+#include "gui.h"
 #include "future.h"
 #include "optional.h"
 #include "result.h"
