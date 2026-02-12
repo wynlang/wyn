@@ -964,7 +964,7 @@ void init_checker() {
     add_symbol(global_scope, ftos_tok, ftos_t, false);
 
     // Math stdlib - register all Math_ functions
-    struct { const char* name; int nlen; int param_count; Type* p1; Type* p2; Type* ret; } math_fns[] = {
+    struct { const char* name; int nlen; int param_count; Type* p1; Type* p2; Type* ret; } reg_math_fns[] = {
         {"Math_abs", 8, 1, builtin_float, NULL, builtin_float},
         {"Math_max", 8, 2, builtin_float, builtin_float, builtin_float},
         {"Math_min", 8, 2, builtin_float, builtin_float, builtin_float},
@@ -980,12 +980,12 @@ void init_checker() {
     };
     for (int i = 0; i < 13; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = math_fns[i].param_count;
+        ft->fn_type.param_count = reg_math_fns[i].param_count;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        if (math_fns[i].p1) ft->fn_type.param_types[0] = math_fns[i].p1;
-        if (math_fns[i].p2) ft->fn_type.param_types[1] = math_fns[i].p2;
-        ft->fn_type.return_type = math_fns[i].ret;
-        Token tok = {TOKEN_IDENT, math_fns[i].name, math_fns[i].nlen, 0};
+        if (reg_math_fns[i].p1) ft->fn_type.param_types[0] = reg_math_fns[i].p1;
+        if (reg_math_fns[i].p2) ft->fn_type.param_types[1] = reg_math_fns[i].p2;
+        ft->fn_type.return_type = reg_math_fns[i].ret;
+        Token tok = {TOKEN_IDENT, reg_math_fns[i].name, reg_math_fns[i].nlen, 0};
         add_symbol(global_scope, tok, ft, false);
     }
 
@@ -1018,7 +1018,7 @@ void init_checker() {
     }
 
     // Path stdlib
-    struct { const char* name; int nlen; } path_fns[] = {
+    struct { const char* name; int nlen; } reg_path_fns[] = {
         {"Path_basename", 13}, {"Path_dirname", 12},
         {"Path_extension", 14}, {"Path_join", 9},
     };
@@ -1029,7 +1029,7 @@ void init_checker() {
         ft->fn_type.param_types[0] = builtin_string;
         if (i == 3) ft->fn_type.param_types[1] = builtin_string;
         ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, path_fns[i].name, path_fns[i].nlen, 0};
+        Token tok = {TOKEN_IDENT, reg_path_fns[i].name, reg_path_fns[i].nlen, 0};
         add_symbol(global_scope, tok, ft, false);
     }
     
@@ -1211,6 +1211,172 @@ void init_checker() {
     dt_sleep_t->fn_type.return_type = builtin_void;
     Token dt_sleep_tok = {TOKEN_IDENT, "DateTime_sleep", 14, 0};
     add_symbol(global_scope, dt_sleep_tok, dt_sleep_t, false);
+
+    // Http namespace — additional methods
+    {
+        // Http.post(url, data) -> string
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 2;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Http_post", 9, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 2;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Http_put", 8, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Http_delete", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 2;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.return_type = builtin_void;
+        Token tok = {TOKEN_IDENT, "Http_set_header", 15, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Url namespace
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Url_encode", 10, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Url_decode", 10, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Path namespace — already registered above
+
+    // System namespace
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "System_exec", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "System_exec_code", 16, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "System_env", 10, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Math namespace — already registered above
+
+    // Net namespace
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Net_listen", 10, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 2;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.param_types[1] = builtin_int;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Net_connect", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 2;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Net_send", 8, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Net_recv", 8, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Net_close", 9, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Task namespace
+    struct { const char* name; int nlen; Type* ret; int pc; Type* p1; } reg_task_fns[] = {
+        {"Task_value", 10, builtin_int, 1, builtin_int},
+        {"Task_get", 8, builtin_int, 1, builtin_int},
+        {"Task_set", 8, builtin_void, 2, builtin_int},
+        {"Task_add", 8, builtin_void, 2, builtin_int},
+        {"Task_channel", 12, builtin_int, 1, builtin_int},
+        {"Task_send", 9, builtin_void, 2, builtin_int},
+        {"Task_recv", 9, builtin_int, 1, builtin_int},
+        {"Task_close", 10, builtin_void, 1, builtin_int},
+    };
+    for (int i = 0; i < 8; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = reg_task_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = reg_task_fns[i].p1;
+        ft->fn_type.param_types[1] = builtin_int;
+        ft->fn_type.return_type = reg_task_fns[i].ret;
+        Token tok = {TOKEN_IDENT, reg_task_fns[i].name, reg_task_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
 }
 
 Symbol* find_symbol(SymbolTable* scope, Token name) {

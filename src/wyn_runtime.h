@@ -149,19 +149,31 @@ int regex_match(const char* str, const char* pattern) {
     return result;
 }
 char* regex_replace(const char* str, const char* pattern, const char* replacement) {
-    // Simple literal replacement (not full regex replace)
-    int slen = strlen(str), plen = strlen(pattern), rlen = strlen(replacement);
-    char* result = malloc(slen * 2 + 1);
+    regex_t re;
+    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return strdup(str);
+    
+    char* result = malloc(strlen(str) * 2 + strlen(replacement) + 1);
     int ri = 0;
-    for (int i = 0; i < slen; ) {
-        if (i + plen <= slen && memcmp(str + i, pattern, plen) == 0) {
-            memcpy(result + ri, replacement, rlen);
-            ri += rlen; i += plen;
-        } else {
-            result[ri++] = str[i++];
-        }
+    const char* p = str;
+    regmatch_t match;
+    
+    while (regexec(&re, p, 1, &match, 0) == 0) {
+        // Copy text before match
+        memcpy(result + ri, p, match.rm_so);
+        ri += match.rm_so;
+        // Copy replacement
+        int rlen = strlen(replacement);
+        memcpy(result + ri, replacement, rlen);
+        ri += rlen;
+        p += match.rm_eo;
     }
+    // Copy remaining
+    int remaining = strlen(p);
+    memcpy(result + ri, p, remaining);
+    ri += remaining;
     result[ri] = '\0';
+    
+    regfree(&re);
     return result;
 }
 
@@ -1263,10 +1275,40 @@ char* https_post(const char* url, const char* data) {
     return len > 0 ? response : NULL;
 }
 
-char* http_get(const char* url) { return http_request("GET", url, NULL); }
-char* http_post(const char* url, const char* data) { return http_request("POST", url, data); }
-char* http_put(const char* url, const char* data) { return http_request("PUT", url, data); }
-char* http_delete(const char* url) { return http_request("DELETE", url, NULL); }
+char* http_get(const char* url) {
+    char* result;
+    if (strncmp(url, "https://", 8) == 0) result = https_get(url);
+    else result = http_request("GET", url, NULL);
+    return result ? result : "";
+}
+char* http_post(const char* url, const char* data) {
+    char* result;
+    if (strncmp(url, "https://", 8) == 0) result = https_post(url, data);
+    else result = http_request("POST", url, data);
+    return result ? result : "";
+}
+char* http_put(const char* url, const char* data) {
+    char* result;
+    if (strncmp(url, "https://", 8) == 0) {
+        char cmd[4096];
+        snprintf(cmd, sizeof(cmd), "curl -s -X PUT -d '%s' '%s' 2>/dev/null", data, url);
+        { FILE* fp = popen(cmd, "r"); if (fp) { result = malloc(65536); size_t len = fread(result, 1, 65535, fp); result[len] = 0; pclose(fp); } else { result = NULL; } }
+    } else {
+        result = http_request("PUT", url, data);
+    }
+    return result ? result : "";
+}
+char* http_delete(const char* url) {
+    char* result;
+    if (strncmp(url, "https://", 8) == 0) {
+        char cmd[2048];
+        snprintf(cmd, sizeof(cmd), "curl -s -X DELETE '%s' 2>/dev/null", url);
+        { FILE* fp = popen(cmd, "r"); if (fp) { result = malloc(65536); size_t len = fread(result, 1, 65535, fp); result[len] = 0; pclose(fp); } else { result = NULL; } }
+    } else {
+        result = http_request("DELETE", url, NULL);
+    }
+    return result ? result : "";
+}
 
 void http_set_header(const char* key, const char* val) {
     if(http_header_count < 32) {
@@ -2038,19 +2080,21 @@ int Net_listen(int port) {
 }
 
 int Net_connect(const char* host, int port) {
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) return -1;
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%d", port);
+    if (getaddrinfo(host, port_str, &hints, &res) != 0) return -1;
+    int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sockfd < 0) { freeaddrinfo(res); return -1; }
+    if (connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
         close(sockfd);
+        freeaddrinfo(res);
         return -1;
     }
-    if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(sockfd);
-        return -1;
-    }
+    freeaddrinfo(res);
     return sockfd;
 }
 

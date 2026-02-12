@@ -971,7 +971,21 @@ void codegen_expr(Expr* expr) {
                 if (!is_local && (is_module_loaded(module_name) || is_builtin_module(module_name))) {
                     // Special case: some modules use lowercase C functions
                     if (strcmp(module_name, "Http") == 0) {
-                        emit("http_%.*s(", method.length, method.start);
+                        // Http.get/post/put/delete -> http_ (simple string API)
+                        // Http.status/body/header -> Http_ (advanced response API)
+                        if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
+                            emit("http_get(");
+                        } else if (method.length == 4 && memcmp(method.start, "post", 4) == 0) {
+                            emit("http_post(");
+                        } else if (method.length == 3 && memcmp(method.start, "put", 3) == 0) {
+                            emit("http_put(");
+                        } else if (method.length == 6 && memcmp(method.start, "delete", 6) == 0) {
+                            emit("http_delete(");
+                        } else if (method.length == 10 && memcmp(method.start, "set_header", 10) == 0) {
+                            emit("http_set_header(");
+                        } else {
+                            emit("http_%.*s(", method.length, method.start);
+                        }
                     } else if (strcmp(module_name, "Regex") == 0) {
                         emit("regex_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "HashMap") == 0) {
