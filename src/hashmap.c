@@ -258,3 +258,29 @@ void hashmap_free(WynHashMap* map) {
 void hashmap_insert(WynHashMap* map, const char* key, int value) {
     hashmap_insert_int(map, key, value);
 }
+
+// Return all keys as newline-separated string
+char* hashmap_keys_string(WynHashMap* map) {
+    if (!map) return "";
+    char* result = malloc(65536);
+    result[0] = 0;
+    for (int i = 0; i < HASHMAP_SIZE; i++) {
+        Entry* entry = map->buckets[i];
+        while (entry) {
+            strcat(result, entry->key);
+            strcat(result, "\n");
+            entry = entry->next;
+        }
+    }
+    return result;
+}
+
+int hashmap_count(WynHashMap* map) {
+    if (!map) return 0;
+    int count = 0;
+    for (int i = 0; i < HASHMAP_SIZE; i++) {
+        Entry* entry = map->buckets[i];
+        while (entry) { count++; entry = entry->next; }
+    }
+    return count;
+}

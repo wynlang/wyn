@@ -1906,6 +1906,41 @@ char* Http_accept(int server_fd) {
 void Http_close_server(int fd) { if (fd >= 0) close(fd); }
 
 // HashMap/HashSet: codegen maps HashMap.new() -> hashmap_new(), HashSet.new() -> hashset_new()
+// HashMap.keys() -> newline-separated string of all keys
+// HashMap.len() -> number of entries
+extern char* hashmap_keys_string(WynHashMap* map);
+char* hashmap_keys(WynHashMap* map) { return hashmap_keys_string(map); }
+
+// String.split(delim) -> newline-separated string (use split_at for indexed access)
+char* string_split_to_str(const char* s, const char* delim) {
+    if (!s || !delim) return "";
+    int dlen = strlen(delim);
+    char* result = malloc(strlen(s) + 256);
+    result[0] = 0;
+    const char* p = s;
+    while (1) {
+        const char* found = strstr(p, delim);
+        if (!found) { strcat(result, p); break; }
+        strncat(result, p, found - p);
+        strcat(result, "\n");
+        p = found + dlen;
+    }
+    return result;
+}
+
+// Array.sort_by(fn) — sort using comparison function
+void wyn_array_sort_by(WynArray* arr, long long (*cmp)(long long, long long)) {
+    // Simple insertion sort (stable, good for small arrays)
+    for (int i = 1; i < arr->count; i++) {
+        long long key = arr->data[i].data.int_val;
+        int j = i - 1;
+        while (j >= 0 && cmp(arr->data[j].data.int_val, key) > 0) {
+            arr->data[j + 1] = arr->data[j];
+            j--;
+        }
+        arr->data[j + 1].data.int_val = key;
+    }
+}
 // HashSet namespace: HashSet.new() -> hashset_new()
 WynHashSet* HashSet_new() { return hashset_new(); }
 

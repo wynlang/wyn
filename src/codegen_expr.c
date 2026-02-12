@@ -1115,6 +1115,17 @@ void codegen_expr(Expr* expr) {
                     emit("; arr_sort((int*)__sa.data, __sa.count); __sa; })");
                     break;
                 }
+                // arr.sort_by(cmp_fn) -> wyn_array_sort_by(&arr, cmp_fn)
+                if (method.length == 7 && memcmp(method.start, "sort_by", 7) == 0 && expr->method_call.arg_count == 1) {
+                    emit("({ wyn_array_sort_by(&(");
+                    codegen_expr(expr->method_call.object);
+                    emit("), ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit("); ");
+                    codegen_expr(expr->method_call.object);
+                    emit("; })");
+                    break;
+                }
                 // arr.contains(val)
                 if (method.length == 8 && memcmp(method.start, "contains", 8) == 0 && expr->method_call.arg_count == 1) {
                     emit("arr_contains(");
@@ -1347,6 +1358,22 @@ void codegen_expr(Expr* expr) {
                     emit(", "); codegen_expr(expr->method_call.args[0]);
                     emit(")"); break;
                 }
+                if (strcmp(method_name, "keys") == 0 && expr->method_call.arg_count == 0) {
+                    emit("hashmap_keys(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "len") == 0 && expr->method_call.arg_count == 0) {
+                    emit("hashmap_len(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "contains") == 0 && expr->method_call.arg_count == 1) {
+                    emit("hashmap_has(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(")"); break;
+                }
             }
             
             if (receiver_type) {
@@ -1421,6 +1448,43 @@ void codegen_expr(Expr* expr) {
                 }
             }
             if (receiver_type) {
+                char method_name[256];
+                int len = method.length < 255 ? method.length : 255;
+                memcpy(method_name, method.start, len);
+                method_name[len] = '\0';
+                
+                // HashMap instance methods
+                if (strcmp(receiver_type, "map") == 0) {
+                    if (strcmp(method_name, "keys") == 0) {
+                        emit("hashmap_keys("); codegen_expr(expr->method_call.object); emit(")"); break;
+                    }
+                    if (strcmp(method_name, "len") == 0) {
+                        emit("hashmap_len("); codegen_expr(expr->method_call.object); emit(")"); break;
+                    }
+                    if (strcmp(method_name, "contains") == 0) {
+                        emit("hashmap_has("); codegen_expr(expr->method_call.object);
+                        emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                    }
+                    if (strcmp(method_name, "get") == 0) {
+                        emit("hashmap_get_string("); codegen_expr(expr->method_call.object);
+                        emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                    }
+                    if (strcmp(method_name, "get_int") == 0) {
+                        emit("hashmap_get_int("); codegen_expr(expr->method_call.object);
+                        emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                    }
+                    if (strcmp(method_name, "insert_int") == 0) {
+                        emit("hashmap_insert_int("); codegen_expr(expr->method_call.object);
+                        emit(", "); codegen_expr(expr->method_call.args[0]);
+                        emit(", "); codegen_expr(expr->method_call.args[1]); emit(")"); break;
+                    }
+                    if (strcmp(method_name, "insert_string") == 0) {
+                        emit("hashmap_insert_string("); codegen_expr(expr->method_call.object);
+                        emit(", "); codegen_expr(expr->method_call.args[0]);
+                        emit(", "); codegen_expr(expr->method_call.args[1]); emit(")"); break;
+                    }
+                }
+                
                 fprintf(stderr, "Error: Unknown method '%.*s' for type '%s'\n", 
                         method.length, method.start, receiver_type);
                 
