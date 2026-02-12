@@ -1,0 +1,269 @@
+// FINAL VALIDATION: Every feature, every module, every pattern
+
+struct Point { x: int, y: int }
+struct User { name: string, age: int }
+
+fn Point.magnitude(self) -> int { return self.x * self.x + self.y * self.y }
+
+trait Describable { fn describe(self) -> string }
+impl Describable for User { fn describe(self) -> string { return self.name + " age " + self.age.to_string() } }
+
+enum Color { Red, Green, Blue }
+fn color_str(c: Color) -> string {
+    match c { Color::Red => return "R" Color::Green => return "G" Color::Blue => return "B" }
+    return "?"
+}
+
+fn divide(a: int, b: int) -> ResultInt {
+    if b == 0 { return Err("zero") }
+    return Ok(a / b)
+}
+
+fn safe_chain(x: int) -> ResultInt {
+    var a = divide(x, 2)?
+    var b = divide(a, 3)?
+    return Ok(b)
+}
+
+fn dbl(x: int) -> int { return x * 2 }
+fn pos(x: int) -> int { return x > 0 }
+fn sum(a: int, b: int) -> int { return a + b }
+fn desc_cmp(a: int, b: int) -> int { if a > b { return -1 } if a < b { return 1 } return 0 }
+fn inc(mut x: int) { x = x + 1 }
+
+var g_count = 0
+fn bump() { g_count = g_count + 1 }
+
+fn worker(shared: int) -> int { Task.add(shared, 10) return 0 }
+
+fn fib(n: int) -> int { if n <= 1 { return n } return fib(n - 1) + fib(n - 2) }
+
+fn main() -> int {
+    var total_pass = 0
+    var total_fail = 0
+    
+    // ========== CORE LANGUAGE ==========
+    Test.init("Core Language")
+    Test.assert_eq_int(42, 42, "int literal")
+    Test.assert_eq_str("hello", "hello", "string literal")
+    Test.assert(10000000000 > 0, "64-bit int")
+    Test.assert_eq_str(10000000000.to_string(), "10000000000", "64-bit to_string")
+    var x = 5
+    x = 10
+    Test.assert_eq_int(x, 10, "var mutation")
+    const C = 99
+    Test.assert_eq_int(C, 99, "const")
+    if 1 > 0 { Test.assert(1 == 1, "if true") } else { Test.assert(0 == 1, "if false") }
+    var t = 0
+    for i in 0..5 { t = t + i }
+    Test.assert_eq_int(t, 10, "for range")
+    var items = [10, 20, 30]
+    var s2 = 0
+    for item in items { s2 = s2 + item }
+    Test.assert_eq_int(s2, 60, "for-each")
+    var w = 0
+    while w < 3 { w = w + 1 }
+    Test.assert_eq_int(w, 3, "while")
+    var found = -1
+    for i in 0..5 { if i == 3 { found = i break } }
+    Test.assert_eq_int(found, 3, "break")
+    var odds = 0
+    for i in 0..10 { if i % 2 == 0 { continue } odds = odds + 1 }
+    Test.assert_eq_int(odds, 5, "continue")
+    Test.assert_eq_int(fib(10), 55, "recursion")
+    Test.assert_eq_int((2 + 3) * 4, 20, "expr precedence")
+    Test.assert_eq_int(17 % 5, 2, "modulo")
+    Test.summary()
+    
+    // ========== STRINGS ==========
+    Test.init("Strings (27+ methods)")
+    var str = "Hello, World!"
+    Test.assert_eq_int(str.len(), 13, "len")
+    Test.assert_eq_str(str.upper(), "HELLO, WORLD!", "upper")
+    Test.assert_eq_str(str.lower(), "hello, world!", "lower")
+    Test.assert_eq_str("  hi  ".trim(), "hi", "trim")
+    Test.assert_eq_str("  hi".trim_left(), "hi", "trim_left")
+    Test.assert_eq_str("hi  ".trim_right(), "hi", "trim_right")
+    Test.assert(str.contains("World"), "contains")
+    Test.assert(str.starts_with("Hello"), "starts_with")
+    Test.assert(str.ends_with("!"), "ends_with")
+    Test.assert_eq_int(str.index_of("World"), 7, "index_of")
+    Test.assert_eq_int(str.last_index_of("l"), 10, "last_index_of")
+    Test.assert_eq_str(str.substring(0, 5), "Hello", "substring")
+    Test.assert_eq_str(str.slice(0, 5), "Hello", "slice")
+    Test.assert_eq_str(str.replace("World", "Wyn"), "Hello, Wyn!", "replace")
+    Test.assert_eq_str("ab".repeat(3), "ababab", "repeat")
+    Test.assert_eq_str("abc".reverse(), "cba", "reverse")
+    Test.assert_eq_str("hello".capitalize(), "Hello", "capitalize")
+    Test.assert_eq_str("hello world".title(), "Hello World", "title")
+    Test.assert_eq_str("42".pad_left(5, "0"), "00042", "pad_left")
+    Test.assert_eq_str("hi".pad_right(5, "."), "hi...", "pad_right")
+    Test.assert_eq_str("a,b,c".split_at(",", 1), "b", "split_at")
+    Test.assert_eq_int("hello".count("l"), 2, "count")
+    Test.assert_eq_int("99".to_int(), 99, "to_int")
+    Test.assert("abc".is_alpha(), "is_alpha")
+    Test.assert("123".is_digit(), "is_digit")
+    Test.assert("abc123".is_alnum(), "is_alnum")
+    var parts = "a,b,c".split(",")
+    Test.assert_eq_str(parts[0], "a", "split[0]")
+    Test.assert_eq_str(parts[2], "c", "split[2]")
+    var name = "Wyn"
+    Test.assert_eq_str("Hello ${name}!", "Hello Wyn!", "interpolation")
+    Test.summary()
+    
+    // ========== STRUCTS + ENUMS + TRAITS ==========
+    Test.init("Structs, Enums, Traits")
+    var p = Point { x: 3, y: 4 }
+    Test.assert_eq_int(p.magnitude(), 25, "struct method")
+    p.x = 10
+    Test.assert_eq_int(p.x, 10, "field mutation")
+    var u = User { name: "Alice", age: 30 }
+    Test.assert_eq_str(u.describe(), "Alice age 30", "trait method")
+    Test.assert_eq_str(color_str(Color::Red), "R", "enum match")
+    var users = [User { name: "A", age: 1 }, User { name: "B", age: 2 }]
+    users[0] = User { name: "C", age: 3 }
+    Test.assert_eq_str(users[0].name, "C", "struct array assign")
+    Test.summary()
+    
+    // ========== ARRAYS ==========
+    Test.init("Arrays")
+    var nums = [5, 3, 1, 4, 2]
+    Test.assert_eq_int(nums.len(), 5, "len")
+    nums[0] = 99
+    Test.assert_eq_int(nums[0], 99, "set")
+    nums.push(6)
+    Test.assert_eq_int(nums.len(), 6, "push")
+    var doubled = [1, 2, 3].map(dbl)
+    Test.assert_eq_int(doubled[2], 6, "map")
+    var filtered = [-1, 2, -3, 4].filter(pos)
+    Test.assert_eq_int(filtered[0], 2, "filter")
+    var reduced = [1, 2, 3, 4].reduce(sum, 0)
+    Test.assert_eq_int(reduced, 10, "reduce")
+    var sorted = [5, 1, 3, 2, 4]
+    sorted.sort_by(desc_cmp)
+    Test.assert_eq_int(sorted[0], 5, "sort_by[0]")
+    Test.assert_eq_int(sorted[4], 1, "sort_by[4]")
+    var strs = ["c", "a", "b"]
+    strs[0] = "z"
+    Test.assert_eq_str(strs[0], "z", "string array set")
+    Test.summary()
+    
+    // ========== RESULT/OPTION + ? ==========
+    Test.init("Result/Option")
+    var ok: ResultInt = Ok(42)
+    Test.assert(ok.is_ok(), "Ok")
+    Test.assert_eq_int(ok.unwrap(), 42, "unwrap")
+    var err: ResultInt = Err("bad")
+    Test.assert(err.is_err(), "Err")
+    Test.assert_eq_str(err.unwrap_err(), "bad", "unwrap_err")
+    var some: OptionInt = Some(7)
+    Test.assert(some.is_some(), "Some")
+    var none: OptionInt = None()
+    Test.assert_eq_int(none.unwrap_or(99), 99, "unwrap_or")
+    var chain = safe_chain(60)
+    Test.assert_eq_int(chain.unwrap(), 10, "? operator")
+    Test.summary()
+    
+    // ========== GLOBALS + MUT REFS ==========
+    Test.init("Globals + Mut Refs")
+    bump()
+    bump()
+    bump()
+    Test.assert_eq_int(g_count, 3, "global var")
+    var n = 10
+    inc(&n)
+    inc(&n)
+    Test.assert_eq_int(n, 12, "mut ref")
+    Test.summary()
+    
+    // ========== HIGHER-ORDER + CLOSURES ==========
+    Test.init("Higher-Order Functions")
+    Test.assert_eq_int(dbl(21), 42, "fn ref")
+    var tripled = [1, 2, 3].map(dbl)
+    Test.assert_eq_int(tripled[1], 4, "map with fn ref")
+    Test.summary()
+    
+    // ========== ALL MODULES ==========
+    Test.init("All 18 Modules")
+    // File
+    File.write("/tmp/wyn_final.txt", "test\n")
+    Test.assert(File.exists("/tmp/wyn_final.txt"), "File.exists")
+    Test.assert(File.read("/tmp/wyn_final.txt").contains("test"), "File.read")
+    Test.assert(File.size("/tmp/wyn_final.txt") > 0, "File.size")
+    Test.assert(File.is_file("/tmp/wyn_final.txt"), "File.is_file")
+    Test.assert(File.is_dir("/tmp"), "File.is_dir")
+    File.append("/tmp/wyn_final.txt", "more\n")
+    var fh = File.open("/tmp/wyn_final.txt", "r")
+    Test.assert_eq_str(File.read_line(fh).trim(), "test", "File.read_line")
+    File.close(fh)
+    File.delete("/tmp/wyn_final.txt")
+    // System
+    Test.assert_eq_str(System.exec("echo hi").trim(), "hi", "System.exec")
+    Test.assert_eq_int(System.exec_code("true"), 0, "System.exec_code")
+    Test.assert(System.env("HOME").len() > 0, "System.env")
+    // HashMap
+    var m = HashMap.new()
+    m.insert_int("x", 5)
+    m.insert_string("y", "hello")
+    Test.assert_eq_int(m.get_int("x"), 5, "HashMap.get_int")
+    Test.assert_eq_str(m.get("y"), "hello", "HashMap.get")
+    Test.assert_eq_int(m.get_int("missing"), 0, "HashMap missing=0")
+    Test.assert(m.keys().contains("x"), "HashMap.keys")
+    Test.assert_eq_int(m.len(), 2, "HashMap.len")
+    // Math
+    Test.assert_eq_int(Math.abs(-7), 7, "Math.abs")
+    Test.assert_eq_int(Math.max(3, 9), 9, "Math.max")
+    Test.assert_eq_int(Math.min(3, 9), 3, "Math.min")
+    // Path
+    Test.assert_eq_str(Path.basename("/a/b/c"), "c", "Path.basename")
+    Test.assert_eq_str(Path.dirname("/a/b/c"), "/a/b", "Path.dirname")
+    Test.assert_eq_str(Path.extension("f.txt"), "txt", "Path.extension")
+    // DateTime
+    Test.assert(DateTime.now() > 1700000000, "DateTime.now")
+    Test.assert(DateTime.millis() > 0, "DateTime.millis")
+    // Json
+    var j = Json.new()
+    Json.set(j, "k", "v")
+    Json.set_int(j, "n", 42)
+    Test.assert(Json.stringify(j).contains("42"), "Json.stringify")
+    // Regex
+    Test.assert_eq_int(Regex.match("abc123", "[0-9]+"), 1, "Regex.match")
+    Test.assert_eq_str(Regex.replace("a1b", "[0-9]", "X"), "aXb", "Regex.replace")
+    // Url
+    Test.assert_eq_str(Url.decode("a%20b"), "a b", "Url.decode")
+    // Terminal
+    Test.assert(Terminal.cols() > 0, "Terminal.cols")
+    // Spawn/Await
+    var f = spawn sum(100, 200)
+    Test.assert_eq_int(await f, 300, "spawn+await")
+    // Task
+    var shared = Task.value(0)
+    var w1 = spawn worker(shared)
+    var w2 = spawn worker(shared)
+    await w1
+    await w2
+    Test.assert_eq_int(Task.get(shared), 20, "Task.value")
+    var ch = Task.channel(5)
+    Task.send(ch, 42)
+    Test.assert_eq_int(Task.recv(ch), 42, "Task.channel")
+    // Db
+    var db = Db.open(":memory:")
+    Db.exec(db, "CREATE TABLE t(v TEXT)")
+    Db.exec(db, "INSERT INTO t VALUES('ok')")
+    Test.assert_eq_str(Db.query_one(db, "SELECT v FROM t"), "ok", "Db.query_one")
+    Db.close(db)
+    // Http client
+    var body = Http.get("https://httpbin.org/get")
+    Test.assert(body.len() > 0, "Http.get HTTPS")
+    // Http server
+    var srv = Http.serve(19998)
+    Test.assert(srv > 0, "Http.serve")
+    Http.close_server(srv)
+    // Net
+    var sock = Net.connect("httpbin.org", 80)
+    Test.assert(sock > 0, "Net.connect")
+    Net.close(sock)
+    Test.summary()
+    
+    return 0
+}
