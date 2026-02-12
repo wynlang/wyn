@@ -45,38 +45,34 @@ void future_set(Future* f, void* result) {
     pthread_mutex_unlock(&f->lock);
 }
 
-// Await — spin briefly then fall back to condvar
+// Await — adaptive spin with CPU hints, no sched_yield on fast path
 void* future_get(Future* f) {
-    // Fast path: already ready (common for short tasks)
-    if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
+    // Fast path: already ready
+    if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY)
         return f->result;
-    }
     
-    // Spin phase: ~200 iterations (~0.5-1μs on modern CPUs)
-    for (int i = 0; i < 64; i++) {
-        if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
+    // Spin phase: tight loop with CPU yield hint (~100-300ns total)
+    for (int i = 0; i < 128; i++) {
+        if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY)
             return f->result;
-        }
         #ifdef __x86_64__
         __asm__ volatile("pause");
         #elif defined(__aarch64__)
-        __asm__ volatile("yield");
+        __asm__ volatile("isb"); // instruction synchronization barrier — faster than yield
         #endif
     }
     
-    // Yield phase: give up CPU briefly
-    for (int i = 0; i < 4; i++) {
-        if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
+    // Medium path: yield a few times (only if spin didn't catch it)
+    for (int i = 0; i < 8; i++) {
+        if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY)
             return f->result;
-        }
         sched_yield();
     }
     
-    // Slow path: condvar wait (only for long-running tasks)
+    // Slow path: condvar
     pthread_mutex_lock(&f->lock);
-    while (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_PENDING) {
+    while (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_PENDING)
         pthread_cond_wait(&f->cond, &f->lock);
-    }
     void* result = f->result;
     pthread_mutex_unlock(&f->lock);
     return result;

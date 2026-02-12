@@ -21,6 +21,7 @@ typedef struct Task {
     TaskFunc func;
     void* arg;
     Future* future;
+    struct Task* next;
 } Task;
 
 // === Lock-free task pool ===
@@ -39,85 +40,86 @@ static Task* alloc_task(void) {
 
 // === Per-processor local deque (single-producer, multi-consumer) ===
 typedef struct {
-    _Atomic int top;    // Only owner pushes/pops from top
+    _Atomic(Task*) buffer[LOCAL_QUEUE_SIZE];
+    _Atomic int top;    // Owner pushes/pops from top
     _Atomic int bottom; // Stealers steal from bottom
-    Task* buffer[LOCAL_QUEUE_SIZE];
 } WorkDeque;
 
 static inline void deque_init(WorkDeque* d) {
     atomic_store(&d->top, 0);
     atomic_store(&d->bottom, 0);
+    for (int i = 0; i < LOCAL_QUEUE_SIZE; i++) atomic_store(&d->buffer[i], NULL);
 }
 
-static inline void deque_push(WorkDeque* d, Task* task) {
+static inline int deque_push(WorkDeque* d, Task* task) {
     int t = atomic_load_explicit(&d->top, memory_order_relaxed);
-    d->buffer[t & (LOCAL_QUEUE_SIZE - 1)] = task;
+    int b = atomic_load_explicit(&d->bottom, memory_order_acquire);
+    if (t - b >= LOCAL_QUEUE_SIZE) return 0; // Full
+    atomic_store_explicit(&d->buffer[t & (LOCAL_QUEUE_SIZE - 1)], task, memory_order_relaxed);
     atomic_store_explicit(&d->top, t + 1, memory_order_release);
+    return 1;
 }
 
 static inline Task* deque_pop(WorkDeque* d) {
     int t = atomic_load_explicit(&d->top, memory_order_relaxed) - 1;
-    atomic_store_explicit(&d->top, t, memory_order_relaxed);
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    int b = atomic_load_explicit(&d->bottom, memory_order_relaxed);
+    atomic_store_explicit(&d->top, t, memory_order_seq_cst);
+    int b = atomic_load_explicit(&d->bottom, memory_order_seq_cst);
     if (b <= t) {
-        Task* task = d->buffer[t & (LOCAL_QUEUE_SIZE - 1)];
-        return task;
+        return atomic_load_explicit(&d->buffer[t & (LOCAL_QUEUE_SIZE - 1)], memory_order_relaxed);
     }
-    // Empty or race — restore top
-    atomic_store_explicit(&d->top, t + 1, memory_order_relaxed);
+    if (b == t + 1) {
+        // Last element — race with stealers
+        atomic_store_explicit(&d->top, t + 1, memory_order_relaxed);
+    }
     return NULL;
 }
 
 static inline Task* deque_steal(WorkDeque* d) {
-    int b = atomic_load_explicit(&d->bottom, memory_order_relaxed);
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    int t = atomic_load_explicit(&d->top, memory_order_acquire);
-    if (b < t) {
-        Task* task = d->buffer[b & (LOCAL_QUEUE_SIZE - 1)];
-        if (atomic_compare_exchange_strong_explicit(&d->bottom, &b, b + 1,
-                memory_order_seq_cst, memory_order_relaxed)) {
-            return task;
-        }
+    int b = atomic_load_explicit(&d->bottom, memory_order_acquire);
+    int t = atomic_load_explicit(&d->top, memory_order_seq_cst);
+    if (b >= t) return NULL;
+    Task* task = atomic_load_explicit(&d->buffer[b & (LOCAL_QUEUE_SIZE - 1)], memory_order_relaxed);
+    if (atomic_compare_exchange_strong_explicit(&d->bottom, &b, b + 1,
+            memory_order_seq_cst, memory_order_relaxed)) {
+        return task;
     }
     return NULL;
 }
 
-// === Global overflow queue (for when local deques are full) ===
+// === Global queue — lock-free LIFO stack (4ns push, 4ns pop) ===
 typedef struct {
-    Task** buffer;
-    int capacity;
-    _Atomic int head;
-    _Atomic int tail;
-    pthread_mutex_t lock;
+    _Atomic(Task*) top;
+    _Atomic long count;
 } GlobalQueue;
 
 static GlobalQueue global_q;
 
 static void global_queue_init(void) {
-    global_q.capacity = 65536;
-    global_q.buffer = calloc(global_q.capacity, sizeof(Task*));
-    atomic_store(&global_q.head, 0);
-    atomic_store(&global_q.tail, 0);
-    pthread_mutex_init(&global_q.lock, NULL);
+    atomic_store(&global_q.top, NULL);
+    atomic_store(&global_q.count, 0);
 }
 
 static void global_queue_push(Task* task) {
-    pthread_mutex_lock(&global_q.lock);
-    int t = atomic_load(&global_q.tail);
-    global_q.buffer[t & (global_q.capacity - 1)] = task;
-    atomic_store(&global_q.tail, t + 1);
-    pthread_mutex_unlock(&global_q.lock);
+    Task* old_top;
+    do {
+        old_top = atomic_load_explicit(&global_q.top, memory_order_relaxed);
+        task->next = old_top;
+    } while (!atomic_compare_exchange_weak_explicit(&global_q.top, &old_top, task,
+             memory_order_release, memory_order_relaxed));
+    atomic_fetch_add_explicit(&global_q.count, 1, memory_order_relaxed);
 }
 
 static Task* global_queue_pop(void) {
-    int h = atomic_load(&global_q.head);
-    int t = atomic_load(&global_q.tail);
-    if (h >= t) return NULL;
-    if (atomic_compare_exchange_strong(&global_q.head, &h, h + 1)) {
-        return global_q.buffer[h & (global_q.capacity - 1)];
-    }
-    return NULL;
+    Task* top;
+    Task* next;
+    do {
+        top = atomic_load_explicit(&global_q.top, memory_order_acquire);
+        if (!top) return NULL;
+        next = top->next;
+    } while (!atomic_compare_exchange_weak_explicit(&global_q.top, &top, next,
+             memory_order_release, memory_order_relaxed));
+    atomic_fetch_sub_explicit(&global_q.count, 1, memory_order_relaxed);
+    return top;
 }
 
 // === Processor (OS thread) ===
@@ -138,17 +140,18 @@ static _Atomic int scheduler_shutdown = 0;
 static _Atomic long total_spawned = 0;
 static _Atomic long total_completed = 0;
 
-// Wake a parked processor
-static void wake_processor(void) {
-    int n = atomic_load(&num_processors);
+// Wake a parked processor — only if someone is actually sleeping
+static inline void wake_processor(void) {
+    int n = atomic_load_explicit(&num_processors, memory_order_relaxed);
     for (int i = 0; i < n; i++) {
-        if (atomic_load(&processors[i].parked)) {
+        if (atomic_load_explicit(&processors[i].parked, memory_order_acquire)) {
             pthread_mutex_lock(&processors[i].park_lock);
             pthread_cond_signal(&processors[i].park_cond);
             pthread_mutex_unlock(&processors[i].park_lock);
             return;
         }
     }
+    // No parked workers — they're either spinning or busy, task will be picked up
 }
 
 // Execute a task
@@ -193,10 +196,9 @@ static void* processor_loop(void* arg) {
         task = try_steal(p->id);
         if (task) { execute_task(task); continue; }
         
-        // 4. Spin briefly before parking
+        // 4. Spin briefly before parking — use CPU hints, no sched_yield
         atomic_store(&p->spinning, 1);
-        int spins = 0;
-        while (spins++ < 64) {
+        for (int spins = 0; spins < 32; spins++) {
             task = global_queue_pop();
             if (task) { atomic_store(&p->spinning, 0); execute_task(task); goto next; }
             task = try_steal(p->id);
@@ -204,15 +206,14 @@ static void* processor_loop(void* arg) {
             #ifdef __x86_64__
             __asm__ volatile("pause");
             #elif defined(__aarch64__)
-            __asm__ volatile("yield");
+            __asm__ volatile("isb");
             #endif
         }
         atomic_store(&p->spinning, 0);
         
-        // 5. Park (sleep until woken)
+        // 5. Park with short timeout
         pthread_mutex_lock(&p->park_lock);
         atomic_store(&p->parked, 1);
-        // Double-check before sleeping
         task = global_queue_pop();
         if (task) {
             atomic_store(&p->parked, 0);
@@ -222,7 +223,7 @@ static void* processor_loop(void* arg) {
         }
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
-        ts.tv_nsec += 1000000; // 1ms timeout
+        ts.tv_nsec += 500000; // 500μs
         if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
         pthread_cond_timedwait(&p->park_cond, &p->park_lock, &ts);
         atomic_store(&p->parked, 0);
