@@ -2688,4 +2688,64 @@ char* Db_error(long long h) { return "sqlite not available"; }
 void Db_close(long long h) {}
 #endif // WYN_USE_SQLITE
 
+// === StringBuilder — O(1) amortized append ===
+typedef struct {
+    char* data;
+    int len;
+    int cap;
+} WynStringBuilder;
+
+#define MAX_STRING_BUILDERS 32
+static WynStringBuilder sb_pool[MAX_STRING_BUILDERS] = {0};
+
+long long StringBuilder_new() {
+    for (int i = 1; i < MAX_STRING_BUILDERS; i++) {
+        if (!sb_pool[i].data) {
+            sb_pool[i].cap = 256;
+            sb_pool[i].data = malloc(256);
+            sb_pool[i].data[0] = 0;
+            sb_pool[i].len = 0;
+            return i;
+        }
+    }
+    return -1;
+}
+
+void StringBuilder_append(long long handle, const char* s) {
+    if (handle <= 0 || handle >= MAX_STRING_BUILDERS || !sb_pool[handle].data) return;
+    WynStringBuilder* sb = &sb_pool[handle];
+    int slen = strlen(s);
+    while (sb->len + slen + 1 > sb->cap) {
+        sb->cap *= 2;
+        sb->data = realloc(sb->data, sb->cap);
+    }
+    memcpy(sb->data + sb->len, s, slen);
+    sb->len += slen;
+    sb->data[sb->len] = 0;
+}
+
+char* StringBuilder_to_string(long long handle) {
+    if (handle <= 0 || handle >= MAX_STRING_BUILDERS || !sb_pool[handle].data) return "";
+    return sb_pool[handle].data;
+}
+
+long long StringBuilder_len(long long handle) {
+    if (handle <= 0 || handle >= MAX_STRING_BUILDERS) return 0;
+    return sb_pool[handle].len;
+}
+
+void StringBuilder_clear(long long handle) {
+    if (handle <= 0 || handle >= MAX_STRING_BUILDERS || !sb_pool[handle].data) return;
+    sb_pool[handle].len = 0;
+    sb_pool[handle].data[0] = 0;
+}
+
+void StringBuilder_free(long long handle) {
+    if (handle <= 0 || handle >= MAX_STRING_BUILDERS || !sb_pool[handle].data) return;
+    free(sb_pool[handle].data);
+    sb_pool[handle].data = NULL;
+    sb_pool[handle].len = 0;
+    sb_pool[handle].cap = 0;
+}
+
 #endif // WYN_RUNTIME_H
