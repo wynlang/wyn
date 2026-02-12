@@ -864,7 +864,7 @@ void codegen_stmt(Stmt* stmt) {
                         const char* ret_type = "int";
                         if (fn_type->return_type && fn_type->return_type->type == EXPR_IDENT) {
                             Token rt = fn_type->return_type->token;
-                            if (rt.length == 3 && memcmp(rt.start, "int", 3) == 0) ret_type = "int";
+                            if (rt.length == 3 && memcmp(rt.start, "int", 3) == 0) ret_type = "long long";
                             else if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) ret_type = "char*";
                             else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) ret_type = "double";
                             else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) ret_type = "bool";
@@ -874,10 +874,10 @@ void codegen_stmt(Stmt* stmt) {
                         char params_buf[256] = "";
                         for (int j = 0; j < fn_type->param_count; j++) {
                             if (j > 0) strcat(params_buf, ", ");
-                            const char* pt = "int";
+                            const char* pt = "long long";
                             if (fn_type->param_types[j] && fn_type->param_types[j]->type == EXPR_IDENT) {
                                 Token pt_tok = fn_type->param_types[j]->token;
-                                if (pt_tok.length == 3 && memcmp(pt_tok.start, "int", 3) == 0) pt = "int";
+                                if (pt_tok.length == 3 && memcmp(pt_tok.start, "int", 3) == 0) pt = "long long";
                                 else if (pt_tok.length == 6 && memcmp(pt_tok.start, "string", 6) == 0) pt = "char*";
                                 else if (pt_tok.length == 5 && memcmp(pt_tok.start, "float", 5) == 0) pt = "double";
                                 else if (pt_tok.length == 4 && memcmp(pt_tok.start, "bool", 4) == 0) pt = "bool";

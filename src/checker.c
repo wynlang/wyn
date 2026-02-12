@@ -1207,6 +1207,20 @@ void init_checker() {
     Token dt_now_tok = {TOKEN_IDENT, "DateTime_now", 12, 0};
     add_symbol(global_scope, dt_now_tok, dt_now_t, false);
     
+    // DateTime.millis / DateTime.micros
+    Type* dt_millis_t = make_type(TYPE_FUNCTION);
+    dt_millis_t->fn_type.param_count = 0;
+    dt_millis_t->fn_type.param_types = NULL;
+    dt_millis_t->fn_type.return_type = builtin_int;
+    Token dt_millis_tok = {TOKEN_IDENT, "DateTime_millis", 15, 0};
+    add_symbol(global_scope, dt_millis_tok, dt_millis_t, false);
+    Type* dt_micros_t = make_type(TYPE_FUNCTION);
+    dt_micros_t->fn_type.param_count = 0;
+    dt_micros_t->fn_type.param_types = NULL;
+    dt_micros_t->fn_type.return_type = builtin_int;
+    Token dt_micros_tok = {TOKEN_IDENT, "DateTime_micros", 15, 0};
+    add_symbol(global_scope, dt_micros_tok, dt_micros_t, false);
+    
     Type* dt_format_t = make_type(TYPE_FUNCTION);
     dt_format_t->fn_type.param_count = 2;
     dt_format_t->fn_type.param_types = malloc(sizeof(Type*) * 2);

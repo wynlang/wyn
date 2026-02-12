@@ -2165,7 +2165,9 @@ float Math_random() {
 const float Math_PI = 3.14159265358979323846f;
 const float Math_E = 2.71828182845904523536f;
 
-int DateTime_now() { return (int)time(NULL); }
+long long DateTime_now() { return (long long)time(NULL); }
+long long DateTime_millis() { struct timeval tv; gettimeofday(&tv, NULL); return (long long)(tv.tv_sec * 1000LL + tv.tv_usec / 1000); }
+long long DateTime_micros() { struct timeval tv; gettimeofday(&tv, NULL); return (long long)(tv.tv_sec * 1000000LL + tv.tv_usec); }
 char* DateTime_format(int timestamp, const char* fmt) {
     time_t t = (time_t)timestamp;
     struct tm* tm_info = localtime(&t);
