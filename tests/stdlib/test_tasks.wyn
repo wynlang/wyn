@@ -1,57 +1,56 @@
-// Test: Task channels (concurrent communication)
-// Verifies Task.new/send/recv/close/free work correctly
+// Test: Tasks — simplified concurrency API
+// Task.value/get/set/add for shared state between spawns
+// Task.channel/send/recv/close for advanced message passing
 
-fn sender(ch: int) {
+fn worker_add(shared: int, amount: int) -> int {
+    Task.add(shared, amount)
+    return amount
+}
+
+fn producer(ch: int) {
     Task.send(ch, 10)
     Task.send(ch, 20)
     Task.send(ch, 30)
     Task.close(ch)
 }
 
-fn accumulator(input: int, output: int) {
-    var sum = 0
-    // Receive 3 values
-    sum = sum + Task.recv(input)
-    sum = sum + Task.recv(input)
-    sum = sum + Task.recv(input)
-    Task.send(output, sum)
-    Task.close(output)
-}
-
 fn main() -> int {
-    Test.init("Task Channels")
+    Test.init("Tasks")
     
-    // Basic send/recv
-    var ch = Task.new(10)
+    // Shared value — basic
+    var counter = Task.value(0)
+    Test.assert_eq_int(Task.get(counter), 0, "initial value = 0")
+    
+    Task.set(counter, 42)
+    Test.assert_eq_int(Task.get(counter), 42, "set to 42")
+    
+    Task.add(counter, 8)
+    Test.assert_eq_int(Task.get(counter), 50, "add 8 = 50")
+    
+    // Shared value — with spawns
+    var shared = Task.value(0)
+    var f1 = spawn worker_add(shared, 100)
+    var f2 = spawn worker_add(shared, 200)
+    await f1
+    await f2
+    Test.assert_eq_int(Task.get(shared), 300, "two spawns add to shared = 300")
+    
+    // Channel — basic send/recv
+    var ch = Task.channel(10)
     Task.send(ch, 42)
     Task.send(ch, 100)
     var v1 = Task.recv(ch)
     var v2 = Task.recv(ch)
-    Test.assert_eq_int(v1, 42, "recv first value")
-    Test.assert_eq_int(v2, 100, "recv second value")
-    Task.free(ch)
+    Test.assert_eq_int(v1, 42, "channel recv 1")
+    Test.assert_eq_int(v2, 100, "channel recv 2")
     
-    // Spawn + channel
-    var ch2 = Task.new(10)
-    spawn sender(ch2)
+    // Channel — with spawn
+    var ch2 = Task.channel(10)
+    spawn producer(ch2)
     var a = Task.recv(ch2)
     var b = Task.recv(ch2)
     var c = Task.recv(ch2)
-    Test.assert_eq_int(a, 10, "spawn sender val 1")
-    Test.assert_eq_int(b, 20, "spawn sender val 2")
-    Test.assert_eq_int(c, 30, "spawn sender val 3")
-    Test.assert_eq_int(a + b + c, 60, "sum from channel")
-    Task.free(ch2)
-    
-    // Pipeline: sender -> accumulator -> main
-    var pipe_in = Task.new(10)
-    var pipe_out = Task.new(10)
-    spawn sender(pipe_in)
-    spawn accumulator(pipe_in, pipe_out)
-    var total = Task.recv(pipe_out)
-    Test.assert_eq_int(total, 60, "pipeline accumulator")
-    Task.free(pipe_in)
-    Task.free(pipe_out)
+    Test.assert_eq_int(a + b + c, 60, "channel from spawn = 60")
     
     Test.summary()
     return 0

@@ -2208,29 +2208,83 @@ int OptionString_is_none(OptionString o) { return o.tag == 0; }
 const char* OptionString_unwrap(OptionString o) { if (o.tag == 0) { fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
 const char* OptionString_unwrap_or(OptionString o, const char* def) { return o.tag == 1 ? o.value : def; }
 
-// Task channel wrappers — handle-based API (like HashMap)
+// Task — simplified concurrency API
+// Task.all(f1, f2) — wait for multiple spawns
+// Task.race(f1, f2) — first spawn wins
+// Task.value(n) — shared mutable int between spawns
+// Task.get(v) / Task.set(v, n) — read/write shared value
+
+// Shared value: thread-safe int with mutex
+typedef struct {
+    long long value;
+    pthread_mutex_t lock;
+} WynSharedValue;
+
+#define MAX_SHARED_VALUES 64
+static WynSharedValue* shared_registry[MAX_SHARED_VALUES] = {0};
+
+long long Task_value(long long initial) {
+    WynSharedValue* sv = malloc(sizeof(WynSharedValue));
+    sv->value = initial;
+    pthread_mutex_init(&sv->lock, NULL);
+    for (int i = 1; i < MAX_SHARED_VALUES; i++) {
+        if (!shared_registry[i]) { shared_registry[i] = sv; return i; }
+    }
+    free(sv);
+    return 0;
+}
+
+long long Task_get(long long handle) {
+    if (handle <= 0 || handle >= MAX_SHARED_VALUES || !shared_registry[handle]) return 0;
+    WynSharedValue* sv = shared_registry[handle];
+    pthread_mutex_lock(&sv->lock);
+    long long val = sv->value;
+    pthread_mutex_unlock(&sv->lock);
+    return val;
+}
+
+void Task_set(long long handle, long long value) {
+    if (handle <= 0 || handle >= MAX_SHARED_VALUES || !shared_registry[handle]) return;
+    WynSharedValue* sv = shared_registry[handle];
+    pthread_mutex_lock(&sv->lock);
+    sv->value = value;
+    pthread_mutex_unlock(&sv->lock);
+}
+
+void Task_add(long long handle, long long amount) {
+    if (handle <= 0 || handle >= MAX_SHARED_VALUES || !shared_registry[handle]) return;
+    WynSharedValue* sv = shared_registry[handle];
+    pthread_mutex_lock(&sv->lock);
+    sv->value += amount;
+    pthread_mutex_unlock(&sv->lock);
+}
+
+void Task_free_value(long long handle) {
+    if (handle <= 0 || handle >= MAX_SHARED_VALUES || !shared_registry[handle]) return;
+    pthread_mutex_destroy(&shared_registry[handle]->lock);
+    free(shared_registry[handle]);
+    shared_registry[handle] = NULL;
+}
+
+// Channel API (advanced) — kept for power users
 #define MAX_TASKS 64
 static WynTask* task_registry[MAX_TASKS] = {0};
-static int task_registry_count = 0;
 
-long long wyn_task_new_handle(int capacity) {
-    WynTask* task = wyn_task_new(capacity);
+long long Task_channel(long long capacity) {
+    WynTask* task = wyn_task_new((int)capacity);
     for (int i = 1; i < MAX_TASKS; i++) {
-        if (!task_registry[i]) {
-            task_registry[i] = task;
-            return i;
-        }
+        if (!task_registry[i]) { task_registry[i] = task; return i; }
     }
-    task_registry[++task_registry_count] = task;
-    return task_registry_count;
+    wyn_task_free(task);
+    return 0;
 }
-void wyn_task_send_handle(long long handle, long long value) {
+void Task_send(long long handle, long long value) {
     if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return;
     long long* boxed = malloc(sizeof(long long));
     *boxed = value;
     wyn_task_send(task_registry[handle], boxed);
 }
-long long wyn_task_recv_handle(long long handle) {
+long long Task_recv(long long handle) {
     if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return 0;
     void* ptr = wyn_task_recv(task_registry[handle]);
     if (!ptr) return 0;
@@ -2238,14 +2292,9 @@ long long wyn_task_recv_handle(long long handle) {
     free(ptr);
     return val;
 }
-void wyn_task_close_handle(long long handle) {
+void Task_close(long long handle) {
     if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return;
     wyn_task_close(task_registry[handle]);
-}
-void wyn_task_free_handle(long long handle) {
-    if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return;
-    wyn_task_free(task_registry[handle]);
-    task_registry[handle] = NULL;
 }
 
 #endif // WYN_RUNTIME_H
