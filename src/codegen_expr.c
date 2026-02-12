@@ -972,7 +972,7 @@ void codegen_expr(Expr* expr) {
                     // Special case: some modules use lowercase C functions
                     if (strcmp(module_name, "Http") == 0) {
                         // Http.get/post/put/delete -> http_ (simple string API)
-                        // Http.status/body/header -> Http_ (advanced response API)
+                        // Http.serve/accept/respond/close_server -> Http_ (server API)
                         if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
                             emit("http_get(");
                         } else if (method.length == 4 && memcmp(method.start, "post", 4) == 0) {
@@ -984,7 +984,8 @@ void codegen_expr(Expr* expr) {
                         } else if (method.length == 10 && memcmp(method.start, "set_header", 10) == 0) {
                             emit("http_set_header(");
                         } else {
-                            emit("http_%.*s(", method.length, method.start);
+                            // Server methods: serve, accept, respond, close_server
+                            emit("Http_%.*s(", method.length, method.start);
                         }
                     } else if (strcmp(module_name, "Regex") == 0) {
                         emit("regex_%.*s(", method.length, method.start);

@@ -1082,8 +1082,13 @@ void init_checker() {
         {"File_list_dir", 13, 1, builtin_string, NULL, builtin_string},
         {"File_append", 11, 2, builtin_string, builtin_string, builtin_int},
         {"File_cwd", 8, 0, NULL, NULL, builtin_string},
+        {"File_open", 9, 2, builtin_string, builtin_string, builtin_int},
+        {"File_read_line", 14, 1, builtin_int, NULL, builtin_string},
+        {"File_write_line", 15, 2, builtin_int, builtin_string, builtin_int},
+        {"File_eof", 8, 1, builtin_int, NULL, builtin_int},
+        {"File_close", 10, 1, builtin_int, NULL, builtin_void},
     };
-    for (int i = 0; i < 13; i++) {
+    for (int i = 0; i < 16; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = file_ns_fns[i].pc;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
@@ -1248,6 +1253,39 @@ void init_checker() {
         ft->fn_type.param_types[0] = builtin_string;
         ft->fn_type.return_type = builtin_string;
         Token tok = {TOKEN_IDENT, "Http_delete", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        // Http.serve(port) -> int (server fd)
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Http_serve", 10, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        // Http.accept(server_fd) -> string "METHOD|PATH|BODY|CLIENT_FD"
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Http_accept", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        // Http.respond(client_fd, status, content_type, body)
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 4;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.param_types[1] = builtin_int;
+        ft->fn_type.param_types[2] = builtin_string;
+        ft->fn_type.param_types[3] = builtin_string;
+        ft->fn_type.return_type = builtin_void;
+        Token tok = {TOKEN_IDENT, "Http_respond", 12, 0};
         add_symbol(global_scope, tok, ft, false);
     }
     {

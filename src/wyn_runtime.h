@@ -1800,6 +1800,97 @@ int File_append(const char* p, const char* d) {
 }
 char* File_cwd() { return file_get_cwd(); }
 
+// File handle API: File.open/read_line/write_line/close
+#define MAX_FILE_HANDLES 32
+static FILE* file_handles[MAX_FILE_HANDLES] = {0};
+
+long long File_open(const char* path, const char* mode) {
+    FILE* f = fopen(path, mode);
+    if (!f) return -1;
+    for (int i = 1; i < MAX_FILE_HANDLES; i++) {
+        if (!file_handles[i]) { file_handles[i] = f; return i; }
+    }
+    fclose(f);
+    return -1;
+}
+char* File_read_line(long long handle) {
+    if (handle <= 0 || handle >= MAX_FILE_HANDLES || !file_handles[handle]) return "";
+    char* buf = malloc(4096);
+    if (fgets(buf, 4096, file_handles[handle])) return buf;
+    free(buf);
+    return "";
+}
+int File_write_line(long long handle, const char* data) {
+    if (handle <= 0 || handle >= MAX_FILE_HANDLES || !file_handles[handle]) return 0;
+    return fputs(data, file_handles[handle]) >= 0;
+}
+int File_eof(long long handle) {
+    if (handle <= 0 || handle >= MAX_FILE_HANDLES || !file_handles[handle]) return 1;
+    return feof(file_handles[handle]) ? 1 : 0;
+}
+void File_close(long long handle) {
+    if (handle <= 0 || handle >= MAX_FILE_HANDLES || !file_handles[handle]) return;
+    fclose(file_handles[handle]);
+    file_handles[handle] = NULL;
+}
+
+// === HTTP Server ===
+static void http_send_response(int client_fd, int status, const char* content_type, const char* body) {
+    const char* status_text = "OK";
+    if (status == 201) status_text = "Created";
+    else if (status == 400) status_text = "Bad Request";
+    else if (status == 404) status_text = "Not Found";
+    else if (status == 500) status_text = "Internal Server Error";
+    int body_len = body ? (int)strlen(body) : 0;
+    char header[1024];
+    snprintf(header, sizeof(header),
+        "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+        status, status_text, content_type ? content_type : "text/plain", body_len);
+    send(client_fd, header, strlen(header), 0);
+    if (body && body_len > 0) send(client_fd, body, body_len, 0);
+}
+
+void Http_respond(long long client_fd, long long status, const char* content_type, const char* body) {
+    http_send_response((int)client_fd, (int)status, content_type, body);
+    close((int)client_fd);
+}
+
+int Http_serve(int port) {
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) return -1;
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(server_fd); return -1; }
+    if (listen(server_fd, 128) < 0) { close(server_fd); return -1; }
+    return server_fd;
+}
+
+char* Http_accept(int server_fd) {
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
+    if (client_fd < 0) return "";
+    char buf[8192] = {0};
+    int n = recv(client_fd, buf, sizeof(buf) - 1, 0);
+    if (n <= 0) { close(client_fd); return ""; }
+    // Parse method and path
+    char method[16] = "", path[1024] = "";
+    char* sp1 = strchr(buf, ' ');
+    if (sp1) { *sp1 = 0; strncpy(method, buf, 15); char* sp2 = strchr(sp1+1, ' '); if (sp2) { *sp2 = 0; strncpy(path, sp1+1, 1023); } }
+    // Find body
+    char* body_start = strstr(buf + strlen(method) + 1, "\r\n\r\n");
+    const char* body = body_start ? body_start + 4 : "";
+    char* result = malloc(16384);
+    snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
+    return result;
+}
+
+void Http_close_server(int fd) { if (fd >= 0) close(fd); }
+
 // HashMap/HashSet: codegen maps HashMap.new() -> hashmap_new(), HashSet.new() -> hashset_new()
 // HashSet namespace: HashSet.new() -> hashset_new()
 WynHashSet* HashSet_new() { return hashset_new(); }
