@@ -1,52 +1,56 @@
-# Wyn Language Documentation
+# Wyn Documentation
 
-![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)
-**Latest: v1.4.0**
+**Version 1.6.0**
 
-Welcome to the official documentation for the Wyn programming language - a modern systems programming language where everything is an object.
-
-## Documentation Navigation
-
-### Getting Started
-- [**Getting Started**](getting-started.md) - Installation, first program, and basic concepts
-- [**Examples**](examples.md) - Code examples with explanations
-
-### Language Reference
-- [**Language Guide**](language-guide.md) - Complete language reference and syntax
-- [**Standard Library Reference**](stdlib-reference.md) - All built-in functions and methods
-
-### Additional Resources
-- [**FAQ**](faq.md) - Frequently asked questions and troubleshooting
-
-## Quick Links
-
-- **Examples Directory:** [../examples/](../examples/)
-- **Changelog:** [../CHANGELOG.md](../CHANGELOG.md)
+Welcome to the Wyn programming language documentation.
 
 ## What is Wyn?
 
-Wyn is a systems programming language with a unique "everything is an object" philosophy. This means you can call methods on any value:
+Wyn is a modern programming language that compiles to C, producing fast native binaries. It combines the simplicity of scripting languages with the performance of systems programming.
 
 ```wyn
-let result = 42.abs() + "hello".len() + 16.0.sqrt()
+fn main() -> int {
+    println("Hello from Wyn!")
+    return 0
+}
 ```
 
-### Key Features
+## Quick Start
 
-- **Everything is an object** - Methods on all types
-- **Type aliases** - `type UserId = int`
-- **Extension methods** - Add methods to existing types
-- **Pattern matching** - Exhaustive enum matching
-- **Generics** - `Option<T>`, `Result<T, E>`
-- **Async/await** - Future-based concurrency
-- **Memory safety** - Automatic Reference Counting (ARC)
+```bash
+# Compile and run
+cd wyn
+./wyn run hello.wyn
 
-## Version Information
+# Compile only
+./wyn hello.wyn
 
-**Current Version:** 1.4.0  
-**Status:** Production Ready  
-**License:** See [LICENSE](../LICENSE)
+# Install a package
+./wyn install /path/to/package
+```
 
----
+## Documentation
 
-*This documentation is for Wyn v1.4.0. For older versions, see the changelog.*
+- [Language Guide](language-guide.md) — Complete syntax and feature reference
+- [Standard Library](stdlib-reference.md) — All modules and methods
+- [Getting Started](getting-started.md) — Installation and first program
+- [Tutorial](tutorial.md) — Step-by-step learning path
+- [Examples](examples.md) — Real-world code examples
+- [Best Practices](best-practices.md) — Idiomatic Wyn patterns
+- [FAQ](faq.md) — Common questions
+
+## Key Features
+
+- **Fast** — Compiles to C, runs at native speed
+- **Simple** — Clean syntax, no semicolons, everything is an object
+- **64-bit** — Native 64-bit integers, no overflow
+- **Concurrent** — `spawn`/`await` with work-stealing scheduler
+- **Complete stdlib** — File I/O, networking, JSON, regex, terminal UI, testing
+- **Package manager** — `wyn install` from local paths or git
+
+## Sample Apps
+
+See [sample-apps/](../../sample-apps/) for 23 real-world programs including:
+- System monitors (htop-lite, disk usage, process viewer)
+- DevOps tools (Docker monitor, Git dashboard, service checker)
+- CLI utilities (file browser, port scanner, log analyzer)

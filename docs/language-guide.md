@@ -1,503 +1,500 @@
 # Wyn Language Guide
 
-![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)
-**Latest: v1.4.0**
+![Version](https://img.shields.io/badge/version-1.6.0-blue)
 
-Complete reference for the Wyn programming language syntax and features.
+Wyn is a modern systems programming language that transpiles to C, combining the safety and expressiveness of modern languages with the performance and portability of C.
 
-## Table of Contents
+## Getting Started
 
-1. [Basic Syntax](#basic-syntax)
-2. [Types](#types)
-3. [Functions](#functions)
-4. [Control Flow](#control-flow)
-5. [Structs](#structs)
-6. [Generics](#generics)
-7. [Async/Await](#asyncawait)
-8. [Modules](#modules)
-9. [Memory Management](#memory-management)
-10. [Best Practices](#best-practices)
+Wyn compiles your `.wyn` files to C code, then uses your system's C compiler to create native binaries:
 
-## Basic Syntax
-
-### Comments
-```wyn
-// Single line comment
+```bash
+./wyn run hello.wyn
 ```
 
-### Variables
-```wyn
-let x = 42;              // Immutable by default
-let name = "Alice";      // String
-let flag = true;         // Boolean
-```
+## Variables
 
-### Type Annotations
+Wyn has two types of variables:
+
 ```wyn
-let num: int = 42;
-let pi: float = 3.14;
-let text: string = "hello";
-let flag: bool = true;
+var x = 42        // mutable variable
+const y = 100     // immutable constant
 ```
 
 ## Types
 
-### Primitive Types
+### Basic Types
 
-| Type | Description | Example |
-|------|-------------|---------|
-| `int` | Integer | `42` |
-| `float` | Floating point | `3.14` |
-| `bool` | Boolean | `true`, `false` |
-| `string` | String | `"hello"` |
-
-### Composite Types
-
-- **`struct`** - User-defined structures
-- **`array`** - Fixed-size arrays
-- **`Optional<T>`** - Optional values
-- **`Result<T>`** - Result type for error handling
-
-### Type Aliases
 ```wyn
-type UserId = int;
-type Point2D = Point;
+var age: int = 25           // 64-bit integer
+var price: float = 19.99    // double precision float
+var name: string = "Alice"  // string
+var active: bool = true     // boolean
+```
 
-let id: UserId = 123;
+### Arrays
+
+```wyn
+var numbers = [1, 2, 3, 4, 5]
+var names: [string] = ["Alice", "Bob", "Charlie"]
+
+// Access elements
+var first = numbers[0]
 ```
 
 ## Functions
 
-### Basic Functions
 ```wyn
 fn add(a: int, b: int) -> int {
-    return a + b;
-}
-```
-
-### No Return Value
-```wyn
-fn print_hello() -> void {
-    print("Hello!");
-}
-```
-
-### Multiple Parameters
-```wyn
-fn calculate(a: int, b: int, c: int) -> int {
-    return a + b * c;
-}
-```
-
-### Function Overloading
-```wyn
-fn process(x: int) -> int {
-    return x * 2;
+    return a + b
 }
 
-fn process(x: string) -> string {
-    return str_concat(x, "_processed");
+fn greet(name: string) {
+    Terminal.print("Hello, " + name + "!")
 }
+
+// Call functions
+var sum = add(5, 3)
+greet("World")
 ```
 
 ## Control Flow
 
 ### If Statements
+
 ```wyn
-if x > 0 {
-    print("Positive");
-} else if x < 0 {
-    print("Negative");
+var score = 85
+
+if score >= 90 {
+    Terminal.print("A grade")
+} else if score >= 80 {
+    Terminal.print("B grade")
 } else {
-    print("Zero");
+    Terminal.print("Try harder")
 }
 ```
 
-### While Loops
-```wyn
-let mut i = 0;
-while i < 10 {
-    print(i);
-    i = i + 1;
-}
-```
+### Loops
 
-### For Loops
 ```wyn
-for i in 0..10 {
-    print(i);
+// For loop with range
+for i in 0..5 {
+    Terminal.print("Count: " + i)
 }
-```
 
-### Pattern Matching
-```wyn
-match value {
-    Some(x) => print(x),
-    None => print("No value")
+// For loop with array
+var fruits = ["apple", "banana", "orange"]
+for fruit in fruits {
+    Terminal.print("Fruit: " + fruit)
+}
+
+// While loop
+var count = 0
+while count < 3 {
+    Terminal.print("Count: " + count)
+    count = count + 1
 }
 ```
 
 ## Structs
 
-### Definition
 ```wyn
-struct Point {
-    x: int,
-    y: int
+struct Person {
+    name: string
+    age: int
+}
+
+// Create instance
+var person = Person { name: "Alice", age: 30 }
+
+// Access fields
+Terminal.print(person.name)
+```
+
+### Methods
+
+```wyn
+fn Person.greet(self) {
+    Terminal.print("Hi, I'm " + self.name)
+}
+
+fn Person.have_birthday(mut self) {
+    self.age = self.age + 1
+}
+
+// Use methods
+person.greet()
+person.have_birthday()
+```
+
+## Enums
+
+```wyn
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+var favorite = Color::Red
+
+match favorite {
+    Color::Red => Terminal.print("Passionate!")
+    Color::Green => Terminal.print("Natural!")
+    Color::Blue => Terminal.print("Calm!")
 }
 ```
 
-### Instantiation
-```wyn
-let p = Point { x: 10, y: 20 };
-let x_val = p.x;
-```
+## Pattern Matching
 
-### Methods (Implementation Blocks)
 ```wyn
-impl Point {
-    fn distance(self) -> int {
-        return self.x * self.x + self.y * self.y;
-    }
-    
-    fn translate(self, dx: int, dy: int) -> Point {
-        return Point { x: self.x + dx, y: self.y + dy };
-    }
+enum Result {
+    Success,
+    Error
+}
+
+var result = Result::Success
+
+match result {
+    Result::Success => Terminal.print("It worked!")
+    Result::Error => Terminal.print("Something went wrong")
 }
 ```
 
-### Using Methods
+## Traits
+
 ```wyn
-let p = Point { x: 3, y: 4 };
-let dist = p.distance();
-let moved = p.translate(5, 5);
+trait Drawable {
+    fn draw(self)
+}
+
+struct Circle {
+    radius: float
+}
+
+impl Drawable for Circle {
+    fn draw(self) {
+        Terminal.print("Drawing circle with radius: " + self.radius)
+    }
+}
+
+var circle = Circle { radius: 5.0 }
+circle.draw()
 ```
 
 ## Generics
 
-### Generic Functions
 ```wyn
-fn identity<T>(x: T) -> T {
-    return x;
-}
-
-fn main() -> int {
-    let num = identity(42);
-    let text = identity("hello");
-    return num;
-}
-```
-
-### Generic Structs
-```wyn
-struct Box<T> {
-    value: T
-}
-
-impl<T> Box<T> {
-    fn new(value: T) -> Box<T> {
-        return Box { value: value };
-    }
-    
-    fn get(self) -> T {
-        return self.value;
+fn max<T>(a: T, b: T) -> T {
+    if a > b {
+        return a
+    } else {
+        return b
     }
 }
+
+var bigger_int = max(10, 20)
+var bigger_float = max(3.14, 2.71)
 ```
 
-### Using Generic Types
-```wyn
-let int_box = Box::new(42);
-let string_box = Box::new("hello");
-let value = int_box.get();
-```
+## Error Handling
 
-## Async/Await
+Wyn provides Result and Option types for safe error handling:
 
-### Async Functions
 ```wyn
-async fn fetch_data() -> int {
-    return 42;
+fn divide(a: int, b: int) -> ResultInt {
+    if b == 0 {
+        return Err("Division by zero")
+    }
+    return Ok(a / b)
 }
-```
 
-### Await Operations
-```wyn
-fn main() -> int {
-    let future = fetch_data();
-    let result = await future;
-    return result;
+var result = divide(10, 2)
+match result {
+    Ok(value) => Terminal.print("Result: " + value)
+    Err(error) => Terminal.print("Error: " + error)
 }
 ```
 
-### Multiple Async Operations
 ```wyn
-async fn step1() -> int {
-    return 10;
+fn find_item(items: [string], target: string) -> OptionString {
+    for item in items {
+        if item == target {
+            return Some(item)
+        }
+    }
+    return None()
 }
 
-async fn step2(x: int) -> int {
-    return x * 2;
-}
-
-fn main() -> int {
-    let f1 = step1();
-    let val = await f1;
-    let f2 = step2(val);
-    let result = await f2;
-    return result;
+var found = find_item(["apple", "banana"], "banana")
+match found {
+    Some(item) => Terminal.print("Found: " + item)
+    None() => Terminal.print("Not found")
 }
 ```
 
-### Concurrent Execution
+## Closures
+
 ```wyn
-async fn parallel_work() -> int {
-    let f1 = fetch_data();
-    let f2 = fetch_data();
-    
-    let result1 = await f1;
-    let result2 = await f2;
-    
-    return result1 + result2;
+var double = fn(x: int) -> int { return x * 2 }
+var result = double(5)  // result is 10
+
+var numbers = [1, 2, 3, 4, 5]
+var doubled = numbers.map(fn(x: int) -> int { return x * 2 })
+```
+
+## Global Variables
+
+```wyn
+var global_counter = 0
+
+fn increment() {
+    global_counter = global_counter + 1
 }
+
+fn get_count() -> int {
+    return global_counter
+}
+```
+
+## Mutable References
+
+```wyn
+fn increment(mut x: int) {
+    x = x + 1
+}
+
+var n = 5
+increment(&n)  // n is now 6
 ```
 
 ## Modules
 
-Wyn has a powerful module system with nested modules, visibility control, and relative imports.
-
-### Creating a Module
+### Exporting
 
 ```wyn
-// math_utils.wyn
-pub fn add(a: int, b: int) -> int {
-    return a + b;
+// math.wyn
+export fn add(a: int, b: int) -> int {
+    return a + b
 }
 
-pub fn multiply(a: int, b: int) -> int {
-    return a * b;
-}
-
-fn internal_helper() -> int {  // Private by default
-    return 42;
-}
+export const PI = 3.14159
 ```
 
-### Importing Modules
+### Importing
 
 ```wyn
 // main.wyn
-import math_utils
+import math
+import { add } from math
 
-fn main() -> int {
-    var sum = math_utils::add(1, 2);
-    var product = math_utils::multiply(3, 4);
-    return sum + product;
+var sum = math.add(5, 3)
+var sum2 = add(5, 3)
+var circle_area = math.PI * radius * radius
+```
+
+## Concurrency
+
+### Spawning Tasks
+
+```wyn
+fn heavy_computation(n: int) -> int {
+    var result = 0
+    for i in 0..n {
+        result = result + i
+    }
+    return result
+}
+
+var future = spawn heavy_computation(1000)
+var result = await future
+Terminal.print("Result: " + result)
+```
+
+### Shared State
+
+```wyn
+var counter = Task.value(0)
+
+fn worker() {
+    for i in 0..10 {
+        counter.add(1)
+    }
+}
+
+var f1 = spawn worker()
+var f2 = spawn worker()
+
+await f1
+await f2
+
+Terminal.print("Final count: " + counter.get())
+```
+
+### Channels
+
+```wyn
+var ch = Task.channel(10)
+
+fn producer() {
+    for i in 0..5 {
+        ch.send("Message " + i)
+    }
+    ch.close()
+}
+
+fn consumer() {
+    while true {
+        var msg = ch.receive()
+        match msg {
+            Some(value) => Terminal.print("Received: " + value)
+            None() => break
+        }
+    }
+}
+
+spawn producer()
+spawn consumer()
+```
+
+## Standard Library
+
+### File Operations
+
+```wyn
+var content = File.read("data.txt")
+File.write("output.txt", "Hello, World!")
+```
+
+### System Commands
+
+```wyn
+var result = System.exec("ls -la")
+Terminal.print(result)
+```
+
+### Terminal Operations
+
+```wyn
+Terminal.print("Hello, World!")
+Terminal.clear()
+var input = Terminal.input("Enter your name: ")
+```
+
+### Math Functions
+
+```wyn
+var abs_value = Math.abs(-42)
+var sqrt_value = Math.sqrt(16.0)
+var max_value = Math.max(10, 20)
+```
+
+### Hash Maps
+
+```wyn
+var map = HashMap.new()
+map.set("key1", "value1")
+map.set("key2", "value2")
+
+var value = map.get("key1")
+match value {
+    Some(v) => Terminal.print("Found: " + v)
+    None() => Terminal.print("Not found")
 }
 ```
 
-### Nested Modules
-
-Use `.` syntax like Java/TypeScript:
+### Testing
 
 ```wyn
-// File: network/http.wyn
-pub fn get(url: string) -> string {
-    return "HTTP response";
-}
-
-// File: main.wyn
-import network.http
-
-fn main() -> int {
-    var response = http::get("example.com");  // Short name
-    // Or use full path: network_http::get()
-    return 0;
+fn test_addition() {
+    Test.init()
+    Test.assert_eq(add(2, 3), 5)
+    Test.assert_eq(add(-1, 1), 0)
 }
 ```
 
-### Relative Imports
+## Package Management
 
-```wyn
-// In company/product/feature.wyn
-import root::utils           // Parent: company/product/utils
-import root::root::config   // Grandparent: company/config
-import root::database        // Root: database
-import self::helpers          // Same dir: company/product/feature/helpers
+### Installing Packages
+
+```bash
+# Install from local path
+wyn install ./my-package
+
+# Install from git repository
+wyn install https://github.com/user/wyn-package
 ```
 
-### Visibility Control
+### wyn.toml Configuration
 
-```wyn
-// module.wyn
-pub fn public_api() -> int {    // Accessible from outside
-    return private_helper();
-}
+```toml
+[package]
+name = "my-app"
+version = "1.0.0"
 
-fn private_helper() -> int {    // Only accessible within module
-    return 42;
-}
+[dependencies]
+math-utils = { path = "./packages/math-utils" }
+http-client = { git = "https://github.com/user/wyn-http" }
 ```
 
-### Multiple Imports
+## Comments
 
 ```wyn
-import math_utils
-import string_utils
-import network.http
+// This is a single-line comment
+var x = 42  // Comments can be at the end of lines
 
-fn main() -> int {
-    var sum = math_utils::add(1, 2);
-    var upper = string_utils::uppercase("hello");
-    var response = http::get("example.com");
-    return 0;
-}
+// Multi-line comments are just multiple single-line comments
+// like this block here
 ```
 
-### Selective Imports
+## String Operations
+
 ```wyn
-import math::{add, multiply};
+var first = "Hello"
+var second = "World"
+var greeting = first + ", " + second + "!"  // "Hello, World!"
 
-fn main() -> int {
-    return add(1, multiply(2, 3));
-}
+var name = "Alice"
+var message = "Welcome, " + name
 ```
-
-## Memory Management
-
-### Automatic Reference Counting (ARC)
-```wyn
-let data = Box::new(42);
-// Automatically freed when out of scope
-```
-
-### Manual Memory Management
-```wyn
-let map = hashmap_new();
-hashmap_insert(map, "key", 42);
-// ... use map ...
-hashmap_free(map);  // Manual cleanup required
-```
-
-### Memory Safety Rules
-1. **No null pointer dereferences** - Use `Optional<T>` instead
-2. **No use after free** - ARC prevents this automatically
-3. **No memory leaks** - Automatic cleanup for most types
 
 ## Best Practices
 
-### Code Style
-1. **Use descriptive names** - `calculate_total` not `calc`
-2. **Keep functions small** - One responsibility per function
-3. **Use type annotations** - Make intent clear
-4. **Handle errors explicitly** - Use Result type for fallible operations
+1. **Use descriptive variable names**: `user_count` instead of `uc`
+2. **Prefer immutable data**: Use `const` when values don't change
+3. **Handle errors explicitly**: Always match on Result and Option types
+4. **Use traits for shared behavior**: Define common interfaces with traits
+5. **Keep functions small**: Break complex logic into smaller functions
+6. **Use pattern matching**: Leverage match expressions for clear control flow
 
-### Performance Tips
-1. **Prefer immutable data** - Easier to reason about
-2. **Use references when possible** - Avoid unnecessary copying
-3. **Profile before optimizing** - Measure actual performance
-4. **Consider async for I/O** - Don't block on network/disk operations
+## Example Program
 
-### Error Handling Patterns
 ```wyn
-// Simple error indication
-fn divide(a: int, b: int) -> int {
-    if b == 0 {
-        return -1;  // Error indicator
+struct User {
+    name: string
+    email: string
+    age: int
+}
+
+fn User.is_adult(self) -> bool {
+    return self.age >= 18
+}
+
+fn User.greet(self) {
+    var status = if self.is_adult() { "adult" } else { "minor" }
+    Terminal.print("Hello " + self.name + " (" + status + ")")
+}
+
+fn main() {
+    var users = [
+        User { name: "Alice", email: "alice@example.com", age: 25 },
+        User { name: "Bob", email: "bob@example.com", age: 16 }
+    ]
+    
+    for user in users {
+        user.greet()
     }
-    return a / b;
-}
-
-// Using Optional for missing values
-fn find_value(key: string) -> Optional<int> {
-    // Return Some(value) or None
-}
-
-// Using Result for detailed errors
-fn parse_number(text: string) -> Result<int, string> {
-    // Return Ok(number) or Err(error_message)
 }
 ```
 
-### Common Patterns
-
-#### Builder Pattern
-```wyn
-struct Config {
-    host: string,
-    port: int,
-    debug: bool
-}
-
-impl Config {
-    fn new() -> Config {
-        return Config { 
-            host: "localhost", 
-            port: 8080, 
-            debug: false 
-        };
-    }
-    
-    fn with_host(self, host: string) -> Config {
-        return Config { 
-            host: host, 
-            port: self.port, 
-            debug: self.debug 
-        };
-    }
-    
-    fn with_port(self, port: int) -> Config {
-        return Config { 
-            host: self.host, 
-            port: port, 
-            debug: self.debug 
-        };
-    }
-}
-
-// Usage
-let config = Config::new()
-    .with_host("example.com")
-    .with_port(9000);
-```
-
-#### Iterator Pattern
-```wyn
-fn process_array(arr: array<int>) -> int {
-    let mut sum = 0;
-    let mut i = 0;
-    
-    while i < arr.len() {
-        sum = sum + arr[i];
-        i = i + 1;
-    }
-    
-    return sum;
-}
-```
-
-## Language Features Summary
-
-| Feature | Status | Example |
-|---------|--------|---------|
-| Variables | ✅ | `let x = 42;` |
-| Functions | ✅ | `fn add(a: int, b: int) -> int` |
-| Structs | ✅ | `struct Point { x: int, y: int }` |
-| Enums | ✅ | `enum Color { Red, Green, Blue }` |
-| Generics | ✅ | `fn identity<T>(x: T) -> T` |
-| Pattern Matching | ✅ | `match value { Some(x) => x, None => 0 }` |
-| Async/Await | ✅ | `async fn fetch() -> int` |
-| Modules | ✅ | `import math; math::add(1, 2)` |
-| Type Aliases | ✅ | `type UserId = int;` |
-| Method Chaining | ✅ | `"hello".upper().len()` |
-
-## See Also
-
-- [**Getting Started Guide**](getting-started.md) - Installation and first steps
-- [**Standard Library Reference**](stdlib-reference.md) - Built-in functions and methods
-- [**Examples**](examples.md) - Code examples and tutorials
-- [**FAQ**](faq.md) - Common questions and troubleshooting
-
----
-
-*This guide covers Wyn v1.4.0. For the latest updates, see the [GitHub repository](https://github.com/wyn-lang/wyn).*
+This guide covers the core features of Wyn v1.6.0. For more examples and advanced topics, explore the other documentation files in this directory.
