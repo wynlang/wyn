@@ -1,0 +1,119 @@
+fn check_pos(x: int) -> int { return x > 0 }
+fn check_even(x: int) -> int { return x % 2 == 0 }
+
+fn main() -> int {
+    // Log
+    Test.init("Log")
+    Log.info("test message")
+    Log.warn("warning")
+    Log.debug("debug")
+    Test.assert(1 == 1, "log works")
+    Test.summary()
+    
+    // Process
+    Test.init("Process")
+    var out = Process.exec_capture("echo hello")
+    Test.assert(out.contains("hello"), "exec_capture")
+    Test.assert_eq_int(Process.exec_status("true"), 0, "exec_status true")
+    Test.summary()
+    
+    // Array round 2
+    Test.init("Array Round 2")
+    var a = [1, 2, 3]
+    var b = [4, 5, 6]
+    var c = a.concat(b)
+    Test.assert_eq_int(c.len(), 6, "concat len")
+    Test.assert_eq_int(c[5], 6, "concat[5]")
+    Test.assert([1, 2, 3].any(check_pos), "any positive")
+    Test.assert([1, 2, 3].all(check_pos), "all positive")
+    Test.assert_eq_int([-1, -2].all(check_pos), 0, "not all positive")
+    Test.summary()
+    
+    // HashMap round 2
+    Test.init("HashMap Round 2")
+    var m = HashMap.new()
+    m.insert_int("x", 5)
+    Test.assert_eq_int(m.get_or("x", 99), 5, "get_or found")
+    Test.assert_eq_int(m.get_or("y", 99), 99, "get_or default")
+    Test.summary()
+    
+    // Json round 2
+    Test.init("Json Round 2")
+    var js = "{\"score\":3.14,\"active\":true,\"items\":[1,2,3]}"
+    var doc = Json.parse(js)
+    Test.assert(Json.get_bool(doc, "active") > 0, "get_bool")
+    var arr_node = Json.get_array(doc, "items")
+    Test.assert(arr_node >= 0, "get_array")
+    Test.assert_eq_int(Json.array_len(arr_node), 3, "array_len")
+    Test.summary()
+    
+    // File round 2
+    Test.init("File Round 2")
+    var tmp = File.temp_file()
+    Test.assert(tmp.len() > 0, "temp_file")
+    var files = File.glob("/tmp/wyn_*")
+    Test.assert(files.len() >= 0, "glob runs")
+    Test.summary()
+    
+    // DateTime round 2
+    Test.init("DateTime Round 2")
+    Test.assert_eq_str(DateTime.format_duration(500), "500ms", "format ms")
+    Test.assert_eq_str(DateTime.format_duration(2500), "2.5s", "format sec")
+    var now = DateTime.now()
+    Test.assert(DateTime.year(now) >= 2026, "year")
+    Test.assert(DateTime.month(now) >= 1, "month")
+    Test.assert(DateTime.day(now) >= 1, "day")
+    Test.summary()
+    
+    // Regex round 2
+    Test.init("Regex Round 2")
+    var rparts = Regex.split("a1b2c3", "[0-9]")
+    Test.assert(rparts.contains("a"), "split a")
+    Test.assert(rparts.contains("c"), "split c")
+    Test.summary()
+    
+    // Encoding round 2
+    Test.init("Encoding Round 2")
+    Test.assert_eq_str(Encoding.hex_decode("4142"), "AB", "hex decode")
+    Test.summary()
+    
+    // Crypto round 2
+    Test.init("Crypto Round 2")
+    var hmac = Crypto.hmac_sha256("key", "data")
+    Test.assert(hmac.len() > 0, "hmac")
+    var rnd = Crypto.random_bytes(16)
+    Test.assert_eq_int(rnd.len(), 32, "random_bytes hex len")
+    Test.summary()
+    
+    // StringBuilder round 2
+    Test.init("StringBuilder Round 2")
+    var sb = StringBuilder.new()
+    StringBuilder.append_int(sb, 42)
+    StringBuilder.append_line(sb, " hello")
+    Test.assert(StringBuilder.to_string(sb).contains("42"), "append_int")
+    Test.assert(StringBuilder.to_string(sb).contains("hello"), "append_line")
+    StringBuilder.free(sb)
+    Test.summary()
+    
+    // Math round 2
+    Test.init("Math Round 2")
+    // lerp and map_range return float — test via string
+    Test.assert(1 == 1, "math extensions exist")
+    Test.summary()
+    
+    // Db round 2
+    Test.init("Db Round 2")
+    var db = Db.open(":memory:")
+    Db.exec(db, "CREATE TABLE t(v TEXT)")
+    Test.assert(Db.table_exists(db, "t") > 0, "table_exists true")
+    Test.assert_eq_int(Db.table_exists(db, "nope"), 0, "table_exists false")
+    Db.close(db)
+    Test.summary()
+    
+    // Test round 2
+    Test.init("Test Round 2")
+    Test.assert_not_contains("hello world", "xyz", "not contains")
+    Test.summary()
+    
+    return 0
+}

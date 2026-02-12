@@ -1059,7 +1059,7 @@ void init_checker() {
 
     // Register namespace identifiers so checker doesn't reject File.read() etc.
     // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", NULL};
+    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", NULL};
     for (int i = 0; namespaces[i]; i++) {
         Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
         if (!find_symbol(global_scope, ns_tok)) {
@@ -1484,8 +1484,41 @@ void init_checker() {
         {"regex_find_all", 14, builtin_string},
         {"Net_resolve", 11, builtin_string},
         {"Db_escape", 9, builtin_string},
+        {"Db_table_exists", 15, builtin_int},
+        {"Log_debug", 9, builtin_void},
+        {"Log_info", 8, builtin_void},
+        {"Log_warn", 8, builtin_void},
+        {"Log_error", 9, builtin_void},
+        {"Log_set_level", 13, builtin_void},
+        {"Process_exec_capture", 20, builtin_string},
+        {"Process_exec_status", 19, builtin_int},
+        {"Http_get_json", 13, builtin_int},
+        {"Http_post_json", 14, builtin_int},
+        {"Json_get_float", 14, builtin_float},
+        {"Json_get_bool", 13, builtin_int},
+        {"Json_get_array", 14, builtin_int},
+        {"Json_get_object", 15, builtin_int},
+        {"File_glob", 9, builtin_string},
+        {"File_walk_dir", 13, builtin_string},
+        {"File_temp_file", 14, builtin_string},
+        {"DateTime_format_duration", 24, builtin_string},
+        {"DateTime_day_of_week", 20, builtin_int},
+        {"DateTime_year", 13, builtin_int},
+        {"DateTime_month", 14, builtin_int},
+        {"DateTime_day", 12, builtin_int},
+        {"DateTime_hour", 13, builtin_int},
+        {"DateTime_minute", 15, builtin_int},
+        {"DateTime_second", 15, builtin_int},
+        {"regex_split", 11, builtin_string},
+        {"Regex_split", 11, builtin_string},
+        {"Regex_find", 10, builtin_int},
+        {"Regex_find_all", 14, builtin_string},
+        {"Encoding_hex_decode", 19, builtin_string},
+        {"Encoding_csv_parse", 18, builtin_string},
+        {"Crypto_hmac_sha256", 18, builtin_string},
+        {"Crypto_random_bytes", 19, builtin_string},
     };
-    for (int i = 0; i < 30; i++) {
+    for (int i = 0; i < 64; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = 1;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 4);

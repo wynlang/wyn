@@ -1019,6 +1019,10 @@ void codegen_expr(Expr* expr) {
                         emit("Os_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "Uuid") == 0) {
                         emit("Uuid_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Log") == 0) {
+                        emit("Log_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Process") == 0) {
+                        emit("Process_%.*s(", method.length, method.start);
                     } else {
                         emit("%.*s_%.*s(", obj_name.length, obj_name.start, method.length, method.start);
                     }
@@ -1196,6 +1200,21 @@ void codegen_expr(Expr* expr) {
                 // arr.unique()
                 if (method.length == 6 && memcmp(method.start, "unique", 6) == 0 && expr->method_call.arg_count == 0) {
                     emit("array_unique_int("); codegen_expr(expr->method_call.object); emit(")"); break;
+                }
+                // arr.concat(other)
+                if (method.length == 6 && memcmp(method.start, "concat", 6) == 0 && expr->method_call.arg_count == 1) {
+                    emit("array_concat("); codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                }
+                // arr.any(fn)
+                if (method.length == 3 && memcmp(method.start, "any", 3) == 0 && expr->method_call.arg_count == 1) {
+                    emit("wyn_arr_any("); codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                }
+                // arr.all(fn)
+                if (method.length == 3 && memcmp(method.start, "all", 3) == 0 && expr->method_call.arg_count == 1) {
+                    emit("wyn_arr_all("); codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
                 
                 if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
@@ -1437,6 +1456,13 @@ void codegen_expr(Expr* expr) {
                 if (strcmp(method_name, "values") == 0 && expr->method_call.arg_count == 0) {
                     emit("hashmap_values_string(");
                     codegen_expr(expr->method_call.object);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "get_or") == 0 && expr->method_call.arg_count == 2) {
+                    emit("hashmap_get_or_int(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(", "); codegen_expr(expr->method_call.args[1]);
                     emit(")"); break;
                 }
             }

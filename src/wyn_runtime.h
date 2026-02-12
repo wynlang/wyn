@@ -3183,4 +3183,261 @@ char* Db_escape(const char* str) {
     return out;
 }
 
+// === Log Module ===
+static int log_level = 0; // 0=debug, 1=info, 2=warn, 3=error
+void Log_set_level(long long level) { log_level = (int)level; }
+void Log_debug(const char* msg) { if (log_level <= 0) fprintf(stderr, "\x1b[90m[DEBUG %ld] %s\x1b[0m\n", (long)time(NULL), msg); }
+void Log_info(const char* msg)  { if (log_level <= 1) fprintf(stderr, "\x1b[32m[INFO  %ld] %s\x1b[0m\n", (long)time(NULL), msg); }
+void Log_warn(const char* msg)  { if (log_level <= 2) fprintf(stderr, "\x1b[33m[WARN  %ld] %s\x1b[0m\n", (long)time(NULL), msg); }
+void Log_error(const char* msg) { if (log_level <= 3) fprintf(stderr, "\x1b[31m[ERROR %ld] %s\x1b[0m\n", (long)time(NULL), msg); }
+
+// === Process Module ===
+char* Process_exec_capture(const char* cmd) {
+    // Run command and capture both stdout and stderr
+    char full_cmd[4096];
+    snprintf(full_cmd, sizeof(full_cmd), "%s 2>&1", cmd);
+    FILE* fp = popen(full_cmd, "r");
+    if (!fp) return "";
+    char* result = malloc(131072);
+    size_t len = fread(result, 1, 131071, fp);
+    result[len] = 0;
+    int status = pclose(fp);
+    return result;
+}
+
+long long Process_exec_status(const char* cmd) {
+    return WEXITSTATUS(system(cmd));
+}
+
+// === Http extensions ===
+long long Http_get_json(const char* url) {
+    char* body = http_get(url);
+    if (!body || !*body) return -1;
+    return Json_parse(body);
+}
+
+long long Http_post_json(const char* url, const char* data) {
+    char* body = http_post(url, data);
+    if (!body || !*body) return -1;
+    return Json_parse(body);
+}
+
+// === Array extensions round 2 ===
+
+long long wyn_arr_any(WynArray arr, long long (*pred)(long long)) {
+    for (int i = 0; i < arr.count; i++) if (pred(array_get_int(arr, i))) return 1;
+    return 0;
+}
+
+long long wyn_arr_all(WynArray arr, long long (*pred)(long long)) {
+    for (int i = 0; i < arr.count; i++) if (!pred(array_get_int(arr, i))) return 0;
+    return 1;
+}
+
+void wyn_arr_each(WynArray arr, void (*fn)(long long)) {
+    for (int i = 0; i < arr.count; i++) fn(array_get_int(arr, i));
+}
+
+// === HashMap extensions round 2 ===
+long long hashmap_get_or_int(WynHashMap* map, const char* key, long long default_val) {
+    if (!hashmap_has(map, key)) return default_val;
+    return hashmap_get_int(map, key);
+}
+
+char* hashmap_get_or_str(WynHashMap* map, const char* key, const char* default_val) {
+    if (!hashmap_has(map, key)) return (char*)default_val;
+    return hashmap_get_string(map, key);
+}
+
+// === Json extensions round 2 ===
+double Json_get_float(long long root, const char* key) {
+    int c = json_find_child((int)root, key);
+    if (c < 0) return 0.0;
+    return json_nodes[c].num_val;
+}
+
+long long Json_get_bool(long long root, const char* key) {
+    int c = json_find_child((int)root, key);
+    if (c < 0) return 0;
+    return (long long)json_nodes[c].num_val;
+}
+
+long long Json_get_array(long long root, const char* key) {
+    int c = json_find_child((int)root, key);
+    if (c < 0 || json_nodes[c].type != 'a') return -1;
+    return c;
+}
+
+long long Json_get_object(long long root, const char* key) {
+    int c = json_find_child((int)root, key);
+    if (c < 0 || json_nodes[c].type != 'o') return -1;
+    return c;
+}
+
+// === File extensions round 2 ===
+char* File_glob(const char* pattern) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "ls -1 %s 2>/dev/null", pattern);
+    FILE* fp = popen(cmd, "r");
+    if (!fp) return "";
+    char* result = malloc(65536); result[0] = 0;
+    char line[1024];
+    while (fgets(line, sizeof(line), fp)) strcat(result, line);
+    pclose(fp);
+    return result;
+}
+
+char* File_walk_dir(const char* path) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "find '%s' -type f 2>/dev/null", path);
+    FILE* fp = popen(cmd, "r");
+    if (!fp) return "";
+    char* result = malloc(262144); result[0] = 0;
+    char line[1024];
+    while (fgets(line, sizeof(line), fp)) strcat(result, line);
+    pclose(fp);
+    return result;
+}
+
+char* File_temp_file() {
+    static int counter = 0;
+    char* path = malloc(256);
+    snprintf(path, 256, "/tmp/wyn_tmp_%d_%d", (int)getpid(), counter++);
+    return path;
+}
+
+// === DateTime extensions round 2 ===
+char* DateTime_format_duration(long long ms) {
+    char* buf = malloc(64);
+    if (ms < 1000) snprintf(buf, 64, "%lldms", ms);
+    else if (ms < 60000) snprintf(buf, 64, "%.1fs", ms / 1000.0);
+    else if (ms < 3600000) snprintf(buf, 64, "%lldm %llds", ms / 60000, (ms % 60000) / 1000);
+    else snprintf(buf, 64, "%lldh %lldm", ms / 3600000, (ms % 3600000) / 60000);
+    return buf;
+}
+
+long long DateTime_day_of_week(long long timestamp) {
+    time_t t = (time_t)timestamp;
+    struct tm* tm = localtime(&t);
+    return tm ? tm->tm_wday : 0;
+}
+
+long long DateTime_year(long long timestamp) { time_t t = (time_t)timestamp; struct tm* tm = localtime(&t); return tm ? tm->tm_year + 1900 : 0; }
+long long DateTime_month(long long timestamp) { time_t t = (time_t)timestamp; struct tm* tm = localtime(&t); return tm ? tm->tm_mon + 1 : 0; }
+long long DateTime_day(long long timestamp) { time_t t = (time_t)timestamp; struct tm* tm = localtime(&t); return tm ? tm->tm_mday : 0; }
+long long DateTime_hour(long long timestamp) { time_t t = (time_t)timestamp; struct tm* tm = localtime(&t); return tm ? tm->tm_hour : 0; }
+long long DateTime_minute(long long timestamp) { time_t t = (time_t)timestamp; struct tm* tm = localtime(&t); return tm ? tm->tm_min : 0; }
+long long DateTime_second(long long timestamp) { time_t t = (time_t)timestamp; struct tm* tm = localtime(&t); return tm ? tm->tm_sec : 0; }
+
+// === Regex extensions round 2 ===
+char* regex_split(const char* str, const char* pattern) {
+    regex_t re;
+    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return strdup(str);
+    char* result = malloc(strlen(str) + 256); result[0] = 0;
+    const char* p = str;
+    regmatch_t match;
+    while (regexec(&re, p, 1, &match, 0) == 0) {
+        strncat(result, p, match.rm_so);
+        strcat(result, "\n");
+        p += match.rm_eo;
+    }
+    strcat(result, p);
+    regfree(&re);
+    return result;
+}
+
+// === Encoding extensions round 2 ===
+char* Encoding_hex_decode(const char* hex) {
+    int len = strlen(hex) / 2;
+    char* out = malloc(len + 1);
+    for (int i = 0; i < len; i++) {
+        unsigned int byte;
+        sscanf(hex + i*2, "%2x", &byte);
+        out[i] = (char)byte;
+    }
+    out[len] = 0;
+    return out;
+}
+
+char* Encoding_csv_parse(const char* csv) {
+    // Returns pipe-separated fields, newline-separated rows
+    char* result = malloc(strlen(csv) + 256); result[0] = 0;
+    const char* p = csv;
+    while (*p) {
+        if (*p == ',') strcat(result, "|");
+        else if (*p == '\n') strcat(result, "\n");
+        else { char c[2] = {*p, 0}; strcat(result, c); }
+        p++;
+    }
+    return result;
+}
+
+// === Crypto extensions round 2 ===
+char* Crypto_hmac_sha256(const char* key, const char* data) {
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd), "printf '%%s' '%s' | openssl dgst -sha256 -hmac '%s' -hex 2>/dev/null | awk '{print $NF}'", data, key);
+    FILE* fp = popen(cmd, "r");
+    if (!fp) return "";
+    char* result = malloc(65); result[0] = 0;
+    fgets(result, 65, fp); pclose(fp);
+    int len = strlen(result);
+    if (len > 0 && result[len-1] == '\n') result[len-1] = 0;
+    return result;
+}
+
+char* Crypto_random_bytes(long long n) {
+    char* bytes = malloc(n * 2 + 1);
+    FILE* f = fopen("/dev/urandom", "rb");
+    if (!f) { bytes[0] = 0; return bytes; }
+    bytes[0] = 0;
+    for (int i = 0; i < (int)n; i++) {
+        unsigned char b;
+        fread(&b, 1, 1, f);
+        sprintf(bytes + i*2, "%02x", b);
+    }
+    fclose(f);
+    return bytes;
+}
+
+// === StringBuilder extensions ===
+void StringBuilder_append_int(long long handle, long long val) {
+    char buf[32]; snprintf(buf, 32, "%lld", val);
+    StringBuilder_append(handle, buf);
+}
+
+void StringBuilder_append_line(long long handle, const char* s) {
+    StringBuilder_append(handle, s);
+    StringBuilder_append(handle, "\n");
+}
+
+// === Math extensions round 2 ===
+double Math_lerp(double a, double b, double t) { return a + (b - a) * t; }
+double Math_map_range(double x, double in_min, double in_max, double out_min, double out_max) {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+// === String extensions ===
+long long string_char_code(const char* s, long long index) {
+    if (!s || index < 0 || index >= (long long)strlen(s)) return 0;
+    return (unsigned char)s[index];
+}
+
+// === Db extensions round 2 ===
+#ifdef WYN_USE_SQLITE
+long long Db_table_exists(long long handle, const char* table_name) {
+    char sql[256];
+    snprintf(sql, sizeof(sql), "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='%s'", table_name);
+    char* result = Db_query_one(handle, sql);
+    return result && strcmp(result, "0") != 0 ? 1 : 0;
+}
+#else
+long long Db_table_exists(long long h, const char* t) { return 0; }
+#endif
+
+// === Test extensions ===
+void Test_assert_not_contains(const char* haystack, const char* needle, const char* msg) {
+    extern void Test_assert(int condition, const char* message);
+    Test_assert(strstr(haystack, needle) == NULL, msg);
+}
+
 #endif // WYN_RUNTIME_H
