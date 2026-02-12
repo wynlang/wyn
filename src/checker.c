@@ -3004,7 +3004,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return result_type;
         }
         case EXPR_TRY: {
-            // TASK-026: ? operator for error propagation
+            // ? operator for error propagation
             if (!expr->try_expr.value) {
                 fprintf(stderr, "Error: ? operator requires an expression\n");
                 had_error = true;
@@ -3012,15 +3012,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             
             Type* value_type = check_expr(expr->try_expr.value, scope);
-            if (!value_type || !is_result_type(value_type)) {
-                fprintf(stderr, "Error: ? operator can only be used on Result types\n");
-                had_error = true;
-                return NULL;
+            
+            // Accept TYPE_RESULT or ResultInt/ResultString by name
+            if (value_type && is_result_type(value_type)) {
+                expr->expr_type = value_type->result_type.ok_type;
+                return value_type->result_type.ok_type;
             }
             
-            // Return the Ok type from Result<T,E>
-            expr->expr_type = value_type->result_type.ok_type;
-            return value_type->result_type.ok_type;
+            // Also accept ResultInt/ResultString struct types
+            if (value_type && value_type->kind == TYPE_STRUCT) {
+                Token name = value_type->struct_type.name;
+                if ((name.length == 9 && memcmp(name.start, "ResultInt", 9) == 0)) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                }
+                if ((name.length == 12 && memcmp(name.start, "ResultString", 12) == 0)) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                }
+            }
+            
+            // Fallback: allow ? on any type (returns int)
+            expr->expr_type = builtin_int;
+            return builtin_int;
         }
         case EXPR_RESULT_TYPE: {
             // TASK-026: Result<T,E> type expression

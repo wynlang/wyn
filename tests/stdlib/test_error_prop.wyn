@@ -1,0 +1,31 @@
+fn parse_int(s: string) -> ResultInt {
+    var n = s.to_int()
+    if n == 0 {
+        if s != "0" { return Err("not a number") }
+    }
+    return Ok(n)
+}
+
+fn add_parsed(a: string, b: string) -> ResultInt {
+    var x = parse_int(a)?
+    var y = parse_int(b)?
+    return Ok(x + y)
+}
+
+fn main() -> int {
+    Test.init("Error Propagation (?)")
+    
+    var r1 = add_parsed("10", "20")
+    Test.assert(r1.is_ok(), "ok case")
+    Test.assert_eq_int(r1.unwrap(), 30, "10+20=30")
+    
+    var r2 = add_parsed("10", "abc")
+    Test.assert(r2.is_err(), "error propagated")
+    Test.assert_eq_str(r2.unwrap_err(), "not a number", "error message")
+    
+    var r3 = add_parsed("abc", "20")
+    Test.assert(r3.is_err(), "first arg error propagated")
+    
+    Test.summary()
+    return 0
+}

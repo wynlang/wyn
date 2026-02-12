@@ -289,9 +289,9 @@ typedef struct {
 } WynValue;
 
 typedef struct WynArray { WynValue* data; int count; int capacity; } WynArray;
-WynArray wyn_array_map(WynArray arr, int (*fn)(int));
-WynArray wyn_array_filter(WynArray arr, int (*fn)(int));
-int wyn_array_reduce(WynArray arr, int (*fn)(int, int), int initial);
+WynArray wyn_array_map(WynArray arr, long long (*fn)(long long));
+WynArray wyn_array_filter(WynArray arr, long long (*fn)(long long));
+long long wyn_array_reduce(WynArray arr, long long (*fn)(long long, long long), long long initial);
 WynArray array_new() { WynArray arr = {0}; return arr; }
 void array_push_int(WynArray* arr, int value) {
     if (arr->count >= arr->capacity) {
@@ -2328,26 +2328,26 @@ WynArray arr_filter_even(WynArray arr) { WynArray result = array_new(); for(int 
 WynArray arr_filter_greater_than_3(WynArray arr) { WynArray result = array_new(); for(int i = 0; i < arr.count; i++) { int val = array_get_int(arr, i); if(val > 3) array_push_int(&result, val); } return result; }
 int arr_reduce_sum(WynArray arr) { int result = 0; for(int i = 0; i < arr.count; i++) { result += array_get_int(arr, i); } return result; }
 int arr_reduce_product(WynArray arr) { int result = 1; for(int i = 0; i < arr.count; i++) { result *= array_get_int(arr, i); } return result; }
-WynArray wyn_array_map(WynArray arr, int (*fn)(int)) {
+WynArray wyn_array_map(WynArray arr, long long (*fn)(long long)) {
     WynArray result = array_new();
     for (int i = 0; i < arr.count; i++) {
-        int val = array_get_int(arr, i);
+        long long val = array_get_int(arr, i);
         array_push_int(&result, fn(val));
     }
     return result;
 }
-WynArray wyn_array_filter(WynArray arr, int (*fn)(int)) {
+WynArray wyn_array_filter(WynArray arr, long long (*fn)(long long)) {
     WynArray result = array_new();
     for (int i = 0; i < arr.count; i++) {
-        int val = array_get_int(arr, i);
+        long long val = array_get_int(arr, i);
         if (fn(val)) array_push_int(&result, val);
     }
     return result;
 }
-int wyn_array_reduce(WynArray arr, int (*fn)(int, int), int initial) {
-    int result = initial;
+long long wyn_array_reduce(WynArray arr, long long (*fn)(long long, long long), long long initial) {
+    long long result = initial;
     for (int i = 0; i < arr.count; i++) {
-        int val = array_get_int(arr, i);
+        long long val = array_get_int(arr, i);
         result = fn(result, val);
     }
     return result;

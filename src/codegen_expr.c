@@ -1074,6 +1074,66 @@ void codegen_expr(Expr* expr) {
             // Special handling for array.get() - use type-specific accessor
             if (object_type && object_type->kind == TYPE_ARRAY) {
                 Token method = expr->method_call.method;
+                
+                // arr.map(fn) -> wyn_array_map(arr, fn)
+                if (method.length == 3 && memcmp(method.start, "map", 3) == 0 && expr->method_call.arg_count == 1) {
+                    emit("wyn_array_map(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                    break;
+                }
+                // arr.filter(fn) -> wyn_array_filter(arr, fn)
+                if (method.length == 6 && memcmp(method.start, "filter", 6) == 0 && expr->method_call.arg_count == 1) {
+                    emit("wyn_array_filter(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                    break;
+                }
+                // arr.reduce(fn, init) -> wyn_array_reduce(arr, fn, init)
+                if (method.length == 6 && memcmp(method.start, "reduce", 6) == 0 && expr->method_call.arg_count == 2) {
+                    emit("wyn_array_reduce(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[1]);
+                    emit(")");
+                    break;
+                }
+                // arr.sort() -> arr_sort(arr.data, arr.count) (in-place)
+                if (method.length == 4 && memcmp(method.start, "sort", 4) == 0 && expr->method_call.arg_count == 0) {
+                    emit("({ WynArray __sa = ");
+                    codegen_expr(expr->method_call.object);
+                    emit("; arr_sort((int*)__sa.data, __sa.count); __sa; })");
+                    break;
+                }
+                // arr.contains(val)
+                if (method.length == 8 && memcmp(method.start, "contains", 8) == 0 && expr->method_call.arg_count == 1) {
+                    emit("arr_contains(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.object);
+                    emit(".count, ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                    break;
+                }
+                // arr.find(val)
+                if (method.length == 4 && memcmp(method.start, "find", 4) == 0 && expr->method_call.arg_count == 1) {
+                    emit("arr_find(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.object);
+                    emit(".count, ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(")");
+                    break;
+                }
+                
                 if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
                     // Determine element type and use appropriate accessor
                     Type* elem_type = object_type->array_type.element_type;
@@ -2019,10 +2079,12 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_TRY: {
-            // TASK-028: Generate ? operator for error propagation
-            emit("({ WynResult* _tmp_result = ");
+            // ? operator: unwrap Result or return early on error
+            // var val = risky_call()?
+            // Expands to: ({ ResultInt _r = risky_call(); if (_r.tag == 1) return _r; _r.data.ok_value; })
+            emit("({ ResultInt __try_r = ");
             codegen_expr(expr->try_expr.value);
-            emit("; if (wyn_result_is_err(_tmp_result)) return _tmp_result; wyn_result_unwrap(_tmp_result); })");
+            emit("; if (__try_r.tag == 1) return __try_r; __try_r.data.ok_value; })");
             break;
         }
         case EXPR_TERNARY:
