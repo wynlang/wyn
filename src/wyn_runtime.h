@@ -1878,13 +1878,26 @@ char* Http_accept(int server_fd) {
     char buf[8192] = {0};
     int n = recv(client_fd, buf, sizeof(buf) - 1, 0);
     if (n <= 0) { close(client_fd); return ""; }
-    // Parse method and path
+    buf[n] = 0;
+    
+    // Save a copy for body parsing
+    char buf_copy[8192];
+    memcpy(buf_copy, buf, n + 1);
+    
+    // Parse method and path from original
     char method[16] = "", path[1024] = "";
     char* sp1 = strchr(buf, ' ');
-    if (sp1) { *sp1 = 0; strncpy(method, buf, 15); char* sp2 = strchr(sp1+1, ' '); if (sp2) { *sp2 = 0; strncpy(path, sp1+1, 1023); } }
-    // Find body
-    char* body_start = strstr(buf + strlen(method) + 1, "\r\n\r\n");
+    if (sp1) {
+        *sp1 = 0;
+        strncpy(method, buf, 15);
+        char* sp2 = strchr(sp1 + 1, ' ');
+        if (sp2) { *sp2 = 0; strncpy(path, sp1 + 1, 1023); }
+    }
+    
+    // Find body from copy
+    char* body_start = strstr(buf_copy, "\r\n\r\n");
     const char* body = body_start ? body_start + 4 : "";
+    
     char* result = malloc(16384);
     snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
     return result;
@@ -2380,7 +2393,27 @@ int floor_int(double x) { return (int)floor(x); }
 int round_int(double x) { return (int)round(x); }
 double abs_float(double x) { return fabs(x); }
 char* str_replace(const char* s, const char* old, const char* new) { int count = 0; const char* p = s; int oldlen = strlen(old); int newlen = strlen(new); while((p = strstr(p, old))) { count++; p += oldlen; } int total = strlen(s) + count * (newlen - oldlen) + 1; char* r = malloc(total); char* dst = r; p = s; while(*p) { if(strncmp(p, old, oldlen) == 0) { memcpy(dst, new, newlen); dst += newlen; p += oldlen; } else { *dst++ = *p++; } } *dst = 0; return r; }
-char** str_split(const char* s, const char* delim, int* count) { char** r = malloc(100 * sizeof(char*)); *count = 0; char* copy = malloc(strlen(s) + 1); strcpy(copy, s); char* tok = strtok(copy, delim); while(tok && *count < 100) { r[*count] = malloc(strlen(tok) + 1); strcpy(r[*count], tok); (*count)++; tok = strtok(NULL, delim); } return r; }
+char** str_split(const char* s, const char* delim, int* count) {
+    char** r = malloc(100 * sizeof(char*));
+    *count = 0;
+    int dlen = strlen(delim);
+    const char* p = s;
+    while (*count < 100) {
+        const char* found = strstr(p, delim);
+        if (!found) {
+            r[*count] = strdup(p);
+            (*count)++;
+            break;
+        }
+        int len = found - p;
+        r[*count] = malloc(len + 1);
+        memcpy(r[*count], p, len);
+        r[*count][len] = 0;
+        (*count)++;
+        p = found + dlen;
+    }
+    return r;
+}
 char* split_get(const char* s, const char* delim, int index) { int count = 0; char** parts = str_split(s, delim, &count); if (index < 0 || index >= count) return ""; return parts[index]; }
 int split_count(const char* s, const char* delim) { int count = 0; str_split(s, delim, &count); return count; }
 char* char_at(const char* s, int index) { if (index < 0 || index >= strlen(s)) return ""; static char buf[2]; buf[0] = s[index]; buf[1] = '\0'; return buf; }

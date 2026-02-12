@@ -1,0 +1,257 @@
+// BRUTAL AUDIT: Test EVERY claimed feature with assertions
+
+struct User { name: string, age: int }
+
+fn divide(a: int, b: int) -> ResultInt {
+    if b == 0 { return Err("zero") }
+    return Ok(a / b)
+}
+
+fn chain(x: int) -> ResultInt {
+    var a = divide(x, 2)?
+    return Ok(a)
+}
+
+fn dbl(x: int) -> int { return x * 2 }
+fn pos(x: int) -> int { return x > 0 }
+fn sum(a: int, b: int) -> int { return a + b }
+
+fn inc(mut x: int) { x = x + 1 }
+
+var global_count = 0
+fn bump() { global_count = global_count + 1 }
+
+fn worker(shared: int) -> int {
+    Task.add(shared, 10)
+    return 0
+}
+
+fn main() -> int {
+    var failures = 0
+    
+    // === CORE LANGUAGE ===
+    Test.init("Core Language")
+    
+    // Variables
+    var x = 42
+    const PI = 3
+    Test.assert_eq_int(x, 42, "var")
+    Test.assert_eq_int(PI, 3, "const")
+    
+    // 64-bit
+    var big = 10000000000
+    Test.assert(big > 0, "64-bit positive")
+    Test.assert_eq_str(big.to_string(), "10000000000", "64-bit to_string")
+    
+    // Strings
+    var s = "hello"
+    Test.assert_eq_int(s.len(), 5, "str.len")
+    Test.assert_eq_str(s.upper(), "HELLO", "str.upper")
+    Test.assert_eq_str(s.lower(), "hello", "str.lower")
+    Test.assert_eq_str(s.capitalize(), "Hello", "str.capitalize")
+    Test.assert_eq_str(s.reverse(), "olleh", "str.reverse")
+    Test.assert_eq_str(s.repeat(2), "hellohello", "str.repeat")
+    Test.assert_eq_str(s.substring(1, 4), "ell", "str.substring")
+    Test.assert_eq_str(s.replace("ll", "r"), "hero", "str.replace")
+    Test.assert(s.contains("ell"), "str.contains")
+    Test.assert(s.starts_with("hel"), "str.starts_with")
+    Test.assert(s.ends_with("llo"), "str.ends_with")
+    Test.assert_eq_int(s.index_of("ll"), 2, "str.index_of")
+    Test.assert_eq_str("  hi  ".trim(), "hi", "str.trim")
+    Test.assert_eq_str("42".pad_left(5, "0"), "00042", "str.pad_left")
+    Test.assert_eq_str("a,b,c".split_at(",", 1), "b", "str.split_at")
+    Test.assert_eq_int("99".to_int(), 99, "str.to_int")
+    Test.assert_eq_int(s.count("l"), 2, "str.count")
+    Test.assert(s.is_alpha(), "str.is_alpha")
+    Test.assert("123".is_digit(), "str.is_digit")
+    
+    // String interpolation
+    var name = "Wyn"
+    Test.assert_eq_str("Hello ${name}!", "Hello Wyn!", "interpolation")
+    
+    // Arrays
+    var arr = [10, 20, 30]
+    Test.assert_eq_int(arr.len(), 3, "arr.len")
+    Test.assert_eq_int(arr[0], 10, "arr[0]")
+    arr[1] = 99
+    Test.assert_eq_int(arr[1], 99, "arr set")
+    
+    // String arrays
+    var names = ["a", "b", "c"]
+    names[0] = "z"
+    Test.assert_eq_str(names[0], "z", "str arr set")
+    
+    // Struct arrays
+    var users = [User { name: "Alice", age: 30 }, User { name: "Bob", age: 25 }]
+    Test.assert_eq_str(users[0].name, "Alice", "struct arr field")
+    users[0] = User { name: "Charlie", age: 35 }
+    Test.assert_eq_str(users[0].name, "Charlie", "struct arr assign")
+    
+    // Structs
+    var u = User { name: "Dave", age: 40 }
+    u.age = 41
+    Test.assert_eq_int(u.age, 41, "struct field set")
+    
+    // Enums + match
+    // (tested in separate files — enum codegen works)
+    
+    // If/else
+    var v = 0
+    if 1 > 0 { v = 1 } else { v = 2 }
+    Test.assert_eq_int(v, 1, "if/else")
+    
+    // For range
+    var total = 0
+    for i in 0..5 { total = total + i }
+    Test.assert_eq_int(total, 10, "for range 0..5")
+    
+    // For array
+    var items = [1, 2, 3]
+    var arr_sum = 0
+    for item in items { arr_sum = arr_sum + item }
+    Test.assert_eq_int(arr_sum, 6, "for-each array")
+    
+    // While
+    var w = 0
+    while w < 3 { w = w + 1 }
+    Test.assert_eq_int(w, 3, "while")
+    
+    // Result/Option
+    var ok: ResultInt = Ok(42)
+    Test.assert(ok.is_ok(), "Result Ok")
+    Test.assert_eq_int(ok.unwrap(), 42, "Result unwrap")
+    var err: ResultInt = Err("bad")
+    Test.assert(err.is_err(), "Result Err")
+    var some: OptionInt = Some(7)
+    Test.assert(some.is_some(), "Option Some")
+    var none: OptionInt = None()
+    Test.assert(none.is_none(), "Option None")
+    Test.assert_eq_int(none.unwrap_or(99), 99, "Option unwrap_or")
+    
+    // ? operator
+    var r = chain(100)
+    Test.assert(r.is_ok(), "? operator ok")
+    Test.assert_eq_int(r.unwrap(), 50, "? operator value")
+    
+    // Global variables
+    bump()
+    bump()
+    Test.assert_eq_int(global_count, 2, "global var")
+    
+    // Mutable references
+    var n = 10
+    inc(&n)
+    Test.assert_eq_int(n, 11, "mut ref")
+    
+    // map/filter/reduce
+    var doubled = [1, 2, 3].map(dbl)
+    Test.assert_eq_int(doubled[0], 2, "arr.map")
+    var filtered = [1, -2, 3, -4].filter(pos)
+    Test.assert_eq_int(filtered[0], 1, "arr.filter")
+    var reduced = [1, 2, 3, 4].reduce(sum, 0)
+    Test.assert_eq_int(reduced, 10, "arr.reduce")
+    
+    Test.summary()
+    
+    // === MODULES ===
+    Test.init("All Modules")
+    
+    // File
+    File.write("/tmp/wyn_brutal.txt", "test\n")
+    Test.assert(File.exists("/tmp/wyn_brutal.txt"), "File.exists")
+    Test.assert(File.read("/tmp/wyn_brutal.txt").contains("test"), "File.read")
+    Test.assert(File.size("/tmp/wyn_brutal.txt") > 0, "File.size")
+    Test.assert(File.is_file("/tmp/wyn_brutal.txt"), "File.is_file")
+    Test.assert(File.is_dir("/tmp"), "File.is_dir")
+    File.mkdir("/tmp/wyn_brutal_dir")
+    Test.assert(File.is_dir("/tmp/wyn_brutal_dir"), "File.mkdir")
+    File.append("/tmp/wyn_brutal.txt", "more\n")
+    Test.assert(File.read("/tmp/wyn_brutal.txt").contains("more"), "File.append")
+    var fh = File.open("/tmp/wyn_brutal.txt", "r")
+    var line = File.read_line(fh).trim()
+    Test.assert_eq_str(line, "test", "File.read_line")
+    File.close(fh)
+    File.delete("/tmp/wyn_brutal.txt")
+    System.exec("rm -rf /tmp/wyn_brutal_dir")
+    
+    // System
+    Test.assert_eq_str(System.exec("echo hi").trim(), "hi", "System.exec")
+    Test.assert_eq_int(System.exec_code("true"), 0, "System.exec_code")
+    Test.assert(System.env("HOME").len() > 0, "System.env")
+    
+    // HashMap
+    var m = HashMap.new()
+    m.insert_int("x", 5)
+    m.insert_string("y", "hello")
+    Test.assert_eq_int(m.get_int("x"), 5, "HashMap.get_int")
+    Test.assert_eq_str(m.get("y"), "hello", "HashMap.get")
+    Test.assert_eq_int(m.get_int("missing"), 0, "HashMap missing=0")
+    
+    // Math
+    Test.assert_eq_int(Math.abs(-7), 7, "Math.abs")
+    Test.assert_eq_int(Math.max(3, 9), 9, "Math.max")
+    Test.assert_eq_int(Math.min(3, 9), 3, "Math.min")
+    
+    // Path
+    Test.assert_eq_str(Path.basename("/a/b/c"), "c", "Path.basename")
+    Test.assert_eq_str(Path.dirname("/a/b/c"), "/a/b", "Path.dirname")
+    Test.assert_eq_str(Path.extension("f.txt"), "txt", "Path.extension")
+    
+    // DateTime
+    Test.assert(DateTime.now() > 1700000000, "DateTime.now")
+    
+    // Json
+    var j = Json.new()
+    Json.set(j, "k", "v")
+    Json.set_int(j, "n", 42)
+    Test.assert(Json.stringify(j).contains("42"), "Json.stringify")
+    
+    // Regex
+    Test.assert_eq_int(Regex.match("abc123", "[0-9]+"), 1, "Regex.match")
+    Test.assert_eq_str(Regex.replace("a1b", "[0-9]", "X"), "aXb", "Regex.replace")
+    
+    // Url
+    Test.assert_eq_str(Url.decode("a%20b"), "a b", "Url.decode")
+    
+    // Terminal (non-interactive)
+    Test.assert(Terminal.cols() > 0, "Terminal.cols")
+    Test.assert(Terminal.rows() > 0, "Terminal.rows")
+    
+    // Test framework itself
+    Test.describe("meta test")
+    
+    // Spawn/Await
+    var f = spawn sum(100, 200)
+    var result = await f
+    Test.assert_eq_int(result, 300, "spawn+await")
+    
+    // Task shared value
+    var shared = Task.value(0)
+    var w1 = spawn worker(shared)
+    var w2 = spawn worker(shared)
+    await w1
+    await w2
+    Test.assert_eq_int(Task.get(shared), 20, "Task shared")
+    
+    // Task channel
+    var ch = Task.channel(5)
+    Task.send(ch, 42)
+    Test.assert_eq_int(Task.recv(ch), 42, "Task channel")
+    
+    Test.summary()
+    
+    // === DATABASE ===
+    Test.init("Database")
+    var db = Db.open(":memory:")
+    Test.assert(db > 0, "Db.open")
+    Db.exec(db, "CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+    Db.exec(db, "INSERT INTO t (val) VALUES ('hello')")
+    Db.exec(db, "INSERT INTO t (val) VALUES ('world')")
+    Test.assert_eq_str(Db.query_one(db, "SELECT COUNT(*) FROM t"), "2", "Db.query_one")
+    Test.assert(Db.query(db, "SELECT val FROM t").contains("hello"), "Db.query")
+    Test.assert_eq_int(Db.last_insert_id(db), 2, "Db.last_insert_id")
+    Db.close(db)
+    Test.summary()
+    
+    return 0
+}
