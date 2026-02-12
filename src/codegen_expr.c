@@ -270,10 +270,10 @@ void codegen_expr(Expr* expr) {
             codegen_expr(expr->unary.operand);
             break;
         case EXPR_AWAIT:
-            // Await: block on future and cast result
-            emit("*(int*)future_get(");
+            // Await: get result from future, handle NULL safely
+            emit("({ void* __fr = future_get(");
             codegen_expr(expr->await.expr);
-            emit(")");
+            emit("); __fr ? *(int*)__fr : 0; })");
             break;
         case EXPR_BINARY:
             // Special handling for string concatenation with + operator

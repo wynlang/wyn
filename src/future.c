@@ -47,6 +47,7 @@ void future_set(Future* f, void* result) {
 
 // Await — adaptive spin with CPU hints, no sched_yield on fast path
 void* future_get(Future* f) {
+    if (!f) return NULL; // Guard against NULL future (e.g., spawn on module function)
     // Fast path: already ready
     if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY)
         return f->result;

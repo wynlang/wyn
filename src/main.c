@@ -104,6 +104,8 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  wyn build <dir>          Build all .wyn files in directory\n");
         fprintf(stderr, "  wyn test                 Run tests\n");
         fprintf(stderr, "  wyn fmt <file.wyn>       Validate file\n");
+        printf("  wyn check <file.wyn>     Type-check without compiling\n");
+        fprintf(stderr, "  wyn check <file.wyn>     Type-check without compiling\n");
         fprintf(stderr, "  wyn clean                Clean artifacts\n");
         fprintf(stderr, "  wyn build-runtime        Precompile runtime for fast builds\n");
         fprintf(stderr, "  wyn cross <os> <file>    Cross-compile (linux/macos/windows)\n");
@@ -135,6 +137,8 @@ int main(int argc, char** argv) {
         printf("  wyn watch <file.wyn>     Watch and auto-rebuild on changes\n");
         printf("  wyn test                 Run tests\n");
         printf("  wyn fmt <file.wyn>       Validate file\n");
+        printf("  wyn check <file.wyn>     Type-check without compiling\n");
+        fprintf(stderr, "  wyn check <file.wyn>     Type-check without compiling\n");
         printf("  wyn clean                Clean artifacts\n");
         printf("  wyn build-runtime        Precompile runtime for fast builds\n");
         printf("  wyn cross <os> <file>    Cross-compile\n");
@@ -565,10 +569,32 @@ int main(int argc, char** argv) {
         return result;
     }
     
+    if (strcmp(command, "check") == 0) {
+        if (argc < 3) { fprintf(stderr, "Usage: wyn check <file.wyn>\n"); return 1; }
+        char* file = argv[2];
+        char* source = read_file(file);
+        if (!source) { fprintf(stderr, "Error: Cannot read %s\n", file); return 1; }
+        extern void preload_imports(const char* source);
+        preload_imports(source);
+        init_lexer(source);
+        init_parser();
+        set_parser_filename(file);
+        init_checker();
+        check_all_modules();
+        Program* prog = parse_program();
+        if (!prog) { fprintf(stderr, "Parse error\n"); free(source); return 1; }
+        check_program(prog);
+        if (checker_had_error()) { free(source); return 1; }
+        printf("✓ %s: no errors\n", file);
+        free(source);
+        return 0;
+    }
+    
     if (strcmp(command, "fmt") == 0) {
         extern int cmd_fmt(const char* file, int argc, char** argv);
         if (argc < 3) {
             fprintf(stderr, "Usage: wyn fmt <file.wyn>\n");
+        fprintf(stderr, "  wyn check <file.wyn>     Type-check without compiling\n");
             return 1;
         }
         return cmd_fmt(argv[2], argc, argv);
