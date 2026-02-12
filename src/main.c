@@ -755,7 +755,7 @@ int main(int argc, char** argv) {
         
         // Detect optional dependencies
         const char* sqlite_flags = strstr(source, "Db.") ? " -DWYN_USE_SQLITE -lsqlite3" : "";
-        const char* gui_flags = strstr(source, "Gui.") ? " -DWYN_USE_GUI $(pkg-config --cflags --libs sdl2 2>/dev/null || echo '-lSDL2')" : "";
+        const char* gui_flags = strstr(source, "Gui.") ? " -DWYN_USE_GUI $(pkg-config --cflags --libs sdl2 2>/dev/null || echo '-lSDL2') " : "";
         
         char compile_cmd[8192];
         int n = snprintf(compile_cmd, sizeof(compile_cmd), 

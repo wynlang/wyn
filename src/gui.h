@@ -313,3 +313,111 @@ long long Gui_load_sprite(const char* p) { return -1; }
 void Gui_draw_sprite(long long id, long long x, long long y) {}
 void Gui_draw_sprite_scaled(long long id, long long x, long long y, long long w, long long h) {}
 #endif
+
+// === Text Input Widget ===
+#ifdef WYN_USE_GUI
+
+static char gui_text_buffer[1024] = "";
+static int gui_text_cursor = 0;
+static int gui_text_active = 0;
+
+void Gui_text_input(long long x, long long y, long long w, long long h) {
+    // Background
+    SDL_Rect rect = {(int)x, (int)y, (int)w, (int)h};
+    SDL_SetRenderDrawColor(gui_renderer, gui_text_active ? 50 : 35, gui_text_active ? 50 : 35, gui_text_active ? 60 : 45, 255);
+    SDL_RenderFillRect(gui_renderer, &rect);
+    SDL_SetRenderDrawColor(gui_renderer, gui_text_active ? 150 : 80, gui_text_active ? 150 : 80, gui_text_active ? 180 : 100, 255);
+    SDL_RenderDrawRect(gui_renderer, &rect);
+    // Text
+    SDL_SetRenderDrawColor(gui_renderer, 220, 220, 220, 255);
+    Gui_text((int)x + 5, (int)y + ((int)h - 7) / 2, gui_text_buffer, 1);
+    // Cursor
+    if (gui_text_active) {
+        int cx = (int)x + 5 + gui_text_cursor * 6;
+        SDL_SetRenderDrawColor(gui_renderer, 200, 200, 255, 255);
+        SDL_RenderDrawLine(gui_renderer, cx, (int)y + 3, cx, (int)y + (int)h - 3);
+    }
+}
+
+void Gui_text_input_activate(long long active) { gui_text_active = (int)active; }
+
+// Process keyboard event for text input. Returns 1 if Enter pressed.
+long long Gui_text_input_key(long long keycode) {
+    if (!gui_text_active) return 0;
+    if (keycode == 13 || keycode == 10) return 1; // Enter
+    if (keycode == 8 || keycode == 127) { // Backspace
+        if (gui_text_cursor > 0) {
+            gui_text_cursor--;
+            memmove(gui_text_buffer + gui_text_cursor, gui_text_buffer + gui_text_cursor + 1,
+                    strlen(gui_text_buffer) - gui_text_cursor);
+        }
+        return 0;
+    }
+    if (keycode >= 32 && keycode < 127 && gui_text_cursor < 1023) {
+        gui_text_buffer[gui_text_cursor++] = (char)keycode;
+        gui_text_buffer[gui_text_cursor] = 0;
+    }
+    return 0;
+}
+
+char* Gui_text_input_value() { return gui_text_buffer; }
+void Gui_text_input_clear() { gui_text_buffer[0] = 0; gui_text_cursor = 0; }
+void Gui_text_input_set(const char* text) { strncpy(gui_text_buffer, text, 1023); gui_text_cursor = strlen(gui_text_buffer); }
+
+#else
+void Gui_text_input(long long x, long long y, long long w, long long h) {}
+void Gui_text_input_activate(long long a) {}
+long long Gui_text_input_key(long long k) { return 0; }
+char* Gui_text_input_value() { return ""; }
+void Gui_text_input_clear() {}
+void Gui_text_input_set(const char* t) {}
+#endif
+
+// === Audio (SDL2_mixer or basic beep) ===
+#ifdef WYN_USE_GUI
+#if __has_include(<SDL2/SDL_mixer.h>)
+#include <SDL2/SDL_mixer.h>
+#define WYN_HAS_AUDIO 1
+static int audio_initialized = 0;
+
+void Audio_init() {
+    if (audio_initialized) return;
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) return;
+    audio_initialized = 1;
+}
+
+static Mix_Chunk* audio_chunks[32] = {0};
+long long Audio_load(const char* path) {
+    Audio_init();
+    Mix_Chunk* chunk = Mix_LoadWAV(path);
+    if (!chunk) return -1;
+    for (int i = 1; i < 32; i++) {
+        if (!audio_chunks[i]) { audio_chunks[i] = chunk; return i; }
+    }
+    Mix_FreeChunk(chunk);
+    return -1;
+}
+
+void Audio_play(long long id) {
+    if (id <= 0 || id >= 32 || !audio_chunks[id]) return;
+    Mix_PlayChannel(-1, audio_chunks[id], 0);
+}
+
+void Audio_stop() { Mix_HaltChannel(-1); }
+void Audio_close() { if (audio_initialized) { Mix_CloseAudio(); audio_initialized = 0; } }
+
+#else
+#define WYN_HAS_AUDIO 0
+void Audio_init() {}
+long long Audio_load(const char* p) { return -1; }
+void Audio_play(long long id) {}
+void Audio_stop() {}
+void Audio_close() {}
+#endif
+#else
+void Audio_init() {}
+long long Audio_load(const char* p) { return -1; }
+void Audio_play(long long id) {}
+void Audio_stop() {}
+void Audio_close() {}
+#endif

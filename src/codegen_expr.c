@@ -1007,6 +1007,8 @@ void codegen_expr(Expr* expr) {
                         emit("Db_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "Gui") == 0) {
                         emit("Gui_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Audio") == 0) {
+                        emit("Audio_%.*s(", method.length, method.start);
                     } else {
                         emit("%.*s_%.*s(", obj_name.length, obj_name.start, method.length, method.start);
                     }

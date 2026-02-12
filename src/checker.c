@@ -1059,7 +1059,7 @@ void init_checker() {
 
     // Register namespace identifiers so checker doesn't reject File.read() etc.
     // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", NULL};
+    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", NULL};
     for (int i = 0; namespaces[i]; i++) {
         Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
         if (!find_symbol(global_scope, ns_tok)) {
@@ -1469,8 +1469,29 @@ void init_checker() {
         {"Gui_height", 10, builtin_int, 0},
         {"Gui_destroy", 11, builtin_void, 0},
         {"Gui_text", 8, builtin_void, 4},
+        {"Gui_text_input", 14, builtin_void, 4},
+        {"Gui_text_input_activate", 23, builtin_void, 1},
+        {"Gui_text_input_key", 18, builtin_int, 1},
+        {"Gui_text_input_value", 20, builtin_string, 0},
+        {"Gui_text_input_clear", 20, builtin_void, 0},
+        {"Gui_text_input_set", 18, builtin_void, 1},
+        {"Gui_button", 10, builtin_void, 5},
+        {"Gui_button_clicked", 18, builtin_int, 6},
+        {"Gui_panel", 9, builtin_void, 4},
+        {"Gui_progress", 12, builtin_void, 5},
+        {"Gui_circle", 10, builtin_void, 3},
+        {"Gui_label", 9, builtin_void, 3},
+        {"Gui_rect_outline", 16, builtin_void, 4},
+        {"Gui_key_pressed", 15, builtin_int, 1},
+        {"Gui_mouse_x", 11, builtin_int, 0},
+        {"Gui_mouse_y", 11, builtin_int, 0},
+        {"Gui_mouse_down", 14, builtin_int, 0},
+        {"Gui_ticks", 9, builtin_int, 0},
+        {"Gui_load_sprite", 15, builtin_int, 1},
+        {"Gui_draw_sprite", 15, builtin_void, 3},
+        {"Gui_draw_sprite_scaled", 22, builtin_void, 5},
     };
-    for (int i = 0; i < 14; i++) {
+    for (int i = 0; i < 36; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = reg_gui_fns[i].pc;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
