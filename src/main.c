@@ -844,6 +844,13 @@ int main(int argc, char** argv) {
         const char* sqlite_flags = strstr(source, "Db.") ? " -DWYN_USE_SQLITE -lsqlite3" : "";
         const char* gui_flags = strstr(source, "Gui.") ? " -DWYN_USE_GUI $(pkg-config --cflags --libs sdl2 2>/dev/null || echo '-lSDL2') " : "";
         
+        // Check for --fast flag (use -O0 for fastest compile)
+        const char* opt_level = "-O1";
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; break; }
+            if (strcmp(argv[i], "--release") == 0) { opt_level = "-O2"; break; }
+        }
+        
         char compile_cmd[8192];
         // Use precompiled runtime library for fast compilation
         // Falls back to source compilation if libwyn_rt.a doesn't exist
@@ -853,13 +860,13 @@ int main(int argc, char** argv) {
         if (rt_check) {
             fclose(rt_check);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "gcc -std=c11 -O1 -w -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm 2>/tmp/wyn_cc_err.txt",
-                     wyn_root, file, file, wyn_root, wyn_root);
+                     "gcc -std=c11 %s -w -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm 2>/tmp/wyn_cc_err.txt",
+                     opt_level, wyn_root, file, file, wyn_root, wyn_root);
         } else {
             // Fallback: compile from source
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "gcc -std=c11 -O1 -w -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s/runtime/libwyn_runtime.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm 2>/tmp/wyn_cc_err.txt",
-                     wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
+                     "gcc -std=c11 %s -w -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s/runtime/libwyn_runtime.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm 2>/tmp/wyn_cc_err.txt",
+                     opt_level, wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
         }
         // Append optional flags before the redirect
         if (sqlite_flags[0] || gui_flags[0]) {
