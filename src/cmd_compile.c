@@ -102,23 +102,35 @@ static int compile_file_with_output(const char* filename, const char* output_nam
     }
     
     char cmd[4096];
-    snprintf(cmd, sizeof(cmd), 
-             "gcc -O0 -I %s/src -o %s %s %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
-             "%s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c "
-             "%s/src/concurrency.c %s/src/async_runtime.c "
-             "%s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c "
-             "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c "
-             "%s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c "
-             "%s/src/spawn.c %s/src/net.c %s/src/net_runtime.c "
-             "%s/src/test_runtime.c %s/src/net_advanced.c "
-             "-L%s/runtime/parser_lib -lwyn_c_parser -lm 2>&1",
-             wyn_dir, output_bin, output_c,
-             wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir,
-             wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir,
-             wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir,
-             wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir);
+    // Try precompiled runtime first, fall back to source
+    char rt_path[512];
+    snprintf(rt_path, sizeof(rt_path), "%s/runtime/libwyn_rt.a", wyn_dir);
+    FILE* rt_test = fopen(rt_path, "r");
+    if (rt_test) {
+        fclose(rt_test);
+        snprintf(cmd, sizeof(cmd),
+                 "gcc -O2 -w -I %s/src -o %s %s %s/runtime/libwyn_rt.a "
+                 "-L%s/runtime/parser_lib -lwyn_c_parser -lpthread -lm 2>&1",
+                 wyn_dir, output_bin, output_c, wyn_dir, wyn_dir);
+    } else {
+        snprintf(cmd, sizeof(cmd), 
+                 "gcc -O2 -w -I %s/src -o %s %s %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
+                 "%s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c "
+                 "%s/src/concurrency.c %s/src/async_runtime.c "
+                 "%s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c "
+                 "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c "
+                 "%s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c "
+                 "%s/src/spawn.c %s/src/net.c %s/src/net_runtime.c "
+                 "%s/src/test_runtime.c %s/src/net_advanced.c "
+                 "-L%s/runtime/parser_lib -lwyn_c_parser -lpthread -lm 2>&1",
+                 wyn_dir, output_bin, output_c,
+                 wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir,
+                 wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir,
+                 wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir,
+                 wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir);
+    }
     
-    int result = system(cmd);
+    if (getenv("WYN_DEBUG")) fprintf(stderr, "CMD: %s\n", cmd); int result = system(cmd);
     if (result != 0) {
         return 1;
     }
