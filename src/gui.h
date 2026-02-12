@@ -172,3 +172,144 @@ long long Gui_height() { return 0; }
 void Gui_destroy() {}
 void Gui_text(long long x, long long y, const char* t, long long s) {}
 #endif
+
+// === Widget helpers (built on top of primitives) ===
+#ifdef WYN_USE_GUI
+
+void Gui_button(long long x, long long y, long long w, long long h, const char* label) {
+    // Button background
+    SDL_Rect rect = {(int)x, (int)y, (int)w, (int)h};
+    SDL_SetRenderDrawColor(gui_renderer, 60, 60, 80, 255);
+    SDL_RenderFillRect(gui_renderer, &rect);
+    // Border
+    SDL_SetRenderDrawColor(gui_renderer, 120, 120, 160, 255);
+    SDL_RenderDrawRect(gui_renderer, &rect);
+    // Label centered
+    int text_x = (int)x + ((int)w - (int)strlen(label) * 8) / 2;
+    int text_y = (int)y + ((int)h - 10) / 2;
+    SDL_SetRenderDrawColor(gui_renderer, 255, 255, 255, 255);
+    Gui_text(text_x, text_y, label, 1);
+}
+
+long long Gui_button_clicked(long long bx, long long by, long long bw, long long bh, long long mx, long long my) {
+    return (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) ? 1 : 0;
+}
+
+void Gui_label(long long x, long long y, const char* text, long long scale) {
+    SDL_SetRenderDrawColor(gui_renderer, 220, 220, 220, 255);
+    Gui_text((int)x, (int)y, text, (int)scale);
+}
+
+void Gui_panel(long long x, long long y, long long w, long long h) {
+    SDL_Rect rect = {(int)x, (int)y, (int)w, (int)h};
+    SDL_SetRenderDrawColor(gui_renderer, 45, 45, 55, 255);
+    SDL_RenderFillRect(gui_renderer, &rect);
+    SDL_SetRenderDrawColor(gui_renderer, 80, 80, 100, 255);
+    SDL_RenderDrawRect(gui_renderer, &rect);
+}
+
+void Gui_progress(long long x, long long y, long long w, long long h, long long pct) {
+    // Background
+    SDL_Rect bg = {(int)x, (int)y, (int)w, (int)h};
+    SDL_SetRenderDrawColor(gui_renderer, 40, 40, 50, 255);
+    SDL_RenderFillRect(gui_renderer, &bg);
+    // Fill
+    int fill_w = (int)(w * pct / 100);
+    if (fill_w > 0) {
+        SDL_Rect fill = {(int)x, (int)y, fill_w, (int)h};
+        if (pct > 80) SDL_SetRenderDrawColor(gui_renderer, 80, 200, 80, 255);
+        else if (pct > 50) SDL_SetRenderDrawColor(gui_renderer, 200, 200, 80, 255);
+        else SDL_SetRenderDrawColor(gui_renderer, 200, 80, 80, 255);
+        SDL_RenderFillRect(gui_renderer, &fill);
+    }
+    // Border
+    SDL_SetRenderDrawColor(gui_renderer, 80, 80, 100, 255);
+    SDL_RenderDrawRect(gui_renderer, &bg);
+}
+
+void Gui_circle(long long cx, long long cy, long long radius) {
+    int r = (int)radius;
+    for (int dy = -r; dy <= r; dy++) {
+        for (int dx = -r; dx <= r; dx++) {
+            if (dx*dx + dy*dy <= r*r) {
+                SDL_RenderDrawPoint(gui_renderer, (int)cx + dx, (int)cy + dy);
+            }
+        }
+    }
+}
+
+#else
+void Gui_button(long long x, long long y, long long w, long long h, const char* l) {}
+long long Gui_button_clicked(long long bx, long long by, long long bw, long long bh, long long mx, long long my) { return 0; }
+void Gui_label(long long x, long long y, const char* t, long long s) {}
+void Gui_panel(long long x, long long y, long long w, long long h) {}
+void Gui_progress(long long x, long long y, long long w, long long h, long long p) {}
+void Gui_circle(long long cx, long long cy, long long r) {}
+#endif
+
+// === Game helpers ===
+#ifdef WYN_USE_GUI
+
+// Keyboard state
+long long Gui_key_pressed(long long keycode) {
+    const Uint8* state = SDL_GetKeyboardState(NULL);
+    SDL_Scancode sc = SDL_GetScancodeFromKey((SDL_Keycode)keycode);
+    return state[sc] ? 1 : 0;
+}
+
+// Mouse state
+long long Gui_mouse_x() { int x, y; SDL_GetMouseState(&x, &y); return x; }
+long long Gui_mouse_y() { int x, y; SDL_GetMouseState(&x, &y); return y; }
+long long Gui_mouse_down() { return (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(1)) ? 1 : 0; }
+
+// Timing
+long long Gui_ticks() { return (long long)SDL_GetTicks(); }
+
+// Outline rect
+void Gui_rect_outline(long long x, long long y, long long w, long long h) {
+    SDL_Rect rect = {(int)x, (int)y, (int)w, (int)h};
+    SDL_RenderDrawRect(gui_renderer, &rect);
+}
+
+// Image loading (BMP only — no SDL_image dependency)
+typedef struct { SDL_Texture* tex; int w; int h; } WynSprite;
+#define MAX_SPRITES 64
+static WynSprite sprites[MAX_SPRITES] = {0};
+
+long long Gui_load_sprite(const char* bmp_path) {
+    SDL_Surface* surface = SDL_LoadBMP(bmp_path);
+    if (!surface) return -1;
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(gui_renderer, surface);
+    int w = surface->w, h = surface->h;
+    SDL_FreeSurface(surface);
+    if (!tex) return -1;
+    for (int i = 1; i < MAX_SPRITES; i++) {
+        if (!sprites[i].tex) { sprites[i] = (WynSprite){tex, w, h}; return i; }
+    }
+    SDL_DestroyTexture(tex);
+    return -1;
+}
+
+void Gui_draw_sprite(long long id, long long x, long long y) {
+    if (id <= 0 || id >= MAX_SPRITES || !sprites[id].tex) return;
+    SDL_Rect dst = {(int)x, (int)y, sprites[id].w, sprites[id].h};
+    SDL_RenderCopy(gui_renderer, sprites[id].tex, NULL, &dst);
+}
+
+void Gui_draw_sprite_scaled(long long id, long long x, long long y, long long w, long long h) {
+    if (id <= 0 || id >= MAX_SPRITES || !sprites[id].tex) return;
+    SDL_Rect dst = {(int)x, (int)y, (int)w, (int)h};
+    SDL_RenderCopy(gui_renderer, sprites[id].tex, NULL, &dst);
+}
+
+#else
+long long Gui_key_pressed(long long k) { return 0; }
+long long Gui_mouse_x() { return 0; }
+long long Gui_mouse_y() { return 0; }
+long long Gui_mouse_down() { return 0; }
+long long Gui_ticks() { return 0; }
+void Gui_rect_outline(long long x, long long y, long long w, long long h) {}
+long long Gui_load_sprite(const char* p) { return -1; }
+void Gui_draw_sprite(long long id, long long x, long long y) {}
+void Gui_draw_sprite_scaled(long long id, long long x, long long y, long long w, long long h) {}
+#endif

@@ -1,0 +1,65 @@
+// Real CLI app: a task manager with file persistence, args, and error handling
+
+fn load_tasks(path: string) -> string {
+    if File.exists(path) { return File.read(path) }
+    return ""
+}
+
+fn save_tasks(path: string, data: string) {
+    File.write(path, data)
+}
+
+fn count_lines(s: string) -> int {
+    if s.len() == 0 { return 0 }
+    var count = 0
+    for i in 0..s.len() {
+        if s[i] == "\n" { count = count + 1 }
+    }
+    return count
+}
+
+fn main() -> int {
+    Test.init("CLI Complete")
+    
+    var path = "/tmp/wyn_tasks.txt"
+    
+    // Write tasks
+    save_tasks(path, "Buy milk\nFix bug #42\nDeploy v2\n")
+    
+    // Read and count
+    var data = load_tasks(path)
+    Test.assert_eq_int(count_lines(data), 3, "3 tasks loaded")
+    
+    // Append
+    File.append(path, "Write docs\n")
+    data = load_tasks(path)
+    Test.assert_eq_int(count_lines(data), 4, "4 after append")
+    
+    // Search
+    Test.assert(data.contains("bug #42"), "search finds task")
+    Test.assert_eq_int(data.contains("nonexistent"), 0, "search misses")
+    
+    // String interpolation
+    var count = count_lines(data)
+    var msg = "You have ${count} tasks"
+    Test.assert(msg.contains("4"), "interpolation works")
+    
+    // Error handling with ?
+    // (can't test ? here since main returns int, not ResultInt)
+    
+    // System integration
+    var user = System.exec("whoami").trim()
+    Test.assert(user.len() > 0, "whoami works")
+    
+    // File operations
+    Test.assert(File.is_file(path), "is_file")
+    Test.assert(File.size(path) > 0, "size > 0")
+    var cwd = File.cwd()
+    Test.assert(cwd.len() > 0, "cwd works")
+    
+    // Cleanup
+    File.delete(path)
+    
+    Test.summary()
+    return 0
+}

@@ -1,0 +1,45 @@
+fn main() -> int {
+    Test.init("Web Services E2E")
+    
+    // 1. HTTP Client — GET
+    var body = Http.get("https://httpbin.org/get")
+    Test.assert(body.len() > 0, "HTTPS GET works")
+    
+    // 2. HTTP Client — POST
+    var pbody = Http.post("https://httpbin.org/post", "key=value")
+    Test.assert(pbody.len() > 0, "HTTPS POST works")
+    
+    // 3. SQLite CRUD
+    var db = Db.open("/tmp/wyn_web_test.db")
+    Db.exec(db, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)")
+    Db.exec(db, "INSERT INTO users (name) VALUES ('Alice')")
+    Db.exec(db, "INSERT INTO users (name) VALUES ('Bob')")
+    var count = Db.query_one(db, "SELECT COUNT(*) FROM users")
+    Test.assert_eq_str(count, "2", "SQLite insert+count")
+    Db.exec(db, "UPDATE users SET name='Charlie' WHERE name='Bob'")
+    var name = Db.query_one(db, "SELECT name FROM users WHERE id=2")
+    Test.assert_eq_str(name, "Charlie", "SQLite update")
+    Db.exec(db, "DELETE FROM users WHERE id=1")
+    count = Db.query_one(db, "SELECT COUNT(*) FROM users")
+    Test.assert_eq_str(count, "1", "SQLite delete")
+    Db.close(db)
+    File.delete("/tmp/wyn_web_test.db")
+    
+    // 4. JSON
+    var j = Json.new()
+    Json.set(j, "status", "ok")
+    Json.set_int(j, "code", 200)
+    var json_str = Json.stringify(j)
+    Test.assert(json_str.contains("ok"), "JSON stringify")
+    
+    // 5. URL encoding
+    Test.assert_eq_str(Url.decode("hello%20world"), "hello world", "URL decode")
+    
+    // 6. HTTP Server (quick test)
+    var server = Http.serve(18091)
+    Test.assert(server > 0, "Http.serve starts")
+    Http.close_server(server)
+    
+    Test.summary()
+    return 0
+}
