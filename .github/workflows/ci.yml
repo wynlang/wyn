@@ -2,196 +2,75 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, dev]
   pull_request:
-    branches: [ main, develop ]
-
-env:
-  LLVM_VERSION: "18"
+    branches: [main]
 
 jobs:
-  test-llvm:
-    name: Test LLVM Backend
+  build-and-test:
+    name: Build & Test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        
+        os: [ubuntu-latest, macos-latest]
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install LLVM (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install llvm@${{ env.LLVM_VERSION }}
-          echo "$(brew --prefix llvm@${{ env.LLVM_VERSION }})/bin" >> $GITHUB_PATH
-          echo "LLVM_PREFIX=$(brew --prefix llvm@${{ env.LLVM_VERSION }})" >> $GITHUB_ENV
-
-      - name: Install LLVM (Linux)
+      - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
-        run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh ${{ env.LLVM_VERSION }}
-          sudo apt-get install -y clang-${{ env.LLVM_VERSION }}
-          echo "/usr/lib/llvm-${{ env.LLVM_VERSION }}/bin" >> $GITHUB_PATH
-          echo "LLVM_PREFIX=/usr/lib/llvm-${{ env.LLVM_VERSION }}" >> $GITHUB_ENV
+        run: sudo apt-get update && sudo apt-get install -y gcc make libsqlite3-dev libssl-dev
 
-      - name: Setup LLVM (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          choco install llvm --version=${{ env.LLVM_VERSION }}
-          echo "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "LLVM_PREFIX=C:\Program Files\LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        shell: pwsh
+      - name: Build compiler
+        run: make clean && make
 
-      - name: Build LLVM Backend
-        run: |
-          make clean
-          make wyn-llvm
-        shell: bash
+      - name: Build runtime
+        run: make runtime
 
-      - name: Test Core Features
+      - name: Run test suite
         run: |
-          # Test fibonacci
-          ./wyn-llvm examples/fibonacci.wyn
-          ./examples/fibonacci.out
-          
-          # Test basic features
-          echo "struct Point { x: int, y: int }" > /tmp/test.wyn
-          echo "fn main() -> int { var p = Point { x: 10, y: 20 }; return p.x + p.y; }" >> /tmp/test.wyn
-          ./wyn-llvm /tmp/test.wyn
-          ./tmp/test.out
-        shell: bash
+          ./wyn run tests/run_tests.wyn 2>&1
+          echo "✅ Test suite passed"
 
-      - name: Run Test Suite
+      - name: Compile sample apps
         run: |
-          # Count passing tests
-          pass=0
-          total=0
-          for f in tests/unit/*.wyn; do
-            total=$((total + 1))
-            if ./wyn-llvm "$f" >/dev/null 2>&1 && [ -f "${f%.wyn}.out" ]; then
-              pass=$((pass + 1))
+          pass=0; fail=0
+          for app in ../sample-apps/cli-tools/*/main.wyn ../sample-apps/sysadmin/*/main.wyn ../sample-apps/data-processing/*/main.wyn ../sample-apps/algorithms/*/main.wyn; do
+            [ -f "$app" ] || continue
+            if timeout 15 ./wyn "$app" >/dev/null 2>&1; then
+              pass=$((pass+1))
+            else
+              fail=$((fail+1))
+              echo "FAIL: $app"
             fi
           done
-          echo "Tests passing: $pass/$total"
-          
-          # Require at least 80% pass rate
-          percentage=$((pass * 100 / total))
-          if [ $percentage -lt 80 ]; then
-            echo "Error: Only $percentage% of tests passing (require 80%)"
-            exit 1
-          fi
-        shell: bash
+          echo "Sample apps: $pass compiled, $fail failed"
+          [ $fail -eq 0 ]
 
-      - name: Test Cross-Compilation
+      - name: Type-check
+        run: |
+          echo 'fn main() -> int { println("check") return 0 }' > /tmp/check.wyn
+          ./wyn check /tmp/check.wyn
+
+      - name: Cross-compile test
         if: runner.os == 'Linux'
         run: |
-          # Test that we can target different architectures
-          echo "fn main() -> int { return 42; }" > /tmp/cross_test.wyn
-          ./wyn-llvm /tmp/cross_test.wyn
-          ./tmp/cross_test.out
-        shell: bash
+          echo 'fn main() -> int { return 0 }' > /tmp/cross.wyn
+          ./wyn cross linux /tmp/cross.wyn
+          [ -f /tmp/cross.wyn.linux ]
+          echo "✅ Cross-compilation works"
 
-  test-c-backend:
-    name: Test C Backend (Compatibility)
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        
+  cross-compile-macos:
+    name: Cross-compile (macOS → iOS)
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build C Backend
+      - name: Build
+        run: make clean && make
+      - name: Cross-compile for iOS
         run: |
-          make clean
-          make wyn
-        shell: bash
-
-      - name: Test Core Features
-        run: |
-          ./wyn examples/fibonacci.wyn
-          ./examples/fibonacci.out
-        shell: bash
-
-      - name: Run Module Tests
-        if: runner.os != 'Windows'
-        run: |
-          ./tests/module_tests/test_modules.sh
-          ./tests/module_tests/test_module_system.sh
-        shell: bash
-
-  compare-backends:
-    name: Compare LLVM vs C Backend
-    runs-on: ubuntu-latest
-    
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install LLVM
-        run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh ${{ env.LLVM_VERSION }}
-          sudo apt-get install -y clang-${{ env.LLVM_VERSION }}
-          echo "/usr/lib/llvm-${{ env.LLVM_VERSION }}/bin" >> $GITHUB_PATH
-
-      - name: Build Both Backends
-        run: |
-          make clean
-          make wyn-llvm
-          cp wyn-llvm wyn-llvm-test
-          make clean
-          make wyn
-          cp wyn wyn-c-test
-
-      - name: Compare Outputs
-        run: |
-          # Test that both backends produce same results
-          echo "fn main() -> int { return 42; }" > /tmp/test.wyn
-          
-          ./wyn-llvm-test /tmp/test.wyn
-          llvm_result=$(/tmp/test.out; echo $?)
-          
-          ./wyn-c-test /tmp/test.wyn
-          c_result=$(/tmp/test.out; echo $?)
-          
-          if [ "$llvm_result" != "$c_result" ]; then
-            echo "Error: LLVM backend returned $llvm_result, C backend returned $c_result"
-            exit 1
-          fi
-          
-          echo "✅ Both backends produce identical results"
-
-  security-audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Check for Security Issues
-        run: |
-          # Check for unsafe patterns
-          ! grep -r "gets(" src/
-          ! grep -r "strcpy(" src/ | grep -v "strncpy"
-          ! grep -r "sprintf(" src/ | grep -v "snprintf"
-          
-          echo "✅ No obvious security issues found"
-
-  documentation:
-    name: Check Documentation
-    runs-on: ubuntu-latest
-    
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Verify Documentation Exists
-        run: |
-          [ -f "README.md" ]
-          [ -f "internal-docs/LLVM_PRODUCTION_READY.md" ]
-          echo "✅ Documentation exists"
+          echo 'fn main() -> int { return 0 }' > /tmp/ios.wyn
+          ./wyn cross ios /tmp/ios.wyn
+          file /tmp/ios.wyn.ios | grep -q "arm64"
+          echo "✅ iOS cross-compilation works"

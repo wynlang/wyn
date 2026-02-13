@@ -1,8 +1,0 @@
-// Test string types in modules
-fn greet(name: string) -> string {
-    return "Hello, ".concat(name);
-}
-
-fn reverse_string(text: string) -> string {
-    return text.reverse();
-}
