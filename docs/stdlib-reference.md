@@ -453,3 +453,35 @@ var sub = arr[1:3]              // array slice
 var sub = arr[2..5]             // same with ..
 var hello = "hello world"[0:5]  // string slice
 ```
+
+---
+
+## Unified Struct Syntax
+
+Fields and methods together — no separate `impl` block needed:
+
+```wyn
+struct Vec2 {
+    x: int
+    y: int
+
+    fn mag_sq(self) -> int {
+        return self.x * self.x + self.y * self.y
+    }
+
+    fn dot(self, other: Vec2) -> int {
+        return self.x * other.x + self.y * other.y
+    }
+}
+
+var v = Vec2{x: 3, y: 4}
+println(v.mag_sq().to_string())  // 25
+```
+
+Use `impl` only for trait implementations:
+
+```wyn
+impl Drawable for Circle {
+    fn draw(self) -> string { return "circle" }
+}
+```

@@ -63,16 +63,19 @@ while n < 5 {
 ## 4. Structs and Methods
 
 ```wyn
-struct Point { x: int, y: int }
+struct Point {
+    x: int
+    y: int
 
-fn Point.distance(self) -> float {
-    return Math.sqrt(self.x * self.x + self.y * self.y)
+    fn mag_sq(self) -> int {
+        return self.x * self.x + self.y * self.y
+    }
 }
 
 fn main() -> int {
-    var p = Point { x: 3, y: 4 }
-    println(p.x.to_string())       // 3
-    p.x = 10                       // field mutation
+    var p = Point{x: 3, y: 4}
+    println(p.mag_sq().to_string())  // 25
+    p.x = 10                        // field mutation
     return 0
 }
 ```
