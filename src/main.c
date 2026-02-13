@@ -1075,9 +1075,9 @@ int main(int argc, char** argv) {
                 if (out_st.st_mtime >= src_st.st_mtime) {
                     char run_cmd[2048];
                     if (out_path[0] == '/') {
-                        snprintf(run_cmd, sizeof(run_cmd), "'%s'", out_path);
+                        snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
                     } else {
-                        snprintf(run_cmd, sizeof(run_cmd), "'./%s'", out_path);
+                        snprintf(run_cmd, sizeof(run_cmd), "./%s", out_path);
                     }
                     for (int i = 3; i < argc; i++) { strcat(run_cmd, " "); strcat(run_cmd, argv[i]); }
                     return system(run_cmd);
@@ -1173,12 +1173,12 @@ int main(int argc, char** argv) {
         if (rt_check) {
             fclose(rt_check);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "gcc -std=c11 %s -w -I %s/src -o '%s.out' '%s.c' %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm 2>wyn_cc_err.txt",
+                     "gcc -std=c11 %s -w -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm 2>wyn_cc_err.txt",
                      opt_level, wyn_root, file, file, wyn_root, wyn_root);
         } else {
             // Fallback: compile from source
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "gcc -std=c11 %s -w -I %s/src -o '%s.out' '%s.c' %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s/runtime/libwyn_runtime.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm 2>wyn_cc_err.txt",
+                     "gcc -std=c11 %s -w -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s/runtime/libwyn_runtime.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm 2>wyn_cc_err.txt",
                      opt_level, wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
         }
         // Append optional flags before the redirect
@@ -1212,9 +1212,9 @@ int main(int argc, char** argv) {
         
         char run_cmd[512];
         if (file[0] == '/') {
-            snprintf(run_cmd, 512, "'%s.out'", file);
+            snprintf(run_cmd, 512, "%s.out", file);
         } else {
-            snprintf(run_cmd, 512, "'./%s.out'", file);
+            snprintf(run_cmd, 512, "./%s.out", file);
         }
         result = system(run_cmd);
         free(source);
