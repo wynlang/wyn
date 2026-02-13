@@ -7,7 +7,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
+#ifndef _WIN32
 #include <sys/wait.h>
+#endif
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
@@ -160,6 +162,12 @@ int main(int argc, char** argv) {
     
     // Install/uninstall wyn to system PATH
     if (strcmp(command, "install") == 0) {
+#ifdef _WIN32
+        fprintf(stderr, "On Windows, use the installer or add wyn.exe to your PATH manually.\n");
+        fprintf(stderr, "  1. Copy wyn.exe to a directory\n");
+        fprintf(stderr, "  2. Add that directory to your PATH environment variable\n");
+        return 1;
+#else
         char exe_path[1024];
         #ifdef __APPLE__
         uint32_t size = sizeof(exe_path);
@@ -168,7 +176,6 @@ int main(int argc, char** argv) {
         ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path)-1);
         if (len > 0) exe_path[len] = 0; else { strncpy(exe_path, argv[0], sizeof(exe_path)-1); }
         #endif
-        // Resolve to absolute path
         char abs_path[1024];
         if (realpath(exe_path, abs_path) == NULL) strncpy(abs_path, exe_path, sizeof(abs_path));
         
@@ -176,7 +183,6 @@ int main(int argc, char** argv) {
         char install_path[1100];
         snprintf(install_path, sizeof(install_path), "%s/wyn", install_dir);
         
-        // Check if already installed
         if (access(install_path, X_OK) == 0) {
             char existing[1024] = {0};
             readlink(install_path, existing, sizeof(existing)-1);
@@ -189,7 +195,6 @@ int main(int argc, char** argv) {
             unlink(install_path);
         }
         
-        // Create symlink
         printf("Installing \033[32mwyn\033[0m to %s...\n", install_path);
         if (symlink(abs_path, install_path) == 0) {
             printf("\033[32m✓\033[0m Installed: %s → %s\n", install_path, abs_path);
@@ -199,9 +204,14 @@ int main(int argc, char** argv) {
             fprintf(stderr, "  sudo ln -sf %s %s\n", abs_path, install_path);
         }
         return 0;
+#endif
     }
     
     if (strcmp(command, "uninstall") == 0) {
+#ifdef _WIN32
+        fprintf(stderr, "On Windows, remove wyn.exe from your PATH manually.\n");
+        return 1;
+#else
         const char* install_path = "/usr/local/bin/wyn";
         if (access(install_path, F_OK) != 0) {
             printf("wyn is not installed at %s\n", install_path);
@@ -214,6 +224,7 @@ int main(int argc, char** argv) {
             fprintf(stderr, "\033[31m✗\033[0m Failed. Try: sudo rm %s\n", install_path);
         }
         return 0;
+#endif
     }
     
     // Handle --help and -h flags
@@ -1216,10 +1227,14 @@ int main(int argc, char** argv) {
             unlink(out_path2);
         }
         // Extract actual exit code from system() result
+#ifdef _WIN32
+        return result;
+#else
         if (WIFEXITED(result)) {
             return WEXITSTATUS(result);
         }
         return result;
+#endif
     }
     
     // Parse optimization flags and -o flag
