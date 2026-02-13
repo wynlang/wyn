@@ -16,8 +16,6 @@ jobs:
             artifact: wyn-linux-x64
           - os: macos-15
             artifact: wyn-macos-arm64
-          - os: macos-13
-            artifact: wyn-macos-x64
           - os: windows-latest
             artifact: wyn-windows-x64
 
@@ -82,7 +80,6 @@ jobs:
           files: |
             wyn-linux-x64/wyn-linux-x64.tar.gz
             wyn-macos-arm64/wyn-macos-arm64.tar.gz
-            wyn-macos-x64/wyn-macos-x64.tar.gz
             wyn-windows-x64/wyn-windows-x64.zip
           body_path: CHANGELOG.md
         env:

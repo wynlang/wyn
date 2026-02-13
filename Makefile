@@ -7,7 +7,7 @@ ifeq ($(OS),Windows_NT)
     PLATFORM := windows
     CC := gcc
     EXE_EXT := .exe
-    PLATFORM_LIBS := -lws2_32 -lpthread
+    PLATFORM_LIBS := -lws2_32 -lpthread -lm
     PLATFORM_CFLAGS := -DWYN_PLATFORM_WINDOWS
 else ifeq ($(UNAME_S),Darwin)
     PLATFORM := macos
