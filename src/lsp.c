@@ -331,6 +331,7 @@ static void handle_completion(const char* id, const char* msg) {
             "{\"label\":\"Uuid\",\"kind\":9,\"detail\":\"module: generate\"},"
             "{\"label\":\"Log\",\"kind\":9,\"detail\":\"module: debug, info, warn, error, set_level\"},"
             "{\"label\":\"Process\",\"kind\":9,\"detail\":\"module: exec_capture, exec_status\"},"
+            "{\"label\":\"Csv\",\"kind\":9,\"detail\":\"module: parse, get, get_field, row_count, header\"},"
             "{\"label\":\"Ok\",\"kind\":12,\"detail\":\"Result constructor\"},"
             "{\"label\":\"Err\",\"kind\":12,\"detail\":\"Result constructor\"},"
             "{\"label\":\"Some\",\"kind\":12,\"detail\":\"Option constructor\"},"
