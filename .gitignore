@@ -41,3 +41,4 @@ tests/test_codegen
 runtime/libwyn_rt.a
 runtime/obj/
 wyn_cc_err.txt
+runtime/libwyn_runtime.a

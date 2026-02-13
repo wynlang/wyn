@@ -27,8 +27,13 @@
 #include <ctype.h>
 #include <stdarg.h>
 #include <setjmp.h>
-#include <dirent.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <io.h>
+#else
+#include <dirent.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <netinet/in.h>
@@ -36,6 +41,7 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <fcntl.h>
+#endif
 #include <errno.h>
 #include "wyn_interface.h"
 #include "io.h"
@@ -83,7 +89,16 @@ char* wyn_c_create_c_filename(const char* filename);
 bool wyn_c_compile_to_binary(const char* c_filename, const char* wyn_filename);
 bool wyn_c_remove_file(const char* filename);
 
-const char* wyn_string_concat_safe(const char* left, const char* right);
+const char* wyn_string_concat_safe(const char* left, const char* right) {
+    if (!left) left = "";
+    if (!right) right = "";
+    size_t l1 = strlen(left), l2 = strlen(right);
+    char* r = malloc(l1 + l2 + 1);
+    memcpy(r, left, l1);
+    memcpy(r + l1, right, l2);
+    r[l1 + l2] = 0;
+    return r;
+}
 
 // Test module
 void Test_init(const char* suite_name);
