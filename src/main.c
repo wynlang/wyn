@@ -1034,7 +1034,11 @@ int main(int argc, char** argv) {
             if (stat(file, &src_st) == 0 && stat(out_path, &out_st) == 0) {
                 if (out_st.st_mtime >= src_st.st_mtime) {
                     char run_cmd[2048];
-                    snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
+                    if (out_path[0] == '/') {
+                        snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
+                    } else {
+                        snprintf(run_cmd, sizeof(run_cmd), "./%s", out_path);
+                    }
                     for (int i = 3; i < argc; i++) { strcat(run_cmd, " "); strcat(run_cmd, argv[i]); }
                     return system(run_cmd);
                 }

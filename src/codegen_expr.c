@@ -2393,7 +2393,7 @@ void codegen_expr(Expr* expr) {
             break;
         case EXPR_STRING_INTERP: {
             // String interpolation: "Hello ${name}" -> sprintf format
-            emit("({ char __buf[256]; sprintf(__buf, \"");
+            emit("({ char __buf[8192]; sprintf(__buf, \"");
             
             // Build format string - use %s for everything and convert with _Generic
             for (int i = 0; i < expr->string_interp.count; i++) {
@@ -2422,7 +2422,7 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
-            emit("); __buf; })");
+            emit("); strdup(__buf); })");
             break;
         }
         case EXPR_RANGE:
