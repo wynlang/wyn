@@ -34,6 +34,7 @@
   #include <windows.h>
   #include <io.h>
   #include <direct.h>
+  #include <conio.h>
   #include <process.h>
   
   // Windows compat layer
@@ -2046,9 +2047,18 @@ void Json_set_int(WynJson* j, const char* k, int v) { json_set_int(j, k, v); }
 void Json_set_bool(WynJson* j, const char* k, int v) { json_set_int(j, k, v ? 1 : 0); }char* Json_stringify(WynJson* j) { return json_stringify(j); }
 
 // Terminal module: POSIX terminal control
-#ifndef _WIN32
+#ifdef _WIN32
+// Windows terminal stubs
+int Terminal_cols() { CONSOLE_SCREEN_BUFFER_INFO csbi; if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) return csbi.srWindow.Right - csbi.srWindow.Left + 1; return 80; }
+int Terminal_rows() { CONSOLE_SCREEN_BUFFER_INFO csbi; if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) return csbi.srWindow.Bottom - csbi.srWindow.Top + 1; return 24; }
+void Terminal_raw_mode() {}
+void Terminal_restore() {}
+int Terminal_read_key() { return _getch(); }
+void Terminal_clear() { system("cls"); }
+void Terminal_move(int row, int col) { COORD c = {(SHORT)(col-1), (SHORT)(row-1)}; SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), c); }
+void Terminal_write(const char* s) { printf("%s", s); }
+#else
 #include <sys/ioctl.h>
-#endif
 #include <termios.h>
 
 static struct termios __wyn_orig_termios;
@@ -2112,6 +2122,7 @@ void Terminal_move(int row, int col) {
 void Terminal_write(const char* s) {
     write(STDOUT_FILENO, s, strlen(s));
 }
+#endif // _WIN32 terminal guard
 
 // Http: Http.get() maps to http_get() (lowercase, returns string)
 // Note: Http_get in net_advanced.c returns HttpResponse* (different API)
