@@ -13,19 +13,19 @@ else ifeq ($(UNAME_S),Darwin)
     PLATFORM := macos
     CC := clang
     EXE_EXT :=
-    PLATFORM_LIBS := -lpthread
+    PLATFORM_LIBS := -lpthread -lm
     PLATFORM_CFLAGS := -DWYN_PLATFORM_MACOS
 else ifeq ($(UNAME_S),Linux)
     PLATFORM := linux
     CC := gcc
     EXE_EXT :=
-    PLATFORM_LIBS := -lpthread
+    PLATFORM_LIBS := -lpthread -lm
     PLATFORM_CFLAGS := -DWYN_PLATFORM_LINUX
 else
     PLATFORM := unknown
     CC := gcc
     EXE_EXT :=
-    PLATFORM_LIBS := -lpthread
+    PLATFORM_LIBS := -lpthread -lm
     PLATFORM_CFLAGS := -DWYN_PLATFORM_UNKNOWN
 endif
 
@@ -86,21 +86,21 @@ wyn$(EXE_EXT): src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c s
 
 # Platform-specific targets
 wyn-windows: PLATFORM_CFLAGS += -DWYN_PLATFORM_WINDOWS
-wyn-windows: PLATFORM_LIBS = -lws2_32 -lpthread
+wyn-windows: PLATFORM_LIBS = -lws2_32 -lpthread -lm
 wyn-windows: CC = x86_64-w64-mingw32-gcc
 wyn-windows: EXE_EXT = .exe
 wyn-windows: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 wyn-linux: PLATFORM_CFLAGS += -DWYN_PLATFORM_LINUX
-wyn-linux: PLATFORM_LIBS = -lpthread
+wyn-linux: PLATFORM_LIBS = -lpthread -lm
 wyn-linux: CC = gcc
 wyn-linux: EXE_EXT =
 wyn-linux: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 wyn-macos: PLATFORM_CFLAGS += -DWYN_PLATFORM_MACOS
-wyn-macos: PLATFORM_LIBS = -lpthread
+wyn-macos: PLATFORM_LIBS = -lpthread -lm
 wyn-macos: CC = clang
 wyn-macos: EXE_EXT =
 wyn-macos: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
