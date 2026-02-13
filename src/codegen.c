@@ -85,6 +85,23 @@ static const char* resolve_short_module_name(const char* short_name) {
 static char* current_function_params[64];
 static bool current_param_mut[64];
 static int current_param_count = 0;
+char current_param_types[64][64];
+
+// Trait name tracking for vtable dispatch
+static char trait_names[64][64];
+static int trait_name_count = 0;
+static void register_trait_name(const char* name, int len) {
+    if (trait_name_count < 64) {
+        snprintf(trait_names[trait_name_count], 64, "%.*s", len, name);
+        trait_name_count++;
+    }
+}
+static int is_trait_type(const char* name, int len) {
+    for (int i = 0; i < trait_name_count; i++) {
+        if ((int)strlen(trait_names[i]) == len && memcmp(trait_names[i], name, len) == 0) return 1;
+    }
+    return 0;
+}
 
 // Local variable tracking for current function
 static char* current_function_locals[256];
@@ -119,6 +136,7 @@ static void clear_module_functions() {
 static void register_parameter(const char* name) {
     if (current_param_count < 64) {
         current_param_mut[current_param_count] = false;
+        current_param_types[current_param_count][0] = 0;
         current_function_params[current_param_count++] = strdup(name);
     }
 }
@@ -126,6 +144,16 @@ static void register_parameter(const char* name) {
 static void register_parameter_mut(const char* name, bool is_mut) {
     if (current_param_count < 64) {
         current_param_mut[current_param_count] = is_mut;
+        current_param_types[current_param_count][0] = 0;
+        current_function_params[current_param_count++] = strdup(name);
+    }
+}
+
+static void register_parameter_typed(const char* name, const char* type_name, bool is_mut) {
+    if (current_param_count < 64) {
+        current_param_mut[current_param_count] = is_mut;
+        if (type_name) snprintf(current_param_types[current_param_count], 64, "%s", type_name);
+        else current_param_types[current_param_count][0] = 0;
         current_function_params[current_param_count++] = strdup(name);
     }
 }

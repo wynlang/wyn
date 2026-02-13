@@ -3448,4 +3448,141 @@ void Test_assert_not_contains(const char* haystack, const char* needle, const ch
     Test_assert(strstr(haystack, needle) == NULL, msg);
 }
 
+// Http timeout (seconds, 0 = no timeout)
+static int _wyn_http_timeout = 30;
+void Http_set_timeout(long long seconds) { _wyn_http_timeout = (int)seconds; }
+long long Http_timeout() { return _wyn_http_timeout; }
+
+// Json pretty print
+char* Json_to_pretty_string(WynJson* j) {
+    char* raw = json_stringify(j);
+    if (!raw) return strdup("{}");
+    int rlen = strlen(raw);
+    char* out = malloc(rlen * 4 + 1);
+    int o = 0, indent = 0;
+    int in_str = 0;
+    for (int i = 0; i < rlen; i++) {
+        char c = raw[i];
+        if (c == '"' && (i == 0 || raw[i-1] != '\\')) { in_str = !in_str; out[o++] = c; continue; }
+        if (in_str) { out[o++] = c; continue; }
+        if (c == '{' || c == '[') {
+            out[o++] = c; out[o++] = '\n'; indent += 2;
+            for (int s = 0; s < indent; s++) out[o++] = ' ';
+        } else if (c == '}' || c == ']') {
+            out[o++] = '\n'; indent -= 2;
+            for (int s = 0; s < indent; s++) out[o++] = ' ';
+            out[o++] = c;
+        } else if (c == ',') {
+            out[o++] = ','; out[o++] = '\n';
+            for (int s = 0; s < indent; s++) out[o++] = ' ';
+        } else if (c == ':') {
+            out[o++] = ':'; out[o++] = ' ';
+        } else {
+            out[o++] = c;
+        }
+    }
+    out[o] = 0;
+    return out;
+}
+
+// === CSV MODULE ===
+typedef struct { char** fields; int field_count; } CsvRow;
+typedef struct { CsvRow* rows; int row_count; char** headers; int header_count; } CsvDoc;
+
+static CsvRow csv_parse_row(const char* line) {
+    CsvRow row = {0};
+    row.fields = malloc(sizeof(char*) * 128);
+    const char* p = line;
+    while (*p) {
+        if (*p == '"') {
+            p++;
+            int cap = 256; char* f = malloc(cap); int len = 0;
+            while (*p) {
+                if (*p == '"' && *(p+1) == '"') { f[len++] = '"'; p += 2; }
+                else if (*p == '"') { p++; break; }
+                else { f[len++] = *p++; }
+                if (len >= cap - 1) { cap *= 2; f = realloc(f, cap); }
+            }
+            f[len] = 0;
+            row.fields[row.field_count++] = f;
+            if (*p == ',') p++;
+        } else {
+            const char* start = p;
+            while (*p && *p != ',' && *p != '\n' && *p != '\r') p++;
+            int len = p - start;
+            char* f = malloc(len + 1); memcpy(f, start, len); f[len] = 0;
+            row.fields[row.field_count++] = f;
+            if (*p == ',') p++;
+        }
+    }
+    return row;
+}
+
+long long Csv_parse(const char* text) {
+    CsvDoc* doc = malloc(sizeof(CsvDoc));
+    doc->rows = malloc(sizeof(CsvRow) * 4096);
+    doc->row_count = 0; doc->headers = NULL; doc->header_count = 0;
+    const char* p = text;
+    while (*p) {
+        const char* eol = p;
+        while (*eol && *eol != '\n') eol++;
+        int len = eol - p;
+        if (len > 0 && p[len-1] == '\r') len--;
+        if (len > 0) {
+            char* line = malloc(len + 1); memcpy(line, p, len); line[len] = 0;
+            CsvRow row = csv_parse_row(line);
+            free(line);
+            if (doc->row_count == 0) {
+                doc->headers = row.fields; doc->header_count = row.field_count;
+            }
+            doc->rows[doc->row_count++] = row;
+        }
+        p = *eol ? eol + 1 : eol;
+    }
+    return (long long)doc;
+}
+
+long long Csv_row_count(long long handle) {
+    CsvDoc* d = (CsvDoc*)handle;
+    return d ? d->row_count : 0;
+}
+
+const char* Csv_get(long long handle, long long row, long long col) {
+    CsvDoc* d = (CsvDoc*)handle;
+    if (!d || row < 0 || row >= d->row_count) return "";
+    CsvRow* r = &d->rows[row];
+    if (col < 0 || col >= r->field_count) return "";
+    return r->fields[col];
+}
+
+const char* Csv_get_field(long long handle, long long row, const char* header) {
+    CsvDoc* d = (CsvDoc*)handle;
+    if (!d || !d->headers || row < 0 || row >= d->row_count) return "";
+    for (int i = 0; i < d->header_count; i++) {
+        if (strcmp(d->headers[i], header) == 0) {
+            CsvRow* r = &d->rows[row];
+            if (i < r->field_count) return r->fields[i];
+            return "";
+        }
+    }
+    return "";
+}
+
+long long Csv_col_count(long long handle, long long row) {
+    CsvDoc* d = (CsvDoc*)handle;
+    if (!d || row < 0 || row >= d->row_count) return 0;
+    return d->rows[row].field_count;
+}
+
+const char* Csv_header(long long handle, long long col) {
+    CsvDoc* d = (CsvDoc*)handle;
+    if (!d || !d->headers || col < 0 || col >= d->header_count) return "";
+    return d->headers[col];
+}
+
+long long Csv_header_count(long long handle) {
+    CsvDoc* d = (CsvDoc*)handle;
+    return d ? d->header_count : 0;
+}
+
 #endif // WYN_RUNTIME_H

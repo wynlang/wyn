@@ -332,6 +332,12 @@ void codegen_stmt(Stmt* stmt) {
                         snprintf(method_name, sizeof(method_name), "%.*s", method.length, method.start);
                         
                         const char* return_type = lookup_method_return_type(receiver_type, method_name);
+                        if (!return_type && stmt->var.init->method_call.object->type == EXPR_IDENT) {
+                            Token mod = stmt->var.init->method_call.object->token;
+                            char fn_name[128];
+                            snprintf(fn_name, sizeof(fn_name), "%.*s_%s", mod.length, mod.start, method_name);
+                            return_type = lookup_module_fn_return_type(fn_name);
+                        }
                         if (return_type) {
                             if (strcmp(return_type, "string") == 0) {
                                 c_type = "char*";
@@ -942,7 +948,14 @@ void codegen_stmt(Stmt* stmt) {
                 char pname[256];
                 snprintf(pname, 256, "%.*s", stmt->fn.params[i].length, stmt->fn.params[i].start);
                 bool is_mut_p = stmt->fn.param_mutable && stmt->fn.param_mutable[i];
-                register_parameter_mut(pname, is_mut_p);
+                // Extract type name for trait dispatch
+                const char* ptype = NULL;
+                char ptbuf[64] = {0};
+                if (stmt->fn.param_types[i] && stmt->fn.param_types[i]->type == EXPR_IDENT) {
+                    snprintf(ptbuf, 64, "%.*s", stmt->fn.param_types[i]->token.length, stmt->fn.param_types[i]->token.start);
+                    ptype = ptbuf;
+                }
+                register_parameter_typed(pname, ptype, is_mut_p);
             }
             
             // Set current function return kind for Ok/Err/Some/None resolution

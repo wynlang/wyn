@@ -1059,7 +1059,7 @@ void init_checker() {
 
     // Register namespace identifiers so checker doesn't reject File.read() etc.
     // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", NULL};
+    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", NULL};
     for (int i = 0; namespaces[i]; i++) {
         Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
         if (!find_symbol(global_scope, ns_tok)) {
@@ -1494,6 +1494,15 @@ void init_checker() {
         {"Log_set_level", 13, builtin_void},
         {"Process_exec_capture", 20, builtin_string},
         {"Process_exec_status", 19, builtin_int},
+        {"Http_timeout", 12, builtin_int},
+        {"Json_to_pretty_string", 21, builtin_string},
+        {"Csv_parse", 9, builtin_int},
+        {"Csv_row_count", 13, builtin_int},
+        {"Csv_get", 7, builtin_string},
+        {"Csv_get_field", 13, builtin_string},
+        {"Csv_col_count", 13, builtin_int},
+        {"Csv_header", 10, builtin_string},
+        {"Csv_header_count", 16, builtin_int},
         {"Http_get_json", 13, builtin_int},
         {"Http_post_json", 14, builtin_int},
         {"Json_get_float", 14, builtin_float},
@@ -1520,7 +1529,8 @@ void init_checker() {
         {"Crypto_hmac_sha256", 18, builtin_string},
         {"Crypto_random_bytes", 19, builtin_string},
     };
-    for (int i = 0; i < 64; i++) {
+    int new_fns_count = sizeof(new_fns) / sizeof(new_fns[0]);
+    for (int i = 0; i < new_fns_count; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = 1;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
@@ -4197,6 +4207,11 @@ void check_program(Program* prog) {
             }
             fn_type->fn_type.return_type = builtin_int; // Simplified
             add_function_overload(global_scope, macro->name, fn_type, false);
+        } else if (prog->stmts[i]->type == STMT_TRAIT) {
+            // Register trait as a type early so functions can use trait params
+            Type* trait_type = make_type(TYPE_STRUCT);
+            trait_type->struct_type.name = prog->stmts[i]->trait_decl.name;
+            add_symbol(global_scope, prog->stmts[i]->trait_decl.name, trait_type, false);
         } else if (prog->stmts[i]->type == STMT_CONST) {
             // Register module-level constants early so functions can use them
             VarStmt* const_stmt = &prog->stmts[i]->const_stmt;

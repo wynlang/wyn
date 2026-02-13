@@ -19,6 +19,7 @@ typedef struct {
 
 // Lookup method return type given receiver type and method name
 const char* lookup_method_return_type(const char* receiver_type, const char* method_name);
+const char* lookup_module_fn_return_type(const char* fn_name);
 
 // Get receiver type string from Type for method dispatch
 const char* get_receiver_type_string(const Type* type);

@@ -975,3 +975,32 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
     
     return false;  // Method not found
 }
+
+// Lookup return type for module functions (e.g., "Crypto_sha256" -> "string")
+const char* lookup_module_fn_return_type(const char* fn_name) {
+    // These match the checker's return type registry
+    struct { const char* name; const char* ret; } fns[] = {
+        {"Crypto_sha256", "string"}, {"Crypto_md5", "string"},
+        {"Crypto_hmac_sha256", "string"}, {"Crypto_random_bytes", "string"},
+        {"Encoding_base64_encode", "string"}, {"Encoding_base64_decode", "string"},
+        {"Encoding_hex_encode", "string"}, {"Encoding_hex_decode", "string"},
+        {"Json_stringify", "string"}, {"Json_to_pretty_string", "string"},
+        {"Json_get", "string"}, {"Json_keys", "string"},
+        {"Os_platform", "string"}, {"Os_arch", "string"},
+        {"Os_hostname", "string"}, {"Os_home_dir", "string"}, {"Os_temp_dir", "string"},
+        {"Uuid_generate", "string"}, {"Process_exec_capture", "string"},
+        {"Csv_get", "string"}, {"Csv_get_field", "string"}, {"Csv_header", "string"},
+        {"Path_basename", "string"}, {"Path_dirname", "string"}, {"Path_extension", "string"}, {"Path_join", "string"},
+        {"DateTime_to_iso", "string"}, {"DateTime_format_duration", "string"},
+        {"Regex_replace", "string"}, {"Regex_find_all", "string"},
+        {"File_read", "string"}, {"File_temp_file", "string"}, {"File_read_line", "string"},
+        {"System_exec", "string"}, {"System_env", "string"},
+        {"Net_resolve", "string"}, {"Url_encode", "string"}, {"Url_decode", "string"},
+        {"StringBuilder_to_string", "string"},
+        {NULL, NULL}
+    };
+    for (int i = 0; fns[i].name; i++) {
+        if (strcmp(fns[i].name, fn_name) == 0) return fns[i].ret;
+    }
+    return NULL;
+}

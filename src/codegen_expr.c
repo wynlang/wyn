@@ -945,6 +945,22 @@ void codegen_expr(Expr* expr) {
             if (expr->method_call.object->expr_type && 
                 expr->method_call.object->expr_type->kind == TYPE_STRUCT) {
                 Token type_name = expr->method_call.object->expr_type->struct_type.name;
+                
+                // Check if this is a trait type — use vtable dispatch
+                if (is_trait_type(type_name.start, type_name.length)) {
+                    emit("(");
+                    codegen_expr(expr->method_call.object);
+                    emit(").vtable->%.*s((", method.length, method.start);
+                    codegen_expr(expr->method_call.object);
+                    emit(").data");
+                    for (int i = 0; i < expr->method_call.arg_count; i++) {
+                        emit(", ");
+                        codegen_expr(expr->method_call.args[i]);
+                    }
+                    emit(")");
+                    break;
+                }
+                
                 emit("%.*s_%.*s(", type_name.length, type_name.start, 
                      method.length, method.start);
                 codegen_expr(expr->method_call.object);
@@ -954,6 +970,34 @@ void codegen_expr(Expr* expr) {
                 }
                 emit(")");
                 break;
+            }
+            
+            // Check if object is a parameter with trait type
+            if (expr->method_call.object->type == EXPR_IDENT) {
+                Token obj = expr->method_call.object->token;
+                // Check current function params for trait-typed params
+                for (int pi = 0; pi < current_param_count; pi++) {
+                    if (current_function_params[pi] && 
+                        strlen(current_function_params[pi]) == (size_t)obj.length &&
+                        memcmp(current_function_params[pi], obj.start, obj.length) == 0) {
+                        // Found the param — check if its type is a trait
+                        // We stored param types during STMT_FN processing
+                        extern char current_param_types[64][64];
+                        if (current_param_types[pi][0] && is_trait_type(current_param_types[pi], strlen(current_param_types[pi]))) {
+                            emit("(");
+                            codegen_expr(expr->method_call.object);
+                            emit(").vtable->%.*s((", method.length, method.start);
+                            codegen_expr(expr->method_call.object);
+                            emit(").data");
+                            for (int i = 0; i < expr->method_call.arg_count; i++) {
+                                emit(", ");
+                                codegen_expr(expr->method_call.args[i]);
+                            }
+                            emit(")");
+                            goto method_done;
+                        }
+                    }
+                }
             }
             
             // Module method calls (module.function()) - CHECK THIS SECOND
@@ -1604,6 +1648,7 @@ void codegen_expr(Expr* expr) {
                 fprintf(stderr, "Error: Unknown method '%.*s' (no type info)\n", 
                         method.length, method.start);
             }
+            method_done:
             break;
         }
         case EXPR_ARRAY: {
