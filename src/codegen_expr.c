@@ -1356,6 +1356,14 @@ void codegen_expr(Expr* expr) {
             
             const char* receiver_type = get_receiver_type_string(object_type);
             
+            // Check if variable is a known array (from list comp or array literal)
+            if (expr->method_call.object->type == EXPR_IDENT) {
+                char vn[64];
+                snprintf(vn, 64, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                extern int is_known_array_var(const char*);
+                if (is_known_array_var(vn)) receiver_type = "array";
+            }
+            
             // Fallback: if no type info, try to infer from expression
             if (!receiver_type && expr->method_call.object->type == EXPR_IDENT) {
                 char mname[64];
@@ -2425,6 +2433,44 @@ void codegen_expr(Expr* expr) {
             codegen_expr(expr->range.end);
             emit("}; __range; })");
             break;
+        case EXPR_LIST_COMP: {
+            // [expr for x in start..end] or [expr for x in array] or [expr for x in range if cond]
+            static int lc_id = 0;
+            int id = lc_id++;
+            if (expr->list_comp.iter_end) {
+                // Range-based: [expr for x in start..end]
+                emit("({ WynArray __lc_%d = array_new(); ", id);
+                emit("for (long long %.*s = ", expr->list_comp.var_name.length, expr->list_comp.var_name.start);
+                codegen_expr(expr->list_comp.iter_start);
+                emit("; %.*s < ", expr->list_comp.var_name.length, expr->list_comp.var_name.start);
+                codegen_expr(expr->list_comp.iter_end);
+                emit("; %.*s++) { ", expr->list_comp.var_name.length, expr->list_comp.var_name.start);
+                if (expr->list_comp.condition) {
+                    emit("if (");
+                    codegen_expr(expr->list_comp.condition);
+                    emit(") ");
+                }
+                emit("array_push(&__lc_%d, (long long)(", id);
+                codegen_expr(expr->list_comp.body);
+                emit(")); } __lc_%d; })", id);
+            } else {
+                // Array-based: [expr for x in array]
+                emit("({ WynArray __lc_%d = array_new(); WynArray __lc_src_%d = ", id, id);
+                codegen_expr(expr->list_comp.iter_start);
+                emit("; for (int __lc_i_%d = 0; __lc_i_%d < __lc_src_%d.count; __lc_i_%d++) { ", id, id, id, id);
+                emit("long long %.*s = __lc_src_%d.data[__lc_i_%d].data.int_val; ",
+                     expr->list_comp.var_name.length, expr->list_comp.var_name.start, id, id);
+                if (expr->list_comp.condition) {
+                    emit("if (");
+                    codegen_expr(expr->list_comp.condition);
+                    emit(") ");
+                }
+                emit("array_push(&__lc_%d, (long long)(", id);
+                codegen_expr(expr->list_comp.body);
+                emit(")); } __lc_%d; })", id);
+            }
+            break;
+        }
         case EXPR_SPAWN: {
             // Spawn expression: spawn fn(args) returns a future
             if (expr->spawn.call && expr->spawn.call->type == EXPR_CALL &&

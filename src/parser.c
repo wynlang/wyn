@@ -554,13 +554,42 @@ static Expr* primary() {
         if (!check(TOKEN_RBRACKET)) {
             int capacity = 8;
             expr->array.elements = malloc(sizeof(Expr*) * capacity);
-            do {
+            expr->array.elements[0] = expression();
+            expr->array.count = 1;
+            
+            // Check for list comprehension: [expr for x in range]
+            if (check(TOKEN_FOR)) {
+                advance(); // consume 'for'
+                Expr* comp = alloc_expr();
+                comp->type = EXPR_LIST_COMP;
+                comp->list_comp.body = expr->array.elements[0];
+                expect(TOKEN_IDENT, "Expected variable name after 'for'");
+                comp->list_comp.var_name = parser.previous;
+                expect(TOKEN_IN, "Expected 'in' after variable name");
+                comp->list_comp.iter_start = expression();
+                if (match(TOKEN_DOTDOT)) {
+                    comp->list_comp.iter_end = expression();
+                } else {
+                    comp->list_comp.iter_end = NULL; // iterating array
+                }
+                // Optional filter: if condition
+                if (check(TOKEN_IF)) {
+                    advance();
+                    comp->list_comp.condition = expression();
+                } else {
+                    comp->list_comp.condition = NULL;
+                }
+                expect(TOKEN_RBRACKET, "Expected ']' after list comprehension");
+                return comp;
+            }
+            
+            while (match(TOKEN_COMMA) && !check(TOKEN_RBRACKET)) {
                 if (expr->array.count >= capacity) {
                     capacity *= 2;
                     expr->array.elements = realloc(expr->array.elements, sizeof(Expr*) * capacity);
                 }
                 expr->array.elements[expr->array.count++] = expression();
-            } while (match(TOKEN_COMMA) && !check(TOKEN_RBRACKET));
+            }
         }
         
         expect(TOKEN_RBRACKET, "Expected ']' after array elements");
@@ -938,7 +967,7 @@ static Expr* call() {
             // Check if this is a slice (arr[1..3]) or index (arr[1])
             Expr* first_expr = expression();
             
-            if (match(TOKEN_DOTDOT)) {
+            if (match(TOKEN_DOTDOT) || match(TOKEN_COLON)) {
                 // It's a slice: arr[start..end]
                 Expr* end_expr = expression();
                 expect(TOKEN_RBRACKET, "Expected ']' after slice");

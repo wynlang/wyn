@@ -227,9 +227,10 @@ void codegen_stmt(Stmt* stmt) {
                     } else if (stmt->var.init->unary.operand->type == EXPR_INT) {
                         c_type = "long long";
                     }
-                } else if (stmt->var.init->type == EXPR_ARRAY) {
+                } else if (stmt->var.init->type == EXPR_ARRAY || stmt->var.init->type == EXPR_LIST_COMP) {
                     c_type = "WynArray";
-                    needs_arc_management = false;  // Array expression already returns proper value
+                    needs_arc_management = false;
+                    { char vn[256]; snprintf(vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start); register_array_var(vn); }
                 } else if (stmt->var.init->type == EXPR_MAP) {
                     // Map type - use the typedef
                     c_type = "WynMap";

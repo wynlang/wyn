@@ -225,6 +225,19 @@ static void register_local_variable(const char* name) {
     }
 }
 
+// Track which local variables are arrays (for method dispatch)
+static char* array_var_names[256];
+static int array_var_count = 0;
+static void register_array_var(const char* name) {
+    if (array_var_count < 256) array_var_names[array_var_count++] = strdup(name);
+}
+int is_known_array_var(const char* name) {
+    for (int i = 0; i < array_var_count; i++) {
+        if (strcmp(array_var_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
 static bool is_local_variable(const char* name) {
     for (int i = 0; i < current_local_count; i++) {
         if (strcmp(current_function_locals[i], name) == 0) {

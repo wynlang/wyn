@@ -53,6 +53,7 @@ typedef enum {
     EXPR_FN_TYPE,        // Function type: fn(T1, T2) -> R
     EXPR_BLOCK,          // Block expression: { stmt1; stmt2; expr }
     EXPR_SPAWN,          // Spawn expression: spawn func() -> Future<T>
+    EXPR_LIST_COMP,      // List comprehension: [expr for x in range]
 } ExprType;
 
 // T3.3.1: Pattern types for destructuring
@@ -308,6 +309,14 @@ typedef struct {
     Expr* call;        // The function call to spawn
 } SpawnExpr;
 
+typedef struct {
+    Expr* body;        // Expression to evaluate per iteration
+    Token var_name;    // Loop variable name
+    Expr* iter_start;  // Range start or array
+    Expr* iter_end;    // Range end (NULL if iterating array)
+    Expr* condition;   // Optional filter (NULL if no 'if')
+} ListCompExpr;
+
 struct Expr {
     ExprType type;
     Token token;
@@ -344,6 +353,7 @@ struct Expr {
         FnTypeExpr fn_type;              // Function type: fn(T1, T2) -> R
         BlockExpr block;                 // Block expression: { stmt1; stmt2; expr }
         SpawnExpr spawn;                 // Spawn expression: spawn func() -> Future<T>
+        ListCompExpr list_comp;          // List comprehension: [expr for x in range]
     };
 };
 
