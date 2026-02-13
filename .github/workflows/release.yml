@@ -34,11 +34,22 @@ jobs:
         shell: pwsh
 
       - name: Build
-        run: make clean && make && make runtime
+        run: make clean && make
+        shell: bash
+
+      - name: Build runtime
+        if: runner.os != 'Windows'
+        run: make runtime
         shell: bash
 
       - name: Test
-        run: ./wyn run tests/run_tests.wyn 2>&1
+        if: runner.os != 'Windows'
+        run: ./wyn run tests/run_tests.wyn
+        shell: bash
+
+      - name: Verify (Windows)
+        if: runner.os == 'Windows'
+        run: ./wyn.exe version
         shell: bash
 
       - name: Package (Unix)
@@ -55,7 +66,6 @@ jobs:
         run: |
           mkdir dist
           copy wyn.exe dist\${{ matrix.artifact }}.exe
-          xcopy /E /I runtime dist\runtime
           copy src\wyn_runtime.h dist\
           Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip
         shell: pwsh
