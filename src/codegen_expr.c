@@ -2443,7 +2443,8 @@ void codegen_expr(Expr* expr) {
                         if (e->token.length > tsl && 
                             memcmp(e->token.start + e->token.length - tsl, ts, tsl) == 0) {
                             // Extract var name before .to_string()
-                            emit(", int_to_string(");
+                            // Use to_string() which handles both int and string
+                            emit(", to_string(");
                             emit("%.*s", (int)(e->token.length - tsl), e->token.start);
                             emit(")");
                             continue;

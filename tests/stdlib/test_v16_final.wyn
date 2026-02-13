@@ -1,0 +1,146 @@
+fn add(a: int, b: int) -> int { return a + b }
+fn dbl(x: int) -> int { return x * 2 }
+
+struct Point { x: int, y: int fn mag_sq(self) -> int { return self.x * self.x + self.y * self.y } }
+
+trait Named { fn name(self) -> string }
+struct Dog { tag: string }
+impl Named for Dog { fn name(self) -> string { return self.tag } }
+fn greet(n: Named) -> string { return n.name() }
+
+fn safe_div(a: int, b: int) -> ResultInt {
+    if b == 0 { return Err("zero") }
+    return Ok(a / b)
+}
+fn chain_div(x: int) -> ResultInt { var a = safe_div(x, 2)? return Ok(a) }
+fn spawnable(n: int) -> int { return n * n }
+fn inc_ref(mut x: int) { x = x + 1 }
+
+fn test_core() {
+    Test.assert(1 == 1 && 2 > 1 && 3 >= 3 && 0 <= 1 && 1 != 2, "comparisons")
+    var p = Point{x: 3, y: 4}
+    Test.assert_eq_int(p.mag_sq(), 25, "struct method")
+    var d = Dog{tag: "Rex"}
+    Test.assert_eq_str(greet(d), "Rex", "trait param")
+}
+
+fn test_result() {
+    Test.assert_eq_int(safe_div(10, 3).unwrap(), 3, "result unwrap")
+    Test.assert_eq_int(safe_div(1, 0).unwrap_or(-1), -1, "unwrap_or err")
+    Test.assert_eq_int(chain_div(100).unwrap(), 50, "? operator")
+    var some: OptionInt = Some(7)
+    var none: OptionInt = None
+    Test.assert_eq_int(some.unwrap_or(0), 7, "option some")
+    Test.assert_eq_int(none.unwrap_or(99), 99, "option none")
+}
+
+fn test_string() {
+    Test.assert_eq_int("hello".len(), 5, "len")
+    Test.assert_eq_str("hi".upper(), "HI", "upper")
+    Test.assert_eq_str("  x  ".trim(), "x", "trim")
+    Test.assert("abc".contains("b"), "contains")
+    Test.assert_eq_str("abc".replace("b", "X"), "aXc", "replace")
+    Test.assert_eq_str("abc".reverse(), "cba", "reverse")
+    Test.assert_eq_int("42".to_int(), 42, "to_int")
+    var nm = "Wyn"
+    Test.assert_eq_str("hi ${nm}", "hi Wyn", "interp")
+    Test.assert_eq_str("${nm.to_string()}!", "Wyn!", "interp to_string")
+}
+
+fn test_array() {
+    var arr = [10, 20, 30]
+    Test.assert_eq_int(arr.len(), 3, "arr len")
+    arr.push(40)
+    Test.assert_eq_int(arr.pop(), 40, "pop")
+    Test.assert_eq_str(arr.join(","), "10,20,30", "join")
+    var sq = [x * x for x in 0..5]
+    Test.assert_eq_str(sq.join(","), "0,1,4,9,16", "comp")
+    var ev = [x for x in 0..10 if x % 2 == 0]
+    Test.assert_eq_str(ev.join(","), "0,2,4,6,8", "comp filter")
+    var d2 = [1,2,3].map(fn(x) => x * 2)
+    Test.assert_eq_str(d2.join(","), "2,4,6", "arrow map")
+    Test.assert_eq_int([1,2,3,4,5].reduce(add, 0), 15, "reduce")
+}
+
+fn test_array_methods() {
+    var sq = [x * x for x in 0..6]
+    var sliced = sq.slice(1, 4)
+    Test.assert_eq_str(sliced.join(","), "1,4,9", "slice join")
+    var filtered = sq.filter(fn(x) => x > 5)
+    Test.assert_eq_str(filtered.join(","), "9,16,25", "filter join")
+}
+
+fn test_hashmap() {
+    var m = HashMap.new()
+    m.insert_int("a", 1)
+    m.insert_int("b", 2)
+    Test.assert_eq_int(m.get_int("a"), 1, "map get")
+    Test.assert_eq_int(m.len(), 2, "map len")
+    Test.assert_eq_int(m.get_or("z", 99), 99, "get_or")
+    m.remove("a")
+    Test.assert_eq_int(m.len(), 1, "remove")
+}
+
+fn test_spawn() {
+    var f1 = spawn spawnable(7)
+    var f2 = spawn spawnable(8)
+    Test.assert_eq_int(await f1, 49, "spawn 1")
+    Test.assert_eq_int(await f2, 64, "spawn 2")
+    var shared = Task.value(0)
+    Task.add(shared, 30)
+    Test.assert_eq_int(Task.get(shared), 30, "task")
+    var ch = Task.channel(5)
+    Task.send(ch, 42)
+    Test.assert_eq_int(Task.recv(ch), 42, "channel")
+}
+
+fn test_stdlib() {
+    Test.assert_eq_int(Math.abs(-7), 7, "abs")
+    Test.assert_eq_int(Math.pow(2, 10), 1024, "pow")
+    Test.assert_eq_int(Math.round(3.7), 4, "round")
+    Test.assert(DateTime.now() > 1700000000, "now")
+    File.write("/tmp/wyn_v16.txt", "ok")
+    Test.assert_eq_str(File.read("/tmp/wyn_v16.txt"), "ok", "file")
+    File.delete("/tmp/wyn_v16.txt")
+    var j = Json.parse("{\"k\":\"v\",\"n\":42}")
+    Test.assert_eq_str(Json.get(j, "k"), "v", "json")
+    Test.assert_eq_int(Json.get_int(j, "n"), 42, "json int")
+    var csv = Csv.parse("a,b\n1,2")
+    Test.assert_eq_str(Csv.get(csv, 1, 0), "1", "csv")
+    Test.assert_eq_str(Encoding.base64_decode(Encoding.base64_encode("hi")), "hi", "b64")
+    Test.assert_eq_int(Crypto.sha256("x").len(), 64, "sha256")
+    Test.assert(Regex.match("abc123", "[0-9]+"), "regex")
+    Test.assert_eq_str(Path.basename("/a/b/c"), "c", "path")
+    Test.assert(Os.pid() > 0, "pid")
+    Test.assert_eq_int(Uuid.generate().len(), 36, "uuid")
+}
+
+fn test_control() {
+    var sum = 0
+    for i in 0..5 { sum = sum + i }
+    Test.assert_eq_int(sum, 10, "for range")
+    var total = 0
+    for x in [10, 20, 30] { total = total + x }
+    Test.assert_eq_int(total, 60, "for each")
+    var found = -1
+    for i in 0..10 { if i == 7 { found = i break } }
+    Test.assert_eq_int(found, 7, "break")
+    var val = 0
+    inc_ref(&val)
+    Test.assert_eq_int(val, 1, "mut ref")
+}
+
+fn main() -> int {
+    Test.init("v1.6 Final")
+    test_core()
+    test_result()
+    test_string()
+    test_array()
+    test_array_methods()
+    test_hashmap()
+    test_spawn()
+    test_stdlib()
+    test_control()
+    Test.summary()
+    return 0
+}
