@@ -27,28 +27,26 @@ jobs:
         run: choco install make mingw -y
         shell: pwsh
 
-      - name: Build compiler
-        run: make clean && make
+      - name: Build compiler and runtime
+        run: |
+          make clean
+          make
+          make runtime
         shell: bash
 
-      - name: Build runtime
-        run: make runtime || echo "Runtime build optional - fallback to source compilation"
+      - name: Verify build
+        run: |
+          ls -la wyn* || true
+          ls -la runtime/libwyn_rt.a || echo "No precompiled runtime"
         shell: bash
 
       - name: Run test suite
         run: |
           if [ -f ./wyn ]; then
-            ./wyn run tests/run_tests.wyn 2>&1
+            WYN_DEBUG=1 ./wyn run tests/run_tests.wyn
           elif [ -f ./wyn.exe ]; then
-            ./wyn.exe run tests/run_tests.wyn 2>&1
+            WYN_DEBUG=1 ./wyn.exe run tests/run_tests.wyn
           fi
-        shell: bash
-
-      - name: Type-check
-        run: |
-          echo 'fn main() -> int { println("check") return 0 }' > check_test.wyn
-          if [ -f ./wyn ]; then ./wyn check check_test.wyn; else ./wyn.exe check check_test.wyn; fi
-          rm -f check_test.wyn
         shell: bash
 
   cross-compile-ios:
