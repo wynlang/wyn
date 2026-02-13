@@ -235,14 +235,14 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 pos += snprintf(func_code + pos, 8192 - pos, 
                     "typedef struct { ");
                 for (int i = 0; i < capture_count; i++) {
-                    pos += snprintf(func_code + pos, 8192 - pos, "int %s; ", captured_vars[i]);
+                    pos += snprintf(func_code + pos, 8192 - pos, "long long %s; ", captured_vars[i]);
                 }
                 pos += snprintf(func_code + pos, 8192 - pos, 
                     "} __closure_env_%d;\n", lambda_id);
                 pos += snprintf(func_code + pos, 8192 - pos, 
-                    "int __lambda_%d(void* __env", lambda_id);
+                    "long long __lambda_%d(void* __env", lambda_id);
                 for (int i = 0; i < expr->lambda.param_count; i++) {
-                    pos += snprintf(func_code + pos, 8192 - pos, ", int %.*s",
+                    pos += snprintf(func_code + pos, 8192 - pos, ", long long %.*s",
                         expr->lambda.params[i].length, expr->lambda.params[i].start);
                 }
                 pos += snprintf(func_code + pos, 8192 - pos, ") {\n");
@@ -251,21 +251,21 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 // Unpack captured vars from env
                 for (int i = 0; i < capture_count; i++) {
                     pos += snprintf(func_code + pos, 8192 - pos, 
-                        "    int %s = __e->%s;\n", captured_vars[i], captured_vars[i]);
+                        "    long long %s = __e->%s;\n", captured_vars[i], captured_vars[i]);
                 }
                 pos += snprintf(func_code + pos, 8192 - pos, "    return ");
                 pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
                 pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
             } else {
                 // Original style: captured vars as extra params
-                pos += snprintf(func_code + pos, 8192 - pos, "int __lambda_%d(", lambda_id);
+                pos += snprintf(func_code + pos, 8192 - pos, "long long __lambda_%d(", lambda_id);
                 for (int i = 0; i < capture_count; i++) {
                     if (i > 0) pos += snprintf(func_code + pos, 8192 - pos, ", ");
-                    pos += snprintf(func_code + pos, 8192 - pos, "int %s", captured_vars[i]);
+                    pos += snprintf(func_code + pos, 8192 - pos, "long long %s", captured_vars[i]);
                 }
                 for (int i = 0; i < expr->lambda.param_count; i++) {
                     if (i > 0 || capture_count > 0) pos += snprintf(func_code + pos, 8192 - pos, ", ");
-                    pos += snprintf(func_code + pos, 8192 - pos, "int %.*s", 
+                    pos += snprintf(func_code + pos, 8192 - pos, "long long %.*s", 
                                    expr->lambda.params[i].length, expr->lambda.params[i].start);
                 }
                 pos += snprintf(func_code + pos, 8192 - pos, ") {\n    return ");

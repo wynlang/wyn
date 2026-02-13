@@ -415,7 +415,7 @@ void codegen_stmt(Stmt* stmt) {
                     needs_arc_management = true;
                 } else if (stmt->var.init->type == EXPR_LAMBDA) {
                     // Lambda/closure type - function pointer
-                    c_type = "int (*)(int, int)";  // Simplified: assume int params and return
+                    c_type = "long long (*)(long long, long long)";  // Simplified: assume long long params and return
                     needs_arc_management = false;
                 } else if (stmt->var.init->type == EXPR_HASHMAP_LITERAL) {
                     // v1.2.3: HashMap literal
@@ -665,10 +665,10 @@ void codegen_stmt(Stmt* stmt) {
                     lambda_var_count++;
                 }
                 
-                emit("int (*%s%.*s)(", is_c_keyword ? "_" : "", stmt->var.name.length, stmt->var.name.start);
+                emit("long long (*%s%.*s)(", is_c_keyword ? "_" : "", stmt->var.name.length, stmt->var.name.start);
                 for (int i = 0; i < total_params; i++) {
                     if (i > 0) emit(", ");
-                    emit("int");
+                    emit("long long");
                 }
                 emit(") = ");
             } else if (stmt->var.is_const && !stmt->var.is_mutable && !is_already_const) {

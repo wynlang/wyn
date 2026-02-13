@@ -830,13 +830,21 @@ char* string_trim(const char* str) {
 }
 WynArray string_split(const char* str, const char* delim) {
     WynArray arr = array_new();
-    char* copy = strdup(str);
-    char* token = strtok(copy, delim);
-    while (token != NULL) {
-        array_push_str(&arr, strdup(token));
-        token = strtok(NULL, delim);
+    int dlen = strlen(delim);
+    const char* p = str;
+    while (1) {
+        const char* found = strstr(p, delim);
+        if (!found) {
+            array_push_str(&arr, strdup(p));
+            break;
+        }
+        int len = found - p;
+        char* seg = malloc(len + 1);
+        memcpy(seg, p, len);
+        seg[len] = 0;
+        array_push_str(&arr, seg);
+        p = found + dlen;
     }
-    free(copy);
     return arr;
 }
 const char* wyn_string_charat(const char* str, int index) {
@@ -1950,7 +1958,7 @@ WynJson* Json_new() { return json_new(); }
 void Json_set(WynJson* j, const char* k, const char* v) { json_set_string(j, k, v); }
 void Json_set_string(WynJson* j, const char* k, const char* v) { json_set_string(j, k, v); }
 void Json_set_int(WynJson* j, const char* k, int v) { json_set_int(j, k, v); }
-char* Json_stringify(WynJson* j) { return json_stringify(j); }
+void Json_set_bool(WynJson* j, const char* k, int v) { json_set_int(j, k, v ? 1 : 0); }char* Json_stringify(WynJson* j) { return json_stringify(j); }
 
 // Terminal module: POSIX terminal control
 #include <sys/ioctl.h>

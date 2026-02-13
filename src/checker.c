@@ -1127,6 +1127,7 @@ void init_checker() {
         {"Json_new", 8, 0, NULL, NULL, NULL, json_type},
         {"Json_set_string", 15, 3, json_type, builtin_string, builtin_string, builtin_void},
         {"Json_set_int", 12, 3, json_type, builtin_string, builtin_int, builtin_void},
+        {"Json_set_bool", 13, 3, json_type, builtin_string, builtin_int, builtin_void},
         {"Json_get_string", 15, 2, json_type, builtin_string, NULL, builtin_string},
         {"Json_get_int", 12, 2, json_type, builtin_string, NULL, builtin_int},
         {"Json_stringify", 14, 1, json_type, NULL, NULL, builtin_string},
@@ -1456,6 +1457,7 @@ void init_checker() {
     // New module registrations
     struct { const char* name; int nlen; Type* ret; } new_fns[] = {
         {"Json_parse", 10, builtin_int},
+        {"Json_stringify", 14, builtin_string},
         {"Json_get", 8, builtin_string},
         {"Json_get_int", 12, builtin_int},
         {"Json_has", 8, builtin_int},

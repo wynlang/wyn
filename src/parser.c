@@ -2077,12 +2077,12 @@ Stmt* function() {
     Stmt* body = alloc_stmt();
     body->type = STMT_BLOCK;
     body->block.count = 0;
-    body->block.stmts = malloc(sizeof(Stmt*) * 4096); // Increased to 4096 for large functions
+    body->block.stmts = malloc(sizeof(Stmt*) * 8192); // Increased to 4096 for large functions
     
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-        if (body->block.count >= 4096) {
-            fprintf(stderr, "Error at line %d: Function body too large (max 4096 statements)\n", parser.current.line);
-            break;
+        if (body->block.count >= 8192) {
+            fprintf(stderr, "Error at line %d: Function body too large (max 8192 statements)\n", parser.current.line);
+            exit(1);
         }
         body->block.stmts[body->block.count++] = statement();
     }
@@ -3434,6 +3434,17 @@ static Pattern* parse_pattern() {
             }
             
             expect(TOKEN_RBRACE, "Expected '}' after struct pattern");
+            return pattern;
+        } else if (match(TOKEN_DOT)) {
+            // Enum variant: Color.Red -> Color_Red
+            expect(TOKEN_IDENT, "Expected variant name after '.'");
+            pattern->type = PATTERN_IDENT;
+            char* buf = safe_malloc(256);
+            int len = snprintf(buf, 256, "%.*s_%.*s",
+                (int)potential_struct.length, potential_struct.start,
+                (int)parser.previous.length, parser.previous.start);
+            pattern->ident.name.start = buf;
+            pattern->ident.name.length = len;
             return pattern;
         } else {
             // This is just an identifier pattern
