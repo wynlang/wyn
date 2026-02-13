@@ -503,17 +503,17 @@ void codegen_program(Program* prog) {
             int ac = spawn_wrappers[i].arg_count;
             if (ac == 0) {
                 emit("void* __spawn_wrapper_%s(void* arg) {\n", spawn_wrappers[i].func_name);
-                emit("    int* result = malloc(sizeof(int));\n");
+                emit("    long long* result = malloc(sizeof(long long));\n");
                 emit("    *result = %s();\n", spawn_wrappers[i].func_name);
                 emit("    return result;\n");
                 emit("}\n\n");
             } else {
                 emit("void* __spawn_wrapper_%s_%d(void* arg) {\n", spawn_wrappers[i].func_name, ac);
                 emit("    struct { ");
-                for (int j = 0; j < ac; j++) emit("int a%d; ", j);
+                for (int j = 0; j < ac; j++) emit("long long a%d; ", j);
                 emit("} *args = arg;\n");
-                emit("    int* result = malloc(sizeof(int));\n");
-                emit("    *result = %s(", spawn_wrappers[i].func_name);
+                emit("    long long* result = malloc(sizeof(long long));\n");
+                emit("    *result = (long long)%s(", spawn_wrappers[i].func_name);
                 for (int j = 0; j < ac; j++) {
                     if (j > 0) emit(", ");
                     emit("args->a%d", j);

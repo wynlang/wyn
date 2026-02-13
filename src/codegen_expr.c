@@ -1675,7 +1675,26 @@ void codegen_expr(Expr* expr) {
                 } else if (strcmp(receiver_type, "set") == 0) {
                     fprintf(stderr, "Hint: Available HashSet methods: .add(item), .contains(item), .remove(item), .len()\n");
                 } else if (strcmp(receiver_type, "array") == 0) {
-                    fprintf(stderr, "Hint: Available array methods: .len(), .push(item), .pop(), .contains(item), .sort()\n");
+                    char mname[64];
+                    snprintf(mname, 64, "%.*s", method.length, method.start);
+                    if (strcmp(mname, "len") == 0) {
+                        emit("("); codegen_expr(expr->method_call.object); emit(").count"); break;
+                    } else if (strcmp(mname, "join") == 0 && expr->method_call.arg_count == 1) {
+                        emit("array_join_str("); codegen_expr(expr->method_call.object); emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                    } else if (strcmp(mname, "slice") == 0 && expr->method_call.arg_count == 2) {
+                        emit("wyn_array_slice_range("); codegen_expr(expr->method_call.object); emit(", "); codegen_expr(expr->method_call.args[0]); emit(", "); codegen_expr(expr->method_call.args[1]); emit(")"); break;
+                    } else if (strcmp(mname, "reverse") == 0) {
+                        emit("array_reverse_copy("); codegen_expr(expr->method_call.object); emit(")"); break;
+                    } else if (strcmp(mname, "push") == 0) {
+                        emit("array_push(&("); codegen_expr(expr->method_call.object); emit("), (long long)("); codegen_expr(expr->method_call.args[0]); emit("))"); break;
+                    } else if (strcmp(mname, "pop") == 0) {
+                        emit("array_pop_int(&("); codegen_expr(expr->method_call.object); emit("))"); break;
+                    } else if (strcmp(mname, "filter") == 0) {
+                        emit("wyn_array_filter("); codegen_expr(expr->method_call.object); emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                    } else if (strcmp(mname, "map") == 0) {
+                        emit("wyn_array_map("); codegen_expr(expr->method_call.object); emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                    }
+                    fprintf(stderr, "Hint: Available array methods: .len(), .push(), .pop(), .slice(), .join(), .filter(), .map()\n");
                 } else if (strcmp(receiver_type, "string") == 0) {
                     fprintf(stderr, "Hint: Available string methods: .len(), .upper(), .lower(), .trim(), .contains(substr)\n");
                 }
@@ -2416,8 +2435,35 @@ void codegen_expr(Expr* expr) {
             // Add arguments for expressions with type conversion
             for (int i = 0; i < expr->string_interp.count; i++) {
                 if (expr->string_interp.expressions[i]) {
+                    Expr* e = expr->string_interp.expressions[i];
+                    // Check if the "identifier" contains .to_string() (parsed as raw text)
+                    if (e->type == EXPR_IDENT && e->token.length > 12) {
+                        const char* ts = ".to_string()";
+                        int tsl = 12;
+                        if (e->token.length > tsl && 
+                            memcmp(e->token.start + e->token.length - tsl, ts, tsl) == 0) {
+                            // Extract var name before .to_string()
+                            emit(", int_to_string(");
+                            emit("%.*s", (int)(e->token.length - tsl), e->token.start);
+                            emit(")");
+                            continue;
+                        }
+                    }
+                    // Check for expressions with + - * (arithmetic in interpolation)
+                    if (e->type == EXPR_IDENT) {
+                        int has_op = 0;
+                        for (int k = 0; k < e->token.length; k++) {
+                            if (e->token.start[k] == '+' || e->token.start[k] == '-' || e->token.start[k] == '*') has_op = 1;
+                        }
+                        if (has_op) {
+                            emit(", int_to_string(");
+                            emit("%.*s", e->token.length, e->token.start);
+                            emit(")");
+                            continue;
+                        }
+                    }
                     emit(", to_string(");
-                    codegen_expr(expr->string_interp.expressions[i]);
+                    codegen_expr(e);
                     emit(")");
                 }
             }
@@ -2492,7 +2538,7 @@ void codegen_expr(Expr* expr) {
                     int sid = spawn_id_counter;
                     emit("({ struct __spawn_args_%d { ", sid);
                     for (int i = 0; i < arg_count; i++) {
-                        emit("int a%d; ", i);
+                        emit("long long a%d; ", i);
                     }
                     emit("} *__sa_%d = malloc(sizeof(struct __spawn_args_%d)); ", sid, sid);
                     for (int i = 0; i < arg_count; i++) {

@@ -236,6 +236,20 @@ void codegen_stmt(Stmt* stmt) {
                     c_type = "WynMap";
                     needs_arc_management = true;
                 } else if (stmt->var.init->type == EXPR_METHOD_CALL) {
+                    // Quick check: if object is a known array and method returns array, type as WynArray
+                    if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
+                        char _vn[64]; snprintf(_vn, 64, "%.*s", stmt->var.init->method_call.object->token.length, stmt->var.init->method_call.object->token.start);
+                        extern int is_known_array_var(const char*);
+                        if (is_known_array_var(_vn)) {
+                            char _mn[64]; snprintf(_mn, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                            if (strcmp(_mn, "slice") == 0 || strcmp(_mn, "reverse") == 0 || strcmp(_mn, "filter") == 0 || strcmp(_mn, "map") == 0 || strcmp(_mn, "concat") == 0 || strcmp(_mn, "unique") == 0) {
+                                c_type = "WynArray";
+                                needs_arc_management = false;
+                                { char vn2[256]; snprintf(vn2, 256, "%.*s", stmt->var.name.length, stmt->var.name.start); register_array_var(vn2); }
+                                goto var_type_done;
+                            }
+                        }
+                    }
                     // Phase 1 Task 1.3: Infer type from method call
                     // First check if the expression has a type from the checker
                     if (stmt->var.init->expr_type) {
@@ -327,6 +341,14 @@ void codegen_stmt(Stmt* stmt) {
                             }
                         }
                         
+                        // Check if object is a known array variable
+                        if (obj->type == EXPR_IDENT) {
+                            char vn[64];
+                            snprintf(vn, 64, "%.*s", obj->token.length, obj->token.start);
+                            extern int is_known_array_var(const char*);
+                            if (is_known_array_var(vn)) receiver_type = "array";
+                        }
+                        
                         // Look up method return type
                         Token method = stmt->var.init->method_call.method;
                         char method_name[64];
@@ -351,6 +373,7 @@ void codegen_stmt(Stmt* stmt) {
                                 c_type = "bool";
                             } else if (strcmp(return_type, "array") == 0) {
                                 c_type = "WynArray";
+                                { char vn[256]; snprintf(vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start); register_array_var(vn); }
                             } else if (strcmp(return_type, "optional") == 0) {
                                 c_type = "WynOptional*";
                                 needs_arc_management = true;
@@ -631,6 +654,7 @@ void codegen_stmt(Stmt* stmt) {
                 // ... rest of type determination logic
             }
             
+            var_type_done:
             // Emit variable declaration - avoid double const
             // Special handling for function pointers (lambdas)
             if (stmt->var.init && stmt->var.init->type == EXPR_LAMBDA) {

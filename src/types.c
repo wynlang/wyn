@@ -744,10 +744,10 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
             out->c_function = "array_skip"; return true;
         }
         if (strcmp(method_name, "slice") == 0 && arg_count == 2) {
-            out->c_function = "array_slice"; return true;
+            out->c_function = "wyn_array_slice_range"; return true;
         }
         if (strcmp(method_name, "join") == 0 && arg_count == 1) {
-            out->c_function = "array_join"; return true;
+            out->c_function = "array_join_str"; return true;
         }
         if (strcmp(method_name, "concat") == 0 && arg_count == 1) {
             out->c_function = "array_concat"; return true;
