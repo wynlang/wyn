@@ -37,8 +37,9 @@ jobs:
 
       - name: Run test suite
         run: |
+          export WYN_DEBUG=1
           if [ -f ./wyn ]; then ./wyn run tests/run_tests.wyn;
-          elif [ -f ./wyn.exe ]; then WYN_DEBUG=1 ./wyn.exe run tests/run_tests.wyn; fi
+          elif [ -f ./wyn.exe ]; then ./wyn.exe run tests/run_tests.wyn; fi
         shell: bash
 
   cross-compile-ios:
