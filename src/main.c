@@ -1084,7 +1084,11 @@ int main(int argc, char** argv) {
                     if (out_path[0] == '/') {
                         snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
                     } else {
+#ifdef _WIN32
+                        snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
+#else
                         snprintf(run_cmd, sizeof(run_cmd), "./%s", out_path);
+#endif
                     }
                     for (int i = 3; i < argc; i++) { strcat(run_cmd, " "); strcat(run_cmd, argv[i]); }
                     return system(run_cmd);
@@ -1228,7 +1232,11 @@ int main(int argc, char** argv) {
         if (file[0] == '/') {
             snprintf(run_cmd, 512, "%s.out", file);
         } else {
+#ifdef _WIN32
+            snprintf(run_cmd, 512, "%s.out", file);
+#else
             snprintf(run_cmd, 512, "./%s.out", file);
+#endif
         }
         result = system(run_cmd);
         free(source);
