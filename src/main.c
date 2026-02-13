@@ -139,7 +139,8 @@ int main(int argc, char** argv) {
         
         fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
         fprintf(stderr, "  \033[33m--fast\033[0m                  Skip optimizations (fastest compile)\n");
-        fprintf(stderr, "  \033[33m--release\033[0m               Full optimizations (-O2)\n");
+        fprintf(stderr, "  \033[33m--release               Full optimizations (-O2)\n");
+        fprintf(stderr, "  \033[33m--debug\033[0m                Keep .c and .out artifacts\n");
         
         fprintf(stderr, "\n\033[2mhttps://wynlang.com\033[0m\n");
         return 1;
@@ -246,7 +247,8 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
         fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
         fprintf(stderr, "  \033[33m--fast\033[0m                  Skip optimizations (fastest compile)\n");
-        fprintf(stderr, "  \033[33m--release\033[0m               Full optimizations (-O2)\n");
+        fprintf(stderr, "  \033[33m--release               Full optimizations (-O2)\n");
+        fprintf(stderr, "  \033[33m--debug\033[0m                Keep .c and .out artifacts\n");
         fprintf(stderr, "\n\033[1mCross-compile targets:\033[0m\n");
         fprintf(stderr, "  linux, macos, windows, ios, android\n");
         fprintf(stderr, "\n\033[2mhttps://wynlang.com\033[0m\n");
@@ -1026,6 +1028,12 @@ int main(int argc, char** argv) {
         }
         char* file = argv[2];
         
+        // Check for --debug flag
+        int keep_artifacts = 0;
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--debug") == 0) keep_artifacts = 1;
+        }
+        
         // Incremental: skip recompilation if binary is newer than source
         {
             char out_path[512];
@@ -1178,6 +1186,14 @@ int main(int argc, char** argv) {
         }
         result = system(run_cmd);
         free(source);
+        // Cleanup artifacts unless --debug
+        if (!keep_artifacts) {
+            char c_path[512], out_path2[512];
+            snprintf(c_path, 512, "%s.c", file);
+            snprintf(out_path2, 512, "%s.out", file);
+            unlink(c_path);
+            unlink(out_path2);
+        }
         // Extract actual exit code from system() result
         if (WIFEXITED(result)) {
             return WEXITSTATUS(result);
