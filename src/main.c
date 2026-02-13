@@ -1,9 +1,13 @@
+#ifdef __linux__
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
+#include <sys/wait.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
@@ -215,7 +219,6 @@ int main(int argc, char** argv) {
     // Handle --help and -h flags
     if (strcmp(command, "help") == 0 || strcmp(command, "--help") == 0 || strcmp(command, "-h") == 0) {
         // Reuse the no-args banner by faking argc
-        char* fake_argv[] = {argv[0]};
         // Print banner directly
         print_banner(get_version());
         fprintf(stderr, "\033[1mUsage:\033[0m wyn \033[33m<command>\033[0m [options]\n\n");
@@ -535,7 +538,6 @@ int main(int argc, char** argv) {
     if (strcmp(command, "repl") == 0) {
         printf("\033[1mWyn REPL\033[0m v%s  (type 'exit' to quit)\n\n", get_version());
         char line[4096];
-        int line_num = 0;
         char history[65536] = "";  // accumulate definitions
         while (1) {
             printf("\033[36mwyn>\033[0m ");
