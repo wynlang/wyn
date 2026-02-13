@@ -171,6 +171,15 @@ void json_set_int(WynJson* json, const char* key, int value);
 char* json_stringify(WynJson* json);
 
 // Regex module - POSIX regex
+#ifdef _WIN32
+int regex_match(const char* str, const char* pattern) { (void)str; (void)pattern; return 0; }
+char* regex_replace(const char* str, const char* pattern, const char* replacement) { (void)pattern; (void)replacement; return strdup(str); }
+int Regex_match(const char* s, const char* p) { return 0; }
+char* Regex_replace(const char* s, const char* p, const char* r) { (void)p; (void)r; return strdup(s); }
+int Regex_find(const char* s, const char* p) { (void)s; (void)p; return -1; }
+char* regex_find_all(const char* str, const char* pattern) { (void)str; (void)pattern; return strdup(""); }
+char* regex_split(const char* str, const char* pattern) { (void)pattern; return strdup(str); }
+#else
 #include <regex.h>
 int regex_match(const char* str, const char* pattern) {
     regex_t re;
@@ -207,6 +216,7 @@ char* regex_replace(const char* str, const char* pattern, const char* replacemen
     regfree(&re);
     return result;
 }
+#endif // _WIN32 regex guard
 
 // Time module wrappers
 long Time_now();
@@ -2059,9 +2069,20 @@ void Terminal_write(const char* s) {
 // Http: Http.get() maps to http_get() (lowercase, returns string)
 // Note: Http_get in net_advanced.c returns HttpResponse* (different API)
 
+// Forward declarations for regex functions defined later
+#ifndef _WIN32
+char* regex_find_all(const char* str, const char* pattern);
+char* regex_split(const char* str, const char* pattern);
+#endif
+
 // Regex namespace aliases
+#ifndef _WIN32
 int Regex_match(const char* s, const char* p) { return regex_match(s, p); }
 char* Regex_replace(const char* s, const char* p, const char* r) { return regex_replace(s, p, r); }
+int Regex_find(const char* s, const char* p) { regex_t re; if (regcomp(&re, p, REG_EXTENDED) != 0) return -1; regmatch_t m; int r2 = regexec(&re, s, 1, &m, 0) == 0 ? m.rm_so : -1; regfree(&re); return r2; }
+char* Regex_find_all(const char* s, const char* p) { return regex_find_all(s, p); }
+char* Regex_split(const char* s, const char* p) { return regex_split(s, p); }
+#endif
 
 int file_size(const char* path) {
     FILE* f = fopen(path, "rb");
@@ -3183,6 +3204,7 @@ long long regex_find(const char* str, const char* pattern) {
     return result;
 }
 
+#ifndef _WIN32
 char* regex_find_all(const char* str, const char* pattern) {
     regex_t re;
     if (regcomp(&re, pattern, REG_EXTENDED) != 0) return "";
@@ -3195,6 +3217,7 @@ char* regex_find_all(const char* str, const char* pattern) {
         strcat(result, m); strcat(result, "\n"); free(m);
         p += match.rm_eo;
     }
+#endif
     regfree(&re);
     return result;
 }
@@ -3389,6 +3412,7 @@ long long DateTime_minute(long long timestamp) { time_t t = (time_t)timestamp; s
 long long DateTime_second(long long timestamp) { time_t t = (time_t)timestamp; struct tm* tm = localtime(&t); return tm ? tm->tm_sec : 0; }
 
 // === Regex extensions round 2 ===
+#ifndef _WIN32
 char* regex_split(const char* str, const char* pattern) {
     regex_t re;
     if (regcomp(&re, pattern, REG_EXTENDED) != 0) return strdup(str);
@@ -3400,6 +3424,7 @@ char* regex_split(const char* str, const char* pattern) {
         strcat(result, "\n");
         p += match.rm_eo;
     }
+#endif
     strcat(result, p);
     regfree(&re);
     return result;
