@@ -38,14 +38,24 @@ jobs:
         shell: bash
 
       - name: Build runtime
+        if: runner.os != 'Windows'
         run: make runtime
         shell: bash
 
-      - name: Test
-        run: |
-          if [ -f ./wyn ]; then ./wyn run tests/run_tests.wyn;
-          elif [ -f ./wyn.exe ]; then ./wyn.exe run tests/run_tests.wyn; fi
+      - name: Build runtime (Windows)
+        if: runner.os == 'Windows'
+        run: make runtime
         shell: bash
+
+      - name: Test (Unix)
+        if: runner.os != 'Windows'
+        run: ./wyn run tests/run_tests.wyn
+        shell: bash
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: wyn.exe run tests\run_tests.wyn
+        shell: cmd
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
