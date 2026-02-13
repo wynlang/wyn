@@ -29,18 +29,61 @@
 #include <setjmp.h>
 #include <sys/stat.h>
 #ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <io.h>
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #include <windows.h>
+  #include <io.h>
+  #include <direct.h>
+  #include <process.h>
+  
+  // Windows compat layer
+  #undef min
+  #undef max
+  #define close(s) closesocket(s)
+  #define mkdir(p,m) _mkdir(p)
+  #define getcwd _getcwd
+  #define popen _popen
+  #define pclose _pclose
+  #define usleep(us) Sleep((us)/1000)
+  #define sleep(s) Sleep((s)*1000)
+  #define ssize_t int
+  #define F_OK 0
+  #define X_OK 0
+  #define access _access
+  
+  // Minimal dirent.h for Windows
+  typedef struct { HANDLE hFind; WIN32_FIND_DATAA data; int first; } DIR;
+  struct dirent { char d_name[MAX_PATH]; };
+  static DIR* opendir(const char* path) {
+      DIR* d = malloc(sizeof(DIR));
+      char pattern[MAX_PATH];
+      snprintf(pattern, MAX_PATH, "%s\\*", path);
+      d->hFind = FindFirstFileA(pattern, &d->data);
+      if (d->hFind == INVALID_HANDLE_VALUE) { free(d); return NULL; }
+      d->first = 1;
+      return d;
+  }
+  static struct dirent* readdir(DIR* d) {
+      static struct dirent entry;
+      if (d->first) { d->first = 0; }
+      else if (!FindNextFileA(d->hFind, &d->data)) return NULL;
+      strncpy(entry.d_name, d->data.cFileName, MAX_PATH);
+      return &entry;
+  }
+  static void closedir(DIR* d) { FindClose(d->hFind); free(d); }
+  
+  // setsockopt compat
+  #define WYN_SETSOCKOPT(s,l,o,v,n) setsockopt(s,l,o,(const char*)(v),n)
 #else
-#include <dirent.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <fcntl.h>
+  #include <dirent.h>
+  #include <sys/socket.h>
+  #include <sys/time.h>
+  #include <netinet/in.h>
+  #include <arpa/inet.h>
+  #include <netdb.h>
+  #include <unistd.h>
+  #include <fcntl.h>
+  #define WYN_SETSOCKOPT(s,l,o,v,n) setsockopt(s,l,o,v,n)
 #endif
 #include <errno.h>
 #include "wyn_interface.h"
@@ -1179,8 +1222,8 @@ char* http_request(const char* method, const char* url, const char* body) {
     
     // Set timeout
     struct timeval tv = {30, 0};
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    WYN_SETSOCKOPT(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    WYN_SETSOCKOPT(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     
     // Resolve hostname
     struct hostent* server = gethostbyname(hostname);
@@ -1679,8 +1722,10 @@ int str_parse_int_failed(int result) {
 }
 double str_parse_float(const char* s) { return atof(s); }
 int abs_val(int x) { return x < 0 ? -x : x; }
-int min(int a, int b) { return a < b ? a : b; }
-int max(int a, int b) { return a > b ? a : b; }
+static inline int wyn_min(int a, int b) { return a < b ? a : b; }
+static inline int wyn_max(int a, int b) { return a > b ? a : b; }
+#define min(a,b) wyn_min(a,b)
+#define max(a,b) wyn_max(a,b)
 int pow_int(int base, int exp) { int r = 1; for(int i = 0; i < exp; i++) r *= base; return r; }
 int clamp(int x, int min_val, int max_val) { return x < min_val ? min_val : (x > max_val ? max_val : x); }
 int sign(int x) { return x < 0 ? -1 : (x > 0 ? 1 : 0); }
@@ -1908,7 +1953,7 @@ int Http_serve(int port) {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) return -1;
     int opt = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    WYN_SETSOCKOPT(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
@@ -2001,7 +2046,9 @@ void Json_set_int(WynJson* j, const char* k, int v) { json_set_int(j, k, v); }
 void Json_set_bool(WynJson* j, const char* k, int v) { json_set_int(j, k, v ? 1 : 0); }char* Json_stringify(WynJson* j) { return json_stringify(j); }
 
 // Terminal module: POSIX terminal control
+#ifndef _WIN32
 #include <sys/ioctl.h>
+#endif
 #include <termios.h>
 
 static struct termios __wyn_orig_termios;
@@ -2370,7 +2417,7 @@ int Net_listen(int port) {
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) return -1;
     int opt = 1;
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    WYN_SETSOCKOPT(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
