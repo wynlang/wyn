@@ -3,6 +3,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <time.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
@@ -12,6 +13,7 @@
 #include "memory.h"
 #include "security.h"
 #include "platform.h"
+#include "banner.h"
 #include "optimize.h"
 #include "module.h"
 #include "commands.h"
@@ -102,15 +104,7 @@ int main(int argc, char** argv) {
     
     if (argc < 2) {
         // Banner
-        fprintf(stderr,
-            "\033[36m\033[1m"
-            "      /\\_/\\\n"
-            "     / o o \\    \033[0m\033[1m\033[37m W Y N \033[0m\033[36m\033[1m\n"
-            "    (  \033[33m>v<\033[36m  )   \033[0m\033[2mv%s\033[0m\033[36m\033[1m\n"
-            "     \\~\033[33m(~)\033[36m~/\n"
-            "      \\_^_/\033[0m\n"
-            "  \033[2m1 language for everything\033[0m\n\n", get_version());
-        
+        print_banner(get_version());
         fprintf(stderr, "\033[1mUsage:\033[0m wyn \033[33m<command>\033[0m [options]\n\n");
         
         fprintf(stderr, "\033[1mDevelop:\033[0m\n");
@@ -119,6 +113,9 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mfmt\033[0m <file.wyn>         Format source file\n");
         fprintf(stderr, "  \033[32mtest\033[0m                    Run project tests\n");
         fprintf(stderr, "  \033[32mwatch\033[0m <file.wyn>       Watch and auto-rebuild\n");
+        fprintf(stderr, "  \033[32mrepl\033[0m                    Interactive REPL\n");
+        fprintf(stderr, "  \033[32mbench\033[0m <file.wyn>       Benchmark with timing\n");
+        fprintf(stderr, "  \033[32mdoc\033[0m <file.wyn>         Generate documentation\n");
         
         fprintf(stderr, "\n\033[1mBuild:\033[0m\n");
         fprintf(stderr, "  \033[32mbuild\033[0m <dir>             Build all .wyn files in directory\n");
@@ -219,14 +216,7 @@ int main(int argc, char** argv) {
         // Reuse the no-args banner by faking argc
         char* fake_argv[] = {argv[0]};
         // Print banner directly
-        fprintf(stderr,
-            "\033[36m\033[1m"
-            "      /\\_/\\\n"
-            "     / o o \\    \033[0m\033[1m\033[37m W Y N \033[0m\033[36m\033[1m\n"
-            "    (  \033[33m>v<\033[36m  )   \033[0m\033[2mv%s\033[0m\033[36m\033[1m\n"
-            "     \\~\033[33m(~)\033[36m~/\n"
-            "      \\_^_/\033[0m\n"
-            "  \033[2m1 language for everything\033[0m\n\n", get_version());
+        print_banner(get_version());
         fprintf(stderr, "\033[1mUsage:\033[0m wyn \033[33m<command>\033[0m [options]\n\n");
         fprintf(stderr, "\033[1mDevelop:\033[0m\n");
         fprintf(stderr, "  \033[32mrun\033[0m <file.wyn>         Compile and run\n");
@@ -234,6 +224,9 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mfmt\033[0m <file.wyn>         Format source file\n");
         fprintf(stderr, "  \033[32mtest\033[0m                    Run project tests\n");
         fprintf(stderr, "  \033[32mwatch\033[0m <file.wyn>       Watch and auto-rebuild\n");
+        fprintf(stderr, "  \033[32mrepl\033[0m                    Interactive REPL\n");
+        fprintf(stderr, "  \033[32mbench\033[0m <file.wyn>       Benchmark with timing\n");
+        fprintf(stderr, "  \033[32mdoc\033[0m <file.wyn>         Generate documentation\n");
         fprintf(stderr, "\n\033[1mBuild:\033[0m\n");
         fprintf(stderr, "  \033[32mbuild\033[0m <dir>             Build all .wyn files in directory\n");
         fprintf(stderr, "  \033[32mcross\033[0m <target> <file>   Cross-compile (linux/macos/windows/ios/android)\n");
@@ -626,6 +619,176 @@ int main(int argc, char** argv) {
         system("find temp -name '*.out' -delete 2>/dev/null");
         system("rm -f tests/test_quick 2>/dev/null");
         printf("✅ Clean complete\n");
+        return 0;
+    }
+    
+    // wyn repl — interactive REPL
+    if (strcmp(command, "repl") == 0) {
+        printf("\033[1mWyn REPL\033[0m v%s  (type 'exit' to quit)\n\n", get_version());
+        char line[4096];
+        int line_num = 0;
+        char history[65536] = "";  // accumulate definitions
+        while (1) {
+            printf("\033[36mwyn>\033[0m ");
+            fflush(stdout);
+            if (!fgets(line, sizeof(line), stdin)) break;
+            line[strcspn(line, "\n")] = 0;
+            if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) break;
+            if (strlen(line) == 0) continue;
+            
+            // Check if it's a definition (fn, struct, etc.) — accumulate
+            int is_def = (strncmp(line, "fn ", 3) == 0 || strncmp(line, "struct ", 7) == 0 ||
+                         strncmp(line, "enum ", 5) == 0 || strncmp(line, "var ", 4) == 0 ||
+                         strncmp(line, "const ", 6) == 0);
+            
+            // Build a temp file with accumulated history + this expression
+            char tmp[128];
+            snprintf(tmp, sizeof(tmp), "/tmp/wyn_repl_%d.wyn", getpid());
+            FILE* f = fopen(tmp, "w");
+            fprintf(f, "%s\n", history);
+            if (is_def) {
+                fprintf(f, "%s\n", line);
+                fprintf(f, "fn main() -> int { return 0 }\n");
+                // Add to history
+                strcat(history, line);
+                strcat(history, "\n");
+            } else {
+                fprintf(f, "fn main() -> int {\n  %s\n  return 0\n}\n", line);
+            }
+            fclose(f);
+            
+            char cmd[512];
+            snprintf(cmd, sizeof(cmd), "%s run %s 2>&1", argv[0], tmp);
+            FILE* p = popen(cmd, "r");
+            if (p) {
+                char buf[4096];
+                while (fgets(buf, sizeof(buf), p)) {
+                    // Filter out compilation noise
+                    if (strstr(buf, "Compiled in") || strstr(buf, "warning")) continue;
+                    printf("%s", buf);
+                }
+                pclose(p);
+            }
+            unlink(tmp);
+            char tmpc[140]; snprintf(tmpc, sizeof(tmpc), "%s.c", tmp); unlink(tmpc);
+            char tmpo[140]; snprintf(tmpo, sizeof(tmpo), "%s.out", tmp); unlink(tmpo);
+        }
+        printf("\nBye!\n");
+        return 0;
+    }
+    
+    // wyn bench <file> — run with timing
+    if (strcmp(command, "bench") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: wyn bench <file.wyn>\n");
+            return 1;
+        }
+        printf("\033[1mBenchmarking\033[0m %s\n\n", argv[2]);
+        
+        // Run 5 times and report
+        char cmd[512];
+        double times[5];
+        for (int i = 0; i < 5; i++) {
+            struct timespec start, end;
+            clock_gettime(CLOCK_MONOTONIC, &start);
+            snprintf(cmd, sizeof(cmd), "%s run %s > /dev/null 2>&1", argv[0], argv[2]);
+            int r = system(cmd);
+            clock_gettime(CLOCK_MONOTONIC, &end);
+            if (r != 0) {
+                fprintf(stderr, "\033[31m✗\033[0m Compilation/execution failed\n");
+                return 1;
+            }
+            times[i] = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1e6;
+            printf("  Run %d: \033[33m%.1fms\033[0m\n", i + 1, times[i]);
+        }
+        
+        // Stats
+        double sum = 0, min = times[0], max = times[0];
+        for (int i = 0; i < 5; i++) {
+            sum += times[i];
+            if (times[i] < min) min = times[i];
+            if (times[i] > max) max = times[i];
+        }
+        printf("\n\033[1mResults:\033[0m\n");
+        printf("  avg: \033[32m%.1fms\033[0m  min: %.1fms  max: %.1fms\n", sum / 5, min, max);
+        return 0;
+    }
+    
+    // wyn doc <file> — generate docs from source
+    if (strcmp(command, "doc") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: wyn doc <file.wyn>\n");
+            return 1;
+        }
+        char* source = read_file(argv[2]);
+        if (!source) {
+            fprintf(stderr, "\033[31m✗\033[0m Cannot read %s\n", argv[2]);
+            return 1;
+        }
+        
+        printf("\033[1m# %s\033[0m\n\n", argv[2]);
+        
+        // Extract functions, structs, enums, traits with their comments
+        char* p = source;
+        char prev_comment[4096] = "";
+        while (*p) {
+            // Capture comments
+            if (p[0] == '/' && p[1] == '/') {
+                char* start = p + 2;
+                while (*start == ' ') start++;
+                char* end = start;
+                while (*end && *end != '\n') end++;
+                int len = end - start;
+                if (len > 0 && len < 4000) {
+                    int plen = strlen(prev_comment);
+                    if (plen > 0) { prev_comment[plen] = '\n'; plen++; }
+                    memcpy(prev_comment + plen, start, len);
+                    prev_comment[plen + len] = 0;
+                }
+                p = *end ? end + 1 : end;
+                continue;
+            }
+            
+            // Check for definitions
+            int is_fn = (strncmp(p, "fn ", 3) == 0);
+            int is_pub_fn = (strncmp(p, "pub fn ", 7) == 0);
+            int is_struct = (strncmp(p, "struct ", 7) == 0);
+            int is_enum = (strncmp(p, "enum ", 5) == 0);
+            int is_trait = (strncmp(p, "trait ", 6) == 0);
+            
+            if (is_fn || is_pub_fn || is_struct || is_enum || is_trait) {
+                // Extract the signature (up to { or newline)
+                char* end = p;
+                while (*end && *end != '{' && *end != '\n') end++;
+                int len = end - p;
+                char sig[512];
+                if (len > 511) len = 511;
+                memcpy(sig, p, len);
+                sig[len] = 0;
+                // Trim trailing whitespace
+                while (len > 0 && (sig[len-1] == ' ' || sig[len-1] == '\t')) sig[--len] = 0;
+                
+                if (is_struct) printf("\033[33m## struct\033[0m ");
+                else if (is_enum) printf("\033[33m## enum\033[0m ");
+                else if (is_trait) printf("\033[33m## trait\033[0m ");
+                else printf("\033[32m## fn\033[0m ");
+                
+                printf("\033[1m%s\033[0m\n", sig + (is_pub_fn ? 7 : is_fn ? 3 : is_struct ? 7 : is_enum ? 5 : 6));
+                
+                if (prev_comment[0]) {
+                    printf("  %s\n", prev_comment);
+                }
+                printf("\n");
+                prev_comment[0] = 0;
+            } else if (*p != '\n' && *p != ' ' && *p != '\t') {
+                prev_comment[0] = 0;  // Reset comment if non-definition line
+            }
+            
+            // Advance to next line
+            while (*p && *p != '\n') p++;
+            if (*p) p++;
+        }
+        free(source);
         return 0;
     }
     
