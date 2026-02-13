@@ -1196,7 +1196,6 @@ int main(int argc, char** argv) {
             fprintf(stderr, "Error: compilation failed (internal codegen error)\n");
             fprintf(stderr, "Run with WYN_DEBUG=1 for details\n");
             if (getenv("WYN_DEBUG")) {
-                // Show raw C compiler output only in debug mode
                 FILE* err_file = fopen("wyn_cc_err.txt", "r");
                 if (err_file) {
                     char line[1024];
@@ -1204,6 +1203,14 @@ int main(int argc, char** argv) {
                         fprintf(stderr, "  %s", line);
                     }
                     fclose(err_file);
+                } else {
+                    fprintf(stderr, "  (no error file found - recompiling with visible errors)\n");
+                    // Re-run without redirect so errors go to stderr
+                    char debug_cmd[8192];
+                    snprintf(debug_cmd, sizeof(debug_cmd),
+                        "gcc -std=c11 -w -I %s/src -o /dev/null %s.c -lm 2>&1 | head -20",
+                        wyn_root, file);
+                    system(debug_cmd);
                 }
             }
             free(source);
