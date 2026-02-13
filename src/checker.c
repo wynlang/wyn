@@ -3828,6 +3828,31 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 if (stmt->trait_decl.method_has_default[i] && method->body) {
                     check_stmt(method->body, &method_scope);
                 }
+                
+                // Register trait method as TraitName_method for type resolution
+                {
+                    Type* fn_type = make_type(TYPE_FUNCTION);
+                    fn_type->fn_type.param_count = method->param_count;
+                    fn_type->fn_type.param_types = malloc(sizeof(Type*) * 4);
+                    for (int j = 0; j < method->param_count && j < 4; j++)
+                        fn_type->fn_type.param_types[j] = builtin_int;
+                    fn_type->fn_type.return_type = builtin_int;
+                    if (method->return_type && method->return_type->type == EXPR_IDENT) {
+                        Token rt = method->return_type->token;
+                        if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0)
+                            fn_type->fn_type.return_type = builtin_string;
+                        else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0)
+                            fn_type->fn_type.return_type = builtin_float;
+                        else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0)
+                            fn_type->fn_type.return_type = builtin_bool;
+                    }
+                    char qname[128];
+                    snprintf(qname, 128, "%.*s_%.*s",
+                        stmt->trait_decl.name.length, stmt->trait_decl.name.start,
+                        method->name.length, method->name.start);
+                    Token qt = {TOKEN_IDENT, strdup(qname), (int)strlen(qname), 0};
+                    add_function_overload(scope, qt, fn_type, false);
+                }
             }
             break;
         case STMT_ENUM:

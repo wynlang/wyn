@@ -933,7 +933,27 @@ void codegen_expr(Expr* expr) {
                         emit("(void*)(intptr_t)");
                     }
                     
+                    // Check if this argument needs trait object wrapping
+                    if (expr->call.callee->type == EXPR_IDENT) {
+                        char callee_buf[64];
+                        snprintf(callee_buf, 64, "%.*s", expr->call.callee->token.length, expr->call.callee->token.start);
+                        const char* trait = get_fn_trait_param(callee_buf, i);
+                        if (trait && expr->call.args[i]->type == EXPR_IDENT && expr->call.args[i]->expr_type &&
+                            expr->call.args[i]->expr_type->kind == TYPE_STRUCT) {
+                            Token sname = expr->call.args[i]->expr_type->struct_type.name;
+                            char sbuf[64];
+                            snprintf(sbuf, 64, "%.*s", sname.length, sname.start);
+                            const char* impl_trait = find_trait_for_struct(sbuf);
+                            if (impl_trait && strcmp(impl_trait, trait) == 0) {
+                                emit("(%s){&", trait);
+                                codegen_expr(expr->call.args[i]);
+                                emit(", &%s_%s_vt}", trait, sbuf);
+                                goto arg_done;
+                            }
+                        }
+                    }
                     codegen_expr(expr->call.args[i]);
+                    arg_done: ;
                 }
                 emit(")");
             }

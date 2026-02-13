@@ -103,6 +103,42 @@ static int is_trait_type(const char* name, int len) {
     return 0;
 }
 
+// Trait impl tracking: which struct implements which trait
+static struct { char struct_name[64]; char trait_name[64]; } trait_impls[128];
+static int trait_impl_count = 0;
+static void register_trait_impl(const char* sname, int slen, const char* tname, int tlen) {
+    if (trait_impl_count < 128) {
+        snprintf(trait_impls[trait_impl_count].struct_name, 64, "%.*s", slen, sname);
+        snprintf(trait_impls[trait_impl_count].trait_name, 64, "%.*s", tlen, tname);
+        trait_impl_count++;
+    }
+}
+static const char* find_trait_for_struct(const char* sname) {
+    for (int i = 0; i < trait_impl_count; i++) {
+        if (strcmp(trait_impls[i].struct_name, sname) == 0) return trait_impls[i].trait_name;
+    }
+    return NULL;
+}
+
+// Function trait param tracking: fn_name -> param_index -> trait_name
+static struct { char fn_name[64]; int param_idx; char trait_name[64]; } fn_trait_params[128];
+static int fn_trait_param_count = 0;
+static void register_fn_trait_param(const char* fn, const char* trait, int idx) {
+    if (fn_trait_param_count < 128) {
+        snprintf(fn_trait_params[fn_trait_param_count].fn_name, 64, "%s", fn);
+        snprintf(fn_trait_params[fn_trait_param_count].trait_name, 64, "%s", trait);
+        fn_trait_params[fn_trait_param_count].param_idx = idx;
+        fn_trait_param_count++;
+    }
+}
+static const char* get_fn_trait_param(const char* fn, int idx) {
+    for (int i = 0; i < fn_trait_param_count; i++) {
+        if (strcmp(fn_trait_params[i].fn_name, fn) == 0 && fn_trait_params[i].param_idx == idx)
+            return fn_trait_params[i].trait_name;
+    }
+    return NULL;
+}
+
 // Local variable tracking for current function
 static char* current_function_locals[256];
 static int current_local_count = 0;

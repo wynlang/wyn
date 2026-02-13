@@ -1,0 +1,31 @@
+trait Animal {
+    fn speak(self) -> string
+}
+
+struct Dog { name: string }
+impl Animal for Dog {
+    fn speak(self) -> string { return "woof" }
+}
+
+struct Cat { name: string }
+impl Animal for Cat {
+    fn speak(self) -> string { return "meow" }
+}
+
+fn describe(a: Animal) -> string {
+    return a.speak()
+}
+
+fn main() -> int {
+    Test.init("Trait Objects")
+    var d = Dog{name: "Rex"}
+    var c = Cat{name: "Whiskers"}
+    
+    Test.assert_eq_str(d.speak(), "woof", "dog direct")
+    Test.assert_eq_str(c.speak(), "meow", "cat direct")
+    Test.assert_eq_str(describe(d), "woof", "dog via trait")
+    Test.assert_eq_str(describe(c), "meow", "cat via trait")
+    
+    Test.summary()
+    return 0
+}

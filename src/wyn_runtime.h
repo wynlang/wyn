@@ -1,6 +1,21 @@
 #ifndef WYN_RUNTIME_H
 #define WYN_RUNTIME_H
 #define _POSIX_C_SOURCE 200809L
+
+// Platform detection for mobile
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#if TARGET_OS_IOS || TARGET_OS_SIMULATOR
+#define WYN_MOBILE_IOS 1
+#endif
+#endif
+#if defined(__ANDROID__)
+#define WYN_MOBILE_ANDROID 1
+#endif
+#if defined(WYN_MOBILE_IOS) || defined(WYN_MOBILE_ANDROID)
+#define WYN_MOBILE 1
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -2113,6 +2128,9 @@ int file_remove_dir_all(const char* path) {
 }
 
 char* System_exec(const char* cmd) {
+#ifdef WYN_MOBILE
+    return "";
+#else
     FILE* pipe = popen(cmd, "r");
     if (!pipe) return "";
     char* result = malloc(65536);
@@ -2123,14 +2141,19 @@ char* System_exec(const char* cmd) {
     }
     pclose(pipe);
     return result;
+#endif
 }
 int System_exec_code(const char* cmd) {
+#ifdef WYN_MOBILE
+    return -1;
+#else
     int result = system(cmd);
     #ifdef _WIN32
     return result;
     #else
     return WEXITSTATUS(result);
     #endif
+#endif
 }
 void System_exit(int code) { exit(code); }
 char* System_env(const char* key) {
@@ -2491,6 +2514,7 @@ int ResultInt_is_ok(ResultInt r) { return r.tag == 0; }
 int ResultInt_is_err(ResultInt r) { return r.tag == 1; }
 int ResultInt_unwrap(ResultInt r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultInt_unwrap_err(ResultInt r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
+long long ResultInt_unwrap_or(ResultInt r, long long def) { return r.tag == 0 ? r.data.ok_value : def; }
 
 ResultString ResultString_Ok(const char* value) { ResultString r; r.tag = 0; r.data.ok_value = value; return r; }
 ResultString ResultString_Err(const char* msg) { ResultString r; r.tag = 1; r.data.err_value = msg; return r; }
@@ -3201,7 +3225,9 @@ void Log_error(const char* msg) { if (log_level <= 3) fprintf(stderr, "\x1b[31m[
 
 // === Process Module ===
 char* Process_exec_capture(const char* cmd) {
-    // Run command and capture both stdout and stderr
+#ifdef WYN_MOBILE
+    return "";
+#else
     char full_cmd[4096];
     snprintf(full_cmd, sizeof(full_cmd), "%s 2>&1", cmd);
     FILE* fp = popen(full_cmd, "r");
@@ -3209,12 +3235,17 @@ char* Process_exec_capture(const char* cmd) {
     char* result = malloc(131072);
     size_t len = fread(result, 1, 131071, fp);
     result[len] = 0;
-    int status = pclose(fp);
+    pclose(fp);
     return result;
+#endif
 }
 
 long long Process_exec_status(const char* cmd) {
+#ifdef WYN_MOBILE
+    return -1;
+#else
     return WEXITSTATUS(system(cmd));
+#endif
 }
 
 // === Http extensions ===
@@ -3449,7 +3480,7 @@ void Test_assert_not_contains(const char* haystack, const char* needle, const ch
 }
 
 // Http timeout (seconds, 0 = no timeout)
-static int _wyn_http_timeout = 30;
+int _wyn_http_timeout = 30;
 void Http_set_timeout(long long seconds) { _wyn_http_timeout = (int)seconds; }
 long long Http_timeout() { return _wyn_http_timeout; }
 

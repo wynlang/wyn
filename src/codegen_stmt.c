@@ -956,6 +956,12 @@ void codegen_stmt(Stmt* stmt) {
                     ptype = ptbuf;
                 }
                 register_parameter_typed(pname, ptype, is_mut_p);
+                // Track trait-typed params for call-site wrapping
+                if (ptype && is_trait_type(ptype, strlen(ptype))) {
+                    char fn_name_buf[128];
+                    snprintf(fn_name_buf, 128, "%.*s", stmt->fn.name.length, stmt->fn.name.start);
+                    register_fn_trait_param(fn_name_buf, ptype, i);
+                }
             }
             
             // Set current function return kind for Ok/Err/Some/None resolution
@@ -1505,6 +1511,7 @@ void codegen_stmt(Stmt* stmt) {
             if (stmt->impl.trait_name.start && stmt->impl.trait_name.length > 0) {
                 Token tname = stmt->impl.trait_name;
                 Token itype = stmt->impl.type_name;
+                register_trait_impl(itype.start, itype.length, tname.start, tname.length);
                 for (int i = 0; i < stmt->impl.method_count; i++) {
                     FnStmt* method = stmt->impl.methods[i];
                     const char* ret = "long long";

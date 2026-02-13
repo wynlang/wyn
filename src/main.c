@@ -108,7 +108,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  wyn check <file.wyn>     Type-check without compiling\n");
         fprintf(stderr, "  wyn clean                Clean artifacts\n");
         fprintf(stderr, "  wyn build-runtime        Precompile runtime for fast builds\n");
-        fprintf(stderr, "  wyn cross <os> <file>    Cross-compile (linux/macos/windows)\n");
+        fprintf(stderr, "  wyn cross <os> <file>    Cross-compile (linux/macos/windows/ios/android)\n");
         fprintf(stderr, "  wyn llvm <file.wyn>      Compile with LLVM backend\n");
         fprintf(stderr, "  wyn version              Show version\n");
         fprintf(stderr, "  wyn help                 Show this help\n");
@@ -500,12 +500,22 @@ int main(int argc, char** argv) {
     if (strcmp(command, "cross") == 0) {
         if (argc < 4) {
             fprintf(stderr, "Usage: wyn cross <target> <file.wyn>\n");
-            fprintf(stderr, "Targets: linux, macos, windows\n");
+            fprintf(stderr, "Targets: linux, macos, windows, ios, android\n");
             return 1;
         }
         
         char* target = argv[2];
         char* file = argv[3];
+        
+        // Find wyn root for includes
+        char wyn_root[1024] = ".";
+        char* root_env = getenv("WYN_ROOT");
+        if (root_env) { snprintf(wyn_root, sizeof(wyn_root), "%s", root_env); }
+        else {
+            char ep[1024]; strncpy(ep, argv[0], sizeof(ep)-1); ep[sizeof(ep)-1]=0;
+            char* ls = strrchr(ep, '/');
+            if (ls) { *ls = 0; snprintf(wyn_root, sizeof(wyn_root), "%s", ep); }
+        }
         
         // Compile to C first
         char* source = read_file(file);
@@ -539,20 +549,90 @@ int main(int argc, char** argv) {
         free(source);
         
         // Cross-compile based on target
-        char compile_cmd[512];
+        char compile_cmd[4096];
         if (strcmp(target, "linux") == 0) {
             // On macOS, just compile normally (user can transfer binary)
-            snprintf(compile_cmd, 512, "gcc -std=c11 -O2 -o %s.linux %s.c -lm", file, file);
+            snprintf(compile_cmd, 512, "gcc -std=c11 -O2 -w -I %s/src -o %s.linux %s.c %s/runtime/libwyn_rt.a -lpthread -lm", wyn_root, file, file, wyn_root);
             printf("Compiling for Linux (native binary)...\n");
         } else if (strcmp(target, "macos") == 0) {
-            snprintf(compile_cmd, 512, "gcc -std=c11 -O2 -o %s.macos %s.c -lm", file, file);
+            snprintf(compile_cmd, 512, "gcc -std=c11 -O2 -w -I %s/src -o %s.macos %s.c %s/runtime/libwyn_rt.a -lpthread -lm", wyn_root, file, file, wyn_root);
             printf("Compiling for macOS...\n");
         } else if (strcmp(target, "windows") == 0) {
-            snprintf(compile_cmd, 512, "x86_64-w64-mingw32-gcc -std=c11 -O2 -static -o %s.exe %s.c -lm", file, file);
+            snprintf(compile_cmd, 512, "x86_64-w64-mingw32-gcc -std=c11 -O2 -w -static -I %s/src -o %s.exe %s.c -lm", wyn_root, file, file);
             printf("Cross-compiling for Windows...\n");
+        } else if (strcmp(target, "ios") == 0) {
+            // iOS cross-compilation via Xcode SDK
+            char sdk_path[512] = {0};
+            FILE* sdk_fp = popen("xcrun --sdk iphoneos --show-sdk-path 2>/dev/null", "r");
+            if (sdk_fp) { fgets(sdk_path, sizeof(sdk_path), sdk_fp); pclose(sdk_fp); }
+            // Trim newline
+            char* nl = strchr(sdk_path, '\n'); if (nl) *nl = 0;
+            if (sdk_path[0] == 0) {
+                fprintf(stderr, "Error: Xcode iOS SDK not found. Install Xcode.\n");
+                return 1;
+            }
+            snprintf(compile_cmd, sizeof(compile_cmd),
+                "clang -std=c11 -O2 -w -arch arm64 -isysroot %s "
+                "-miphoneos-version-min=15.0 "
+                "-I %s/src -o %s.ios %s.c "
+                "%s/src/wyn_wrapper.c %s/src/wyn_interface.c "
+                "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c "
+                "%s/src/test_runtime.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c "
+                "%s/src/net.c %s/src/net_advanced.c "
+                "-lpthread -lm",
+                sdk_path, wyn_root, file, file,
+                wyn_root, wyn_root,
+                wyn_root, wyn_root, wyn_root,
+                wyn_root, wyn_root, wyn_root, wyn_root,
+                wyn_root, wyn_root);
+            printf("Cross-compiling for iOS (arm64)...\n");
+            printf("SDK: %s\n", sdk_path);
+        } else if (strcmp(target, "android") == 0) {
+            // Android cross-compilation via NDK
+            char ndk_path[512] = {0};
+            // Check common NDK locations
+            const char* ndk_dirs[] = {
+                "~/Library/Android/sdk/ndk",
+                "~/Android/Sdk/ndk",
+                "/usr/local/lib/android/sdk/ndk",
+                NULL
+            };
+            for (int i = 0; ndk_dirs[i]; i++) {
+                char expanded[512];
+                if (ndk_dirs[i][0] == '~') {
+                    snprintf(expanded, 512, "%s%s", getenv("HOME"), ndk_dirs[i] + 1);
+                } else {
+                    snprintf(expanded, 512, "%s", ndk_dirs[i]);
+                }
+                // Find latest NDK version
+                char find_cmd[512];
+                snprintf(find_cmd, 512, "ls -d %s/*/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android*-clang 2>/dev/null | tail -1", expanded);
+                FILE* fp = popen(find_cmd, "r");
+                if (fp) {
+                    char clang_path[512] = {0};
+                    fgets(clang_path, sizeof(clang_path), fp);
+                    pclose(fp);
+                    char* nl2 = strchr(clang_path, '\n'); if (nl2) *nl2 = 0;
+                    if (clang_path[0]) {
+                        snprintf(ndk_path, 512, "%s", clang_path);
+                        break;
+                    }
+                }
+            }
+            if (ndk_path[0] == 0) {
+                fprintf(stderr, "Error: Android NDK not found.\n");
+                fprintf(stderr, "Install: Android Studio → SDK Manager → NDK\n");
+                fprintf(stderr, "Or: sdkmanager --install 'ndk;latest'\n");
+                return 1;
+            }
+            snprintf(compile_cmd, 512,
+                "%s -std=c11 -O2 -w -I %s/src -o %s.android %s.c -lm -llog",
+                ndk_path, wyn_root, file, file);
+            printf("Cross-compiling for Android (arm64)...\n");
+            printf("NDK: %s\n", ndk_path);
         } else {
             fprintf(stderr, "Unknown target: %s\n", target);
-            fprintf(stderr, "Available: linux, macos, windows\n");
+            fprintf(stderr, "Available: linux, macos, windows, ios, android\n");
             return 1;
         }
         

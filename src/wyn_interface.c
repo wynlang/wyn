@@ -248,7 +248,18 @@ struct WynArray _args(void) {
 }
 
 int _exec_code(const char* cmd) {
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#if TARGET_OS_IOS || TARGET_OS_SIMULATOR
+    return -1;
+#else
     return system(cmd);
+#endif
+#elif defined(__ANDROID__)
+    return -1;
+#else
+    return system(cmd);
+#endif
 }
 
 // Additional stubs for http_server example
