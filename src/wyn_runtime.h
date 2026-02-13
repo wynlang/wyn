@@ -2320,8 +2320,13 @@ const float Math_PI = 3.14159265358979323846f;
 const float Math_E = 2.71828182845904523536f;
 
 long long DateTime_now() { return (long long)time(NULL); }
+#ifdef _WIN32
+long long DateTime_millis() { FILETIME ft; GetSystemTimeAsFileTime(&ft); ULARGE_INTEGER ul; ul.LowPart=ft.dwLowDateTime; ul.HighPart=ft.dwHighDateTime; return (long long)((ul.QuadPart - 116444736000000000ULL) / 10000); }
+long long DateTime_micros() { FILETIME ft; GetSystemTimeAsFileTime(&ft); ULARGE_INTEGER ul; ul.LowPart=ft.dwLowDateTime; ul.HighPart=ft.dwHighDateTime; return (long long)((ul.QuadPart - 116444736000000000ULL) / 10); }
+#else
 long long DateTime_millis() { struct timeval tv; gettimeofday(&tv, NULL); return (long long)(tv.tv_sec * 1000LL + tv.tv_usec / 1000); }
 long long DateTime_micros() { struct timeval tv; gettimeofday(&tv, NULL); return (long long)(tv.tv_sec * 1000000LL + tv.tv_usec); }
+#endif
 char* DateTime_format(int timestamp, const char* fmt) {
     time_t t = (time_t)timestamp;
     struct tm* tm_info = localtime(&t);
@@ -3124,9 +3129,20 @@ char* Os_arch() {
 }
 
 char* Os_hostname() { static char buf[256]; gethostname(buf, sizeof(buf)); return buf; }
-long long Os_pid() { return (long long)getpid(); }
+long long Os_pid() {
+#ifdef _WIN32
+    return (long long)_getpid();
+#else
+    return (long long)getpid();
+#endif
+}
+#ifdef _WIN32
+char* Os_temp_dir() { char* t = getenv("TEMP"); return t ? t : "C:\\Temp"; }
+char* Os_home_dir() { char* h = getenv("USERPROFILE"); return h ? h : "C:\\"; }
+#else
 char* Os_temp_dir() { return "/tmp"; }
 char* Os_home_dir() { char* h = getenv("HOME"); return h ? h : "/tmp"; }
+#endif
 
 // === UUID v4 ===
 char* Uuid_generate() {
@@ -3431,7 +3447,13 @@ char* File_walk_dir(const char* path) {
 char* File_temp_file() {
     static int counter = 0;
     char* path = malloc(256);
+#ifdef _WIN32
+    const char* tmp = getenv("TEMP");
+    if (!tmp) tmp = ".";
+    snprintf(path, 256, "%s\\wyn_tmp_%d_%d", tmp, (int)_getpid(), counter++);
+#else
     snprintf(path, 256, "/tmp/wyn_tmp_%d_%d", (int)getpid(), counter++);
+#endif
     return path;
 }
 
@@ -3518,15 +3540,21 @@ char* Crypto_hmac_sha256(const char* key, const char* data) {
 
 char* Crypto_random_bytes(long long n) {
     char* bytes = malloc(n * 2 + 1);
-    FILE* f = fopen("/dev/urandom", "rb");
-    if (!f) { bytes[0] = 0; return bytes; }
     bytes[0] = 0;
+    unsigned char* raw = malloc(n);
+#ifdef _WIN32
+    for (int i = 0; i < (int)n; i++) raw[i] = rand() & 0xFF;
+#else
+    FILE* f = fopen("/dev/urandom", "rb");
+    if (f) { fread(raw, 1, n, f); fclose(f); }
+    else { for (int i = 0; i < (int)n; i++) raw[i] = rand() & 0xFF; }
+#endif
     for (int i = 0; i < (int)n; i++) {
-        unsigned char b;
-        fread(&b, 1, 1, f);
-        sprintf(bytes + i*2, "%02x", b);
+        char hex[3];
+        snprintf(hex, 3, "%02x", raw[i]);
+        strcat(bytes, hex);
     }
-    fclose(f);
+    free(raw);
     return bytes;
 }
 
