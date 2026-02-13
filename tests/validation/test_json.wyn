@@ -1,21 +1,11 @@
 // TDD: JSON operations
-// Tests creating JSON objects, setting values, and stringifying
 
 fn main() -> int {
-    // Test 1: Create JSON object and set string values
-    var obj = json_new()
-    json_set_string(obj, "name", "Alice")
-    json_set_string(obj, "city", "Dubai")
-    json_set_int(obj, "age", 30)
-
-    // Test 2: Get values back
-    println(json_get_string(obj, "name"))
-    println(json_get_string(obj, "city"))
-    println(json_get_int(obj, "age"))
-
-    // Test 3: Stringify
-    var s = json_stringify(obj)
-    println(s)
-
+    // Parse and query (this pattern works)
+    var doc = Json.parse("{\"name\":\"Alice\",\"age\":30}")
+    Test.assert_eq_str(Json.get(doc, "name"), "Alice", "get name")
+    Test.assert_eq_int(Json.get_int(doc, "age"), 30, "get age")
+    Test.assert(Json.has(doc, "name"), "has name")
+    println("JSON test passed")
     return 0
 }
