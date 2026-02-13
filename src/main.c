@@ -2,6 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #include "common.h"
 #include "ast.h"
 #include "types.h"
@@ -97,24 +101,50 @@ int main(int argc, char** argv) {
     wyn_init_args(argc, argv);
     
     if (argc < 2) {
-        fprintf(stderr, "Wyn Compiler v%s\n", get_version());
-        fprintf(stderr, "Usage:\n");
-        fprintf(stderr, "  wyn <file.wyn>           Compile file\n");
-        fprintf(stderr, "  wyn run <file.wyn>       Compile and run\n");
-        fprintf(stderr, "  wyn build <dir>          Build all .wyn files in directory\n");
-        fprintf(stderr, "  wyn test                 Run tests\n");
-        fprintf(stderr, "  wyn fmt <file.wyn>       Validate file\n");
-        printf("  wyn check <file.wyn>     Type-check without compiling\n");
-        fprintf(stderr, "  wyn check <file.wyn>     Type-check without compiling\n");
-        fprintf(stderr, "  wyn clean                Clean artifacts\n");
-        fprintf(stderr, "  wyn build-runtime        Precompile runtime for fast builds\n");
-        fprintf(stderr, "  wyn cross <os> <file>    Cross-compile (linux/macos/windows/ios/android)\n");
-        fprintf(stderr, "  wyn llvm <file.wyn>      Compile with LLVM backend\n");
-        fprintf(stderr, "  wyn version              Show version\n");
-        fprintf(stderr, "  wyn help                 Show this help\n");
-        fprintf(stderr, "\nOptimization flags:\n");
-        fprintf(stderr, "  -O1                      Basic optimizations\n");
-        fprintf(stderr, "  -O2                      Advanced optimizations\n");
+        // Banner
+        fprintf(stderr,
+            "\033[36m\033[1m"
+            "      /\\_/\\\n"
+            "     / o o \\    \033[0m\033[1m\033[37m W Y N \033[0m\033[36m\033[1m\n"
+            "    (  \033[33m>v<\033[36m  )   \033[0m\033[2mv%s\033[0m\033[36m\033[1m\n"
+            "     \\~\033[33m(~)\033[36m~/\n"
+            "      \\_^_/\033[0m\n"
+            "  \033[2m1 language for everything\033[0m\n\n", get_version());
+        
+        fprintf(stderr, "\033[1mUsage:\033[0m wyn \033[33m<command>\033[0m [options]\n\n");
+        
+        fprintf(stderr, "\033[1mDevelop:\033[0m\n");
+        fprintf(stderr, "  \033[32mrun\033[0m <file.wyn>         Compile and run\n");
+        fprintf(stderr, "  \033[32mcheck\033[0m <file.wyn>       Type-check without compiling\n");
+        fprintf(stderr, "  \033[32mfmt\033[0m <file.wyn>         Format source file\n");
+        fprintf(stderr, "  \033[32mtest\033[0m                    Run project tests\n");
+        fprintf(stderr, "  \033[32mwatch\033[0m <file.wyn>       Watch and auto-rebuild\n");
+        
+        fprintf(stderr, "\n\033[1mBuild:\033[0m\n");
+        fprintf(stderr, "  \033[32mbuild\033[0m <dir>             Build all .wyn files in directory\n");
+        fprintf(stderr, "  \033[32mcross\033[0m <target> <file>   Cross-compile (linux/macos/windows/ios/android)\n");
+        fprintf(stderr, "  \033[32mbuild-runtime\033[0m           Precompile runtime for fast builds\n");
+        fprintf(stderr, "  \033[32mclean\033[0m                   Remove build artifacts\n");
+        
+        fprintf(stderr, "\n\033[1mPackages:\033[0m\n");
+        fprintf(stderr, "  \033[32minit\033[0m [name]             Create new project\n");
+        fprintf(stderr, "  \033[32mpkg install\033[0m <name>      Install a package\n");
+        fprintf(stderr, "  \033[32mpkg list\033[0m                List installed packages\n");
+        fprintf(stderr, "  \033[32mpkg uninstall\033[0m <name>    Uninstall a package\n");
+        fprintf(stderr, "  \033[32mpkg search\033[0m <query>      Search package registry\n");
+        
+        fprintf(stderr, "\n\033[1mTools:\033[0m\n");
+        fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
+        fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
+        fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
+        fprintf(stderr, "  \033[32mversion\033[0m                 Show version\n");
+        fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
+        
+        fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
+        fprintf(stderr, "  \033[33m--fast\033[0m                  Skip optimizations (fastest compile)\n");
+        fprintf(stderr, "  \033[33m--release\033[0m               Full optimizations (-O2)\n");
+        
+        fprintf(stderr, "\n\033[2mhttps://wynlang.com\033[0m\n");
         return 1;
     }
     
@@ -122,41 +152,111 @@ int main(int argc, char** argv) {
     
     // Handle --version and -v flags
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0 || strcmp(command, "-v") == 0) {
-        printf("Wyn v%s\n", get_version());
+        printf("\033[36mWyn\033[0m v%s\n", get_version());
+        return 0;
+    }
+    
+    // Install/uninstall wyn to system PATH
+    if (strcmp(command, "install") == 0) {
+        char exe_path[1024];
+        #ifdef __APPLE__
+        uint32_t size = sizeof(exe_path);
+        _NSGetExecutablePath(exe_path, &size);
+        #else
+        ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path)-1);
+        if (len > 0) exe_path[len] = 0; else { strncpy(exe_path, argv[0], sizeof(exe_path)-1); }
+        #endif
+        // Resolve to absolute path
+        char abs_path[1024];
+        if (realpath(exe_path, abs_path) == NULL) strncpy(abs_path, exe_path, sizeof(abs_path));
+        
+        const char* install_dir = "/usr/local/bin";
+        char install_path[1100];
+        snprintf(install_path, sizeof(install_path), "%s/wyn", install_dir);
+        
+        // Check if already installed
+        if (access(install_path, X_OK) == 0) {
+            char existing[1024] = {0};
+            readlink(install_path, existing, sizeof(existing)-1);
+            printf("\033[33mwyn\033[0m is already installed at %s\n", install_path);
+            if (existing[0]) printf("  → %s\n", existing);
+            printf("Reinstall? [y/N] ");
+            fflush(stdout);
+            char c = getchar();
+            if (c != 'y' && c != 'Y') { printf("Cancelled.\n"); return 0; }
+            unlink(install_path);
+        }
+        
+        // Create symlink
+        printf("Installing \033[32mwyn\033[0m to %s...\n", install_path);
+        if (symlink(abs_path, install_path) == 0) {
+            printf("\033[32m✓\033[0m Installed: %s → %s\n", install_path, abs_path);
+            printf("  Run \033[1mwyn version\033[0m from anywhere to verify.\n");
+        } else {
+            fprintf(stderr, "\033[31m✗\033[0m Failed to create symlink. Try:\n");
+            fprintf(stderr, "  sudo ln -sf %s %s\n", abs_path, install_path);
+        }
+        return 0;
+    }
+    
+    if (strcmp(command, "uninstall") == 0) {
+        const char* install_path = "/usr/local/bin/wyn";
+        if (access(install_path, F_OK) != 0) {
+            printf("wyn is not installed at %s\n", install_path);
+            return 0;
+        }
+        printf("Removing \033[33m%s\033[0m...\n", install_path);
+        if (unlink(install_path) == 0) {
+            printf("\033[32m✓\033[0m Uninstalled wyn from %s\n", install_path);
+        } else {
+            fprintf(stderr, "\033[31m✗\033[0m Failed. Try: sudo rm %s\n", install_path);
+        }
         return 0;
     }
     
     // Handle --help and -h flags
     if (strcmp(command, "help") == 0 || strcmp(command, "--help") == 0 || strcmp(command, "-h") == 0) {
-        printf("Wyn Compiler v%s\n\n", get_version());
-        printf("Commands:\n");
-        printf("  wyn <file.wyn>           Compile file\n");
-        printf("  wyn run <file.wyn>       Compile and run\n");
-        printf("  wyn build <dir>          Build all .wyn files in directory\n");
-        printf("  wyn init [name]          Create new project\n");
-        printf("  wyn watch <file.wyn>     Watch and auto-rebuild on changes\n");
-        printf("  wyn test                 Run tests\n");
-        printf("  wyn fmt <file.wyn>       Validate file\n");
-        printf("  wyn check <file.wyn>     Type-check without compiling\n");
-        fprintf(stderr, "  wyn check <file.wyn>     Type-check without compiling\n");
-        printf("  wyn clean                Clean artifacts\n");
-        printf("  wyn build-runtime        Precompile runtime for fast builds\n");
-        printf("  wyn cross <os> <file>    Cross-compile\n");
-        printf("  wyn llvm <file.wyn>      Compile with LLVM backend\n");
-        printf("  wyn search <query>       Search package registry\n");
-        printf("  wyn info <package>       Show package information\n");
-        printf("  wyn versions <package>   List package versions\n");
-        printf("  wyn install <package>    Install package from registry\n");
-        printf("  wyn publish              Publish package to registry\n");
-        printf("  wyn version              Show version\n");
-        printf("  wyn help                 Show this help\n");
-        printf("\nOptimization flags:\n");
-        printf("  -O1                      Basic optimizations (dead code elimination)\n");
-        printf("  -O2                      Advanced optimizations (includes function inlining)\n");
-        printf("\nCross-compile targets:\n");
-        printf("  linux   - Linux x86_64\n");
-        printf("  macos   - macOS (current platform)\n");
-        printf("  windows - Windows x86_64 (requires mingw)\n");
+        // Reuse the no-args banner by faking argc
+        char* fake_argv[] = {argv[0]};
+        // Print banner directly
+        fprintf(stderr,
+            "\033[36m\033[1m"
+            "      /\\_/\\\n"
+            "     / o o \\    \033[0m\033[1m\033[37m W Y N \033[0m\033[36m\033[1m\n"
+            "    (  \033[33m>v<\033[36m  )   \033[0m\033[2mv%s\033[0m\033[36m\033[1m\n"
+            "     \\~\033[33m(~)\033[36m~/\n"
+            "      \\_^_/\033[0m\n"
+            "  \033[2m1 language for everything\033[0m\n\n", get_version());
+        fprintf(stderr, "\033[1mUsage:\033[0m wyn \033[33m<command>\033[0m [options]\n\n");
+        fprintf(stderr, "\033[1mDevelop:\033[0m\n");
+        fprintf(stderr, "  \033[32mrun\033[0m <file.wyn>         Compile and run\n");
+        fprintf(stderr, "  \033[32mcheck\033[0m <file.wyn>       Type-check without compiling\n");
+        fprintf(stderr, "  \033[32mfmt\033[0m <file.wyn>         Format source file\n");
+        fprintf(stderr, "  \033[32mtest\033[0m                    Run project tests\n");
+        fprintf(stderr, "  \033[32mwatch\033[0m <file.wyn>       Watch and auto-rebuild\n");
+        fprintf(stderr, "\n\033[1mBuild:\033[0m\n");
+        fprintf(stderr, "  \033[32mbuild\033[0m <dir>             Build all .wyn files in directory\n");
+        fprintf(stderr, "  \033[32mcross\033[0m <target> <file>   Cross-compile (linux/macos/windows/ios/android)\n");
+        fprintf(stderr, "  \033[32mbuild-runtime\033[0m           Precompile runtime for fast builds\n");
+        fprintf(stderr, "  \033[32mclean\033[0m                   Remove build artifacts\n");
+        fprintf(stderr, "\n\033[1mPackages:\033[0m\n");
+        fprintf(stderr, "  \033[32minit\033[0m [name]             Create new project\n");
+        fprintf(stderr, "  \033[32mpkg install\033[0m <name>      Install a package\n");
+        fprintf(stderr, "  \033[32mpkg list\033[0m                List installed packages\n");
+        fprintf(stderr, "  \033[32mpkg uninstall\033[0m <name>    Uninstall a package\n");
+        fprintf(stderr, "  \033[32mpkg search\033[0m <query>      Search package registry\n");
+        fprintf(stderr, "\n\033[1mTools:\033[0m\n");
+        fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
+        fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
+        fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
+        fprintf(stderr, "  \033[32mversion\033[0m                 Show version\n");
+        fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
+        fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
+        fprintf(stderr, "  \033[33m--fast\033[0m                  Skip optimizations (fastest compile)\n");
+        fprintf(stderr, "  \033[33m--release\033[0m               Full optimizations (-O2)\n");
+        fprintf(stderr, "\n\033[1mCross-compile targets:\033[0m\n");
+        fprintf(stderr, "  linux, macos, windows, ios, android\n");
+        fprintf(stderr, "\n\033[2mhttps://wynlang.com\033[0m\n");
         return 0;
     }
     
@@ -246,7 +346,7 @@ int main(int argc, char** argv) {
     
     if (strcmp(command, "pkg") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn pkg <list|install>\n");
+            fprintf(stderr, "Usage: wyn pkg <list|install|uninstall|search>\n");
             return 1;
         }
         extern int package_install(const char*);
@@ -256,6 +356,23 @@ int main(int argc, char** argv) {
             return package_list();
         } else if (strcmp(argv[2], "install") == 0) {
             return package_install(".");
+        } else if (strcmp(argv[2], "uninstall") == 0) {
+            if (argc < 4) {
+                fprintf(stderr, "Usage: wyn pkg uninstall <package-name>\n");
+                return 1;
+            }
+            char pkg_dir[1024];
+            snprintf(pkg_dir, sizeof(pkg_dir), "%s/.wyn/packages/%s", getenv("HOME"), argv[3]);
+            struct stat st;
+            if (stat(pkg_dir, &st) != 0) {
+                fprintf(stderr, "\033[31m✗\033[0m Package '%s' is not installed.\n", argv[3]);
+                return 1;
+            }
+            char cmd[1100];
+            snprintf(cmd, sizeof(cmd), "rm -rf '%s'", pkg_dir);
+            system(cmd);
+            printf("\033[32m✓\033[0m Uninstalled %s\n", argv[3]);
+            return 0;
         } else {
             fprintf(stderr, "Unknown pkg command: %s\n", argv[2]);
             return 1;
@@ -430,18 +547,33 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "test") == 0) {
-        printf("Running tests...\n");
-        
-        // Check if we're in a project directory (has tests/ folder)
-        FILE* test_dir = fopen("tests", "r");
-        if (test_dir) {
-            fclose(test_dir);
-            // Simple approach: run each .wyn file in tests/
-            return system("for f in tests/*.wyn; do [ -f \"$f\" ] && wyn run \"$f\"; done");
-        } else {
-            // Fallback to build system tests
-            return system("make test 2>&1 && ./tests/integration_tests.sh");
+        // Find test files: tests/*.wyn or tests/**/*.wyn
+        struct stat st;
+        if (stat("tests", &st) != 0 || !S_ISDIR(st.st_mode)) {
+            fprintf(stderr, "\033[33mNo tests/ directory found.\033[0m\n");
+            fprintf(stderr, "Create tests/*.wyn files to get started.\n");
+            return 1;
         }
+        
+        printf("\033[1mRunning tests...\033[0m\n\n");
+        char cmd[4096];
+        // Use the current binary path
+        snprintf(cmd, sizeof(cmd),
+            "pass=0; fail=0; "
+            "for f in tests/*.wyn tests/*/*.wyn; do "
+            "  [ -f \"$f\" ] || continue; "
+            "  result=$(%s run \"$f\" 2>&1); "
+            "  if [ $? -eq 0 ]; then "
+            "    echo \"  \\033[32m✓\\033[0m $f\"; pass=$((pass+1)); "
+            "  else "
+            "    echo \"  \\033[31m✗\\033[0m $f\"; fail=$((fail+1)); "
+            "    echo \"$result\" | tail -3 | sed 's/^/    /'; "
+            "  fi; "
+            "done; "
+            "echo; echo \"\\033[1mResults:\\033[0m $pass passed, $fail failed\"; "
+            "[ $fail -eq 0 ]",
+            argv[0]);
+        return system(cmd) == 0 ? 0 : 1;
     }
     
     if (strcmp(command, "build-runtime") == 0) {
