@@ -2027,7 +2027,7 @@ char* Regex_replace(const char* s, const char* p, const char* r) { return regex_
 
 int file_size(const char* path) {
     FILE* f = fopen(path, "rb");
-    if(!f) return -1;
+    if(!f) return 0;
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fclose(f);
@@ -2189,7 +2189,7 @@ float Math_pow(float base, float exp) { return powf(base, exp); }
 float Math_floor(float x) { return floorf(x); }
 float Math_ceil(float x) { return ceilf(x); }
 float Math_round(float x) { return roundf(x); }
-float Math_abs(float x) { return fabsf(x); }
+long long Math_abs(long long x) { return x < 0 ? -x : x; }
 float Math_max(float a, float b) { return a > b ? a : b; }
 float Math_min(float a, float b) { return a < b ? a : b; }
 float Math_random() {
