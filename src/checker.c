@@ -976,6 +976,10 @@ void init_checker() {
         {"Math_sin", 8, 1, builtin_float, NULL, builtin_float},
         {"Math_cos", 8, 1, builtin_float, NULL, builtin_float},
         {"Math_tan", 8, 1, builtin_float, NULL, builtin_float},
+        {"Math_round_to", 13, 2, builtin_float, builtin_int, builtin_float},
+        {"Math_atan2", 10, 2, builtin_float, builtin_float, builtin_float},
+        {"Math_pi", 7, 0, NULL, NULL, builtin_float},
+        {"Math_e", 6, 0, NULL, NULL, builtin_float},
         {"Math_random", 11, 0, NULL, NULL, builtin_float},
     };
     for (int i = 0; i < 13; i++) {

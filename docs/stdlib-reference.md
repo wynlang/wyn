@@ -485,3 +485,36 @@ impl Drawable for Circle {
     fn draw(self) -> string { return "circle" }
 }
 ```
+
+---
+
+## Arrow Lambdas
+
+Short syntax for inline functions:
+
+```wyn
+var doubled = nums.map(fn(x) => x * 2)
+var evens = nums.filter(fn(x) => x % 2 == 0)
+var big = [1,2,3,4,5].filter(fn(x) => x > 3).map(fn(x) => x * 10)
+```
+
+## Additional Math Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Math.sin(x)` | `-> float` | Sine |
+| `Math.cos(x)` | `-> float` | Cosine |
+| `Math.tan(x)` | `-> float` | Tangent |
+| `Math.atan2(y, x)` | `-> float` | Two-argument arctangent |
+| `Math.round(x)` | `-> int` | Round to nearest |
+| `Math.floor(x)` | `-> int` | Round down |
+| `Math.ceil(x)` | `-> int` | Round up |
+| `Math.round_to(x, places)` | `-> float` | Round to N decimal places |
+| `Math.pi()` | `-> float` | π (3.14159...) |
+| `Math.e()` | `-> float` | e (2.71828...) |
+
+## String.to_float
+
+```wyn
+var f = "3.14".to_float()  // 3.14
+```

@@ -2219,6 +2219,11 @@ float Math_sqrt(float x) { return sqrtf(x); }
 float Math_pow(float base, float exp) { return powf(base, exp); }
 float Math_floor(float x) { return floorf(x); }
 float Math_ceil(float x) { return ceilf(x); }
+float Math_round_to(float x, long long places) { float m = powf(10, places); return roundf(x * m) / m; }
+float Math_atan2(float y, float x) { return atan2f(y, x); }
+float Math_pi() { return 3.14159265358979323846f; }
+float Math_e() { return 2.71828182845904523536f; }
+float String_to_float(const char* s) { return s ? atof(s) : 0.0f; }
 float Math_round(float x) { return roundf(x); }
 long long Math_abs(long long x) { return x < 0 ? -x : x; }
 float Math_max(float a, float b) { return a > b ? a : b; }

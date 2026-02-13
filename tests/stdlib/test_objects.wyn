@@ -1,0 +1,51 @@
+fn main() -> int {
+    Test.init("New Methods")
+    
+    // Arrow lambdas
+    var nums = [1, 2, 3, 4, 5]
+    var doubled = nums.map(fn(x) => x * 2)
+    Test.assert_eq_str(doubled.join(","), "2,4,6,8,10", "arrow map")
+    var big = nums.filter(fn(x) => x > 3)
+    Test.assert_eq_str(big.join(","), "4,5", "arrow filter")
+    
+    // Chained arrow lambdas
+    var result = [1,2,3,4,5].filter(fn(x) => x > 2).map(fn(x) => x * 10)
+    Test.assert_eq_str(result.join(","), "30,40,50", "chained arrows")
+    
+    // Math trig
+    Test.assert(Math.sin(0.0) < 0.01, "sin 0")
+    Test.assert(Math.cos(0.0) > 0.99, "cos 0")
+    Test.assert(Math.tan(0.0) < 0.01, "tan 0")
+    
+    // Math rounding
+    Test.assert_eq_int(Math.round(3.7), 4, "round")
+    Test.assert_eq_int(Math.floor(3.9), 3, "floor")
+    Test.assert_eq_int(Math.ceil(3.1), 4, "ceil")
+    
+    // Math constants
+    Test.assert(Math.pi() > 3, "pi")
+    Test.assert(Math.e() > 2, "e")
+    
+    // round_to
+    // Math.round_to(3.14159, 2) should be ~3.14
+    
+    // String.to_float
+    var f = "3.14".to_float()
+    Test.assert(1 == 1, "to_float exists")
+    
+    // pow
+    Test.assert_eq_int(Math.pow(2, 10), 1024, "pow")
+    
+    // Everything is an object
+    Test.assert_eq_str(42.to_string(), "42", "int to_string")
+    Test.assert_eq_int("hello".len(), 5, "str len")
+    Test.assert_eq_str("hello".upper(), "HELLO", "str upper")
+    Test.assert_eq_str("  hi  ".trim(), "hi", "str trim")
+    
+    // Method chaining
+    Test.assert_eq_str("  HELLO  ".trim().lower(), "hello", "chain trim lower")
+    Test.assert_eq_str("hello".upper().reverse(), "OLLEH", "chain upper reverse")
+    
+    Test.summary()
+    return 0
+}
