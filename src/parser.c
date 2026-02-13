@@ -2237,9 +2237,15 @@ Stmt* struct_decl() {
             if (!check(TOKEN_RPAREN)) {
                 do {
                     method->params[method->param_count] = parser.current;
-                    expect(TOKEN_IDENT, "Expected parameter name");
-                    expect(TOKEN_COLON, "Expected ':' after parameter");
-                    method->param_types[method->param_count] = parse_type();
+                    if (check(TOKEN_SELF)) { advance(); } else { expect(TOKEN_IDENT, "Expected parameter name"); }
+                    if (method->params[method->param_count].length == 4 &&
+                        memcmp(method->params[method->param_count].start, "self", 4) == 0 &&
+                        !check(TOKEN_COLON)) {
+                        method->param_types[method->param_count] = NULL;
+                    } else {
+                        expect(TOKEN_COLON, "Expected ':' after parameter");
+                        method->param_types[method->param_count] = parse_type();
+                    }
                     method->param_count++;
                 } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
             }

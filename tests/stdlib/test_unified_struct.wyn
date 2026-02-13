@@ -1,0 +1,36 @@
+struct Counter {
+    value: int
+
+    fn increment(self) -> int {
+        return self.value + 1
+    }
+}
+
+struct Vec2 {
+    x: int
+    y: int
+
+    fn mag_sq(self) -> int {
+        return self.x * self.x + self.y * self.y
+    }
+
+    fn dot(self, other: Vec2) -> int {
+        return self.x * other.x + self.y * other.y
+    }
+}
+
+fn main() -> int {
+    Test.init("Unified Structs")
+    
+    var c = Counter{value: 42}
+    Test.assert_eq_int(c.increment(), 43, "method")
+    
+    var v1 = Vec2{x: 3, y: 4}
+    Test.assert_eq_int(v1.mag_sq(), 25, "mag_sq")
+    
+    var v2 = Vec2{x: 1, y: 2}
+    Test.assert_eq_int(v1.dot(v2), 11, "dot product")
+    
+    Test.summary()
+    return 0
+}
