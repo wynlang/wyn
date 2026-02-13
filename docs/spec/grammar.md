@@ -36,7 +36,7 @@ boolean_literal = "true" | "false" ;
 ```ebnf
 keyword = "fn" | "struct" | "enum" | "if" | "else" | "while" | "for" 
         | "return" | "let" | "var" | "mut" | "true" | "false" | "null"
-        | "async" | "await" | "match" | "impl" | "trait" | "type"
+        | "await" | "match" | "impl" | "trait" | "type"
         | "import" | "export" | "pub" | "priv" ;
 ```
 
@@ -176,7 +176,6 @@ primary_expr = identifier
              | array_literal
              | struct_literal
              | lambda_expr
-             | async_expr
              | await_expr ;
 
 literal = integer_literal
@@ -193,7 +192,6 @@ field_inits = field_init { "," field_init } ;
 field_init = identifier ":" expression ;
 
 lambda_expr = "|" [param_list] "|" (expression | block) ;
-async_expr = "async" block ;
 await_expr = "await" expression ;
 ```
 
@@ -269,7 +267,6 @@ fn handle_result(r: Result<int, string>) -> int {
 
 ### Async Function
 ```wyn
-async fn fetch_data(url: string) -> Result<string, string> {
     let response = await http_get(url);
     match response {
         Ok(data) => return Ok(data),

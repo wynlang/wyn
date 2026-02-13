@@ -1994,13 +1994,16 @@ static void mark_implicit_return(Stmt* body) {
 }
 
 Stmt* function() {
-    bool is_async = match(TOKEN_ASYNC);
+    if (check(TOKEN_ASYNC)) {
+        advance();
+        fprintf(stderr, "Warning: 'async' is deprecated. Use 'spawn' for concurrency.\n");
+    }
     bool is_public = match(TOKEN_PUB);
     expect(TOKEN_FN, "Expected 'fn'");
     Stmt* stmt = alloc_stmt();
     stmt->type = STMT_FN;
     stmt->fn.is_public = is_public;
-    stmt->fn.is_async = is_async;
+    stmt->fn.is_async = false;
     stmt->fn.name = parser.current;
     expect(TOKEN_IDENT, "Expected function name");
     

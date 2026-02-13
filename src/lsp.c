@@ -303,7 +303,6 @@ static void handle_completion(const char* id, const char* msg) {
             "{\"label\":\"continue\",\"kind\":14,\"detail\":\"keyword\"},"
             "{\"label\":\"spawn\",\"kind\":14,\"detail\":\"keyword\"},"
             "{\"label\":\"await\",\"kind\":14,\"detail\":\"keyword\"},"
-            "{\"label\":\"async\",\"kind\":14,\"detail\":\"keyword\"},"
             "{\"label\":\"mut\",\"kind\":14,\"detail\":\"keyword\"},"
             "{\"label\":\"println\",\"kind\":3,\"detail\":\"fn(string)\"},"
             "{\"label\":\"print\",\"kind\":3,\"detail\":\"fn(string)\"},"
