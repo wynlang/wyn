@@ -46,7 +46,7 @@ Wyn is suitable for:
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/wyn-lang/wyn.git
+   git clone https://github.com/wynlang/wyn.git
    cd wyn
    ```
 
@@ -449,4 +449,4 @@ If you can't find the answer here:
    - Code examples if relevant
    - What you've already tried
 
-*This FAQ covers Wyn v1.6.0. For the latest updates, see the [GitHub repository](https://github.com/wyn-lang/wyn).*
+*This FAQ covers Wyn v1.6.0. For the latest updates, see the [GitHub repository](https://github.com/wynlang/wyn).*
