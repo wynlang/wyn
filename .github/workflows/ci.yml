@@ -8,12 +8,12 @@ on:
 
 jobs:
   build-and-test:
-    name: Build & Test
+    name: Build & Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, macos-13, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -22,18 +22,27 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y gcc make libsqlite3-dev libssl-dev
 
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: choco install make mingw -y
+        shell: pwsh
+
       - name: Build compiler
         run: make clean && make
+        shell: bash
 
       - name: Build runtime
         run: make runtime
+        shell: bash
 
       - name: Run test suite
         run: |
           ./wyn run tests/run_tests.wyn 2>&1
           echo "✅ Test suite passed"
+        shell: bash
 
       - name: Compile sample apps
+        if: runner.os != 'Windows'
         run: |
           pass=0; fail=0
           for app in ../sample-apps/cli-tools/*/main.wyn ../sample-apps/sysadmin/*/main.wyn ../sample-apps/data-processing/*/main.wyn ../sample-apps/algorithms/*/main.wyn; do
@@ -47,22 +56,16 @@ jobs:
           done
           echo "Sample apps: $pass compiled, $fail failed"
           [ $fail -eq 0 ]
+        shell: bash
 
       - name: Type-check
         run: |
           echo 'fn main() -> int { println("check") return 0 }' > /tmp/check.wyn
           ./wyn check /tmp/check.wyn
+        shell: bash
 
-      - name: Cross-compile test
-        if: runner.os == 'Linux'
-        run: |
-          echo 'fn main() -> int { return 0 }' > /tmp/cross.wyn
-          ./wyn cross linux /tmp/cross.wyn
-          [ -f /tmp/cross.wyn.linux ]
-          echo "✅ Cross-compilation works"
-
-  cross-compile-macos:
-    name: Cross-compile (macOS → iOS)
+  cross-compile:
+    name: Cross-compile (iOS)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

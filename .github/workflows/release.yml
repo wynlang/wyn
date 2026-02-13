@@ -7,17 +7,19 @@ on:
 
 jobs:
   build:
-    name: Build Release
+    name: Build (${{ matrix.artifact }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
-            target: linux-x64
             artifact: wyn-linux-x64
           - os: macos-latest
-            target: macos-arm64
             artifact: wyn-macos-arm64
+          - os: macos-13
+            artifact: wyn-macos-x64
+          - os: windows-latest
+            artifact: wyn-windows-x64
 
     steps:
       - uses: actions/checkout@v4
@@ -26,25 +28,43 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y gcc make libsqlite3-dev libssl-dev
 
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: choco install make mingw -y
+        shell: pwsh
+
       - name: Build
         run: make clean && make && make runtime
+        shell: bash
 
       - name: Test
         run: ./wyn run tests/run_tests.wyn 2>&1
+        shell: bash
 
-      - name: Package
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
         run: |
           mkdir -p dist
           cp wyn dist/${{ matrix.artifact }}
           cp -r runtime dist/runtime
-          cp -r src/wyn_runtime.h dist/
+          cp src/wyn_runtime.h dist/
           tar czf ${{ matrix.artifact }}.tar.gz -C dist .
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir dist
+          copy wyn.exe dist\${{ matrix.artifact }}.exe
+          xcopy /E /I runtime dist\runtime
+          copy src\wyn_runtime.h dist\
+          Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip
+        shell: pwsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.tar.gz
+          path: ${{ matrix.artifact }}.*
 
   release:
     name: Create Release
@@ -62,6 +82,8 @@ jobs:
           files: |
             wyn-linux-x64/wyn-linux-x64.tar.gz
             wyn-macos-arm64/wyn-macos-arm64.tar.gz
+            wyn-macos-x64/wyn-macos-x64.tar.gz
+            wyn-windows-x64/wyn-windows-x64.zip
           body_path: CHANGELOG.md
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
