@@ -271,7 +271,7 @@ void codegen_expr(Expr* expr) {
             break;
         case EXPR_AWAIT:
             // Await: get result from future, handle NULL safely
-            emit("({ void* __fr = future_get(");
+            emit("({ void* __fr = future_get((Future*)(intptr_t)");
             codegen_expr(expr->await.expr);
             emit("); __fr ? *(int*)__fr : 0; })");
             break;
@@ -1150,6 +1150,13 @@ void codegen_expr(Expr* expr) {
                         emit(")");
                         break;
                     }
+                    // Default: int/pointer push with cast
+                    emit("array_push(&(");
+                    codegen_expr(expr->method_call.object);
+                    emit("), (long long)(");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit("))");
+                    break;
                 }
             }
             

@@ -37,6 +37,9 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
             scan_expr_for_lambdas(stmt->while_stmt.condition);
             scan_stmt_for_lambdas(stmt->while_stmt.body);
             break;
+        case STMT_FOR:
+            if (stmt->for_stmt.body) scan_stmt_for_lambdas(stmt->for_stmt.body);
+            break;
         case STMT_SPAWN:
             // Collect spawn wrappers
             if (stmt->spawn.call->type == EXPR_CALL && 

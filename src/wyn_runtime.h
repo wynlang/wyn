@@ -296,7 +296,7 @@ typedef struct { void** keys; void** values; int count; } WynMap;
 typedef struct {
     WynTypeId type;
     union {
-        int int_val;
+        long long int_val;
         double float_val;
         const char* string_val;
         struct WynArray* array_val;
@@ -309,7 +309,7 @@ WynArray wyn_array_map(WynArray arr, long long (*fn)(long long));
 WynArray wyn_array_filter(WynArray arr, long long (*fn)(long long));
 long long wyn_array_reduce(WynArray arr, long long (*fn)(long long, long long), long long initial);
 WynArray array_new() { WynArray arr = {0}; return arr; }
-void array_push_int(WynArray* arr, int value) {
+void array_push_int(WynArray* arr, long long value) {
     if (arr->count >= arr->capacity) {
         arr->capacity = arr->capacity == 0 ? 4 : arr->capacity * 2;
         arr->data = realloc(arr->data, sizeof(WynValue) * arr->capacity);
@@ -336,7 +336,7 @@ void array_push_array(WynArray* arr, WynArray* nested) {
     arr->data[arr->count].data.array_val = nested;
     arr->count++;
 }
-int array_get_int(WynArray arr, int index) {
+long long array_get_int(WynArray arr, int index) {
     if (index < 0 || index >= arr.count) {
         fprintf(stderr, "Warning: Array index out of bounds: %d (array size: %d)\n", index, arr.count);
         return 0;
@@ -407,7 +407,7 @@ void array_remove_str(WynArray* arr, const char* value) {
         }
     }
 }
-void array_push(WynArray* arr, int value) {
+void array_push(WynArray* arr, long long value) {
     if (arr->count >= arr->capacity) {
         arr->capacity = arr->capacity == 0 ? 4 : arr->capacity * 2;
         arr->data = realloc(arr->data, sizeof(WynValue) * arr->capacity);
