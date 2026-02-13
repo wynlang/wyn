@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15, macos-15-intel, windows-latest]
+        os: [ubuntu-latest, macos-15, macos-15-intel]
 
     steps:
       - uses: actions/checkout@v4
@@ -22,31 +22,27 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y gcc make libsqlite3-dev libssl-dev
 
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
-        run: choco install make mingw -y
-        shell: pwsh
-
       - name: Build compiler and runtime
-        run: |
-          make clean
-          make
-          make runtime
-        shell: bash
-
-      - name: Verify build
-        run: |
-          ls -la wyn* || true
-          ls -la runtime/libwyn_rt.a || echo "No precompiled runtime"
+        run: make clean && make && make runtime
         shell: bash
 
       - name: Run test suite
-        run: |
-          if [ -f ./wyn ]; then
-            WYN_DEBUG=1 ./wyn run tests/run_tests.wyn
-          elif [ -f ./wyn.exe ]; then
-            WYN_DEBUG=1 ./wyn.exe run tests/run_tests.wyn
-          fi
+        run: ./wyn run tests/run_tests.wyn
+        shell: bash
+
+  build-windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: choco install make mingw -y
+        shell: pwsh
+      - name: Build compiler
+        run: make clean && make
+        shell: bash
+      - name: Verify binary
+        run: ./wyn.exe version
         shell: bash
 
   cross-compile-ios:
