@@ -2558,11 +2558,13 @@ void todo(const char* msg) { printf("TODO: %s\n", msg); exit(1); }
 void exit_program(int code) { exit(code); }
 void sleep_ms(int ms) { struct timespec ts; ts.tv_sec = ms / 1000; ts.tv_nsec = (ms % 1000) * 1000000; nanosleep(&ts, NULL); }
 char* getenv_var(const char* name) { return getenv(name); }
+int setenv_var(const char* name, const char* val) {
 #ifdef _WIN32
     return _putenv_s(name, val) == 0;
 #else
-int setenv_var(const char* name, const char* val) { return setenv(name, val, 1) == 0; }
+    return setenv(name, val, 1) == 0;
 #endif
+}
 int sqrt_int(int x) { return (int)sqrt(x); }
 int ceil_int(double x) { return (int)ceil(x); }
 int floor_int(double x) { return (int)floor(x); }
@@ -3295,10 +3297,10 @@ char* regex_find_all(const char* str, const char* pattern) {
         strcat(result, m); strcat(result, "\n"); free(m);
         p += match.rm_eo;
     }
-#endif
     regfree(&re);
     return result;
 }
+#endif
 
 // === File extensions ===
 int File_rename(const char* old_path, const char* new_path) { return rename(old_path, new_path) == 0; }
@@ -3362,8 +3364,10 @@ char* Process_exec_capture(const char* cmd) {
 }
 
 long long Process_exec_status(const char* cmd) {
-#ifdef WYN_MOBILE
+#if defined(WYN_MOBILE)
     return -1;
+#elif defined(_WIN32)
+    return system(cmd);
 #else
     return WEXITSTATUS(system(cmd));
 #endif
@@ -3508,11 +3512,11 @@ char* regex_split(const char* str, const char* pattern) {
         strcat(result, "\n");
         p += match.rm_eo;
     }
-#endif
     strcat(result, p);
     regfree(&re);
     return result;
 }
+#endif
 
 // === Encoding extensions round 2 ===
 char* Encoding_hex_decode(const char* hex) {
