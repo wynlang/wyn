@@ -108,14 +108,14 @@ int main(int argc, char** argv) {
         fprintf(stderr, "\033[1mUsage:\033[0m wyn \033[33m<command>\033[0m [options]\n\n");
         
         fprintf(stderr, "\033[1mDevelop:\033[0m\n");
-        fprintf(stderr, "  \033[32mrun\033[0m <file.wyn>         Compile and run\n");
-        fprintf(stderr, "  \033[32mcheck\033[0m <file.wyn>       Type-check without compiling\n");
-        fprintf(stderr, "  \033[32mfmt\033[0m <file.wyn>         Format source file\n");
+        fprintf(stderr, "  \033[32mrun\033[0m <file.wyn>          Compile and run\n");
+        fprintf(stderr, "  \033[32mcheck\033[0m <file.wyn>        Type-check without compiling\n");
+        fprintf(stderr, "  \033[32mfmt\033[0m <file.wyn>          Format source file\n");
         fprintf(stderr, "  \033[32mtest\033[0m                    Run project tests\n");
-        fprintf(stderr, "  \033[32mwatch\033[0m <file.wyn>       Watch and auto-rebuild\n");
+        fprintf(stderr, "  \033[32mwatch\033[0m <file.wyn>        Watch and auto-rebuild\n");
         fprintf(stderr, "  \033[32mrepl\033[0m                    Interactive REPL\n");
-        fprintf(stderr, "  \033[32mbench\033[0m <file.wyn>       Benchmark with timing\n");
-        fprintf(stderr, "  \033[32mdoc\033[0m <file.wyn>         Generate documentation\n");
+        fprintf(stderr, "  \033[32mbench\033[0m <file.wyn>        Benchmark with timing\n");
+        fprintf(stderr, "  \033[32mdoc\033[0m <file.wyn>          Generate documentation\n");
         
         fprintf(stderr, "\n\033[1mBuild:\033[0m\n");
         fprintf(stderr, "  \033[32mbuild\033[0m <dir>             Build all .wyn files in directory\n");
@@ -366,6 +366,32 @@ int main(int argc, char** argv) {
             system(cmd);
             printf("\033[32m✓\033[0m Uninstalled %s\n", argv[3]);
             return 0;
+        } else if (strcmp(argv[2], "search") == 0) {
+            if (argc < 4) {
+                fprintf(stderr, "Usage: wyn pkg search <query>\n");
+                return 1;
+            }
+            // Search installed packages and registry
+            char pkg_dir[512];
+            snprintf(pkg_dir, sizeof(pkg_dir), "%s/.wyn/packages", getenv("HOME"));
+            printf("\033[1mSearching for '%s'...\033[0m\n\n", argv[3]);
+            
+            // Search local packages
+            char cmd[1024];
+            snprintf(cmd, sizeof(cmd), "ls -1 %s 2>/dev/null | grep -i '%s'", pkg_dir, argv[3]);
+            FILE* fp = popen(cmd, "r");
+            int found = 0;
+            if (fp) {
+                char buf[256];
+                while (fgets(buf, sizeof(buf), fp)) {
+                    buf[strcspn(buf, "\n")] = 0;
+                    printf("  \033[32m●\033[0m %s \033[2m(installed)\033[0m\n", buf);
+                    found++;
+                }
+                pclose(fp);
+            }
+            if (!found) printf("  No packages found matching '%s'\n", argv[3]);
+            return 0;
         } else {
             fprintf(stderr, "Unknown pkg command: %s\n", argv[2]);
             return 1;
@@ -377,183 +403,51 @@ int main(int argc, char** argv) {
             fprintf(stderr, "Usage: wyn build <directory>\n");
             return 1;
         }
-        
         char* dir = argv[2];
         
-        // Create temp directory if it doesn't exist
-        system("mkdir -p temp");
-        
-        printf("Building project in %s...\n", dir);
-        
-        // Find all .wyn files and compile them together
-        char find_cmd[512];
-        snprintf(find_cmd, 512, "find %s -name '*.wyn' -type f > temp/files.txt", dir);
-        system(find_cmd);
-        
-        // Read file list and concatenate
-        FILE* files = fopen("temp/files.txt", "r");
-        if (!files) {
-            fprintf(stderr, "Error: No .wyn files found in %s\n", dir);
-            return 1;
-        }
-        
-        // Check if file list is empty
-        fseek(files, 0, SEEK_END);
-        long file_size = ftell(files);
-        fseek(files, 0, SEEK_SET);
-        
-        if (file_size == 0) {
-            fprintf(stderr, "Error: No .wyn files found in %s\n", dir);
-            fclose(files);
-            return 1;
-        }
-        
-        FILE* combined = fopen("temp/combined.wyn", "w");
-        char line[512];
-        while (fgets(line, 512, files)) {
-            line[strcspn(line, "\n")] = 0; // Remove newline
-            
-            // Extract module name from filename (e.g., /path/to/math.wyn -> math)
-            char* filename = strrchr(line, '/');
-            if (!filename) filename = line;
-            else filename++; // Skip the /
-            
-            char module_name[128] = "";
-            char* dot = strrchr(filename, '.');
-            if (dot) {
-                int len = dot - filename;
-                if (len > 0 && len < 127) {
-                    strncpy(module_name, filename, len);
-                    module_name[len] = '\0';
-                }
+        // Look for main.wyn or src/main.wyn
+        char entry[512];
+        struct stat st;
+        snprintf(entry, sizeof(entry), "%s/main.wyn", dir);
+        if (stat(entry, &st) != 0) {
+            snprintf(entry, sizeof(entry), "%s/src/main.wyn", dir);
+            if (stat(entry, &st) != 0) {
+                fprintf(stderr, "\033[31m✗\033[0m No main.wyn found in %s or %s/src\n", dir, dir);
+                return 1;
             }
-            
-            char* source = read_file(line);
-            
-            // Process source: remove imports, prefix exports, replace module::func with module_func
-            char* modified = malloc(strlen(source) * 2);
-            char* dst = modified;
-            char* src = source;
-            
-            while (*src) {
-                // Skip import statements
-                if (strncmp(src, "import ", 7) == 0) {
-                    while (*src && *src != ';') src++;
-                    if (*src == ';') src++;
-                    while (*src == ' ' || *src == '\n') src++;
-                    continue;
-                }
-                
-                // Prefix exported functions
-                if (strncmp(src, "export fn ", 10) == 0 && 
-                    strcmp(module_name, "main") != 0 && strlen(module_name) > 0) {
-                    strcpy(dst, "fn ");
-                    dst += 3;
-                    strcpy(dst, module_name);
-                    dst += strlen(module_name);
-                    *dst++ = '_';
-                    src += 10;
-                } else if (src[0] != '\0' && src[1] != '\0' && strncmp(src, "::", 2) == 0) {
-                    // Replace :: with _
-                    *dst++ = '_';
-                    src += 2;
-                } else {
-                    *dst++ = *src++;
-                }
-            }
-            *dst = '\0';
-            
-            fprintf(combined, "// From %s\n%s\n\n", line, modified);
-            free(modified);
-            free(source);
-        }
-        fclose(files);
-        fclose(combined);
-        
-        // Compile the combined file
-        char* source = read_file("temp/combined.wyn");
-        init_lexer(source);
-        init_parser();
-        set_parser_filename("temp/combined.wyn");  // Set filename for better error messages
-        init_checker();
-        check_all_modules();  // Type check loaded modules
-        
-        Program* prog = parse_program();
-        if (!prog) {
-            fprintf(stderr, "Error: Failed to parse program\n");
-            free(source);
-            return 1;
         }
         
-        check_program(prog);
-        if (checker_had_error()) {
-            fprintf(stderr, "Compilation failed due to errors\n");
-            free(source);
-            return 1;
-        }
-        
-        char out_path[256];
-        snprintf(out_path, 256, "%s/main.c", dir);
-        FILE* out = fopen(out_path, "w");
-        init_codegen(out);
-        codegen_c_header();
-        codegen_program(prog);
-        fclose(out);
-        
-        // Get WYN_ROOT or auto-detect
-        char wyn_root[1024] = ".";
-        char* root_env = getenv("WYN_ROOT");
-        if (root_env) {
-            snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
-        } else {
-            // Auto-detect: check if src/wyn_wrapper.c exists, if not try ./wyn
-            FILE* test = fopen("./src/wyn_wrapper.c", "r");
-            if (!test) {
-                test = fopen("./wyn/src/wyn_wrapper.c", "r");
-                if (test) {
-                    snprintf(wyn_root, sizeof(wyn_root), "./wyn");
-                }
-            }
-            if (test) fclose(test);
-        }
-        
-        char compile_cmd[8192];
-        snprintf(compile_cmd, sizeof(compile_cmd), 
-                 "gcc -std=c11 -O2 -w -I %s/src -o %s/main %s/main.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s/runtime/libwyn_runtime.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm", 
-                 wyn_root, dir, dir, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
-        int result = system(compile_cmd);
-        
+        printf("\033[1mBuilding\033[0m %s...\n", entry);
+        char cmd[1024];
+        snprintf(cmd, sizeof(cmd), "%s run %s", argv[0], entry);
+        int result = system(cmd);
         if (result == 0) {
-            printf("Build successful: %s/main\n", dir);
-            // Clean up intermediate files
-            char cleanup[256];
-            snprintf(cleanup, 256, "%s/main.c", dir);
-            remove(cleanup);
-            remove("temp/files.txt");
-            remove("temp/combined.wyn");
+            printf("\033[32m✓\033[0m Build successful\n");
         } else {
-            fprintf(stderr, "Build failed\n");
+            fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
         }
-        
-        free(source);
-        return result;
+        return result == 0 ? 0 : 1;
     }
     
     if (strcmp(command, "test") == 0) {
-        // Find test files: tests/*.wyn or tests/**/*.wyn
         struct stat st;
+        // Prefer run_tests.wyn if it exists
+        if (stat("tests/run_tests.wyn", &st) == 0) {
+            printf("\033[1mRunning tests...\033[0m\n\n");
+            char cmd[512];
+            snprintf(cmd, sizeof(cmd), "%s run tests/run_tests.wyn", argv[0]);
+            return system(cmd) == 0 ? 0 : 1;
+        }
         if (stat("tests", &st) != 0 || !S_ISDIR(st.st_mode)) {
             fprintf(stderr, "\033[33mNo tests/ directory found.\033[0m\n");
             fprintf(stderr, "Create tests/*.wyn files to get started.\n");
             return 1;
         }
-        
         printf("\033[1mRunning tests...\033[0m\n\n");
         char cmd[4096];
-        // Use the current binary path
         snprintf(cmd, sizeof(cmd),
             "pass=0; fail=0; "
-            "for f in tests/*.wyn tests/*/*.wyn; do "
+            "for f in tests/test_*.wyn tests/*/test_*.wyn; do "
             "  [ -f \"$f\" ] || continue; "
             "  result=$(%s run \"$f\" 2>&1); "
             "  if [ $? -eq 0 ]; then "
