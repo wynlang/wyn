@@ -238,31 +238,106 @@ static void handle_format(const char* id, const char* msg) {
 }
 
 static void handle_completion(const char* id, const char* msg) {
-    // Extract position
     char* line_str = strstr(msg, "\"line\":");
     char* char_str = strstr(msg, "\"character\":");
     
-    if (!line_str || !char_str) {
-        send_response(id, "[]");
-        return;
+    if (!line_str || !char_str) { send_response(id, "[]"); return; }
+    
+    // Check if triggered by '.' (module method completion)
+    char* trigger = strstr(msg, "\"triggerCharacter\":\"");
+    int is_dot = trigger && trigger[19] == '.';
+    
+    static char buf[16384];
+    if (is_dot) {
+        // Module method completions — provide methods for all modules
+        snprintf(buf, sizeof(buf),
+            "[{\"label\":\"len\",\"kind\":2,\"detail\":\"() -> int\"},"
+            "{\"label\":\"get\",\"kind\":2,\"detail\":\"(key) -> string\"},"
+            "{\"label\":\"get_int\",\"kind\":2,\"detail\":\"(key) -> int\"},"
+            "{\"label\":\"set\",\"kind\":2,\"detail\":\"(key, val)\"},"
+            "{\"label\":\"contains\",\"kind\":2,\"detail\":\"(val) -> bool\"},"
+            "{\"label\":\"keys\",\"kind\":2,\"detail\":\"() -> string\"},"
+            "{\"label\":\"push\",\"kind\":2,\"detail\":\"(val)\"},"
+            "{\"label\":\"pop\",\"kind\":2,\"detail\":\"() -> int\"},"
+            "{\"label\":\"map\",\"kind\":2,\"detail\":\"(fn) -> array\"},"
+            "{\"label\":\"filter\",\"kind\":2,\"detail\":\"(fn) -> array\"},"
+            "{\"label\":\"reduce\",\"kind\":2,\"detail\":\"(fn, init) -> int\"},"
+            "{\"label\":\"join\",\"kind\":2,\"detail\":\"(sep) -> string\"},"
+            "{\"label\":\"reverse\",\"kind\":2,\"detail\":\"() -> array\"},"
+            "{\"label\":\"slice\",\"kind\":2,\"detail\":\"(start, end) -> array\"},"
+            "{\"label\":\"sort_by\",\"kind\":2,\"detail\":\"(cmp_fn)\"},"
+            "{\"label\":\"unique\",\"kind\":2,\"detail\":\"() -> array\"},"
+            "{\"label\":\"concat\",\"kind\":2,\"detail\":\"(other) -> array\"},"
+            "{\"label\":\"index_of\",\"kind\":2,\"detail\":\"(val) -> int\"},"
+            "{\"label\":\"upper\",\"kind\":2,\"detail\":\"() -> string\"},"
+            "{\"label\":\"lower\",\"kind\":2,\"detail\":\"() -> string\"},"
+            "{\"label\":\"trim\",\"kind\":2,\"detail\":\"() -> string\"},"
+            "{\"label\":\"replace\",\"kind\":2,\"detail\":\"(old, new) -> string\"},"
+            "{\"label\":\"split\",\"kind\":2,\"detail\":\"(delim) -> array\"},"
+            "{\"label\":\"split_at\",\"kind\":2,\"detail\":\"(delim, idx) -> string\"},"
+            "{\"label\":\"to_int\",\"kind\":2,\"detail\":\"() -> int\"},"
+            "{\"label\":\"to_string\",\"kind\":2,\"detail\":\"() -> string\"},"
+            "{\"label\":\"is_ok\",\"kind\":2,\"detail\":\"() -> bool\"},"
+            "{\"label\":\"is_err\",\"kind\":2,\"detail\":\"() -> bool\"},"
+            "{\"label\":\"unwrap\",\"kind\":2,\"detail\":\"() -> int\"},"
+            "{\"label\":\"unwrap_or\",\"kind\":2,\"detail\":\"(default) -> int\"}]");
+    } else {
+        // Global completions — keywords + modules
+        snprintf(buf, sizeof(buf),
+            "[{\"label\":\"fn\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"var\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"const\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"struct\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"enum\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"trait\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"impl\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"import\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"export\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"if\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"else\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"while\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"for\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"match\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"return\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"break\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"continue\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"spawn\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"await\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"async\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"mut\",\"kind\":14,\"detail\":\"keyword\"},"
+            "{\"label\":\"println\",\"kind\":3,\"detail\":\"fn(string)\"},"
+            "{\"label\":\"print\",\"kind\":3,\"detail\":\"fn(string)\"},"
+            "{\"label\":\"sleep_ms\",\"kind\":3,\"detail\":\"fn(int)\"},"
+            "{\"label\":\"File\",\"kind\":9,\"detail\":\"module: read, write, exists, delete, size, open...\"},"
+            "{\"label\":\"System\",\"kind\":9,\"detail\":\"module: exec, exec_code, env, exit, args\"},"
+            "{\"label\":\"Terminal\",\"kind\":9,\"detail\":\"module: cols, rows, raw_mode, read_key, clear...\"},"
+            "{\"label\":\"HashMap\",\"kind\":9,\"detail\":\"module: new, get, get_int, insert_int, keys, len...\"},"
+            "{\"label\":\"Math\",\"kind\":9,\"detail\":\"module: abs, max, min, sqrt, pow, clamp, sign...\"},"
+            "{\"label\":\"Path\",\"kind\":9,\"detail\":\"module: basename, dirname, extension, join\"},"
+            "{\"label\":\"DateTime\",\"kind\":9,\"detail\":\"module: now, millis, format, to_iso, year...\"},"
+            "{\"label\":\"Json\",\"kind\":9,\"detail\":\"module: new, parse, get, get_int, stringify, keys...\"},"
+            "{\"label\":\"Regex\",\"kind\":9,\"detail\":\"module: match, replace, find, find_all, split\"},"
+            "{\"label\":\"Encoding\",\"kind\":9,\"detail\":\"module: base64_encode, base64_decode, hex_encode...\"},"
+            "{\"label\":\"Crypto\",\"kind\":9,\"detail\":\"module: sha256, md5, hmac_sha256, random_bytes\"},"
+            "{\"label\":\"Url\",\"kind\":9,\"detail\":\"module: encode, decode\"},"
+            "{\"label\":\"Test\",\"kind\":9,\"detail\":\"module: init, assert, assert_eq_int, summary...\"},"
+            "{\"label\":\"Task\",\"kind\":9,\"detail\":\"module: value, get, set, add, channel, send, recv\"},"
+            "{\"label\":\"Db\",\"kind\":9,\"detail\":\"module: open, exec, query, query_one, close...\"},"
+            "{\"label\":\"Http\",\"kind\":9,\"detail\":\"module: get, post, serve, accept, respond, get_json...\"},"
+            "{\"label\":\"Net\",\"kind\":9,\"detail\":\"module: connect, send, recv, close, listen, resolve\"},"
+            "{\"label\":\"Gui\",\"kind\":9,\"detail\":\"module: create, clear, rect, text, button, panel...\"},"
+            "{\"label\":\"Audio\",\"kind\":9,\"detail\":\"module: init, load, play, stop, close\"},"
+            "{\"label\":\"StringBuilder\",\"kind\":9,\"detail\":\"module: new, append, to_string, len, clear\"},"
+            "{\"label\":\"Os\",\"kind\":9,\"detail\":\"module: platform, arch, hostname, pid, home_dir\"},"
+            "{\"label\":\"Uuid\",\"kind\":9,\"detail\":\"module: generate\"},"
+            "{\"label\":\"Log\",\"kind\":9,\"detail\":\"module: debug, info, warn, error, set_level\"},"
+            "{\"label\":\"Process\",\"kind\":9,\"detail\":\"module: exec_capture, exec_status\"},"
+            "{\"label\":\"Ok\",\"kind\":12,\"detail\":\"Result constructor\"},"
+            "{\"label\":\"Err\",\"kind\":12,\"detail\":\"Result constructor\"},"
+            "{\"label\":\"Some\",\"kind\":12,\"detail\":\"Option constructor\"},"
+            "{\"label\":\"None\",\"kind\":12,\"detail\":\"Option constructor\"}]");
     }
-    
-    int line = atoi(line_str + 7);
-    int character = atoi(char_str + 12);
-    
-    // Real implementation would provide context-aware completions
-    const char* completions = 
-        "[{\"label\":\"print\",\"kind\":3,\"detail\":\"fn(string)\"},"
-        "{\"label\":\"var\",\"kind\":14,\"detail\":\"keyword\"},"
-        "{\"label\":\"fn\",\"kind\":14,\"detail\":\"keyword\"},"
-        "{\"label\":\"struct\",\"kind\":14,\"detail\":\"keyword\"},"
-        "{\"label\":\"enum\",\"kind\":14,\"detail\":\"keyword\"},"
-        "{\"label\":\"match\",\"kind\":14,\"detail\":\"keyword\"},"
-        "{\"label\":\"if\",\"kind\":14,\"detail\":\"keyword\"},"
-        "{\"label\":\"while\",\"kind\":14,\"detail\":\"keyword\"},"
-        "{\"label\":\"for\",\"kind\":14,\"detail\":\"keyword\"},"
-        "{\"label\":\"return\",\"kind\":14,\"detail\":\"keyword\"}]";
-    send_response(id, completions);
+    send_response(id, buf);
 }
 
 int lsp_server_start() {

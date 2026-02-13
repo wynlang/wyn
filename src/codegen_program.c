@@ -328,10 +328,8 @@ void codegen_program(Program* prog) {
             bool is_main_function = (fn->name.length == 4 && 
                                    memcmp(fn->name.start, "main", 4) == 0);
             
-            // For async functions, return WynFuture*
-            if (is_async) {
-                emit("WynFuture* %.*s(", fn->name.length, fn->name.start);
-            } else if (is_main_function) {
+            // Function forward declaration
+            if (is_main_function) {
                 emit("%s wyn_main(", return_type);
             } else if (fn->is_extension) {
                 // Extension method: Type_method

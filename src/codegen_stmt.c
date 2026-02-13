@@ -830,10 +830,8 @@ void codegen_stmt(Stmt* stmt) {
             bool is_main_function = (stmt->fn.name.length == 4 && 
                                    memcmp(stmt->fn.name.start, "main", 4) == 0);
             
-            // For async functions, return WynFuture*
-            if (is_async) {
-                emit("WynFuture* %.*s(", stmt->fn.name.length, stmt->fn.name.start);
-            } else if (is_main_function) {
+            // Function signature
+            if (is_main_function) {
                 emit("%s wyn_main(", return_type);
             } else if (stmt->fn.is_extension) {
                 // Extension method: fn Type.method() -> Type_method()
@@ -985,21 +983,8 @@ void codegen_stmt(Stmt* stmt) {
                     current_fn_return_kind = "OptionString";
             }
 
-            // For async functions, wrap the body in a future
-            if (is_async) {
-                emit("    WynFuture* future = wyn_future_new();\n");
-                emit("    %s* temp = malloc(sizeof(%s));\n", return_type, return_type);
-                emit("    {\n");
-                // Set async context for return statement handling
-                bool prev_async = in_async_function;
-                in_async_function = true;
-                codegen_stmt(stmt->fn.body);
-                in_async_function = prev_async;
-                emit("    }\n");
-                emit("async_return:\n");
-                emit("    wyn_future_ready(future, temp);\n");
-                emit("    return future;\n");
-            } else {
+            // Function body
+            {
                 codegen_stmt(stmt->fn.body);
                 // Ensure main function always returns 0 if no explicit return
                 bool is_main = (stmt->fn.name.length == 4 && 
