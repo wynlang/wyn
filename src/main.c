@@ -420,11 +420,24 @@ int main(int argc, char** argv) {
         }
         
         printf("\033[1mBuilding\033[0m %s...\n", entry);
+        // Compile only — keep binary, clean .c
         char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "%s run %s", argv[0], entry);
+        snprintf(cmd, sizeof(cmd), "%s %s", argv[0], entry);
         int result = system(cmd);
         if (result == 0) {
-            printf("\033[32m✓\033[0m Build successful\n");
+            // Remove .c, keep .out
+            char c_path[512];
+            snprintf(c_path, sizeof(c_path), "%s.c", entry);
+            unlink(c_path);
+            // Rename .out to clean name
+            char out_path[512], bin_path[512];
+            snprintf(out_path, sizeof(out_path), "%s.out", entry);
+            // Extract name: dir/main.wyn -> dir/main
+            snprintf(bin_path, sizeof(bin_path), "%s", entry);
+            char* dot = strrchr(bin_path, '.');
+            if (dot) *dot = 0;
+            rename(out_path, bin_path);
+            printf("\033[32m✓\033[0m Built: %s\n", bin_path);
         } else {
             fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
         }
