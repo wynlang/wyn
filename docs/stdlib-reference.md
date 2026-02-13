@@ -434,3 +434,22 @@ Instance methods on `[int]` or `[string]` arrays.
 | `Audio.play(id)` | Play audio |
 | `Audio.stop()` | Stop playback |
 | `Audio.close()` | Close audio |
+
+---
+
+## List Comprehensions
+
+```wyn
+var squares = [x * x for x in 0..10]
+var evens = [x for x in 0..20 if x % 2 == 0]
+var doubled = [x * 2 for x in some_array]
+var big = [x for x in nums if x > 100]
+```
+
+## Slice Syntax
+
+```wyn
+var sub = arr[1:3]              // array slice
+var sub = arr[2..5]             // same with ..
+var hello = "hello world"[0:5]  // string slice
+```
