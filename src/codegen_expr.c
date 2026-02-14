@@ -259,7 +259,7 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_BOOL:
-            emit("%.*s", expr->token.length, expr->token.start);
+            emit("(bool)%.*s", expr->token.length, expr->token.start);
             break;
         case EXPR_UNARY:
             if (expr->unary.op.type == TOKEN_NOT) {

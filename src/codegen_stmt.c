@@ -790,7 +790,7 @@ void codegen_stmt(Stmt* stmt) {
             break;
         case STMT_FN: {
             // Determine return type
-            const char* return_type = "long long"; // default
+            const char* return_type = stmt->fn.return_type ? "long long" : "void"; // default
             char return_type_buf[256] = {0};  // Buffer for custom return types
             bool is_async = stmt->fn.is_async;
             

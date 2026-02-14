@@ -1628,8 +1628,8 @@ void print_args_impl(int count, ...) {
 void print_int(int x) { printf("%d", x); }
 void print_float(double x) { printf("%g\n", x); }
 void print_str(const char* s) { printf("%s", s); fflush(stdout); }
-void print_bool(bool b) { printf("%s\n", b ? "true" : "false"); }
-void print_int_no_nl(int x) { printf("%d", x); }
+void print_bool(bool b) { printf("%s", b ? "true" : "false"); }
+void print_int_no_nl(long long x) { printf("%lld", x); }
 void print_float_no_nl(double x) { printf("%g", x); }
 void print_str_no_nl(const char* s) { printf("%s", s); }
 void print_bool_no_nl(bool b) { printf("%s", b ? "true" : "false"); }
@@ -1657,15 +1657,17 @@ void print_bin(int x) { for(int i = 31; i >= 0; i--) printf("%d", (x >> i) & 1);
 #define println(x) do { print(x); printf("\n"); } while(0)
 void print_debug(const char* label, int val) { printf("%s: %d\n", label, val); }
 #define print(x) _Generic((x), \
-    int: print_int, \
-    float: print_float, \
-    double: print_float, \
-    char*: print_str, \
-    const char*: print_str, \
-    bool: print_bool, \
+    int: print_int_no_nl, \
+    long: print_int_no_nl, \
+    long long: print_int_no_nl, \
+    float: print_float_no_nl, \
+    double: print_float_no_nl, \
+    char*: print_str_no_nl, \
+    const char*: print_str_no_nl, \
+    bool: print_bool_no_nl, \
     WynArray: print_array, \
     WynValue: print_value, \
-    default: print_int)(x)
+    default: print_int_no_nl)(x)
 
 int input() { int x = 0; if (scanf("%d", &x) != 1) { while(getchar() != '\n') { /* clear input buffer */ } return 0; } return x; }
 float input_float() { float x = 0.0f; if (scanf("%f", &x) != 1) { while(getchar() != '\n') { /* clear input buffer */ } return 0.0f; } return x; }
