@@ -1626,11 +1626,11 @@ void print_args_impl(int count, ...) {
 }
 
 void print_int(int x) { printf("%d", x); }
-void print_float(double x) { printf("%f\n", x); }
+void print_float(double x) { printf("%g\n", x); }
 void print_str(const char* s) { printf("%s", s); fflush(stdout); }
 void print_bool(bool b) { printf("%s\n", b ? "true" : "false"); }
 void print_int_no_nl(int x) { printf("%d", x); }
-void print_float_no_nl(double x) { printf("%f", x); }
+void print_float_no_nl(double x) { printf("%g", x); }
 void print_str_no_nl(const char* s) { printf("%s", s); }
 void print_bool_no_nl(bool b) { printf("%s", b ? "true" : "false"); }
 void print_array(WynArray arr) { printf("["); for(int i = 0; i < arr.count; i++) { if(i > 0) printf(", "); printf("%d", array_get_int(arr, i)); } printf("]\n"); }

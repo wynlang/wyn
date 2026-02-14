@@ -1127,6 +1127,8 @@ int main(int argc, char** argv) {
         char out_path[256];
         snprintf(out_path, 256, "%s.c", file);
         FILE* out = fopen(out_path, "w");
+        struct timespec _ts_start, _ts_end;
+        clock_gettime(CLOCK_MONOTONIC, &_ts_start);
         init_codegen(out);
         codegen_c_header();
         codegen_program(prog);
@@ -1203,6 +1205,11 @@ int main(int argc, char** argv) {
         }
         int result = system(compile_cmd);
         
+        if (result == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &_ts_end);
+            double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
+            fprintf(stderr, "\033[2mCompiled in %.0fms\033[0m\n", _ms);
+        }
         if (result != 0) {
             fprintf(stderr, "Error: compilation failed (internal codegen error)\n");
             fprintf(stderr, "Run with WYN_DEBUG=1 for details\n");
