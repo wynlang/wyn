@@ -2469,7 +2469,7 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
-            emit("); strdup(__buf); })");
+            emit("); wyn_strdup(__buf); })");
             break;
         }
         case EXPR_RANGE:
