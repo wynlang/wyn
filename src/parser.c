@@ -504,7 +504,7 @@ static Expr* primary() {
                 advance(); // consume '{'
                 Expr* block_expr = alloc_expr();
                 block_expr->type = EXPR_BLOCK;
-                block_expr->block.stmts = malloc(sizeof(Stmt*) * 32);
+                block_expr->block.stmts = malloc(sizeof(Stmt*) * 256);
                 block_expr->block.stmt_count = 0;
                 block_expr->block.result = NULL;
                 
@@ -1375,7 +1375,7 @@ Stmt* statement() {
         stmt->try_stmt.try_block = alloc_stmt();
         stmt->try_stmt.try_block->type = STMT_BLOCK;
         stmt->try_stmt.try_block->block.count = 0;
-        stmt->try_stmt.try_block->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->try_stmt.try_block->block.stmts = malloc(sizeof(Stmt*) * 256);
         
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
             stmt->try_stmt.try_block->block.stmts[stmt->try_stmt.try_block->block.count++] = statement();
@@ -1542,7 +1542,7 @@ Stmt* statement() {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_UNSAFE;
         expect(TOKEN_LBRACE, "Expected '{' after 'unsafe'");
-        stmt->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
             stmt->block.stmts[stmt->block.count++] = statement();
@@ -1573,7 +1573,7 @@ Stmt* statement() {
         expect(TOKEN_LBRACE, "Expected '{' after if condition");
         stmt->if_stmt.then_branch = alloc_stmt();
         stmt->if_stmt.then_branch->type = STMT_BLOCK;
-        stmt->if_stmt.then_branch->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->if_stmt.then_branch->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->if_stmt.then_branch->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
             stmt->if_stmt.then_branch->block.stmts[stmt->if_stmt.then_branch->block.count++] = statement();
@@ -1587,7 +1587,7 @@ Stmt* statement() {
                 expect(TOKEN_LBRACE, "Expected '{' after else");
                 stmt->if_stmt.else_branch = alloc_stmt();
                 stmt->if_stmt.else_branch->type = STMT_BLOCK;
-                stmt->if_stmt.else_branch->block.stmts = malloc(sizeof(Stmt*) * 32);
+                stmt->if_stmt.else_branch->block.stmts = malloc(sizeof(Stmt*) * 256);
                 stmt->if_stmt.else_branch->block.count = 0;
                 while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                     stmt->if_stmt.else_branch->block.stmts[stmt->if_stmt.else_branch->block.count++] = statement();
@@ -1752,7 +1752,7 @@ Stmt* statement() {
         expect(TOKEN_LBRACE, "Expected '{' after while condition");
         stmt->while_stmt.body = alloc_stmt();
         stmt->while_stmt.body->type = STMT_BLOCK;
-        stmt->while_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->while_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->while_stmt.body->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
             stmt->while_stmt.body->block.stmts[stmt->while_stmt.body->block.count++] = statement();
@@ -1889,7 +1889,7 @@ Stmt* statement() {
                 expect(TOKEN_LBRACE, "Expected '{' after for header");
                 stmt->for_stmt.body = alloc_stmt();
                 stmt->for_stmt.body->type = STMT_BLOCK;
-                stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 32);
+                stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
                 stmt->for_stmt.body->block.count = 0;
                 while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                     stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = statement();
@@ -1926,7 +1926,7 @@ Stmt* statement() {
         expect(TOKEN_LBRACE, "Expected '{' after for header");
         stmt->for_stmt.body = alloc_stmt();
         stmt->for_stmt.body->type = STMT_BLOCK;
-        stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->for_stmt.body->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
             stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = statement();
@@ -1942,7 +1942,7 @@ Stmt* statement() {
     if (match(TOKEN_LBRACE)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_BLOCK;
-        stmt->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
             stmt->block.stmts[stmt->block.count++] = statement();
@@ -2109,12 +2109,13 @@ Stmt* function() {
     Stmt* body = alloc_stmt();
     body->type = STMT_BLOCK;
     body->block.count = 0;
-    body->block.stmts = malloc(sizeof(Stmt*) * 8192); // Increased to 4096 for large functions
+    int block_capacity = 1024;
+    body->block.stmts = malloc(sizeof(Stmt*) * block_capacity);
     
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-        if (body->block.count >= 8192) {
-            fprintf(stderr, "Error at line %d: Function body too large (max 8192 statements)\n", parser.current.line);
-            exit(1);
+        if (body->block.count >= block_capacity) {
+            block_capacity *= 2;
+            body->block.stmts = realloc(body->block.stmts, sizeof(Stmt*) * block_capacity);
         }
         body->block.stmts[body->block.count++] = statement();
     }
@@ -2266,7 +2267,7 @@ Stmt* struct_decl() {
             Stmt* body = alloc_stmt();
             body->type = STMT_BLOCK;
             body->block.count = 0;
-            body->block.stmts = malloc(sizeof(Stmt*) * 64);
+            body->block.stmts = malloc(sizeof(Stmt*) * 256);
             
             while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                 body->block.stmts[body->block.count++] = statement();
@@ -2372,7 +2373,7 @@ Stmt* object_decl() {
             Stmt* body = alloc_stmt();
             body->type = STMT_BLOCK;
             body->block.count = 0;
-            body->block.stmts = malloc(sizeof(Stmt*) * 64);
+            body->block.stmts = malloc(sizeof(Stmt*) * 256);
             
             while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                 body->block.stmts[body->block.count++] = statement();
@@ -2709,7 +2710,7 @@ Stmt* type_alias() {
 
 Program* parse_program() {
     Program* prog = safe_calloc(1, sizeof(Program));
-    prog->stmts = safe_malloc(sizeof(Stmt*) * 32);
+    prog->stmts = safe_malloc(sizeof(Stmt*) * 256);
     prog->count = 0;
     int capacity = 32;
     
@@ -3043,7 +3044,7 @@ static Stmt* parse_test_statement() {
     expect(TOKEN_LBRACE, "Expected '{' before test body");
     stmt->test_stmt.body = alloc_stmt();
     stmt->test_stmt.body->type = STMT_BLOCK;
-    stmt->test_stmt.body->block.stmts = safe_malloc(sizeof(Stmt*) * 32);
+    stmt->test_stmt.body->block.stmts = safe_malloc(sizeof(Stmt*) * 256);
     stmt->test_stmt.body->block.count = 0;
     
     // Parse statements until closing brace

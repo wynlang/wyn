@@ -1194,7 +1194,7 @@ int main(int argc, char** argv) {
         }
         // Append optional flags before the redirect
         if (sqlite_flags[0] || gui_flags[0]) {
-            char* redirect = strstr(compile_cmd, " 2>/tmp");
+            char* redirect = strstr(compile_cmd, " 2>wyn_cc_err");
             if (redirect) {
                 char tail[256];
                 strncpy(tail, redirect, sizeof(tail)-1); tail[sizeof(tail)-1] = 0;

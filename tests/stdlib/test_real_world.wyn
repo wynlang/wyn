@@ -1,0 +1,81 @@
+fn main() -> int {
+    Test.init("Real World")
+    
+    // Large function with many operations (was limited to 8192)
+    var sum = 0
+    for i in 0..100 { sum = sum + i }
+    Test.assert_eq_int(sum, 4950, "100 iterations")
+    
+    // Nested loops (inner blocks were limited to 32)
+    var count = 0
+    for i in 0..20 {
+        for j in 0..20 {
+            count = count + 1
+        }
+    }
+    Test.assert_eq_int(count, 400, "nested 20x20")
+    
+    // String building in loop
+    var sb = StringBuilder.new()
+    for i in 0..50 {
+        StringBuilder.append(sb, "x")
+    }
+    Test.assert_eq_int(StringBuilder.len(sb), 50, "sb 50")
+    StringBuilder.free(sb)
+    
+    // Large array operations
+    var big = [x for x in 0..100]
+    Test.assert_eq_int(big.len(), 100, "100 elem comp")
+    
+    // HashMap with many entries
+    var m = HashMap.new()
+    for i in 0..50 {
+        m.insert_int(i.to_string(), i * i)
+    }
+    Test.assert_eq_int(m.len(), 50, "50 entries")
+    Test.assert_eq_int(m.get_int("7"), 49, "get 7^2")
+    
+    // Multiple spawns
+    var shared = Task.value(0)
+    var f1 = spawn add_to(shared, 1)
+    var f2 = spawn add_to(shared, 2)
+    var f3 = spawn add_to(shared, 3)
+    var f4 = spawn add_to(shared, 4)
+    var f5 = spawn add_to(shared, 5)
+    await f1
+    await f2
+    await f3
+    await f4
+    await f5
+    Test.assert_eq_int(Task.get(shared), 15, "5 spawns")
+    
+    // File write/read/append cycle
+    File.write("/tmp/wyn_real.txt", "line1\n")
+    File.append("/tmp/wyn_real.txt", "line2\n")
+    File.append("/tmp/wyn_real.txt", "line3\n")
+    var content = File.read("/tmp/wyn_real.txt")
+    Test.assert(content.contains("line1"), "write")
+    Test.assert(content.contains("line3"), "append")
+    File.delete("/tmp/wyn_real.txt")
+    Test.assert_eq_int(File.exists("/tmp/wyn_real.txt"), 0, "delete")
+    
+    // Db operations
+    var db = Db.open(":memory:")
+    Db.exec(db, "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)")
+    for i in 0..10 {
+        var val = i.to_string()
+        Db.exec(db, "INSERT INTO t(v) VALUES('${val}')")
+    }
+    Test.assert_eq_str(Db.query_one(db, "SELECT COUNT(*) FROM t"), "10", "10 rows")
+    Db.exec(db, "DELETE FROM t WHERE id > 5")
+    Test.assert_eq_str(Db.query_one(db, "SELECT COUNT(*) FROM t"), "5", "delete rows")
+    Db.close(db)
+    
+    Test.summary()
+    return 0
+}
+
+fn add_to(shared: int, n: int) -> int {
+    Task.add(shared, n)
+    return 0
+}
