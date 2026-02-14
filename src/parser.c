@@ -209,8 +209,8 @@ static Expr* primary() {
             expr->token = str_token;
             
             // Parse interpolation expressions
-            expr->string_interp.parts = malloc(sizeof(char*) * 8);
-            expr->string_interp.expressions = malloc(sizeof(Expr*) * 8);
+            expr->string_interp.parts = malloc(sizeof(char*) * 64);
+            expr->string_interp.expressions = malloc(sizeof(Expr*) * 64);
             expr->string_interp.count = 0;
             
             // Parse the string and extract ${...} expressions
