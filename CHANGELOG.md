@@ -1,8 +1,9 @@
 # Changelog
 
-## v1.6.0 — 2026-02-13
+## v1.6.0 — 2026-02-16
 
 ### Language Features
+
 - **Unified struct syntax** — methods directly in struct body, no separate `impl` needed
 - **List comprehensions** — `[x * x for x in 0..10 if x > 3]`
 - **Slice syntax** — `arr[1:3]` and `str[0:5]` (both `:` and `..`)
@@ -14,6 +15,7 @@
 - **String interpolation** — `"hello ${name}"` with expressions
 
 ### Standard Library — 27 Modules, 270+ Methods
+
 - **New: Csv** (7 methods) — parse, row_count, col_count, get, get_field, header, header_count
 - **New: Math** — sin, cos, tan, atan2, round, floor, ceil, round_to, pi, e
 - **New: Json** — to_pretty_string, set_bool
@@ -31,6 +33,7 @@
 - **ResultInt** — unwrap_or added
 
 ### CLI
+
 - **New: `wyn run --python`** — compile to shared library + auto-generated Python wrapper with type hints
 - **New: `wyn run --shared`** — compile to shared library (`.so`/`.dylib`/`.dll`)
 - **New: `wyn repl`** — interactive REPL with definition accumulation
@@ -46,22 +49,26 @@
 - **`async` deprecated** — use `spawn`/`await` instead
 
 ### Cross-Platform
+
 - **Windows fully supported** — compat layer for dirent, Winsock, terminal, temp paths
 - **iOS cross-compilation** — `wyn cross ios file.wyn`
 - **Android cross-compilation** — `wyn cross android file.wyn`
 - **5 targets** — linux, macos, windows, ios, android
 
 ### Editor Support
+
 - **LSP** — completions for all 27 modules, dot-triggered method hints
 - **VS Code** — syntax highlighting, LSP client, v1.6.0
 - **Neovim** — syntax highlighting, LSP config, all keywords
 
 ### Performance
+
 - Spawn: 2μs per task, 180 bytes memory
 - Compilation: 62ms cached
 - M:N work-stealing scheduler
 
 ### Bug Fixes
+
 - Math.abs used float (precision loss) → long long
 - File.size returned -1 for missing files → 0
 - string_split skipped empty fields (strtok) → strstr
@@ -74,6 +81,7 @@
 - Futures in arrays: WynValue.int_val int → long long
 
 ### Infrastructure
+
 - GitHub Actions CI: Ubuntu, macOS ARM, macOS Intel, Windows
 - Release workflow: 4 platform binaries
 - Site: wynlang.com with install scripts (sh + ps1)

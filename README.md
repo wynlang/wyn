@@ -94,6 +94,8 @@ See [docs/stdlib-reference.md](docs/stdlib-reference.md) for the full API.
 
 ```
 wyn run <file>          Compile and run
+wyn run <file> --shared Build as shared library (.so/.dylib/.dll)
+wyn run <file> --python Build shared library + Python wrapper
 wyn check <file>        Type-check without compiling
 wyn test                Run project tests
 wyn repl                Interactive REPL
