@@ -1244,9 +1244,10 @@ int main(int argc, char** argv) {
                 FILE* py = fopen(py_path, "w");
                 if (py) {
                     fprintf(py, "\"\"\"Auto-generated Python wrapper for %s.wyn — created by Wyn\"\"\"\n", lib_name);
-                    fprintf(py, "import ctypes, os\n\n");
+                    fprintf(py, "import ctypes, os, sys\n\n");
                     fprintf(py, "_dir = os.path.dirname(os.path.abspath(__file__))\n");
-                    fprintf(py, "_lib = ctypes.CDLL(os.path.join(_dir, \"%s\"))\n\n", lib_path);
+                    fprintf(py, "if sys.platform == 'darwin':\n    _ext = 'dylib'\nelif sys.platform == 'win32':\n    _ext = 'dll'\nelse:\n    _ext = 'so'\n");
+                    fprintf(py, "_lib = ctypes.CDLL(os.path.join(_dir, f'lib%s.{_ext}'))\n\n", lib_name);
                     for (int fi = 0; fi < prog->count; fi++) {
                         Stmt* s = prog->stmts[fi];
                         if (s->type != STMT_FN) continue;
@@ -1292,13 +1293,26 @@ int main(int argc, char** argv) {
                         }
                         fprintf(py, "]\n");
                         fprintf(py, "_lib.%s%s.restype = %s\n\n", cpfx, fname, py_res);
-                        // Python wrapper function
+                        // Python wrapper function with type hints
                         fprintf(py, "def %s(", fname);
                         for (int p = 0; p < s->fn.param_count; p++) {
                             if (p > 0) fprintf(py, ", ");
                             fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
+                            // Add type hint
+                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                                Token pt = s->fn.param_types[p]->token;
+                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(py, ": str");
+                                else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(py, ": float");
+                                else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(py, ": bool");
+                                else if (pt.length == 3 && memcmp(pt.start, "int", 3) == 0) fprintf(py, ": int");
+                            }
                         }
-                        fprintf(py, "):\n");
+                        // Return type hint
+                        if (ret_is_str) fprintf(py, ") -> str:\n");
+                        else if (strcmp(py_res, "ctypes.c_double") == 0) fprintf(py, ") -> float:\n");
+                        else if (strcmp(py_res, "ctypes.c_bool") == 0) fprintf(py, ") -> bool:\n");
+                        else if (strcmp(py_res, "None") == 0) fprintf(py, ") -> None:\n");
+                        else fprintf(py, ") -> int:\n");
                         // Encode string params
                         for (int p = 0; p < s->fn.param_count; p++) {
                             if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
