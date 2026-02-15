@@ -1,0 +1,81 @@
+// TDD: Struct methods regression test
+// Tests fn Type.method(self) syntax end-to-end
+
+// === Test 1: Basic method, no extra args ===
+struct Point { x: int, y: int }
+
+fn Point.sum(self) -> int {
+    return self.x + self.y
+}
+
+// === Test 2: Method with extra args, returns struct ===
+fn Point.scale(self, factor: int) -> Point {
+    return Point { x: self.x * factor, y: self.y * factor }
+}
+
+// === Test 3: Method returning string ===
+fn Point.to_string(self) -> string {
+    return "Point"
+}
+
+// === Test 4: Multiple methods on same struct ===
+struct Counter { value: int }
+
+fn Counter.increment(self) -> Counter {
+    return Counter { value: self.value + 1 }
+}
+
+fn Counter.get(self) -> int {
+    return self.value
+}
+
+fn Counter.add(self, n: int) -> Counter {
+    return Counter { value: self.value + n }
+}
+
+// === Test 5: Method using conditional logic ===
+fn Point.quadrant(self) -> int {
+    if self.x > 0 {
+        if self.y > 0 {
+            return 1
+        }
+        return 4
+    }
+    if self.y > 0 {
+        return 2
+    }
+    return 3
+}
+
+fn main() -> int {
+    // Test 1: basic method
+    var p = Point { x: 10, y: 20 }
+    println(p.sum())
+
+    // Test 2: method with extra args
+    var p2 = p.scale(3)
+    println(p2.x)
+    println(p2.y)
+
+    // Test 3: method returning string
+    println(p.to_string())
+
+    // Test 4: chained struct usage
+    var c = Counter { value: 0 }
+    var c2 = c.increment()
+    var c3 = c2.increment()
+    println(c3.get())
+
+    // Test 4b: method with extra args
+    var c4 = c.add(10)
+    println(c4.get())
+
+    // Test 5: conditional logic in method
+    var q1 = Point { x: 5, y: 5 }
+    println(q1.quadrant())
+
+    var q3 = Point { x: -1, y: -1 }
+    println(q3.quadrant())
+
+    return 0
+}

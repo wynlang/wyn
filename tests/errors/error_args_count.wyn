@@ -1,0 +1,11 @@
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn main() -> int {
+    var result1 = add(5);        // Too few args
+    var result2 = add(1, 2, 3);  // Too many args
+    print(result1);
+    print(result2);
+    return 0;
+}

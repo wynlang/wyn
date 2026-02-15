@@ -1,0 +1,166 @@
+fn dbl(x: int) -> int { return x * 2 }
+
+struct Point { x: int, y: int }
+impl Point {
+    fn sum(self) -> int { return self.x + self.y }
+}
+
+trait Shape {
+    fn area(self) -> int
+}
+struct Square { side: int }
+impl Shape for Square {
+    fn area(self) -> int { return self.side * self.side }
+}
+
+fn test_core() {
+    // Chained method calls on strings
+    Test.assert_eq_str("  HELLO  ".trim().lower().reverse(), "olleh", "chain 3")
+    
+    // Nested function calls
+    Test.assert_eq_int(Math.max(Math.min(10, 5), 3), 5, "nested fn")
+    
+    // Negative array index_of
+    Test.assert_eq_int([1,2,3].index_of(0), -1, "index_of missing")
+    
+    // Large array
+    var big = [0]
+    for i in 1..101 { big.push(i) }
+    Test.assert_eq_int(big.len(), 101, "big array")
+    Test.assert_eq_int(big[100], 100, "big array last")
+    
+    // HashMap with many entries
+    var m = HashMap.new()
+    for i in 0..50 { m.insert_int(i.to_string(), i) }
+    Test.assert_eq_int(m.len(), 50, "50 entries")
+    Test.assert_eq_int(m.get_int("49"), 49, "get 49th")
+    
+    // Struct in array
+    var pts = [Point{x:1,y:2}, Point{x:3,y:4}, Point{x:5,y:6}]
+    Test.assert_eq_int(pts[2].x, 5, "struct arr[2].x")
+    Test.assert_eq_int(pts[1].sum(), 7, "struct arr method")
+    
+    // Trait method on struct
+    var sq = Square{side: 7}
+    Test.assert_eq_int(sq.area(), 49, "trait method")
+    
+    // Result chaining
+    var ok: ResultInt = Ok(42)
+    var err: ResultInt = Err("nope")
+    Test.assert_eq_int(ok.unwrap_or(0), 42, "unwrap_or ok")
+    Test.assert_eq_int(err.unwrap_or(0), 0, "unwrap_or err")
+    
+    // Option
+    var some: OptionInt = Some(10)
+    var none: OptionInt = None
+    Test.assert(some.is_some(), "some is_some")
+    Test.assert(none.is_none(), "none is_none")
+    Test.assert_eq_int(some.unwrap_or(0), 10, "some unwrap_or")
+    Test.assert_eq_int(none.unwrap_or(99), 99, "none unwrap_or")
+    
+    // Higher-order: map with named fn
+    var arr = [1, 2, 3]
+    var doubled = arr.map(dbl)
+    Test.assert_eq_int(doubled[0], 2, "map named fn")
+    Test.assert_eq_int(doubled[2], 6, "map named fn last")
+    
+    // For-each with string array
+    var words = "hello world foo".split(" ")
+    var sb = StringBuilder.new()
+    for w in words { StringBuilder.append(sb, w) }
+    Test.assert_eq_str(StringBuilder.to_string(sb), "helloworldfoo", "for-each strings")
+    StringBuilder.free(sb)
+}
+
+fn test_io() {
+    // File: write, read, append, read lines
+    File.write("/tmp/wyn_h3.txt", "line1\nline2\n")
+    File.append("/tmp/wyn_h3.txt", "line3\n")
+    var content = File.read("/tmp/wyn_h3.txt")
+    Test.assert(content.contains("line3"), "append works")
+    Test.assert_eq_int(File.size("/tmp/wyn_h3.txt"), 18, "file size")
+    
+    // Db: update + delete
+    var db = Db.open(":memory:")
+    Db.exec(db, "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)")
+    Db.exec(db, "INSERT INTO t(v) VALUES('a')")
+    Db.exec(db, "INSERT INTO t(v) VALUES('b')")
+    Db.exec(db, "UPDATE t SET v='c' WHERE id=1")
+    Test.assert_eq_str(Db.query_one(db, "SELECT v FROM t WHERE id=1"), "c", "db update")
+    Db.exec(db, "DELETE FROM t WHERE id=2")
+    Test.assert_eq_str(Db.query_one(db, "SELECT COUNT(*) FROM t"), "1", "db delete")
+    Db.close(db)
+    
+    // Json: nested objects
+    var j = Json.parse("{\"user\":{\"name\":\"Wyn\",\"age\":2}}")
+    var user = Json.get_object(j, "user")
+    Test.assert_eq_str(Json.get(user, "name"), "Wyn", "nested json")
+    Test.assert_eq_int(Json.get_int(user, "age"), 2, "nested json int")
+    
+    File.delete("/tmp/wyn_h3.txt")
+}
+
+fn test_concurrency() {
+    // Spawn multiple workers
+    var shared = Task.value(0)
+    var f1 = spawn worker_add(shared, 10)
+    var f2 = spawn worker_add(shared, 20)
+    var f3 = spawn worker_add(shared, 30)
+    var f4 = spawn worker_add(shared, 40)
+    await f1
+    await f2
+    await f3
+    await f4
+    Test.assert_eq_int(Task.get(shared), 100, "4 spawns = 100")
+    
+    // Channel ordering
+    var ch = Task.channel(100)
+    for i in 0..10 { Task.send(ch, i * i) }
+    Test.assert_eq_int(Task.recv(ch), 0, "ch[0]=0")
+    Test.assert_eq_int(Task.recv(ch), 1, "ch[1]=1")
+    Test.assert_eq_int(Task.recv(ch), 4, "ch[2]=4")
+    Test.assert_eq_int(Task.recv(ch), 9, "ch[3]=9")
+}
+
+fn worker_add(shared: int, n: int) -> int {
+    Task.add(shared, n)
+    return 0
+}
+
+fn test_csv_edge() {
+    // Empty CSV
+    var empty = Csv.parse("")
+    Test.assert_eq_int(Csv.row_count(empty), 0, "empty csv")
+    
+    // Single row
+    var single = Csv.parse("a,b,c")
+    Test.assert_eq_int(Csv.row_count(single), 1, "single row csv")
+    Test.assert_eq_str(Csv.get(single, 0, 0), "a", "single row get")
+    
+    // Quoted with newline-like content
+    var quoted = Csv.parse("name,desc\nAlice,\"hello, world\"\nBob,\"test\"\"quote\"\"\"")
+    Test.assert_eq_str(Csv.get(quoted, 1, 1), "hello, world", "csv quoted comma")
+    Test.assert_eq_str(Csv.get(quoted, 2, 1), "test\"quote\"", "csv escaped quote")
+}
+
+fn test_encoding_roundtrip() {
+    // Various lengths for base64
+    Test.assert_eq_str(Encoding.base64_decode(Encoding.base64_encode("a")), "a", "b64 1 char")
+    Test.assert_eq_str(Encoding.base64_decode(Encoding.base64_encode("ab")), "ab", "b64 2 char")
+    Test.assert_eq_str(Encoding.base64_decode(Encoding.base64_encode("abc")), "abc", "b64 3 char")
+    Test.assert_eq_str(Encoding.base64_decode(Encoding.base64_encode("abcd")), "abcd", "b64 4 char")
+    
+    // Hex roundtrip
+    Test.assert_eq_str(Encoding.hex_decode(Encoding.hex_encode("Hello!")), "Hello!", "hex roundtrip")
+}
+
+fn main() -> int {
+    Test.init("Hunt 3")
+    test_core()
+    test_io()
+    test_concurrency()
+    test_csv_edge()
+    test_encoding_roundtrip()
+    Test.summary()
+    return 0
+}

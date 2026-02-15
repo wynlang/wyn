@@ -1,0 +1,23 @@
+// TDD: Method calls on struct - calling another method from within a method
+
+struct Rect { w: int, h: int }
+
+fn Rect.area(self) -> int {
+    return self.w * self.h
+}
+
+fn Rect.perimeter(self) -> int {
+    return 2 * (self.w + self.h)
+}
+
+fn Rect.describe(self) -> string {
+    return int_to_string(self.w) + "x" + int_to_string(self.h) + " area=" + int_to_string(self.area())
+}
+
+fn main() -> int {
+    var r = Rect { w: 5, h: 3 }
+    println(r.area())
+    println(r.perimeter())
+    println(r.describe())
+    return 0
+}

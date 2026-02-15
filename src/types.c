@@ -25,7 +25,6 @@ static const MethodSignature method_signatures[] = {
     {"string", "ends_with", "bool", 1},
     {"string", "index_of", "int", 1},    // Returns -1 if not found
     {"string", "replace", "string", 2},
-    {"string", "split", "array", 1},     // Returns Vec<string>
     {"string", "slice", "string", 2},
     {"string", "substring", "string", 2},
     {"string", "repeat", "string", 1},
@@ -44,6 +43,30 @@ static const MethodSignature method_signatures[] = {
     {"string", "equals", "bool", 1},         // String equality
     {"string", "count", "int", 1},           // Count occurrences
     {"string", "is_numeric", "bool", 0},     // Check if numeric (int or float)
+    {"string", "to_int", "int", 0},          // Parse string to int
+    {"string", "to_float", "float", 0},      // Parse string to float
+    {"string", "parse_int", "int", 0},       // Parse string to int (alias)
+    {"string", "parse_float", "float", 0},   // Parse string to float (alias)
+    {"string", "parse_json", "json", 0},     // Parse JSON string, returns json object
+    
+    // JSON methods
+    {"json", "get_string", "string", 1},     // Get string value by key
+    {"json", "get_int", "int", 1},           // Get int value by key
+    {"json", "get_float", "float", 1},       // Get float value by key
+    {"json", "get_bool", "bool", 1},         // Get bool value by key
+    {"json", "free", "void", 0},             // Free JSON object
+    
+    // HTTP methods (URL is a string)
+    {"string", "http_get", "string", 0},     // GET request, returns response body
+    {"string", "http_post", "string", 1},    // POST request with body
+    
+    // String formatting
+    {"string", "format", "string", -1},      // Variable args: format(arg1, arg2, ...)
+    
+    // File system methods (path is a string)
+    {"string", "exists", "bool", 0},         // Check if path exists
+    {"string", "is_file", "bool", 0},        // Check if path is a file
+    {"string", "is_dir", "bool", 0},         // Check if path is a directory
     
     // Int methods
     {"int", "to_string", "string", 0},
@@ -95,6 +118,22 @@ static const MethodSignature method_signatures[] = {
     // Bool methods
     {"bool", "to_string", "string", 0},
     {"bool", "to_int", "int", 0},
+    {"bool", "not", "bool", 0},
+    {"bool", "and", "bool", 1},
+    {"bool", "or", "bool", 1},
+    {"bool", "xor", "bool", 1},
+    
+    // Char methods
+    {"char", "to_string", "string", 0},
+    {"char", "to_int", "int", 0},
+    {"char", "is_alpha", "bool", 0},
+    {"char", "is_numeric", "bool", 0},
+    {"char", "is_alphanumeric", "bool", 0},
+    {"char", "is_whitespace", "bool", 0},
+    {"char", "is_uppercase", "bool", 0},
+    {"char", "is_lowercase", "bool", 0},
+    {"char", "to_upper", "char", 0},
+    {"char", "to_lower", "char", 0},
     
     // Array/Vec methods (receiver type will be "array" for now)
     {"array", "len", "int", 0},
@@ -129,12 +168,23 @@ static const MethodSignature method_signatures[] = {
     
     // HashMap methods
     {"map", "insert", "void", 2},
-    {"map", "get", "int", 1},          // Returns value (type depends on map)
+    {"map", "set", "void", 2},
+    {"map", "get", "string", 1},
+    {"map", "get_int", "int", 1},
+    {"map", "get_string", "string", 1},
+    {"map", "insert", "void", 2},
+    {"map", "insert_int", "void", 2},
+    {"map", "insert_string", "void", 2},
+    {"map", "set_string", "void", 2},
+    {"map", "keys", "string", 0},
+    {"map", "len", "int", 0},
+    {"map", "contains", "int", 1},
+    {"map", "set_int", "void", 2},
+    {"map", "stringify", "string", 0},
     {"map", "remove", "void", 1},
     {"map", "contains", "bool", 1},
     {"map", "len", "int", 0},
     {"map", "is_empty", "bool", 0},
-    {"map", "keys", "array", 0},
     {"map", "values", "array", 0},
     {"map", "clear", "void", 0},
     {"map", "get_or_default", "int", 2},  // Returns value or default
@@ -221,6 +271,7 @@ const char* get_receiver_type_string(const Type* type) {
         case TYPE_SET: return "set";
         case TYPE_OPTIONAL: return "option";
         case TYPE_RESULT: return "result";
+        case TYPE_JSON: return "json";
         case TYPE_ENUM:
             // Map enum names to method receiver types
             if (type->name.length == 6 && memcmp(type->name.start, "Option", 6) == 0) {
@@ -369,6 +420,75 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "to_float") == 0 && arg_count == 0) {
             out->c_function = "str_parse_float"; return true;
         }
+        // JSON parsing method
+        if (strcmp(method_name, "parse_json") == 0 && arg_count == 0) {
+            out->c_function = "json_parse"; return true;
+        }
+        // HTTP methods (URL is a string)
+        if (strcmp(method_name, "http_get") == 0 && arg_count == 0) {
+            out->c_function = "http_get"; return true;
+        }
+        if (strcmp(method_name, "http_post") == 0 && arg_count == 1) {
+            out->c_function = "http_post"; return true;
+        }
+        // String formatting (variable args)
+        if (strcmp(method_name, "format") == 0) {
+            out->c_function = "string_format"; return true;
+        }
+        // File system methods (path is a string)
+        if (strcmp(method_name, "exists") == 0 && arg_count == 0) {
+            out->c_function = "_exists"; return true;
+        }
+        if (strcmp(method_name, "is_file") == 0 && arg_count == 0) {
+            out->c_function = "_is_file"; return true;
+        }
+        if (strcmp(method_name, "is_dir") == 0 && arg_count == 0) {
+            out->c_function = "_is_dir"; return true;
+        }
+        if (strcmp(method_name, "mkdir") == 0 && arg_count == 0) {
+            out->c_function = "file_mkdir"; return true;
+        }
+        if (strcmp(method_name, "rmdir") == 0 && arg_count == 0) {
+            out->c_function = "file_rmdir"; return true;
+        }
+        if (strcmp(method_name, "file_size") == 0 && arg_count == 0) {
+            out->c_function = "file_size"; return true;
+        }
+        if (strcmp(method_name, "delete") == 0 && arg_count == 0) {
+            out->c_function = "file_delete"; return true;
+        }
+        if (strcmp(method_name, "split_at") == 0 && arg_count == 2) {
+            out->c_function = "split_get"; return true;
+        }
+        if (strcmp(method_name, "split_count") == 0 && arg_count == 1) {
+            out->c_function = "split_count"; return true;
+        }
+        if (strcmp(method_name, "to_int") == 0 && arg_count == 0) {
+            out->c_function = "str_to_int"; return true;
+        }
+        if (strcmp(method_name, "to_float") == 0 && arg_count == 0) {
+            out->c_function = "str_to_float"; return true;
+        }
+        return false;
+    }
+    
+    if (strcmp(receiver_type, "json") == 0) {
+        // JSON object methods
+        if (strcmp(method_name, "get_string") == 0 && arg_count == 1) {
+            out->c_function = "json_get_string"; return true;
+        }
+        if (strcmp(method_name, "get_int") == 0 && arg_count == 1) {
+            out->c_function = "json_get_int"; return true;
+        }
+        if (strcmp(method_name, "get_float") == 0 && arg_count == 1) {
+            out->c_function = "json_get_float"; return true;
+        }
+        if (strcmp(method_name, "get_bool") == 0 && arg_count == 1) {
+            out->c_function = "json_get_bool"; return true;
+        }
+        if (strcmp(method_name, "free") == 0 && arg_count == 0) {
+            out->c_function = "json_free"; return true;
+        }
         return false;
     }
     
@@ -410,6 +530,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "is_zero") == 0 && arg_count == 0) {
             out->c_function = "int_is_zero"; return true;
         }
+        if (strcmp(method_name, "sign") == 0 && arg_count == 0) {
+            out->c_function = "int_sign"; return true;
+        }
         if (strcmp(method_name, "to_binary") == 0 && arg_count == 0) {
             out->c_function = "int_to_binary"; return true;
         }
@@ -427,6 +550,53 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "to_int") == 0 && arg_count == 0) {
             out->c_function = "bool_to_int"; return true;
         }
+        if (strcmp(method_name, "not") == 0 && arg_count == 0) {
+            out->c_function = "bool_not"; return true;
+        }
+        if (strcmp(method_name, "and") == 0 && arg_count == 1) {
+            out->c_function = "bool_and"; return true;
+        }
+        if (strcmp(method_name, "or") == 0 && arg_count == 1) {
+            out->c_function = "bool_or"; return true;
+        }
+        if (strcmp(method_name, "xor") == 0 && arg_count == 1) {
+            out->c_function = "bool_xor"; return true;
+        }
+        return false;
+    }
+    
+    if (strcmp(receiver_type, "char") == 0) {
+        // Char methods
+        if (strcmp(method_name, "to_string") == 0 && arg_count == 0) {
+            out->c_function = "char_to_string"; return true;
+        }
+        if (strcmp(method_name, "to_int") == 0 && arg_count == 0) {
+            out->c_function = "char_to_int"; return true;
+        }
+        if (strcmp(method_name, "is_alpha") == 0 && arg_count == 0) {
+            out->c_function = "char_is_alpha"; return true;
+        }
+        if (strcmp(method_name, "is_numeric") == 0 && arg_count == 0) {
+            out->c_function = "char_is_numeric"; return true;
+        }
+        if (strcmp(method_name, "is_alphanumeric") == 0 && arg_count == 0) {
+            out->c_function = "char_is_alphanumeric"; return true;
+        }
+        if (strcmp(method_name, "is_whitespace") == 0 && arg_count == 0) {
+            out->c_function = "char_is_whitespace"; return true;
+        }
+        if (strcmp(method_name, "is_uppercase") == 0 && arg_count == 0) {
+            out->c_function = "char_is_uppercase"; return true;
+        }
+        if (strcmp(method_name, "is_lowercase") == 0 && arg_count == 0) {
+            out->c_function = "char_is_lowercase"; return true;
+        }
+        if (strcmp(method_name, "to_upper") == 0 && arg_count == 0) {
+            out->c_function = "char_to_upper"; return true;
+        }
+        if (strcmp(method_name, "to_lower") == 0 && arg_count == 0) {
+            out->c_function = "char_to_lower"; return true;
+        }
         return false;
     }
     
@@ -440,6 +610,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "round") == 0 && arg_count == 0) {
             out->c_function = "float_round"; return true;
+        }
+        if (strcmp(method_name, "round_to") == 0 && arg_count == 1) {
+            out->c_function = "float_round_to"; return true;
         }
         if (strcmp(method_name, "floor") == 0 && arg_count == 0) {
             out->c_function = "float_floor"; return true;
@@ -480,6 +653,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "is_negative") == 0 && arg_count == 0) {
             out->c_function = "float_is_negative"; return true;
         }
+        if (strcmp(method_name, "sign") == 0 && arg_count == 0) {
+            out->c_function = "float_sign"; return true;
+        }
         if (strcmp(method_name, "sin") == 0 && arg_count == 0) {
             out->c_function = "float_sin"; return true;
         }
@@ -489,8 +665,23 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "tan") == 0 && arg_count == 0) {
             out->c_function = "float_tan"; return true;
         }
+        if (strcmp(method_name, "asin") == 0 && arg_count == 0) {
+            out->c_function = "float_asin"; return true;
+        }
+        if (strcmp(method_name, "acos") == 0 && arg_count == 0) {
+            out->c_function = "float_acos"; return true;
+        }
+        if (strcmp(method_name, "atan") == 0 && arg_count == 0) {
+            out->c_function = "float_atan"; return true;
+        }
         if (strcmp(method_name, "log") == 0 && arg_count == 0) {
             out->c_function = "float_log"; return true;
+        }
+        if (strcmp(method_name, "log10") == 0 && arg_count == 0) {
+            out->c_function = "float_log10"; return true;
+        }
+        if (strcmp(method_name, "log2") == 0 && arg_count == 0) {
+            out->c_function = "float_log2"; return true;
         }
         if (strcmp(method_name, "exp") == 0 && arg_count == 0) {
             out->c_function = "float_exp"; return true;
@@ -551,10 +742,10 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
             out->c_function = "array_skip"; return true;
         }
         if (strcmp(method_name, "slice") == 0 && arg_count == 2) {
-            out->c_function = "array_slice"; return true;
+            out->c_function = "wyn_array_slice_range"; return true;
         }
         if (strcmp(method_name, "join") == 0 && arg_count == 1) {
-            out->c_function = "array_join"; return true;
+            out->c_function = "array_join_str"; return true;
         }
         if (strcmp(method_name, "concat") == 0 && arg_count == 1) {
             out->c_function = "array_concat"; return true;
@@ -578,6 +769,11 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "remove") == 0 && arg_count == 1) {
             out->c_function = "array_remove_value";
+            out->pass_by_ref = true;
+            return true;
+        }
+        if (strcmp(method_name, "remove_at") == 0 && arg_count == 1) {
+            out->c_function = "array_remove_at";
             out->pass_by_ref = true;
             return true;
         }
@@ -615,6 +811,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
     if (strcmp(receiver_type, "map") == 0) {
         // HashMap methods
         if (strcmp(method_name, "insert") == 0 && arg_count == 2) {
+            out->c_function = "hashmap_insert_int"; return true;
+        }
+        if (strcmp(method_name, "set") == 0 && arg_count == 2) {
             out->c_function = "hashmap_insert_int"; return true;
         }
         if (strcmp(method_name, "has") == 0 && arg_count == 1) {
@@ -758,5 +957,48 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         return false;
     }
     
+    // JSON object methods
+    if (strcmp(receiver_type, "json") == 0 || strcmp(receiver_type, "WynJson") == 0) {
+        if (strcmp(method_name, "get_string") == 0 && arg_count == 1) {
+            out->c_function = "json_get_string"; return true;
+        }
+        if (strcmp(method_name, "get_int") == 0 && arg_count == 1) {
+            out->c_function = "json_get_int"; return true;
+        }
+        if (strcmp(method_name, "free") == 0 && arg_count == 0) {
+            out->c_function = "json_free"; return true;
+        }
+        return false;
+    }
+    
     return false;  // Method not found
+}
+
+// Lookup return type for module functions (e.g., "Crypto_sha256" -> "string")
+const char* lookup_module_fn_return_type(const char* fn_name) {
+    // These match the checker's return type registry
+    struct { const char* name; const char* ret; } fns[] = {
+        {"Crypto_sha256", "string"}, {"Crypto_md5", "string"},
+        {"Crypto_hmac_sha256", "string"}, {"Crypto_random_bytes", "string"},
+        {"Encoding_base64_encode", "string"}, {"Encoding_base64_decode", "string"},
+        {"Encoding_hex_encode", "string"}, {"Encoding_hex_decode", "string"},
+        {"Json_stringify", "string"}, {"Json_to_pretty_string", "string"},
+        {"Json_get", "string"}, {"Json_keys", "string"},
+        {"Os_platform", "string"}, {"Os_arch", "string"},
+        {"Os_hostname", "string"}, {"Os_home_dir", "string"}, {"Os_temp_dir", "string"},
+        {"Uuid_generate", "string"}, {"Process_exec_capture", "string"},
+        {"Csv_get", "string"}, {"Csv_get_field", "string"}, {"Csv_header", "string"},
+        {"Path_basename", "string"}, {"Path_dirname", "string"}, {"Path_extension", "string"}, {"Path_join", "string"},
+        {"DateTime_to_iso", "string"}, {"DateTime_format_duration", "string"},
+        {"Regex_replace", "string"}, {"Regex_find_all", "string"},
+        {"File_read", "string"}, {"File_temp_file", "string"}, {"File_read_line", "string"},
+        {"System_exec", "string"}, {"System_env", "string"},
+        {"Net_resolve", "string"}, {"Url_encode", "string"}, {"Url_decode", "string"},
+        {"StringBuilder_to_string", "string"},
+        {NULL, NULL}
+    };
+    for (int i = 0; fns[i].name; i++) {
+        if (strcmp(fns[i].name, fn_name) == 0) return fns[i].ret;
+    }
+    return NULL;
 }

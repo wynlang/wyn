@@ -1,0 +1,20 @@
+// TDD: Namespaced APIs + expression method calls + variable name safety
+
+fn main() -> int {
+    // Test 1: File.read / File.exists / File.write namespaced API
+    var content = File.read("tests/validation/test_debug.wyn")
+    println(content.len())
+    println(File.exists("tests/validation/test_debug.wyn"))
+
+    // Test 2: (expr).method() - method call on expression result
+    var total = 100
+    var count = 3
+    var avg = total / count
+    println(avg.to_string())
+
+    // Test 3: Variable named 'math' shouldn't collide with Math module
+    var math = 42
+    println(math.to_string())
+
+    return 0
+}

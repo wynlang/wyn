@@ -1,0 +1,30 @@
+// Test operations on empty HashMap
+fn main() -> int {
+    var map = wyn_hashmap_new();
+    
+    // Test get on empty map
+    var val = wyn_hashmap_get_int(map, "nonexistent");
+    print("Get from empty map: ");
+    print(val);
+    print("\n");
+    
+    // Test contains on empty map
+    var has = wyn_hashmap_has(map, "nonexistent");
+    print("Contains in empty map: ");
+    print(has);
+    print("\n");
+    
+    // Test length of empty map
+    var len = wyn_hashmap_len(map);
+    print("Empty map length: ");
+    print(len);
+    print("\n");
+    
+    // Test removing from empty map (should not crash)
+    // Note: wyn_hashmap_remove not available, skip this test
+    print("Remove from empty map: SKIPPED (function not available)\n");
+    
+    wyn_hashmap_free(map);
+    print("Empty HashMap tests passed\n");
+    return 0;
+}

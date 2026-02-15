@@ -1,11 +1,17 @@
-// Package manager stub for wyn install
 #ifndef PACKAGE_H
 #define PACKAGE_H
 
-// Install packages from wyn.toml
-int package_install(const char* project_dir);
+typedef struct {
+    char name[128];
+    char version[32];
+    char description[256];
+    char author[128];
+} PackageInfo;
 
-// List installed packages
-int package_list();
+// Read package.wyn manifest
+PackageInfo* read_package_manifest(const char* module_path);
+
+// Free package info
+void free_package_info(PackageInfo* info);
 
 #endif // PACKAGE_H

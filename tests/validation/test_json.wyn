@@ -1,0 +1,11 @@
+// TDD: JSON operations
+
+fn main() -> int {
+    // Parse and query (this pattern works)
+    var doc = Json.parse("{\"name\":\"Alice\",\"age\":30}")
+    Test.assert_eq_str(Json.get(doc, "name"), "Alice", "get name")
+    Test.assert_eq_int(Json.get_int(doc, "age"), 30, "get age")
+    Test.assert(Json.has(doc, "name"), "has name")
+    println("JSON test passed")
+    return 0
+}

@@ -1,0 +1,1104 @@
+// Printer Module for Wyn Self-Hosted Parser
+// Implements AST pretty printing for round-trip testing
+// Requirement 8.1: Needed for round-trip testing
+
+// ============================================================================
+// Span Type (from AST module)
+// ============================================================================
+
+// Span represents a location in source code
+struct Span {
+    line: int,      // Line number (1-indexed)
+    column: int,    // Column number (1-indexed)
+    len: int        // Length of the span in characters
+}
+
+// Create a new span
+fn span_new(line: int, column: int, len: int) -> Span {
+    return Span {
+        line: line,
+        column: column,
+        len: len
+    }
+}
+
+// ============================================================================
+// Expression Type Constants (matching parser.wyn)
+// ============================================================================
+
+// EXPR_INT_LITERAL = 0
+// EXPR_FLOAT_LITERAL = 1
+// EXPR_STRING_LITERAL = 2
+// EXPR_BOOL_LITERAL = 3
+// EXPR_NULL_LITERAL = 4
+// EXPR_IDENTIFIER = 5
+// EXPR_PAREN = 6
+// EXPR_BINARY = 7
+// EXPR_UNARY = 8
+// EXPR_CALL = 9
+// EXPR_FIELD_ACCESS = 10
+// EXPR_INDEX_ACCESS = 11
+// EXPR_ARRAY_LITERAL = 12
+// EXPR_STRUCT_LITERAL = 13
+// EXPR_ERROR = 99
+
+// ============================================================================
+// Statement Type Constants (matching parser.wyn)
+// ============================================================================
+
+// STMT_FN_DECL = 0
+// STMT_VAR_DECL = 1
+// STMT_EXPR = 2
+// STMT_RETURN = 3
+// STMT_IF = 4
+// STMT_WHILE = 5
+// STMT_FOR = 6
+// STMT_BLOCK = 7
+// STMT_MATCH = 8
+// STMT_ERROR = 99
+
+// ============================================================================
+// Pattern Type Constants (matching parser.wyn)
+// ============================================================================
+
+// PATTERN_LITERAL = 0
+// PATTERN_WILDCARD = 1
+// PATTERN_BINDING = 2
+// PATTERN_STRUCT = 3
+// PATTERN_ARRAY = 4
+// PATTERN_OR = 5
+// PATTERN_ERROR = 99
+
+// ============================================================================
+// Type Constants (matching parser.wyn)
+// ============================================================================
+
+// TYPE_INT = 0
+// TYPE_FLOAT = 1
+// TYPE_STRING = 2
+// TYPE_BOOL = 3
+// TYPE_VOID = 4
+// TYPE_ARRAY = 5
+// TYPE_NAMED = 6
+
+// ============================================================================
+// Binary Operator Token Constants (matching parser.wyn)
+// ============================================================================
+
+// PLUS = 23, MINUS = 24, STAR = 25, SLASH = 26
+// PERCENT = 27, EQUAL_EQUAL = 28, BANG_EQUAL = 29
+// LESS = 30, LESS_EQUAL = 31, GREATER = 32, GREATER_EQUAL = 33
+// AND_AND = 34, OR_OR = 35, BANG = 36, TILDE = 37
+// AMPERSAND = 38, PIPE = 39, CARET = 40
+// LESS_LESS = 41, GREATER_GREATER = 42
+
+// ============================================================================
+// Number to String Conversion
+// ============================================================================
+
+// Convert integer to string
+fn printer_int_to_string(value: int) -> string {
+    if value == 0 {
+        return "0"
+    }
+    
+    var result = ""
+    var is_negative = 0
+    var num = value
+    
+    if num < 0 {
+        is_negative = 1
+        num = 0 - num
+    }
+    
+    while num > 0 {
+        var digit = num % 10
+        var digit_char = ""
+        if digit == 0 { digit_char = "0" }
+        if digit == 1 { digit_char = "1" }
+        if digit == 2 { digit_char = "2" }
+        if digit == 3 { digit_char = "3" }
+        if digit == 4 { digit_char = "4" }
+        if digit == 5 { digit_char = "5" }
+        if digit == 6 { digit_char = "6" }
+        if digit == 7 { digit_char = "7" }
+        if digit == 8 { digit_char = "8" }
+        if digit == 9 { digit_char = "9" }
+        result = digit_char + result
+        num = num / 10
+    }
+    
+    if is_negative == 1 {
+        result = "-" + result
+    }
+    
+    return result
+}
+
+// Convert float to string (simplified - just integer part for now)
+fn printer_float_to_string(value: float) -> string {
+    // Simplified implementation - convert to int and add .0
+    // A full implementation would handle decimal places properly
+    return "0.0"
+}
+
+// ============================================================================
+// Binary Operator Printing
+// ============================================================================
+
+// Convert binary operator token type to string
+fn binary_op_to_string(op: int) -> string {
+    if op == 23 { return "+" }      // PLUS
+    if op == 24 { return "-" }      // MINUS
+    if op == 25 { return "*" }      // STAR
+    if op == 26 { return "/" }      // SLASH
+    if op == 27 { return "%" }      // PERCENT
+    if op == 28 { return "==" }     // EQUAL_EQUAL
+    if op == 29 { return "!=" }     // BANG_EQUAL
+    if op == 30 { return "<" }      // LESS
+    if op == 31 { return "<=" }     // LESS_EQUAL
+    if op == 32 { return ">" }      // GREATER
+    if op == 33 { return ">=" }     // GREATER_EQUAL
+    if op == 34 { return "&&" }     // AND_AND
+    if op == 35 { return "||" }     // OR_OR
+    if op == 38 { return "&" }      // AMPERSAND
+    if op == 39 { return "|" }      // PIPE
+    if op == 40 { return "^" }      // CARET
+    if op == 41 { return "<<" }     // LESS_LESS
+    if op == 42 { return ">>" }     // GREATER_GREATER
+    return "?"
+}
+
+// ============================================================================
+// Unary Operator Printing
+// ============================================================================
+
+// Convert unary operator token type to string
+fn unary_op_to_string(op: int) -> string {
+    if op == 24 { return "-" }      // MINUS (negation)
+    if op == 36 { return "!" }      // BANG (logical not)
+    if op == 37 { return "~" }      // TILDE (bitwise not)
+    return "?"
+}
+
+// ============================================================================
+// Operator Precedence for Parenthesization
+// ============================================================================
+
+// Get precedence of binary operator (same as parser)
+fn get_precedence(op: int) -> int {
+    if op == 35 { return 1 }        // OR_OR
+    if op == 34 { return 2 }        // AND_AND
+    if op == 28 { return 3 }        // EQUAL_EQUAL
+    if op == 29 { return 3 }        // BANG_EQUAL
+    if op == 30 { return 4 }        // LESS
+    if op == 31 { return 4 }        // LESS_EQUAL
+    if op == 32 { return 4 }        // GREATER
+    if op == 33 { return 4 }        // GREATER_EQUAL
+    if op == 39 { return 5 }        // PIPE (Bitwise OR)
+    if op == 40 { return 6 }        // CARET (Bitwise XOR)
+    if op == 38 { return 7 }        // AMPERSAND (Bitwise AND)
+    if op == 41 { return 8 }        // LESS_LESS (Shift)
+    if op == 42 { return 8 }        // GREATER_GREATER (Shift)
+    if op == 23 { return 9 }        // PLUS (Additive)
+    if op == 24 { return 9 }        // MINUS (Additive)
+    if op == 25 { return 10 }       // STAR (Multiplicative)
+    if op == 26 { return 10 }       // SLASH (Multiplicative)
+    if op == 27 { return 10 }       // PERCENT (Multiplicative)
+    return 0
+}
+
+// ============================================================================
+// Type Printing
+// ============================================================================
+
+// Print a type annotation
+fn print_type(type_kind: int, type_name: string) -> string {
+    if type_kind == 0 { return "int" }      // TYPE_INT
+    if type_kind == 1 { return "float" }    // TYPE_FLOAT
+    if type_kind == 2 { return "string" }   // TYPE_STRING
+    if type_kind == 3 { return "bool" }     // TYPE_BOOL
+    if type_kind == 4 { return "void" }     // TYPE_VOID
+    if type_kind == 5 { return "[?]" }      // TYPE_ARRAY (simplified)
+    if type_kind == 6 {                     // TYPE_NAMED
+        if type_name == "" { return "?" }
+        return type_name
+    }
+    return "?"
+}
+
+// ============================================================================
+// Printer State
+// ============================================================================
+
+// PrinterState holds the current indentation level and output buffer
+struct PrinterState {
+    indent_level: int,      // Current indentation level
+    indent_str: string,     // Indentation string (e.g., "    ")
+    output: string          // Accumulated output
+}
+
+// Create a new printer state
+fn printer_new() -> PrinterState {
+    return PrinterState {
+        indent_level: 0,
+        indent_str: "    ",
+        output: ""
+    }
+}
+
+// Increase indentation level
+fn printer_indent(state: PrinterState) -> PrinterState {
+    return PrinterState {
+        indent_level: state.indent_level + 1,
+        indent_str: state.indent_str,
+        output: state.output
+    }
+}
+
+// Decrease indentation level
+fn printer_dedent(state: PrinterState) -> PrinterState {
+    var new_level = state.indent_level - 1
+    if new_level < 0 { new_level = 0 }
+    return PrinterState {
+        indent_level: new_level,
+        indent_str: state.indent_str,
+        output: state.output
+    }
+}
+
+// Get current indentation string
+fn printer_get_indent(state: PrinterState) -> string {
+    var result = ""
+    var i = 0
+    while i < state.indent_level {
+        result = result + state.indent_str
+        i = i + 1
+    }
+    return result
+}
+
+// Append text to output
+fn printer_append(state: PrinterState, text: string) -> PrinterState {
+    return PrinterState {
+        indent_level: state.indent_level,
+        indent_str: state.indent_str,
+        output: state.output + text
+    }
+}
+
+// Append text with current indentation
+fn printer_append_indented(state: PrinterState, text: string) -> PrinterState {
+    var indent = printer_get_indent(state)
+    return printer_append(state, indent + text)
+}
+
+// Append newline
+fn printer_newline(state: PrinterState) -> PrinterState {
+    return printer_append(state, "\n")
+}
+
+// Get the output from a printer state
+fn printer_get_output(state: PrinterState) -> string {
+    return state.output
+}
+
+// ============================================================================
+// Literal Value Printing Helpers
+// ============================================================================
+
+// Print an integer literal
+fn print_int_literal(value: int) -> string {
+    return printer_int_to_string(value)
+}
+
+// Print a float literal
+fn print_float_literal(value: float) -> string {
+    return printer_float_to_string(value)
+}
+
+// Print a string literal (with quotes)
+fn print_string_literal(value: string) -> string {
+    return "\"" + value + "\""
+}
+
+// Print a boolean literal
+fn print_bool_literal(value: int) -> string {
+    if value == 1 { return "true" }
+    return "false"
+}
+
+// Print null literal
+fn print_null_literal() -> string {
+    return "null"
+}
+
+// Print an identifier
+fn print_identifier(name: string) -> string {
+    return name
+}
+
+// ============================================================================
+// Expression Result Type (matching parser.wyn)
+// ============================================================================
+
+// ParseExprResult represents the result of parsing an expression
+struct ParseExprResult {
+    success: int,           // 1 if successful, 0 if error
+    expr_type: int,         // Expression type (EXPR_* constant)
+    int_value: int,         // Value for int literals
+    float_value: float,     // Value for float literals
+    string_value: string,   // Value for string literals, identifiers, field names
+    bool_value: int,        // Value for bool literals (1 = true, 0 = false)
+    inner_result_idx: int,  // Index for nested expressions (paren, unary operand)
+    left_idx: int,          // Index for binary left operand / callee / object / array
+    right_idx: int,         // Index for binary right operand / index expression
+    operator: int,          // Token type of operator (for binary/unary)
+    arg_count: int,         // Number of arguments for function calls
+    span: Span              // Source location
+}
+
+// ============================================================================
+// Simple Expression Printing (without nested expression array)
+// ============================================================================
+
+// Print a simple expression (for standalone expressions without nesting)
+fn print_simple_expr(result: ParseExprResult) -> string {
+    var expr_type = result.expr_type
+    
+    // EXPR_INT_LITERAL = 0
+    if expr_type == 0 { return printer_int_to_string(result.int_value) }
+    
+    // EXPR_FLOAT_LITERAL = 1
+    if expr_type == 1 { return printer_float_to_string(result.float_value) }
+    
+    // EXPR_STRING_LITERAL = 2
+    if expr_type == 2 { return "\"" + result.string_value + "\"" }
+    
+    // EXPR_BOOL_LITERAL = 3
+    if expr_type == 3 {
+        if result.bool_value == 1 { return "true" }
+        return "false"
+    }
+    
+    // EXPR_NULL_LITERAL = 4
+    if expr_type == 4 { return "null" }
+    
+    // EXPR_IDENTIFIER = 5
+    if expr_type == 5 { return result.string_value }
+    
+    // EXPR_PAREN = 6
+    if expr_type == 6 { return "(...)" }
+    
+    // EXPR_BINARY = 7
+    if expr_type == 7 {
+        var op_str = binary_op_to_string(result.operator)
+        return "... " + op_str + " ..."
+    }
+    
+    // EXPR_UNARY = 8
+    if expr_type == 8 {
+        var op_str = unary_op_to_string(result.operator)
+        return op_str + "..."
+    }
+    
+    // EXPR_CALL = 9
+    if expr_type == 9 { return "...()" }
+    
+    // EXPR_FIELD_ACCESS = 10
+    if expr_type == 10 { return "..." + "." + result.string_value }
+    
+    // EXPR_INDEX_ACCESS = 11
+    if expr_type == 11 { return "...[...]" }
+    
+    // EXPR_ARRAY_LITERAL = 12
+    if expr_type == 12 { return "[...]" }
+    
+    // EXPR_STRUCT_LITERAL = 13
+    if expr_type == 13 { return result.string_value + " {...}" }
+    
+    return "?"
+}
+
+// ============================================================================
+// Expression Printing with Array of Expressions
+// ============================================================================
+
+// Print a leaf expression (no recursion needed) - MUST be defined before print_expr
+fn print_expr_leaf(result: ParseExprResult) -> string {
+    var expr_type = result.expr_type
+    
+    // EXPR_INT_LITERAL = 0
+    if expr_type == 0 { return printer_int_to_string(result.int_value) }
+    
+    // EXPR_FLOAT_LITERAL = 1
+    if expr_type == 1 { return printer_float_to_string(result.float_value) }
+    
+    // EXPR_STRING_LITERAL = 2
+    if expr_type == 2 { return "\"" + result.string_value + "\"" }
+    
+    // EXPR_BOOL_LITERAL = 3
+    if expr_type == 3 {
+        if result.bool_value == 1 { return "true" }
+        return "false"
+    }
+    
+    // EXPR_NULL_LITERAL = 4
+    if expr_type == 4 { return "null" }
+    
+    // EXPR_IDENTIFIER = 5
+    if expr_type == 5 { return result.string_value }
+    
+    // For compound expressions, return placeholder
+    // EXPR_PAREN = 6
+    if expr_type == 6 { return "(...)" }
+    
+    // EXPR_BINARY = 7
+    if expr_type == 7 {
+        var op_str = binary_op_to_string(result.operator)
+        return "... " + op_str + " ..."
+    }
+    
+    // EXPR_UNARY = 8
+    if expr_type == 8 {
+        var op_str = unary_op_to_string(result.operator)
+        return op_str + "..."
+    }
+    
+    // EXPR_CALL = 9
+    if expr_type == 9 { return "...()" }
+    
+    // EXPR_FIELD_ACCESS = 10
+    if expr_type == 10 { return "..." + "." + result.string_value }
+    
+    // EXPR_INDEX_ACCESS = 11
+    if expr_type == 11 { return "...[...]" }
+    
+    // EXPR_ARRAY_LITERAL = 12
+    if expr_type == 12 { return "[...]" }
+    
+    // EXPR_STRUCT_LITERAL = 13
+    if expr_type == 13 { return result.string_value + " {...}" }
+    
+    return "?"
+}
+
+// Print an expression to string (uses array for nested expressions)
+fn print_expr(result: ParseExprResult, all_exprs: [ParseExprResult]) -> string {
+    var expr_type = result.expr_type
+    
+    // EXPR_INT_LITERAL = 0
+    if expr_type == 0 { return printer_int_to_string(result.int_value) }
+    
+    // EXPR_FLOAT_LITERAL = 1
+    if expr_type == 1 { return printer_float_to_string(result.float_value) }
+    
+    // EXPR_STRING_LITERAL = 2
+    if expr_type == 2 { return "\"" + result.string_value + "\"" }
+    
+    // EXPR_BOOL_LITERAL = 3
+    if expr_type == 3 {
+        if result.bool_value == 1 { return "true" }
+        return "false"
+    }
+    
+    // EXPR_NULL_LITERAL = 4
+    if expr_type == 4 { return "null" }
+    
+    // EXPR_IDENTIFIER = 5
+    if expr_type == 5 { return result.string_value }
+    
+    // For complex expressions, just return a placeholder
+    // This function is meant for leaf expressions only
+    // EXPR_PAREN = 6
+    if expr_type == 6 { return "(...)" }
+    
+    // EXPR_BINARY = 7
+    if expr_type == 7 { return "?" }
+    
+    // EXPR_UNARY = 8
+    if expr_type == 8 { return "?" }
+    
+    // EXPR_CALL = 9
+    if expr_type == 9 { return "?()" }
+    
+    // EXPR_FIELD_ACCESS = 10
+    if expr_type == 10 { return "?.?" }
+    
+    // EXPR_INDEX_ACCESS = 11
+    if expr_type == 11 { return "?[?]" }
+    
+    // EXPR_ARRAY_LITERAL = 12
+    if expr_type == 12 { return "[]" }
+    
+    // EXPR_STRUCT_LITERAL = 13
+    if expr_type == 13 { return result.string_value + " {}" }
+    
+    return "?"
+}
+
+// ============================================================================
+// Pattern Result Type (matching parser.wyn)
+// ============================================================================
+
+// ParsePatternResult represents the result of parsing a pattern
+struct ParsePatternResult {
+    success: int,           // 1 if successful, 0 if error
+    pattern_type: int,      // Pattern type (PATTERN_* constant)
+    int_value: int,         // Value for int literal patterns
+    string_value: string,   // Value for string literal patterns, binding names
+    bool_value: int,        // Value for bool literal patterns (1 = true, 0 = false)
+    field_count: int,       // Number of fields for struct patterns
+    span: Span              // Source location
+}
+
+// ============================================================================
+// Pattern Printing
+// ============================================================================
+
+// Print a pattern to string
+fn print_pattern(result: ParsePatternResult) -> string {
+    var pattern_type = result.pattern_type
+    
+    // PATTERN_LITERAL = 0
+    if pattern_type == 0 {
+        // Check what kind of literal
+        if result.string_value == "null" { return "null" }
+        if result.string_value != "" { return "\"" + result.string_value + "\"" }
+        if result.bool_value == 1 { return "true" }
+        // Could be false or int 0
+        if result.int_value == 0 { return "false" }
+        return printer_int_to_string(result.int_value)
+    }
+    
+    // PATTERN_WILDCARD = 1
+    if pattern_type == 1 { return "_" }
+    
+    // PATTERN_BINDING = 2
+    if pattern_type == 2 { return result.string_value }
+    
+    // PATTERN_STRUCT = 3
+    if pattern_type == 3 {
+        var type_name = result.string_value
+        if type_name == "" { type_name = "?" }
+        return type_name + " { ... }"
+    }
+    
+    // PATTERN_ARRAY = 4
+    if pattern_type == 4 { return "[ ... ]" }
+    
+    // PATTERN_OR = 5
+    if pattern_type == 5 { return "... | ..." }
+    
+    return "?"
+}
+
+// ============================================================================
+// Statement Result Type (matching parser.wyn)
+// ============================================================================
+
+// ParseStmtResult represents the result of parsing a statement
+struct ParseStmtResult {
+    success: int,           // 1 if successful, 0 if error
+    stmt_type: int,         // Statement type (STMT_* constant)
+    name: string,           // Name for fn/var declarations
+    param_count: int,       // Number of parameters for fn
+    return_type: int,       // Return type for fn (TYPE_* constant)
+    has_initializer: int,   // 1 if var has initializer, 0 otherwise
+    var_type: int,          // Type annotation for var (TYPE_* constant)
+    span: Span              // Source location
+}
+
+// ============================================================================
+// Statement Printing
+// ============================================================================
+
+// Print a statement to string (simplified - returns statement skeleton)
+fn print_stmt(result: ParseStmtResult, state: PrinterState) -> PrinterState {
+    var stmt_type = result.stmt_type
+    
+    // STMT_FN_DECL = 0
+    if stmt_type == 0 {
+        var fn_name = result.name
+        if fn_name == "" { fn_name = "?" }
+        var ret_type = print_type(result.return_type, "")
+        var line = "fn " + fn_name + "() -> " + ret_type + " {"
+        state = printer_append_indented(state, line)
+        state = printer_newline(state)
+        state = printer_append_indented(state, "}")
+        state = printer_newline(state)
+        return state
+    }
+    
+    // STMT_VAR_DECL = 1
+    if stmt_type == 1 {
+        var var_name = result.name
+        if var_name == "" { var_name = "?" }
+        var line = "var " + var_name
+        if result.var_type >= 0 {
+            line = line + ": " + print_type(result.var_type, "")
+        }
+        if result.has_initializer == 1 {
+            line = line + " = ..."
+        }
+        line = line + ";"
+        state = printer_append_indented(state, line)
+        state = printer_newline(state)
+        return state
+    }
+    
+    // STMT_EXPR = 2
+    if stmt_type == 2 {
+        state = printer_append_indented(state, "...;")
+        state = printer_newline(state)
+        return state
+    }
+    
+    // STMT_RETURN = 3
+    if stmt_type == 3 {
+        state = printer_append_indented(state, "return ...;")
+        state = printer_newline(state)
+        return state
+    }
+    
+    // STMT_IF = 4
+    if stmt_type == 4 {
+        state = printer_append_indented(state, "if (...) {")
+        state = printer_newline(state)
+        state = printer_append_indented(state, "}")
+        state = printer_newline(state)
+        return state
+    }
+    
+    // STMT_WHILE = 5
+    if stmt_type == 5 {
+        state = printer_append_indented(state, "while (...) {")
+        state = printer_newline(state)
+        state = printer_append_indented(state, "}")
+        state = printer_newline(state)
+        return state
+    }
+    
+    // STMT_FOR = 6
+    if stmt_type == 6 {
+        state = printer_append_indented(state, "for ... in ... {")
+        state = printer_newline(state)
+        state = printer_append_indented(state, "}")
+        state = printer_newline(state)
+        return state
+    }
+    
+    // STMT_BLOCK = 7
+    if stmt_type == 7 {
+        state = printer_append_indented(state, "{")
+        state = printer_newline(state)
+        state = printer_append_indented(state, "}")
+        state = printer_newline(state)
+        return state
+    }
+    
+    // STMT_MATCH = 8
+    if stmt_type == 8 {
+        state = printer_append_indented(state, "match ... {")
+        state = printer_newline(state)
+        state = printer_append_indented(state, "}")
+        state = printer_newline(state)
+        return state
+    }
+    
+    state = printer_append_indented(state, "?")
+    state = printer_newline(state)
+    return state
+}
+
+// ============================================================================
+// ExprNode for Expression Tree Printing
+// ============================================================================
+
+// ExprNode represents a node in the expression tree for printing
+struct ExprNode {
+    expr_type: int,         // Expression type
+    int_value: int,         // For int literals
+    float_value: float,     // For float literals
+    string_value: string,   // For strings, identifiers, field names
+    bool_value: int,        // For bool literals
+    operator: int,          // For binary/unary operators
+    left: int,              // Index of left child (-1 if none)
+    right: int,             // Index of right child (-1 if none)
+    inner: int,             // Index of inner expression (-1 if none)
+    arg_count: int          // For calls and compound literals
+}
+
+// Create an expression node from ParseExprResult
+fn expr_node_from_result(result: ParseExprResult) -> ExprNode {
+    return ExprNode {
+        expr_type: result.expr_type,
+        int_value: result.int_value,
+        float_value: result.float_value,
+        string_value: result.string_value,
+        bool_value: result.bool_value,
+        operator: result.operator,
+        left: result.left_idx,
+        right: result.right_idx,
+        inner: result.inner_result_idx,
+        arg_count: result.arg_count
+    }
+}
+
+// Print a leaf expression node (no recursion needed) - MUST be defined before print_expr_with_prec
+fn print_expr_node_leaf(node: ExprNode) -> string {
+    var expr_type = node.expr_type
+    
+    // EXPR_INT_LITERAL = 0
+    if expr_type == 0 { return printer_int_to_string(node.int_value) }
+    
+    // EXPR_FLOAT_LITERAL = 1
+    if expr_type == 1 { return printer_float_to_string(node.float_value) }
+    
+    // EXPR_STRING_LITERAL = 2
+    if expr_type == 2 { return "\"" + node.string_value + "\"" }
+    
+    // EXPR_BOOL_LITERAL = 3
+    if expr_type == 3 {
+        if node.bool_value == 1 { return "true" }
+        return "false"
+    }
+    
+    // EXPR_NULL_LITERAL = 4
+    if expr_type == 4 { return "null" }
+    
+    // EXPR_IDENTIFIER = 5
+    if expr_type == 5 { return node.string_value }
+    
+    // For compound expressions, return placeholder
+    if expr_type == 6 { return "(...)" }                    // EXPR_PAREN
+    if expr_type == 7 {                                      // EXPR_BINARY
+        var op_str = binary_op_to_string(node.operator)
+        return "... " + op_str + " ..."
+    }
+    if expr_type == 8 {                                      // EXPR_UNARY
+        var op_str = unary_op_to_string(node.operator)
+        return op_str + "..."
+    }
+    if expr_type == 9 { return "...()" }                    // EXPR_CALL
+    if expr_type == 10 { return "..." + "." + node.string_value }  // EXPR_FIELD_ACCESS
+    if expr_type == 11 { return "...[...]" }                // EXPR_INDEX_ACCESS
+    if expr_type == 12 { return "[...]" }                   // EXPR_ARRAY_LITERAL
+    if expr_type == 13 { return node.string_value + " {...}" }  // EXPR_STRUCT_LITERAL
+    
+    return "?"
+}
+
+// Print expression with proper parenthesization based on precedence
+fn print_expr_with_prec(node: ExprNode, nodes: [ExprNode], parent_prec: int, is_right: int) -> string {
+    var expr_type = node.expr_type
+    
+    // Leaf expressions - no precedence concerns
+    if expr_type == 0 { return printer_int_to_string(node.int_value) }
+    if expr_type == 1 { return printer_float_to_string(node.float_value) }
+    if expr_type == 2 { return "\"" + node.string_value + "\"" }
+    if expr_type == 3 {
+        if node.bool_value == 1 { return "true" }
+        return "false"
+    }
+    if expr_type == 4 { return "null" }
+    if expr_type == 5 { return node.string_value }
+    
+    // EXPR_PAREN = 6
+    if expr_type == 6 {
+        if node.inner >= 0 {
+            var inner_node = nodes[node.inner]
+            var inner_str = print_expr_node_leaf(inner_node)
+            return "(" + inner_str + ")"
+        }
+        return "(...)"
+    }
+    
+    // EXPR_BINARY = 7
+    if expr_type == 7 {
+        var op_prec = get_precedence(node.operator)
+        var op_str = binary_op_to_string(node.operator)
+        
+        var left_str = "?"
+        var right_str = "?"
+        
+        if node.left >= 0 {
+            var left_node = nodes[node.left]
+            left_str = print_expr_node_leaf(left_node)
+        }
+        
+        if node.right >= 0 {
+            var right_node = nodes[node.right]
+            right_str = print_expr_node_leaf(right_node)
+        }
+        
+        var result = left_str + " " + op_str + " " + right_str
+        
+        // Add parentheses if needed for precedence
+        var need_parens = 0
+        if parent_prec > op_prec { need_parens = 1 }
+        if parent_prec == op_prec {
+            if is_right == 1 { need_parens = 1 }
+        }
+        
+        if need_parens == 1 {
+            result = "(" + result + ")"
+        }
+        
+        return result
+    }
+    
+    // EXPR_UNARY = 8
+    if expr_type == 8 {
+        var op_str = unary_op_to_string(node.operator)
+        var operand_str = "?"
+        
+        if node.inner >= 0 {
+            var operand_node = nodes[node.inner]
+            operand_str = print_expr_node_leaf(operand_node)
+        }
+        
+        return op_str + operand_str
+    }
+    
+    // EXPR_CALL = 9
+    if expr_type == 9 {
+        var callee_str = "?"
+        if node.left >= 0 {
+            var callee_node = nodes[node.left]
+            callee_str = print_expr_node_leaf(callee_node)
+        }
+        return callee_str + "(...)"
+    }
+    
+    // EXPR_FIELD_ACCESS = 10
+    if expr_type == 10 {
+        var obj_str = "?"
+        if node.left >= 0 {
+            var obj_node = nodes[node.left]
+            obj_str = print_expr_node_leaf(obj_node)
+        }
+        return obj_str + "." + node.string_value
+    }
+    
+    // EXPR_INDEX_ACCESS = 11
+    if expr_type == 11 {
+        var arr_str = "?"
+        var idx_str = "?"
+        if node.left >= 0 {
+            var arr_node = nodes[node.left]
+            arr_str = print_expr_node_leaf(arr_node)
+        }
+        if node.right >= 0 {
+            var idx_node = nodes[node.right]
+            idx_str = print_expr_node_leaf(idx_node)
+        }
+        return arr_str + "[" + idx_str + "]"
+    }
+    
+    // EXPR_ARRAY_LITERAL = 12
+    if expr_type == 12 { return "[...]" }
+    
+    // EXPR_STRUCT_LITERAL = 13
+    if expr_type == 13 { return node.string_value + " {...}" }
+    
+    return "?"
+}
+
+// Print an expression tree starting from root
+// NOTE: This function is currently not used and has issues with array indexing
+// Wyn doesn't support extracting structs from arrays directly
+// fn print_expr_tree(nodes: [ExprNode], root_idx: int) -> string {
+//     if root_idx < 0 { return "?" }
+//     var root = nodes[root_idx]
+//     return print_expr_with_prec(root, nodes, 0, 0)
+// }
+
+// ============================================================================
+// Main Function (for testing)
+// ============================================================================
+
+fn main() -> int {
+    // Test printer state creation
+    var state = printer_new()
+    if state.indent_level != 0 { return 1 }
+    
+    // Test indentation
+    state = printer_indent(state)
+    if state.indent_level != 1 { return 2 }
+    
+    state = printer_dedent(state)
+    if state.indent_level != 0 { return 3 }
+    
+    // Test append
+    state = printer_append(state, "hello")
+    if state.output != "hello" { return 4 }
+    
+    state = printer_append(state, " world")
+    if state.output != "hello world" { return 5 }
+    
+    // Test int_to_string
+    var s = printer_int_to_string(0)
+    if s != "0" { return 6 }
+    
+    s = printer_int_to_string(42)
+    if s != "42" { return 7 }
+    
+    s = printer_int_to_string(123)
+    if s != "123" { return 8 }
+    
+    // Test negative numbers
+    s = printer_int_to_string(-5)
+    if s != "-5" { return 9 }
+    
+    // Test binary operator to string
+    s = binary_op_to_string(23)  // PLUS
+    if s != "+" { return 10 }
+    
+    s = binary_op_to_string(25)  // STAR
+    if s != "*" { return 11 }
+    
+    s = binary_op_to_string(28)  // EQUAL_EQUAL
+    if s != "==" { return 12 }
+    
+    // Test unary operator to string
+    s = unary_op_to_string(24)  // MINUS (negation)
+    if s != "-" { return 13 }
+    
+    s = unary_op_to_string(36)  // BANG
+    if s != "!" { return 14 }
+    
+    // Test type printing
+    s = print_type(0, "")  // TYPE_INT
+    if s != "int" { return 15 }
+    
+    s = print_type(2, "")  // TYPE_STRING
+    if s != "string" { return 16 }
+    
+    s = print_type(4, "")  // TYPE_VOID
+    if s != "void" { return 17 }
+    
+    // Test literal printing helpers
+    s = print_int_literal(42)
+    if s != "42" { return 18 }
+    
+    s = print_string_literal("hello")
+    if s != "\"hello\"" { return 19 }
+    
+    s = print_bool_literal(1)
+    if s != "true" { return 20 }
+    
+    s = print_bool_literal(0)
+    if s != "false" { return 21 }
+    
+    s = print_null_literal()
+    if s != "null" { return 22 }
+    
+    s = print_identifier("foo")
+    if s != "foo" { return 23 }
+    
+    // Test precedence function
+    var prec = get_precedence(25)  // STAR (multiplicative)
+    if prec != 10 { return 24 }
+    
+    prec = get_precedence(23)  // PLUS (additive)
+    if prec != 9 { return 25 }
+    
+    prec = get_precedence(35)  // OR_OR
+    if prec != 1 { return 26 }
+    
+    // Test simple expression printing
+    var span = span_new(1, 1, 1)
+    var expr_result = ParseExprResult {
+        success: 1,
+        expr_type: 0,  // EXPR_INT_LITERAL
+        int_value: 42,
+        float_value: 0.0,
+        string_value: "",
+        bool_value: 0,
+        inner_result_idx: 0,
+        left_idx: 0,
+        right_idx: 0,
+        operator: 0,
+        arg_count: 0,
+        span: span
+    }
+    
+    s = print_simple_expr(expr_result)
+    if s != "42" { return 27 }
+    
+    // Test bool expression
+    expr_result = ParseExprResult {
+        success: 1,
+        expr_type: 3,  // EXPR_BOOL_LITERAL
+        int_value: 0,
+        float_value: 0.0,
+        string_value: "",
+        bool_value: 1,
+        inner_result_idx: 0,
+        left_idx: 0,
+        right_idx: 0,
+        operator: 0,
+        arg_count: 0,
+        span: span
+    }
+    
+    s = print_simple_expr(expr_result)
+    if s != "true" { return 28 }
+    
+    // Test identifier expression
+    expr_result = ParseExprResult {
+        success: 1,
+        expr_type: 5,  // EXPR_IDENTIFIER
+        int_value: 0,
+        float_value: 0.0,
+        string_value: "myVar",
+        bool_value: 0,
+        inner_result_idx: 0,
+        left_idx: 0,
+        right_idx: 0,
+        operator: 0,
+        arg_count: 0,
+        span: span
+    }
+    
+    s = print_simple_expr(expr_result)
+    if s != "myVar" { return 29 }
+    
+    // Test pattern printing
+    var pattern_result = ParsePatternResult {
+        success: 1,
+        pattern_type: 1,  // PATTERN_WILDCARD
+        int_value: 0,
+        string_value: "",
+        bool_value: 0,
+        field_count: 0,
+        span: span
+    }
+    
+    s = print_pattern(pattern_result)
+    if s != "_" { return 30 }
+    
+    // Test binding pattern
+    pattern_result = ParsePatternResult {
+        success: 1,
+        pattern_type: 2,  // PATTERN_BINDING
+        int_value: 0,
+        string_value: "x",
+        bool_value: 0,
+        field_count: 0,
+        span: span
+    }
+    
+    s = print_pattern(pattern_result)
+    if s != "x" { return 31 }
+    
+    // Test indented output
+    var state2 = printer_new()
+    state2 = printer_indent(state2)
+    state2 = printer_append_indented(state2, "hello")
+    if state2.output != "    hello" { return 32 }
+    
+    // All tests passed
+    return 0
+}

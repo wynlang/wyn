@@ -1,0 +1,23 @@
+// Test float methods
+fn main() -> int {
+    var x = 3.7
+    
+    // Test floor
+    var f = x.floor()
+    if f != 3.0 { return 1; }
+    
+    // Test ceil
+    var c = x.ceil()
+    if c != 4.0 { return 2; }
+    
+    // Test round
+    var r = x.round()
+    if r != 4.0 { return 3; }
+    
+    // Test abs
+    var neg = -2.5
+    var a = neg.abs()
+    if a != 2.5 { return 4; }
+    
+    return 0
+}

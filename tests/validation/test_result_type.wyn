@@ -1,0 +1,36 @@
+// Test: Result<T, E> type implementation
+// Tests basic Result type functionality
+
+fn divide(a: int, b: int) -> ResultInt {
+    if b == 0 {
+        return ResultInt_Err("Division by zero");
+    }
+    return ResultInt_Ok(a / b);
+}
+
+fn main() -> int {
+    // Test 1: Ok case
+    var result1 = divide(10, 2);
+    if !ResultInt_is_ok(result1) {
+        return 1;
+    }
+    
+    // Test 2: Err case
+    var result2 = divide(10, 0);
+    if !ResultInt_is_err(result2) {
+        return 2;
+    }
+    
+    // Test 3: Direct construction
+    var ok_result = ResultInt_Ok(42);
+    if !ResultInt_is_ok(ok_result) {
+        return 3;
+    }
+    
+    var err_result = ResultInt_Err("test error");
+    if !ResultInt_is_err(err_result) {
+        return 4;
+    }
+    
+    return 0;  // All tests passed
+}

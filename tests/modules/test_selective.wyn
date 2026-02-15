@@ -1,0 +1,12 @@
+// Test selective import - only import add, not multiply
+import { add } from math_utils
+
+fn main() -> int {
+    var sum = add(10, 20)
+    if sum != 30 { return 1; }
+    
+    // This should fail - multiply was not imported
+    // var product = multiply(5, 6)
+    
+    return 0
+}

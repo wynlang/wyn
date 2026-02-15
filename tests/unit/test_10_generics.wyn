@@ -1,2 +1,0 @@
-fn identity<T>(x: T) -> T { return x; }
-fn main() -> int { return identity(42); }

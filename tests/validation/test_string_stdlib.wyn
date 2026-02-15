@@ -1,0 +1,22 @@
+// TDD: String stdlib expansion
+
+fn main() -> int {
+    // Test str_substring
+    var s = "Hello World"
+    println(str_substring(s, 0, 5))
+    println(str_substring(s, 6, 11))
+
+    // Test str_index_of
+    println(str_index_of(s, "World"))
+    println(str_index_of(s, "xyz"))
+
+    // Test str_repeat
+    println(str_repeat("ab", 3))
+
+    // Test str_starts_with / str_ends_with
+    println(str_starts_with(s, "Hello"))
+    println(str_ends_with(s, "World"))
+    println(str_starts_with(s, "World"))
+
+    return 0
+}

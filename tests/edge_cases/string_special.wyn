@@ -1,0 +1,151 @@
+fn main() -> int {
+    print("=== Special Character Edge Cases ===")
+    
+    // Test escape sequences
+    print("=== Escape Sequence Tests ===")
+    
+    var newline_str = "Line1\nLine2\nLine3"
+    var tab_str = "Col1\tCol2\tCol3"
+    var quote_str = "He said \"Hello\" to me"
+    var backslash_str = "Path\\to\\file"
+    var mixed_escapes = "Mixed:\n\tTab\r\nWindows\\"
+    
+    print("Newline string:")
+    print(newline_str)
+    print("Length:")
+    print(wyn_string_len(newline_str))
+    
+    print("Tab string:")
+    print(tab_str)
+    print("Length:")
+    print(wyn_string_len(tab_str))
+    
+    print("Quote string:")
+    print(quote_str)
+    print("Length:")
+    print(wyn_string_len(quote_str))
+    
+    print("Backslash string:")
+    print(backslash_str)
+    print("Length:")
+    print(wyn_string_len(backslash_str))
+    
+    print("Mixed escapes:")
+    print(mixed_escapes)
+    print("Length:")
+    print(wyn_string_len(mixed_escapes))
+    
+    // Test operations on strings with escape sequences
+    print("=== Operations on Escaped Strings ===")
+    
+    var contains_newline = wyn_string_contains(newline_str, "\n")
+    var contains_tab = wyn_string_contains(tab_str, "\t")
+    print("Contains newline:")
+    print(contains_newline)
+    print("Contains tab:")
+    print(contains_tab)
+    
+    // Test split on escape sequences
+    var count_lines = split_count(newline_str, "\n")
+    var count_tabs = split_count(tab_str, "\t")
+    
+    print("Split by newline count:")
+    print(count_lines)
+    print("Split by tab count:")
+    print(count_tabs)
+    
+    if (count_lines > 0) {
+        print("First line:")
+        var first_line = split_get(newline_str, "\n", 0)
+        print(first_line)
+    }
+    
+    // Test replace with escape sequences
+    var no_newlines = wyn_str_replace(newline_str, "\n", " ")
+    var no_tabs = wyn_str_replace(tab_str, "\t", " ")
+    print("Replace newlines with spaces:")
+    print(no_newlines)
+    print("Replace tabs with spaces:")
+    print(no_tabs)
+    
+    // Test whitespace handling
+    print("=== Whitespace Tests ===")
+    
+    var whitespace_str = "  \t\n  Hello World  \t\n  "
+    print("Whitespace string (before trim):")
+    print(whitespace_str)
+    print("Length:")
+    print(wyn_string_len(whitespace_str))
+    
+    var trimmed = wyn_string_trim(whitespace_str)
+    print("After trim:")
+    print(trimmed)
+    print("Length:")
+    print(wyn_string_len(trimmed))
+    
+    // Test various whitespace characters
+    var space_types = " \t\n\r\v\f"
+    print("Various whitespace types:")
+    print(space_types)
+    print("Length:")
+    print(wyn_string_len(space_types))
+    
+    var trimmed_types = wyn_string_trim(space_types)
+    print("Trimmed whitespace types:")
+    print(trimmed_types)
+    print("Length:")
+    print(wyn_string_len(trimmed_types))
+    
+    // Test control characters
+    print("=== Control Character Tests ===")
+    
+    // Note: Some control characters might not display properly
+    var ctrl_chars = "\x01\x02\x03\x1F"
+    print("Control characters length:")
+    print(wyn_string_len(ctrl_chars))
+    
+    var contains_ctrl = wyn_string_contains(ctrl_chars, "\x01")
+    print("Contains \\x01:")
+    print(contains_ctrl)
+    
+    // Test high ASCII characters
+    var high_ascii = "\x80\x90\xA0\xFF"
+    print("High ASCII length:")
+    print(wyn_string_len(high_ascii))
+    
+    // Test mixed special characters
+    print("=== Mixed Special Characters ===")
+    
+    var mixed_special = "Normal\x00Text\nWith\tSpecial\rChars\\"
+    print("Mixed special string length:")
+    print(wyn_string_len(mixed_special))
+    
+    // Test operations on mixed special
+    var idx_null = wyn_string_index_of(mixed_special, "\x00")
+    var idx_newline = wyn_string_index_of(mixed_special, "\n")
+    print("Index of null byte:")
+    print(idx_null)
+    print("Index of newline:")
+    print(idx_newline)
+    
+    // Test case conversion with special chars
+    var special_case = "Hello\nWORLD\tTest"
+    var upper_special = wyn_string_to_upper(special_case)
+    var lower_special = wyn_string_to_lower(special_case)
+    print("Original with special:")
+    print(special_case)
+    print("To upper:")
+    print(upper_special)
+    print("To lower:")
+    print(lower_special)
+    
+    // Test padding with special characters
+    var padded_special = wyn_string_pad_left("test", 10, "\t")
+    print("Padded with tabs:")
+    print(padded_special)
+    print("Length:")
+    print(wyn_string_len(padded_special))
+    
+    print("=== Special Character Tests Complete ===")
+    return 0
+}

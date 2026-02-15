@@ -19,6 +19,7 @@ typedef struct {
 
 // Lookup method return type given receiver type and method name
 const char* lookup_method_return_type(const char* receiver_type, const char* method_name);
+const char* lookup_module_fn_return_type(const char* fn_name);
 
 // Get receiver type string from Type for method dispatch
 const char* get_receiver_type_string(const Type* type);
@@ -59,6 +60,7 @@ typedef enum {
     TYPE_UNION,     // T2.5.2: Union Type Support
     TYPE_RESULT,    // TASK-026: Result<T,E> Type Implementation
     TYPE_GENERIC,   // T3.1.2: Generic type parameter
+    TYPE_JSON,      // JSON object type for method syntax
 } TypeKind;
 
 // Type already forward declared above

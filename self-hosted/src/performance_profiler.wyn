@@ -1,0 +1,126 @@
+// Performance Profiler Module
+// Profiles parsing performance using Time module
+
+struct ProfileResult {
+    source_lines: int,      // Number of lines in source
+    source_chars: int,      // Number of characters in source
+    parse_time_ms: int,     // Parsing time in milliseconds
+    tokens_parsed: int,     // Number of tokens parsed
+    success: int            // 1 if parse succeeded, 0 otherwise
+}
+
+// Count lines in source
+fn count_lines(source: string) -> int {
+    var count = 1
+    var i = 0
+    var len = source.len()
+    while i < len {
+        var c = source.char_at(i)
+        if str_eq(c, "\n") == 1 {
+            count = count + 1
+        }
+        i = i + 1
+    }
+    return count
+}
+
+// Profile parsing of a source string
+fn profile_parse(source: string) -> ProfileResult {
+    var source_len = source.len()
+    var source_lines = count_lines(source)
+    
+    // Profile C parser
+    var start = Time::now()
+    
+    var success = C_Parser::init_lexer(source)
+    if success == 0 {
+        return ProfileResult {
+            source_lines: source_lines,
+            source_chars: source_len,
+            parse_time_ms: 0,
+            tokens_parsed: 0,
+            success: 0
+        }
+    }
+    
+    C_Parser::init_parser()
+    var ast = C_Parser::parse_program()
+    
+    var end = Time::now()
+    var elapsed = end - start
+    
+    // Free AST
+    if ast != 0 {
+        C_Parser::free_ast(ast)
+    }
+    
+    var parse_success = 1
+    if ast == 0 {
+        parse_success = 0
+    }
+    
+    return ProfileResult {
+        source_lines: source_lines,
+        source_chars: source_len,
+        parse_time_ms: elapsed,
+        tokens_parsed: 0,  // Not tracked yet
+        success: parse_success
+    }
+}
+
+// Generate a test program with approximately n lines
+fn generate_test_program(n: int) -> string {
+    var result = ""
+    var i = 0
+    while i < n {
+        result = result + "fn func_"
+        result = result + i.to_string()
+        result = result + "() -> int {\n"
+        result = result + "    return "
+        result = result + i.to_string()
+        result = result + "\n"
+        result = result + "}\n\n"
+        i = i + 1
+    }
+    return result
+}
+
+// Run performance benchmark suite
+fn run_performance_suite() -> int {
+    print("=== Performance Benchmark ===\n\n")
+    
+    // Test with increasing file sizes
+    var sizes = [5, 10, 20, 50, 100]
+    var i = 0
+    while i < 5 {
+        var size = sizes[i]
+        print("Generating program with ~")
+        print(size)
+        print(" functions...\n")
+        
+        var source = generate_test_program(size)
+        var result = profile_parse(source)
+        
+        if result.success == 0 {
+            print("  FAIL: Parse failed\n")
+            return 1
+        }
+        
+        print("  Lines: ")
+        print(result.source_lines)
+        print(", Chars: ")
+        print(result.source_chars)
+        print(", Time: ")
+        print(result.parse_time_ms)
+        print(" ms\n")
+        
+        i = i + 1
+    }
+    
+    print("\n=== Performance Tests PASS ===\n")
+    return 0
+}
+
+fn main() -> int {
+    return run_performance_suite()
+}

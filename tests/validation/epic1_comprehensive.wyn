@@ -1,0 +1,77 @@
+// Epic 1 Comprehensive Validation Test
+// Tests core type system features
+
+// Task 1.1: Result<T, E> Type
+fn divide(a: int, b: int) -> Result<int, string> {
+    if b == 0 {
+        return Err("Division by zero")
+    }
+    return Ok(a / b)
+}
+
+// Task 1.2: Option<T> Type
+fn find_positive(x: int) -> Option<int> {
+    if x > 0 {
+        return Some(x)
+    }
+    return None()
+}
+
+// Task 1.6: Traits
+trait Describable {
+    fn describe(self) -> string
+}
+
+// Task 1.8: Structs
+struct Point { x: int, y: int }
+
+fn Point.sum(self) -> int {
+    return self.x + self.y
+}
+
+impl Describable for Point {
+    fn describe(self) -> string {
+        return "Point"
+    }
+}
+
+fn main() -> int {
+    // Test 1.1: Result type with generic syntax
+    var r1 = divide(10, 2)
+    if ResultInt_is_ok(r1) == 0 {
+        return 1
+    }
+    if ResultInt_unwrap(r1) != 5 {
+        return 2
+    }
+
+    var r2 = divide(10, 0)
+    if ResultInt_is_err(r2) == 0 {
+        return 3
+    }
+
+    // Test 1.2: Option type with generic syntax
+    var o1 = find_positive(7)
+    if OptionInt_is_some(o1) == 0 {
+        return 4
+    }
+    if OptionInt_unwrap(o1) != 7 {
+        return 5
+    }
+
+    var o2 = find_positive(-3)
+    if OptionInt_is_none(o2) == 0 {
+        return 6
+    }
+
+    // Test 1.6 + 1.8: Traits + Structs + Methods
+    var p = Point { x: 10, y: 20 }
+    if p.sum() != 30 {
+        return 7
+    }
+    println(p.describe())
+
+    // All tests passed!
+    println("All epic1 tests passed!")
+    return 0
+}

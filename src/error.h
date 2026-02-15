@@ -64,6 +64,9 @@ void parser_error_at_previous(const char* message);
 void parser_synchronize(void);
 void parser_suggest_fix(const char* expected, const char* got);
 bool parser_check_and_suggest(int expected_token, const char* context);
+void parser_error_missing_semicolon(const char* filename, int line, int column);
+void parser_error_unclosed_delimiter(const char* filename, int line, int column, 
+                                    char opening_char, int opening_line, int opening_column);
 
 // T1.2.4: Type checker error message functions
 void type_error_mismatch(const char* expected_type, const char* actual_type, const char* context, int line, int column);

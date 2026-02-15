@@ -1,0 +1,29 @@
+// Task 4.1: String Methods - TDD
+fn main() -> int {
+    // Test 1: substring
+    var s = "hello world"
+    var sub = s.substring(0, 5)
+    if sub != "hello" { return 1; }
+    
+    // Test 2: trim
+    var s2 = "  hello  "
+    var trimmed = s2.trim()
+    if trimmed != "hello" { return 2; }
+    
+    // Test 3: replace
+    var s3 = "hello world"
+    var replaced = s3.replace("world", "wyn")
+    if replaced != "hello wyn" { return 3; }
+    
+    // Test 4: to_upper
+    var s4 = "hello"
+    var upper = s4.to_upper()
+    if upper != "HELLO" { return 4; }
+    
+    // Test 5: to_lower
+    var s5 = "HELLO"
+    var lower = s5.to_lower()
+    if lower != "hello" { return 5; }
+    
+    return 0
+}

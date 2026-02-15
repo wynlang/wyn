@@ -1,0 +1,143 @@
+// Test 1: Simple expression implicit return
+fn test_simple() -> int {
+    42
+}
+
+// Test 2: Arithmetic expression implicit return
+fn test_arithmetic() -> int {
+    5 + 3 * 2
+}
+
+// Test 3: Function call implicit return
+fn helper() -> int {
+    10
+}
+
+fn test_call() -> int {
+    helper()
+}
+
+// Test 4: If/else expression implicit return
+fn test_if_else(x: int) -> int {
+    if x > 0 {
+        1
+    } else {
+        -1
+    }
+}
+
+// Test 5: Nested if/else implicit return
+fn test_nested_if(x: int, y: int) -> int {
+    if x > 0 {
+        if y > 0 {
+            x + y
+        } else {
+            x - y
+        }
+    } else {
+        0
+    }
+}
+
+// Test 6: String implicit return
+fn test_string() -> string {
+    "hello world"
+}
+
+// Test 7: Boolean implicit return
+fn test_bool(x: int) -> bool {
+    x > 5
+}
+
+// Test 8: Explicit return still works
+fn test_explicit() -> int {
+    return 99;
+}
+
+// Test 9: Mixed explicit and implicit
+fn test_mixed(x: int) -> int {
+    if x < 0 {
+        return -1;
+    }
+    x * 2
+}
+
+// Test 10: Array implicit return
+fn test_array() -> [int] {
+    [1, 2, 3, 4, 5]
+}
+
+// Test 11: Struct implicit return
+struct Point {
+    x: int,
+    y: int
+}
+
+fn test_struct() -> Point {
+    Point { x: 10, y: 20 }
+}
+
+// Test 12: Variable assignment then implicit return
+fn test_var_then_return() -> int {
+    var x = 15;
+    x + 5
+}
+
+// Test 13: Multiple statements then implicit return
+fn test_multiple_stmts() -> int {
+    var a = 5;
+    var b = 10;
+    var c = 15;
+    a + b + c
+}
+
+// Test 14: Function with no return type (void) - no implicit return
+fn test_void() {
+    var x = 42;
+}
+
+// Test 15: Match expression implicit return
+fn test_match(x: int) -> string {
+    match x {
+        1 => "one",
+        2 => "two",
+        _ => "other"
+    }
+}
+
+fn main() -> int {
+    // Test all functions
+    assert(test_simple() == 42);
+    assert(test_arithmetic() == 11);
+    assert(test_call() == 10);
+    assert(test_if_else(5) == 1);
+    assert(test_if_else(-3) == -1);
+    assert(test_nested_if(3, 4) == 7);
+    assert(test_nested_if(3, -4) == -1);
+    assert(test_nested_if(-3, 4) == 0);
+    assert(test_string() == "hello world");
+    assert(test_bool(10) == true);
+    assert(test_bool(3) == false);
+    assert(test_explicit() == 99);
+    assert(test_mixed(-5) == -1);
+    assert(test_mixed(7) == 14);
+    
+    var arr = test_array();
+    assert(arr.len() == 5);
+    assert(arr[0] == 1);
+    assert(arr[4] == 5);
+    
+    var point = test_struct();
+    assert(point.x == 10);
+    assert(point.y == 20);
+    
+    assert(test_var_then_return() == 20);
+    assert(test_multiple_stmts() == 30);
+    
+    assert(test_match(1) == "one");
+    assert(test_match(2) == "two");
+    assert(test_match(99) == "other");
+    
+    println("All implicit return tests passed!");
+    0
+}

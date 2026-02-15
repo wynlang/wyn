@@ -1,0 +1,35 @@
+// Test match with multiple cases
+fn main() -> int {
+    var x = 2
+    
+    var result = match x {
+        1 => 10,
+        2 => 20,
+        3 => 30,
+        _ => 0
+    }
+    
+    if result != 20 { return 1; }
+    
+    var y = 3
+    var result2 = match y {
+        1 => 10,
+        2 => 20,
+        3 => 30,
+        _ => 0
+    }
+    
+    if result2 != 30 { return 2; }
+    
+    var z = 99
+    var result3 = match z {
+        1 => 10,
+        2 => 20,
+        3 => 30,
+        _ => 0
+    }
+    
+    if result3 != 0 { return 3; }
+    
+    return 0  // All tests passed
+}

@@ -1,0 +1,33 @@
+// Test: 64-bit integers
+// Verifies int is now 64-bit (long long) — no overflow at 2^31
+
+fn main() -> int {
+    Test.init("64-bit Integers")
+    
+    // Basic overflow test
+    var max32 = 2147483647
+    var overflow = max32 + 1
+    Test.assert_eq_int(overflow, 2147483648, "2^31 - 1 + 1 = 2^31")
+    
+    // Large values
+    var big = 10000000000
+    Test.assert(big > 0, "10 billion is positive")
+    
+    // Arithmetic with large values
+    var a = 5000000000
+    var b = 3000000000
+    Test.assert_eq_int(a + b, 8000000000, "5B + 3B = 8B")
+    Test.assert_eq_int(a - b, 2000000000, "5B - 3B = 2B")
+    
+    // to_string with large values
+    var s = big.to_string()
+    Test.assert_eq_str(s, "10000000000", "10B to_string")
+    
+    // Negative large values
+    var neg = -5000000000
+    Test.assert(neg < 0, "negative 5B is negative")
+    Test.assert_eq_str(neg.to_string(), "-5000000000", "negative 5B to_string")
+    
+    Test.summary()
+    return 0
+}

@@ -1,0 +1,6 @@
+// Minimal bool method test
+fn main() -> int {
+    var t = true
+    var result = t.not()
+    return 0
+}

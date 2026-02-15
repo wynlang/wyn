@@ -1,0 +1,21 @@
+fn main() -> int {
+    Test.init("HTTP Audit")
+    
+    // Basic GET
+    var body = Http.get("https://httpbin.org/get")
+    Test.assert(body.len() > 0, "Http.get returns body")
+    Test.assert(body.contains("httpbin"), "body contains httpbin")
+    
+    // POST
+    var resp = Http.post("https://httpbin.org/post", "hello=world")
+    Test.assert(resp.len() > 0, "Http.post returns body")
+    
+    // URL encode/decode
+    var encoded = Url.encode("hello world&foo=bar")
+    Test.assert(encoded.contains("%20") || encoded.contains("+"), "Url.encode spaces")
+    var decoded = Url.decode("hello%20world")
+    Test.assert_eq_str(decoded, "hello world", "Url.decode")
+    
+    Test.summary()
+    return 0
+}

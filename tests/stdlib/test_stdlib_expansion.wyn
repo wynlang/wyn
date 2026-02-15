@@ -1,0 +1,110 @@
+fn make_json() -> string { return "{\"name\":\"Wyn\",\"ver\":2,\"ok\":true}" }
+
+fn main() -> int {
+    // JSON Parse
+    Test.init("Json Parse")
+    var doc = Json.parse(make_json())
+    Test.assert_eq_str(Json.get(doc, "name"), "Wyn", "get string")
+    Test.assert_eq_int(Json.get_int(doc, "ver"), 2, "get int")
+    Test.assert(Json.has(doc, "name"), "has")
+    Test.assert_eq_int(Json.has(doc, "nope"), 0, "has missing")
+    Test.assert(Json.keys(doc).contains("name"), "keys")
+    Test.summary()
+    
+    // Base64
+    Test.init("Encoding")
+    Test.assert_eq_str(Encoding.base64_encode("Hello"), "SGVsbG8=", "b64 encode")
+    Test.assert_eq_str(Encoding.base64_decode("SGVsbG8="), "Hello", "b64 decode")
+    Test.assert_eq_str(Encoding.hex_encode("AB"), "4142", "hex")
+    Test.summary()
+    
+    // Crypto
+    Test.init("Crypto")
+    var h = Crypto.sha256("hello")
+    Test.assert_eq_int(h.len(), 64, "sha256 len")
+    Test.assert(h.starts_with("2cf24"), "sha256 value")
+    Test.assert_eq_int(Crypto.md5("hello").len(), 32, "md5 len")
+    Test.summary()
+    
+    // Os
+    Test.init("Os")
+    Test.assert(Os.platform().len() > 0, "platform")
+    Test.assert(Os.arch().len() > 0, "arch")
+    Test.assert(Os.pid() > 0, "pid")
+    Test.assert(Os.home_dir().len() > 0, "home")
+    Test.summary()
+    
+    // Uuid
+    Test.init("Uuid")
+    var id = Uuid.generate()
+    Test.assert_eq_int(id.len(), 36, "uuid len")
+    Test.assert(id.contains("-"), "uuid dashes")
+    Test.summary()
+    
+    // Array methods
+    Test.init("Array Expansion")
+    var a = [1, 2, 3, 4, 5]
+    Test.assert_eq_int(a.pop(), 5, "pop")
+    Test.assert_eq_int(a.len(), 4, "pop len")
+    Test.assert_eq_int([10, 20, 30].slice(1, 3)[0], 20, "slice")
+    Test.assert_eq_int([1, 2, 3].reverse()[0], 3, "reverse")
+    Test.assert_eq_str([1, 2, 3].join(","), "1,2,3", "join")
+    Test.assert_eq_int([10, 20, 30].index_of(20), 1, "index_of")
+    Test.assert_eq_int([1, 1, 2, 2, 3].unique().len(), 3, "unique")
+    Test.summary()
+    
+    // HashMap methods
+    Test.init("HashMap Expansion")
+    var m = HashMap.new()
+    m.insert_string("a", "1")
+    m.insert_string("b", "2")
+    m.remove("b")
+    Test.assert_eq_int(m.contains("b"), 0, "remove")
+    m.clear()
+    Test.assert_eq_int(m.len(), 0, "clear")
+    Test.summary()
+    
+    // Math
+    Test.init("Math Expansion")
+    Test.assert_eq_int(Math.clamp(5, 0, 10), 5, "clamp mid")
+    Test.assert_eq_int(Math.clamp(-5, 0, 10), 0, "clamp lo")
+    Test.assert_eq_int(Math.sign(5), 1, "sign +")
+    Test.assert_eq_int(Math.sign(-5), -1, "sign -")
+    Test.assert_eq_int(Math.sign(0), 0, "sign 0")
+    Test.summary()
+    
+    // DateTime
+    Test.init("DateTime Expansion")
+    var now = DateTime.now()
+    Test.assert_eq_int(DateTime.diff(now + 100, now), 100, "diff")
+    var iso = DateTime.to_iso(now)
+    Test.assert(iso.contains("T"), "iso T")
+    Test.summary()
+    
+    // Regex
+    Test.init("Regex Expansion")
+    Test.assert_eq_int(Regex.find("abc123", "[0-9]+"), 3, "find pos")
+    Test.assert(Regex.find_all("a1b2c3", "[0-9]").contains("2"), "find_all")
+    Test.summary()
+    
+    // File
+    Test.init("File Expansion")
+    File.write("/tmp/wyn_ren.txt", "x")
+    File.rename("/tmp/wyn_ren.txt", "/tmp/wyn_ren2.txt")
+    Test.assert(File.exists("/tmp/wyn_ren2.txt"), "rename")
+    File.delete("/tmp/wyn_ren2.txt")
+    Test.summary()
+    
+    // Net
+    Test.init("Net Expansion")
+    var ip = Net.resolve("localhost")
+    Test.assert(ip.len() > 0, "resolve")
+    Test.summary()
+    
+    // Db
+    Test.init("Db Expansion")
+    Test.assert(Db.escape("it's").contains("''"), "escape quote")
+    Test.summary()
+    
+    return 0
+}

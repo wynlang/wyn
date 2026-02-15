@@ -1,0 +1,4 @@
+// Test multiple levels of nesting
+export fn deep_function() -> int {
+    return 99
+}

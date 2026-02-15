@@ -1,0 +1,27 @@
+// Benchmark: CPU work (100 tasks, fib(25))
+fn fib(n: int) -> int {
+    if n < 2 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn main() -> int {
+    var start = time_now();
+    
+    var i = 0;
+    while i < 100 {
+        spawn fib(25);
+        i = i + 1;
+    }
+    
+    // Wait for completion
+    var wait = 0;
+    while wait < 500000000 {
+        wait = wait + 1;
+    }
+    
+    var elapsed = time_now() - start;
+    print(elapsed);  // Nanoseconds
+    return 0;
+}

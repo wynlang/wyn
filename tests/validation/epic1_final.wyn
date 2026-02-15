@@ -1,0 +1,76 @@
+// EPIC 1 FINAL VALIDATION
+// Tests only the features that were actually implemented in Epic 1
+
+struct Point {
+    x: int
+    y: int
+}
+
+struct Color {
+    r: int
+    g: int
+    b: int
+}
+
+fn main() -> int {
+    var tests_passed = 0
+    var tests_failed = 0
+    
+    // TEST 1: Basic struct field access
+    var p = Point { x: 10, y: 20 }
+    if p.x == 10 {
+        tests_passed = tests_passed + 1
+    }
+    if p.y == 20 {
+        tests_passed = tests_passed + 1
+    }
+    
+    // TEST 2: Field access in expressions
+    var sum = p.x + p.y
+    if sum == 30 {
+        tests_passed = tests_passed + 1
+    }
+    
+    // TEST 3: Multiple struct instances
+    var p2 = Point { x: 5, y: 15 }
+    if p2.x == 5 {
+        tests_passed = tests_passed + 1
+    }
+    
+    // TEST 4: Field comparison
+    if p.x > p2.x {
+        tests_passed = tests_passed + 1
+    }
+    
+    // TEST 5: Different struct type
+    var c = Color { r: 255, g: 128, b: 64 }
+    if c.r == 255 {
+        tests_passed = tests_passed + 1
+    }
+    if c.g == 128 {
+        tests_passed = tests_passed + 1
+    }
+    if c.b == 64 {
+        tests_passed = tests_passed + 1
+    }
+    
+    // TEST 6: Field access in control flow
+    if p.x < 20 {
+        if p.y > 10 {
+            tests_passed = tests_passed + 1
+        }
+    }
+    
+    // TEST 7: Complex field expression
+    var result = p.x * 2 + p.y / 2
+    if result == 30 {
+        tests_passed = tests_passed + 1
+    }
+    
+    // Expected: 10 tests passed
+    if tests_passed == 10 {
+        return 0  // SUCCESS
+    }
+    
+    return tests_passed  // Return number of tests passed for debugging
+}

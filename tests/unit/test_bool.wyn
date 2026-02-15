@@ -1,7 +1,0 @@
-fn main() -> int {
-    let flag = true;
-    if flag {
-        return 42;
-    }
-    return 0;
-}

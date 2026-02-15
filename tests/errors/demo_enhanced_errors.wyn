@@ -1,0 +1,12 @@
+// This file demonstrates enhanced error messages in Wyn
+
+fn main() -> int {
+    // 1. Undefined function with typo detection
+    prnt("Hello");           // Should suggest "print"
+    str_lenght("test");      // Should suggest "str_length"
+    
+    // 2. Completely unknown function
+    unknown_func();
+    
+    return 0;
+}

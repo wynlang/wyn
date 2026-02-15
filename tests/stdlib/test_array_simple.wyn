@@ -1,0 +1,14 @@
+// Task 4.2: Array Methods - Simple test
+fn main() -> int {
+    var arr = [1, 2, 3]
+    
+    // Test first
+    var f = arr.first()
+    if f != 1 { return 1; }
+    
+    // Test last
+    var l = arr.last()
+    if l != 3 { return 2; }
+    
+    return 0
+}

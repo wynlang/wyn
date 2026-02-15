@@ -1,0 +1,33 @@
+// Task 2.1: Bool Methods Test
+fn main() -> int {
+    var t = true
+    var f = false
+    
+    // Test to_int
+    if t.to_int() != 1 { return 1; }
+    if f.to_int() != 0 { return 2; }
+    
+    // Test not
+    if t.not() != false { return 3; }
+    if f.not() != true { return 4; }
+    
+    // Test and
+    if t.and(t) != true { return 5; }
+    if t.and(f) != false { return 6; }
+    if f.and(t) != false { return 7; }
+    if f.and(f) != false { return 8; }
+    
+    // Test or
+    if t.or(t) != true { return 9; }
+    if t.or(f) != true { return 10; }
+    if f.or(t) != true { return 11; }
+    if f.or(f) != false { return 12; }
+    
+    // Test xor
+    if t.xor(t) != false { return 13; }
+    if t.xor(f) != true { return 14; }
+    if f.xor(t) != true { return 15; }
+    if f.xor(f) != false { return 16; }
+    
+    return 0  // All tests passed
+}

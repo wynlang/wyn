@@ -1,0 +1,29 @@
+fn main() -> int {
+    Test.init("HTTP Server E2E")
+    var server = Http.serve(18768)
+    Test.assert(server > 0, "server started")
+    
+    System.exec_code("(curl -s http://localhost:18768/api/test > /tmp/wyn_srv_final.txt) &")
+    sleep_ms(200)
+    
+    var sep = "|"
+    var req = Http.accept(server)
+    var method = req.split_at(sep, 0)
+    var path = req.split_at(sep, 1)
+    var fd = req.split_at(sep, 3).to_int()
+    
+    Test.assert_eq_str(method, "GET", "method")
+    Test.assert_eq_str(path, "/api/test", "path")
+    Test.assert(fd > 0, "fd > 0")
+    
+    Http.respond(fd, 200, "application/json", "{\"ok\":true}")
+    sleep_ms(500)
+    
+    var result = File.read("/tmp/wyn_srv_final.txt").trim()
+    Test.assert_eq_str(result, "{\"ok\":true}", "client got JSON response")
+    
+    Http.close_server(server)
+    File.delete("/tmp/wyn_srv_final.txt")
+    Test.summary()
+    return 0
+}

@@ -157,7 +157,14 @@ static Expr* primary() {
         return expr;
     }
     
-    if (match(TOKEN_NOT) || match(TOKEN_MINUS) || match(TOKEN_BANG) || match(TOKEN_TILDE)) {
+    if (match(TOKEN_SPAWN)) {
+        Expr* expr = alloc_expr();
+        expr->type = EXPR_SPAWN;
+        expr->spawn.call = call();  // Parse call expression
+        return expr;
+    }
+    
+    if (match(TOKEN_NOT) || match(TOKEN_MINUS) || match(TOKEN_BANG) || match(TOKEN_TILDE) || match(TOKEN_AMP)) {
         Token op = parser.previous;
         Expr* operand = primary();
         Expr* unary = alloc_expr();
@@ -202,8 +209,8 @@ static Expr* primary() {
             expr->token = str_token;
             
             // Parse interpolation expressions
-            expr->string_interp.parts = malloc(sizeof(char*) * 8);
-            expr->string_interp.expressions = malloc(sizeof(Expr*) * 8);
+            expr->string_interp.parts = malloc(sizeof(char*) * 64);
+            expr->string_interp.expressions = malloc(sizeof(Expr*) * 64);
             expr->string_interp.count = 0;
             
             // Parse the string and extract ${...} expressions
@@ -279,6 +286,14 @@ static Expr* primary() {
         return expr;
     }
     
+    // Treat 'self' as an identifier in expression context
+    if (match(TOKEN_SELF)) {
+        Expr* expr = alloc_expr();
+        expr->type = EXPR_IDENT;
+        expr->token = parser.previous;
+        return expr;
+    }
+
     if (match(TOKEN_IDENT)) {
         Token name = parser.previous;
         
@@ -305,7 +320,7 @@ static Expr* primary() {
                     // Parse field value
                     expr->struct_init.field_values[expr->struct_init.field_count] = expression();
                     expr->struct_init.field_count++;
-                } while (match(TOKEN_COMMA));
+                } while (match(TOKEN_COMMA) && !check(TOKEN_RBRACE));
             }
             
             expect(TOKEN_RBRACE, "Expected '}' after struct fields");
@@ -334,7 +349,7 @@ static Expr* primary() {
                     // Parse field value
                     expr->struct_init.field_values[expr->struct_init.field_count] = expression();
                     expr->struct_init.field_count++;
-                } while (match(TOKEN_COMMA));
+                } while (match(TOKEN_COMMA) && !check(TOKEN_RBRACE));
             }
             
             expect(TOKEN_RBRACE, "Expected '}' after struct fields");
@@ -470,6 +485,16 @@ static Expr* primary() {
                 parser.had_error = true;
                 return NULL;
             }
+            
+            // Check for guard: pattern if condition
+            if (match(TOKEN_IF)) {
+                Pattern* guard_pattern = safe_malloc(sizeof(Pattern));
+                guard_pattern->type = PATTERN_GUARD;
+                guard_pattern->guard.pattern = pat;
+                guard_pattern->guard.guard = expression();
+                pat = guard_pattern;
+            }
+            
             expr->match.arms[expr->match.arm_count].pattern = pat;
             
             expect(TOKEN_FATARROW, "Expected '=>' after pattern");
@@ -479,7 +504,7 @@ static Expr* primary() {
                 advance(); // consume '{'
                 Expr* block_expr = alloc_expr();
                 block_expr->type = EXPR_BLOCK;
-                block_expr->block.stmts = malloc(sizeof(Stmt*) * 32);
+                block_expr->block.stmts = malloc(sizeof(Stmt*) * 256);
                 block_expr->block.stmt_count = 0;
                 block_expr->block.result = NULL;
                 
@@ -529,13 +554,42 @@ static Expr* primary() {
         if (!check(TOKEN_RBRACKET)) {
             int capacity = 8;
             expr->array.elements = malloc(sizeof(Expr*) * capacity);
-            do {
+            expr->array.elements[0] = expression();
+            expr->array.count = 1;
+            
+            // Check for list comprehension: [expr for x in range]
+            if (check(TOKEN_FOR)) {
+                advance(); // consume 'for'
+                Expr* comp = alloc_expr();
+                comp->type = EXPR_LIST_COMP;
+                comp->list_comp.body = expr->array.elements[0];
+                expect(TOKEN_IDENT, "Expected variable name after 'for'");
+                comp->list_comp.var_name = parser.previous;
+                expect(TOKEN_IN, "Expected 'in' after variable name");
+                comp->list_comp.iter_start = expression();
+                if (match(TOKEN_DOTDOT)) {
+                    comp->list_comp.iter_end = expression();
+                } else {
+                    comp->list_comp.iter_end = NULL; // iterating array
+                }
+                // Optional filter: if condition
+                if (check(TOKEN_IF)) {
+                    advance();
+                    comp->list_comp.condition = expression();
+                } else {
+                    comp->list_comp.condition = NULL;
+                }
+                expect(TOKEN_RBRACKET, "Expected ']' after list comprehension");
+                return comp;
+            }
+            
+            while (match(TOKEN_COMMA) && !check(TOKEN_RBRACKET)) {
                 if (expr->array.count >= capacity) {
                     capacity *= 2;
                     expr->array.elements = realloc(expr->array.elements, sizeof(Expr*) * capacity);
                 }
                 expr->array.elements[expr->array.count++] = expression();
-            } while (match(TOKEN_COMMA) && !check(TOKEN_RBRACKET));
+            }
         }
         
         expect(TOKEN_RBRACKET, "Expected ']' after array elements");
@@ -694,7 +748,7 @@ static Expr* primary() {
                         }
                     }
                 }
-            } while (match(TOKEN_COMMA));
+            } while (match(TOKEN_COMMA) && !check(TOKEN_PIPE));
         }
         
         expect(TOKEN_PIPE, "Expected '|' after lambda parameters");
@@ -724,7 +778,7 @@ static Expr* primary() {
             // Skip to return statement
             if (match(TOKEN_RETURN)) {
                 lambda_expr->lambda.body = expression();
-                expect(TOKEN_SEMI, "Expected ';' after return expression");
+                match(TOKEN_SEMI); // optional semi after return in lambda ';' after return expression");
             } else {
                 // No return, just parse expression
                 lambda_expr->lambda.body = expression();
@@ -743,7 +797,7 @@ static Expr* primary() {
         return lambda_expr;
     }
 
-    // TASK-7.1: Lambda expression parsing fn(x) => x * 2
+    // TASK-7.1: Lambda expression parsing fn(x) => x * 2 or fn(x: int) -> int { return x * 2 }
     if (match(TOKEN_FN)) {
         Expr* lambda_expr = alloc_expr();
         lambda_expr->type = EXPR_LAMBDA;
@@ -766,7 +820,7 @@ static Expr* primary() {
                         advance(); // Skip type name
                     }
                 }
-            } while (match(TOKEN_COMMA));
+            } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
         }
         
         expect(TOKEN_RPAREN, "Expected ')' after lambda parameters");
@@ -779,19 +833,42 @@ static Expr* primary() {
             }
         }
         
-        expect(TOKEN_FATARROW, "Expected '=>' after lambda signature");
-        
-        // Parse body - can be expression or block
-        if (check(TOKEN_LBRACE)) {
-            // Block body: { var y = x * 2; return y + 1; }
+        // Support both => and { } syntax
+        if (match(TOKEN_FATARROW)) {
+            // Arrow syntax: fn(x) => x * 2
+            if (check(TOKEN_LBRACE)) {
+                // Block body: { var y = x * 2; return y + 1; }
+                advance(); // consume '{'
+                
+                // For now, skip all statements until we find a return or reach the end
+                // This is a simplified implementation for Task 7.1
+                while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                    if (match(TOKEN_RETURN)) {
+                        lambda_expr->lambda.body = expression();
+                        match(TOKEN_SEMI);
+                        break;
+                    } else {
+                        // Skip other statements for now
+                        while (!check(TOKEN_SEMI) && !check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                            advance();
+                        }
+                        if (check(TOKEN_SEMI)) advance();
+                    }
+                }
+                
+                expect(TOKEN_RBRACE, "Expected '}' after lambda block body");
+            } else {
+                // Expression body: x * 2
+                lambda_expr->lambda.body = expression();
+            }
+        } else if (check(TOKEN_LBRACE)) {
+            // Block syntax: fn(x: int) -> int { return x * 2 }
             advance(); // consume '{'
             
-            // For now, skip all statements until we find a return or reach the end
-            // This is a simplified implementation for Task 7.1
             while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                 if (match(TOKEN_RETURN)) {
                     lambda_expr->lambda.body = expression();
-                    expect(TOKEN_SEMI, "Expected ';' after return expression");
+                    match(TOKEN_SEMI);
                     break;
                 } else {
                     // Skip other statements for now
@@ -804,8 +881,8 @@ static Expr* primary() {
             
             expect(TOKEN_RBRACE, "Expected '}' after lambda block body");
         } else {
-            // Expression body: x * 2
-            lambda_expr->lambda.body = expression();
+            fprintf(stderr, "Error at line %d: Expected '=>' or '{' after lambda signature\n", parser.current.line);
+            parser.had_error = true;
         }
         
         // Initialize capture fields (will be filled by capture analysis)
@@ -872,12 +949,25 @@ static Expr* call() {
             }
             
             expect(TOKEN_RPAREN, "Expected ')' after arguments");
+            
+            // Convert Ok(x)/Err(x) calls to EXPR_OK/EXPR_ERR
+            if (call_expr->call.callee->type == EXPR_IDENT) {
+                Token fn_name = call_expr->call.callee->token;
+                if (fn_name.length == 2 && memcmp(fn_name.start, "Ok", 2) == 0 && call_expr->call.arg_count == 1) {
+                    call_expr->type = EXPR_OK;
+                    call_expr->option.value = call_expr->call.args[0];
+                } else if (fn_name.length == 3 && memcmp(fn_name.start, "Err", 3) == 0 && call_expr->call.arg_count == 1) {
+                    call_expr->type = EXPR_ERR;
+                    call_expr->option.value = call_expr->call.args[0];
+                }
+            }
+            
             expr = call_expr;
         } else if (match(TOKEN_LBRACKET)) {
             // Check if this is a slice (arr[1..3]) or index (arr[1])
             Expr* first_expr = expression();
             
-            if (match(TOKEN_DOTDOT)) {
+            if (match(TOKEN_DOTDOT) || match(TOKEN_COLON)) {
                 // It's a slice: arr[start..end]
                 Expr* end_expr = expression();
                 expect(TOKEN_RBRACKET, "Expected ']' after slice");
@@ -925,7 +1015,10 @@ static Expr* call() {
                 }
             
             // Check for module.Type { ... } struct initialization
-            if (check(TOKEN_LBRACE) && field_or_method.start[0] >= 'A' && field_or_method.start[0] <= 'Z') {
+            // DISABLED: This causes false positives when { belongs to outer construct
+            // e.g., "if s == Status.Ok {" incorrectly parsed as struct init
+            // The pattern module.Type { } is rare and can be written as Type { } instead
+            if (false && check(TOKEN_LBRACE) && field_or_method.start[0] >= 'A' && field_or_method.start[0] <= 'Z') {
                 advance(); // consume '{'
                 
                 Expr* struct_expr = alloc_expr();
@@ -961,7 +1054,7 @@ static Expr* call() {
                         expect(TOKEN_COLON, "Expected ':' after field name");
                         struct_expr->struct_init.field_values[struct_expr->struct_init.field_count] = expression();
                         struct_expr->struct_init.field_count++;
-                    } while (match(TOKEN_COMMA));
+                    } while (match(TOKEN_COMMA) && !check(TOKEN_RBRACE));
                 }
                 
                 expect(TOKEN_RBRACE, "Expected '}' after struct fields");
@@ -1282,7 +1375,7 @@ Stmt* statement() {
         stmt->try_stmt.try_block = alloc_stmt();
         stmt->try_stmt.try_block->type = STMT_BLOCK;
         stmt->try_stmt.try_block->block.count = 0;
-        stmt->try_stmt.try_block->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->try_stmt.try_block->block.stmts = malloc(sizeof(Stmt*) * 256);
         
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
             stmt->try_stmt.try_block->block.stmts[stmt->try_stmt.try_block->block.count++] = statement();
@@ -1449,7 +1542,7 @@ Stmt* statement() {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_UNSAFE;
         expect(TOKEN_LBRACE, "Expected '{' after 'unsafe'");
-        stmt->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
             stmt->block.stmts[stmt->block.count++] = statement();
@@ -1480,7 +1573,7 @@ Stmt* statement() {
         expect(TOKEN_LBRACE, "Expected '{' after if condition");
         stmt->if_stmt.then_branch = alloc_stmt();
         stmt->if_stmt.then_branch->type = STMT_BLOCK;
-        stmt->if_stmt.then_branch->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->if_stmt.then_branch->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->if_stmt.then_branch->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
             stmt->if_stmt.then_branch->block.stmts[stmt->if_stmt.then_branch->block.count++] = statement();
@@ -1494,7 +1587,7 @@ Stmt* statement() {
                 expect(TOKEN_LBRACE, "Expected '{' after else");
                 stmt->if_stmt.else_branch = alloc_stmt();
                 stmt->if_stmt.else_branch->type = STMT_BLOCK;
-                stmt->if_stmt.else_branch->block.stmts = malloc(sizeof(Stmt*) * 32);
+                stmt->if_stmt.else_branch->block.stmts = malloc(sizeof(Stmt*) * 256);
                 stmt->if_stmt.else_branch->block.count = 0;
                 while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                     stmt->if_stmt.else_branch->block.stmts[stmt->if_stmt.else_branch->block.count++] = statement();
@@ -1659,7 +1752,7 @@ Stmt* statement() {
         expect(TOKEN_LBRACE, "Expected '{' after while condition");
         stmt->while_stmt.body = alloc_stmt();
         stmt->while_stmt.body->type = STMT_BLOCK;
-        stmt->while_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->while_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->while_stmt.body->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
             stmt->while_stmt.body->block.stmts[stmt->while_stmt.body->block.count++] = statement();
@@ -1796,7 +1889,7 @@ Stmt* statement() {
                 expect(TOKEN_LBRACE, "Expected '{' after for header");
                 stmt->for_stmt.body = alloc_stmt();
                 stmt->for_stmt.body->type = STMT_BLOCK;
-                stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 32);
+                stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
                 stmt->for_stmt.body->block.count = 0;
                 while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                     stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = statement();
@@ -1833,7 +1926,7 @@ Stmt* statement() {
         expect(TOKEN_LBRACE, "Expected '{' after for header");
         stmt->for_stmt.body = alloc_stmt();
         stmt->for_stmt.body->type = STMT_BLOCK;
-        stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->for_stmt.body->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
             stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = statement();
@@ -1849,7 +1942,7 @@ Stmt* statement() {
     if (match(TOKEN_LBRACE)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_BLOCK;
-        stmt->block.stmts = malloc(sizeof(Stmt*) * 32);
+        stmt->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
             stmt->block.stmts[stmt->block.count++] = statement();
@@ -1865,14 +1958,52 @@ Stmt* statement() {
     return stmt;
 }
 
+// Helper function to mark last expression as implicit return
+static void mark_implicit_return(Stmt* body) {
+    if (!body || body->type != STMT_BLOCK || body->block.count == 0) {
+        return;
+    }
+    
+    // Find the last statement in the block
+    Stmt* last_stmt = body->block.stmts[body->block.count - 1];
+    
+    // If the last statement is an expression statement, mark it as implicit return
+    if (last_stmt->type == STMT_EXPR) {
+        last_stmt->expr->is_implicit_return = true;
+    }
+    // Handle if/else expressions that could be implicit returns
+    else if (last_stmt->type == STMT_IF) {
+        // For if statements, we need to check if both branches end with expressions
+        if (last_stmt->if_stmt.then_branch && last_stmt->if_stmt.then_branch->type == STMT_BLOCK) {
+            mark_implicit_return(last_stmt->if_stmt.then_branch);
+        }
+        if (last_stmt->if_stmt.else_branch && last_stmt->if_stmt.else_branch->type == STMT_BLOCK) {
+            mark_implicit_return(last_stmt->if_stmt.else_branch);
+        }
+    }
+    // Handle match statements
+    else if (last_stmt->type == STMT_MATCH) {
+        // Mark implicit returns in all match arms
+        for (int i = 0; i < last_stmt->match_stmt.case_count; i++) {
+            if (last_stmt->match_stmt.cases[i].body && 
+                last_stmt->match_stmt.cases[i].body->type == STMT_BLOCK) {
+                mark_implicit_return(last_stmt->match_stmt.cases[i].body);
+            }
+        }
+    }
+}
+
 Stmt* function() {
-    bool is_async = match(TOKEN_ASYNC);
+    if (check(TOKEN_ASYNC)) {
+        advance();
+        fprintf(stderr, "Warning: 'async' is deprecated. Use 'spawn' for concurrency.\n");
+    }
     bool is_public = match(TOKEN_PUB);
     expect(TOKEN_FN, "Expected 'fn'");
     Stmt* stmt = alloc_stmt();
     stmt->type = STMT_FN;
     stmt->fn.is_public = is_public;
-    stmt->fn.is_async = is_async;
+    stmt->fn.is_async = false;
     stmt->fn.name = parser.current;
     expect(TOKEN_IDENT, "Expected function name");
     
@@ -1936,7 +2067,10 @@ Stmt* function() {
             }
             stmt->fn.param_mutable[stmt->fn.param_count] = match(TOKEN_MUT);
             stmt->fn.params[stmt->fn.param_count] = parser.current;
-            expect(TOKEN_IDENT, "Expected parameter name");
+            // Accept TOKEN_SELF as a valid parameter name (for extension methods)
+            if (!match(TOKEN_SELF)) {
+                expect(TOKEN_IDENT, "Expected parameter name");
+            }
             
             // Allow optional type for 'self' parameter (for impl blocks)
             bool is_self = (parser.previous.length == 4 && 
@@ -1960,7 +2094,7 @@ Stmt* function() {
             }
             
             stmt->fn.param_count++;
-        } while (match(TOKEN_COMMA));
+        } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
     }
     
     expect(TOKEN_RPAREN, "Expected ')' after parameters");
@@ -1975,17 +2109,24 @@ Stmt* function() {
     Stmt* body = alloc_stmt();
     body->type = STMT_BLOCK;
     body->block.count = 0;
-    body->block.stmts = malloc(sizeof(Stmt*) * 1024); // Increased to 1024 for large functions
+    int block_capacity = 1024;
+    body->block.stmts = malloc(sizeof(Stmt*) * block_capacity);
     
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-        if (body->block.count >= 1024) {
-            fprintf(stderr, "Error at line %d: Function body too large (max 1024 statements)\n", parser.current.line);
-            break;
+        if (body->block.count >= block_capacity) {
+            block_capacity *= 2;
+            body->block.stmts = realloc(body->block.stmts, sizeof(Stmt*) * block_capacity);
         }
         body->block.stmts[body->block.count++] = statement();
     }
     
     expect(TOKEN_RBRACE, "Expected '}' after function body");
+    
+    // Mark last expression as implicit return if function has return type
+    if (stmt->fn.return_type) {
+        mark_implicit_return(body);
+    }
+    
     stmt->fn.body = body;
     
     return stmt;
@@ -2030,7 +2171,7 @@ Stmt* extern_decl() {
             expect(TOKEN_COLON, "Expected ':' after parameter name");
             stmt->extern_fn.param_types[stmt->extern_fn.param_count] = parse_type();
             stmt->extern_fn.param_count++;
-        } while (match(TOKEN_COMMA));
+        } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
     }
     
     expect(TOKEN_RPAREN, "Expected ')' after parameters");
@@ -2100,11 +2241,17 @@ Stmt* struct_decl() {
             if (!check(TOKEN_RPAREN)) {
                 do {
                     method->params[method->param_count] = parser.current;
-                    expect(TOKEN_IDENT, "Expected parameter name");
-                    expect(TOKEN_COLON, "Expected ':' after parameter");
-                    method->param_types[method->param_count] = parse_type();
+                    if (check(TOKEN_SELF)) { advance(); } else { expect(TOKEN_IDENT, "Expected parameter name"); }
+                    if (method->params[method->param_count].length == 4 &&
+                        memcmp(method->params[method->param_count].start, "self", 4) == 0 &&
+                        !check(TOKEN_COLON)) {
+                        method->param_types[method->param_count] = NULL;
+                    } else {
+                        expect(TOKEN_COLON, "Expected ':' after parameter");
+                        method->param_types[method->param_count] = parse_type();
+                    }
                     method->param_count++;
-                } while (match(TOKEN_COMMA));
+                } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
             }
             expect(TOKEN_RPAREN, "Expected ')' after parameters");
             
@@ -2120,7 +2267,7 @@ Stmt* struct_decl() {
             Stmt* body = alloc_stmt();
             body->type = STMT_BLOCK;
             body->block.count = 0;
-            body->block.stmts = malloc(sizeof(Stmt*) * 64);
+            body->block.stmts = malloc(sizeof(Stmt*) * 256);
             
             while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                 body->block.stmts[body->block.count++] = statement();
@@ -2146,7 +2293,12 @@ Stmt* struct_decl() {
             stmt->struct_decl.field_count++;
             
             // Consume optional comma after field
-            match(TOKEN_COMMA);
+            if (match(TOKEN_COMMA)) {
+                // Allow trailing comma - continue if not at closing brace
+                if (check(TOKEN_RBRACE)) {
+                    break;
+                }
+            }
         }
     }
     
@@ -2205,7 +2357,7 @@ Stmt* object_decl() {
                     expect(TOKEN_COLON, "Expected ':' after parameter");
                     method->param_types[method->param_count] = parse_type();
                     method->param_count++;
-                } while (match(TOKEN_COMMA));
+                } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
             }
             expect(TOKEN_RPAREN, "Expected ')' after parameters");
             
@@ -2221,7 +2373,7 @@ Stmt* object_decl() {
             Stmt* body = alloc_stmt();
             body->type = STMT_BLOCK;
             body->block.count = 0;
-            body->block.stmts = malloc(sizeof(Stmt*) * 64);
+            body->block.stmts = malloc(sizeof(Stmt*) * 256);
             
             while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                 body->block.stmts[body->block.count++] = statement();
@@ -2414,7 +2566,10 @@ Stmt* trait_decl() {
                 do {
                     method->param_mutable[method->param_count] = false;
                     method->params[method->param_count] = parser.current;
-                    expect(TOKEN_IDENT, "Expected parameter name");
+                    // Accept TOKEN_SELF as parameter name (for trait methods)
+                    if (!match(TOKEN_SELF)) {
+                        expect(TOKEN_IDENT, "Expected parameter name");
+                    }
                     
                     // Handle optional type annotation
                     if (match(TOKEN_COLON)) {
@@ -2425,7 +2580,7 @@ Stmt* trait_decl() {
                     
                     method->param_defaults[method->param_count] = NULL;
                     method->param_count++;
-                } while (match(TOKEN_COMMA));
+                } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
             }
             
             expect(TOKEN_RPAREN, "Expected ')' after parameters");
@@ -2521,6 +2676,10 @@ Stmt* enum_decl() {
         
         // After each variant, we expect either ',' or '}'
         if (match(TOKEN_COMMA)) {
+            // Allow trailing comma - check if we're at the end
+            if (check(TOKEN_RBRACE)) {
+                break;
+            }
             // Continue to next variant
             continue;
         } else if (check(TOKEN_RBRACE)) {
@@ -2551,7 +2710,7 @@ Stmt* type_alias() {
 
 Program* parse_program() {
     Program* prog = safe_calloc(1, sizeof(Program));
-    prog->stmts = safe_malloc(sizeof(Stmt*) * 32);
+    prog->stmts = safe_malloc(sizeof(Stmt*) * 256);
     prog->count = 0;
     int capacity = 32;
     
@@ -2885,7 +3044,7 @@ static Stmt* parse_test_statement() {
     expect(TOKEN_LBRACE, "Expected '{' before test body");
     stmt->test_stmt.body = alloc_stmt();
     stmt->test_stmt.body->type = STMT_BLOCK;
-    stmt->test_stmt.body->block.stmts = safe_malloc(sizeof(Stmt*) * 32);
+    stmt->test_stmt.body->block.stmts = safe_malloc(sizeof(Stmt*) * 256);
     stmt->test_stmt.body->block.count = 0;
     
     // Parse statements until closing brace
@@ -3057,6 +3216,42 @@ static Stmt* parse_match_statement() {
         
         current_case->pattern = pattern;
         
+        // Check for or patterns: 1 | 2 | 3
+        if (match(TOKEN_PIPE)) {
+            // Create an or pattern
+            Pattern* or_pattern = safe_malloc(sizeof(Pattern));
+            or_pattern->type = PATTERN_OR;
+            or_pattern->or_pat.patterns = safe_malloc(sizeof(Pattern*) * 16);
+            or_pattern->or_pat.pattern_count = 0;
+            
+            // Add the first pattern
+            or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = pattern;
+            
+            // Parse remaining patterns
+            do {
+                Pattern* next_pattern = safe_malloc(sizeof(Pattern));
+                
+                if (check(TOKEN_INT) || check(TOKEN_FLOAT) || check(TOKEN_STRING) || check(TOKEN_TRUE) || check(TOKEN_FALSE)) {
+                    next_pattern->type = PATTERN_LITERAL;
+                    next_pattern->literal.value = parser.current;
+                    advance();
+                } else if (match(TOKEN_UNDERSCORE)) {
+                    next_pattern->type = PATTERN_WILDCARD;
+                } else if (check(TOKEN_IDENT)) {
+                    next_pattern->type = PATTERN_IDENT;
+                    next_pattern->ident.name = parser.current;
+                    advance();
+                } else {
+                    fprintf(stderr, "Error: Expected pattern after '|'\n");
+                    break;
+                }
+                
+                or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = next_pattern;
+            } while (match(TOKEN_PIPE) && or_pattern->or_pat.pattern_count < 16);
+            
+            current_case->pattern = or_pattern;
+        }
+        
         // Check for guard clause
         if (match(TOKEN_IF)) {
             current_case->guard = expression();
@@ -3071,9 +3266,12 @@ static Stmt* parse_match_statement() {
         
         stmt->match_stmt.case_count++;
         
-        // Optional comma
-        if (check(TOKEN_COMMA)) {
-            advance();
+        // Optional comma - allow trailing comma
+        if (match(TOKEN_COMMA)) {
+            // If we see closing brace after comma, it's a trailing comma
+            if (check(TOKEN_RBRACE)) {
+                break;
+            }
         }
     }
     
@@ -3100,7 +3298,7 @@ static Expr* parse_type() {
         if (!check(TOKEN_RPAREN)) {
             do {
                 base_type->fn_type.param_types[base_type->fn_type.param_count++] = parse_type();
-            } while (match(TOKEN_COMMA));
+            } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
         }
         
         expect(TOKEN_RPAREN, "Expected ')' after function parameter types");
@@ -3154,8 +3352,6 @@ static Expr* parse_type() {
             // Check for built-in types
             if (type_token.length == 3 && memcmp(type_token.start, "str", 3) == 0) {
                 // Built-in string type
-                base_type = alloc_expr();
-                base_type->type = EXPR_IDENT;
                 base_type = alloc_expr();
                 base_type->type = EXPR_IDENT;
                 base_type->token = type_token;
@@ -3278,6 +3474,17 @@ static Pattern* parse_pattern() {
             
             expect(TOKEN_RBRACE, "Expected '}' after struct pattern");
             return pattern;
+        } else if (match(TOKEN_DOT)) {
+            // Enum variant: Color.Red -> Color_Red
+            expect(TOKEN_IDENT, "Expected variant name after '.'");
+            pattern->type = PATTERN_IDENT;
+            char* buf = safe_malloc(256);
+            int len = snprintf(buf, 256, "%.*s_%.*s",
+                (int)potential_struct.length, potential_struct.start,
+                (int)parser.previous.length, parser.previous.start);
+            pattern->ident.name.start = buf;
+            pattern->ident.name.length = len;
+            return pattern;
         } else {
             // This is just an identifier pattern
             pattern->type = PATTERN_IDENT;
@@ -3353,8 +3560,65 @@ static Pattern* parse_pattern() {
     // Handle literal patterns
     if (match(TOKEN_INT) || match(TOKEN_FLOAT) || match(TOKEN_STRING) || 
         match(TOKEN_TRUE) || match(TOKEN_FALSE)) {
+        Token first_token = parser.previous;
+        
+        // Check for range pattern: 0..10
+        if (check(TOKEN_DOTDOT)) {
+            advance(); // consume ..
+            if (!match(TOKEN_INT)) {
+                fprintf(stderr, "Error: Expected integer after '..' in range pattern\n");
+                free(pattern);
+                return NULL;
+            }
+            
+            pattern->type = PATTERN_RANGE;
+            pattern->range.inclusive = true;
+            
+            // Create start expression
+            Expr* start_expr = alloc_expr();
+            start_expr->type = EXPR_INT;
+            start_expr->token = first_token;
+            pattern->range.start = start_expr;
+            
+            // Create end expression
+            Expr* end_expr = alloc_expr();
+            end_expr->type = EXPR_INT;
+            end_expr->token = parser.previous;
+            pattern->range.end = end_expr;
+            
+            return pattern;
+        }
+        
+        // Regular literal pattern
         pattern->type = PATTERN_LITERAL;
-        pattern->literal.value = parser.previous;
+        pattern->literal.value = first_token;
+        
+        // Check for or pattern: 1 | 2 | 3
+        if (check(TOKEN_PIPE)) {
+            Pattern* first_pattern = pattern;
+            Pattern* or_pattern = safe_malloc(sizeof(Pattern));
+            or_pattern->type = PATTERN_OR;
+            or_pattern->or_pat.patterns = safe_malloc(sizeof(Pattern*) * 16);
+            or_pattern->or_pat.pattern_count = 0;
+            or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = first_pattern;
+            
+            while (match(TOKEN_PIPE)) {
+                // Parse just the literal, not full pattern
+                if (match(TOKEN_INT) || match(TOKEN_FLOAT) || match(TOKEN_STRING) || 
+                    match(TOKEN_TRUE) || match(TOKEN_FALSE)) {
+                    Pattern* next = safe_malloc(sizeof(Pattern));
+                    next->type = PATTERN_LITERAL;
+                    next->literal.value = parser.previous;
+                    or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = next;
+                } else {
+                    fprintf(stderr, "Error: Expected literal in or pattern\n");
+                    break;
+                }
+            }
+            
+            return or_pattern;
+        }
+        
         return pattern;
     }
     
@@ -3381,6 +3645,39 @@ static Pattern* parse_pattern() {
         pattern->type = PATTERN_IDENT;
         pattern->ident.name = parser.current;
         advance();
+        
+        // Check for or pattern: 1 | 2 | 3
+        if (check(TOKEN_PIPE)) {
+            Pattern* first_pattern = pattern;
+            Pattern* or_pattern = safe_malloc(sizeof(Pattern));
+            or_pattern->type = PATTERN_OR;
+            or_pattern->or_pat.patterns = safe_malloc(sizeof(Pattern*) * 16);
+            or_pattern->or_pat.pattern_count = 0;
+            or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = first_pattern;
+            
+            while (match(TOKEN_PIPE)) {
+                // Parse only simple patterns (literals/idents), not recursive patterns
+                Pattern* next = safe_malloc(sizeof(Pattern));
+                if (match(TOKEN_INT) || match(TOKEN_FLOAT) || match(TOKEN_STRING) || 
+                    match(TOKEN_TRUE) || match(TOKEN_FALSE)) {
+                    next->type = PATTERN_LITERAL;
+                    next->literal.value = parser.previous;
+                } else if (match(TOKEN_UNDERSCORE)) {
+                    next->type = PATTERN_WILDCARD;
+                } else if (match(TOKEN_IDENT)) {
+                    next->type = PATTERN_IDENT;
+                    next->ident.name = parser.previous;
+                } else {
+                    fprintf(stderr, "Error: Expected simple pattern after '|'\n");
+                    free(next);
+                    break;
+                }
+                or_pattern->or_pat.patterns[or_pattern->or_pat.pattern_count++] = next;
+            }
+            
+            return or_pattern;
+        }
+        
         return pattern;
     }
     

@@ -1,0 +1,11 @@
+// Test module resolution - relative paths
+// tests/modules/lib/string_utils.wyn
+
+export fn uppercase(s: string) -> string {
+    // Simplified - just return the string for now
+    return s
+}
+
+export fn lowercase(s: string) -> string {
+    return s
+}

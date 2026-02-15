@@ -52,6 +52,8 @@ typedef enum {
     EXPR_PATTERN,        // T3.3.1: Pattern expressions for destructuring
     EXPR_FN_TYPE,        // Function type: fn(T1, T2) -> R
     EXPR_BLOCK,          // Block expression: { stmt1; stmt2; expr }
+    EXPR_SPAWN,          // Spawn expression: spawn func() -> Future<T>
+    EXPR_LIST_COMP,      // List comprehension: [expr for x in range]
 } ExprType;
 
 // T3.3.1: Pattern types for destructuring
@@ -65,6 +67,7 @@ typedef enum {
     PATTERN_RANGE,       // Range patterns (1..10, 'a'..'z')
     PATTERN_OPTION,      // Option patterns (Some(x), None)
     PATTERN_GUARD,       // Pattern with guard clause (x if x > 0)
+    PATTERN_OR,          // Or patterns (1 | 2 | 3)
 } PatternType;
 
 typedef struct {
@@ -173,6 +176,11 @@ typedef struct {
     Expr* guard;          // Guard expression
 } GuardPattern;
 
+typedef struct {
+    Pattern** patterns;   // Array of patterns
+    int pattern_count;    // Number of patterns
+} OrPattern;
+
 struct Pattern {
     PatternType type;
     union {
@@ -184,6 +192,7 @@ struct Pattern {
         RangePattern range;
         OptionPattern option;
         GuardPattern guard;
+        OrPattern or_pat;
     };
 };
 
@@ -296,10 +305,23 @@ typedef struct {
     Expr* result;      // Final expression (result of the block)
 } BlockExpr;
 
+typedef struct {
+    Expr* call;        // The function call to spawn
+} SpawnExpr;
+
+typedef struct {
+    Expr* body;        // Expression to evaluate per iteration
+    Token var_name;    // Loop variable name
+    Expr* iter_start;  // Range start or array
+    Expr* iter_end;    // Range end (NULL if iterating array)
+    Expr* condition;   // Optional filter (NULL if no 'if')
+} ListCompExpr;
+
 struct Expr {
     ExprType type;
     Token token;
     struct Type* expr_type;  // Type information populated by checker
+    bool is_implicit_return; // Mark expression as implicit return
     union {
         BinaryExpr binary;
         CallExpr call;
@@ -330,6 +352,8 @@ struct Expr {
         TryExpr try_expr;                // TASK-026: ? operator for error propagation
         FnTypeExpr fn_type;              // Function type: fn(T1, T2) -> R
         BlockExpr block;                 // Block expression: { stmt1; stmt2; expr }
+        SpawnExpr spawn;                 // Spawn expression: spawn func() -> Future<T>
+        ListCompExpr list_comp;          // List comprehension: [expr for x in range]
     };
 };
 

@@ -1,0 +1,54 @@
+// Test: Mutable references (pass by reference)
+// fn foo(mut x: int) passes a pointer, caller uses &var
+
+fn increment(mut x: int) {
+    x = x + 1
+}
+
+fn add_to(mut x: int, amount: int) {
+    x = x + amount
+}
+
+fn swap_vals(mut a: int, mut b: int) {
+    var temp = a
+    a = b
+    b = temp
+}
+
+fn reset(mut x: int) {
+    x = 0
+}
+
+fn main() -> int {
+    Test.init("Mutable References")
+    
+    // Basic increment
+    var n = 10
+    increment(&n)
+    Test.assert_eq_int(n, 11, "increment by ref")
+    
+    // Multiple increments
+    increment(&n)
+    increment(&n)
+    Test.assert_eq_int(n, 13, "triple increment")
+    
+    // Add amount
+    var total = 100
+    add_to(&total, 50)
+    Test.assert_eq_int(total, 150, "add_to by ref")
+    
+    // Swap
+    var x = 1
+    var y = 2
+    swap_vals(&x, &y)
+    Test.assert_eq_int(x, 2, "swap x")
+    Test.assert_eq_int(y, 1, "swap y")
+    
+    // Reset
+    var val = 999
+    reset(&val)
+    Test.assert_eq_int(val, 0, "reset to 0")
+    
+    Test.summary()
+    return 0
+}

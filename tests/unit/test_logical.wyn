@@ -1,8 +1,0 @@
-fn main() -> int {
-    let a = true;
-    let b = false;
-    if a and not b {
-        return 42;
-    }
-    return 0;
-}

@@ -1,0 +1,90 @@
+fn main() -> int {
+    Test.init("Edge Cases")
+    
+    // Empty string operations
+    Test.assert_eq_int("".len(), 0, "empty len")
+    Test.assert_eq_str("".upper(), "", "empty upper")
+    Test.assert_eq_str("".trim(), "", "empty trim")
+    Test.assert_eq_int("".to_int(), 0, "empty to_int")
+    Test.assert_eq_int("".contains("x"), 0, "empty contains")
+    Test.assert_eq_str("".replace("a", "b"), "", "empty replace")
+    Test.assert_eq_str("".reverse(), "", "empty reverse")
+    
+    // Single char strings
+    Test.assert_eq_str("a".upper(), "A", "single upper")
+    Test.assert_eq_str("a".repeat(0), "", "repeat 0")
+    Test.assert_eq_str("a".substring(0, 0), "", "substring empty")
+    Test.assert_eq_str("a".substring(0, 1), "a", "substring full")
+    
+    // Negative numbers
+    Test.assert_eq_int(Math.abs(0), 0, "abs 0")
+    Test.assert_eq_int(Math.abs(-1), 1, "abs -1")
+    Test.assert_eq_int(Math.max(-5, -3), -3, "max negatives")
+    Test.assert_eq_int(Math.min(-5, -3), -5, "min negatives")
+    
+    // Division edge cases
+    Test.assert_eq_int(0 / 1, 0, "0/1")
+    Test.assert_eq_int(10 / 3, 3, "int division truncates")
+    Test.assert_eq_int(-7 / 2, -3, "negative division")
+    Test.assert_eq_int(10 % 3, 1, "modulo")
+    Test.assert_eq_int(-7 % 3, -1, "negative modulo")
+    
+    // Large numbers
+    var big = 9999999999999
+    Test.assert(big > 0, "large positive")
+    Test.assert_eq_str(big.to_string(), "9999999999999", "large to_string")
+    
+    // Array edge cases
+    var empty_arr = [0]
+    Test.assert_eq_int(empty_arr.len(), 1, "single element array")
+    empty_arr[0] = 42
+    Test.assert_eq_int(empty_arr[0], 42, "set single element")
+    
+    // String with special chars
+    var special = "hello\tworld\n"
+    Test.assert(special.contains("\t"), "contains tab")
+    Test.assert(special.contains("\n"), "contains newline")
+    
+    // HashMap edge cases
+    var m = HashMap.new()
+    Test.assert_eq_int(m.get_int("nonexistent"), 0, "missing key = 0")
+    Test.assert_eq_str(m.get("nonexistent"), "", "missing key = empty")
+    m.insert_int("key", 0)
+    Test.assert_eq_int(m.get_int("key"), 0, "stored 0 retrievable")
+    Test.assert(m.contains("key"), "contains after insert 0")
+    
+    // File edge cases
+    Test.assert_eq_int(File.exists("/nonexistent/path"), 0, "nonexistent file")
+    Test.assert_eq_int(File.is_dir("/nonexistent"), 0, "nonexistent dir")
+    Test.assert_eq_int(File.is_file("/nonexistent"), 0, "nonexistent is_file")
+    
+    // Result chaining
+    var ok: ResultInt = Ok(0)
+    Test.assert(ok.is_ok(), "Ok(0) is ok")
+    Test.assert_eq_int(ok.unwrap(), 0, "Ok(0) unwrap = 0")
+    
+    // Option with 0
+    var some_zero: OptionInt = Some(0)
+    Test.assert(some_zero.is_some(), "Some(0) is some")
+    Test.assert_eq_int(some_zero.unwrap(), 0, "Some(0) unwrap = 0")
+    
+    // Nested string operations
+    Test.assert_eq_str("  HELLO  ".trim().lower(), "hello", "trim then lower")
+    Test.assert_eq_str("abc".upper().reverse(), "CBA", "upper then reverse")
+    
+    // Boolean comparisons
+    Test.assert(1 == 1, "1 == 1")
+    Test.assert(1 != 2, "1 != 2")
+    Test.assert(!(1 == 2), "!(1==2)")
+    
+    // String comparison
+    Test.assert("abc" == "abc", "string equality")
+    Test.assert("abc" != "def", "string inequality")
+    
+    // Spawn with 0 result
+    var f = spawn Math.abs(0)
+    Test.assert_eq_int(await f, 0, "spawn returning 0")
+    
+    Test.summary()
+    return 0
+}

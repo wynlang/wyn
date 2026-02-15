@@ -1,0 +1,194 @@
+fn add(a: int, b: int) -> int { return a + b }
+
+enum Color { Red, Green, Blue }
+struct Vec2 { x: int, y: int }
+impl Vec2 {
+    fn mag_sq(self) -> int { return self.x * self.x + self.y * self.y }
+}
+struct Rect { origin: Vec2, size: Vec2 }
+
+fn divide(a: int, b: int) -> ResultInt {
+    if b == 0 { return Err("zero") }
+    return Ok(a / b)
+}
+
+fn test_control_flow() {
+    // for-each
+    var arr = [10, 20, 30]
+    var sum = 0
+    for x in arr { sum = sum + x }
+    Test.assert_eq_int(sum, 60, "for-each array")
+    
+    // nested if-else
+    var x = 5
+    var r = ""
+    if x > 10 { r = "big" } else if x > 3 { r = "mid" } else { r = "small" }
+    Test.assert_eq_str(r, "mid", "nested if-else")
+    
+    // while &&
+    var i = 0
+    while i < 10 && i != 7 { i = i + 1 }
+    Test.assert_eq_int(i, 7, "while &&")
+    
+    // match
+    var c = Color.Green
+    var name = match c {
+        Color.Red => "red"
+        Color.Green => "green"
+        Color.Blue => "blue"
+    }
+    Test.assert_eq_str(name, "green", "match enum")
+    
+    // break/continue
+    var found = -1
+    for i in 0..10 { if i == 7 { found = i break } }
+    Test.assert_eq_int(found, 7, "break at 7")
+    var oddsum = 0
+    for i in 0..10 { if i % 2 == 0 { continue } oddsum = oddsum + i }
+    Test.assert_eq_int(oddsum, 25, "continue odds")
+}
+
+fn test_structs() {
+    var v1 = Vec2{x: 3, y: 4}
+    Test.assert_eq_int(v1.mag_sq(), 25, "struct method")
+    
+    var rect = Rect{origin: Vec2{x: 0, y: 0}, size: Vec2{x: 100, y: 50}}
+    Test.assert_eq_int(rect.size.x, 100, "nested struct")
+}
+
+fn test_array_ops() {
+    var nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    var evens = nums.filter(fn(x: int) -> int { return x % 2 == 0 })
+    Test.assert_eq_int(evens.len(), 5, "filter evens")
+    var doubled = nums.map(fn(x: int) -> int { return x * 2 })
+    Test.assert_eq_int(doubled[0], 2, "map double")
+    Test.assert_eq_int(doubled[9], 20, "map double last")
+    var total = nums.reduce(add, 0)
+    Test.assert_eq_int(total, 55, "reduce sum")
+    
+    // remove/insert
+    var list = [1, 2, 3, 4, 5]
+    list.remove(2)
+    Test.assert_eq_int(list.len(), 4, "remove len")
+    Test.assert_eq_int(list[2], 4, "remove shifted")
+    list.insert(0, 99)
+    Test.assert_eq_int(list[0], 99, "insert at 0")
+    Test.assert_eq_int(list.len(), 5, "insert len")
+    
+    // split preserves empty
+    var csv = "a,,b,,c"
+    var parts = csv.split(",")
+    Test.assert_eq_int(parts.len(), 5, "split preserves empty")
+    Test.assert_eq_str(parts[1], "", "split empty field")
+}
+
+fn test_string_edge() {
+    Test.assert("hello".contains(""), "contains empty")
+    Test.assert("hello".starts_with(""), "starts_with empty")
+    Test.assert("hello".ends_with(""), "ends_with empty")
+    Test.assert_eq_int("hello".contains("hello world"), 0, "contains longer")
+    
+    // interpolation
+    var a = 10
+    var b = 20
+    Test.assert_eq_str("${a} + ${b} = ${a + b}", "10 + 20 = 30", "nested interp")
+}
+
+fn test_hashmap_edge() {
+    var m = HashMap.new()
+    m.insert_int("k", 1)
+    m.insert_int("k", 2)
+    Test.assert_eq_int(m.get_int("k"), 2, "hashmap overwrite")
+    Test.assert_eq_int(m.len(), 1, "hashmap overwrite len")
+}
+
+fn test_path_edge() {
+    Test.assert_eq_str(Path.basename("file.txt"), "file.txt", "basename no dir")
+    Test.assert_eq_str(Path.dirname("file.txt"), ".", "dirname no dir")
+    Test.assert_eq_str(Path.extension("noext"), "", "extension none")
+    Test.assert_eq_str(Path.extension(".hidden"), "hidden", "extension dotfile")
+}
+
+fn test_datetime() {
+    var now = DateTime.now()
+    var later = DateTime.add_seconds(now, 3600)
+    Test.assert_eq_int(DateTime.diff(later, now), 3600, "add_seconds")
+}
+
+fn test_json_roundtrip() {
+    var j = Json.new()
+    Json.set(j, "name", "Wyn")
+    Json.set_int(j, "ver", 2)
+    Json.set_bool(j, "ok", 1)
+    var s: string = Json.stringify(j)
+    var p = Json.parse(s)
+    Test.assert_eq_str(Json.get(p, "name"), "Wyn", "json roundtrip str")
+    Test.assert_eq_int(Json.get_int(p, "ver"), 2, "json roundtrip int")
+    Test.assert(Json.get_bool(p, "ok") > 0, "json roundtrip bool")
+    
+    Test.assert_eq_str(Regex.replace("a1b2c3", "[0-9]", "X"), "aXbXcX", "replace all")
+}
+
+fn test_encoding_edge() {
+    Test.assert_eq_str(Encoding.base64_encode(""), "", "b64 empty")
+    Test.assert_eq_str(Encoding.base64_decode(""), "", "b64 decode empty")
+    Test.assert_eq_str(Encoding.hex_encode(""), "", "hex empty")
+}
+
+fn test_db_multi() {
+    var db = Db.open(":memory:")
+    Db.exec(db, "CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT)")
+    Db.exec(db, "INSERT INTO items(name) VALUES('alpha')")
+    Db.exec(db, "INSERT INTO items(name) VALUES('beta')")
+    Db.exec(db, "INSERT INTO items(name) VALUES('gamma')")
+    var rows = Db.query(db, "SELECT name FROM items ORDER BY name")
+    Test.assert(rows.contains("alpha"), "db row 1")
+    Test.assert(rows.contains("beta"), "db row 2")
+    Test.assert(rows.contains("gamma"), "db row 3")
+    Test.assert_eq_int(Db.last_insert_id(db), 3, "db last id after 3")
+    Db.close(db)
+}
+
+fn test_crypto_det() {
+    var h1 = Crypto.sha256("test")
+    var h2 = Crypto.sha256("test")
+    Test.assert_eq_str(h1, h2, "sha256 deterministic")
+    var h3 = Crypto.sha256("test2")
+    Test.assert(h1 != h3, "sha256 different input")
+}
+
+fn test_channel_fifo() {
+    var ch = Task.channel(10)
+    Task.send(ch, 1)
+    Task.send(ch, 2)
+    Task.send(ch, 3)
+    Test.assert_eq_int(Task.recv(ch), 1, "channel FIFO 1")
+    Test.assert_eq_int(Task.recv(ch), 2, "channel FIFO 2")
+    Test.assert_eq_int(Task.recv(ch), 3, "channel FIFO 3")
+}
+
+fn test_sb_large() {
+    var sb = StringBuilder.new()
+    for i in 0..100 { StringBuilder.append(sb, "x") }
+    Test.assert_eq_int(StringBuilder.len(sb), 100, "sb 100 appends")
+    StringBuilder.free(sb)
+}
+
+fn main() -> int {
+    Test.init("Bug Hunt")
+    test_control_flow()
+    test_structs()
+    test_array_ops()
+    test_string_edge()
+    test_hashmap_edge()
+    test_path_edge()
+    test_datetime()
+    test_json_roundtrip()
+    test_encoding_edge()
+    test_db_multi()
+    test_crypto_det()
+    test_channel_fifo()
+    test_sb_large()
+    Test.summary()
+    return 0
+}

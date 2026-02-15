@@ -1,0 +1,13 @@
+// Test namespace/qualified names - import whole module
+import math_utils
+
+fn main() -> int {
+    // Call using qualified name
+    var sum = math_utils::add(10, 20)
+    if sum != 30 { return 1; }
+    
+    var product = math_utils::multiply(5, 6)
+    if product != 30 { return 2; }
+    
+    return 0
+}

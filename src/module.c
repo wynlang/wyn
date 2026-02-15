@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include "module.h"
+#include "package.h"
 
 static char* module_paths[16];
 static int module_path_count = 0;
@@ -49,7 +50,11 @@ static void print_circular_import_error(const char* module_name) {
 
 // Check if module is built-in (has C implementation)
 bool is_builtin_module(const char* module_name) {
-    const char* builtins[] = {"math", NULL};
+    const char* builtins[] = {
+        "math", "Math", "File", "System", "Path", "DateTime", 
+        "Json", "Http", "Regex", "Random", "HashMap", "HashSet", "Terminal",
+        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", NULL
+    };
     for (int i = 0; builtins[i] != NULL; i++) {
         if (strcmp(module_name, builtins[i]) == 0) {
             return true;
@@ -61,12 +66,53 @@ bool is_builtin_module(const char* module_name) {
 // Pre-scan source for imports and load them
 void preload_imports(const char* source) {
     const char* p = source;
+    bool in_comment = false;
+    bool in_line_comment = false;
+    
     while (*p) {
+        // Track comments
+        if (!in_comment && !in_line_comment && *p == '/' && *(p+1) == '/') {
+            in_line_comment = true;
+            p += 2;
+            continue;
+        }
+        if (!in_comment && !in_line_comment && *p == '/' && *(p+1) == '*') {
+            in_comment = true;
+            p += 2;
+            continue;
+        }
+        if (in_comment && *p == '*' && *(p+1) == '/') {
+            in_comment = false;
+            p += 2;
+            continue;
+        }
+        if (in_line_comment && *p == '\n') {
+            in_line_comment = false;
+            p++;
+            continue;
+        }
+        
+        // Skip if in comment
+        if (in_comment || in_line_comment) {
+            p++;
+            continue;
+        }
+        
         // Look for "import " keyword
         if (strncmp(p, "import ", 7) == 0) {
             p += 7;
             // Skip whitespace
             while (*p == ' ' || *p == '\t') p++;
+            
+            // Check for selective import: import { ... } from module
+            if (*p == '{') {
+                // Skip to "from"
+                while (*p && strncmp(p, " from ", 6) != 0) p++;
+                if (strncmp(p, " from ", 6) == 0) {
+                    p += 6;
+                    while (*p == ' ' || *p == '\t') p++;
+                }
+            }
             
             // Check for relative imports
             char module_name[256];
@@ -178,15 +224,25 @@ char* resolve_module_path(const char* module_name) {
     snprintf(path, sizeof(path), "%s/%s.wyn", source_directory, module_name);
     if (stat(path, &st) == 0) return strdup(path);
     
-    // 2. Source file directory + modules/
+    // 2. Parent directory of source file
+    char parent_dir[512];
+    strcpy(parent_dir, source_directory);
+    char* last_slash = strrchr(parent_dir, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        snprintf(path, sizeof(path), "%s/%s.wyn", parent_dir, module_name);
+        if (stat(path, &st) == 0) return strdup(path);
+    }
+    
+    // 3. Source file directory + modules/
     snprintf(path, sizeof(path), "%s/modules/%s.wyn", source_directory, module_name);
     if (stat(path, &st) == 0) return strdup(path);
     
-    // 3. Current directory
+    // 4. Current directory
     snprintf(path, sizeof(path), "%s.wyn", module_name);
     if (stat(path, &st) == 0) return strdup(path);
     
-    // 4. ./modules/ directory
+    // 5. ./modules/ directory
     snprintf(path, sizeof(path), "./modules/%s.wyn", module_name);
     if (stat(path, &st) == 0) return strdup(path);
     
@@ -321,6 +377,16 @@ Program* load_module(const char* module_name) {
     if (prog) {
         extern void register_module(const char* name, Program* ast);
         register_module(resolved_name, prog);
+        
+        // Read package manifest if available
+        extern PackageInfo* read_package_manifest(const char* module_path);
+        PackageInfo* pkg = read_package_manifest(path);
+        if (pkg) {
+            // Package manifest found - could validate version, dependencies, etc.
+            // For now, just acknowledge it exists
+            extern void free_package_info(PackageInfo* info);
+            free_package_info(pkg);
+        }
     }
     
     // Remove from loading stack

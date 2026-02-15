@@ -1,0 +1,12 @@
+// Test visibility - should only access public_fn
+import { public_fn } from visibility_test
+
+fn main() -> int {
+    var result = public_fn()
+    if result != 15 { return 1; }
+    
+    // This should fail if uncommented - private_fn is not exported
+    // var x = private_fn()
+    
+    return 0
+}

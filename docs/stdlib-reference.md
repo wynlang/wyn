@@ -1,850 +1,520 @@
-# Wyn Standard Library Reference v1.4.0
+# Wyn Standard Library Reference — v1.6.0
 
-**Version:** 1.4.0  
-**Date:** 2026-01-21
-
-Complete reference for Wyn's standard library with object-oriented API.
+27 modules, 270+ methods. All cross-platform (POSIX).
 
 ---
 
-## Philosophy
+## String (29 methods)
+Instance methods on `string` values.
 
-**Everything is an object.** All operations use method syntax (`.method()`) or module functions (`Module::function()`).
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `len()` | `-> int` | Length in bytes |
+| `upper()` | `-> string` | Uppercase |
+| `lower()` | `-> string` | Lowercase |
+| `trim()` | `-> string` | Strip whitespace |
+| `trim_left()` | `-> string` | Strip leading whitespace |
+| `trim_right()` | `-> string` | Strip trailing whitespace |
+| `contains(s)` | `-> bool` | Substring check |
+| `starts_with(s)` | `-> bool` | Prefix check |
+| `ends_with(s)` | `-> bool` | Suffix check |
+| `index_of(s)` | `-> int` | First occurrence (-1 if not found) |
+| `last_index_of(s)` | `-> int` | Last occurrence |
+| `substring(start, end)` | `-> string` | Extract range |
+| `slice(start, end)` | `-> string` | Extract range (alias) |
+| `replace(old, new)` | `-> string` | Replace all occurrences |
+| `repeat(n)` | `-> string` | Repeat n times |
+| `reverse()` | `-> string` | Reverse characters |
+| `capitalize()` | `-> string` | First char uppercase |
+| `title()` | `-> string` | Title case |
+| `pad_left(n, ch)` | `-> string` | Left-pad to width |
+| `pad_right(n, ch)` | `-> string` | Right-pad to width |
+| `split(delim)` | `-> [string]` | Split (preserves empty fields) |
+| `split_at(delim, idx)` | `-> string` | Get nth split segment |
+| `count(s)` | `-> int` | Count occurrences |
+| `to_int()` | `-> int` | Parse integer |
+| `is_alpha()` | `-> bool` | All alphabetic |
+| `is_digit()` | `-> bool` | All numeric |
+| `is_alnum()` | `-> bool` | All alphanumeric |
+| `to_string()` | `-> string` | Identity (also works on int) |
 
----
-
-## Table of Contents
-
-1. [I/O Functions](#io-functions)
-2. [String Methods](#string-methods)
-3. [Array Methods](#array-methods)
-4. [Number Methods](#number-methods)
-5. [HashMap Operations](#hashmap-operations)
-6. [HashSet Operations](#hashset-operations)
-7. [File Module](#file-module)
-8. [System Module](#system-module)
-9. [Time Module](#time-module)
-
----
-
-## I/O Functions
-
-### `print(value: any)`
-Polymorphic print function that prints any value followed by newline.
-
-```wyn
-print(42);              // 42
-print(3.14);            // 3.14
-print("Hello");         // Hello
-print(true);            // true
-print([1, 2, 3]);       // [1, 2, 3]
-```
-
-**String Interpolation:**
-```wyn
-var name = "Alice";
-var age = 25;
-print("${name} is ${age} years old");
-// Output: Alice is 25 years old
-```
-
-### `println()`
-Prints a blank line (no arguments).
-
-```wyn
-println();  // Prints: \n
-```
-
-### `input() -> int`
-Reads an integer from standard input.
-
-```wyn
-var num = input();
-```
+String interpolation: `"hello ${name}"` — works with variables and expressions.
 
 ---
 
-## String Methods
+## Array (19 methods)
+Instance methods on `[int]` or `[string]` arrays.
 
-All string operations use method syntax on string values.
-
-### Length & Checks
-
-#### `.len() -> int`
-Returns string length.
-```wyn
-var len = "hello".len();  // 5
-```
-
-#### `.is_empty() -> bool`
-Checks if string is empty.
-```wyn
-if text.is_empty() { }
-```
-
-### Case Conversion
-
-#### `.upper() -> string`
-Converts to uppercase.
-```wyn
-var upper = "hello".upper();  // "HELLO"
-```
-
-#### `.lower() -> string`
-Converts to lowercase.
-```wyn
-var lower = "HELLO".lower();  // "hello"
-```
-
-#### `.capitalize() -> string`
-Capitalizes first letter.
-```wyn
-var cap = "john".capitalize();  // "John"
-```
-
-### Trimming
-
-#### `.trim() -> string`
-Removes leading/trailing whitespace.
-```wyn
-var clean = "  hello  ".trim();  // "hello"
-```
-
-#### `.trim_left() -> string`
-Removes leading whitespace.
-
-#### `.trim_right() -> string`
-Removes trailing whitespace.
-
-### Searching
-
-#### `.contains(substr: string) -> bool`
-Checks if string contains substring.
-```wyn
-if email.contains("@") { }
-```
-
-#### `.starts_with(prefix: string) -> bool`
-Checks if string starts with prefix.
-```wyn
-if filename.starts_with("test") { }
-```
-
-#### `.ends_with(suffix: string) -> bool`
-Checks if string ends with suffix.
-```wyn
-if filename.ends_with(".wyn") { }
-```
-
-#### `.index_of(substr: string) -> int`
-Returns index of first occurrence (-1 if not found).
-```wyn
-var pos = text.index_of("hello");
-```
-
-#### `.last_index_of(substr: string) -> int`
-Returns index of last occurrence.
-
-### Manipulation
-
-#### `.concat(other: string) -> string`
-Concatenates strings.
-```wyn
-var result = "Hello".concat(" World");  // "Hello World"
-```
-
-#### `.replace(old: string, new: string) -> string`
-Replaces first occurrence.
-```wyn
-var fixed = text.replace("foo", "bar");
-```
-
-#### `.replace_all(old: string, new: string) -> string`
-Replaces all occurrences.
-```wyn
-var fixed = text.replace_all("foo", "bar");
-```
-
-#### `.repeat(count: int) -> string`
-Repeats string n times.
-```wyn
-var stars = "*".repeat(5);  // "*****"
-```
-
-#### `.reverse() -> string`
-Reverses string.
-```wyn
-var rev = "hello".reverse();  // "olleh"
-```
-
-### Extraction
-
-#### `.slice(start: int, end: int) -> string`
-Extracts substring.
-```wyn
-var sub = "hello".slice(0, 3);  // "hel"
-```
-
-#### `.substring(start: int, end: int) -> string`
-Alias for slice.
-
-#### `.split(delimiter: string) -> array<string>`
-Splits string into array.
-```wyn
-var parts = "a,b,c".split(",");  // ["a", "b", "c"]
-```
-
-#### `.chars() -> array<string>`
-Splits into character array.
-
-#### `.lines() -> array<string>`
-Splits into lines.
-
-#### `.words() -> array<string>`
-Splits into words.
-
-### Character Checks
-
-#### `.is_alpha() -> bool`
-Checks if all characters are alphabetic.
-
-#### `.is_digit() -> bool`
-Checks if all characters are digits.
-
-#### `.is_alnum() -> bool`
-Checks if all characters are alphanumeric.
-
-#### `.is_whitespace() -> bool`
-Checks if all characters are whitespace.
-
-#### `.char_at(index: int) -> string`
-Returns character at index as a string.
-```wyn
-var ch = "hello".char_at(1);  // "e"
-```
-
-#### `.equals(other: string) -> bool`
-Compares two strings for equality.
-```wyn
-if name.equals("Alice") == 1 {
-    print("Hello Alice!");
-}
-```
-
-#### `.count(substring: string) -> int`
-Counts occurrences of substring.
-```wyn
-var text = "hello world hello";
-var count = text.count("hello");  // 2
-```
-
-#### `.is_numeric() -> bool`
-Checks if string is a valid number (int or float).
-```wyn
-"123".is_numeric()    // 1 (true)
-"12.34".is_numeric()  // 1 (true)
-"abc".is_numeric()    // 0 (false)
-```
-
-### Conversion
-
-#### `.parse_int() -> int`
-Parses string to integer.
-```wyn
-var num = "42".parse_int();  // 42
-```
-
-#### `.parse_float() -> float`
-Parses string to float.
-```wyn
-var num = "3.14".parse_float();  // 3.14
-```
-
-#### `.to_int() -> int`
-Alias for parse_int.
-
-#### `.to_float() -> float`
-Alias for parse_float.
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `len()` | `-> int` | Element count |
+| `push(val)` | | Append element |
+| `pop()` | `-> int` | Remove and return last |
+| `slice(start, end)` | `-> array` | Sub-array |
+| `reverse()` | `-> array` | Reversed copy |
+| `join(sep)` | `-> string` | Join with separator |
+| `index_of(val)` | `-> int` | Find element (-1 if missing) |
+| `remove(idx)` | | Remove at index |
+| `insert(idx, val)` | | Insert at index |
+| `unique()` | `-> array` | Deduplicated copy |
+| `concat(other)` | `-> array` | Concatenate arrays |
+| `any(fn)` | `-> bool` | Any element matches |
+| `all(fn)` | `-> bool` | All elements match |
+| `map(fn)` | `-> array` | Transform elements |
+| `filter(fn)` | `-> array` | Filter elements |
+| `reduce(fn, init)` | `-> int` | Fold elements |
+| `sort_by(cmp_fn)` | | Sort with comparator |
 
 ---
 
-## Array Methods
+## HashMap (12 methods)
 
-All array operations use method syntax.
-
-### Basic Operations
-
-#### `.len() -> int`
-Returns array length.
-```wyn
-var len = [1, 2, 3].len();  // 3
-```
-
-#### `.push(item: T)`
-Adds element to end.
-```wyn
-arr.push(4);
-```
-
-#### `.pop() -> T`
-Removes and returns last element.
-```wyn
-var last = arr.pop();
-```
-
-### Searching
-
-#### `.contains(item: T) -> bool`
-Checks if array contains element.
-```wyn
-if numbers.contains(5) { }
-```
-
-#### `.count(item: T) -> int`
-Counts occurrences of element.
-```wyn
-var arr = [1, 2, 3, 2, 4, 2];
-var count = arr.count(2);  // 3
-```
-
-#### `.index_of(item: T) -> int`
-Returns index of element (-1 if not found).
-```wyn
-var pos = arr.index_of(42);
-```
-
-### Modification
-
-#### `.sort()`
-Sorts array in place.
-```wyn
-numbers.sort();
-```
-
-#### `.reverse()`
-Reverses array in place.
-```wyn
-arr.reverse();
-```
-
-### Extraction
-
-#### `.slice(start: int, end: int) -> array<T>`
-Extracts subarray.
-```wyn
-var sub = arr.slice(1, 3);
-```
-
-#### `.first() -> T`
-Returns first element.
-```wyn
-var first = arr.first();
-```
-
-#### `.last() -> T`
-Returns last element.
-```wyn
-var last = arr.last();
-```
-
-### Aggregation
-
-#### `.min() -> int`
-Returns minimum value.
-```wyn
-var min = numbers.min();
-```
-
-#### `.max() -> int`
-Returns maximum value.
-```wyn
-var max = numbers.max();
-```
-
-#### `.sum() -> int`
-Returns sum of all elements.
-```wyn
-var total = numbers.sum();
-```
-
-#### `.average() -> int`
-Returns average value.
-```wyn
-var avg = numbers.average();
-```
-
-### Combination
-
-#### `.join(separator: string) -> string`
-Joins array elements into string.
-```wyn
-var text = words.join(" ");
-```
-
-#### `.concat(other: array<T>) -> array<T>`
-Concatenates arrays.
-```wyn
-var combined = arr1.concat(arr2);
-```
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `HashMap.new()` | `-> map` | Create empty map |
+| `insert_int(key, val)` | | Set integer value |
+| `insert_string(key, val)` | | Set string value |
+| `get(key)` | `-> string` | Get string ("" if missing) |
+| `get_int(key)` | `-> int` | Get integer (0 if missing) |
+| `get_or(key, default)` | `-> int` | Get with default |
+| `contains(key)` | `-> bool` | Key exists |
+| `keys()` | `-> string` | Comma-separated keys |
+| `len()` | `-> int` | Entry count |
+| `remove(key)` | | Delete entry |
+| `clear()` | | Remove all entries |
+| `values()` | `-> string` | Comma-separated values |
 
 ---
 
-## Number Methods
+## Math (20 methods)
 
-### Integer Methods
-
-#### `.to_string() -> string`
-Converts to string.
-```wyn
-var str = 42.to_string();  // "42"
-```
-
-#### `.abs() -> int`
-Returns absolute value.
-```wyn
-var abs = (-42).abs();  // 42
-```
-
-#### `.to_float() -> float`
-Converts to float.
-```wyn
-var f = 42.to_float();  // 42.0
-```
-
-#### `.to_binary() -> string`
-Converts to binary string.
-```wyn
-var bin = 5.to_binary();  // "101"
-```
-
-#### `.to_hex() -> string`
-Converts to hexadecimal string.
-```wyn
-var hex = 255.to_hex();  // "ff"
-```
-
-#### `.is_even() -> bool`
-Checks if even.
-```wyn
-if num.is_even() == 1 { }
-```
-
-#### `.is_odd() -> bool`
-Checks if odd.
-```wyn
-if num.is_odd() == 1 { }
-```
-
-### Float Methods
-
-#### `.to_string() -> string`
-Converts to string.
-```wyn
-var str = 3.14.to_string();  // "3.14"
-```
-
-#### `.to_int() -> int`
-Converts to integer (truncates).
-```wyn
-var i = 3.14.to_int();  // 3
-```
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Math.abs(x)` | `-> int` | Absolute value |
+| `Math.max(a, b)` | `-> int` | Maximum |
+| `Math.min(a, b)` | `-> int` | Minimum |
+| `Math.pow(base, exp)` | `-> int` | Power |
+| `Math.sqrt(x)` | `-> float` | Square root |
+| `Math.clamp(x, lo, hi)` | `-> int` | Clamp to range |
+| `Math.sign(x)` | `-> int` | -1, 0, or 1 |
+| `Math.lerp(a, b, t)` | `-> float` | Linear interpolation |
+| `Math.map_range(x, a1, a2, b1, b2)` | `-> float` | Map between ranges |
+| `Math.log(x)` | `-> float` | Natural log |
+| `Math.log10(x)` | `-> float` | Base-10 log |
+| `Math.exp(x)` | `-> float` | e^x |
+| `Math.random()` | `-> int` | Random integer |
 
 ---
 
-## HashMap Operations
+## DateTime (16 methods)
 
-HashMaps use indexing syntax for get/set and methods for other operations.
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `DateTime.now()` | `-> int` | Unix timestamp (seconds) |
+| `DateTime.millis()` | `-> int` | Milliseconds since epoch |
+| `DateTime.micros()` | `-> int` | Microseconds since epoch |
+| `DateTime.format(ts, fmt)` | `-> string` | Format timestamp |
+| `DateTime.to_iso(ts)` | `-> string` | ISO 8601 string |
+| `DateTime.year(ts)` | `-> int` | Year component |
+| `DateTime.month(ts)` | `-> int` | Month (1-12) |
+| `DateTime.day(ts)` | `-> int` | Day (1-31) |
+| `DateTime.hour(ts)` | `-> int` | Hour (0-23) |
+| `DateTime.minute(ts)` | `-> int` | Minute (0-59) |
+| `DateTime.second(ts)` | `-> int` | Second (0-59) |
+| `DateTime.day_of_week(ts)` | `-> int` | Day of week (0=Sun) |
+| `DateTime.diff(a, b)` | `-> int` | Difference in seconds |
+| `DateTime.add_seconds(ts, n)` | `-> int` | Add seconds |
+| `DateTime.format_duration(ms)` | `-> string` | Human-readable duration |
 
-### Indexing
+---
 
-#### `map[key]` (get)
-Gets value by key.
+## File (22 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `File.read(path)` | `-> string` | Read entire file |
+| `File.write(path, data)` | | Write file (overwrite) |
+| `File.append(path, data)` | | Append to file |
+| `File.exists(path)` | `-> bool` | File exists |
+| `File.delete(path)` | | Delete file |
+| `File.size(path)` | `-> int` | File size (0 if missing) |
+| `File.is_file(path)` | `-> bool` | Is regular file |
+| `File.is_dir(path)` | `-> bool` | Is directory |
+| `File.open(path, mode)` | `-> int` | Open file handle |
+| `File.close(handle)` | | Close file handle |
+| `File.read_line(handle)` | `-> string` | Read one line |
+| `File.rename(old, new)` | | Rename/move file |
+| `File.copy(src, dst)` | | Copy file |
+| `File.mkdir(path)` | | Create directory |
+| `File.list_dir(path)` | `-> [string]` | List directory |
+| `File.glob(pattern)` | `-> string` | Glob match |
+| `File.walk_dir(path)` | `-> string` | Recursive listing |
+| `File.temp_file()` | `-> string` | Create temp file path |
+| `File.cwd()` | `-> string` | Current directory |
+
+---
+
+## Json (16 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Json.new()` | `-> json` | Create empty object |
+| `Json.parse(str)` | `-> json` | Parse JSON string |
+| `Json.stringify(j)` | `-> string` | Serialize to string |
+| `Json.to_pretty_string(j)` | `-> string` | Pretty-print JSON |
+| `Json.get(j, key)` | `-> string` | Get string value |
+| `Json.get_int(j, key)` | `-> int` | Get integer value |
+| `Json.get_float(j, key)` | `-> float` | Get float value |
+| `Json.get_bool(j, key)` | `-> bool` | Get boolean value |
+| `Json.get_array(j, key)` | `-> json` | Get array node |
+| `Json.get_object(j, key)` | `-> json` | Get object node |
+| `Json.set(j, key, val)` | | Set string value |
+| `Json.set_int(j, key, val)` | | Set integer value |
+| `Json.set_bool(j, key, val)` | | Set boolean value |
+| `Json.has(j, key)` | `-> bool` | Key exists |
+| `Json.keys(j)` | `-> string` | Comma-separated keys |
+| `Json.array_len(j)` | `-> int` | Array length |
+
+---
+
+## Csv (7 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Csv.parse(text)` | `-> csv` | Parse CSV (handles quoted fields) |
+| `Csv.row_count(doc)` | `-> int` | Number of rows (including header) |
+| `Csv.col_count(doc, row)` | `-> int` | Columns in row |
+| `Csv.get(doc, row, col)` | `-> string` | Get cell by index |
+| `Csv.get_field(doc, row, header)` | `-> string` | Get cell by header name |
+| `Csv.header(doc, col)` | `-> string` | Get header name |
+| `Csv.header_count(doc)` | `-> int` | Number of headers |
+
+---
+
+## Encoding (4 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Encoding.base64_encode(s)` | `-> string` | Base64 encode |
+| `Encoding.base64_decode(s)` | `-> string` | Base64 decode |
+| `Encoding.hex_encode(s)` | `-> string` | Hex encode |
+| `Encoding.hex_decode(s)` | `-> string` | Hex decode |
+
+---
+
+## Crypto (4 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Crypto.sha256(s)` | `-> string` | SHA-256 hash (64 hex chars) |
+| `Crypto.md5(s)` | `-> string` | MD5 hash (32 hex chars) |
+| `Crypto.hmac_sha256(key, data)` | `-> string` | HMAC-SHA256 |
+| `Crypto.random_bytes(n)` | `-> string` | Random bytes (hex encoded) |
+
+---
+
+## Regex (5 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Regex.match(str, pattern)` | `-> bool` | Pattern matches |
+| `Regex.replace(str, pattern, repl)` | `-> string` | Replace all matches |
+| `Regex.find(str, pattern)` | `-> int` | First match position (-1 if none) |
+| `Regex.find_all(str, pattern)` | `-> string` | All matches |
+| `Regex.split(str, pattern)` | `-> string` | Split by pattern |
+
+---
+
+## Path (4 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Path.basename(path)` | `-> string` | Filename component |
+| `Path.dirname(path)` | `-> string` | Directory component |
+| `Path.extension(path)` | `-> string` | File extension |
+| `Path.join(a, b)` | `-> string` | Join paths |
+
+---
+
+## Http (8 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Http.get(url)` | `-> string` | HTTP/HTTPS GET |
+| `Http.post(url, body, content_type)` | `-> string` | HTTP POST |
+| `Http.get_json(url)` | `-> json` | GET + JSON parse |
+| `Http.post_json(url, data)` | `-> json` | POST + JSON parse |
+| `Http.serve(port)` | `-> int` | Start HTTP server |
+| `Http.accept(server)` | `-> int` | Accept connection |
+| `Http.respond(client, status, body)` | | Send response |
+| `Http.set_timeout(seconds)` | | Set request timeout |
+| `Http.timeout()` | `-> int` | Get current timeout |
+
+---
+
+## Net (6 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Net.connect(host, port)` | `-> int` | TCP connect |
+| `Net.send(sock, data)` | `-> int` | Send data |
+| `Net.recv(sock, size)` | `-> string` | Receive data |
+| `Net.close(sock)` | | Close socket |
+| `Net.listen(port)` | `-> int` | Listen on port |
+| `Net.resolve(host)` | `-> string` | DNS resolve |
+
+---
+
+## Db (9 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Db.open(path)` | `-> int` | Open SQLite database |
+| `Db.exec(db, sql)` | | Execute SQL |
+| `Db.query(db, sql)` | `-> string` | Query (tab-separated) |
+| `Db.query_one(db, sql)` | `-> string` | Single value query |
+| `Db.last_insert_id(db)` | `-> int` | Last inserted row ID |
+| `Db.table_exists(db, name)` | `-> bool` | Table exists |
+| `Db.escape(s)` | `-> string` | SQL escape |
+| `Db.close(db)` | | Close database |
+
+---
+
+## System (5 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `System.exec(cmd)` | `-> string` | Execute and capture output |
+| `System.exec_code(cmd)` | `-> int` | Execute and return exit code |
+| `System.env(name)` | `-> string` | Get environment variable |
+| `System.exit(code)` | | Exit process |
+| `System.args()` | `-> [string]` | Command-line arguments |
+
+---
+
+## Os (6 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Os.platform()` | `-> string` | "macos", "linux", "windows" |
+| `Os.arch()` | `-> string` | "arm64", "x86_64" |
+| `Os.hostname()` | `-> string` | Machine hostname |
+| `Os.pid()` | `-> int` | Process ID |
+| `Os.home_dir()` | `-> string` | Home directory |
+| `Os.temp_dir()` | `-> string` | Temp directory |
+
+---
+
+## Process (2 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Process.exec_capture(cmd)` | `-> string` | Execute and capture output |
+| `Process.exec_status(cmd)` | `-> int` | Execute and return status |
+
+---
+
+## Terminal (4 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Terminal.cols()` | `-> int` | Terminal width |
+| `Terminal.rows()` | `-> int` | Terminal height |
+| `Terminal.raw_mode(on)` | | Enable/disable raw mode |
+| `Terminal.read_key()` | `-> int` | Read single keypress |
+
+---
+
+## Task (7 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Task.value(init)` | `-> int` | Create shared atomic value |
+| `Task.get(v)` | `-> int` | Read shared value |
+| `Task.set(v, val)` | | Write shared value |
+| `Task.add(v, n)` | | Atomic add |
+| `Task.channel(cap)` | `-> int` | Create bounded channel |
+| `Task.send(ch, val)` | | Send to channel |
+| `Task.recv(ch)` | `-> int` | Receive from channel |
+
+---
+
+## StringBuilder (7 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `StringBuilder.new()` | `-> int` | Create builder |
+| `StringBuilder.append(sb, s)` | | Append string |
+| `StringBuilder.append_int(sb, n)` | | Append integer |
+| `StringBuilder.append_line(sb, s)` | | Append with newline |
+| `StringBuilder.to_string(sb)` | `-> string` | Build final string |
+| `StringBuilder.len(sb)` | `-> int` | Current length |
+| `StringBuilder.clear(sb)` | | Reset to empty |
+| `StringBuilder.free(sb)` | | Free memory |
+
+---
+
+## Uuid (1 method)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Uuid.generate()` | `-> string` | Generate v4 UUID |
+
+---
+
+## Log (5 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Log.debug(msg)` | | Debug message (gray) |
+| `Log.info(msg)` | | Info message (green) |
+| `Log.warn(msg)` | | Warning message (yellow) |
+| `Log.error(msg)` | | Error message (red) |
+| `Log.set_level(level)` | | Set minimum level (0-3) |
+
+---
+
+## Url (2 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Url.encode(s)` | `-> string` | URL-encode |
+| `Url.decode(s)` | `-> string` | URL-decode |
+
+---
+
+## Test (12 methods)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Test.init(name)` | | Start test suite |
+| `Test.describe(name)` | | Start test group |
+| `Test.assert(cond, msg)` | | Assert truthy |
+| `Test.assert_eq_int(a, b, msg)` | | Assert integers equal |
+| `Test.assert_eq_str(a, b, msg)` | | Assert strings equal |
+| `Test.assert_eq_float(a, b, msg)` | | Assert floats equal |
+| `Test.assert_not_contains(s, sub, msg)` | | Assert not contains |
+| `Test.skip(msg)` | | Skip test |
+| `Test.summary()` | | Print results |
+
+---
+
+## Gui (30+ methods) — requires SDL2
+
+| Method | Description |
+|--------|-------------|
+| `Gui.create(title, w, h)` | Create window |
+| `Gui.clear(r, g, b)` | Clear screen |
+| `Gui.present()` | Flip buffer |
+| `Gui.rect(x, y, w, h, r, g, b)` | Draw rectangle |
+| `Gui.line(x1, y1, x2, y2, r, g, b)` | Draw line |
+| `Gui.circle(cx, cy, radius, r, g, b)` | Draw circle |
+| `Gui.text(x, y, str, r, g, b)` | Draw text |
+| `Gui.button(x, y, w, h, label)` | Draw button (returns click) |
+| `Gui.panel(x, y, w, h, r, g, b)` | Draw panel |
+| `Gui.text_input(x, y, w, h)` | Text input widget |
+| `Gui.progress(x, y, w, h, pct)` | Progress bar |
+| `Gui.poll_event()` | Poll for events |
+| `Gui.key_pressed(key)` | Check key state |
+| `Gui.mouse_x()` / `Gui.mouse_y()` | Mouse position |
+| `Gui.mouse_clicked()` | Mouse button state |
+| `Gui.load_sprite(path)` | Load BMP sprite |
+| `Gui.draw_sprite(id, x, y)` | Draw sprite |
+| `Gui.delay(ms)` | Frame delay |
+| `Gui.close()` | Close window |
+
+---
+
+## Audio (5 methods) — requires SDL2_mixer
+
+| Method | Description |
+|--------|-------------|
+| `Audio.init()` | Initialize audio |
+| `Audio.load(path)` | Load audio file |
+| `Audio.play(id)` | Play audio |
+| `Audio.stop()` | Stop playback |
+| `Audio.close()` | Close audio |
+
+---
+
+## List Comprehensions
+
 ```wyn
-var scores = {"alice": 95, "bob": 87};
-var alice_score = scores["alice"];  // 95
+var squares = [x * x for x in 0..10]
+var evens = [x for x in 0..20 if x % 2 == 0]
+var doubled = [x * 2 for x in some_array]
+var big = [x for x in nums if x > 100]
 ```
 
-#### `map[key] = value` (set)
-Sets value by key.
-```wyn
-scores["charlie"] = 92;
-```
+## Slice Syntax
 
-### Methods
-
-#### `.has(key: string) -> bool`
-Checks if key exists.
 ```wyn
-if scores.has("alice") { }
-```
-
-#### `.remove(key: string)`
-Removes key-value pair.
-```wyn
-scores.remove("bob");
-```
-
-#### `.len() -> int`
-Returns number of entries.
-```wyn
-var count = scores.len();
+var sub = arr[1:3]              // array slice
+var sub = arr[2..5]             // same with ..
+var hello = "hello world"[0:5]  // string slice
 ```
 
 ---
 
-## HashSet Operations
+## Unified Struct Syntax
 
-HashSets use method syntax for all operations.
+Fields and methods together — no separate `impl` block needed:
 
-### Methods
-
-#### `.add(item: string)`
-Adds element to set.
 ```wyn
-tags.add("urgent");
-```
+struct Vec2 {
+    x: int
+    y: int
 
-#### `.contains(item: string) -> bool`
-Checks if element exists.
-```wyn
-if tags.contains("urgent") { }
-```
-
-#### `.remove(item: string)`
-Removes element.
-```wyn
-tags.remove("urgent");
-```
-
-#### `.len() -> int`
-Returns number of elements.
-```wyn
-var count = tags.len();
-```
-
----
-
-## File Module
-
-All file operations use `File::` prefix.
-
-### Reading & Writing
-
-#### `File::read(path: string) -> string`
-Reads entire file as string.
-```wyn
-var content = File::read("/tmp/file.txt");
-```
-
-#### `File::write(path: string, data: string) -> bool`
-Writes string to file.
-```wyn
-File::write("/tmp/file.txt", "Hello");
-```
-
-### Checking
-
-#### `File::exists(path: string) -> bool`
-Checks if file/directory exists.
-```wyn
-if File::exists("/tmp/file.txt") { }
-```
-
-#### `File::is_file(path: string) -> bool`
-Checks if path is a file.
-```wyn
-if File::is_file(path) { }
-```
-
-#### `File::is_dir(path: string) -> bool`
-Checks if path is a directory.
-```wyn
-if File::is_dir(path) { }
-```
-
-### Directory Operations
-
-#### `File::list_dir(path: string) -> array<string>`
-Lists directory contents.
-```wyn
-var entries = File::list_dir(".");
-```
-
-#### `File::create_dir(path: string) -> bool`
-Creates directory.
-```wyn
-File::create_dir("/tmp/mydir");
-```
-
-#### `File::get_cwd() -> string`
-Gets current working directory.
-```wyn
-var cwd = File::get_cwd();
-```
-
-### File Operations
-
-#### `File::delete(path: string) -> bool`
-Deletes file.
-```wyn
-File::delete("/tmp/file.txt");
-```
-
-#### `File::file_size(path: string) -> int`
-Gets file size in bytes.
-```wyn
-var size = File::file_size(path);
-```
-
-### Path Operations
-
-#### `File::path_join(a: string, b: string) -> string`
-Joins path components safely.
-```wyn
-var path = File::path_join(dir, filename);
-```
-
-#### `File::basename(path: string) -> string`
-Extracts filename from path.
-```wyn
-var name = File::basename("/tmp/file.txt");  // "file.txt"
-```
-
-#### `File::dirname(path: string) -> string`
-Extracts directory from path.
-```wyn
-var dir = File::dirname("/tmp/file.txt");  // "/tmp"
-```
-
-#### `File::extension(path: string) -> string`
-Extracts file extension.
-```wyn
-var ext = File::extension("file.txt");  // "txt"
-```
-
----
-
-## System Module
-
-All system operations use `System::` prefix.
-
-#### `System::exec(command: string) -> string`
-Executes shell command and returns output.
-```wyn
-var output = System::exec("ls -la");
-```
-
-#### `System::exec_code(command: string) -> int`
-Executes command and returns exit code.
-```wyn
-var code = System::exec_code("make test");
-if code == 0 {
-    print("Success!");
-}
-```
-
-#### `System::exit(code: int)`
-Exits program with status code.
-```wyn
-System::exit(0);
-```
-
-#### `System::args() -> array<string>`
-Gets command-line arguments.
-```wyn
-var args = System::args();
-if args.len() > 1 {
-    var first_arg = args[1];
-}
-```
-
-#### `System::env(key: string) -> string`
-Gets environment variable.
-```wyn
-var home = System::env("HOME");
-```
-
-#### `System::set_env(key: string, value: string) -> bool`
-Sets environment variable.
-```wyn
-System::set_env("MY_VAR", "value");
-```
-
-#### `System::args() -> array<string>`
-Gets command line arguments.
-```wyn
-var args = System::args();
-```
-
----
-
-## Time Module
-
-All time operations use `Time::` prefix.
-
-#### `Time::now() -> int`
-Gets current Unix timestamp.
-```wyn
-var timestamp = Time::now();
-```
-
-#### `Time::sleep(milliseconds: int)`
-Sleeps for specified milliseconds.
-```wyn
-Time::sleep(1000);  // Sleep 1 second
-```
-
-#### `Time::format(timestamp: int) -> string`
-Formats timestamp as human-readable string.
-```wyn
-var now = Time::now();
-var formatted = Time::format(now);  // "2026-01-22 14:30:45"
-```
-
----
-
-## Net Module
-
-Basic TCP networking operations.
-
-#### `Net::listen(port: int) -> int`
-Creates TCP server socket. Returns socket descriptor or -1 on error.
-```wyn
-var server = Net::listen(8080);
-if server == -1 {
-    print("Error: Could not start server\n");
-}
-```
-
-#### `Net::connect(host: string, port: int) -> int`
-Connects to TCP server. Returns socket descriptor or -1 on error.
-```wyn
-var client = Net::connect("127.0.0.1", 8080);
-if client == -1 {
-    print("Error: Could not connect\n");
-}
-```
-
-#### `Net::send(socket: int, data: string) -> int`
-Sends data through socket. Returns bytes sent or -1 on error.
-```wyn
-var sent = Net::send(socket, "Hello\n");
-```
-
-#### `Net::recv(socket: int) -> string`
-Receives data from socket. Returns data or empty string on error.
-```wyn
-var data = Net::recv(socket);
-if data.len() > 0 {
-    print(data);
-}
-```
-
-#### `Net::close(socket: int) -> int`
-Closes socket. Returns 1 on success, 0 on error.
-```wyn
-Net::close(socket);
-```
-
----
-
-## Error Handling
-
-Wyn uses return codes for error handling. Functions return special values to indicate errors.
-
-### Error Patterns
-
-#### Return -1 for Errors
-```wyn
-fn divide(a: int, b: int) -> int {
-    if b == 0 {
-        return -1;  // Error indicator
+    fn mag_sq(self) -> int {
+        return self.x * self.x + self.y * self.y
     }
-    return a / b;
-}
 
-// Check for errors
-var result = divide(10, 0);
-if result == -1 {
-    print("Error: division by zero\n");
-}
-```
-
-#### Return Empty String for Errors
-```wyn
-fn read_file(path: string) -> string {
-    if !File::exists(path) {
-        return "";  // Error indicator
-    }
-    return File::read(path);
-}
-
-// Check for errors
-var content = read_file("missing.txt");
-if content.len() == 0 {
-    print("Error: could not read file\n");
-}
-```
-
-#### Use Exit Codes
-```wyn
-fn main() -> int {
-    if some_error {
-        return 1;  // Non-zero indicates error
-    }
-    return 0;  // Success
-}
-```
-
----
-
-## Examples
-
-### String Processing
-```wyn
-var email = "  USER@EXAMPLE.COM  ";
-var cleaned = email.trim().lower();
-if cleaned.contains("@") && cleaned.ends_with(".com") {
-    print("Valid email: ${cleaned}");
-}
-```
-
-### Array Processing
-```wyn
-var numbers = [5, 2, 8, 1, 9];
-numbers.sort();
-var min = numbers.min();
-var max = numbers.max();
-var avg = numbers.average();
-print("Min: ${min}, Max: ${max}, Avg: ${avg}");
-```
-
-### File Operations
-```wyn
-var entries = File::list_dir(".");
-for i in 0..entries.len() {
-    var name = entries[i];
-    if File::is_file(name) && name.ends_with(".wyn") {
-        var size = File::file_size(name);
-        print("${name}: ${size} bytes");
+    fn dot(self, other: Vec2) -> int {
+        return self.x * other.x + self.y * other.y
     }
 }
+
+var v = Vec2{x: 3, y: 4}
+println(v.mag_sq().to_string())  // 25
 ```
 
-### HashMap Usage
+Use `impl` only for trait implementations:
+
 ```wyn
-var scores = {"alice": 95, "bob": 87};
-if scores.has("alice") {
-    var score = scores["alice"];
-    print("Alice: ${score}");
+impl Drawable for Circle {
+    fn draw(self) -> string { return "circle" }
 }
-scores["charlie"] = 92;
 ```
 
 ---
 
-## See Also
+## Arrow Lambdas
 
-- [Examples](../examples/)
-- [CHANGELOG](../CHANGELOG.md)
-- [GitHub Repository](https://github.com/wyn-lang/wyn)
+Short syntax for inline functions:
+
+```wyn
+var doubled = nums.map(fn(x) => x * 2)
+var evens = nums.filter(fn(x) => x % 2 == 0)
+var big = [1,2,3,4,5].filter(fn(x) => x > 3).map(fn(x) => x * 10)
+```
+
+## Additional Math Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Math.sin(x)` | `-> float` | Sine |
+| `Math.cos(x)` | `-> float` | Cosine |
+| `Math.tan(x)` | `-> float` | Tangent |
+| `Math.atan2(y, x)` | `-> float` | Two-argument arctangent |
+| `Math.round(x)` | `-> int` | Round to nearest |
+| `Math.floor(x)` | `-> int` | Round down |
+| `Math.ceil(x)` | `-> int` | Round up |
+| `Math.round_to(x, places)` | `-> float` | Round to N decimal places |
+| `Math.pi()` | `-> float` | π (3.14159...) |
+| `Math.e()` | `-> float` | e (2.71828...) |
+
+## String.to_float
+
+```wyn
+var f = "3.14".to_float()  // 3.14
+```

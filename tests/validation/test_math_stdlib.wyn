@@ -1,0 +1,13 @@
+// TDD: Math stdlib functions
+
+fn main() -> int {
+    // Test basic math
+    println(Math_abs(-5))
+    println(Math_abs(5))
+    println(Math_max(10, 20))
+    println(Math_min(10, 20))
+    println(Math_pow(2.0, 10.0))
+    println(Math_sqrt(144.0))
+
+    return 0
+}

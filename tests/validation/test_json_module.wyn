@@ -1,0 +1,12 @@
+// TDD: JSON-like key-value operations using HashMap
+
+fn main() -> int {
+    var obj = hashmap_new()
+    hashmap_insert_string(obj, "name", "Alice")
+    hashmap_insert_string(obj, "city", "Dubai")
+
+    println(hashmap_get_string(obj, "name"))
+    println(hashmap_get_string(obj, "city"))
+
+    return 0
+}

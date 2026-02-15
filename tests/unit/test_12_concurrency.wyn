@@ -1,2 +1,0 @@
-fn worker() -> int { return 1; }
-fn main() -> int { spawn worker(); return 42; }

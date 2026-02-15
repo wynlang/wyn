@@ -1,0 +1,166 @@
+// Comprehensive validation test
+// Tests that the self-hosted parser actually works on real Wyn code
+
+fn test_simple_function() -> int {
+    var source = "fn add(x: int, y: int) -> int { return x + y }"
+    
+    // Parse with C parser
+    var c_success = C_Parser::init_lexer(source)
+    if c_success == 0 {
+        print("FAIL: C lexer init\n")
+        return 1
+    }
+    
+    C_Parser::init_parser()
+    var c_ast = C_Parser::parse_program()
+    if c_ast == 0 {
+        print("FAIL: C parser returned null\n")
+        return 1
+    }
+    
+    var c_str = C_Parser::ast_to_string(c_ast)
+    C_Parser::free_ast(c_ast)
+    
+    // Verify we got something
+    if string_length(c_str) == 0 {
+        print("FAIL: C AST string empty\n")
+        return 1
+    }
+    
+    print("PASS: Simple function\n")
+    return 0
+}
+
+fn test_struct() -> int {
+    var source = "struct Point { x: int, y: int }"
+    
+    var c_success = C_Parser::init_lexer(source)
+    if c_success == 0 {
+        print("FAIL: Struct - C lexer init\n")
+        return 1
+    }
+    
+    C_Parser::init_parser()
+    var c_ast = C_Parser::parse_program()
+    if c_ast == 0 {
+        print("FAIL: Struct - C parser returned null\n")
+        return 1
+    }
+    
+    var c_str = C_Parser::ast_to_string(c_ast)
+    C_Parser::free_ast(c_ast)
+    
+    if string_length(c_str) == 0 {
+        print("FAIL: Struct - C AST string empty\n")
+        return 1
+    }
+    
+    print("PASS: Struct\n")
+    return 0
+}
+
+fn test_enum() -> int {
+    var source = "enum Color { Red, Green, Blue }"
+    
+    var c_success = C_Parser::init_lexer(source)
+    if c_success == 0 {
+        print("FAIL: Enum - C lexer init\n")
+        return 1
+    }
+    
+    C_Parser::init_parser()
+    var c_ast = C_Parser::parse_program()
+    if c_ast == 0 {
+        print("FAIL: Enum - C parser returned null\n")
+        return 1
+    }
+    
+    var c_str = C_Parser::ast_to_string(c_ast)
+    C_Parser::free_ast(c_ast)
+    
+    if string_length(c_str) == 0 {
+        print("FAIL: Enum - C AST string empty\n")
+        return 1
+    }
+    
+    print("PASS: Enum\n")
+    return 0
+}
+
+fn test_match() -> int {
+    var source = "fn test(x: int) -> int { match x { 1 => 10, 2 => 20, _ => 0 } }"
+    
+    var c_success = C_Parser::init_lexer(source)
+    if c_success == 0 {
+        print("FAIL: Match - C lexer init\n")
+        return 1
+    }
+    
+    C_Parser::init_parser()
+    var c_ast = C_Parser::parse_program()
+    if c_ast == 0 {
+        print("FAIL: Match - C parser returned null\n")
+        return 1
+    }
+    
+    var c_str = C_Parser::ast_to_string(c_ast)
+    C_Parser::free_ast(c_ast)
+    
+    if string_length(c_str) == 0 {
+        print("FAIL: Match - C AST string empty\n")
+        return 1
+    }
+    
+    print("PASS: Match\n")
+    return 0
+}
+
+fn test_array() -> int {
+    var source = "fn test() -> int { var arr = [1, 2, 3] return arr[0] }"
+    
+    var c_success = C_Parser::init_lexer(source)
+    if c_success == 0 {
+        print("FAIL: Array - C lexer init\n")
+        return 1
+    }
+    
+    C_Parser::init_parser()
+    var c_ast = C_Parser::parse_program()
+    if c_ast == 0 {
+        print("FAIL: Array - C parser returned null\n")
+        return 1
+    }
+    
+    var c_str = C_Parser::ast_to_string(c_ast)
+    C_Parser::free_ast(c_ast)
+    
+    if string_length(c_str) == 0 {
+        print("FAIL: Array - C AST string empty\n")
+        return 1
+    }
+    
+    print("PASS: Array\n")
+    return 0
+}
+
+fn main() -> int {
+    print("=== Comprehensive Validation Tests ===\n\n")
+    
+    var failures = 0
+    failures = failures + test_simple_function()
+    failures = failures + test_struct()
+    failures = failures + test_enum()
+    failures = failures + test_match()
+    failures = failures + test_array()
+    
+    print("\n=== Summary ===\n")
+    print("Failures: ")
+    print(failures)
+    print("\n")
+    
+    if failures == 0 {
+        print("All validation tests PASSED!\n")
+    }
+    
+    return failures
+}

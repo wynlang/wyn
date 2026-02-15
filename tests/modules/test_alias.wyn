@@ -1,0 +1,10 @@
+// Test module alias
+import math_utils as math
+
+fn main() -> int {
+    // Call using alias
+    var sum = math::add(10, 20)
+    if sum != 30 { return 1; }
+    
+    return 0
+}

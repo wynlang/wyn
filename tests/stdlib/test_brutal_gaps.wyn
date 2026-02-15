@@ -1,0 +1,114 @@
+struct Node { value: int, next_idx: int }
+
+fn main() -> int {
+    // === Linked list via array ===
+    Test.init("Data Structures")
+    var nodes = [
+        Node { value: 10, next_idx: 1 },
+        Node { value: 20, next_idx: 2 },
+        Node { value: 30, next_idx: -1 }
+    ]
+    var idx = 0
+    var ll_sum = 0
+    while idx >= 0 {
+        ll_sum = ll_sum + nodes[idx].value
+        idx = nodes[idx].next_idx
+    }
+    Test.assert_eq_int(ll_sum, 60, "linked list traversal")
+    Test.summary()
+    
+    // === Nested function calls ===
+    Test.init("Nesting")
+    var nested = Math.abs(Math.min(-5, -10))
+    Test.assert_eq_int(nested, 5, "abs(min(-5,-10))")
+    
+    // Chained string methods
+    var s = "  Hello World  "
+    var processed = s.trim().lower().replace(" ", "_")
+    Test.assert_eq_str(processed, "hello_world", "chained string methods")
+    Test.summary()
+    
+    // === Complex expressions ===
+    Test.init("Expressions")
+    var a = (2 + 3) * 4
+    Test.assert_eq_int(a, 20, "(2+3)*4 = 20")
+    var b = 10 % 3
+    Test.assert_eq_int(b, 1, "10 % 3 = 1")
+    var c = 100 / 3
+    Test.assert_eq_int(c, 33, "100 / 3 = 33")
+    
+    // Boolean logic
+    var t = 1 == 1
+    var f = 1 == 2
+    Test.assert(t, "1 == 1")
+    Test.assert_eq_int(f, 0, "1 == 2 is false")
+    Test.assert(5 > 3, "5 > 3")
+    Test.assert(3 < 5, "3 < 5")
+    Test.assert(5 >= 5, "5 >= 5")
+    Test.assert(5 <= 5, "5 <= 5")
+    Test.assert(5 != 3, "5 != 3")
+    Test.summary()
+    
+    // === Recursion ===
+    Test.init("Recursion")
+    Test.assert_eq_int(fib(10), 55, "fib(10) = 55")
+    Test.assert_eq_int(factorial(5), 120, "5! = 120")
+    Test.summary()
+    
+    // === HashMap as config ===
+    Test.init("HashMap Advanced")
+    var config = HashMap.new()
+    config.insert_string("host", "localhost")
+    config.insert_int("port", 8080)
+    config.insert_int("debug", 1)
+    
+    // Read back
+    Test.assert_eq_str(config.get("host"), "localhost", "config host")
+    Test.assert_eq_int(config.get_int("port"), 8080, "config port")
+    
+    // Overwrite
+    config.insert_int("port", 9090)
+    Test.assert_eq_int(config.get_int("port"), 9090, "config port updated")
+    
+    // Missing key
+    Test.assert_eq_str(config.get("missing"), "", "missing = empty")
+    Test.assert_eq_int(config.get_int("missing"), 0, "missing int = 0")
+    Test.summary()
+    
+    // === Concurrent data processing ===
+    Test.init("Concurrency")
+    var shared = Task.value(0)
+    var f1 = spawn add_to_shared(shared, 100)
+    var f2 = spawn add_to_shared(shared, 200)
+    var f3 = spawn add_to_shared(shared, 300)
+    await f1
+    await f2
+    await f3
+    Test.assert_eq_int(Task.get(shared), 600, "3 spawns sum to 600")
+    
+    // Channel pipeline
+    var ch = Task.channel(10)
+    Task.send(ch, 1)
+    Task.send(ch, 2)
+    Task.send(ch, 3)
+    var ch_sum = Task.recv(ch) + Task.recv(ch) + Task.recv(ch)
+    Test.assert_eq_int(ch_sum, 6, "channel 1+2+3 = 6")
+    Test.summary()
+    
+    return 0
+}
+
+fn fib(n: int) -> int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn factorial(n: int) -> int {
+    if n <= 1 { return 1 }
+    return n * factorial(n - 1)
+}
+
+fn add_to_shared(shared: int, amount: int) -> int {
+    Task.add(shared, amount)
+    return 0
+}

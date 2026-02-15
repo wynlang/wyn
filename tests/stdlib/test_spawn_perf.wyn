@@ -1,0 +1,56 @@
+fn tiny(x: int) -> int { return x }
+fn add(a: int, b: int) -> int { return a + b }
+
+fn worker(shared: int) -> int {
+    Task.add(shared, 1)
+    return 0
+}
+
+fn main() -> int {
+    // Warmup
+    var w = spawn tiny(0)
+    await w
+    sleep_ms(10)
+    
+    Test.init("Spawn Performance")
+    
+    // Correctness
+    var f1 = spawn add(10, 20)
+    Test.assert_eq_int(await f1, 30, "spawn add(10,20)")
+    
+    // Parallel correctness
+    var fa = spawn add(1, 2)
+    var fb = spawn add(3, 4)
+    var fc = spawn add(5, 6)
+    var fd = spawn add(7, 8)
+    Test.assert_eq_int(await fa, 3, "parallel a")
+    Test.assert_eq_int(await fb, 7, "parallel b")
+    Test.assert_eq_int(await fc, 11, "parallel c")
+    Test.assert_eq_int(await fd, 15, "parallel d")
+    
+    // Task shared state with spawns
+    var shared = Task.value(0)
+    var w1 = spawn worker(shared)
+    var w2 = spawn worker(shared)
+    var w3 = spawn worker(shared)
+    var w4 = spawn worker(shared)
+    await w1
+    await w2
+    await w3
+    await w4
+    Test.assert_eq_int(Task.get(shared), 4, "4 workers = 4")
+    
+    // Performance: overhead should be < 50us/op sequential
+    var t0 = DateTime.micros()
+    for i in 0..100 {
+        var f = spawn tiny(i)
+        await f
+    }
+    var t1 = DateTime.micros()
+    var overhead = (t1 - t0) / 100
+    Test.assert(overhead < 100, "spawn overhead < 100us")
+    println("  Measured: " + overhead.to_string() + "us/spawn")
+    
+    Test.summary()
+    return 0
+}

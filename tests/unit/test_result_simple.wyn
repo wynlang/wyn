@@ -1,5 +1,0 @@
-fn main() -> int {
-    let success = ok(42);
-    let failure = err(1);
-    return 99;
-}

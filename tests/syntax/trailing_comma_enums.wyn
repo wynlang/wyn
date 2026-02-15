@@ -1,0 +1,17 @@
+// Test trailing commas in enum variants
+
+enum Status {
+    Active,
+    Inactive,
+    Pending,
+}
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+fn main() -> int {
+    return 42;
+}

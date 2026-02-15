@@ -1,0 +1,26 @@
+fn double_val(x: int) -> int { return x * 2 }
+fn check_even(x: int) -> int { return x % 2 == 0 }
+fn sum(a: int, b: int) -> int { return a + b }
+
+fn main() -> int {
+    Test.init("Typed Collections")
+    
+    var nums = [1, 2, 3, 4, 5]
+    
+    // map
+    var doubled = nums.map(double_val)
+    Test.assert_eq_int(doubled[0], 2, "map [0]=2")
+    Test.assert_eq_int(doubled[4], 10, "map [4]=10")
+    
+    // filter
+    var evens = nums.filter(check_even)
+    Test.assert_eq_int(evens[0], 2, "filter [0]=2")
+    Test.assert_eq_int(evens[1], 4, "filter [1]=4")
+    
+    // reduce
+    var total = nums.reduce(sum, 0)
+    Test.assert_eq_int(total, 15, "reduce sum=15")
+    
+    Test.summary()
+    return 0
+}

@@ -1,0 +1,385 @@
+// AST Module for Wyn Self-Hosted Parser
+// Defines all Abstract Syntax Tree node types with source location tracking
+
+// ============================================================================
+// Source Location Tracking
+// ============================================================================
+
+// Span represents a location in source code
+struct Span {
+    line: int,      // Line number (1-indexed)
+    column: int,    // Column number (1-indexed)
+    len: int        // Length of the span in characters
+}
+
+// Create a new span
+fn span_new(line: int, column: int, len: int) -> Span {
+    return Span {
+        line: line,
+        column: column,
+        len: len
+    }
+}
+
+// Get the length of a span
+fn span_get_length(span: Span) -> int {
+    var len_val = span.len
+    return len_val
+}
+
+// Merge two spans into one that covers both
+fn span_merge(start: Span, end: Span) -> Span {
+    var end_col = end.column
+    var end_len = span_get_length(end)
+    var end_pos = end_col + end_len
+    var start_col = start.column
+    var total_length = end_pos - start_col
+    return Span {
+        line: start.line,
+        column: start.column,
+        len: total_length
+    }
+}
+
+// ============================================================================
+// Binary and Unary Operators
+// ============================================================================
+
+enum BinaryOp {
+    Add,      // +
+    Sub,      // -
+    Mul,      // *
+    Div,      // /
+    Mod,      // %
+    Eq,       // ==
+    Ne,       // !=
+    Lt,       // <
+    Le,       // <=
+    Gt,       // >
+    Ge        // >=
+}
+
+enum UnaryOp {
+    Neg,      // -x (negation)
+    Not       // !x (logical not)
+}
+
+// ============================================================================
+// Type Nodes
+// ============================================================================
+
+enum Type {
+    Int,
+    Float,
+    String,
+    Bool,
+    Void
+}
+
+// ============================================================================
+// Expression Nodes
+// ============================================================================
+
+// Base expression type - represents all expression forms
+enum Expr {
+    // Literals
+    IntLiteral,
+    FloatLiteral,
+    StringLiteral,
+    BoolLiteral,
+    
+    // Variables and identifiers
+    Identifier,
+    
+    // Binary operations
+    Binary,
+    
+    // Unary operations
+    Unary,
+    
+    // Function calls
+    Call,
+    
+    // Parenthesized expression
+    Paren
+}
+
+// Integer literal expression
+struct IntLiteralExpr {
+    value: int,
+    span: Span
+}
+
+// Float literal expression
+struct FloatLiteralExpr {
+    value: float,
+    span: Span
+}
+
+// String literal expression
+struct StringLiteralExpr {
+    value: string,
+    span: Span
+}
+
+// Boolean literal expression
+struct BoolLiteralExpr {
+    value: int,  // 1 for true, 0 for false
+    span: Span
+}
+
+// Identifier expression
+struct IdentifierExpr {
+    name: string,
+    span: Span
+}
+
+// Binary operation expression
+struct BinaryExpr {
+    op: int,     // BinaryOp enum value
+    left: int,   // Index into expression array
+    right: int,  // Index into expression array
+    span: Span
+}
+
+// Unary operation expression
+struct UnaryExpr {
+    op: int,       // UnaryOp enum value
+    operand: int,  // Index into expression array
+    span: Span
+}
+
+// Function call expression
+struct CallExpr {
+    callee: int,      // Index into expression array
+    arg_count: int,   // Number of arguments
+    args_start: int,  // Starting index in arguments array
+    span: Span
+}
+
+// Parenthesized expression
+struct ParenExpr {
+    inner: int,  // Index into expression array
+    span: Span
+}
+
+// ============================================================================
+// Statement Nodes
+// ============================================================================
+
+// Base statement type - represents all statement forms
+enum Stmt {
+    // Function declaration
+    FnDecl,
+    
+    // Variable declaration
+    VarDecl,
+    
+    // Return statement
+    Return,
+    
+    // If statement
+    If,
+    
+    // While loop
+    While,
+    
+    // Expression statement
+    ExprStmt
+}
+
+// Function parameter
+struct Param {
+    name: string,
+    param_type: int,  // Type enum value
+    span: Span
+}
+
+// Function declaration statement
+struct FnDeclStmt {
+    name: string,
+    param_count: int,
+    params_start: int,    // Starting index in parameters array
+    return_type: int,     // Type enum value
+    body_count: int,
+    body_start: int,      // Starting index in statements array
+    span: Span
+}
+
+// Variable declaration statement
+struct VarDeclStmt {
+    name: string,
+    has_type: int,        // 1 if type annotation present, 0 otherwise
+    var_type: int,        // Type enum value
+    initializer: int,     // Index into expression array
+    span: Span
+}
+
+// Return statement
+struct ReturnStmt {
+    has_value: int,       // 1 if return value present, 0 otherwise
+    value: int,           // Index into expression array (if has_value)
+    span: Span
+}
+
+// If statement
+struct IfStmt {
+    condition: int,       // Index into expression array
+    then_count: int,
+    then_start: int,      // Starting index in statements array
+    has_else: int,        // 1 if else block present, 0 otherwise
+    else_count: int,
+    else_start: int,      // Starting index in statements array (if has_else)
+    span: Span
+}
+
+// While loop statement
+struct WhileStmt {
+    condition: int,       // Index into expression array
+    body_count: int,
+    body_start: int,      // Starting index in statements array
+    span: Span
+}
+
+// Expression statement
+struct ExprStmtNode {
+    expr: int,            // Index into expression array
+    span: Span
+}
+
+// ============================================================================
+// Pattern Nodes (for future match expressions)
+// ============================================================================
+
+// Base pattern type - represents all pattern forms
+enum Pattern {
+    // Literal patterns
+    IntPattern,
+    StringPattern,
+    BoolPattern,
+    
+    // Wildcard pattern
+    Wildcard,
+    
+    // Variable binding
+    Binding
+}
+
+// Integer literal pattern
+struct IntPatternNode {
+    value: int,
+    span: Span
+}
+
+// String literal pattern
+struct StringPatternNode {
+    value: string,
+    span: Span
+}
+
+// Boolean literal pattern
+struct BoolPatternNode {
+    value: int,  // 1 for true, 0 for false
+    span: Span
+}
+
+// Wildcard pattern (_)
+struct WildcardPattern {
+    span: Span
+}
+
+// Variable binding pattern
+struct BindingPattern {
+    name: string,
+    span: Span
+}
+
+// ============================================================================
+// Program Node (Top-level)
+// ============================================================================
+
+// Top-level program containing all statements
+struct Program {
+    stmt_count: int,
+    stmts_start: int,     // Starting index in statements array
+    span: Span
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+// Check if a span is valid (line >= 1, column >= 1, length >= 0)
+fn span_is_valid(span: Span) -> int {
+    var line_val = span.line
+    var col_val = span.column
+    var len_val = span_get_length(span)
+    if line_val >= 1 {
+        if col_val >= 1 {
+            if len_val >= 0 {
+                return 1
+            }
+        }
+    }
+    return 0
+}
+
+// Get the precedence level for a binary operator
+// Takes the integer value of the BinaryOp enum
+fn binary_op_precedence(op: int) -> int {
+    // Multiplication: precedence 10
+    if op == 2 {  // BinaryOp.Mul
+        return 10
+    }
+    // Division: precedence 10
+    if op == 3 {  // BinaryOp.Div
+        return 10
+    }
+    // Modulo: precedence 10
+    if op == 4 {  // BinaryOp.Mod
+        return 10
+    }
+    // Addition: precedence 9
+    if op == 0 {  // BinaryOp.Add
+        return 9
+    }
+    // Subtraction: precedence 9
+    if op == 1 {  // BinaryOp.Sub
+        return 9
+    }
+    // Less than: precedence 4
+    if op == 7 {  // BinaryOp.Lt
+        return 4
+    }
+    // Less or equal: precedence 4
+    if op == 8 {  // BinaryOp.Le
+        return 4
+    }
+    // Greater than: precedence 4
+    if op == 9 {  // BinaryOp.Gt
+        return 4
+    }
+    // Greater or equal: precedence 4
+    if op == 10 {  // BinaryOp.Ge
+        return 4
+    }
+    // Equality: precedence 3
+    if op == 5 {  // BinaryOp.Eq
+        return 3
+    }
+    // Not equal: precedence 3
+    if op == 6 {  // BinaryOp.Ne
+        return 3
+    }
+    return 0
+}
+
+// Main function for testing (this module is meant to be imported)
+fn main() -> int {
+    // Test span creation
+    var span = span_new(1, 1, 5)
+    if span_is_valid(span) {
+        return 0
+    }
+    return 1
+}

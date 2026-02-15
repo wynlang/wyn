@@ -1,0 +1,14 @@
+// Test: HashMap basic operations
+// Validates HashMap creation, insert, and get
+
+fn main() -> int {
+    var map = hashmap_new();
+    hashmap_insert_int(map, "key", 42);
+    var val = hashmap_get_int(map, "key");
+    
+    if val != 42 {
+        return 1;
+    }
+    
+    return 0;
+}

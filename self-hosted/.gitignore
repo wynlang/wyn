@@ -1,0 +1,7 @@
+# Compiled artifacts
+*.c
+*.out
+*.o
+*.so
+*.dylib
+*.dll

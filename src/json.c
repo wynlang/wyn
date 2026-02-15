@@ -1,4 +1,5 @@
 #include "json.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -110,4 +111,43 @@ void json_free(WynJson* json) {
         }
     }
     free(json);
+}
+
+WynJson* json_new() {
+    WynJson* json = calloc(1, sizeof(WynJson));
+    return json;
+}
+
+void json_set_string(WynJson* json, const char* key, const char* value) {
+    if (json->count < MAX_PAIRS) {
+        json->pairs[json->count].key = strdup(key);
+        json->pairs[json->count].str_value = strdup(value);
+        json->pairs[json->count].is_int = 0;
+        json->count++;
+    }
+}
+
+void json_set_int(WynJson* json, const char* key, int value) {
+    if (json->count < MAX_PAIRS) {
+        json->pairs[json->count].key = strdup(key);
+        json->pairs[json->count].int_value = value;
+        json->pairs[json->count].is_int = 1;
+        json->count++;
+    }
+}
+
+char* json_stringify(WynJson* json) {
+    char* buf = malloc(4096);
+    int pos = 0;
+    pos += snprintf(buf + pos, 4096 - pos, "{");
+    for (int i = 0; i < json->count; i++) {
+        if (i > 0) pos += snprintf(buf + pos, 4096 - pos, ", ");
+        if (json->pairs[i].is_int) {
+            pos += snprintf(buf + pos, 4096 - pos, "\"%s\": %d", json->pairs[i].key, json->pairs[i].int_value);
+        } else {
+            pos += snprintf(buf + pos, 4096 - pos, "\"%s\": \"%s\"", json->pairs[i].key, json->pairs[i].str_value);
+        }
+    }
+    snprintf(buf + pos, 4096 - pos, "}");
+    return buf;
 }

@@ -1,0 +1,17 @@
+// Test struct as function parameter
+struct Data {
+    value: int
+}
+
+fn get_value(d: Data) -> int {
+    return d.value
+}
+
+fn main() -> int {
+    var d = Data { value: 42 }
+    var result = get_value(d)
+    if result == 42 {
+        return 0
+    }
+    return 1
+}

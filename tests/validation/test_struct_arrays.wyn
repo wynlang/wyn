@@ -1,0 +1,66 @@
+// Test: Arrays of structs
+// This was broken - codegen used array_push_int for all types
+// Fixed: Now detects struct types and uses array_push_struct
+
+struct User {
+    id: int
+    name: string
+    age: int
+}
+
+fn create_user(id: int, name: string, age: int) -> User {
+    return User { id: id, name: name, age: age };
+}
+
+fn main() -> int {
+    // Test 1: Array of struct literals
+    var users1 = [
+        User { id: 1, name: "Alice", age: 25 },
+        User { id: 2, name: "Bob", age: 30 }
+    ];
+    
+    // Test 2: Array of struct variables
+    var u1 = User { id: 3, name: "Charlie", age: 35 };
+    var u2 = User { id: 4, name: "Diana", age: 40 };
+    var users2 = [u1, u2];
+    
+    // Test 3: Array of function calls returning structs
+    var users3 = [
+        create_user(5, "Eve", 45),
+        create_user(6, "Frank", 50)
+    ];
+    
+    // Verify we can iterate
+    var count = 0;
+    for user in users1 {
+        count = count + 1;
+    }
+    
+    if count != 2 {
+        println("FAIL: users1 iteration");
+        return 1;
+    }
+    
+    count = 0;
+    for user in users2 {
+        count = count + 1;
+    }
+    
+    if count != 2 {
+        println("FAIL: users2 iteration");
+        return 2;
+    }
+    
+    count = 0;
+    for user in users3 {
+        count = count + 1;
+    }
+    
+    if count != 2 {
+        println("FAIL: users3 iteration");
+        return 3;
+    }
+    
+    println("✅ Arrays of structs work");
+    return 0;
+}

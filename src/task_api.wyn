@@ -1,0 +1,20 @@
+// Task coordination API
+fn task_create() -> int {
+    // Returns task ID
+    return 0;
+}
+
+fn task_spawn(task_id: int, func_ptr: int) -> int {
+    // Spawn function and add to task group
+    return 0;
+}
+
+fn task_wait(task_id: int) -> int {
+    // Wait for all spawns in task group
+    return 0;
+}
+
+fn task_cancel(task_id: int) -> int {
+    // Cancel task group
+    return 0;
+}

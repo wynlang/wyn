@@ -1,0 +1,59 @@
+// Task 1.8: Struct Field Access Validation
+struct Point {
+    x: int
+    y: int
+}
+
+struct Rectangle {
+    top_left: Point
+    width: int
+    height: int
+}
+
+fn main() -> int {
+    // Test 1: Simple field access
+    var p1 = Point { x: 10, y: 20 }
+    if p1.x != 10 {
+        return 1
+    }
+    if p1.y != 20 {
+        return 2
+    }
+    
+    // Test 2: Field access in expression
+    var sum = p1.x + p1.y
+    if sum != 30 {
+        return 3
+    }
+    
+    // Test 3: Multiple structs
+    var p2 = Point { x: 5, y: 15 }
+    if p2.x != 5 {
+        return 4
+    }
+    
+    // Test 4: Field access in condition
+    if p1.x > p2.x {
+        if p1.x - p2.x != 5 {
+            return 5
+        }
+    }
+    
+    // Test 5: Nested struct (if supported)
+    var rect = Rectangle { 
+        top_left: Point { x: 0, y: 0 },
+        width: 100,
+        height: 50
+    }
+    
+    if rect.width != 100 {
+        return 6
+    }
+    
+    if rect.height != 50 {
+        return 7
+    }
+    
+    // All tests passed
+    return 0
+}

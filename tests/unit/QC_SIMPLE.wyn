@@ -1,8 +1,0 @@
-fn main() -> int {
-    let x = 200;
-    let result = match x {
-        200 => 1,
-        _ => 2
-    };
-    return result;
-}

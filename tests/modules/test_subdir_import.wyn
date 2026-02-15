@@ -1,0 +1,7 @@
+// Test module resolution with subdirectories
+import { uppercase } from lib.string_utils
+
+fn main() -> int {
+    var result = uppercase("hello")
+    return 0
+}

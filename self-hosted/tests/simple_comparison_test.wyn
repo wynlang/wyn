@@ -1,0 +1,77 @@
+// Simple Parser Comparison Test
+// Compares success/failure of C parser vs self-hosted parser
+// Does NOT compare ASTs (self-hosted parser doesn't build AST)
+
+fn test_parse_success(source: string, name: string) -> int {
+    print("Test: ")
+    print(name)
+    print("\n")
+    
+    // Parse with C parser
+    var c_ok = C_Parser::init_lexer(source)
+    if c_ok == 0 {
+        print("  FAIL: C lexer init failed\n")
+        return 1
+    }
+    
+    C_Parser::init_parser()
+    var c_ast = C_Parser::parse_program()
+    var c_success = 0
+    if c_ast != 0 {
+        c_success = 1
+        C_Parser::free_ast(c_ast)
+    }
+    
+    print("  C parser: ")
+    if c_success == 1 {
+        print("SUCCESS\n")
+    } else {
+        print("FAIL\n")
+    }
+    
+    // For now, just verify C parser works
+    // TODO: Add self-hosted parser comparison when module system exists
+    
+    if c_success == 1 {
+        print("  PASS\n")
+        return 0
+    }
+    
+    print("  FAIL: C parser failed\n")
+    return 1
+}
+
+fn main() -> int {
+    print("=== Parser Comparison Test ===\n\n")
+    
+    var failures = 0
+    
+    // Simple expressions
+    failures = failures + test_parse_success("42", "number")
+    failures = failures + test_parse_success("1 + 2", "addition")
+    failures = failures + test_parse_success("x", "identifier")
+    
+    // Variables
+    failures = failures + test_parse_success("var x = 5", "variable")
+    failures = failures + test_parse_success("var y: int = 10", "typed variable")
+    
+    // Functions
+    failures = failures + test_parse_success("fn main() -> int { return 42 }", "function")
+    failures = failures + test_parse_success("fn add(x: int, y: int) -> int { return x + y }", "function with params")
+    
+    // Control flow
+    failures = failures + test_parse_success("if x > 0 { return 1 }", "if statement")
+    failures = failures + test_parse_success("while (i < 10) { i = i + 1 }", "while loop")
+    
+    print("\n=== Summary ===\n")
+    print("Failures: ")
+    print(failures)
+    print("\n")
+    
+    if failures == 0 {
+        print("All tests PASSED!\n")
+        return 0
+    }
+    
+    return 1
+}

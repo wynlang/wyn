@@ -557,3 +557,28 @@ WynIoError wyn_set_current_dir(const char* path) {
     
     return WYN_IO_SUCCESS;
 }
+
+// New file system utility functions
+WynIoError wyn_file_move(const char* src, const char* dst) {
+    return wyn_file_rename(src, dst);
+}
+
+WynDir* wyn_file_list_dir(const char* path, WynIoError* error) {
+    return wyn_dir_open(path, error);
+}
+
+WynIoError wyn_file_mkdir(const char* path) {
+    return wyn_dir_create(path);
+}
+
+WynIoError wyn_file_rmdir(const char* path) {
+    return wyn_dir_remove(path);
+}
+
+bool wyn_file_is_file(const char* path) {
+    return wyn_is_file(path);
+}
+
+bool wyn_file_is_dir(const char* path) {
+    return wyn_is_directory(path);
+}

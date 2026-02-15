@@ -780,4 +780,4 @@ let name = option_unwrap(user);
 
 ---
 
-*This reference covers Wyn v1.4.0. For the latest updates, see the [GitHub repository](https://github.com/wyn-lang/wyn).*
+*This reference covers Wyn v1.4.0. For the latest updates, see the [GitHub repository](https://github.com/wynlang/wyn).*

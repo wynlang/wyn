@@ -1,0 +1,23 @@
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn greet(name: string, age: int, city: string) {
+    print("Hello " + name);
+}
+
+fn main() {
+    // Too few arguments
+    var result = add(5);  // Expected 2, got 1
+    
+    // Too many arguments  
+    var result2 = add(1, 2, 3);  // Expected 2, got 3
+    
+    // Wrong count for function with multiple params
+    greet("Alice");  // Expected 3, got 1
+    greet("Bob", 25, "NYC", "extra");  // Expected 3, got 4
+    
+    // Built-in function with wrong args
+    print();  // Expected 1, got 0
+    print("a", "b");  // Expected 1, got 2
+}

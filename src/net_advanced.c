@@ -106,6 +106,14 @@ HttpResponse* Http_get(const char* url) {
     addr.sin_port = htons(port);
     memcpy(&addr.sin_addr, he->h_addr_list[0], he->h_length);
     
+    // Set timeout
+    extern int _wyn_http_timeout;
+    if (_wyn_http_timeout > 0) {
+        struct timeval tv = { .tv_sec = _wyn_http_timeout, .tv_usec = 0 };
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    }
+    
     // Connect
     if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         close(sock);

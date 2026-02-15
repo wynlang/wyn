@@ -1,7 +1,0 @@
-fn main() -> int {
-    print(42);
-    print(3.14);
-    print("hello");
-    print(true);
-    return 0;
-}

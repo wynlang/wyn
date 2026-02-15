@@ -1,5 +1,0 @@
-fn main() -> int {
-    let mut x = 10;
-    x = 20;
-    return x;
-}

@@ -1,0 +1,25 @@
+// Task 3.1: Exhaustive Pattern Matching Test
+enum Color { RED, GREEN, BLUE }
+
+fn main() -> int {
+    var c = RED
+    
+    var result = match c {
+        RED => 1,
+        GREEN => 2,
+        BLUE => 3
+    }
+    
+    if result != 1 { return 1; }
+    
+    var c2 = GREEN
+    var result2 = match c2 {
+        RED => 1,
+        GREEN => 2,
+        BLUE => 3
+    }
+    
+    if result2 != 2 { return 2; }
+    
+    return 0  // All tests passed
+}

@@ -1,0 +1,17 @@
+// Step 3: Array methods comprehensive test
+fn main() -> int {
+    var arr = [10, 20, 30, 40, 50]
+    
+    // Test 1: len
+    if arr.len() != 5 { return 1; }
+    
+    // Test 2: first
+    var f = arr.first()
+    if f != 10 { return 2; }
+    
+    // Test 3: last
+    var l = arr.last()
+    if l != 50 { return 3; }
+    
+    return 0
+}

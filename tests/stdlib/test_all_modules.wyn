@@ -1,0 +1,50 @@
+fn main() -> int {
+    Test.init("Quick Audit")
+    
+    // String
+    Test.assert_eq_str("hello".upper(), "HELLO", "string.upper")
+    Test.assert_eq_str("hello".capitalize(), "Hello", "string.capitalize")
+    Test.assert("abc".is_alpha(), "string.is_alpha")
+    
+    // File
+    File.write("/tmp/wyn_q.txt", "ok\n")
+    Test.assert(File.exists("/tmp/wyn_q.txt"), "File.exists")
+    File.delete("/tmp/wyn_q.txt")
+    
+    // System
+    Test.assert_eq_str(System.exec("echo hi").trim(), "hi", "System.exec")
+    
+    // HashMap
+    var m = HashMap.new()
+    m.insert_int("x", 5)
+    Test.assert_eq_int(m.get_int("x"), 5, "HashMap.get_int")
+    
+    // Json
+    var j = Json.new()
+    Json.set(j, "k", "v")
+    Test.assert(Json.stringify(j).contains("v"), "Json.stringify")
+    
+    // Regex
+    Test.assert_eq_int(Regex.match("abc", "[a-z]+"), 1, "Regex.match")
+    Test.assert_eq_str(Regex.replace("a1b", "[0-9]", "X"), "aXb", "Regex.replace")
+    
+    // Path
+    Test.assert_eq_str(Path.basename("/a/b"), "b", "Path.basename")
+    
+    // Math
+    Test.assert_eq_int(Math.abs(-5), 5, "Math.abs")
+    
+    // DateTime
+    Test.assert(DateTime.now() > 1700000000, "DateTime.now")
+    
+    // Task
+    var v = Task.value(0)
+    Task.set(v, 42)
+    Test.assert_eq_int(Task.get(v), 42, "Task.value/get/set")
+    
+    // Url
+    Test.assert_eq_str(Url.decode("a%20b"), "a b", "Url.decode")
+    
+    Test.summary()
+    return 0
+}

@@ -1,0 +1,70 @@
+fn double_val(x: int) -> int { return x * 2 }
+fn is_positive(x: int) -> int { return x > 0 }
+fn add(a: int, b: int) -> int { return a + b }
+
+fn main() -> int {
+    Test.init("Data Apps Complete")
+    
+    // 1. Streaming I/O — process large file line by line
+    File.write("/tmp/wyn_data.csv", "name,score\nAlice,95\nBob,87\nCharlie,92\nDiana,78\n")
+    var f = File.open("/tmp/wyn_data.csv", "r")
+    var header = File.read_line(f).trim()
+    Test.assert_eq_str(header, "name,score", "CSV header")
+    var total = 0
+    var count = 0
+    while File.eof(f) == 0 {
+        var line = File.read_line(f).trim()
+        if line.len() > 0 {
+            var score = line.split_at(",", 1).to_int()
+            total = total + score
+            count = count + 1
+        }
+    }
+    File.close(f)
+    Test.assert_eq_int(count, 4, "read 4 data rows")
+    Test.assert_eq_int(total / count, 88, "average score = 88")
+    
+    // 2. SQLite analytics
+    var db = Db.open(":memory:")
+    Db.exec(db, "CREATE TABLE sales (product TEXT, amount INTEGER)")
+    Db.exec(db, "INSERT INTO sales VALUES ('Widget', 100)")
+    Db.exec(db, "INSERT INTO sales VALUES ('Gadget', 250)")
+    Db.exec(db, "INSERT INTO sales VALUES ('Widget', 150)")
+    Db.exec(db, "INSERT INTO sales VALUES ('Gadget', 300)")
+    var top = Db.query_one(db, "SELECT product FROM sales GROUP BY product ORDER BY SUM(amount) DESC LIMIT 1")
+    Test.assert_eq_str(top, "Gadget", "top product by revenue")
+    var total_rev = Db.query_one(db, "SELECT SUM(amount) FROM sales")
+    Test.assert_eq_str(total_rev, "800", "total revenue = 800")
+    Db.close(db)
+    
+    // 3. Array map/filter/reduce
+    var nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    var doubled = nums.map(double_val)
+    Test.assert_eq_int(doubled[0], 2, "map works")
+    var positives = [-3, -1, 0, 2, 5].filter(is_positive)
+    Test.assert_eq_int(positives[0], 2, "filter works")
+    var sum = nums.reduce(add, 0)
+    Test.assert_eq_int(sum, 55, "reduce sum = 55")
+    
+    // 4. HashMap for aggregation
+    var m = HashMap.new()
+    m.insert_int("a", 10)
+    m.insert_int("b", 20)
+    m.insert_int("a", m.get_int("a") + 5)
+    Test.assert_eq_int(m.get_int("a"), 15, "hashmap accumulate")
+    
+    // 5. Regex for data extraction
+    Test.assert_eq_int(Regex.match("2026-02-12", "[0-9]{4}-[0-9]{2}-[0-9]{2}"), 1, "regex date match")
+    var cleaned = Regex.replace("price: $42.99", "\\$[0-9.]+", "REDACTED")
+    Test.assert(cleaned.contains("REDACTED"), "regex replace in data")
+    
+    // 6. JSON output
+    var j = Json.new()
+    Json.set(j, "report", "sales")
+    Json.set_int(j, "total", 800)
+    Test.assert(Json.stringify(j).contains("800"), "JSON report")
+    
+    File.delete("/tmp/wyn_data.csv")
+    Test.summary()
+    return 0
+}

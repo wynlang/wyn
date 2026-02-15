@@ -1,0 +1,44 @@
+// TDD: Option type regression test
+// Tests Some(value) / None with match, unwrap, is_some, is_none
+
+fn find_positive(x: int) -> OptionInt {
+    if x > 0 {
+        return OptionInt_Some(x)
+    }
+    return OptionInt_None()
+}
+
+fn main() -> int {
+    // Test 1: Some value
+    var a = OptionInt_Some(42)
+    println(OptionInt_is_some(a))
+    println(OptionInt_is_none(a))
+    println(OptionInt_unwrap(a))
+
+    // Test 2: None value
+    var b = OptionInt_None()
+    println(OptionInt_is_some(b))
+    println(OptionInt_is_none(b))
+
+    // Test 3: From function
+    var c = find_positive(10)
+    println(OptionInt_unwrap(c))
+
+    var d = find_positive(-5)
+    println(OptionInt_is_none(d))
+
+    // Test 4: unwrap_or with default
+    println(OptionInt_unwrap_or(c, 0))
+    println(OptionInt_unwrap_or(d, 99))
+
+    // Test 5: String option
+    var s = OptionString_Some("hello")
+    println(OptionString_unwrap(s))
+    println(OptionString_is_some(s))
+
+    var ns = OptionString_None()
+    println(OptionString_is_none(ns))
+    println(OptionString_unwrap_or(ns, "default"))
+
+    return 0
+}

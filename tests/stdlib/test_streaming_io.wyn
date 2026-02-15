@@ -1,0 +1,43 @@
+fn main() -> int {
+    Test.init("Streaming I/O")
+    
+    // Write a multi-line file
+    File.write("/tmp/wyn_stream.txt", "line1\nline2\nline3\nline4\nline5\n")
+    
+    // Read line by line
+    var f = File.open("/tmp/wyn_stream.txt", "r")
+    Test.assert(f > 0, "open returns handle")
+    
+    var line1 = File.read_line(f)
+    Test.assert_eq_str(line1.trim(), "line1", "read_line 1")
+    
+    var line2 = File.read_line(f)
+    Test.assert_eq_str(line2.trim(), "line2", "read_line 2")
+    
+    // Read remaining lines
+    var count = 2
+    while File.eof(f) == 0 {
+        var line = File.read_line(f)
+        if line.len() > 0 { count = count + 1 }
+    }
+    Test.assert_eq_int(count, 5, "read all 5 lines")
+    
+    File.close(f)
+    
+    // Write line by line
+    var out = File.open("/tmp/wyn_stream_out.txt", "w")
+    File.write_line(out, "hello\n")
+    File.write_line(out, "world\n")
+    File.close(out)
+    
+    var content = File.read("/tmp/wyn_stream_out.txt")
+    Test.assert(content.contains("hello"), "write_line hello")
+    Test.assert(content.contains("world"), "write_line world")
+    
+    // Cleanup
+    File.delete("/tmp/wyn_stream.txt")
+    File.delete("/tmp/wyn_stream_out.txt")
+    
+    Test.summary()
+    return 0
+}

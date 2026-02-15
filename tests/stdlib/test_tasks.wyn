@@ -1,0 +1,57 @@
+// Test: Tasks — simplified concurrency API
+// Task.value/get/set/add for shared state between spawns
+// Task.channel/send/recv/close for advanced message passing
+
+fn worker_add(shared: int, amount: int) -> int {
+    Task.add(shared, amount)
+    return amount
+}
+
+fn producer(ch: int) {
+    Task.send(ch, 10)
+    Task.send(ch, 20)
+    Task.send(ch, 30)
+    Task.close(ch)
+}
+
+fn main() -> int {
+    Test.init("Tasks")
+    
+    // Shared value — basic
+    var counter = Task.value(0)
+    Test.assert_eq_int(Task.get(counter), 0, "initial value = 0")
+    
+    Task.set(counter, 42)
+    Test.assert_eq_int(Task.get(counter), 42, "set to 42")
+    
+    Task.add(counter, 8)
+    Test.assert_eq_int(Task.get(counter), 50, "add 8 = 50")
+    
+    // Shared value — with spawns
+    var shared = Task.value(0)
+    var f1 = spawn worker_add(shared, 100)
+    var f2 = spawn worker_add(shared, 200)
+    await f1
+    await f2
+    Test.assert_eq_int(Task.get(shared), 300, "two spawns add to shared = 300")
+    
+    // Channel — basic send/recv
+    var ch = Task.channel(10)
+    Task.send(ch, 42)
+    Task.send(ch, 100)
+    var v1 = Task.recv(ch)
+    var v2 = Task.recv(ch)
+    Test.assert_eq_int(v1, 42, "channel recv 1")
+    Test.assert_eq_int(v2, 100, "channel recv 2")
+    
+    // Channel — with spawn
+    var ch2 = Task.channel(10)
+    spawn producer(ch2)
+    var a = Task.recv(ch2)
+    var b = Task.recv(ch2)
+    var c = Task.recv(ch2)
+    Test.assert_eq_int(a + b + c, 60, "channel from spawn = 60")
+    
+    Test.summary()
+    return 0
+}

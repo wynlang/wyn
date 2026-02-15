@@ -9,8 +9,10 @@
 #include "optional.h"
 #include "result.h"
 #include "traits.h"
+#include "module_loader.h"
 
 // Forward declarations
+extern Program* load_module(const char* module_name);  // From module.c
 void check_stmt(Stmt* stmt, SymbolTable* scope);
 Type* check_expr(Expr* expr, SymbolTable* scope);
 void analyze_lambda_captures(LambdaExpr* lambda, Expr* body, SymbolTable* scope);
@@ -26,6 +28,7 @@ static Type* builtin_void = NULL;
 static Type* builtin_array = NULL;
 static bool had_error = false;
 static Type* current_function_return_type = NULL;
+static Type* current_self_type = NULL; // receiver type for extension methods
 
 // Module visibility tracking
 static char current_module_name[256] = "";
@@ -144,7 +147,21 @@ static void print_type_name(Type* type) {
         case TYPE_STRING: fprintf(stderr, "string"); break;
         case TYPE_BOOL: fprintf(stderr, "bool"); break;
         case TYPE_VOID: fprintf(stderr, "void"); break;
-        case TYPE_ARRAY: fprintf(stderr, "array"); break;
+        case TYPE_ARRAY: 
+            fprintf(stderr, "[");
+            if (type->array_type.element_type) {
+                print_type_name(type->array_type.element_type);
+            } else {
+                fprintf(stderr, "unknown");
+            }
+            fprintf(stderr, "]");
+            break;
+        case TYPE_MAP:
+            fprintf(stderr, "HashMap<string, int>");
+            break;
+        case TYPE_SET:
+            fprintf(stderr, "HashSet<int>");
+            break;
         case TYPE_STRUCT:
             if (type->struct_type.name.length > 0) {
                 fprintf(stderr, "%.*s", type->struct_type.name.length, type->struct_type.name.start);
@@ -153,8 +170,9 @@ static void print_type_name(Type* type) {
             }
             break;
         case TYPE_OPTIONAL: // T2.5.1: Optional Type Implementation
+            fprintf(stderr, "Option<");
             print_type_name(type->optional_type.inner_type);
-            fprintf(stderr, "?");
+            fprintf(stderr, ">");
             break;
         case TYPE_RESULT: // TASK-026: Result Type Implementation
             fprintf(stderr, "Result<");
@@ -162,6 +180,15 @@ static void print_type_name(Type* type) {
             fprintf(stderr, ", ");
             print_type_name(type->result_type.err_type);
             fprintf(stderr, ">");
+            break;
+        case TYPE_FUNCTION:
+            fprintf(stderr, "fn(");
+            for (int i = 0; i < type->fn_type.param_count; i++) {
+                if (i > 0) fprintf(stderr, ", ");
+                print_type_name(type->fn_type.param_types[i]);
+            }
+            fprintf(stderr, ") -> ");
+            print_type_name(type->fn_type.return_type);
             break;
         default: fprintf(stderr, "unknown"); break;
     }
@@ -425,18 +452,31 @@ void init_checker() {
     Token set_tok = {TOKEN_IDENT, "HashSet", 7, 0};
     add_symbol(global_scope, set_tok, builtin_set, false);
     
+    // Register Result types
+    Type* result_int_type = make_type(TYPE_STRUCT);
+    result_int_type->struct_type.name = (Token){TOKEN_IDENT, "ResultInt", 9, 0};
+    Token result_int_tok = {TOKEN_IDENT, "ResultInt", 9, 0};
+    add_symbol(global_scope, result_int_tok, result_int_type, false);
+    
+    Type* result_string_type = make_type(TYPE_STRUCT);
+    result_string_type->struct_type.name = (Token){TOKEN_IDENT, "ResultString", 12, 0};
+    Token result_string_tok = {TOKEN_IDENT, "ResultString", 12, 0};
+    add_symbol(global_scope, result_string_tok, result_string_type, false);
+    
     // Add built-in functions
     const char* stdlib_funcs[] = {
-        "print", "print_float", "print_str", "print_bool", "print_hex", "print_bin", "println", "print_debug", "input", "input_float", "input_line", "printf_wyn", "sin_approx", "cos_approx", "pi_const", "e_const",
+        "print", "print_float", "print_str", "print_bool", "print_hex", "print_bin", "println", "print_debug", "input", "input_float", "input_line", "printf_wyn", "string_format", "sin_approx", "cos_approx", "pi_const", "e_const",
         "str_len", "str_eq", "str_concat", "str_upper", "str_lower", "str_contains", "str_starts_with", "str_ends_with", "str_trim",
-        "str_replace", "str_split", "str_join", "int_to_str", "str_to_int", "str_repeat", "str_reverse", "str_parse_int", "str_parse_float", "str_free",
+        "str_replace", "str_split", "str_join", "int_to_str", "str_to_int", "str_repeat", "str_reverse", "str_parse_int", "str_parse_int_failed", "str_parse_float", "str_free",
         "split_get", "split_count", "char_at", "is_numeric", "str_count", "str_contains_substr",
+        "string_char_at", "string_length",
         "abs_val", "min", "max", "pow_int", "clamp", "sign", "gcd", "lcm", "is_even", "is_odd",
         "sqrt_int", "ceil_int", "floor_int", "round_int", "abs_float",
         "swap", "clamp_float", "lerp", "map_range",
         "bit_set", "bit_clear", "bit_toggle", "bit_check", "bit_count",
         "arr_sum", "arr_max", "arr_min", "arr_contains", "arr_find", "arr_reverse", "arr_sort", "arr_count", "arr_fill", "arr_all", "arr_join", "arr_map_double", "arr_map_square", "arr_filter_positive", "arr_filter_even", "arr_filter_greater_than_3", "arr_reduce_sum", "arr_reduce_product",
         "file_exists", "file_size", "file_delete", "file_append", "file_copy", "last_error_get",
+        "file_move", "file_list_dir", "file_mkdir", "file_rmdir", "file_is_file", "file_is_dir",
         // NOTE: file_read, file_write, sys_exec are registered separately with proper types
         "random_int", "random_range", "random_float", "seed_random", "time_now", "time_format",
         "range", "array_new", "array_push", "array_pop", "array_length_dyn", "len",
@@ -459,7 +499,11 @@ void init_checker() {
         "wyn_string_to_upper", "wyn_string_to_lower", "wyn_string_trim", "wyn_str_replace",
         "wyn_string_split", "wyn_string_join", "wyn_str_substring", "wyn_string_index_of",
         "wyn_string_last_index_of", "wyn_string_repeat", "wyn_string_reverse",
+        "wyn_string_pad_left", "wyn_string_pad_right",
+        "wyn_string_pad_left_safe", "wyn_string_pad_right_safe",
         "wyn_array_map", "wyn_array_filter", "wyn_array_reduce", "wyn_array_find",
+        "wyn_array_find_index", "wyn_array_unique", "wyn_array_join",
+        "wyn_array_first", "wyn_array_last", "wyn_array_is_empty",
         "wyn_array_any", "wyn_array_all", "wyn_array_reverse", "wyn_array_sort",
         "wyn_array_contains", "wyn_array_index_of", "wyn_array_last_index_of",
         "wyn_array_slice", "wyn_array_concat", "wyn_array_fill",
@@ -471,10 +515,12 @@ void init_checker() {
         "wyn_time_hour", "wyn_time_minute", "wyn_time_second",
         "wyn_crypto_hash32", "wyn_crypto_hash64", "wyn_crypto_md5", "wyn_crypto_sha256",
         "wyn_crypto_base64_encode", "wyn_crypto_base64_decode",
-        "wyn_crypto_random_bytes", "wyn_crypto_random_hex", "wyn_crypto_xor_cipher"
+        "wyn_crypto_random_bytes", "wyn_crypto_random_hex", "wyn_crypto_xor_cipher",
+        "wyn_math_abs", "wyn_math_min", "wyn_math_max", "wyn_math_pow",
+        "wyn_math_sqrt", "wyn_math_floor", "wyn_math_ceil", "wyn_math_round"
     };
     
-    for (int i = 0; i < 214; i++) {  // Updated count: 217 - 3 = 214
+    for (int i = 0; i < 232; i++) {  // Updated count: 224 + 8 = 232
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
     }
@@ -568,6 +614,74 @@ void init_checker() {
     Token c_generate_code_tok = {TOKEN_IDENT, "c_generate_code", 15, 0};
     add_symbol(global_scope, c_generate_code_tok, c_generate_code_type, false);
     
+    // Add wyn_math function types
+    Type* wyn_math_abs_type = make_type(TYPE_FUNCTION);
+    wyn_math_abs_type->fn_type.param_count = 1;
+    wyn_math_abs_type->fn_type.param_types = malloc(sizeof(Type*));
+    wyn_math_abs_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_abs_type->fn_type.return_type = builtin_float;
+    Token wyn_math_abs_tok = {TOKEN_IDENT, "wyn_math_abs", 12, 0};
+    add_symbol(global_scope, wyn_math_abs_tok, wyn_math_abs_type, false);
+    
+    Type* wyn_math_min_type = make_type(TYPE_FUNCTION);
+    wyn_math_min_type->fn_type.param_count = 2;
+    wyn_math_min_type->fn_type.param_types = malloc(2 * sizeof(Type*));
+    wyn_math_min_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_min_type->fn_type.param_types[1] = builtin_float;
+    wyn_math_min_type->fn_type.return_type = builtin_float;
+    Token wyn_math_min_tok = {TOKEN_IDENT, "wyn_math_min", 12, 0};
+    add_symbol(global_scope, wyn_math_min_tok, wyn_math_min_type, false);
+    
+    Type* wyn_math_max_type = make_type(TYPE_FUNCTION);
+    wyn_math_max_type->fn_type.param_count = 2;
+    wyn_math_max_type->fn_type.param_types = malloc(2 * sizeof(Type*));
+    wyn_math_max_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_max_type->fn_type.param_types[1] = builtin_float;
+    wyn_math_max_type->fn_type.return_type = builtin_float;
+    Token wyn_math_max_tok = {TOKEN_IDENT, "wyn_math_max", 12, 0};
+    add_symbol(global_scope, wyn_math_max_tok, wyn_math_max_type, false);
+    
+    Type* wyn_math_pow_type = make_type(TYPE_FUNCTION);
+    wyn_math_pow_type->fn_type.param_count = 2;
+    wyn_math_pow_type->fn_type.param_types = malloc(2 * sizeof(Type*));
+    wyn_math_pow_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_pow_type->fn_type.param_types[1] = builtin_float;
+    wyn_math_pow_type->fn_type.return_type = builtin_float;
+    Token wyn_math_pow_tok = {TOKEN_IDENT, "wyn_math_pow", 12, 0};
+    add_symbol(global_scope, wyn_math_pow_tok, wyn_math_pow_type, false);
+    
+    Type* wyn_math_sqrt_type = make_type(TYPE_FUNCTION);
+    wyn_math_sqrt_type->fn_type.param_count = 1;
+    wyn_math_sqrt_type->fn_type.param_types = malloc(sizeof(Type*));
+    wyn_math_sqrt_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_sqrt_type->fn_type.return_type = builtin_float;
+    Token wyn_math_sqrt_tok = {TOKEN_IDENT, "wyn_math_sqrt", 13, 0};
+    add_symbol(global_scope, wyn_math_sqrt_tok, wyn_math_sqrt_type, false);
+    
+    Type* wyn_math_floor_type = make_type(TYPE_FUNCTION);
+    wyn_math_floor_type->fn_type.param_count = 1;
+    wyn_math_floor_type->fn_type.param_types = malloc(sizeof(Type*));
+    wyn_math_floor_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_floor_type->fn_type.return_type = builtin_float;
+    Token wyn_math_floor_tok = {TOKEN_IDENT, "wyn_math_floor", 14, 0};
+    add_symbol(global_scope, wyn_math_floor_tok, wyn_math_floor_type, false);
+    
+    Type* wyn_math_ceil_type = make_type(TYPE_FUNCTION);
+    wyn_math_ceil_type->fn_type.param_count = 1;
+    wyn_math_ceil_type->fn_type.param_types = malloc(sizeof(Type*));
+    wyn_math_ceil_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_ceil_type->fn_type.return_type = builtin_float;
+    Token wyn_math_ceil_tok = {TOKEN_IDENT, "wyn_math_ceil", 13, 0};
+    add_symbol(global_scope, wyn_math_ceil_tok, wyn_math_ceil_type, false);
+    
+    Type* wyn_math_round_type = make_type(TYPE_FUNCTION);
+    wyn_math_round_type->fn_type.param_count = 1;
+    wyn_math_round_type->fn_type.param_types = malloc(sizeof(Type*));
+    wyn_math_round_type->fn_type.param_types[0] = builtin_float;
+    wyn_math_round_type->fn_type.return_type = builtin_float;
+    Token wyn_math_round_tok = {TOKEN_IDENT, "wyn_math_round", 14, 0};
+    add_symbol(global_scope, wyn_math_round_tok, wyn_math_round_type, false);
+    
     Type* c_create_c_filename_type = make_type(TYPE_FUNCTION);
     c_create_c_filename_type->fn_type.param_count = 1;
     c_create_c_filename_type->fn_type.param_types = malloc(sizeof(Type*));
@@ -592,6 +706,899 @@ void init_checker() {
     c_remove_file_type->fn_type.return_type = builtin_bool;
     Token c_remove_file_tok = {TOKEN_IDENT, "c_remove_file", 13, 0};
     add_symbol(global_scope, c_remove_file_tok, c_remove_file_type, false);
+    
+    // Register Result functions
+    Type* result_int_ok_type = make_type(TYPE_FUNCTION);
+    result_int_ok_type->fn_type.param_count = 1;
+    result_int_ok_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_int_ok_type->fn_type.param_types[0] = builtin_int;
+    result_int_ok_type->fn_type.return_type = result_int_type;
+    Token result_int_ok_tok = {TOKEN_IDENT, "ResultInt_Ok", 12, 0};
+    add_symbol(global_scope, result_int_ok_tok, result_int_ok_type, false);
+    
+    Type* result_int_err_type = make_type(TYPE_FUNCTION);
+    result_int_err_type->fn_type.param_count = 1;
+    result_int_err_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_int_err_type->fn_type.param_types[0] = builtin_string;
+    result_int_err_type->fn_type.return_type = result_int_type;
+    Token result_int_err_tok = {TOKEN_IDENT, "ResultInt_Err", 13, 0};
+    add_symbol(global_scope, result_int_err_tok, result_int_err_type, false);
+    
+    Type* result_int_is_ok_type = make_type(TYPE_FUNCTION);
+    result_int_is_ok_type->fn_type.param_count = 1;
+    result_int_is_ok_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_int_is_ok_type->fn_type.param_types[0] = result_int_type;
+    result_int_is_ok_type->fn_type.return_type = builtin_int;
+    Token result_int_is_ok_tok = {TOKEN_IDENT, "ResultInt_is_ok", 15, 0};
+    add_symbol(global_scope, result_int_is_ok_tok, result_int_is_ok_type, false);
+    
+    Type* result_int_is_err_type = make_type(TYPE_FUNCTION);
+    result_int_is_err_type->fn_type.param_count = 1;
+    result_int_is_err_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_int_is_err_type->fn_type.param_types[0] = result_int_type;
+    result_int_is_err_type->fn_type.return_type = builtin_int;
+    Token result_int_is_err_tok = {TOKEN_IDENT, "ResultInt_is_err", 16, 0};
+    add_symbol(global_scope, result_int_is_err_tok, result_int_is_err_type, false);
+    
+    Type* result_string_ok_type = make_type(TYPE_FUNCTION);
+    result_string_ok_type->fn_type.param_count = 1;
+    result_string_ok_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_string_ok_type->fn_type.param_types[0] = builtin_string;
+    result_string_ok_type->fn_type.return_type = result_string_type;
+    Token result_string_ok_tok = {TOKEN_IDENT, "ResultString_Ok", 15, 0};
+    add_symbol(global_scope, result_string_ok_tok, result_string_ok_type, false);
+    
+    Type* result_string_err_type = make_type(TYPE_FUNCTION);
+    result_string_err_type->fn_type.param_count = 1;
+    result_string_err_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_string_err_type->fn_type.param_types[0] = builtin_string;
+    result_string_err_type->fn_type.return_type = result_string_type;
+    Token result_string_err_tok = {TOKEN_IDENT, "ResultString_Err", 16, 0};
+    add_symbol(global_scope, result_string_err_tok, result_string_err_type, false);
+    
+    Type* result_string_is_ok_type = make_type(TYPE_FUNCTION);
+    result_string_is_ok_type->fn_type.param_count = 1;
+    result_string_is_ok_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_string_is_ok_type->fn_type.param_types[0] = result_string_type;
+    result_string_is_ok_type->fn_type.return_type = builtin_int;
+    Token result_string_is_ok_tok = {TOKEN_IDENT, "ResultString_is_ok", 18, 0};
+    add_symbol(global_scope, result_string_is_ok_tok, result_string_is_ok_type, false);
+    
+    Type* result_string_is_err_type = make_type(TYPE_FUNCTION);
+    result_string_is_err_type->fn_type.param_count = 1;
+    result_string_is_err_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_string_is_err_type->fn_type.param_types[0] = result_string_type;
+    result_string_is_err_type->fn_type.return_type = builtin_int;
+    Token result_string_is_err_tok = {TOKEN_IDENT, "ResultString_is_err", 19, 0};
+    add_symbol(global_scope, result_string_is_err_tok, result_string_is_err_type, false);
+    
+    // Register Result unwrap functions
+    Type* result_int_unwrap_type = make_type(TYPE_FUNCTION);
+    result_int_unwrap_type->fn_type.param_count = 1;
+    result_int_unwrap_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_int_unwrap_type->fn_type.param_types[0] = result_int_type;
+    result_int_unwrap_type->fn_type.return_type = builtin_int;
+    Token result_int_unwrap_tok = {TOKEN_IDENT, "ResultInt_unwrap", 16, 0};
+    add_symbol(global_scope, result_int_unwrap_tok, result_int_unwrap_type, false);
+    
+    Type* result_int_unwrap_err_type = make_type(TYPE_FUNCTION);
+    result_int_unwrap_err_type->fn_type.param_count = 1;
+    result_int_unwrap_err_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_int_unwrap_err_type->fn_type.param_types[0] = result_int_type;
+    result_int_unwrap_err_type->fn_type.return_type = builtin_string;
+    Token result_int_unwrap_err_tok = {TOKEN_IDENT, "ResultInt_unwrap_err", 20, 0};
+    add_symbol(global_scope, result_int_unwrap_err_tok, result_int_unwrap_err_type, false);
+    
+    Type* result_string_unwrap_type = make_type(TYPE_FUNCTION);
+    result_string_unwrap_type->fn_type.param_count = 1;
+    result_string_unwrap_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_string_unwrap_type->fn_type.param_types[0] = result_string_type;
+    result_string_unwrap_type->fn_type.return_type = builtin_string;
+    Token result_string_unwrap_tok = {TOKEN_IDENT, "ResultString_unwrap", 19, 0};
+    add_symbol(global_scope, result_string_unwrap_tok, result_string_unwrap_type, false);
+    
+    Type* result_string_unwrap_err_type = make_type(TYPE_FUNCTION);
+    result_string_unwrap_err_type->fn_type.param_count = 1;
+    result_string_unwrap_err_type->fn_type.param_types = malloc(sizeof(Type*));
+    result_string_unwrap_err_type->fn_type.param_types[0] = result_string_type;
+    result_string_unwrap_err_type->fn_type.return_type = builtin_string;
+    Token result_string_unwrap_err_tok = {TOKEN_IDENT, "ResultString_unwrap_err", 23, 0};
+    add_symbol(global_scope, result_string_unwrap_err_tok, result_string_unwrap_err_type, false);
+
+    // OptionInt type and functions
+    Type* option_int_type = make_type(TYPE_STRUCT);
+    Token option_int_name = {TOKEN_IDENT, "OptionInt", 9, 0};
+    option_int_type->struct_type.name = option_int_name;
+    add_symbol(global_scope, option_int_name, option_int_type, false);
+
+    Type* oi_some_t = make_type(TYPE_FUNCTION);
+    oi_some_t->fn_type.param_count = 1;
+    oi_some_t->fn_type.param_types = malloc(sizeof(Type*));
+    oi_some_t->fn_type.param_types[0] = builtin_int;
+    oi_some_t->fn_type.return_type = option_int_type;
+    Token oi_some_tok = {TOKEN_IDENT, "OptionInt_Some", 14, 0};
+    add_symbol(global_scope, oi_some_tok, oi_some_t, false);
+
+    Type* oi_none_t = make_type(TYPE_FUNCTION);
+    oi_none_t->fn_type.param_count = 0;
+    oi_none_t->fn_type.param_types = NULL;
+    oi_none_t->fn_type.return_type = option_int_type;
+    Token oi_none_tok = {TOKEN_IDENT, "OptionInt_None", 14, 0};
+    add_symbol(global_scope, oi_none_tok, oi_none_t, false);
+
+    Type* oi_is_some_t = make_type(TYPE_FUNCTION);
+    oi_is_some_t->fn_type.param_count = 1;
+    oi_is_some_t->fn_type.param_types = malloc(sizeof(Type*));
+    oi_is_some_t->fn_type.param_types[0] = option_int_type;
+    oi_is_some_t->fn_type.return_type = builtin_int;
+    Token oi_is_some_tok = {TOKEN_IDENT, "OptionInt_is_some", 17, 0};
+    add_symbol(global_scope, oi_is_some_tok, oi_is_some_t, false);
+
+    Type* oi_is_none_t = make_type(TYPE_FUNCTION);
+    oi_is_none_t->fn_type.param_count = 1;
+    oi_is_none_t->fn_type.param_types = malloc(sizeof(Type*));
+    oi_is_none_t->fn_type.param_types[0] = option_int_type;
+    oi_is_none_t->fn_type.return_type = builtin_int;
+    Token oi_is_none_tok = {TOKEN_IDENT, "OptionInt_is_none", 17, 0};
+    add_symbol(global_scope, oi_is_none_tok, oi_is_none_t, false);
+
+    Type* oi_unwrap_t = make_type(TYPE_FUNCTION);
+    oi_unwrap_t->fn_type.param_count = 1;
+    oi_unwrap_t->fn_type.param_types = malloc(sizeof(Type*));
+    oi_unwrap_t->fn_type.param_types[0] = option_int_type;
+    oi_unwrap_t->fn_type.return_type = builtin_int;
+    Token oi_unwrap_tok = {TOKEN_IDENT, "OptionInt_unwrap", 16, 0};
+    add_symbol(global_scope, oi_unwrap_tok, oi_unwrap_t, false);
+
+    Type* oi_unwrap_or_t = make_type(TYPE_FUNCTION);
+    oi_unwrap_or_t->fn_type.param_count = 2;
+    oi_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
+    oi_unwrap_or_t->fn_type.param_types[0] = option_int_type;
+    oi_unwrap_or_t->fn_type.param_types[1] = builtin_int;
+    oi_unwrap_or_t->fn_type.return_type = builtin_int;
+    Token oi_unwrap_or_tok = {TOKEN_IDENT, "OptionInt_unwrap_or", 19, 0};
+    add_symbol(global_scope, oi_unwrap_or_tok, oi_unwrap_or_t, false);
+
+    // OptionString type and functions
+    Type* option_string_type = make_type(TYPE_STRUCT);
+    Token option_string_name = {TOKEN_IDENT, "OptionString", 12, 0};
+    option_string_type->struct_type.name = option_string_name;
+    add_symbol(global_scope, option_string_name, option_string_type, false);
+
+    Type* os_some_t = make_type(TYPE_FUNCTION);
+    os_some_t->fn_type.param_count = 1;
+    os_some_t->fn_type.param_types = malloc(sizeof(Type*));
+    os_some_t->fn_type.param_types[0] = builtin_string;
+    os_some_t->fn_type.return_type = option_string_type;
+    Token os_some_tok = {TOKEN_IDENT, "OptionString_Some", 17, 0};
+    add_symbol(global_scope, os_some_tok, os_some_t, false);
+
+    Type* os_none_t = make_type(TYPE_FUNCTION);
+    os_none_t->fn_type.param_count = 0;
+    os_none_t->fn_type.param_types = NULL;
+    os_none_t->fn_type.return_type = option_string_type;
+    Token os_none_tok = {TOKEN_IDENT, "OptionString_None", 17, 0};
+    add_symbol(global_scope, os_none_tok, os_none_t, false);
+
+    Type* os_is_some_t = make_type(TYPE_FUNCTION);
+    os_is_some_t->fn_type.param_count = 1;
+    os_is_some_t->fn_type.param_types = malloc(sizeof(Type*));
+    os_is_some_t->fn_type.param_types[0] = option_string_type;
+    os_is_some_t->fn_type.return_type = builtin_int;
+    Token os_is_some_tok = {TOKEN_IDENT, "OptionString_is_some", 20, 0};
+    add_symbol(global_scope, os_is_some_tok, os_is_some_t, false);
+
+    Type* os_is_none_t = make_type(TYPE_FUNCTION);
+    os_is_none_t->fn_type.param_count = 1;
+    os_is_none_t->fn_type.param_types = malloc(sizeof(Type*));
+    os_is_none_t->fn_type.param_types[0] = option_string_type;
+    os_is_none_t->fn_type.return_type = builtin_int;
+    Token os_is_none_tok = {TOKEN_IDENT, "OptionString_is_none", 20, 0};
+    add_symbol(global_scope, os_is_none_tok, os_is_none_t, false);
+
+    Type* os_unwrap_t = make_type(TYPE_FUNCTION);
+    os_unwrap_t->fn_type.param_count = 1;
+    os_unwrap_t->fn_type.param_types = malloc(sizeof(Type*));
+    os_unwrap_t->fn_type.param_types[0] = option_string_type;
+    os_unwrap_t->fn_type.return_type = builtin_string;
+    Token os_unwrap_tok = {TOKEN_IDENT, "OptionString_unwrap", 19, 0};
+    add_symbol(global_scope, os_unwrap_tok, os_unwrap_t, false);
+
+    Type* os_unwrap_or_t = make_type(TYPE_FUNCTION);
+    os_unwrap_or_t->fn_type.param_count = 2;
+    os_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
+    os_unwrap_or_t->fn_type.param_types[0] = option_string_type;
+    os_unwrap_or_t->fn_type.param_types[1] = builtin_string;
+    os_unwrap_or_t->fn_type.return_type = builtin_string;
+    Token os_unwrap_or_tok = {TOKEN_IDENT, "OptionString_unwrap_or", 22, 0};
+    add_symbol(global_scope, os_unwrap_or_tok, os_unwrap_or_t, false);
+
+    // System functions
+    Type* sys_exec_t = make_type(TYPE_FUNCTION);
+    sys_exec_t->fn_type.param_count = 1;
+    sys_exec_t->fn_type.param_types = malloc(sizeof(Type*));
+    sys_exec_t->fn_type.param_types[0] = builtin_string;
+    sys_exec_t->fn_type.return_type = builtin_string;
+    Token sys_exec_tok = {TOKEN_IDENT, "System_exec", 11, 0};
+    add_symbol(global_scope, sys_exec_tok, sys_exec_t, false);
+
+    Type* sys_exec_code_t = make_type(TYPE_FUNCTION);
+    sys_exec_code_t->fn_type.param_count = 1;
+    sys_exec_code_t->fn_type.param_types = malloc(sizeof(Type*));
+    sys_exec_code_t->fn_type.param_types[0] = builtin_string;
+    sys_exec_code_t->fn_type.return_type = builtin_int;
+    Token sys_exec_code_tok = {TOKEN_IDENT, "System_exec_code", 16, 0};
+    add_symbol(global_scope, sys_exec_code_tok, sys_exec_code_t, false);
+
+    Type* sys_exit_t = make_type(TYPE_FUNCTION);
+    sys_exit_t->fn_type.param_count = 1;
+    sys_exit_t->fn_type.param_types = malloc(sizeof(Type*));
+    sys_exit_t->fn_type.param_types[0] = builtin_int;
+    sys_exit_t->fn_type.return_type = builtin_void;
+    Token sys_exit_tok = {TOKEN_IDENT, "System_exit", 11, 0};
+    add_symbol(global_scope, sys_exit_tok, sys_exit_t, false);
+
+    Type* sys_env_t = make_type(TYPE_FUNCTION);
+    sys_env_t->fn_type.param_count = 1;
+    sys_env_t->fn_type.param_types = malloc(sizeof(Type*));
+    sys_env_t->fn_type.param_types[0] = builtin_string;
+    sys_env_t->fn_type.return_type = builtin_string;
+    Token sys_env_tok = {TOKEN_IDENT, "System_env", 10, 0};
+    add_symbol(global_scope, sys_env_tok, sys_env_t, false);
+
+    // Conversion functions
+    Type* itos_t = make_type(TYPE_FUNCTION);
+    itos_t->fn_type.param_count = 1;
+    itos_t->fn_type.param_types = malloc(sizeof(Type*));
+    itos_t->fn_type.param_types[0] = builtin_int;
+    itos_t->fn_type.return_type = builtin_string;
+    Token itos_tok = {TOKEN_IDENT, "int_to_string", 13, 0};
+    add_symbol(global_scope, itos_tok, itos_t, false);
+
+    Type* ftos_t = make_type(TYPE_FUNCTION);
+    ftos_t->fn_type.param_count = 1;
+    ftos_t->fn_type.param_types = malloc(sizeof(Type*));
+    ftos_t->fn_type.param_types[0] = builtin_float;
+    ftos_t->fn_type.return_type = builtin_string;
+    Token ftos_tok = {TOKEN_IDENT, "float_to_string", 15, 0};
+    add_symbol(global_scope, ftos_tok, ftos_t, false);
+
+    // Math stdlib - register all Math_ functions
+    struct { const char* name; int nlen; int param_count; Type* p1; Type* p2; Type* ret; } reg_math_fns[] = {
+        {"Math_abs", 8, 1, builtin_float, NULL, builtin_float},
+        {"Math_max", 8, 2, builtin_float, builtin_float, builtin_float},
+        {"Math_min", 8, 2, builtin_float, builtin_float, builtin_float},
+        {"Math_pow", 8, 2, builtin_float, builtin_float, builtin_float},
+        {"Math_sqrt", 9, 1, builtin_float, NULL, builtin_float},
+        {"Math_floor", 10, 1, builtin_float, NULL, builtin_float},
+        {"Math_ceil", 9, 1, builtin_float, NULL, builtin_float},
+        {"Math_round", 10, 1, builtin_float, NULL, builtin_float},
+        {"Math_sin", 8, 1, builtin_float, NULL, builtin_float},
+        {"Math_cos", 8, 1, builtin_float, NULL, builtin_float},
+        {"Math_tan", 8, 1, builtin_float, NULL, builtin_float},
+        {"Math_round_to", 13, 2, builtin_float, builtin_int, builtin_float},
+        {"Math_atan2", 10, 2, builtin_float, builtin_float, builtin_float},
+        {"Math_pi", 7, 0, NULL, NULL, builtin_float},
+        {"Math_e", 6, 0, NULL, NULL, builtin_float},
+        {"Math_random", 11, 0, NULL, NULL, builtin_float},
+    };
+    for (int i = 0; i < 13; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = reg_math_fns[i].param_count;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        if (reg_math_fns[i].p1) ft->fn_type.param_types[0] = reg_math_fns[i].p1;
+        if (reg_math_fns[i].p2) ft->fn_type.param_types[1] = reg_math_fns[i].p2;
+        ft->fn_type.return_type = reg_math_fns[i].ret;
+        Token tok = {TOKEN_IDENT, reg_math_fns[i].name, reg_math_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // String stdlib - function-style str_ functions
+    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } str_fns[] = {
+        {"str_len", 7, 1, builtin_string, NULL, NULL, builtin_int},
+        {"str_upper", 9, 1, builtin_string, NULL, NULL, builtin_string},
+        {"str_lower", 9, 1, builtin_string, NULL, NULL, builtin_string},
+        {"str_trim", 8, 1, builtin_string, NULL, NULL, builtin_string},
+        {"str_contains", 12, 2, builtin_string, builtin_string, NULL, builtin_int},
+        {"str_starts_with", 15, 2, builtin_string, builtin_string, NULL, builtin_int},
+        {"str_ends_with", 13, 2, builtin_string, builtin_string, NULL, builtin_int},
+        {"str_index_of", 12, 2, builtin_string, builtin_string, NULL, builtin_int},
+        {"str_replace", 11, 3, builtin_string, builtin_string, builtin_string, builtin_string},
+        {"str_substring", 13, 3, builtin_string, builtin_int, builtin_int, builtin_string},
+        {"str_repeat", 10, 2, builtin_string, builtin_int, NULL, builtin_string},
+        {"str_concat", 10, 2, builtin_string, builtin_string, NULL, builtin_string},
+        {"str_to_int", 10, 1, builtin_string, NULL, NULL, builtin_int},
+    };
+    for (int i = 0; i < 13; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = str_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
+        if (str_fns[i].p1) ft->fn_type.param_types[0] = str_fns[i].p1;
+        if (str_fns[i].p2) ft->fn_type.param_types[1] = str_fns[i].p2;
+        if (str_fns[i].p3) ft->fn_type.param_types[2] = str_fns[i].p3;
+        ft->fn_type.return_type = str_fns[i].ret;
+        Token tok = {TOKEN_IDENT, str_fns[i].name, str_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Path stdlib
+    struct { const char* name; int nlen; } reg_path_fns[] = {
+        {"Path_basename", 13}, {"Path_dirname", 12},
+        {"Path_extension", 14}, {"Path_join", 9},
+    };
+    for (int i = 0; i < 4; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = (i == 3) ? 2 : 1; // Path_join takes 2
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_string;
+        if (i == 3) ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, reg_path_fns[i].name, reg_path_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    
+    // JSON stdlib
+    Type* json_obj_type = make_type(TYPE_MAP);
+    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } json_fns[] = {
+        {"json_new", 8, 0, NULL, NULL, NULL, json_obj_type},
+        {"json_set_string", 15, 3, json_obj_type, builtin_string, builtin_string, builtin_void},
+        {"json_set_int", 12, 3, json_obj_type, builtin_string, builtin_int, builtin_void},
+        {"json_get_string", 15, 2, json_obj_type, builtin_string, NULL, builtin_string},
+        {"json_get_int", 12, 2, json_obj_type, builtin_string, NULL, builtin_int},
+        {"json_stringify", 14, 1, json_obj_type, NULL, NULL, builtin_string},
+        {"Regex_match", 11, 2, builtin_string, builtin_string, NULL, builtin_int},
+        {"Regex_replace", 13, 3, builtin_string, builtin_string, builtin_string, builtin_string},
+    };
+    for (int i = 0; i < 8; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = json_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
+        if (json_fns[i].p1) ft->fn_type.param_types[0] = json_fns[i].p1;
+        if (json_fns[i].p2) ft->fn_type.param_types[1] = json_fns[i].p2;
+        if (json_fns[i].p3) ft->fn_type.param_types[2] = json_fns[i].p3;
+        ft->fn_type.return_type = json_fns[i].ret;
+        Token tok = {TOKEN_IDENT, json_fns[i].name, json_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Register namespace identifiers so checker doesn't reject File.read() etc.
+    // Also register their methods with proper return types
+    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", NULL};
+    for (int i = 0; namespaces[i]; i++) {
+        Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
+        if (!find_symbol(global_scope, ns_tok)) {
+            add_symbol(global_scope, ns_tok, builtin_int, false);
+        }
+    }
+
+    // File namespace methods
+    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* ret; } file_ns_fns[] = {
+        {"File_read", 9, 1, builtin_string, NULL, builtin_string},
+        {"File_write", 10, 2, builtin_string, builtin_string, builtin_int},
+        {"File_exists", 11, 1, builtin_string, NULL, builtin_int},
+        {"File_delete", 11, 1, builtin_string, NULL, builtin_int},
+        {"File_copy", 9, 2, builtin_string, builtin_string, builtin_int},
+        {"File_move", 9, 2, builtin_string, builtin_string, builtin_int},
+        {"File_size", 9, 1, builtin_string, NULL, builtin_int},
+        {"File_is_dir", 11, 1, builtin_string, NULL, builtin_int},
+        {"File_is_file", 12, 1, builtin_string, NULL, builtin_int},
+        {"File_mkdir", 10, 1, builtin_string, NULL, builtin_int},
+        {"File_list_dir", 13, 1, builtin_string, NULL, builtin_string},
+        {"File_append", 11, 2, builtin_string, builtin_string, builtin_int},
+        {"File_cwd", 8, 0, NULL, NULL, builtin_string},
+        {"File_open", 9, 2, builtin_string, builtin_string, builtin_int},
+        {"File_read_line", 14, 1, builtin_int, NULL, builtin_string},
+        {"File_write_line", 15, 2, builtin_int, builtin_string, builtin_int},
+        {"File_eof", 8, 1, builtin_int, NULL, builtin_int},
+        {"File_close", 10, 1, builtin_int, NULL, builtin_void},
+    };
+    for (int i = 0; i < 16; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = file_ns_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = file_ns_fns[i].p1;
+        if (file_ns_fns[i].p2) ft->fn_type.param_types[1] = file_ns_fns[i].p2;
+        ft->fn_type.return_type = file_ns_fns[i].ret;
+        Token tok = {TOKEN_IDENT, file_ns_fns[i].name, file_ns_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // HashMap namespace: HashMap.new() -> HashMap_new()
+    Type* map_type = make_type(TYPE_MAP);
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 0;
+        ft->fn_type.param_types = NULL;
+        ft->fn_type.return_type = map_type;
+        Token tok = {TOKEN_IDENT, "HashMap_new", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // HashSet namespace: HashSet.new() -> HashSet_new()
+    Type* set_type = make_type(TYPE_SET);
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 0;
+        ft->fn_type.param_types = NULL;
+        ft->fn_type.return_type = set_type;
+        Token tok = {TOKEN_IDENT, "HashSet_new", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Json namespace
+    Type* json_type = make_type(TYPE_MAP); // opaque pointer
+    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } json_ns_fns[] = {
+        {"Json_new", 8, 0, NULL, NULL, NULL, json_type},
+        {"Json_set_string", 15, 3, json_type, builtin_string, builtin_string, builtin_void},
+        {"Json_set_int", 12, 3, json_type, builtin_string, builtin_int, builtin_void},
+        {"Json_set_bool", 13, 3, json_type, builtin_string, builtin_int, builtin_void},
+        {"Json_get_string", 15, 2, json_type, builtin_string, NULL, builtin_string},
+        {"Json_get_int", 12, 2, json_type, builtin_string, NULL, builtin_int},
+        {"Json_stringify", 14, 1, json_type, NULL, NULL, builtin_string},
+    };
+    for (int i = 0; i < 6; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = json_ns_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
+        if (json_ns_fns[i].p1) ft->fn_type.param_types[0] = json_ns_fns[i].p1;
+        if (json_ns_fns[i].p2) ft->fn_type.param_types[1] = json_ns_fns[i].p2;
+        if (json_ns_fns[i].p3) ft->fn_type.param_types[2] = json_ns_fns[i].p3;
+        ft->fn_type.return_type = json_ns_fns[i].ret;
+        Token tok = {TOKEN_IDENT, json_ns_fns[i].name, json_ns_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Http namespace
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Http_get", 8, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Regex namespace
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 2;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Regex_match", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 3;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.param_types[2] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Regex_replace", 13, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Terminal namespace
+    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* ret; } term_fns[] = {
+        {"Terminal_cols", 13, 0, NULL, NULL, builtin_int},
+        {"Terminal_rows", 13, 0, NULL, NULL, builtin_int},
+        {"Terminal_raw_mode", 17, 0, NULL, NULL, builtin_void},
+        {"Terminal_restore", 16, 0, NULL, NULL, builtin_void},
+        {"Terminal_read_key", 17, 0, NULL, NULL, builtin_int},
+        {"Terminal_clear", 14, 0, NULL, NULL, builtin_void},
+        {"Terminal_write", 14, 1, builtin_string, NULL, builtin_void},
+        {"Terminal_move", 13, 2, builtin_int, builtin_int, builtin_void},
+    };
+    for (int i = 0; i < 8; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = term_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        if (term_fns[i].p1) ft->fn_type.param_types[0] = term_fns[i].p1;
+        if (term_fns[i].p2) ft->fn_type.param_types[1] = term_fns[i].p2;
+        ft->fn_type.return_type = term_fns[i].ret;
+        Token tok = {TOKEN_IDENT, term_fns[i].name, term_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // DateTime stdlib
+    Type* dt_now_t = make_type(TYPE_FUNCTION);
+    dt_now_t->fn_type.param_count = 0;
+    dt_now_t->fn_type.param_types = NULL;
+    dt_now_t->fn_type.return_type = builtin_int;
+    Token dt_now_tok = {TOKEN_IDENT, "DateTime_now", 12, 0};
+    add_symbol(global_scope, dt_now_tok, dt_now_t, false);
+    
+    // DateTime.millis / DateTime.micros
+    Type* dt_millis_t = make_type(TYPE_FUNCTION);
+    dt_millis_t->fn_type.param_count = 0;
+    dt_millis_t->fn_type.param_types = NULL;
+    dt_millis_t->fn_type.return_type = builtin_int;
+    Token dt_millis_tok = {TOKEN_IDENT, "DateTime_millis", 15, 0};
+    add_symbol(global_scope, dt_millis_tok, dt_millis_t, false);
+    Type* dt_micros_t = make_type(TYPE_FUNCTION);
+    dt_micros_t->fn_type.param_count = 0;
+    dt_micros_t->fn_type.param_types = NULL;
+    dt_micros_t->fn_type.return_type = builtin_int;
+    Token dt_micros_tok = {TOKEN_IDENT, "DateTime_micros", 15, 0};
+    add_symbol(global_scope, dt_micros_tok, dt_micros_t, false);
+    
+    Type* dt_format_t = make_type(TYPE_FUNCTION);
+    dt_format_t->fn_type.param_count = 2;
+    dt_format_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
+    dt_format_t->fn_type.param_types[0] = builtin_int;
+    dt_format_t->fn_type.param_types[1] = builtin_string;
+    dt_format_t->fn_type.return_type = builtin_string;
+    Token dt_format_tok = {TOKEN_IDENT, "DateTime_format", 15, 0};
+    add_symbol(global_scope, dt_format_tok, dt_format_t, false);
+    
+    Type* dt_sleep_t = make_type(TYPE_FUNCTION);
+    dt_sleep_t->fn_type.param_count = 1;
+    dt_sleep_t->fn_type.param_types = malloc(sizeof(Type*));
+    dt_sleep_t->fn_type.param_types[0] = builtin_int;
+    dt_sleep_t->fn_type.return_type = builtin_void;
+    Token dt_sleep_tok = {TOKEN_IDENT, "DateTime_sleep", 14, 0};
+    add_symbol(global_scope, dt_sleep_tok, dt_sleep_t, false);
+
+    // Http namespace — additional methods
+    {
+        // Http.post(url, data) -> string
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 2;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Http_post", 9, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 2;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Http_put", 8, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Http_delete", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        // Http.serve(port) -> int (server fd)
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Http_serve", 10, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        // Http.accept(server_fd) -> string "METHOD|PATH|BODY|CLIENT_FD"
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Http_accept", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        // Http.respond(client_fd, status, content_type, body)
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 4;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.param_types[1] = builtin_int;
+        ft->fn_type.param_types[2] = builtin_string;
+        ft->fn_type.param_types[3] = builtin_string;
+        ft->fn_type.return_type = builtin_void;
+        Token tok = {TOKEN_IDENT, "Http_respond", 12, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 2;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.return_type = builtin_void;
+        Token tok = {TOKEN_IDENT, "Http_set_header", 15, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Url namespace
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Url_encode", 10, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Url_decode", 10, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Path namespace — already registered above
+
+    // System namespace
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "System_exec", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "System_exec_code", 16, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "System_env", 10, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Math namespace — already registered above
+
+    // Net namespace
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Net_listen", 10, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 2;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.param_types[1] = builtin_int;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Net_connect", 11, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 2;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.param_types[1] = builtin_string;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Net_send", 8, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.return_type = builtin_string;
+        Token tok = {TOKEN_IDENT, "Net_recv", 8, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.return_type = builtin_int;
+        Token tok = {TOKEN_IDENT, "Net_close", 9, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Task namespace
+    struct { const char* name; int nlen; Type* ret; int pc; Type* p1; } reg_task_fns[] = {
+        {"Task_value", 10, builtin_int, 1, builtin_int},
+        {"Task_get", 8, builtin_int, 1, builtin_int},
+        {"Task_set", 8, builtin_void, 2, builtin_int},
+        {"Task_add", 8, builtin_void, 2, builtin_int},
+        {"Task_channel", 12, builtin_int, 1, builtin_int},
+        {"Task_send", 9, builtin_void, 2, builtin_int},
+        {"Task_recv", 9, builtin_int, 1, builtin_int},
+        {"Task_close", 10, builtin_void, 1, builtin_int},
+    };
+    for (int i = 0; i < 8; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = reg_task_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = reg_task_fns[i].p1;
+        ft->fn_type.param_types[1] = builtin_int;
+        ft->fn_type.return_type = reg_task_fns[i].ret;
+        Token tok = {TOKEN_IDENT, reg_task_fns[i].name, reg_task_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Db namespace
+    struct { const char* name; int nlen; Type* ret; int pc; Type* p1; } reg_db_fns[] = {
+        {"Db_open", 7, builtin_int, 1, builtin_string},
+        {"Db_exec", 7, builtin_int, 2, builtin_int},
+        {"Db_query", 8, builtin_string, 2, builtin_int},
+        {"Db_query_one", 12, builtin_string, 2, builtin_int},
+        {"Db_last_insert_id", 17, builtin_int, 1, builtin_int},
+        {"Db_error", 8, builtin_string, 1, builtin_int},
+        {"Db_close", 8, builtin_void, 1, builtin_int},
+    };
+    for (int i = 0; i < 7; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = reg_db_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        ft->fn_type.param_types[0] = reg_db_fns[i].p1;
+
+    // New module registrations
+    struct { const char* name; int nlen; Type* ret; } new_fns[] = {
+        {"Json_parse", 10, builtin_int},
+        {"Json_stringify", 14, builtin_string},
+        {"Json_get", 8, builtin_string},
+        {"Json_get_int", 12, builtin_int},
+        {"Json_has", 8, builtin_int},
+        {"Json_keys", 9, builtin_string},
+        {"Json_array_len", 14, builtin_int},
+        {"Json_array_get", 14, builtin_int},
+        {"Json_node_str", 13, builtin_string},
+        {"Encoding_base64_encode", 22, builtin_string},
+        {"Encoding_base64_decode", 22, builtin_string},
+        {"Encoding_hex_encode", 19, builtin_string},
+        {"Crypto_sha256", 13, builtin_string},
+        {"Crypto_md5", 10, builtin_string},
+        {"Os_platform", 11, builtin_string},
+        {"Os_arch", 7, builtin_string},
+        {"Os_hostname", 11, builtin_string},
+        {"Os_pid", 6, builtin_int},
+        {"Os_temp_dir", 11, builtin_string},
+        {"Os_home_dir", 11, builtin_string},
+        {"Uuid_generate", 13, builtin_string},
+        {"Math_clamp", 10, builtin_int},
+        {"Math_sign", 9, builtin_int},
+        {"DateTime_diff", 13, builtin_int},
+        {"DateTime_add_seconds", 20, builtin_int},
+        {"DateTime_to_iso", 15, builtin_string},
+        {"regex_find", 10, builtin_int},
+        {"regex_find_all", 14, builtin_string},
+        {"Net_resolve", 11, builtin_string},
+        {"Db_escape", 9, builtin_string},
+        {"Db_table_exists", 15, builtin_int},
+        {"Log_debug", 9, builtin_void},
+        {"Log_info", 8, builtin_void},
+        {"Log_warn", 8, builtin_void},
+        {"Log_error", 9, builtin_void},
+        {"Log_set_level", 13, builtin_void},
+        {"Process_exec_capture", 20, builtin_string},
+        {"Process_exec_status", 19, builtin_int},
+        {"Http_timeout", 12, builtin_int},
+        {"Json_to_pretty_string", 21, builtin_string},
+        {"Csv_parse", 9, builtin_int},
+        {"Csv_row_count", 13, builtin_int},
+        {"Csv_get", 7, builtin_string},
+        {"Csv_get_field", 13, builtin_string},
+        {"Csv_col_count", 13, builtin_int},
+        {"Csv_header", 10, builtin_string},
+        {"Csv_header_count", 16, builtin_int},
+        {"Http_get_json", 13, builtin_int},
+        {"Http_post_json", 14, builtin_int},
+        {"Json_get_float", 14, builtin_float},
+        {"Json_get_bool", 13, builtin_int},
+        {"Json_get_array", 14, builtin_int},
+        {"Json_get_object", 15, builtin_int},
+        {"File_glob", 9, builtin_string},
+        {"File_walk_dir", 13, builtin_string},
+        {"File_temp_file", 14, builtin_string},
+        {"DateTime_format_duration", 24, builtin_string},
+        {"DateTime_day_of_week", 20, builtin_int},
+        {"DateTime_year", 13, builtin_int},
+        {"DateTime_month", 14, builtin_int},
+        {"DateTime_day", 12, builtin_int},
+        {"DateTime_hour", 13, builtin_int},
+        {"DateTime_minute", 15, builtin_int},
+        {"DateTime_second", 15, builtin_int},
+        {"regex_split", 11, builtin_string},
+        {"Regex_split", 11, builtin_string},
+        {"Regex_find", 10, builtin_int},
+        {"Regex_find_all", 14, builtin_string},
+        {"Encoding_hex_decode", 19, builtin_string},
+        {"Encoding_csv_parse", 18, builtin_string},
+        {"Crypto_hmac_sha256", 18, builtin_string},
+        {"Crypto_random_bytes", 19, builtin_string},
+    };
+    int new_fns_count = sizeof(new_fns) / sizeof(new_fns[0]);
+    for (int i = 0; i < new_fns_count; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = new_fns[i].ret;
+        Token tok = {TOKEN_IDENT, new_fns[i].name, new_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Gui namespace
+    struct { const char* name; int nlen; Type* ret; int pc; } reg_gui_fns[] = {
+        {"Gui_create", 10, builtin_int, 3},
+        {"Gui_clear", 9, builtin_void, 3},
+        {"Gui_color", 9, builtin_void, 3},
+        {"Gui_rect", 8, builtin_void, 4},
+        {"Gui_line", 8, builtin_void, 4},
+        {"Gui_point", 9, builtin_void, 2},
+        {"Gui_present", 11, builtin_void, 0},
+        {"Gui_poll", 8, builtin_string, 0},
+        {"Gui_running", 11, builtin_int, 0},
+        {"Gui_delay", 9, builtin_void, 1},
+        {"Gui_width", 9, builtin_int, 0},
+        {"Gui_height", 10, builtin_int, 0},
+        {"Gui_destroy", 11, builtin_void, 0},
+        {"Gui_text", 8, builtin_void, 4},
+        {"Gui_text_input", 14, builtin_void, 4},
+        {"Gui_text_input_activate", 23, builtin_void, 1},
+        {"Gui_text_input_key", 18, builtin_int, 1},
+        {"Gui_text_input_value", 20, builtin_string, 0},
+        {"Gui_text_input_clear", 20, builtin_void, 0},
+        {"Gui_text_input_set", 18, builtin_void, 1},
+        {"Gui_button", 10, builtin_void, 5},
+        {"Gui_button_clicked", 18, builtin_int, 6},
+        {"Gui_panel", 9, builtin_void, 4},
+        {"Gui_progress", 12, builtin_void, 5},
+        {"Gui_circle", 10, builtin_void, 3},
+        {"Gui_label", 9, builtin_void, 3},
+        {"Gui_rect_outline", 16, builtin_void, 4},
+        {"Gui_key_pressed", 15, builtin_int, 1},
+        {"Gui_mouse_x", 11, builtin_int, 0},
+        {"Gui_mouse_y", 11, builtin_int, 0},
+        {"Gui_mouse_down", 14, builtin_int, 0},
+        {"Gui_ticks", 9, builtin_int, 0},
+        {"Gui_load_sprite", 15, builtin_int, 1},
+        {"Gui_draw_sprite", 15, builtin_void, 3},
+        {"Gui_draw_sprite_scaled", 22, builtin_void, 5},
+    };
+    for (int i = 0; i < 36; i++) {
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = reg_gui_fns[i].pc;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
+        for (int j = 0; j < 4; j++) ft->fn_type.param_types[j] = builtin_int;
+        if (i == 0) ft->fn_type.param_types[0] = builtin_string; // create(title, w, h)
+        if (i == 7) ft->fn_type.param_types[0] = NULL; // poll()
+        if (i == 13) { ft->fn_type.param_types[2] = builtin_string; } // text(x, y, str, scale)
+        ft->fn_type.return_type = reg_gui_fns[i].ret;
+        Token tok = {TOKEN_IDENT, reg_gui_fns[i].name, reg_gui_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+        ft->fn_type.param_types[1] = (reg_db_fns[i].pc > 1) ? builtin_string : NULL;
+        ft->fn_type.return_type = reg_db_fns[i].ret;
+        Token tok = {TOKEN_IDENT, reg_db_fns[i].name, reg_db_fns[i].nlen, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
 }
 
 Symbol* find_symbol(SymbolTable* scope, Token name) {
@@ -688,7 +1695,12 @@ static char* generate_mangled_name(Token name, Type* type) {
 // T1.5.3: Find best matching overload for function call
 static Symbol* find_function_overload(SymbolTable* scope, Token name, Type** arg_types, int arg_count) {
     Symbol* symbol = find_symbol(scope, name);
-    if (!symbol || symbol->type->kind != TYPE_FUNCTION) return symbol;
+    if (!symbol) {
+        return NULL;
+    }
+    if (symbol->type->kind != TYPE_FUNCTION) {
+        return symbol;
+    }
     
     Symbol* best_match = NULL;
     int best_score = -1;
@@ -799,6 +1811,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             expr->expr_type = builtin_bool;
             return builtin_bool;
         case EXPR_IDENT: {
+            // Handle 'self' in extension methods
+            if (current_self_type && expr->token.length == 4 && 
+                memcmp(expr->token.start, "self", 4) == 0) {
+                expr->expr_type = current_self_type;
+                return current_self_type;
+            }
+            
+            // Check for built-in Option/Result constants
+            if (expr->token.length == 4 && memcmp(expr->token.start, "none", 4) == 0) {
+                expr->expr_type = builtin_int;  // Return type is pointer to Option
+                return builtin_int;
+            }
+            
+            // Check for boolean literals
+            if (expr->token.length == 4 && memcmp(expr->token.start, "true", 4) == 0) {
+                expr->expr_type = builtin_int;  // Booleans are ints (1)
+                return builtin_int;
+            }
+            if (expr->token.length == 5 && memcmp(expr->token.start, "false", 5) == 0) {
+                expr->expr_type = builtin_int;  // Booleans are ints (0)
+                return builtin_int;
+            }
+            
             // T2.5.1: Handle built-in type names
             if (expr->token.length == 3 && memcmp(expr->token.start, "int", 3) == 0) {
                 expr->expr_type = builtin_int;
@@ -863,6 +1898,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 
                 fprintf(stderr, "\nError at line %d: Undefined variable '%.*s'\n", 
                         expr->token.line, expr->token.length, expr->token.start);
+                
+                // Extract variable name for enhanced error reporting
+                char var_name[256];
+                snprintf(var_name, sizeof(var_name), "%.*s", expr->token.length, expr->token.start);
+                type_error_undefined_variable(var_name, expr->token.line, 0);
                 
                 // Suggest similar names
                 fprintf(stderr, "  Available variables in scope:\n");
@@ -956,8 +1996,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             
             if (left->kind != right->kind) {
-                fprintf(stderr, "Error at line %d: Type mismatch in binary expression (left: %d, right: %d, op: %d)\n", 
-                        expr->binary.op.line, left->kind, right->kind, expr->binary.op.type);
+                // Use enhanced error reporting with detailed type information
+                char left_type[256], right_type[256];
+                snprintf(left_type, sizeof(left_type), "%s", type_to_string(left));
+                snprintf(right_type, sizeof(right_type), "%s", type_to_string(right));
+                
+                type_error_mismatch(left_type, right_type, "binary expression", 
+                                  expr->binary.op.line, 0);
                 had_error = true;
                 return NULL;
             }
@@ -968,6 +2013,310 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // T3.1.1: Enhanced generic function call handling
             if (expr->call.callee->type == EXPR_IDENT) {
                 Token func_name = expr->call.callee->token;
+                
+                // Check for built-in Option/Result constructors
+                char name_buf[256];
+                int name_len = func_name.length < 255 ? func_name.length : 255;
+                strncpy(name_buf, func_name.start, name_len);
+                name_buf[name_len] = '\0';
+                
+                if (strcmp(name_buf, "some") == 0 || strcmp(name_buf, "ok") == 0) {
+                    // some(value) or ok(value) - returns Option<T> or Result<T, E>
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: '%s' expects 1 argument, got %d\n",
+                                func_name.line, name_buf, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    Type* arg_type = check_expr(expr->call.args[0], scope);
+                    expr->expr_type = arg_type;  // Return type is pointer to Option/Result
+                    return arg_type;
+                } else if (strcmp(name_buf, "none") == 0) {
+                    // none() - returns Option<T>
+                    if (expr->call.arg_count != 0) {
+                        fprintf(stderr, "Error at line %d: 'none' expects 0 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    expr->expr_type = builtin_int;  // Return type is pointer to Option
+                    return builtin_int;
+                } else if (strcmp(name_buf, "err") == 0) {
+                    // err(error) - returns Result<T, E>
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'err' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    Type* arg_type = check_expr(expr->call.args[0], scope);
+                    expr->expr_type = arg_type;  // Return type is pointer to Result
+                    return arg_type;
+                } else if (strcmp(name_buf, "file_write") == 0 || strcmp(name_buf, "file_append") == 0) {
+                    // file_write(path, content) or file_append(path, content) - returns int
+                    if (expr->call.arg_count != 2) {
+                        fprintf(stderr, "Error at line %d: '%s' expects 2 arguments, got %d\n",
+                                func_name.line, name_buf, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    check_expr(expr->call.args[1], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "file_exists") == 0) {
+                    // file_exists(path) - returns int
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: '%s' expects 1 argument, got %d\n",
+                                func_name.line, name_buf, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "print") == 0 || strcmp(name_buf, "println") == 0) {
+                    // print(value) or println(value) - accepts any number of arguments
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
+                } else if (strcmp(name_buf, "assert") == 0) {
+                    // assert(condition) or assert(condition, message)
+                    if (expr->call.arg_count < 1 || expr->call.arg_count > 2) {
+                        fprintf(stderr, "Error at line %d: 'assert' expects 1 or 2 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_void;
+                    }
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
+                }
+                
+                // Math functions
+                if (strcmp(name_buf, "min") == 0 || strcmp(name_buf, "max") == 0) {
+                    if (expr->call.arg_count != 2) {
+                        fprintf(stderr, "Error at line %d: '%s' expects 2 arguments, got %d\n",
+                                func_name.line, name_buf, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    check_expr(expr->call.args[1], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "abs") == 0) {
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'abs' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "len") == 0) {
+                    // len(array) or len(string) - returns int
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'len' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "typeof") == 0) {
+                    // typeof(value) - returns string
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'typeof' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_string;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                }
+                
+                // Utility functions
+                if (strcmp(name_buf, "exit") == 0) {
+                    // exit(code) - exits program
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'exit' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_void;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
+                } else if (strcmp(name_buf, "panic") == 0) {
+                    // panic(message) - panic with message
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'panic' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_void;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
+                } else if (strcmp(name_buf, "sleep") == 0) {
+                    // sleep(ms) - sleep for milliseconds
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'sleep' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_void;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
+                } else if (strcmp(name_buf, "rand") == 0) {
+                    // rand() - random number
+                    if (expr->call.arg_count != 0) {
+                        fprintf(stderr, "Error at line %d: 'rand' expects 0 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "time_now") == 0) {
+                    // time_now() - current time in seconds
+                    if (expr->call.arg_count != 0) {
+                        fprintf(stderr, "Error at line %d: 'time_now' expects 0 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "system") == 0) {
+                    // system(cmd) - run shell command
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'system' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                }
+                
+                // String functions
+                if (strcmp(name_buf, "str_concat") == 0) {
+                    // str_concat(s1, s2) - concatenate strings
+                    if (expr->call.arg_count != 2) {
+                        fprintf(stderr, "Error at line %d: 'str_concat' expects 2 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_string;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    check_expr(expr->call.args[1], scope);
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "str_contains") == 0) {
+                    // str_contains(haystack, needle) - check if string contains substring
+                    if (expr->call.arg_count != 2) {
+                        fprintf(stderr, "Error at line %d: 'str_contains' expects 2 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    check_expr(expr->call.args[1], scope);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "str_upper") == 0) {
+                    // str_upper(s) - convert to uppercase
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'str_upper' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_string;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "str_lower") == 0) {
+                    // str_lower(s) - convert to lowercase
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'str_lower' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_string;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "wyn_str_substring") == 0) {
+                    // wyn_str_substring(s, start, end) - returns substring
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "str_eq") == 0 || strcmp(name_buf, "string_length") == 0 ||
+                           strcmp(name_buf, "str_len") == 0) {
+                    // str_eq(a, b), string_length(s), str_len(s) - returns int
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(name_buf, "str_concat") == 0) {
+                    // str_concat(a, b) - returns string
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "int_to_str") == 0) {
+                    // int_to_str(n) - returns string
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "file_read") == 0) {
+                    // file_read(path) - returns string
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "char_at") == 0 || strcmp(name_buf, "string_char_at") == 0) {
+                    // char_at(s, index) - returns string (single char)
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "split_get") == 0) {
+                    // split_get(s, delim, index) - returns string
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(name_buf, "str_upper") == 0 || strcmp(name_buf, "str_lower") == 0 ||
+                           strcmp(name_buf, "str_trim") == 0 || strcmp(name_buf, "str_repeat") == 0 ||
+                           strcmp(name_buf, "str_reverse") == 0 || strcmp(name_buf, "str_replace") == 0) {
+                    // String transformation functions - return string
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                }
                 
                 // Check if this is a generic function call
                 if (wyn_is_generic_function_call(func_name)) {
@@ -1053,7 +2402,24 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
                 
                 if (is_qualified && !best_match) {
-                    // Module-qualified function - assume it's valid if visibility passed
+                    // Module-qualified function - check for known return types
+                    if (strcmp(qual_module, "C_Parser") == 0) {
+                        // C_Parser module functions
+                        if (strcmp(qual_func, "ast_to_string") == 0) {
+                            expr->expr_type = builtin_string;
+                            free(arg_types);
+                            return builtin_string;
+                        }
+                        // Other C_Parser functions return int/void
+                    }
+                    if (strcmp(qual_module, "HashMap") == 0) {
+                        if (strcmp(qual_func, "new") == 0) {
+                            Type* map_type = make_type(TYPE_MAP);
+                            expr->expr_type = map_type;
+                            free(arg_types);
+                            return map_type;
+                        }
+                    }
                     expr->expr_type = builtin_int;  // Default return type
                     free(arg_types);
                     return builtin_int;
@@ -1081,8 +2447,40 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     char func_name[256];
                     snprintf(func_name, sizeof(func_name), "%.*s", 
                             expr->call.callee->token.length, expr->call.callee->token.start);
-                    fprintf(stderr, "Error: No matching overload found for function '%s' with %d arguments\n",
-                            func_name, expr->call.arg_count);
+                    
+                    // Search scope for similar names (typo detection)
+                    int min_dist = 999;
+                    char closest[256] = {0};
+                    SymbolTable* s = scope;
+                    while (s) {
+                        for (int si = 0; si < s->count; si++) {
+                            char sn[256];
+                            int sl = s->symbols[si].name.length < 255 ? s->symbols[si].name.length : 255;
+                            memcpy(sn, s->symbols[si].name.start, sl);
+                            sn[sl] = '\0';
+                            // Simple distance: count differing chars
+                            int fl = strlen(func_name);
+                            int diff = abs(fl - sl);
+                            if (diff <= 2 && sl > 1) {
+                                int match_chars = 0;
+                                int ml = fl < sl ? fl : sl;
+                                for (int ci = 0; ci < ml; ci++) {
+                                    if (func_name[ci] == sn[ci]) match_chars++;
+                                }
+                                int d = (ml - match_chars) + diff;
+                                if (d < min_dist && d <= 2 && d > 0) {
+                                    min_dist = d;
+                                    strcpy(closest, sn);
+                                }
+                            }
+                        }
+                        s = s->parent;
+                    }
+                    if (closest[0]) {
+                        fprintf(stderr, "\n  Did you mean: %s?\n", closest);
+                    }
+                    
+                    type_error_undefined_function(func_name, expr->call.callee->token.line, 0);
                     had_error = true;
                 }
                 
@@ -1097,13 +2495,19 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // For variadic functions, allow any number of arguments >= param_count
                 if (callee_type->fn_type.is_variadic) {
                     if (expr->call.arg_count < callee_type->fn_type.param_count) {
-                        fprintf(stderr, "Error: Variadic function expects at least %d arguments, got %d\n",
-                                callee_type->fn_type.param_count, expr->call.arg_count);
+                        char func_name[256];
+                        snprintf(func_name, sizeof(func_name), "%.*s", 
+                                expr->call.callee->token.length, expr->call.callee->token.start);
+                        type_error_wrong_arg_count(func_name, callee_type->fn_type.param_count, 
+                                                  expr->call.arg_count, expr->call.callee->token.line, 0);
                         had_error = true;
                     }
                 } else if (expr->call.arg_count != callee_type->fn_type.param_count) {
-                    fprintf(stderr, "Error: Parameter count mismatch - function expects %d arguments, got %d\n",
-                            callee_type->fn_type.param_count, expr->call.arg_count);
+                    char func_name[256];
+                    snprintf(func_name, sizeof(func_name), "%.*s", 
+                            expr->call.callee->token.length, expr->call.callee->token.start);
+                    type_error_wrong_arg_count(func_name, callee_type->fn_type.param_count, 
+                                              expr->call.arg_count, expr->call.callee->token.line, 0);
                     had_error = true;
                 }
                 
@@ -1114,11 +2518,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     Type* actual_type = check_expr(expr->call.args[i], scope);
                     
                     if (!wyn_is_type_compatible(expected_type, actual_type)) {
-                        fprintf(stderr, "Error: Type mismatch for argument %d - expected ", i + 1);
-                        print_type_name(expected_type);
-                        fprintf(stderr, ", got ");
-                        print_type_name(actual_type);
-                        fprintf(stderr, "\n");
+                        char expected_str[256], actual_str[256], context[256];
+                        snprintf(expected_str, sizeof(expected_str), "%s", type_to_string(expected_type));
+                        snprintf(actual_str, sizeof(actual_str), "%s", type_to_string(actual_type));
+                        snprintf(context, sizeof(context), "argument %d", i + 1);
+                        
+                        type_error_mismatch(expected_str, actual_str, context, 
+                                          expr->call.args[i]->token.line, 0);
                         had_error = true;
                     }
                 }
@@ -1142,9 +2548,104 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 check_expr(expr->method_call.args[i], scope);
             }
             
+            Token method = expr->method_call.method;
+            char method_name[256];
+            int len = method.length < 255 ? method.length : 255;
+            memcpy(method_name, method.start, len);
+            method_name[len] = '\0';
+            
+            // Check for namespace method calls: File.read() -> File_read
+            // Only for known namespaces, not regular variables
+            if (expr->method_call.object->type == EXPR_IDENT) {
+                char obj_name[256];
+                snprintf(obj_name, sizeof(obj_name), "%.*s",
+                    expr->method_call.object->token.length,
+                    expr->method_call.object->token.start);
+                // Only treat as namespace if it's a known builtin module
+                extern bool is_builtin_module(const char* name);
+                if (is_builtin_module(obj_name)) {
+                    char ns_method[256];
+                    snprintf(ns_method, sizeof(ns_method), "%s_%s", obj_name, method_name);
+                    Token ns_tok = {TOKEN_IDENT, ns_method, (int)strlen(ns_method), 0};
+                    Symbol* ns_sym = find_symbol(global_scope, ns_tok);
+                    if (ns_sym && ns_sym->type && ns_sym->type->kind == TYPE_FUNCTION) {
+                        Type* ret = ns_sym->type->fn_type.return_type;
+                        if (ret) {
+                            expr->expr_type = ret;
+                            return ret;
+                        }
+                    }
+                }
+            }
+            
+            // Handle string methods
+            if (object_type && object_type->kind == TYPE_STRING) {
+                if (strcmp(method_name, "contains") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "upper") == 0 || strcmp(method_name, "lower") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "len") == 0 || strcmp(method_name, "length") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "starts_with") == 0 || strcmp(method_name, "ends_with") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "trim") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "replace") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "substring") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "split_at") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "repeat") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "index_of") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "split_count") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "to_int") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "to_float") == 0) {
+                    expr->expr_type = builtin_float;
+                    return builtin_float;
+                }
+            }
+            
+            // Handle int methods
+            if (object_type == builtin_int) {
+                if (strcmp(method_name, "abs") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                } else if (strcmp(method_name, "to_string") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "min") == 0 || strcmp(method_name, "max") == 0) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                }
+            }
+            
+            // Handle bool methods
+            if (object_type == builtin_bool || object_type == builtin_int) {
+                if (strcmp(method_name, "to_string") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                }
+            }
+            
             // Special handling for array.get() - return element type
             if (object_type && object_type->kind == TYPE_ARRAY) {
-                Token method = expr->method_call.method;
                 if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
                     // Return the element type if known
                     if (object_type->array_type.element_type) {
@@ -1157,9 +2658,6 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // Use method signature table for type inference (Phase 1)
             const char* receiver_type = get_receiver_type_string(object_type);
             if (receiver_type) {
-                Token method = expr->method_call.method;
-                char method_name[256];
-                int len = method.length < 255 ? method.length : 255;
                 memcpy(method_name, method.start, len);
                 method_name[len] = '\0';
                 
@@ -1179,12 +2677,49 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         expr->expr_type = builtin_bool;
                         return builtin_bool;
                     } else if (strcmp(return_type_str, "array") == 0) {
+                        // Check if this is a string method that returns string array
+                        if (object_type && object_type->kind == TYPE_STRING) {
+                            if (strcmp(method_name, "split") == 0 ||
+                                strcmp(method_name, "chars") == 0 ||
+                                strcmp(method_name, "words") == 0 ||
+                                strcmp(method_name, "lines") == 0) {
+                                Type* string_array = make_type(TYPE_ARRAY);
+                                string_array->array_type.element_type = builtin_string;
+                                expr->expr_type = string_array;
+                                return string_array;
+                            }
+                        }
                         expr->expr_type = builtin_array;
                         return builtin_array;
+                    } else if (strcmp(return_type_str, "json") == 0) {
+                        Type* json_type = make_type(TYPE_JSON);
+                        expr->expr_type = json_type;
+                        return json_type;
+                    } else if (strcmp(return_type_str, "void") == 0) {
+                        expr->expr_type = builtin_void;
+                        return builtin_void;
                     }
                 }
             }
             
+            // Look up user-defined extension methods: Type_method in symbol table
+            if (object_type && object_type->kind == TYPE_STRUCT) {
+                Token type_name = object_type->struct_type.name;
+                char ext_fn_name[256];
+                snprintf(ext_fn_name, sizeof(ext_fn_name), "%.*s_%.*s",
+                        type_name.length, type_name.start,
+                        (int)method.length, method.start);
+                Token ext_tok = {TOKEN_IDENT, ext_fn_name, (int)strlen(ext_fn_name), 0};
+                Symbol* ext_sym = find_symbol(global_scope, ext_tok);
+                if (ext_sym && ext_sym->type && ext_sym->type->kind == TYPE_FUNCTION) {
+                    Type* ret = ext_sym->type->fn_type.return_type;
+                    if (ret) {
+                        expr->expr_type = ret;
+                        return ret;
+                    }
+                }
+            }
+
             // Fallback to int
             expr->expr_type = builtin_int;
             return builtin_int;
@@ -1359,11 +2894,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
         }
         case EXPR_IF_EXPR: {
             check_expr(expr->if_expr.condition, scope);
+            Type* then_type = NULL;
+            Type* else_type = NULL;
             if (expr->if_expr.then_expr) {
-                check_expr(expr->if_expr.then_expr, scope);
+                then_type = check_expr(expr->if_expr.then_expr, scope);
             }
             if (expr->if_expr.else_expr) {
-                check_expr(expr->if_expr.else_expr, scope);
+                else_type = check_expr(expr->if_expr.else_expr, scope);
+            }
+            // Return the type of the then branch (or else if no then)
+            if (then_type) {
+                expr->expr_type = then_type;
+                return then_type;
+            }
+            if (else_type) {
+                expr->expr_type = else_type;
+                return else_type;
             }
             return builtin_int;
         }
@@ -1580,39 +3126,41 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return union_type;
         }
         case EXPR_OK: {
-            // TASK-026: Ok(value) expression - creates Result type
             if (!expr->option.value) {
                 fprintf(stderr, "Error: Ok() requires a value\n");
                 had_error = true;
                 return NULL;
             }
-            
             Type* value_type = check_expr(expr->option.value, scope);
             if (!value_type) return NULL;
-            
-            // Create Result<T, String> type (default error type is string)
-            Type* result_type = make_result_type(value_type, builtin_string);
+            // Resolve to concrete ResultInt or ResultString
+            Token concrete_name;
+            if (value_type == builtin_string) {
+                concrete_name = (Token){TOKEN_IDENT, "ResultString", 12, 0};
+            } else {
+                concrete_name = (Token){TOKEN_IDENT, "ResultInt", 9, 0};
+            }
+            Symbol* sym = find_symbol(global_scope, concrete_name);
+            Type* result_type = sym ? sym->type : make_result_type(value_type, builtin_string);
             expr->expr_type = result_type;
             return result_type;
         }
         case EXPR_ERR: {
-            // TASK-026: Err(error) expression - creates Result type
             if (!expr->option.value) {
                 fprintf(stderr, "Error: Err() requires an error value\n");
                 had_error = true;
                 return NULL;
             }
-            
-            Type* error_type = check_expr(expr->option.value, scope);
-            if (!error_type) return NULL;
-            
-            // Create Result<void, E> type (default success type is void for errors)
-            Type* result_type = make_result_type(builtin_void, error_type);
+            check_expr(expr->option.value, scope);
+            // Default to ResultInt (Err always takes string, result type from context)
+            Token concrete_name = {TOKEN_IDENT, "ResultInt", 9, 0};
+            Symbol* sym = find_symbol(global_scope, concrete_name);
+            Type* result_type = sym ? sym->type : make_result_type(builtin_void, builtin_string);
             expr->expr_type = result_type;
             return result_type;
         }
         case EXPR_TRY: {
-            // TASK-026: ? operator for error propagation
+            // ? operator for error propagation
             if (!expr->try_expr.value) {
                 fprintf(stderr, "Error: ? operator requires an expression\n");
                 had_error = true;
@@ -1620,15 +3168,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             
             Type* value_type = check_expr(expr->try_expr.value, scope);
-            if (!value_type || !is_result_type(value_type)) {
-                fprintf(stderr, "Error: ? operator can only be used on Result types\n");
-                had_error = true;
-                return NULL;
+            
+            // Accept TYPE_RESULT or ResultInt/ResultString by name
+            if (value_type && is_result_type(value_type)) {
+                expr->expr_type = value_type->result_type.ok_type;
+                return value_type->result_type.ok_type;
             }
             
-            // Return the Ok type from Result<T,E>
-            expr->expr_type = value_type->result_type.ok_type;
-            return value_type->result_type.ok_type;
+            // Also accept ResultInt/ResultString struct types
+            if (value_type && value_type->kind == TYPE_STRUCT) {
+                Token name = value_type->struct_type.name;
+                if ((name.length == 9 && memcmp(name.start, "ResultInt", 9) == 0)) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                }
+                if ((name.length == 12 && memcmp(name.start, "ResultString", 12) == 0)) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                }
+            }
+            
+            // Fallback: allow ? on any type (returns int)
+            expr->expr_type = builtin_int;
+            return builtin_int;
         }
         case EXPR_RESULT_TYPE: {
             // TASK-026: Result<T,E> type expression
@@ -1642,30 +3204,31 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return result_type;
         }
         case EXPR_SOME: {
-            // T2.5.1: Some(value) expression - creates optional type
             if (!expr->option.value) {
                 fprintf(stderr, "Error: Some() requires a value\n");
                 had_error = true;
                 return NULL;
             }
-            
             Type* inner_type = check_expr(expr->option.value, scope);
             if (!inner_type) return NULL;
-            
-            // Create optional type containing the inner type
-            Type* optional_type = make_type(TYPE_OPTIONAL);
-            optional_type->optional_type.inner_type = inner_type;
-            expr->expr_type = optional_type;
-            return optional_type;
+            Token concrete_name;
+            if (inner_type == builtin_string) {
+                concrete_name = (Token){TOKEN_IDENT, "OptionString", 12, 0};
+            } else {
+                concrete_name = (Token){TOKEN_IDENT, "OptionInt", 9, 0};
+            }
+            Symbol* sym = find_symbol(global_scope, concrete_name);
+            Type* opt_type = sym ? sym->type : make_type(TYPE_OPTIONAL);
+            expr->expr_type = opt_type;
+            return opt_type;
         }
         case EXPR_NONE: {
-            // T2.5.1: None expression - creates empty optional type
-            // For now, create a generic optional type - in a full implementation,
-            // this would be inferred from context
-            Type* optional_type = make_type(TYPE_OPTIONAL);
-            optional_type->optional_type.inner_type = builtin_void; // Generic None
-            expr->expr_type = optional_type;
-            return optional_type;
+            // Default to OptionInt - context would refine this
+            Token concrete_name = {TOKEN_IDENT, "OptionInt", 9, 0};
+            Symbol* sym = find_symbol(global_scope, concrete_name);
+            Type* opt_type = sym ? sym->type : make_type(TYPE_OPTIONAL);
+            expr->expr_type = opt_type;
+            return opt_type;
         }
         case EXPR_UNARY: {
             // Type-check unary expressions (!, -, etc.)
@@ -1711,16 +3274,46 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 
                 // Add pattern bindings to scope
                 if (arm->pattern) {
-                    if (arm->pattern->type == PATTERN_IDENT) {
+                    Pattern* pat = arm->pattern;
+                    
+                    // Unwrap guard pattern
+                    if (pat->type == PATTERN_GUARD) {
+                        pat = pat->guard.pattern;
+                    }
+                    
+                    if (pat->type == PATTERN_IDENT) {
                         // Simple variable binding
-                        add_symbol(&arm_scope, arm->pattern->ident.name, match_value_type, false);
-                    } else if (arm->pattern->type == PATTERN_OPTION && arm->pattern->option.inner) {
+                        add_symbol(&arm_scope, pat->ident.name, match_value_type, false);
+                    } else if (pat->type == PATTERN_STRUCT) {
+                        // Struct destructuring - bind each field
+                        for (int j = 0; j < pat->struct_pat.field_count; j++) {
+                            Token field_name = pat->struct_pat.field_names[j];
+                            // Get field type from struct
+                            Type* field_type = builtin_int; // Default to int
+                            if (match_value_type->kind == TYPE_STRUCT) {
+                                for (int k = 0; k < match_value_type->struct_type.field_count; k++) {
+                                    if (match_value_type->struct_type.field_names[k].length == field_name.length &&
+                                        memcmp(match_value_type->struct_type.field_names[k].start, field_name.start, field_name.length) == 0) {
+                                        field_type = match_value_type->struct_type.field_types[k];
+                                        break;
+                                    }
+                                }
+                            }
+                            add_symbol(&arm_scope, field_name, field_type, false);
+                        }
+                    } else if (pat->type == PATTERN_OPTION && pat->option.inner) {
                         // Enum variant with inner pattern
-                        if (arm->pattern->option.inner->type == PATTERN_IDENT) {
+                        if (pat->option.inner->type == PATTERN_IDENT) {
                             // For now, assume int type for inner value
                             // TODO: Get actual type from enum variant
-                            add_symbol(&arm_scope, arm->pattern->option.inner->ident.name, builtin_int, false);
+                            add_symbol(&arm_scope, pat->option.inner->ident.name, builtin_int, false);
                         }
+                    }
+                    
+                    // If this is a guard pattern, check the guard expression with bindings in scope
+                    if (arm->pattern->type == PATTERN_GUARD) {
+                        Type* guard_type = check_expr(arm->pattern->guard.guard, &arm_scope);
+                        if (!guard_type) return NULL;
                     }
                 }
                 
@@ -1837,7 +3430,16 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 // IMPORTANT: Still check the init expression to resolve method calls
                 // and propagate type information, even though we have an explicit type
                 if (stmt->var.init) {
-                    check_expr(stmt->var.init, scope);
+                    Type* actual_type = check_expr(stmt->var.init, scope);
+                    // Task 1.1: Check type mismatch between declared and actual type
+                    if (init_type && actual_type && !types_equal(init_type, actual_type)) {
+                        char expected_str[128], actual_str[128];
+                        snprintf(expected_str, sizeof(expected_str), "%s", type_to_string(init_type));
+                        snprintf(actual_str, sizeof(actual_str), "%s", type_to_string(actual_type));
+                        type_error_mismatch(expected_str, actual_str, "variable declaration",
+                            stmt->var.name.line, 0);
+                        had_error = true;
+                    }
                 }
             } else if (stmt->var.init) {
                 // Always check the expression to populate expr_type
@@ -1885,10 +3487,19 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 if (current_function_return_type && return_expr_type) {
                     // Skip type checking for Result types (allows implicit conversion)
                     if (return_expr_type->kind == TYPE_RESULT) {
-                        // Allow returning Result from any function
                         break;
                     }
-                    if (current_function_return_type->kind != return_expr_type->kind) {
+                    // Allow returning concrete Result/Option structs from generic-typed functions
+                    if ((current_function_return_type->kind == TYPE_RESULT ||
+                         current_function_return_type->kind == TYPE_OPTIONAL) &&
+                        return_expr_type->kind == TYPE_STRUCT) {
+                        break;
+                    }
+                    // Allow int/bool interchangeability (comparisons return int but work as bool)
+                    bool types_match = (current_function_return_type->kind == return_expr_type->kind) ||
+                        (current_function_return_type->kind == TYPE_BOOL && return_expr_type->kind == TYPE_INT) ||
+                        (current_function_return_type->kind == TYPE_INT && return_expr_type->kind == TYPE_BOOL);
+                    if (!types_match) {
                         fprintf(stderr, "Error: Return type mismatch. Expected ");
                         print_type_name(current_function_return_type);
                         fprintf(stderr, ", got ");
@@ -1924,7 +3535,13 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             
             // For array iteration, add the loop variable to scope
             if (stmt->for_stmt.array_expr) {
-                add_symbol(scope, stmt->for_stmt.loop_var, builtin_int, false);
+                // Determine element type from array expression
+                Type* array_type = check_expr(stmt->for_stmt.array_expr, scope);
+                Type* elem_type = builtin_int; // default
+                if (array_type && array_type->kind == TYPE_ARRAY && array_type->array_type.element_type) {
+                    elem_type = array_type->array_type.element_type;
+                }
+                add_symbol(scope, stmt->for_stmt.loop_var, elem_type, false);
             }
             
             check_stmt(stmt->for_stmt.body, scope);
@@ -2188,7 +3805,12 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             }
             break;
         case STMT_TRAIT:
-            // T3.2.1: Trait definition handling
+            // Register trait as a type (for dynamic dispatch parameters)
+            {
+                Type* trait_type = make_type(TYPE_STRUCT);
+                trait_type->struct_type.name = stmt->trait_decl.name;
+                add_symbol(scope, stmt->trait_decl.name, trait_type, false);
+            }
             wyn_register_trait(&stmt->trait_decl);
             
             // Check trait methods
@@ -2209,6 +3831,31 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 // Check method body if it has a default implementation
                 if (stmt->trait_decl.method_has_default[i] && method->body) {
                     check_stmt(method->body, &method_scope);
+                }
+                
+                // Register trait method as TraitName_method for type resolution
+                {
+                    Type* fn_type = make_type(TYPE_FUNCTION);
+                    fn_type->fn_type.param_count = method->param_count;
+                    fn_type->fn_type.param_types = malloc(sizeof(Type*) * 4);
+                    for (int j = 0; j < method->param_count && j < 4; j++)
+                        fn_type->fn_type.param_types[j] = builtin_int;
+                    fn_type->fn_type.return_type = builtin_int;
+                    if (method->return_type && method->return_type->type == EXPR_IDENT) {
+                        Token rt = method->return_type->token;
+                        if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0)
+                            fn_type->fn_type.return_type = builtin_string;
+                        else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0)
+                            fn_type->fn_type.return_type = builtin_float;
+                        else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0)
+                            fn_type->fn_type.return_type = builtin_bool;
+                    }
+                    char qname[128];
+                    snprintf(qname, 128, "%.*s_%.*s",
+                        stmt->trait_decl.name.length, stmt->trait_decl.name.start,
+                        method->name.length, method->name.start);
+                    Token qt = {TOKEN_IDENT, strdup(qname), (int)strlen(qname), 0};
+                    add_function_overload(scope, qt, fn_type, false);
                 }
             }
             break;
@@ -2589,6 +4236,11 @@ void check_program(Program* prog) {
             }
             fn_type->fn_type.return_type = builtin_int; // Simplified
             add_function_overload(global_scope, macro->name, fn_type, false);
+        } else if (prog->stmts[i]->type == STMT_TRAIT) {
+            // Register trait as a type early so functions can use trait params
+            Type* trait_type = make_type(TYPE_STRUCT);
+            trait_type->struct_type.name = prog->stmts[i]->trait_decl.name;
+            add_symbol(global_scope, prog->stmts[i]->trait_decl.name, trait_type, false);
         } else if (prog->stmts[i]->type == STMT_CONST) {
             // Register module-level constants early so functions can use them
             VarStmt* const_stmt = &prog->stmts[i]->const_stmt;
@@ -2729,6 +4381,32 @@ void check_program(Program* prog) {
         file_extension_type->fn_type.param_types[0] = builtin_string;
         file_extension_type->fn_type.return_type = builtin_string;
         add_symbol(global_scope, file_extension_tok, file_extension_type, false);
+        
+        // New file system utility functions
+        Token file_move_tok = {TOKEN_IDENT, "File::move", 10, 0};
+        Type* file_move_type = make_type(TYPE_FUNCTION);
+        file_move_type->fn_type.param_count = 2;
+        file_move_type->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        file_move_type->fn_type.param_types[0] = builtin_string;
+        file_move_type->fn_type.param_types[1] = builtin_string;
+        file_move_type->fn_type.return_type = builtin_int;
+        add_symbol(global_scope, file_move_tok, file_move_type, false);
+        
+        Token file_mkdir_tok = {TOKEN_IDENT, "File::mkdir", 11, 0};
+        Type* file_mkdir_type = make_type(TYPE_FUNCTION);
+        file_mkdir_type->fn_type.param_count = 1;
+        file_mkdir_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
+        file_mkdir_type->fn_type.param_types[0] = builtin_string;
+        file_mkdir_type->fn_type.return_type = builtin_int;
+        add_symbol(global_scope, file_mkdir_tok, file_mkdir_type, false);
+        
+        Token file_rmdir_tok = {TOKEN_IDENT, "File::rmdir", 11, 0};
+        Type* file_rmdir_type = make_type(TYPE_FUNCTION);
+        file_rmdir_type->fn_type.param_count = 1;
+        file_rmdir_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
+        file_rmdir_type->fn_type.param_types[0] = builtin_string;
+        file_rmdir_type->fn_type.return_type = builtin_int;
+        add_symbol(global_scope, file_rmdir_tok, file_rmdir_type, false);
         
         // System module
         Token sys_exec_tok = {TOKEN_IDENT, "System::exec", 12, 0};
@@ -2872,8 +4550,16 @@ void check_program(Program* prog) {
         Type* hashmap_new_type = make_type(TYPE_FUNCTION);
         hashmap_new_type->fn_type.param_count = 0;
         hashmap_new_type->fn_type.param_types = NULL;
-        hashmap_new_type->fn_type.return_type = builtin_int;
+        hashmap_new_type->fn_type.return_type = make_type(TYPE_MAP);
         add_symbol(global_scope, hashmap_new_tok, hashmap_new_type, false);
+        
+        // HashSet module
+        Token hashset_new_tok = {TOKEN_IDENT, "HashSet::new", 12, 0};
+        Type* hashset_new_type = make_type(TYPE_FUNCTION);
+        hashset_new_type->fn_type.param_count = 0;
+        hashset_new_type->fn_type.param_types = NULL;
+        hashset_new_type->fn_type.return_type = make_type(TYPE_SET);
+        add_symbol(global_scope, hashset_new_tok, hashset_new_type, false);
         
         Token hashmap_insert_tok = {TOKEN_IDENT, "HashMap::insert", 15, 0};
         Type* hashmap_insert_type = make_type(TYPE_FUNCTION);
@@ -2989,153 +4675,70 @@ void check_program(Program* prog) {
         add_symbol(global_scope, wyn_arena_new_tok, wyn_arena_new_type, false);
     }
     
-    // First pass: process imports and register functions with their signatures
+    // First pass: process imports and load modules
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_IMPORT) {
-            // Load and process imported module
             ImportStmt* import = &prog->stmts[i]->import;
-            char module_path[256];
-            snprintf(module_path, 256, "%.*s.wyn", import->module.length, import->module.start);
             
-            // For now, just register some common module functions
-            // In a full implementation, we'd parse the module file
-            if (import->module.length == 4 && memcmp(import->module.start, "math", 4) == 0) {
-                // Register the module itself as a namespace
-                add_symbol(global_scope, import->module, builtin_int, false); // Module type (simplified)
-                
-                // Register math module functions - only useful ones (not add/multiply/etc)
-                // Users should use operators: +, -, *, / for basic arithmetic
-                Token math_pow = {TOKEN_IDENT, "math.pow", 8, 0};
-                Token math_sqrt = {TOKEN_IDENT, "math.sqrt", 9, 0};
-                Token math_abs = {TOKEN_IDENT, "math.abs", 8, 0};
-                Token math_floor = {TOKEN_IDENT, "math.floor", 10, 0};
-                Token math_ceil = {TOKEN_IDENT, "math.ceil", 9, 0};
-                Token math_round = {TOKEN_IDENT, "math.round", 10, 0};
-                Token math_sin = {TOKEN_IDENT, "math.sin", 8, 0};
-                Token math_cos = {TOKEN_IDENT, "math.cos", 8, 0};
-                Token math_tan = {TOKEN_IDENT, "math.tan", 8, 0};
-                Token math_log = {TOKEN_IDENT, "math.log", 8, 0};
-                Token math_exp = {TOKEN_IDENT, "math.exp", 8, 0};
-                Token math_min = {TOKEN_IDENT, "math.min", 8, 0};
-                Token math_max = {TOKEN_IDENT, "math.max", 8, 0};
-                Token math_pi = {TOKEN_IDENT, "math.pi", 7, 0};
-                Token math_e = {TOKEN_IDENT, "math.e", 6, 0};
-                
-                Type* math_fn_type = make_type(TYPE_FUNCTION);
-                math_fn_type->fn_type.param_count = 2;
-                math_fn_type->fn_type.param_types = malloc(sizeof(Type*) * 2);
-                math_fn_type->fn_type.param_types[0] = builtin_float;
-                math_fn_type->fn_type.param_types[1] = builtin_float;
-                math_fn_type->fn_type.return_type = builtin_float;
-                
-                Type* math_fn1_type = make_type(TYPE_FUNCTION);
-                math_fn1_type->fn_type.param_count = 1;
-                math_fn1_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
-                math_fn1_type->fn_type.param_types[0] = builtin_float;
-                math_fn1_type->fn_type.return_type = builtin_float;
-                
-                add_symbol(global_scope, math_pow, math_fn_type, false);
-                add_symbol(global_scope, math_sqrt, math_fn1_type, false);
-                add_symbol(global_scope, math_abs, math_fn1_type, false);
-                add_symbol(global_scope, math_floor, math_fn1_type, false);
-                add_symbol(global_scope, math_ceil, math_fn1_type, false);
-                add_symbol(global_scope, math_round, math_fn1_type, false);
-                add_symbol(global_scope, math_sin, math_fn1_type, false);
-                add_symbol(global_scope, math_cos, math_fn1_type, false);
-                add_symbol(global_scope, math_tan, math_fn1_type, false);
-                add_symbol(global_scope, math_log, math_fn1_type, false);
-                add_symbol(global_scope, math_exp, math_fn1_type, false);
-                add_symbol(global_scope, math_min, math_fn_type, false);
-                add_symbol(global_scope, math_max, math_fn_type, false);
-                add_symbol(global_scope, math_pi, builtin_float, false);
-                add_symbol(global_scope, math_e, builtin_float, false);
-            } else {
-                // Load user module and register its exported functions
-                extern Program* load_module(const char* module_name);
-                
-                char module_name[256];
-                snprintf(module_name, 256, "%.*s", import->module.length, import->module.start);
-                
-                Program* module_prog = load_module(module_name);
-                if (module_prog) {
-                    // Register the module itself as a namespace
-                    add_symbol(global_scope, import->module, builtin_int, false);
+            // Build module name
+            char module_name[256];
+            snprintf(module_name, sizeof(module_name), "%.*s", import->module.length, import->module.start);
+            
+            // Load module from same directory as current file
+            Program* module = load_module(module_name);
+            
+            if (module) {
+                // Check if this is a whole-module import (no items specified)
+                if (import->item_count == 0) {
+                    // Whole module import - register functions with module prefix
+                    char module_name_str[256];
+                    snprintf(module_name_str, sizeof(module_name_str), "%.*s", import->module.length, import->module.start);
                     
-                    // Register all exported functions from the module
-                    for (int j = 0; j < module_prog->count; j++) {
-                        Stmt* module_stmt = module_prog->stmts[j];
-                        
-                        // Unwrap export statements
-                        if (module_stmt->type == STMT_EXPORT && module_stmt->export.stmt) {
-                            module_stmt = module_stmt->export.stmt;
-                        }
-                        
-                        if (module_stmt->type == STMT_FN) {
-                            FnStmt* fn = &module_stmt->fn;
+                    // Register all exported functions with qualified names
+                    for (int j = 0; j < module->count; j++) {
+                        Stmt* stmt = module->stmts[j];
+                        if (stmt->type == STMT_EXPORT && stmt->export.stmt && stmt->export.stmt->type == STMT_FN) {
+                            FnStmt* fn = &stmt->export.stmt->fn;
                             
-                            // Create prefixed function name: module_functionname
-                            char prefixed_name[512];
-                            snprintf(prefixed_name, 512, "%s_%.*s", 
-                                    module_name, fn->name.length, fn->name.start);
+                            // Create qualified name: module::function
+                            char* qualified_name = malloc(strlen(module_name_str) + 2 + fn->name.length + 1);
+                            sprintf(qualified_name, "%s::%.*s", module_name_str, fn->name.length, fn->name.start);
                             
-                            Token prefixed_token = {
-                                .type = TOKEN_IDENT,
-                                .start = strdup(prefixed_name),
-                                .length = strlen(prefixed_name),
-                                .line = fn->name.line
-                            };
+                            Token qualified_token = fn->name;
+                            qualified_token.start = qualified_name;
+                            qualified_token.length = strlen(qualified_name);
                             
                             // Create function type
                             Type* fn_type = make_type(TYPE_FUNCTION);
                             fn_type->fn_type.param_count = fn->param_count;
                             fn_type->fn_type.param_types = malloc(sizeof(Type*) * fn->param_count);
-                            
+                            Type* int_type = make_type(TYPE_INT);
                             for (int k = 0; k < fn->param_count; k++) {
-                                // Parse parameter type from type annotation
-                                Type* param_type = builtin_int; // default
-                                
-                                if (fn->param_types[k] && fn->param_types[k]->type == EXPR_IDENT) {
-                                    Token type_name = fn->param_types[k]->token;
-                                    if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-                                        param_type = builtin_int;
-                                    } else if ((type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) ||
-                                               (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0)) {
-                                        param_type = builtin_string;
-                                    } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
-                                        param_type = builtin_float;
-                                    } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
-                                        param_type = builtin_bool;
-                                    }
-                                }
-                                
-                                fn_type->fn_type.param_types[k] = param_type;
+                                fn_type->fn_type.param_types[k] = int_type;
                             }
+                            fn_type->fn_type.return_type = int_type;
                             
-                            // Parse return type
-                            Type* return_type = builtin_int; // default
-                            if (fn->return_type && fn->return_type->type == EXPR_IDENT) {
-                                Token type_name = fn->return_type->token;
-                                if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-                                    return_type = builtin_int;
-                                } else if ((type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) ||
-                                           (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0)) {
-                                    return_type = builtin_string;
-                                } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
-                                    return_type = builtin_float;
-                                } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
-                                    return_type = builtin_bool;
-                                }
+                            // Register with qualified name
+                            Symbol* existing = find_symbol(global_scope, qualified_token);
+                            if (!existing) {
+                                add_symbol(global_scope, qualified_token, fn_type, false);
                             }
-                            
-                            fn_type->fn_type.return_type = return_type;
-                            
-                            // Register the prefixed function
-                            add_symbol(global_scope, prefixed_token, fn_type, false);
                         }
                     }
                 }
+                
+                // Merge exported functions into current program for codegen
+                // Symbols are already registered by check_all_modules
+                merge_module_exports(module, prog, import);
+            } else {
+                fprintf(stderr, "Warning: Could not load module '%s'\n", module_name);
             }
-        } else if (prog->stmts[i]->type == STMT_FN) {
+        }
+    }
+    
+    // Continue with function registration
+    for (int i = 0; i < prog->count; i++) {
+        if (prog->stmts[i]->type == STMT_FN) {
             FnStmt* fn = &prog->stmts[i]->fn;
             
             // T3.1.1: Register generic functions
@@ -3186,7 +4789,29 @@ void check_program(Program* prog) {
                         }
                     } else if (fn->param_types[j]->type == EXPR_ARRAY) {
                         // Handle array types [type]
-                        param_type = builtin_array;
+                        Type* array_type = make_type(TYPE_ARRAY);
+                        if (fn->param_types[j]->array.count > 0 && fn->param_types[j]->array.elements[0]) {
+                            Expr* elem_type_expr = fn->param_types[j]->array.elements[0];
+                            if (elem_type_expr->type == EXPR_IDENT) {
+                                Token elem_type_name = elem_type_expr->token;
+                                if (elem_type_name.length == 3 && memcmp(elem_type_name.start, "int", 3) == 0) {
+                                    array_type->array_type.element_type = builtin_int;
+                                } else if (elem_type_name.length == 6 && memcmp(elem_type_name.start, "string", 6) == 0) {
+                                    array_type->array_type.element_type = builtin_string;
+                                } else if (elem_type_name.length == 5 && memcmp(elem_type_name.start, "float", 5) == 0) {
+                                    array_type->array_type.element_type = builtin_float;
+                                } else if (elem_type_name.length == 4 && memcmp(elem_type_name.start, "bool", 4) == 0) {
+                                    array_type->array_type.element_type = builtin_bool;
+                                } else {
+                                    // Check if it's a user-defined type (struct or enum)
+                                    Symbol* type_symbol = find_symbol(global_scope, elem_type_name);
+                                    if (type_symbol && type_symbol->type) {
+                                        array_type->array_type.element_type = type_symbol->type;
+                                    }
+                                }
+                            }
+                        }
+                        param_type = array_type;
                     }
                 }
                 fn_type->fn_type.param_types[j] = param_type;
@@ -3204,13 +4829,29 @@ void check_program(Program* prog) {
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             fn_type->fn_type.return_type = make_type(TYPE_SET);
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
-                            fn_type->fn_type.return_type = builtin_int; // Simplified
-                        } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
-                            // Check if it's an enum type
-                            Symbol* type_symbol = find_symbol(global_scope, type_name);
-                            if (type_symbol && type_symbol->type) {
-                                fn_type->fn_type.return_type = type_symbol->type;
+                            // Resolve Option<int> -> OptionInt, Option<string> -> OptionString
+                            Token concrete = {TOKEN_IDENT, "OptionInt", 9, 0};
+                            if (fn->return_type->call.arg_count > 0 &&
+                                fn->return_type->call.args[0]->type == EXPR_IDENT) {
+                                Token inner = fn->return_type->call.args[0]->token;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0) {
+                                    concrete = (Token){TOKEN_IDENT, "OptionString", 12, 0};
+                                }
                             }
+                            Symbol* sym = find_symbol(global_scope, concrete);
+                            fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
+                        } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
+                            // Resolve Result<int, string> -> ResultInt, Result<string, string> -> ResultString
+                            Token concrete = {TOKEN_IDENT, "ResultInt", 9, 0};
+                            if (fn->return_type->call.arg_count > 0 &&
+                                fn->return_type->call.args[0]->type == EXPR_IDENT) {
+                                Token inner = fn->return_type->call.args[0]->token;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0) {
+                                    concrete = (Token){TOKEN_IDENT, "ResultString", 12, 0};
+                                }
+                            }
+                            Symbol* sym = find_symbol(global_scope, concrete);
+                            fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
                         }
                     }
                 } else if (fn->return_type->type == EXPR_ARRAY) {
@@ -3268,7 +4909,11 @@ void check_program(Program* prog) {
             }
             
             // T1.5.3: Register function with overload support
-            add_function_overload(global_scope, function_name, fn_type, false);
+            // Check if already registered (e.g., from imported module)
+            Symbol* existing = find_symbol(global_scope, function_name);
+            if (!existing || !signatures_match(existing->type, fn_type)) {
+                add_function_overload(global_scope, function_name, fn_type, false);
+            }
         } else if (prog->stmts[i]->type == STMT_EXPORT) {
             // Handle exported statements
             Stmt* exported = prog->stmts[i]->export.stmt;
@@ -3358,7 +5003,10 @@ void check_program(Program* prog) {
             // Set current function return type for return statement validation
             current_function_return_type = builtin_int; // default
             if (fn->return_type) {
-                if (fn->return_type->type == EXPR_CALL) {
+                if (fn->return_type->type == EXPR_FN_TYPE) {
+                    // Function type: fn(T1, T2) -> R
+                    current_function_return_type = check_expr(fn->return_type, &local_scope);
+                } else if (fn->return_type->type == EXPR_CALL) {
                     // Generic type instantiation: HashMap<K,V>, Option<T>, etc.
                     if (fn->return_type->call.callee->type == EXPR_IDENT) {
                         Token type_name = fn->return_type->call.callee->token;
@@ -3367,9 +5015,25 @@ void check_program(Program* prog) {
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             current_function_return_type = make_type(TYPE_SET);
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
-                            current_function_return_type = make_type(TYPE_OPTIONAL);
+                            Token concrete = {TOKEN_IDENT, "OptionInt", 9, 0};
+                            if (fn->return_type->call.arg_count > 0 &&
+                                fn->return_type->call.args[0]->type == EXPR_IDENT &&
+                                fn->return_type->call.args[0]->token.length == 6 &&
+                                memcmp(fn->return_type->call.args[0]->token.start, "string", 6) == 0) {
+                                concrete = (Token){TOKEN_IDENT, "OptionString", 12, 0};
+                            }
+                            Symbol* sym = find_symbol(global_scope, concrete);
+                            current_function_return_type = sym ? sym->type : make_type(TYPE_OPTIONAL);
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
-                            current_function_return_type = make_type(TYPE_RESULT);
+                            Token concrete = {TOKEN_IDENT, "ResultInt", 9, 0};
+                            if (fn->return_type->call.arg_count > 0 &&
+                                fn->return_type->call.args[0]->type == EXPR_IDENT &&
+                                fn->return_type->call.args[0]->token.length == 6 &&
+                                memcmp(fn->return_type->call.args[0]->token.start, "string", 6) == 0) {
+                                concrete = (Token){TOKEN_IDENT, "ResultString", 12, 0};
+                            }
+                            Symbol* sym = find_symbol(global_scope, concrete);
+                            current_function_return_type = sym ? sym->type : make_type(TYPE_RESULT);
                         }
                     }
                 } else if (fn->return_type->type == EXPR_ARRAY) {
@@ -3418,26 +5082,7 @@ void check_program(Program* prog) {
                 // Determine parameter type from type annotation
                 Type* param_type = builtin_int; // default
                 if (fn->param_types[j]) {
-                    if (fn->param_types[j]->type == EXPR_ARRAY) {
-                        // Array type like [int] or [string]
-                        Type* array_type = make_type(TYPE_ARRAY);
-                        if (fn->param_types[j]->array.count > 0 && fn->param_types[j]->array.elements[0]) {
-                            Expr* elem_type_expr = fn->param_types[j]->array.elements[0];
-                            if (elem_type_expr->type == EXPR_IDENT) {
-                                Token elem_type_name = elem_type_expr->token;
-                                if (elem_type_name.length == 3 && memcmp(elem_type_name.start, "int", 3) == 0) {
-                                    array_type->array_type.element_type = builtin_int;
-                                } else if (elem_type_name.length == 6 && memcmp(elem_type_name.start, "string", 6) == 0) {
-                                    array_type->array_type.element_type = builtin_string;
-                                } else if (elem_type_name.length == 5 && memcmp(elem_type_name.start, "float", 5) == 0) {
-                                    array_type->array_type.element_type = builtin_float;
-                                } else if (elem_type_name.length == 4 && memcmp(elem_type_name.start, "bool", 4) == 0) {
-                                    array_type->array_type.element_type = builtin_bool;
-                                }
-                            }
-                        }
-                        param_type = array_type;
-                    } else if (fn->param_types[j]->type == EXPR_IDENT) {
+                    if (fn->param_types[j]->type == EXPR_IDENT) {
                         Token type_name = fn->param_types[j]->token;
                         if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                             param_type = builtin_int;
@@ -3459,7 +5104,29 @@ void check_program(Program* prog) {
                         }
                     } else if (fn->param_types[j]->type == EXPR_ARRAY) {
                         // Handle array types [type]
-                        param_type = builtin_array;
+                        Type* array_type = make_type(TYPE_ARRAY);
+                        if (fn->param_types[j]->array.count > 0 && fn->param_types[j]->array.elements[0]) {
+                            Expr* elem_type_expr = fn->param_types[j]->array.elements[0];
+                            if (elem_type_expr->type == EXPR_IDENT) {
+                                Token elem_type_name = elem_type_expr->token;
+                                if (elem_type_name.length == 3 && memcmp(elem_type_name.start, "int", 3) == 0) {
+                                    array_type->array_type.element_type = builtin_int;
+                                } else if (elem_type_name.length == 6 && memcmp(elem_type_name.start, "string", 6) == 0) {
+                                    array_type->array_type.element_type = builtin_string;
+                                } else if (elem_type_name.length == 5 && memcmp(elem_type_name.start, "float", 5) == 0) {
+                                    array_type->array_type.element_type = builtin_float;
+                                } else if (elem_type_name.length == 4 && memcmp(elem_type_name.start, "bool", 4) == 0) {
+                                    array_type->array_type.element_type = builtin_bool;
+                                } else {
+                                    // Check if it's a user-defined type (struct or enum)
+                                    Symbol* type_symbol = find_symbol(global_scope, elem_type_name);
+                                    if (type_symbol && type_symbol->type) {
+                                        array_type->array_type.element_type = type_symbol->type;
+                                    }
+                                }
+                            }
+                        }
+                        param_type = array_type;
                     }
                 }
                 
@@ -3497,8 +5164,15 @@ void check_program(Program* prog) {
                 register_function_visibility(current_module_name, func_name, fn->is_public);
             }
             
+            // Set self type for extension methods
+            if (fn->is_extension) {
+                Symbol* recv = find_symbol(global_scope, fn->receiver_type);
+                current_self_type = (recv && recv->type) ? recv->type : NULL;
+            }
+            
             check_stmt(fn->body, &local_scope);
-            current_function_return_type = NULL; // Reset after function
+            current_function_return_type = NULL;
+            current_self_type = NULL;
             free(local_scope.symbols);
         } else {
             check_stmt(prog->stmts[i], global_scope);

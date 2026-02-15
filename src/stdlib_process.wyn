@@ -1,0 +1,78 @@
+// Standard Library: Process Execution
+// High-level wrappers for process management
+
+extern fn wyn_sys_spawn_process(cmd: str, args: [str]) -> int
+extern fn wyn_sys_wait_process(pid: int) -> int
+extern fn wyn_sys_read_process_output(pid: int) -> str
+extern fn wyn_sys_kill_process(pid: int) -> int
+
+struct ProcessResult {
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    timeout: bool
+}
+
+struct Process {
+}
+
+impl Process {
+    // Execute command and wait for completion
+    fn exec(cmd: str, args: [str]) -> ProcessResult {
+        var result = ProcessResult {
+            exit_code: 0,
+            stdout: "",
+            stderr: "",
+            timeout: false
+        }
+        
+        // Build full command
+        var full_cmd = cmd
+        var i = 0
+        while i < args.len() {
+            full_cmd = full_cmd + " " + args[i]
+            i = i + 1
+        }
+        
+        // Execute using system()
+        result.exit_code = system(full_cmd)
+        
+        return result
+    }
+    
+    // Execute with timeout (milliseconds)
+    fn exec_timeout(cmd: str, args: [str], timeout_ms: int) -> ProcessResult {
+        var result = ProcessResult {
+            exit_code: 0,
+            stdout: "",
+            stderr: "",
+            timeout: false
+        }
+        
+        // Build full command with timeout
+        var timeout_sec = timeout_ms / 1000
+        if timeout_sec < 1 {
+            timeout_sec = 1
+        }
+        
+        var full_cmd = "timeout " + timeout_sec.to_string() + "s " + cmd
+        var i = 0
+        while i < args.len() {
+            full_cmd = full_cmd + " " + args[i]
+            i = i + 1
+        }
+        
+        // Execute
+        result.exit_code = system(full_cmd)
+        
+        // Check if timeout occurred (exit code 124)
+        if result.exit_code == 124 {
+            result.timeout = true
+        }
+        
+        return result
+    }
+}
+
+// External C function
+extern fn system(cmd: str) -> int

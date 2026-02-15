@@ -7,25 +7,25 @@ ifeq ($(OS),Windows_NT)
     PLATFORM := windows
     CC := gcc
     EXE_EXT := .exe
-    PLATFORM_LIBS := -lws2_32 -lpthread
+    PLATFORM_LIBS := -lws2_32 -lpthread -lm
     PLATFORM_CFLAGS := -DWYN_PLATFORM_WINDOWS
 else ifeq ($(UNAME_S),Darwin)
     PLATFORM := macos
     CC := clang
     EXE_EXT :=
-    PLATFORM_LIBS := -lpthread
+    PLATFORM_LIBS := -lpthread -lm
     PLATFORM_CFLAGS := -DWYN_PLATFORM_MACOS
 else ifeq ($(UNAME_S),Linux)
     PLATFORM := linux
     CC := gcc
     EXE_EXT :=
-    PLATFORM_LIBS := -lpthread
+    PLATFORM_LIBS := -lpthread -lm
     PLATFORM_CFLAGS := -DWYN_PLATFORM_LINUX
 else
     PLATFORM := unknown
     CC := gcc
     EXE_EXT :=
-    PLATFORM_LIBS := -lpthread
+    PLATFORM_LIBS := -lpthread -lm
     PLATFORM_CFLAGS := -DWYN_PLATFORM_UNKNOWN
 endif
 
@@ -62,7 +62,7 @@ ifeq ($(OS),Windows_NT)
 endif
 
 CFLAGS_LLVM = $(CFLAGS) $(LLVM_CFLAGS) -DWITH_LLVM=1
-LDFLAGS_LLVM = $(LLVM_LDFLAGS) $(LLVM_LIBS)
+LDFLAGS_LLVM = $(LLVM_LDFLAGS) $(LLVM_LIBS) -Lruntime -lwyn_runtime
 else
 # LLVM not available - use basic flags
 CFLAGS_LLVM = $(CFLAGS)
@@ -81,33 +81,33 @@ platform-info:
 	@echo "Platform flags: $(PLATFORM_CFLAGS)"
 
 # Original C-based compiler (Phase 1)
-wyn$(EXE_EXT): src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c src/closures.c src/scope.c src/toml.c src/file_watch.c src/package.c src/lsp.c src/spawn.c src/registry.c src/semver.c
+wyn$(EXE_EXT): src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c src/closures.c src/scope.c src/toml.c src/file_watch.c src/package.c src/lsp.c src/spawn.c src/registry.c src/semver.c
 	$(CC) $(CFLAGS) -I src -o $@ $^ $(PLATFORM_LIBS)
 
 # Platform-specific targets
 wyn-windows: PLATFORM_CFLAGS += -DWYN_PLATFORM_WINDOWS
-wyn-windows: PLATFORM_LIBS = -lws2_32 -lpthread
+wyn-windows: PLATFORM_LIBS = -lws2_32 -lpthread -lm
 wyn-windows: CC = x86_64-w64-mingw32-gcc
 wyn-windows: EXE_EXT = .exe
-wyn-windows: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
+wyn-windows: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 wyn-linux: PLATFORM_CFLAGS += -DWYN_PLATFORM_LINUX
-wyn-linux: PLATFORM_LIBS = -lpthread
+wyn-linux: PLATFORM_LIBS = -lpthread -lm
 wyn-linux: CC = gcc
 wyn-linux: EXE_EXT =
-wyn-linux: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
+wyn-linux: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 wyn-macos: PLATFORM_CFLAGS += -DWYN_PLATFORM_MACOS
-wyn-macos: PLATFORM_LIBS = -lpthread
+wyn-macos: PLATFORM_LIBS = -lpthread -lm
 wyn-macos: CC = clang
 wyn-macos: EXE_EXT =
-wyn-macos: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
+wyn-macos: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 # LLVM-based compiler (Phase 2) with Context Management, Target Configuration, Type Mapping, Runtime Functions, Expression Codegen, Statement Codegen, Function Codegen, and Array/String Operations
-wyn-llvm: src/main.c src/lexer.c src/parser.c src/checker.c src/llvm_codegen.c src/llvm_context.c src/target_config.c src/type_mapping.c src/runtime_functions.c src/llvm_expression_codegen.c src/llvm_statement_codegen.c src/llvm_function_codegen.c src/llvm_array_string_codegen.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/cmd_other.c src/optimize.c src/types.c src/patterns.c src/generics.c src/type_inference.c src/platform.c src/wyn_interface.c src/traits.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/result.c src/modules.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/hashmap.c src/hashset.c src/json.c
+wyn-llvm: src/main.c src/lexer.c src/parser.c src/checker.c src/llvm_codegen.c src/llvm_context.c src/target_config.c src/type_mapping.c src/runtime_functions.c src/llvm_expression_codegen.c src/llvm_statement_codegen.c src/llvm_function_codegen.c src/llvm_array_string_codegen.c src/llvm_runtime.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/cmd_other.c src/optimize.c src/types.c src/patterns.c src/generics.c src/type_inference.c src/platform.c src/wyn_interface.c src/traits.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/result.c src/modules.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_math.c src/hashmap.c src/hashset.c src/json.c src/cmd_compile.c src/cmd_test.c src/toml.c src/file_watch.c src/package.c src/lsp.c src/spawn.c src/registry.c src/semver.c src/closures.c src/scope.c src/optional.c src/file_io_simple.c src/stdlib_enhanced.c src/stdlib_process.c src/stdlib_fs.c runtime/libwyn_runtime.a
 	$(CC) $(CFLAGS_LLVM) -I src -o $@ $^ $(LDFLAGS_LLVM) -lpthread
 
 # Phase 2 Integration Testing
@@ -473,6 +473,16 @@ fmt-tool: tools/formatter.wyn.out
 tools/formatter.wyn.out: tools/formatter.wyn wyn
 	./wyn tools/formatter.wyn
 
+
+# Precompile runtime library for fast compilation
+runtime: wyn$(EXE_EXT)
+	@echo "Building runtime library..."
+	@mkdir -p runtime/obj
+	@for f in src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c; do $(CC) -std=c11 -O2 -w -I src -c $$f -o runtime/obj/$$(basename $$f .c).o 2>/dev/null; done
+	@# Old runtime extraction removed fi
+	@ar rcs runtime/libwyn_rt.a runtime/obj/*.o
+	@echo "Built runtime/libwyn_rt.a"
+
 clean:
 	rm -f wyn wyn.exe wyn-windows.exe wyn-linux wyn-macos wyn-llvm tests/test_lexer tests/test_parser tests/test_checker tests/test_codegen tests/test_operators tests/test_default_parameters tests/test_function_overloading tests/test_generic_functions tests/test_parameter_validation tests/test_function_integration tests/test_syntax_design tests/test_system_integration tests/phase2_integration tests/test_llvm_context tests/phase2_integration_simple tests/test_wasm_support tests/test_self_compilation tests/test_documentation_system tests/test_container_support tests/test_lexer_rewrite tools/formatter.wyn.out
 	rm -rf temp
@@ -483,3 +493,7 @@ clean:
 
 test_t2_3_1_validation: tests/test_t2_3_1_validation.c $(SOURCES)
 	$(CC) $(CFLAGS) -I src -o tests/test_t2_3_1_validation tests/test_t2_3_1_validation.c $(SOURCES) $(LDFLAGS)
+
+# Runtime library
+runtime/libwyn_runtime.a:
+	$(MAKE) -C runtime

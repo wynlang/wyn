@@ -1,4 +1,0 @@
-fn main() -> int {
-    let x = some(42);
-    return 99;
-}

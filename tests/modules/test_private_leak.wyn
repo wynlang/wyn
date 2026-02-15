@@ -1,0 +1,12 @@
+// KNOWN LIMITATION: Private functions are currently accessible
+// This is because all module functions are registered in global scope
+// TODO: Implement module-scoped symbol tables for proper visibility
+import { public_fn } from visibility_test
+
+fn main() -> int {
+    // This SHOULD fail but currently works - private_fn leaks into global scope
+    var x = private_fn()
+    // For now, just verify it works
+    if x != 5 { return 1; }
+    return 0
+}

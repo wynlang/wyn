@@ -1,0 +1,4 @@
+fn main() {
+    var x: int = "hello";
+    print(x);
+}

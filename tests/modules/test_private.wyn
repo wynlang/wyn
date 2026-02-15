@@ -1,0 +1,12 @@
+// Test that private functions are not accessible
+import { add } from math_private
+
+fn main() -> int {
+    var sum = add(5, 10)
+    if sum != 15 { return 1; }
+    
+    // This should fail - private_helper is not exported
+    // var x = private_helper(5)
+    
+    return 0
+}

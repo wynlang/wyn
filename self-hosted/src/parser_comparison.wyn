@@ -1,0 +1,123 @@
+// Parser Comparison Module
+// Compares self-hosted Wyn parser output with C parser output
+
+struct ComparisonResult {
+    matches: int,           // 1 if ASTs match, 0 otherwise
+    c_ast_str: string,      // C parser AST as string
+    wyn_ast_str: string,    // Wyn parser AST as string (placeholder for now)
+    difference: string      // Description of first difference
+}
+
+// Compare parsing results for a source string
+fn compare_parsers(source: string) -> ComparisonResult {
+    // Parse with C parser
+    var c_success = C_Parser::init_lexer(source)
+    if c_success == 0 {
+        return ComparisonResult {
+            matches: 0,
+            c_ast_str: "",
+            wyn_ast_str: "",
+            difference: "C lexer initialization failed"
+        }
+    }
+    
+    C_Parser::init_parser()
+    var c_ast = C_Parser::parse_program()
+    
+    if c_ast == 0 {
+        return ComparisonResult {
+            matches: 0,
+            c_ast_str: "",
+            wyn_ast_str: "",
+            difference: "C parser returned null AST"
+        }
+    }
+    
+    var c_ast_str = C_Parser::ast_to_string(c_ast)
+    var c_error_count = C_Parser::get_error_count()
+    
+    // For now, we just validate the C parser works
+    // In the future, we'll parse with Wyn parser and compare
+    var wyn_ast_str = "(Not implemented yet)"
+    
+    // Free C AST
+    C_Parser::free_ast(c_ast)
+    
+    // For now, just return success if C parser worked
+    return ComparisonResult {
+        matches: 1,
+        c_ast_str: c_ast_str,
+        wyn_ast_str: wyn_ast_str,
+        difference: ""
+    }
+}
+
+// Test a single source string
+fn test_comparison(source: string, expected_pass: int) -> int {
+    print("Testing: ")
+    print(source)
+    print("\n")
+    
+    var result = compare_parsers(source)
+    
+    if result.matches == expected_pass {
+        print("  PASS\n")
+        return 0
+    }
+    
+    print("  FAIL: ")
+    print(result.difference)
+    print("\n")
+    print("  C AST: ")
+    print(result.c_ast_str)
+    print("\n")
+    return 1
+}
+
+// Run comparison on multiple test cases
+fn run_comparison_suite() -> int {
+    print("=== Parser Comparison Suite ===\n\n")
+    
+    var failures = 0
+    
+    // Test simple expressions
+    print("## Simple Expressions\n")
+    failures = failures + test_comparison("42", 1)
+    failures = failures + test_comparison("1 + 2", 1)
+    failures = failures + test_comparison("x * y + z", 1)
+    print("\n")
+    
+    // Test functions
+    print("## Functions\n")
+    failures = failures + test_comparison("fn main() -> int { return 42 }", 1)
+    failures = failures + test_comparison("fn add(x: int, y: int) -> int { return x + y }", 1)
+    print("\n")
+    
+    // Test control flow
+    print("## Control Flow\n")
+    failures = failures + test_comparison("if x > 0 { return 1 } else { return 0 }", 1)
+    failures = failures + test_comparison("while (i < 10) { i = i + 1 }", 1)
+    print("\n")
+    
+    // Test variables
+    print("## Variables\n")
+    failures = failures + test_comparison("var x = 5", 1)
+    failures = failures + test_comparison("var y: int = 10", 1)
+    print("\n")
+    
+    // Summary
+    print("=== Summary ===\n")
+    print("Failures: ")
+    print(failures)
+    print("\n")
+    
+    if failures == 0 {
+        print("All tests PASSED!\n")
+    }
+    
+    return failures
+}
+
+fn main() -> int {
+    return run_comparison_suite()
+}

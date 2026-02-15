@@ -1,0 +1,59 @@
+// Bootstrap Test: Verify self-hosted compiler can parse and generate C
+
+fn main() -> int {
+    print("=== Bootstrap Test ===\n")
+    
+    // Test 1: Parse simple program
+    var src = "fn main() -> int { return 42 }"
+    C_Parser::init_lexer(src)
+    C_Parser::init_parser()
+    var ast = C_Parser::parse_program()
+    
+    if ast == 0 {
+        print("FAIL: Parse failed\n")
+        return 1
+    }
+    
+    var ast_str: string = C_Parser::ast_to_string(ast)
+    C_Parser::free_ast(ast)
+    
+    print("AST: ")
+    print(ast_str)
+    print("\n")
+    
+    // Verify AST contains expected nodes
+    if str_contains(ast_str, "Fn main") == 0 {
+        print("FAIL: Fn main not found\n")
+        return 2
+    }
+    print("Test 1: Parse function... PASS\n")
+    
+    if str_contains(ast_str, "Return") == 0 {
+        print("FAIL: Return not found\n")
+        return 3
+    }
+    print("Test 2: Parse return... PASS\n")
+    
+    if str_contains(ast_str, "Int 42") == 0 {
+        print("FAIL: Int 42 not found\n")
+        return 4
+    }
+    print("Test 3: Parse int literal... PASS\n")
+    
+    // Test 2: Parse with variable
+    var src2 = "fn main() -> int { var x = 5 return x }"
+    C_Parser::init_lexer(src2)
+    C_Parser::init_parser()
+    var ast2 = C_Parser::parse_program()
+    var ast_str2: string = C_Parser::ast_to_string(ast2)
+    C_Parser::free_ast(ast2)
+    
+    if str_contains(ast_str2, "Var x") == 0 {
+        print("FAIL: Var x not found\n")
+        return 5
+    }
+    print("Test 4: Parse var decl... PASS\n")
+    
+    print("\n=== Bootstrap Test PASS ===\n")
+    return 0
+}

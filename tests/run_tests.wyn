@@ -1,0 +1,92 @@
+// Wyn Test Runner — dogfooding Wyn to test Wyn
+
+fn run_test(path: string) -> int {
+    var cmd = "./wyn run " + path + " 2>&1"
+    var output = System_exec(cmd)
+
+    if str_contains(output, "compilation failed") {
+        return 0
+    }
+    if str_contains(output, "Failed to parse") {
+        return 0
+    }
+    if str_contains(output, "Segmentation fault") {
+        return 0
+    }
+    if str_contains(output, "error:") {
+        return 0
+    }
+    return 1
+}
+
+fn main() -> int {
+    println("=== Wyn Test Runner ===")
+
+    var pass = 0
+    var fail = 0
+    var tests = [
+        "tests/validation/test_struct_methods.wyn",
+        "tests/validation/test_option_type.wyn",
+        "tests/validation/test_generic_result_option.wyn",
+        "tests/validation/test_string_indexing.wyn",
+        "tests/validation/test_comprehensive_all_features.wyn",
+        "tests/validation/test_struct_arrays.wyn",
+        "tests/validation/test_enum_literal_comparison.wyn",
+        "tests/validation/test_result_type.wyn",
+        "tests/validation/test_real_world_suite.wyn",
+        "tests/validation/test_production_ready.wyn",
+        "tests/validation/test_hashmap_simple.wyn",
+        "tests/validation/test_enum_simple.wyn",
+        "tests/validation/test_var_in_nested_scopes.wyn",
+        "tests/validation/test_struct_init_null_field.wyn",
+        "tests/validation/test_struct_param.wyn",
+        "tests/validation/test_struct_simple.wyn",
+        "tests/validation/test_debug.wyn",
+        "tests/validation/test_1_1_result.wyn",
+        "tests/validation/test_1_8_structs.wyn",
+        "tests/validation/epic1_task_1_8.wyn",
+        "tests/validation/epic1_stress_test.wyn",
+        "tests/validation/epic1_final.wyn",
+        "tests/validation/epic1_comprehensive.wyn",
+        "tests/validation/test_traits.wyn",
+        "tests/validation/test_returning_closures.wyn",
+        "tests/validation/test_math_module.wyn",
+        "tests/validation/test_datetime_module.wyn",
+        "tests/validation/test_math_stdlib.wyn",
+        "tests/validation/test_path_stdlib.wyn",
+        "tests/validation/test_string_stdlib.wyn",
+        "tests/validation/test_json_module.wyn",
+        "tests/validation/test_runtime_extraction.wyn",
+        "tests/validation/test_generic_syntax.wyn",
+        "tests/validation/test_array_params.wyn",
+        "tests/validation/test_method_chaining.wyn",
+        "tests/validation/test_split_operations.wyn",
+        "tests/validation/test_namespaced_api.wyn",
+        "tests/validation/test_json.wyn",
+        "tests/validation/test_regex.wyn",
+        "tests/validation/test_http.wyn"
+    ]
+
+    for i in 0..40 {
+        var path = tests[i]
+        var result = run_test(path)
+        if result == 1 {
+            pass = pass + 1
+        } else {
+            fail = fail + 1
+            println("  FAIL: " + path)
+        }
+    }
+
+    println("")
+    println("Results: " + int_to_string(pass) + " pass, " + int_to_string(fail) + " fail")
+
+    // Clean up artifacts
+    System_exec("find tests -name '*.wyn.c' -delete 2>/dev/null")
+    System_exec("find tests -name '*.wyn.out' -delete 2>/dev/null")
+
+    if fail > 0 {
+        return 1
+    }
+    return 0
+}

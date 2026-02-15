@@ -1,0 +1,62 @@
+fn main() -> int {
+    // === NET ===
+    Test.init("Net Module")
+    // Can't test full TCP without a server, but verify functions exist
+    var sock = Net.connect("httpbin.org", 80)
+    Test.assert(sock > 0, "Net.connect returns socket")
+    var sent = Net.send(sock, "GET / HTTP/1.0\r\nHost: httpbin.org\r\n\r\n")
+    Test.assert(sent > 0, "Net.send returns bytes")
+    var resp = Net.recv(sock)
+    Test.assert(resp.len() > 0, "Net.recv returns data")
+    Test.assert(resp.contains("HTTP"), "response contains HTTP")
+    Net.close(sock)
+    Test.summary()
+    
+    // === JSON ===
+    Test.init("Json Module")
+    var j = Json.new()
+    Json.set(j, "name", "wyn")
+    Json.set_int(j, "version", 2)
+    var s = Json.stringify(j)
+    Test.assert(s.contains("wyn"), "json contains name")
+    Test.assert(s.contains("2"), "json contains version")
+    Test.summary()
+    
+    // === REGEX ===
+    Test.init("Regex Module")
+    Test.assert_eq_int(Regex.match("hello123", "[a-z]+[0-9]+"), 1, "match alphanumeric")
+    Test.assert_eq_int(Regex.match("hello", "[0-9]+"), 0, "no match digits")
+    var replaced = Regex.replace("foo123bar", "[0-9]+", "NUM")
+    Test.assert_eq_str(replaced, "fooNUMbar", "replace digits")
+    Test.summary()
+    
+    // === PATH ===
+    Test.init("Path Module")
+    Test.assert_eq_str(Path.basename("/usr/local/bin/wyn"), "wyn", "basename")
+    Test.assert_eq_str(Path.dirname("/usr/local/bin/wyn"), "/usr/local/bin", "dirname")
+    Test.assert_eq_str(Path.extension("main.wyn"), "wyn", "extension")
+    Test.assert_eq_str(Path.join("/usr", "local"), "/usr/local", "join")
+    Test.summary()
+    
+    // === DATETIME ===
+    Test.init("DateTime Module")
+    var now = DateTime.now()
+    Test.assert(now > 1700000000, "now > 2023")
+    Test.summary()
+    
+    // === MATH ===
+    Test.init("Math Module")
+    Test.assert_eq_int(Math.abs(-42), 42, "abs")
+    Test.assert_eq_int(Math.max(3, 7), 7, "max")
+    Test.assert_eq_int(Math.min(3, 7), 3, "min")
+    Test.summary()
+    
+    // === URL ===
+    Test.init("Url Module")
+    var enc = Url.encode("hello world")
+    Test.assert(enc.contains("%20") || enc.contains("+"), "encode spaces")
+    Test.assert_eq_str(Url.decode("hello%20world"), "hello world", "decode")
+    Test.summary()
+    
+    return 0
+}

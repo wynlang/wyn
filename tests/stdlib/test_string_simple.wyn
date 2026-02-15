@@ -1,0 +1,25 @@
+// Task 4.1: String Methods - TDD
+fn main() -> int {
+    // Test 1: substring
+    var s = "hello world"
+    var sub = s.substring(0, 5)
+    // Can't compare strings yet, just test it compiles
+    
+    // Test 2: trim
+    var s2 = "  hello  "
+    var trimmed = s2.trim()
+    
+    // Test 3: replace
+    var s3 = "hello world"
+    var replaced = s3.replace("world", "wyn")
+    
+    // Test 4: upper (already exists)
+    var s4 = "hello"
+    var upper = s4.upper()
+    
+    // Test 5: lower (already exists)
+    var s5 = "HELLO"
+    var lower = s5.lower()
+    
+    return 0
+}

@@ -1,0 +1,29 @@
+// Test destructuring with guards
+struct Point {
+    x: int,
+    y: int
+}
+
+fn main() -> int {
+    var p = Point { x: 10, y: 20 }
+    
+    // Destructure with guard
+    var result = match p {
+        Point { x, y } if x > 5 => x + y,
+        Point { x, y } => x - y,
+        _ => 0
+    }
+    
+    if result != 30 { return 1; }
+    
+    var p2 = Point { x: 2, y: 8 }
+    var result2 = match p2 {
+        Point { x, y } if x > 5 => x + y,
+        Point { x, y } => x - y,
+        _ => 0
+    }
+    
+    if result2 != -6 { return 2; }
+    
+    return 0
+}

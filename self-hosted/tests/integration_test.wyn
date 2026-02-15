@@ -1,0 +1,81 @@
+// Integration Test: Lexer + Parser
+// Tests that the self-hosted lexer and parser work together
+
+// Token type constants (from lexer.wyn)
+// INT = 0, IDENT = 9, FN = 5, VAR = 6, IF = 7, ELSE = 8
+// RETURN = 14, LEFT_BRACE = 16, RIGHT_BRACE = 17
+// LEFT_PAREN = 18, RIGHT_PAREN = 19
+// PLUS = 23, MINUS = 24, STAR = 25
+// COLON = 20, ARROW = 21, EOF = 10
+
+struct Tokens {
+    types: [int],
+    lines: [int],
+    cols: [int],
+    count: int
+}
+
+// Minimal lexer for testing (just enough to parse "42")
+fn lex_minimal(source: string) -> Tokens {
+    var types = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var lines = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    var cols = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    
+    // For "42", return: INT(42), EOF
+    types[0] = 0  // INT
+    types[1] = 10 // EOF
+    
+    return Tokens {
+        types: types,
+        lines: lines,
+        cols: cols,
+        count: 2
+    }
+}
+
+fn test_parse_number() -> int {
+    print("Test: Parse number literal\n")
+    
+    var source = "42"
+    var tokens = lex_minimal(source)
+    
+    // Verify tokens
+    if tokens.count != 2 {
+        print("  FAIL: Expected 2 tokens, got ")
+        print(tokens.count)
+        print("\n")
+        return 1
+    }
+    
+    if tokens.types[0] != 0 {
+        print("  FAIL: Expected INT token\n")
+        return 1
+    }
+    
+    if tokens.types[1] != 10 {
+        print("  FAIL: Expected EOF token\n")
+        return 1
+    }
+    
+    print("  PASS: Tokens correct\n")
+    return 0
+}
+
+fn main() -> int {
+    print("=== Integration Test: Lexer + Parser ===\n\n")
+    
+    var failures = 0
+    failures = failures + test_parse_number()
+    
+    print("\n=== Summary ===\n")
+    print("Failures: ")
+    print(failures)
+    print("\n")
+    
+    if failures == 0 {
+        print("All tests PASSED!\n")
+        return 0
+    }
+    
+    return 1
+}

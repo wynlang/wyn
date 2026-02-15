@@ -1,0 +1,9 @@
+// Test: Struct initialization with null field values should not crash
+
+struct Point { x: int }
+
+fn main() -> int {
+    var p = Point { x: 10 }
+    println(p.x)
+    return 0
+}

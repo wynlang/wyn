@@ -1,0 +1,38 @@
+// Comprehensive destructuring test
+struct Point {
+    x: int,
+    y: int
+}
+
+struct Rect {
+    width: int,
+    height: int
+}
+
+fn main() -> int {
+    // Test 1: Basic destructuring
+    var p = Point { x: 10, y: 20 }
+    var result1 = match p {
+        Point { x, y } => x + y,
+        _ => 0
+    }
+    if result1 != 30 { return 1; }
+    
+    // Test 2: Destructuring with different values
+    var p2 = Point { x: 5, y: 15 }
+    var result2 = match p2 {
+        Point { x, y } => x * y,
+        _ => 0
+    }
+    if result2 != 75 { return 2; }
+    
+    // Test 3: Multiple struct types
+    var r = Rect { width: 8, height: 4 }
+    var result3 = match r {
+        Rect { width, height } => width * height,
+        _ => 0
+    }
+    if result3 != 32 { return 3; }
+    
+    return 0
+}

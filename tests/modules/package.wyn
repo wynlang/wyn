@@ -1,0 +1,8 @@
+# Package manifest for math_utils module
+name = "math_utils"
+version = "1.0.0"
+description = "Basic math utilities"
+author = "Wyn Team"
+
+[dependencies]
+# No dependencies for this simple module

@@ -1,0 +1,15 @@
+// Task 1.1: Result<T, E> Type Validation
+fn divide(a: int, b: int) -> int {
+    if b == 0 {
+        return -1
+    }
+    return a / b
+}
+
+fn main() -> int {
+    var result = divide(10, 2)
+    if result == 5 {
+        return 0  // PASS
+    }
+    return 1  // FAIL
+}

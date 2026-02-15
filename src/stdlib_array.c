@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 // Array module - comprehensive array manipulation functions
 
@@ -49,6 +50,94 @@ int wyn_array_find(int* arr, int len, int (*pred)(int), int* found) {
     }
     *found = 0;
     return 0;
+}
+
+// Find index: return index of first element matching predicate
+int wyn_array_find_index(int* arr, int len, int (*pred)(int)) {
+    for (int i = 0; i < len; i++) {
+        if (pred(arr[i])) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Unique: remove duplicates from array
+int* wyn_array_unique(int* arr, int len, int* out_len) {
+    int* result = malloc(sizeof(int) * len);
+    int count = 0;
+    for (int i = 0; i < len; i++) {
+        int is_duplicate = 0;
+        for (int j = 0; j < count; j++) {
+            if (result[j] == arr[i]) {
+                is_duplicate = 1;
+                break;
+            }
+        }
+        if (!is_duplicate) {
+            result[count++] = arr[i];
+        }
+    }
+    *out_len = count;
+    return result;
+}
+
+// Join: join array elements into string with separator
+char* wyn_array_join(int* arr, int len, const char* separator) {
+    if (len == 0) {
+        char* result = malloc(1);
+        result[0] = '\0';
+        return result;
+    }
+    
+    // Calculate required buffer size
+    int sep_len = strlen(separator);
+    int total_len = 0;
+    for (int i = 0; i < len; i++) {
+        // Estimate digits needed for each number (max 12 for int)
+        total_len += 12;
+        if (i < len - 1) total_len += sep_len;
+    }
+    total_len += 1; // null terminator
+    
+    char* result = malloc(total_len);
+    result[0] = '\0';
+    
+    for (int i = 0; i < len; i++) {
+        char num_str[12];
+        sprintf(num_str, "%d", arr[i]);
+        strcat(result, num_str);
+        if (i < len - 1) {
+            strcat(result, separator);
+        }
+    }
+    
+    return result;
+}
+
+// First: get first element
+int wyn_array_first(int* arr, int len, int* found) {
+    if (len > 0) {
+        *found = 1;
+        return arr[0];
+    }
+    *found = 0;
+    return 0;
+}
+
+// Last: get last element
+int wyn_array_last(int* arr, int len, int* found) {
+    if (len > 0) {
+        *found = 1;
+        return arr[len - 1];
+    }
+    *found = 0;
+    return 0;
+}
+
+// Is empty: check if array is empty
+int wyn_array_is_empty(int* arr, int len) {
+    return len == 0;
 }
 
 // Any: check if any element matches predicate

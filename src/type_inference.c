@@ -89,6 +89,21 @@ Type* wyn_infer_variable_type(Expr* init_expr, SymbolTable* scope) {
                 inferred_type = init_expr->expr_type;
             }
             break;
+        case EXPR_IDENT:
+            // Variable reference - look up its type
+            {
+                Symbol* sym = find_symbol(scope, init_expr->token);
+                if (sym && sym->type) {
+                    inferred_type = sym->type;
+                }
+            }
+            break;
+        case EXPR_FIELD_ACCESS:
+            // Field access - use the checked type
+            if (init_expr->expr_type) {
+                inferred_type = init_expr->expr_type;
+            }
+            break;
         default:
             // No inference - return NULL to use checked type
             inferred_type = NULL;
@@ -171,8 +186,28 @@ Type* wyn_infer_binary_result_type(Expr* binary_expr) {
     WynTokenType op = binary_expr->binary.op.type;
     
     if (op == TOKEN_PLUS || op == TOKEN_MINUS || op == TOKEN_STAR || op == TOKEN_SLASH) {
-        // Arithmetic operations - check operand types
+        // Check for string concatenation first
+        if (op == TOKEN_PLUS) {
+            if (binary_expr->binary.left->type == EXPR_STRING || binary_expr->binary.right->type == EXPR_STRING) {
+                return make_type(TYPE_STRING);
+            }
+            // Check if operands are identifiers that might be strings
+            if (binary_expr->binary.left->expr_type && binary_expr->binary.left->expr_type->kind == TYPE_STRING) {
+                return make_type(TYPE_STRING);
+            }
+            if (binary_expr->binary.right->expr_type && binary_expr->binary.right->expr_type->kind == TYPE_STRING) {
+                return make_type(TYPE_STRING);
+            }
+        }
+        // Arithmetic operations - check operand types (both literals and variables)
         if (binary_expr->binary.left->type == EXPR_FLOAT || binary_expr->binary.right->type == EXPR_FLOAT) {
+            return make_type(TYPE_FLOAT);
+        }
+        // Check expr_type for variables
+        if (binary_expr->binary.left->expr_type && binary_expr->binary.left->expr_type->kind == TYPE_FLOAT) {
+            return make_type(TYPE_FLOAT);
+        }
+        if (binary_expr->binary.right->expr_type && binary_expr->binary.right->expr_type->kind == TYPE_FLOAT) {
             return make_type(TYPE_FLOAT);
         }
         return make_type(TYPE_INT);
@@ -191,6 +226,11 @@ Type* wyn_infer_binary_result_type(Expr* binary_expr) {
 Type* wyn_infer_call_return_type(Expr* call_expr, SymbolTable* scope) {
     if (!call_expr || call_expr->type != EXPR_CALL) {
         return make_type(TYPE_INT);
+    }
+    
+    // Check if type was already set by checker (for builtin functions)
+    if (call_expr->expr_type) {
+        return call_expr->expr_type;
     }
     
     // Look up function in symbol table to get return type

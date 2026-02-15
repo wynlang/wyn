@@ -1,13 +1,25 @@
+#ifdef __linux__
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <time.h>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #include "common.h"
 #include "ast.h"
 #include "types.h"
 #include "memory.h"
 #include "security.h"
 #include "platform.h"
-#include "llvm_codegen.h"
+#include "banner.h"
 #include "optimize.h"
 #include "module.h"
 #include "commands.h"
@@ -35,6 +47,14 @@ static char* read_file(const char* path) {
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
     
+    // Handle empty files
+    if (size <= 0) {
+        fclose(f);
+        char* buffer = malloc(1);
+        buffer[0] = '\0';
+        return buffer;
+    }
+    
     char* buffer = safe_malloc(size + 1);
     fread(buffer, 1, size, f);
     buffer[size] = '\0';
@@ -44,7 +64,7 @@ static char* read_file(const char* path) {
 }
 
 static char* get_version() {
-    static char version[32] = {0};
+    static char version[64] = {0};
     if (version[0] == 0) {
         // Try multiple locations for VERSION file
         const char* paths[] = {
@@ -66,7 +86,12 @@ static char* get_version() {
             }
             fclose(f);
         }
-        if (version[0] == 0) strcpy(version, "1.2.1");
+        if (version[0] == 0) strcpy(version, "1.6.0");
+        
+        // Add LLVM backend indicator
+        #ifdef WITH_LLVM
+        strcat(version, " (LLVM backend)");
+        #endif
     }
     return version;
 }
@@ -84,21 +109,46 @@ int main(int argc, char** argv) {
     wyn_init_args(argc, argv);
     
     if (argc < 2) {
-        fprintf(stderr, "Wyn Compiler v%s\n", get_version());
-        fprintf(stderr, "Usage:\n");
-        fprintf(stderr, "  wyn <file.wyn>           Compile file\n");
-        fprintf(stderr, "  wyn run <file.wyn>       Compile and run\n");
-        fprintf(stderr, "  wyn build <dir>          Build all .wyn files in directory\n");
-        fprintf(stderr, "  wyn test                 Run tests\n");
-        fprintf(stderr, "  wyn fmt <file.wyn>       Validate file\n");
-        fprintf(stderr, "  wyn clean                Clean artifacts\n");
-        fprintf(stderr, "  wyn cross <os> <file>    Cross-compile (linux/macos/windows)\n");
-        fprintf(stderr, "  wyn llvm <file.wyn>      Compile with LLVM backend\n");
-        fprintf(stderr, "  wyn version              Show version\n");
-        fprintf(stderr, "  wyn help                 Show this help\n");
-        fprintf(stderr, "\nOptimization flags:\n");
-        fprintf(stderr, "  -O1                      Basic optimizations\n");
-        fprintf(stderr, "  -O2                      Advanced optimizations\n");
+        // Banner
+        print_banner(get_version());
+        fprintf(stderr, "\033[1mUsage:\033[0m wyn \033[33m<command>\033[0m [options]\n\n");
+        
+        fprintf(stderr, "\033[1mDevelop:\033[0m\n");
+        fprintf(stderr, "  \033[32mrun\033[0m <file.wyn>          Compile and run\n");
+        fprintf(stderr, "  \033[32mcheck\033[0m <file.wyn>        Type-check without compiling\n");
+        fprintf(stderr, "  \033[32mfmt\033[0m <file.wyn>          Format source file\n");
+        fprintf(stderr, "  \033[32mtest\033[0m                    Run project tests\n");
+        fprintf(stderr, "  \033[32mwatch\033[0m <file.wyn>        Watch and auto-rebuild\n");
+        fprintf(stderr, "  \033[32mrepl\033[0m                    Interactive REPL\n");
+        fprintf(stderr, "  \033[32mbench\033[0m <file.wyn>        Benchmark with timing\n");
+        fprintf(stderr, "  \033[32mdoc\033[0m <file.wyn>          Generate documentation\n");
+        
+        fprintf(stderr, "\n\033[1mBuild:\033[0m\n");
+        fprintf(stderr, "  \033[32mbuild\033[0m <dir>             Build project (--shared / --python)\n");
+        fprintf(stderr, "  \033[32mcross\033[0m <target> <file>   Cross-compile (linux/macos/windows/ios/android)\n");
+        fprintf(stderr, "  \033[32mbuild-runtime\033[0m           Precompile runtime for fast builds\n");
+        fprintf(stderr, "  \033[32mclean\033[0m                   Remove build artifacts\n");
+        
+        fprintf(stderr, "\n\033[1mPackages:\033[0m\n");
+        fprintf(stderr, "  \033[32minit\033[0m [name]             Create new project\n");
+        fprintf(stderr, "  \033[32mpkg install\033[0m <name>      Install a package\n");
+        fprintf(stderr, "  \033[32mpkg list\033[0m                List installed packages\n");
+        fprintf(stderr, "  \033[32mpkg uninstall\033[0m <name>    Uninstall a package\n");
+        fprintf(stderr, "  \033[32mpkg search\033[0m <query>      Search package registry\n");
+        
+        fprintf(stderr, "\n\033[1mTools:\033[0m\n");
+        fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
+        fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
+        fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
+        fprintf(stderr, "  \033[32mversion\033[0m                 Show version\n");
+        fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
+        
+        fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
+        fprintf(stderr, "  \033[33m--fast\033[0m                  Skip optimizations (fastest compile)\n");
+        fprintf(stderr, "  \033[33m--release               Full optimizations (-O2)\n");
+        fprintf(stderr, "  \033[33m--debug\033[0m                Keep .c and .out artifacts\n");
+        
+        fprintf(stderr, "\n\033[2mhttps://wynlang.com\033[0m\n");
         return 1;
     }
     
@@ -106,38 +156,116 @@ int main(int argc, char** argv) {
     
     // Handle --version and -v flags
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0 || strcmp(command, "-v") == 0) {
-        printf("Wyn v%s\n", get_version());
+        printf("\033[36mWyn\033[0m v%s\n", get_version());
         return 0;
+    }
+    
+    // Install/uninstall wyn to system PATH
+    if (strcmp(command, "install") == 0) {
+#ifdef _WIN32
+        fprintf(stderr, "On Windows, use the installer or add wyn.exe to your PATH manually.\n");
+        fprintf(stderr, "  1. Copy wyn.exe to a directory\n");
+        fprintf(stderr, "  2. Add that directory to your PATH environment variable\n");
+        return 1;
+#else
+        char exe_path[1024];
+        #ifdef __APPLE__
+        uint32_t size = sizeof(exe_path);
+        _NSGetExecutablePath(exe_path, &size);
+        #else
+        ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path)-1);
+        if (len > 0) exe_path[len] = 0; else { strncpy(exe_path, argv[0], sizeof(exe_path)-1); }
+        #endif
+        char abs_path[1024];
+        if (realpath(exe_path, abs_path) == NULL) strncpy(abs_path, exe_path, sizeof(abs_path));
+        
+        const char* install_dir = "/usr/local/bin";
+        char install_path[1100];
+        snprintf(install_path, sizeof(install_path), "%s/wyn", install_dir);
+        
+        if (access(install_path, X_OK) == 0) {
+            char existing[1024] = {0};
+            readlink(install_path, existing, sizeof(existing)-1);
+            printf("\033[33mwyn\033[0m is already installed at %s\n", install_path);
+            if (existing[0]) printf("  → %s\n", existing);
+            printf("Reinstall? [y/N] ");
+            fflush(stdout);
+            char c = getchar();
+            if (c != 'y' && c != 'Y') { printf("Cancelled.\n"); return 0; }
+            unlink(install_path);
+        }
+        
+        printf("Installing \033[32mwyn\033[0m to %s...\n", install_path);
+        if (symlink(abs_path, install_path) == 0) {
+            printf("\033[32m✓\033[0m Installed: %s → %s\n", install_path, abs_path);
+            printf("  Run \033[1mwyn version\033[0m from anywhere to verify.\n");
+        } else {
+            fprintf(stderr, "\033[31m✗\033[0m Failed to create symlink. Try:\n");
+            fprintf(stderr, "  sudo ln -sf %s %s\n", abs_path, install_path);
+        }
+        return 0;
+#endif
+    }
+    
+    if (strcmp(command, "uninstall") == 0) {
+#ifdef _WIN32
+        fprintf(stderr, "On Windows, remove wyn.exe from your PATH manually.\n");
+        return 1;
+#else
+        const char* install_path = "/usr/local/bin/wyn";
+        if (access(install_path, F_OK) != 0) {
+            printf("wyn is not installed at %s\n", install_path);
+            return 0;
+        }
+        printf("Removing \033[33m%s\033[0m...\n", install_path);
+        if (unlink(install_path) == 0) {
+            printf("\033[32m✓\033[0m Uninstalled wyn from %s\n", install_path);
+        } else {
+            fprintf(stderr, "\033[31m✗\033[0m Failed. Try: sudo rm %s\n", install_path);
+        }
+        return 0;
+#endif
     }
     
     // Handle --help and -h flags
     if (strcmp(command, "help") == 0 || strcmp(command, "--help") == 0 || strcmp(command, "-h") == 0) {
-        printf("Wyn Compiler v%s\n\n", get_version());
-        printf("Commands:\n");
-        printf("  wyn <file.wyn>           Compile file\n");
-        printf("  wyn run <file.wyn>       Compile and run\n");
-        printf("  wyn build <dir>          Build all .wyn files in directory\n");
-        printf("  wyn init [name]          Create new project\n");
-        printf("  wyn watch <file.wyn>     Watch and auto-rebuild on changes\n");
-        printf("  wyn test                 Run tests\n");
-        printf("  wyn fmt <file.wyn>       Validate file\n");
-        printf("  wyn clean                Clean artifacts\n");
-        printf("  wyn cross <os> <file>    Cross-compile\n");
-        printf("  wyn llvm <file.wyn>      Compile with LLVM backend\n");
-        printf("  wyn search <query>       Search package registry\n");
-        printf("  wyn info <package>       Show package information\n");
-        printf("  wyn versions <package>   List package versions\n");
-        printf("  wyn install <package>    Install package from registry\n");
-        printf("  wyn publish              Publish package to registry\n");
-        printf("  wyn version              Show version\n");
-        printf("  wyn help                 Show this help\n");
-        printf("\nOptimization flags:\n");
-        printf("  -O1                      Basic optimizations (dead code elimination)\n");
-        printf("  -O2                      Advanced optimizations (includes function inlining)\n");
-        printf("\nCross-compile targets:\n");
-        printf("  linux   - Linux x86_64\n");
-        printf("  macos   - macOS (current platform)\n");
-        printf("  windows - Windows x86_64 (requires mingw)\n");
+        // Reuse the no-args banner by faking argc
+        // Print banner directly
+        print_banner(get_version());
+        fprintf(stderr, "\033[1mUsage:\033[0m wyn \033[33m<command>\033[0m [options]\n\n");
+        fprintf(stderr, "\033[1mDevelop:\033[0m\n");
+        fprintf(stderr, "  \033[32mrun\033[0m <file.wyn>         Compile and run\n");
+        fprintf(stderr, "  \033[32mcheck\033[0m <file.wyn>       Type-check without compiling\n");
+        fprintf(stderr, "  \033[32mfmt\033[0m <file.wyn>         Format source file\n");
+        fprintf(stderr, "  \033[32mtest\033[0m                    Run project tests\n");
+        fprintf(stderr, "  \033[32mwatch\033[0m <file.wyn>       Watch and auto-rebuild\n");
+        fprintf(stderr, "  \033[32mrepl\033[0m                    Interactive REPL\n");
+        fprintf(stderr, "  \033[32mbench\033[0m <file.wyn>       Benchmark with timing\n");
+        fprintf(stderr, "  \033[32mdoc\033[0m <file.wyn>         Generate documentation\n");
+        fprintf(stderr, "\n\033[1mBuild:\033[0m\n");
+        fprintf(stderr, "  \033[32mbuild\033[0m <dir>             Build project (--shared / --python)\n");
+        fprintf(stderr, "  \033[32mcross\033[0m <target> <file>   Cross-compile (linux/macos/windows/ios/android)\n");
+        fprintf(stderr, "  \033[32mbuild-runtime\033[0m           Precompile runtime for fast builds\n");
+        fprintf(stderr, "  \033[32mclean\033[0m                   Remove build artifacts\n");
+        fprintf(stderr, "\n\033[1mPackages:\033[0m\n");
+        fprintf(stderr, "  \033[32minit\033[0m [name]             Create new project\n");
+        fprintf(stderr, "  \033[32mpkg install\033[0m <name>      Install a package\n");
+        fprintf(stderr, "  \033[32mpkg list\033[0m                List installed packages\n");
+        fprintf(stderr, "  \033[32mpkg uninstall\033[0m <name>    Uninstall a package\n");
+        fprintf(stderr, "  \033[32mpkg search\033[0m <query>      Search package registry\n");
+        fprintf(stderr, "\n\033[1mTools:\033[0m\n");
+        fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
+        fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
+        fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
+        fprintf(stderr, "  \033[32mversion\033[0m                 Show version\n");
+        fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
+        fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
+        fprintf(stderr, "  \033[33m--fast\033[0m                  Skip optimizations (fastest compile)\n");
+        fprintf(stderr, "  \033[33m--release               Full optimizations (-O2)\n");
+        fprintf(stderr, "  \033[33m--debug\033[0m                Keep .c and .out artifacts\n");
+        fprintf(stderr, "\n\033[1mCross-compile targets:\033[0m\n");
+        fprintf(stderr, "  linux, macos, windows, ios, android\n");
+        fprintf(stderr, "\n\033[2mhttps://wynlang.com\033[0m\n");
         return 0;
     }
     
@@ -175,14 +303,11 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "install") == 0) {
+        extern int package_install(const char*);
         if (argc < 3) {
-            // wyn install - install packages from wyn.toml
-            extern int package_install(const char*);
             return package_install(".");
         } else {
-            // wyn install <package> - install from registry
-            extern int registry_install(const char*);
-            return registry_install(argv[2]);
+            return package_install(argv[2]);
         }
     }
     
@@ -230,7 +355,7 @@ int main(int argc, char** argv) {
     
     if (strcmp(command, "pkg") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn pkg <list|install>\n");
+            fprintf(stderr, "Usage: wyn pkg <list|install|uninstall|search>\n");
             return 1;
         }
         extern int package_install(const char*);
@@ -240,6 +365,49 @@ int main(int argc, char** argv) {
             return package_list();
         } else if (strcmp(argv[2], "install") == 0) {
             return package_install(".");
+        } else if (strcmp(argv[2], "uninstall") == 0) {
+            if (argc < 4) {
+                fprintf(stderr, "Usage: wyn pkg uninstall <package-name>\n");
+                return 1;
+            }
+            char pkg_dir[1024];
+            snprintf(pkg_dir, sizeof(pkg_dir), "%s/.wyn/packages/%s", getenv("HOME"), argv[3]);
+            struct stat st;
+            if (stat(pkg_dir, &st) != 0) {
+                fprintf(stderr, "\033[31m✗\033[0m Package '%s' is not installed.\n", argv[3]);
+                return 1;
+            }
+            char cmd[1100];
+            snprintf(cmd, sizeof(cmd), "rm -rf '%s'", pkg_dir);
+            system(cmd);
+            printf("\033[32m✓\033[0m Uninstalled %s\n", argv[3]);
+            return 0;
+        } else if (strcmp(argv[2], "search") == 0) {
+            if (argc < 4) {
+                fprintf(stderr, "Usage: wyn pkg search <query>\n");
+                return 1;
+            }
+            // Search installed packages and registry
+            char pkg_dir[512];
+            snprintf(pkg_dir, sizeof(pkg_dir), "%s/.wyn/packages", getenv("HOME"));
+            printf("\033[1mSearching for '%s'...\033[0m\n\n", argv[3]);
+            
+            // Search local packages
+            char cmd[1024];
+            snprintf(cmd, sizeof(cmd), "ls -1 %s 2>/dev/null | grep -i '%s'", pkg_dir, argv[3]);
+            FILE* fp = popen(cmd, "r");
+            int found = 0;
+            if (fp) {
+                char buf[256];
+                while (fgets(buf, sizeof(buf), fp)) {
+                    buf[strcspn(buf, "\n")] = 0;
+                    printf("  \033[32m●\033[0m %s \033[2m(installed)\033[0m\n", buf);
+                    found++;
+                }
+                pclose(fp);
+            }
+            if (!found) printf("  No packages found matching '%s'\n", argv[3]);
+            return 0;
         } else {
             fprintf(stderr, "Unknown pkg command: %s\n", argv[2]);
             return 1;
@@ -248,184 +416,131 @@ int main(int argc, char** argv) {
     
     if (strcmp(command, "build") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn build <directory>\n");
+            fprintf(stderr, "Usage: wyn build <file|dir> [--shared|--python]\n");
             return 1;
         }
-        
-        char* dir = argv[2];
-        
-        // Create temp directory if it doesn't exist
-        system("mkdir -p temp");
-        
-        printf("Building project in %s...\n", dir);
-        
-        // Find all .wyn files and compile them together
-        char find_cmd[512];
-        snprintf(find_cmd, 512, "find %s -name '*.wyn' -type f > temp/files.txt", dir);
-        system(find_cmd);
-        
-        // Read file list and concatenate
-        FILE* files = fopen("temp/files.txt", "r");
-        if (!files) {
-            fprintf(stderr, "Error: No .wyn files found in %s\n", dir);
-            return 1;
+        // Detect flags
+        char* dir = NULL;
+        const char* build_flag = "";
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--shared") == 0) build_flag = " --shared";
+            else if (strcmp(argv[i], "--python") == 0) build_flag = " --python";
+            else if (!dir) dir = argv[i];
         }
+        if (!dir) { fprintf(stderr, "Usage: wyn build <file|dir> [--shared|--python]\n"); return 1; }
         
-        // Check if file list is empty
-        fseek(files, 0, SEEK_END);
-        long file_size = ftell(files);
-        fseek(files, 0, SEEK_SET);
-        
-        if (file_size == 0) {
-            fprintf(stderr, "Error: No .wyn files found in %s\n", dir);
-            fclose(files);
-            return 1;
-        }
-        
-        FILE* combined = fopen("temp/combined.wyn", "w");
-        char line[512];
-        while (fgets(line, 512, files)) {
-            line[strcspn(line, "\n")] = 0; // Remove newline
-            
-            // Extract module name from filename (e.g., /path/to/math.wyn -> math)
-            char* filename = strrchr(line, '/');
-            if (!filename) filename = line;
-            else filename++; // Skip the /
-            
-            char module_name[128] = "";
-            char* dot = strrchr(filename, '.');
-            if (dot) {
-                int len = dot - filename;
-                if (len > 0 && len < 127) {
-                    strncpy(module_name, filename, len);
-                    module_name[len] = '\0';
-                }
-            }
-            
-            char* source = read_file(line);
-            
-            // Process source: remove imports, prefix exports, replace module::func with module_func
-            char* modified = malloc(strlen(source) * 2);
-            char* dst = modified;
-            char* src = source;
-            
-            while (*src) {
-                // Skip import statements
-                if (strncmp(src, "import ", 7) == 0) {
-                    while (*src && *src != ';') src++;
-                    if (*src == ';') src++;
-                    while (*src == ' ' || *src == '\n') src++;
-                    continue;
-                }
-                
-                // Prefix exported functions
-                if (strncmp(src, "export fn ", 10) == 0 && 
-                    strcmp(module_name, "main") != 0 && strlen(module_name) > 0) {
-                    strcpy(dst, "fn ");
-                    dst += 3;
-                    strcpy(dst, module_name);
-                    dst += strlen(module_name);
-                    *dst++ = '_';
-                    src += 10;
-                } else if (src[0] != '\0' && src[1] != '\0' && strncmp(src, "::", 2) == 0) {
-                    // Replace :: with _
-                    *dst++ = '_';
-                    src += 2;
-                } else {
-                    *dst++ = *src++;
-                }
-            }
-            *dst = '\0';
-            
-            fprintf(combined, "// From %s\n%s\n\n", line, modified);
-            free(modified);
-            free(source);
-        }
-        fclose(files);
-        fclose(combined);
-        
-        // Compile the combined file
-        char* source = read_file("temp/combined.wyn");
-        init_lexer(source);
-        init_parser();
-        set_parser_filename("temp/combined.wyn");  // Set filename for better error messages
-        init_checker();
-        check_all_modules();  // Type check loaded modules
-        
-        Program* prog = parse_program();
-        if (!prog) {
-            fprintf(stderr, "Error: Failed to parse program\n");
-            free(source);
-            return 1;
-        }
-        
-        check_program(prog);
-        if (checker_had_error()) {
-            fprintf(stderr, "Compilation failed due to errors\n");
-            free(source);
-            return 1;
-        }
-        
-        char out_path[256];
-        snprintf(out_path, 256, "%s/main.c", dir);
-        FILE* out = fopen(out_path, "w");
-        init_codegen(out);
-        codegen_c_header();
-        codegen_program(prog);
-        fclose(out);
-        
-        // Get WYN_ROOT or auto-detect
-        char wyn_root[1024] = ".";
-        char* root_env = getenv("WYN_ROOT");
-        if (root_env) {
-            snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
+        // Accept a .wyn file directly or a directory
+        char entry[512];
+        struct stat st;
+        if (stat(dir, &st) == 0 && S_ISREG(st.st_mode)) {
+            snprintf(entry, sizeof(entry), "%s", dir);
         } else {
-            // Auto-detect: check if src/wyn_wrapper.c exists, if not try ./wyn
-            FILE* test = fopen("./src/wyn_wrapper.c", "r");
-            if (!test) {
-                test = fopen("./wyn/src/wyn_wrapper.c", "r");
-                if (test) {
-                    snprintf(wyn_root, sizeof(wyn_root), "./wyn");
+            snprintf(entry, sizeof(entry), "%s/main.wyn", dir);
+            if (stat(entry, &st) != 0) {
+                snprintf(entry, sizeof(entry), "%s/src/main.wyn", dir);
+                if (stat(entry, &st) != 0) {
+                    fprintf(stderr, "\033[31m✗\033[0m No main.wyn found in %s or %s/src\n", dir, dir);
+                    return 1;
                 }
             }
-            if (test) fclose(test);
         }
         
-        char compile_cmd[4096];
-        snprintf(compile_cmd, sizeof(compile_cmd), 
-                 "gcc -std=c11 -I %s/src -o %s/main %s/main.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/spawn.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c -lm", 
-                 wyn_root, dir, dir, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
-        int result = system(compile_cmd);
-        
-        if (result == 0) {
-            printf("Build successful: %s/main\n", dir);
-            // Clean up intermediate files
-            char cleanup[256];
-            snprintf(cleanup, 256, "%s/main.c", dir);
-            remove(cleanup);
-            remove("temp/files.txt");
-            remove("temp/combined.wyn");
-        } else {
-            fprintf(stderr, "Build failed\n");
+        printf("\033[1mBuilding\033[0m %s%s...\n", entry, build_flag);
+        char cmd[1024];
+        snprintf(cmd, sizeof(cmd), "%s run %s%s", argv[0], entry, build_flag);
+        int result = system(cmd);
+        if (result == 0 && build_flag[0] == 0) {
+            // Normal build: remove .c, rename .out to clean name
+            char c_path[512];
+            snprintf(c_path, sizeof(c_path), "%s.c", entry);
+            unlink(c_path);
+            char out_path[512], bin_path[512];
+            snprintf(out_path, sizeof(out_path), "%s.out", entry);
+            snprintf(bin_path, sizeof(bin_path), "%s", entry);
+            char* dot = strrchr(bin_path, '.');
+            if (dot) *dot = 0;
+            rename(out_path, bin_path);
+            printf("\033[32m✓\033[0m Built: %s\n", bin_path);
+        } else if (result != 0) {
+            fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
         }
-        
-        free(source);
-        return result;
+        return result == 0 ? 0 : 1;
     }
     
     if (strcmp(command, "test") == 0) {
-        printf("Running tests...\n");
-        
-        // Check if we're in a project directory (has tests/ folder)
-        FILE* test_dir = fopen("tests", "r");
-        if (test_dir) {
-            fclose(test_dir);
-            // Simple approach: run each .wyn file in tests/
-            return system("for f in tests/*.wyn; do [ -f \"$f\" ] && wyn run \"$f\"; done");
-        } else {
-            // Fallback to build system tests
-            return system("make test 2>&1 && ./tests/integration_tests.sh");
+        struct stat st;
+        // Prefer run_tests.wyn if it exists
+        if (stat("tests/run_tests.wyn", &st) == 0) {
+            printf("\033[1mRunning tests...\033[0m\n\n");
+            char cmd[512];
+            snprintf(cmd, sizeof(cmd), "%s run tests/run_tests.wyn", argv[0]);
+            return system(cmd) == 0 ? 0 : 1;
         }
+        if (stat("tests", &st) != 0 || !S_ISDIR(st.st_mode)) {
+            fprintf(stderr, "\033[33mNo tests/ directory found.\033[0m\n");
+            fprintf(stderr, "Create tests/*.wyn files to get started.\n");
+            return 1;
+        }
+        printf("\033[1mRunning tests...\033[0m\n\n");
+        char cmd[4096];
+        snprintf(cmd, sizeof(cmd),
+            "pass=0; fail=0; "
+            "for f in tests/test_*.wyn tests/*/test_*.wyn; do "
+            "  [ -f \"$f\" ] || continue; "
+            "  result=$(%s run \"$f\" 2>&1); "
+            "  if [ $? -eq 0 ]; then "
+            "    echo \"  \\033[32m✓\\033[0m $f\"; pass=$((pass+1)); "
+            "  else "
+            "    echo \"  \\033[31m✗\\033[0m $f\"; fail=$((fail+1)); "
+            "    echo \"$result\" | tail -3 | sed 's/^/    /'; "
+            "  fi; "
+            "done; "
+            "echo; echo \"\\033[1mResults:\\033[0m $pass passed, $fail failed\"; "
+            "[ $fail -eq 0 ]",
+            argv[0]);
+        return system(cmd) == 0 ? 0 : 1;
+    }
+    
+    if (strcmp(command, "build-runtime") == 0) {
+        // Precompile runtime library for fast compilation
+        printf("Building runtime library...\n");
+        char cmd[4096];
+        snprintf(cmd, sizeof(cmd),
+            "cd %s && mkdir -p runtime/obj && "
+            "for f in src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c "
+            "src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c "
+            "src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c "
+            "src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c "
+            "src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c "
+            "src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c "
+            "src/file_io_simple.c src/stdlib_enhanced.c; do "
+            "gcc -std=c11 -O2 -w -I src -c $f -o runtime/obj/$(basename $f .c).o; done && "
+            "ar rcs runtime/libwyn_rt.a runtime/obj/*.o",
+            argv[0] && strchr(argv[0], '/') ? "" : ".");
+        // Use wyn_root
+        char wyn_root[1024] = ".";
+        char* root_env = getenv("WYN_ROOT");
+        if (root_env) strncpy(wyn_root, root_env, sizeof(wyn_root)-1);
+        else {
+            char exe_path[1024];
+            strncpy(exe_path, argv[0], sizeof(exe_path)-1);
+            char* last_slash = strrchr(exe_path, '/');
+            if (last_slash) { *last_slash = 0; strncpy(wyn_root, exe_path, sizeof(wyn_root)-1); }
+        }
+        snprintf(cmd, sizeof(cmd),
+            "mkdir -p %s/runtime/obj && cd %s && "
+            "for f in src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c "
+            "src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c "
+            "src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c "
+            "src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c "
+            "src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c "
+            "src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c "
+            "src/file_io_simple.c src/stdlib_enhanced.c; do "
+            "gcc -std=c11 -O2 -w -I src -c $f -o runtime/obj/$(basename $f .c).o 2>/dev/null; done && "
+            "ar rcs runtime/libwyn_rt.a runtime/obj/*.o && "
+            "echo 'Built runtime/libwyn_rt.a'",
+            wyn_root, wyn_root);
+        return system(cmd);
     }
     
     if (strcmp(command, "clean") == 0) {
@@ -439,15 +554,194 @@ int main(int argc, char** argv) {
         return 0;
     }
     
+    // wyn repl — interactive REPL
+    if (strcmp(command, "repl") == 0) {
+        printf("\033[1mWyn REPL\033[0m v%s  (type 'exit' to quit)\n\n", get_version());
+        char line[4096];
+        char history[65536] = "";  // accumulate definitions
+        while (1) {
+            printf("\033[36mwyn>\033[0m ");
+            fflush(stdout);
+            if (!fgets(line, sizeof(line), stdin)) break;
+            line[strcspn(line, "\n")] = 0;
+            if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) break;
+            if (strlen(line) == 0) continue;
+            
+            // Check if it's a definition (fn, struct, etc.) — accumulate
+            int is_def = (strncmp(line, "fn ", 3) == 0 || strncmp(line, "struct ", 7) == 0 ||
+                         strncmp(line, "enum ", 5) == 0 || strncmp(line, "var ", 4) == 0 ||
+                         strncmp(line, "const ", 6) == 0);
+            
+            // Build a temp file with accumulated history + this expression
+            char tmp[128];
+            snprintf(tmp, sizeof(tmp), "/tmp/wyn_repl_%d.wyn", getpid());
+            FILE* f = fopen(tmp, "w");
+            fprintf(f, "%s\n", history);
+            if (is_def) {
+                fprintf(f, "%s\n", line);
+                fprintf(f, "fn main() -> int { return 0 }\n");
+                // Add to history
+                strcat(history, line);
+                strcat(history, "\n");
+            } else {
+                fprintf(f, "fn main() -> int {\n  %s\n  return 0\n}\n", line);
+            }
+            fclose(f);
+            
+            char cmd[512];
+            snprintf(cmd, sizeof(cmd), "%s run %s 2>&1", argv[0], tmp);
+            FILE* p = popen(cmd, "r");
+            if (p) {
+                char buf[4096];
+                while (fgets(buf, sizeof(buf), p)) {
+                    // Filter out compilation noise
+                    if (strstr(buf, "Compiled in") || strstr(buf, "warning")) continue;
+                    printf("%s", buf);
+                }
+                pclose(p);
+            }
+            unlink(tmp);
+            char tmpc[140]; snprintf(tmpc, sizeof(tmpc), "%s.c", tmp); unlink(tmpc);
+            char tmpo[140]; snprintf(tmpo, sizeof(tmpo), "%s.out", tmp); unlink(tmpo);
+        }
+        printf("\nBye!\n");
+        return 0;
+    }
+    
+    // wyn bench <file> — run with timing
+    if (strcmp(command, "bench") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: wyn bench <file.wyn>\n");
+            return 1;
+        }
+        printf("\033[1mBenchmarking\033[0m %s\n\n", argv[2]);
+        
+        // Run 5 times and report
+        char cmd[512];
+        double times[5];
+        for (int i = 0; i < 5; i++) {
+            struct timespec start, end;
+            clock_gettime(CLOCK_MONOTONIC, &start);
+            snprintf(cmd, sizeof(cmd), "%s run %s > /dev/null 2>&1", argv[0], argv[2]);
+            int r = system(cmd);
+            clock_gettime(CLOCK_MONOTONIC, &end);
+            if (r != 0) {
+                fprintf(stderr, "\033[31m✗\033[0m Compilation/execution failed\n");
+                return 1;
+            }
+            times[i] = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1e6;
+            printf("  Run %d: \033[33m%.1fms\033[0m\n", i + 1, times[i]);
+        }
+        
+        // Stats
+        double sum = 0, min = times[0], max = times[0];
+        for (int i = 0; i < 5; i++) {
+            sum += times[i];
+            if (times[i] < min) min = times[i];
+            if (times[i] > max) max = times[i];
+        }
+        printf("\n\033[1mResults:\033[0m\n");
+        printf("  avg: \033[32m%.1fms\033[0m  min: %.1fms  max: %.1fms\n", sum / 5, min, max);
+        return 0;
+    }
+    
+    // wyn doc <file> — generate docs from source
+    if (strcmp(command, "doc") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: wyn doc <file.wyn>\n");
+            return 1;
+        }
+        char* source = read_file(argv[2]);
+        if (!source) {
+            fprintf(stderr, "\033[31m✗\033[0m Cannot read %s\n", argv[2]);
+            return 1;
+        }
+        
+        printf("\033[1m# %s\033[0m\n\n", argv[2]);
+        
+        // Extract functions, structs, enums, traits with their comments
+        char* p = source;
+        char prev_comment[4096] = "";
+        while (*p) {
+            // Capture comments
+            if (p[0] == '/' && p[1] == '/') {
+                char* start = p + 2;
+                while (*start == ' ') start++;
+                char* end = start;
+                while (*end && *end != '\n') end++;
+                int len = end - start;
+                if (len > 0 && len < 4000) {
+                    int plen = strlen(prev_comment);
+                    if (plen > 0) { prev_comment[plen] = '\n'; plen++; }
+                    memcpy(prev_comment + plen, start, len);
+                    prev_comment[plen + len] = 0;
+                }
+                p = *end ? end + 1 : end;
+                continue;
+            }
+            
+            // Check for definitions
+            int is_fn = (strncmp(p, "fn ", 3) == 0);
+            int is_pub_fn = (strncmp(p, "pub fn ", 7) == 0);
+            int is_struct = (strncmp(p, "struct ", 7) == 0);
+            int is_enum = (strncmp(p, "enum ", 5) == 0);
+            int is_trait = (strncmp(p, "trait ", 6) == 0);
+            
+            if (is_fn || is_pub_fn || is_struct || is_enum || is_trait) {
+                // Extract the signature (up to { or newline)
+                char* end = p;
+                while (*end && *end != '{' && *end != '\n') end++;
+                int len = end - p;
+                char sig[512];
+                if (len > 511) len = 511;
+                memcpy(sig, p, len);
+                sig[len] = 0;
+                // Trim trailing whitespace
+                while (len > 0 && (sig[len-1] == ' ' || sig[len-1] == '\t')) sig[--len] = 0;
+                
+                if (is_struct) printf("\033[33m## struct\033[0m ");
+                else if (is_enum) printf("\033[33m## enum\033[0m ");
+                else if (is_trait) printf("\033[33m## trait\033[0m ");
+                else printf("\033[32m## fn\033[0m ");
+                
+                printf("\033[1m%s\033[0m\n", sig + (is_pub_fn ? 7 : is_fn ? 3 : is_struct ? 7 : is_enum ? 5 : 6));
+                
+                if (prev_comment[0]) {
+                    printf("  %s\n", prev_comment);
+                }
+                printf("\n");
+                prev_comment[0] = 0;
+            } else if (*p != '\n' && *p != ' ' && *p != '\t') {
+                prev_comment[0] = 0;  // Reset comment if non-definition line
+            }
+            
+            // Advance to next line
+            while (*p && *p != '\n') p++;
+            if (*p) p++;
+        }
+        free(source);
+        return 0;
+    }
+    
     if (strcmp(command, "cross") == 0) {
         if (argc < 4) {
             fprintf(stderr, "Usage: wyn cross <target> <file.wyn>\n");
-            fprintf(stderr, "Targets: linux, macos, windows\n");
+            fprintf(stderr, "Targets: linux, macos, windows, ios, android\n");
             return 1;
         }
         
         char* target = argv[2];
         char* file = argv[3];
+        
+        // Find wyn root for includes
+        char wyn_root[1024] = ".";
+        char* root_env = getenv("WYN_ROOT");
+        if (root_env) { snprintf(wyn_root, sizeof(wyn_root), "%s", root_env); }
+        else {
+            char ep[1024]; strncpy(ep, argv[0], sizeof(ep)-1); ep[sizeof(ep)-1]=0;
+            char* ls = strrchr(ep, '/');
+            if (ls) { *ls = 0; snprintf(wyn_root, sizeof(wyn_root), "%s", ep); }
+        }
         
         // Compile to C first
         char* source = read_file(file);
@@ -481,20 +775,90 @@ int main(int argc, char** argv) {
         free(source);
         
         // Cross-compile based on target
-        char compile_cmd[512];
+        char compile_cmd[4096];
         if (strcmp(target, "linux") == 0) {
             // On macOS, just compile normally (user can transfer binary)
-            snprintf(compile_cmd, 512, "gcc -std=c11 -O2 -o %s.linux %s.c -lm", file, file);
+            snprintf(compile_cmd, 512, "gcc -std=c11 -O2 -w -I %s/src -o %s.linux %s.c %s/runtime/libwyn_rt.a -lpthread -lm", wyn_root, file, file, wyn_root);
             printf("Compiling for Linux (native binary)...\n");
         } else if (strcmp(target, "macos") == 0) {
-            snprintf(compile_cmd, 512, "gcc -std=c11 -O2 -o %s.macos %s.c -lm", file, file);
+            snprintf(compile_cmd, 512, "gcc -std=c11 -O2 -w -I %s/src -o %s.macos %s.c %s/runtime/libwyn_rt.a -lpthread -lm", wyn_root, file, file, wyn_root);
             printf("Compiling for macOS...\n");
         } else if (strcmp(target, "windows") == 0) {
-            snprintf(compile_cmd, 512, "x86_64-w64-mingw32-gcc -std=c11 -O2 -static -o %s.exe %s.c -lm", file, file);
+            snprintf(compile_cmd, 512, "x86_64-w64-mingw32-gcc -std=c11 -O2 -w -static -I %s/src -o %s.exe %s.c -lm", wyn_root, file, file);
             printf("Cross-compiling for Windows...\n");
+        } else if (strcmp(target, "ios") == 0) {
+            // iOS cross-compilation via Xcode SDK
+            char sdk_path[512] = {0};
+            FILE* sdk_fp = popen("xcrun --sdk iphoneos --show-sdk-path 2>/dev/null", "r");
+            if (sdk_fp) { fgets(sdk_path, sizeof(sdk_path), sdk_fp); pclose(sdk_fp); }
+            // Trim newline
+            char* nl = strchr(sdk_path, '\n'); if (nl) *nl = 0;
+            if (sdk_path[0] == 0) {
+                fprintf(stderr, "Error: Xcode iOS SDK not found. Install Xcode.\n");
+                return 1;
+            }
+            snprintf(compile_cmd, sizeof(compile_cmd),
+                "clang -std=c11 -O2 -w -arch arm64 -isysroot %s "
+                "-miphoneos-version-min=15.0 "
+                "-I %s/src -o %s.ios %s.c "
+                "%s/src/wyn_wrapper.c %s/src/wyn_interface.c "
+                "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c "
+                "%s/src/test_runtime.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c "
+                "%s/src/net.c %s/src/net_advanced.c "
+                "-lpthread -lm",
+                sdk_path, wyn_root, file, file,
+                wyn_root, wyn_root,
+                wyn_root, wyn_root, wyn_root,
+                wyn_root, wyn_root, wyn_root, wyn_root,
+                wyn_root, wyn_root);
+            printf("Cross-compiling for iOS (arm64)...\n");
+            printf("SDK: %s\n", sdk_path);
+        } else if (strcmp(target, "android") == 0) {
+            // Android cross-compilation via NDK
+            char ndk_path[512] = {0};
+            // Check common NDK locations
+            const char* ndk_dirs[] = {
+                "~/Library/Android/sdk/ndk",
+                "~/Android/Sdk/ndk",
+                "/usr/local/lib/android/sdk/ndk",
+                NULL
+            };
+            for (int i = 0; ndk_dirs[i]; i++) {
+                char expanded[512];
+                if (ndk_dirs[i][0] == '~') {
+                    snprintf(expanded, 512, "%s%s", getenv("HOME"), ndk_dirs[i] + 1);
+                } else {
+                    snprintf(expanded, 512, "%s", ndk_dirs[i]);
+                }
+                // Find latest NDK version
+                char find_cmd[512];
+                snprintf(find_cmd, 512, "ls -d %s/*/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android*-clang 2>/dev/null | tail -1", expanded);
+                FILE* fp = popen(find_cmd, "r");
+                if (fp) {
+                    char clang_path[512] = {0};
+                    fgets(clang_path, sizeof(clang_path), fp);
+                    pclose(fp);
+                    char* nl2 = strchr(clang_path, '\n'); if (nl2) *nl2 = 0;
+                    if (clang_path[0]) {
+                        snprintf(ndk_path, 512, "%s", clang_path);
+                        break;
+                    }
+                }
+            }
+            if (ndk_path[0] == 0) {
+                fprintf(stderr, "Error: Android NDK not found.\n");
+                fprintf(stderr, "Install: Android Studio → SDK Manager → NDK\n");
+                fprintf(stderr, "Or: sdkmanager --install 'ndk;latest'\n");
+                return 1;
+            }
+            snprintf(compile_cmd, 512,
+                "%s -std=c11 -O2 -w -I %s/src -o %s.android %s.c -lm -llog",
+                ndk_path, wyn_root, file, file);
+            printf("Cross-compiling for Android (arm64)...\n");
+            printf("NDK: %s\n", ndk_path);
         } else {
             fprintf(stderr, "Unknown target: %s\n", target);
-            fprintf(stderr, "Available: linux, macos, windows\n");
+            fprintf(stderr, "Available: linux, macos, windows, ios, android\n");
             return 1;
         }
         
@@ -511,10 +875,32 @@ int main(int argc, char** argv) {
         return result;
     }
     
+    if (strcmp(command, "check") == 0) {
+        if (argc < 3) { fprintf(stderr, "Usage: wyn check <file.wyn>\n"); return 1; }
+        char* file = argv[2];
+        char* source = read_file(file);
+        if (!source) { fprintf(stderr, "Error: Cannot read %s\n", file); return 1; }
+        extern void preload_imports(const char* source);
+        preload_imports(source);
+        init_lexer(source);
+        init_parser();
+        set_parser_filename(file);
+        init_checker();
+        check_all_modules();
+        Program* prog = parse_program();
+        if (!prog) { fprintf(stderr, "Parse error\n"); free(source); return 1; }
+        check_program(prog);
+        if (checker_had_error()) { free(source); return 1; }
+        printf("✓ %s: no errors\n", file);
+        free(source);
+        return 0;
+    }
+    
     if (strcmp(command, "fmt") == 0) {
         extern int cmd_fmt(const char* file, int argc, char** argv);
         if (argc < 3) {
             fprintf(stderr, "Usage: wyn fmt <file.wyn>\n");
+        fprintf(stderr, "  wyn check <file.wyn>     Type-check without compiling\n");
             return 1;
         }
         return cmd_fmt(argv[2], argc, argv);
@@ -584,25 +970,81 @@ int main(int argc, char** argv) {
             return 1;
         }
         
-        // Generate LLVM IR
-        char out_path[256];
-        snprintf(out_path, 256, "%s.ll", file);
-        FILE* out = fopen(out_path, "w");
-        init_codegen(out);
-        codegen_c_header();
-        codegen_program(prog);
-        fclose(out);
+        // Generate code using LLVM backend
+        char base_name[256];
+        strncpy(base_name, file, sizeof(base_name) - 1);
+        char* dot = strrchr(base_name, '.');
+        if (dot) *dot = '\0';
         
-        // Generate bitcode if possible
-        char bc_path[256];
-        snprintf(bc_path, 256, "%s.bc", file);
-        if (codegen_generate_bitcode(bc_path)) {
-            printf("Generated LLVM bitcode: %s\n", bc_path);
+        char ll_path[300];
+        char obj_path[300];
+        char out_path[300];
+        snprintf(ll_path, sizeof(ll_path), "%s.ll", base_name);
+        snprintf(obj_path, sizeof(obj_path), "%s.o", base_name);
+        snprintf(out_path, sizeof(out_path), "%s.out", base_name);
+        
+        // Initialize LLVM codegen (no C file output)
+        init_codegen(NULL);
+        codegen_program(prog);
+        
+        // Write LLVM IR to file
+        extern bool llvm_write_ir_to_file(const char* filename);
+        if (!llvm_write_ir_to_file(ll_path)) {
+            fprintf(stderr, "Error: Failed to write LLVM IR\n");
+            free(source);
+            return 1;
+        }
+        printf("Generated LLVM IR: %s\n", ll_path);
+        
+        // Compile LLVM IR to object file
+        extern bool llvm_compile_to_object(const char* ir_file, const char* obj_file);
+        if (!llvm_compile_to_object(ll_path, obj_path)) {
+            fprintf(stderr, "Error: Failed to compile LLVM IR to object file\n");
+            free(source);
+            return 1;
+        }
+        printf("Compiled to object: %s\n", obj_path);
+        
+        // Get WYN_ROOT
+        char wyn_root[1024] = ".";
+        char* root_env = getenv("WYN_ROOT");
+        if (root_env) {
+            snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
+        } else {
+            // Auto-detect: try multiple locations
+            const char* test_paths[] = {
+                "./src/wyn_wrapper.c",
+                "../src/wyn_wrapper.c",
+                "./wyn/src/wyn_wrapper.c",
+                NULL
+            };
+            
+            for (int i = 0; test_paths[i] != NULL; i++) {
+                FILE* test = fopen(test_paths[i], "r");
+                if (test) {
+                    fclose(test);
+                    if (i == 0) {
+                        strcpy(wyn_root, ".");
+                    } else if (i == 1) {
+                        strcpy(wyn_root, "..");
+                    } else if (i == 2) {
+                        strcpy(wyn_root, "./wyn");
+                    }
+                    break;
+                }
+            }
         }
         
-        printf("Generated LLVM IR: %s\n", out_path);
+        // Link to binary
+        extern bool llvm_link_binary(const char* obj_file, const char* output, const char* wyn_root);
+        if (!llvm_link_binary(obj_path, out_path, wyn_root)) {
+            fprintf(stderr, "Error: Failed to link binary\n");
+            free(source);
+            return 1;
+        }
+        printf("Linked binary: %s\n", out_path);
+        printf("Compiled successfully\n");
         
-        // Cleanup
         cleanup_codegen();
         free_program(prog);
         free(source);
@@ -619,7 +1061,50 @@ int main(int argc, char** argv) {
             fprintf(stderr, "Usage: wyn run <file.wyn>\n");
             return 1;
         }
-        char* file = argv[2];
+        char* file = NULL;
+        
+        // Check for --debug flag and find file arg
+        int keep_artifacts = 0;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--debug") == 0) keep_artifacts = 1;
+            else if (strcmp(argv[i], "--fast") == 0 || strcmp(argv[i], "--release") == 0 || strcmp(argv[i], "--shared") == 0 || strcmp(argv[i], "--python") == 0) {}
+            else if (!file) file = argv[i];
+        }
+        if (!file) {
+            fprintf(stderr, "Usage: wyn run <file.wyn>\n");
+            return 1;
+        }
+        
+        // Platform-specific link flags
+        #ifdef _WIN32
+        const char* platform_libs = "-lws2_32 -lpthread -lm";
+        #else
+        const char* platform_libs = "-lpthread -lm";
+        #endif
+        
+        // Incremental: skip recompilation if binary is newer than source
+        {
+            char out_path[512];
+            snprintf(out_path, sizeof(out_path), "%s.out", file);
+            struct stat src_st, out_st;
+            if (stat(file, &src_st) == 0 && stat(out_path, &out_st) == 0) {
+                if (out_st.st_mtime >= src_st.st_mtime) {
+                    char run_cmd[2048];
+                    if (out_path[0] == '/') {
+                        snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
+                    } else {
+#ifdef _WIN32
+                        snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
+#else
+                        snprintf(run_cmd, sizeof(run_cmd), "./%s", out_path);
+#endif
+                    }
+                    for (int i = 3; i < argc; i++) { strcat(run_cmd, " "); strcat(run_cmd, argv[i]); }
+                    return system(run_cmd);
+                }
+            }
+        }
+        
         char* source = read_file(file);
         
         // Pre-load all imports before parsing
@@ -651,45 +1136,283 @@ int main(int argc, char** argv) {
         char out_path[256];
         snprintf(out_path, 256, "%s.c", file);
         FILE* out = fopen(out_path, "w");
+        struct timespec _ts_start, _ts_end;
+        clock_gettime(CLOCK_MONOTONIC, &_ts_start);
         init_codegen(out);
         codegen_c_header();
         codegen_program(prog);
         fclose(out);
         
-        // Get WYN_ROOT or auto-detect
+        // Get WYN_ROOT or auto-detect from executable path
         char wyn_root[1024] = ".";
         char* root_env = getenv("WYN_ROOT");
         if (root_env) {
             snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
         } else {
-            // Auto-detect: check if src/wyn_wrapper.c exists, if not try ./wyn
-            FILE* test = fopen("./src/wyn_wrapper.c", "r");
+            // Derive from executable path
+            char exe_path[1024];
+            strncpy(exe_path, argv[0], sizeof(exe_path) - 1);
+            exe_path[sizeof(exe_path) - 1] = '\0';
+            char* last_slash = strrchr(exe_path, '/');
+            if (last_slash) {
+                *last_slash = '\0';
+                if (exe_path[0] != '\0') {
+                    snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path);
+                }
+            }
+            // Verify
+            char test_path[1100];
+            snprintf(test_path, sizeof(test_path), "%s/src/wyn_wrapper.c", wyn_root);
+            FILE* test = fopen(test_path, "r");
             if (!test) {
-                test = fopen("./wyn/src/wyn_wrapper.c", "r");
-                if (test) {
-                    snprintf(wyn_root, sizeof(wyn_root), "./wyn");
+                test = fopen("./src/wyn_wrapper.c", "r");
+                if (test) strcpy(wyn_root, ".");
+                else {
+                    test = fopen("./wyn/src/wyn_wrapper.c", "r");
+                    if (test) strcpy(wyn_root, "./wyn");
                 }
             }
             if (test) fclose(test);
         }
         
-        char compile_cmd[4096];
-        snprintf(compile_cmd, sizeof(compile_cmd), 
-                 "gcc -std=c11 -O2 -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/spawn.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c -lm", 
-                 wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
-        int result = system(compile_cmd);
+        // Detect optional dependencies
+        const char* sqlite_flags = strstr(source, "Db.") ? " -DWYN_USE_SQLITE -lsqlite3" : "";
+        const char* gui_flags = strstr(source, "Gui.") ? " -DWYN_USE_GUI $(pkg-config --cflags --libs sdl2 2>/dev/null || echo '-lSDL2') " : "";
         
+        // Check for --fast flag (use -O0 for fastest compile)
+        const char* opt_level = "-O1";
+        int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; }
+            if (strcmp(argv[i], "--release") == 0) { opt_level = "-O2"; }
+            if (strcmp(argv[i], "--shared") == 0) { shared_mode = 1; }
+            if (strcmp(argv[i], "--python") == 0) { shared_mode = 2; }
+        }
+        
+        char compile_cmd[8192];
+        // Use precompiled runtime library for fast compilation
+        // Falls back to source compilation if libwyn_rt.a doesn't exist
+        char rt_lib[512];
+        snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
+        FILE* rt_check = fopen(rt_lib, "r");
+        if (rt_check) {
+            fclose(rt_check);
+            snprintf(compile_cmd, sizeof(compile_cmd),
+                     "gcc -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a %s 2>wyn_cc_err.txt",
+                     opt_level, wyn_root, file, file, wyn_root, wyn_root, platform_libs);
+        } else {
+            // Fallback: compile from source
+            snprintf(compile_cmd, sizeof(compile_cmd),
+                     "gcc -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
+                     opt_level, wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
+        }
+        // Append optional flags before the redirect
+        if (sqlite_flags[0] || gui_flags[0]) {
+            char* redirect = strstr(compile_cmd, " 2>wyn_cc_err");
+            if (redirect) {
+                char tail[256];
+                strncpy(tail, redirect, sizeof(tail)-1); tail[sizeof(tail)-1] = 0;
+                snprintf(redirect, sizeof(compile_cmd) - (redirect - compile_cmd), "%s%s%s", sqlite_flags, gui_flags, tail);
+            }
+        }
+        
+        // Shared library mode: compile as .so/.dylib instead of executable
+        if (shared_mode > 0) {
+            char lib_name[256] = {0};
+            const char* base = strrchr(file, '/');
+            base = base ? base + 1 : file;
+            snprintf(lib_name, sizeof(lib_name), "%s", base);
+            char* ldot = strrchr(lib_name, '.'); if (ldot) *ldot = 0;
+#ifdef __APPLE__
+            const char* lib_ext = "dylib"; const char* shared_flags = "-dynamiclib";
+#elif _WIN32
+            const char* lib_ext = "dll"; const char* shared_flags = "-shared";
+#else
+            const char* lib_ext = "so"; const char* shared_flags = "-shared";
+#endif
+            char lib_path[512];
+            snprintf(lib_path, sizeof(lib_path), "lib%s.%s", lib_name, lib_ext);
+            char shared_cmd[8192];
+            if (rt_check) {
+                snprintf(shared_cmd, sizeof(shared_cmd),
+                         "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s %s.c %s/runtime/libwyn_rt.a %s 2>wyn_cc_err.txt",
+                         opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, platform_libs);
+            } else {
+                snprintf(shared_cmd, sizeof(shared_cmd),
+                         "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
+                         opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
+            }
+            int result = system(shared_cmd);
+            if (result == 0) {
+                clock_gettime(CLOCK_MONOTONIC, &_ts_end);
+                double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
+                fprintf(stderr, "\033[32m✓\033[0m Built shared library: %s (%.0fms)\n", lib_path, _ms);
+            }
+            if (result == 0 && shared_mode == 2) {
+                char py_path[512]; snprintf(py_path, sizeof(py_path), "%s.py", lib_name);
+                FILE* py = fopen(py_path, "w");
+                if (py) {
+                    fprintf(py, "\"\"\"Auto-generated Python wrapper for %s.wyn — created by Wyn\"\"\"\n", lib_name);
+                    fprintf(py, "import ctypes, os, sys\n\n");
+                    fprintf(py, "_dir = os.path.dirname(os.path.abspath(__file__))\n");
+                    fprintf(py, "if sys.platform == 'darwin':\n    _ext = 'dylib'\nelif sys.platform == 'win32':\n    _ext = 'dll'\nelse:\n    _ext = 'so'\n");
+                    fprintf(py, "_lib = ctypes.CDLL(os.path.join(_dir, f'lib%s.{_ext}'))\n\n", lib_name);
+                    for (int fi = 0; fi < prog->count; fi++) {
+                        Stmt* s = prog->stmts[fi];
+                        if (s->type != STMT_FN) continue;
+                        if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
+                        if (s->fn.receiver_type.length > 0) continue;
+                        char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
+                        // C keyword prefix
+                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                        const char* cpfx = "";
+                        for (int k = 0; _ckw[k]; k++) { if (strcmp(fname, _ckw[k]) == 0) { cpfx = "_"; break; } }
+                        // Return type
+                        const char* py_res = "ctypes.c_longlong";
+                        int ret_is_str = 0;
+                        if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT) {
+                            Token rt = s->fn.return_type->token;
+                            if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) { py_res = "ctypes.c_char_p"; ret_is_str = 1; }
+                            else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) py_res = "ctypes.c_double";
+                            else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) py_res = "ctypes.c_bool";
+                        } else if (!s->fn.return_type) { py_res = "None"; }
+                        // Wyn signature as comment
+                        fprintf(py, "# %s(", fname);
+                        for (int p = 0; p < s->fn.param_count; p++) {
+                            if (p > 0) fprintf(py, ", ");
+                            fprintf(py, "%.*s: %.*s", s->fn.params[p].length, s->fn.params[p].start,
+                                    s->fn.param_types[p] ? s->fn.param_types[p]->token.length : 3,
+                                    s->fn.param_types[p] ? s->fn.param_types[p]->token.start : "int");
+                        }
+                        fprintf(py, ")");
+                        if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT)
+                            fprintf(py, " -> %.*s", s->fn.return_type->token.length, s->fn.return_type->token.start);
+                        fprintf(py, "\n");
+                        // argtypes
+                        fprintf(py, "_lib.%s%s.argtypes = [", cpfx, fname);
+                        for (int p = 0; p < s->fn.param_count; p++) {
+                            if (p > 0) fprintf(py, ", ");
+                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                                Token pt = s->fn.param_types[p]->token;
+                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(py, "ctypes.c_char_p");
+                                else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(py, "ctypes.c_double");
+                                else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(py, "ctypes.c_bool");
+                                else fprintf(py, "ctypes.c_longlong");
+                            } else fprintf(py, "ctypes.c_longlong");
+                        }
+                        fprintf(py, "]\n");
+                        fprintf(py, "_lib.%s%s.restype = %s\n\n", cpfx, fname, py_res);
+                        // Python wrapper function with type hints
+                        fprintf(py, "def %s(", fname);
+                        for (int p = 0; p < s->fn.param_count; p++) {
+                            if (p > 0) fprintf(py, ", ");
+                            fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
+                            // Add type hint
+                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                                Token pt = s->fn.param_types[p]->token;
+                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(py, ": str");
+                                else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(py, ": float");
+                                else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(py, ": bool");
+                                else if (pt.length == 3 && memcmp(pt.start, "int", 3) == 0) fprintf(py, ": int");
+                            }
+                        }
+                        // Return type hint
+                        if (ret_is_str) fprintf(py, ") -> str:\n");
+                        else if (strcmp(py_res, "ctypes.c_double") == 0) fprintf(py, ") -> float:\n");
+                        else if (strcmp(py_res, "ctypes.c_bool") == 0) fprintf(py, ") -> bool:\n");
+                        else if (strcmp(py_res, "None") == 0) fprintf(py, ") -> None:\n");
+                        else fprintf(py, ") -> int:\n");
+                        // Encode string params
+                        for (int p = 0; p < s->fn.param_count; p++) {
+                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                                Token pt = s->fn.param_types[p]->token;
+                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0)
+                                    fprintf(py, "    %.*s = %.*s.encode() if isinstance(%.*s, str) else %.*s\n",
+                                            s->fn.params[p].length, s->fn.params[p].start,
+                                            s->fn.params[p].length, s->fn.params[p].start,
+                                            s->fn.params[p].length, s->fn.params[p].start,
+                                            s->fn.params[p].length, s->fn.params[p].start);
+                            }
+                        }
+                        fprintf(py, "    _r = _lib.%s%s(", cpfx, fname);
+                        for (int p = 0; p < s->fn.param_count; p++) {
+                            if (p > 0) fprintf(py, ", ");
+                            fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
+                        }
+                        fprintf(py, ")\n");
+                        if (ret_is_str) fprintf(py, "    return _r.decode() if _r else \"\"\n");
+                        else if (strcmp(py_res, "None") != 0) fprintf(py, "    return _r\n");
+                        fprintf(py, "\n");
+                    }
+                    fclose(py);
+                    fprintf(stderr, "\033[32m✓\033[0m Generated Python wrapper: %s\n", py_path);
+                }
+            }
+            if (!keep_artifacts) { char cp[512]; snprintf(cp, sizeof(cp), "%s.c", file); unlink(cp); }
+            unlink("wyn_cc_err.txt");
+            return result == 0 ? 0 : 1;
+        }
+        
+        int result = system(compile_cmd);
+        if (result == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &_ts_end);
+            double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
+            fprintf(stderr, "\033[2mCompiled in %.0fms\033[0m\n", _ms);
+        }
         if (result != 0) {
-            fprintf(stderr, "C compilation failed\n");
+            fprintf(stderr, "Error: compilation failed (internal codegen error)\n");
+            fprintf(stderr, "Run with WYN_DEBUG=1 for details\n");
+            if (getenv("WYN_DEBUG")) {
+                FILE* err_file = fopen("wyn_cc_err.txt", "r");
+                if (err_file) {
+                    char line[1024];
+                    while (fgets(line, sizeof(line), err_file)) {
+                        fprintf(stderr, "  %s", line);
+                    }
+                    fclose(err_file);
+                } else {
+                    fprintf(stderr, "  (no error file found - recompiling with visible errors)\n");
+                    // Re-run without redirect so errors go to stderr
+                    char debug_cmd[8192];
+                    snprintf(debug_cmd, sizeof(debug_cmd),
+                        "gcc -std=c11 -w -I %s/src -o /dev/null %s.c -lm 2>&1 | head -20",
+                        wyn_root, file);
+                    system(debug_cmd);
+                }
+            }
             free(source);
-            return result;
+            return 1;
         }
         
         char run_cmd[512];
-        snprintf(run_cmd, 512, "./%s.out", file);
+        if (file[0] == '/') {
+            snprintf(run_cmd, 512, "%s.out", file);
+        } else {
+#ifdef _WIN32
+            snprintf(run_cmd, 512, "%s.out", file);
+#else
+            snprintf(run_cmd, 512, "./%s.out", file);
+#endif
+        }
         result = system(run_cmd);
         free(source);
+        // Cleanup artifacts unless --debug
+        if (!keep_artifacts) {
+            char c_path[512], out_path2[512];
+            snprintf(c_path, 512, "%s.c", file);
+            snprintf(out_path2, 512, "%s.out", file);
+            unlink(c_path);
+            unlink(out_path2);
+        }
+        // Extract actual exit code from system() result
+#ifdef _WIN32
         return result;
+#else
+        if (WIFEXITED(result)) {
+            return WEXITSTATUS(result);
+        }
+        return result;
+#endif
     }
     
     // Parse optimization flags and -o flag
@@ -770,6 +1493,91 @@ int main(int argc, char** argv) {
         }
     }
     
+    #ifdef WITH_LLVM
+    // Use LLVM backend
+    char base_name[256];
+    strncpy(base_name, argv[file_arg_index], sizeof(base_name) - 1);
+    char* dot = strrchr(base_name, '.');
+    if (dot) *dot = '\0';
+    
+    char ll_path[300];
+    char obj_path[300];
+    char out_path[300];
+    snprintf(ll_path, sizeof(ll_path), "%s.ll", base_name);
+    snprintf(obj_path, sizeof(obj_path), "%s.o", base_name);
+    
+    if (output_name) {
+        snprintf(out_path, sizeof(out_path), "%s", output_name);
+    } else {
+        snprintf(out_path, sizeof(out_path), "%s.out", base_name);
+    }
+    
+    // Initialize LLVM codegen
+    init_codegen(NULL);
+    codegen_program(prog);
+    
+    // Write LLVM IR to file
+    extern bool llvm_write_ir_to_file(const char* filename);
+    if (!llvm_write_ir_to_file(ll_path)) {
+        fprintf(stderr, "Error: Failed to write LLVM IR\n");
+        free(source);
+        return 1;
+    }
+    
+    // Compile LLVM IR to object file
+    extern bool llvm_compile_to_object(const char* ir_file, const char* obj_file);
+    if (!llvm_compile_to_object(ll_path, obj_path)) {
+        fprintf(stderr, "Error: Failed to compile LLVM IR to object file\n");
+        free(source);
+        return 1;
+    }
+    
+    // Get WYN_ROOT
+    char wyn_root[1024] = ".";
+    char* root_env = getenv("WYN_ROOT");
+    if (root_env) {
+        snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
+    } else {
+        // Auto-detect: try multiple locations
+        const char* test_paths[] = {
+            "./src/wyn_wrapper.c",
+            "../src/wyn_wrapper.c",
+            "./wyn/src/wyn_wrapper.c",
+            NULL
+        };
+        
+        for (int i = 0; test_paths[i] != NULL; i++) {
+            FILE* test = fopen(test_paths[i], "r");
+            if (test) {
+                fclose(test);
+                if (i == 0) {
+                    strcpy(wyn_root, ".");
+                } else if (i == 1) {
+                    strcpy(wyn_root, "..");
+                } else if (i == 2) {
+                    strcpy(wyn_root, "./wyn");
+                }
+                break;
+            }
+        }
+    }
+    
+    // Link to binary
+    extern bool llvm_link_binary(const char* obj_file, const char* output, const char* wyn_root);
+    if (!llvm_link_binary(obj_path, out_path, wyn_root)) {
+        fprintf(stderr, "Error: Failed to link binary\n");
+        free(source);
+        return 1;
+    }
+    
+    printf("Compiled successfully\n");
+    cleanup_codegen();
+    free_program(prog);
+    free(source);
+    return 0;
+    
+    #else
+    // Use C backend (fallback)
     char out_path[256];
     snprintf(out_path, 256, "%s.c", argv[file_arg_index]);
     FILE* out = fopen(out_path, "w");
@@ -781,18 +1589,33 @@ int main(int argc, char** argv) {
     // Free AST
     free_program(prog);
     
-    // Get WYN_ROOT or auto-detect
+    // Get WYN_ROOT or auto-detect from executable path
     char wyn_root[1024] = ".";
     char* root_env = getenv("WYN_ROOT");
     if (root_env) {
         snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
     } else {
-        // Auto-detect: check if src/wyn_wrapper.c exists, if not try ./wyn
-        FILE* test = fopen("./src/wyn_wrapper.c", "r");
+        // Derive from executable path
+        char exe_path[1024];
+        strncpy(exe_path, argv[0], sizeof(exe_path) - 1);
+        exe_path[sizeof(exe_path) - 1] = '\0';
+        char* last_slash = strrchr(exe_path, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            if (exe_path[0] != '\0') {
+                snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path);
+            }
+        }
+        // Verify
+        char test_path[1100];
+        snprintf(test_path, sizeof(test_path), "%s/src/wyn_wrapper.c", wyn_root);
+        FILE* test = fopen(test_path, "r");
         if (!test) {
-            test = fopen("./wyn/src/wyn_wrapper.c", "r");
-            if (test) {
-                snprintf(wyn_root, sizeof(wyn_root), "./wyn");
+            test = fopen("./src/wyn_wrapper.c", "r");
+            if (test) strcpy(wyn_root, ".");
+            else {
+                test = fopen("./wyn/src/wyn_wrapper.c", "r");
+                if (test) strcpy(wyn_root, "./wyn");
             }
         }
         if (test) fclose(test);
@@ -802,34 +1625,37 @@ int main(int argc, char** argv) {
     const char* opt_flag = (optimization == OPT_O2) ? "-O2" : (optimization == OPT_O1) ? "-O1" : "-O0";
     char output_bin[256];
     if (output_name) {
-        snprintf(output_bin, 256, "%s", output_name);
+        snprintf(output_bin, sizeof(output_bin), "%s", output_name);
     } else {
-        snprintf(output_bin, 256, "%s.out", argv[file_arg_index]);
+        snprintf(output_bin, sizeof(output_bin), "%s.out", argv[file_arg_index]);
     }
-    snprintf(compile_cmd, sizeof(compile_cmd), 
-             "gcc %s -std=c11 -I %s/src -o %s %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/spawn.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c -lm", 
-             opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
+    
+    // Try precompiled runtime first
+    char rt_path[512];
+    snprintf(rt_path, sizeof(rt_path), "%s/runtime/libwyn_rt.a", wyn_root);
+    FILE* rt_check = fopen(rt_path, "r");
+    if (rt_check) {
+        fclose(rt_check);
+        snprintf(compile_cmd, sizeof(compile_cmd),
+                 "gcc %s -std=c11 -w -I %s/src -o %s %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm",
+                 opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root);
+    } else {
+        snprintf(compile_cmd, sizeof(compile_cmd),
+                 "gcc %s -std=c11 -w -I %s/src -o %s %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c -lpthread -lm", 
+                 opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
+    }
+    
     int result = system(compile_cmd);
-    
-    // Check if output file was actually created
-    FILE* check = fopen(output_bin, "r");
-    if (check) {
-        fclose(check);
-        printf("Compiled successfully: %s\n", output_bin);
-        // Keep intermediate .c file for debugging
-        // char c_file[256];
-        // snprintf(c_file, 256, "%s.c", argv[file_arg_index]);
-        // remove(c_file);
-    } else {
-        fprintf(stderr, "C compilation failed - output file not created\n");
-        fprintf(stderr, "Command: %s\n", compile_cmd);
-        fprintf(stderr, "GCC exit code: %d\n", result);
-        return 1;
+    if (result != 0) {
+        fprintf(stderr, "C compilation failed\n");
+        free(source);
+        return result;
     }
     
-    safe_free(source);
-    wyn_platform_cleanup();
-    return result;
+    printf("Compiled successfully\n");
+    free(source);
+    return 0;
+    #endif
 }
 
 int create_new_project(const char* project_name) {

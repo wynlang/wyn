@@ -1,0 +1,25 @@
+// Task 4.2: Array Methods - TDD
+fn main() -> int {
+    // Test 1: push and len
+    var arr = [1, 2, 3]
+    arr.push(4)
+    // Can't test len yet (needs runtime metadata)
+    
+    // Test 2: pop
+    var last = arr.pop()
+    if last != 4 { return 2; }
+    
+    // Test 3: first
+    var f = arr.first()
+    if f != 1 { return 3; }
+    
+    // Test 4: last
+    var l = arr.last()
+    if l != 3 { return 4; }
+    
+    // Test 5: contains
+    if !arr.contains(2) { return 5; }
+    if arr.contains(99) { return 6; }
+    
+    return 0
+}

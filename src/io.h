@@ -108,4 +108,12 @@ const char* wyn_io_error_string(WynIoError error);
 char* wyn_get_current_dir(void);
 WynIoError wyn_set_current_dir(const char* path);
 
+// New file system utility functions
+WynIoError wyn_file_move(const char* src, const char* dst);
+WynDir* wyn_file_list_dir(const char* path, WynIoError* error);
+WynIoError wyn_file_mkdir(const char* path);
+WynIoError wyn_file_rmdir(const char* path);
+bool wyn_file_is_file(const char* path);
+bool wyn_file_is_dir(const char* path);
+
 #endif // WYN_IO_H

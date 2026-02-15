@@ -1,0 +1,20 @@
+// Test JSON parsing with method syntax
+fn main() -> int {
+    var json_str = "{\"name\": \"test\", \"value\": 42}"
+    var obj = json_str.parse_json()
+    var name = obj.get_string("name")
+    var value = obj.get_int("value")
+    
+    if name.equals("test") == false {
+        print("FAIL: name mismatch")
+        return 1
+    }
+    if value != 42 {
+        print("FAIL: value mismatch")
+        return 2
+    }
+    
+    obj.free()
+    print("JSON method tests PASS")
+    return 0
+}

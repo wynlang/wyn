@@ -38,3 +38,7 @@ tests/test_codegen
 
 # OS
 .DS_Store
+runtime/libwyn_rt.a
+runtime/obj/
+wyn_cc_err.txt
+runtime/libwyn_runtime.a

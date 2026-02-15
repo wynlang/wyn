@@ -5,111 +5,82 @@ on:
     tags:
       - "v*"
 
-env:
-  LLVM_VERSION: "18"
-
 jobs:
   build:
-    name: Build Release Binaries
+    name: Build (${{ matrix.artifact }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
-            target: linux-x64
             artifact: wyn-linux-x64
-          - os: ubuntu-latest
-            target: linux-arm64
-            artifact: wyn-linux-arm64
-            arch: aarch64
-          - os: macos-latest
-            target: macos-x64
-            artifact: wyn-macos-x64
-          - os: macos-latest
-            target: macos-arm64
+          - os: macos-15
             artifact: wyn-macos-arm64
+          - os: macos-15-intel
+            artifact: wyn-macos-x64
           - os: windows-latest
-            target: windows-x64
-            artifact: wyn-windows-x64.exe
+            artifact: wyn-windows-x64
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install LLVM (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install llvm@${{ env.LLVM_VERSION }}
-          echo "$(brew --prefix llvm@${{ env.LLVM_VERSION }})/bin" >> $GITHUB_PATH
-          echo "LLVM_PREFIX=$(brew --prefix llvm@${{ env.LLVM_VERSION }})" >> $GITHUB_ENV
-
-      - name: Install LLVM (Linux)
+      - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
-        run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh ${{ env.LLVM_VERSION }}
-          sudo apt-get install -y clang-${{ env.LLVM_VERSION }}
-          echo "/usr/lib/llvm-${{ env.LLVM_VERSION }}/bin" >> $GITHUB_PATH
-          echo "LLVM_PREFIX=/usr/lib/llvm-${{ env.LLVM_VERSION }}" >> $GITHUB_ENV
+        run: sudo apt-get update && sudo apt-get install -y gcc make libsqlite3-dev libssl-dev
 
-      - name: Setup LLVM (Windows)
+      - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
-        run: |
-          echo "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "LLVM_PREFIX=C:\Program Files\LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        run: choco install make mingw -y
         shell: pwsh
 
-      - name: Set up cross-compilation (ARM)
-        if: matrix.arch == 'aarch64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Test (before cross-compile)
-        if: matrix.os != 'windows-latest'
-        run: |
-          # Build native binary for testing
-          make clean
-          make wyn
-
-          # Run module tests
-          ./tests/module_tests/test_modules.sh
-          ./tests/module_tests/test_module_system.sh
-
-          # Skip example compilation - many use unimplemented v1.4 features
-          echo "Skipping example compilation (v1.4 features not fully implemented)"
+      - name: Build
+        run: make clean && make
         shell: bash
 
-      - name: Build (Windows)
-        if: matrix.os == 'windows-latest'
-        run: make wyn.exe
+      - name: Build runtime
+        if: runner.os != 'Windows'
+        run: make runtime
         shell: bash
 
-      - name: Build (cross-compile if needed)
-        if: matrix.os != 'windows-latest'
-        run: |
-          if [ "${{ matrix.arch }}" = "aarch64" ]; then
-            # Only clean and cross-compile for ARM
-            make clean
-            CC=aarch64-linux-gnu-gcc make wyn
-          fi
-          # For native builds, wyn binary already exists from test step
+      - name: Build runtime (Windows)
+        if: runner.os == 'Windows'
+        run: make runtime
         shell: bash
 
-      - name: Rename binary
-        run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            mv wyn.exe ${{ matrix.artifact }}
-          else
-            mv wyn ${{ matrix.artifact }}
-          fi
+      - name: Test (Unix)
+        if: runner.os != 'Windows'
+        run: ./wyn run tests/run_tests.wyn
         shell: bash
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: wyn.exe run tests\run_tests.wyn
+        shell: cmd
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp wyn dist/${{ matrix.artifact }}
+          cp -r runtime dist/runtime
+          cp src/wyn_runtime.h dist/
+          tar czf ${{ matrix.artifact }}.tar.gz -C dist .
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir dist
+          copy wyn.exe dist\${{ matrix.artifact }}.exe
+          xcopy /E /I runtime dist\runtime
+          copy src\wyn_runtime.h dist\
+          Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip
+        shell: pwsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.*
 
   release:
     name: Create Release
@@ -125,11 +96,10 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            wyn-linux-x64/wyn-linux-x64
-            wyn-linux-arm64/wyn-linux-arm64
-            wyn-macos-x64/wyn-macos-x64
-            wyn-macos-arm64/wyn-macos-arm64
-            wyn-windows-x64.exe/wyn-windows-x64.exe
+            wyn-linux-x64/wyn-linux-x64.tar.gz
+            wyn-macos-arm64/wyn-macos-arm64.tar.gz
+            wyn-macos-x64/wyn-macos-x64.tar.gz
+            wyn-windows-x64/wyn-windows-x64.zip
           body_path: CHANGELOG.md
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}

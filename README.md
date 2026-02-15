@@ -1,324 +1,192 @@
 # Wyn Programming Language
 
-**A modern systems programming language where everything is an object**
+**1 language for everything — CLI, web, desktop, mobile, games.**
 
-[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](VERSION)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Examples](https://img.shields.io/badge/examples-62%2F63%20passing-brightgreen.svg)](examples/)
+Wyn compiles to C, runs everywhere, and ships with 27 stdlib modules out of the box.
 
 ---
 
-## ✨ What Makes Wyn Special
-
-- **Everything is an Object** - Even integers and strings have methods
-- **Modern Syntax** - Clean, intuitive, and expressive
-- **Systems Programming** - Compiles to C for maximum performance
-- **Module System** - Built-in import/export for code organization
-- **Rich Standard Library** - Strings, arrays, file I/O, networking, JSON, and more
-- **IDE Support** - LSP, VS Code extension, Neovim plugin
-- **Package Manager** - Built-in package management (registry coming in v1.5.1)
-
----
-
-## 🚀 Quick Start
-
-### Installation
+## Quick Start
 
 ```bash
-cd wyn
-make
-./wyn --version  # Should show "Wyn v1.5.0"
+make                    # Build the compiler
+./wyn install           # Install to PATH (optional)
+wyn run hello.wyn       # Compile and run
 ```
-
-### Hello World
 
 ```wyn
 fn main() -> int {
-    print("Hello, World!")
+    println("Hello, World!")
     return 0
 }
 ```
 
-```bash
-./wyn hello.wyn
-./hello.wyn.out
-# Output: Hello, World!
-```
-
----
-
-## 💡 Features
-
-### Everything is an Object
+## Features
 
 ```wyn
-// Methods on integers
-42.abs()
-(-5).abs()  // Returns 5
+// Variables and types
+var name = "Wyn"
+const version = 2
+var pi = 3.14
 
-// Methods on strings
-"hello".upper()      // "HELLO"
-"hello".len()        // 5
-"hello".contains("ell")  // true
+// String interpolation
+println("${name} v${version}")
 
-// Methods on arrays
-[1, 2, 3].len()      // 3
-[1, 2, 3].map(fn(x) -> x * 2)  // [2, 4, 6]
-[1, 2, 3].filter(fn(x) -> x > 1)  // [2, 3]
-```
+// Structs with methods
+struct Point { x: int, y: int }
+impl Point {
+    fn distance(self) -> int { return self.x + self.y }
+}
 
-### Clean Collection Syntax
+// Enums with pattern matching
+enum Color { Red, Green, Blue }
+var c = Color.Green
+var label = match c {
+    Color.Red => "red"
+    Color.Green => "green"
+    Color.Blue => "blue"
+}
 
-```wyn
-// Arrays
-var numbers = [1, 2, 3, 4, 5]
-numbers.push(6)
-var first = numbers[0]
+// Traits with dynamic dispatch
+trait Shape {
+    fn area(self) -> int
+}
+struct Square { side: int }
+impl Shape for Square {
+    fn area(self) -> int { return self.side * self.side }
+}
+fn describe(s: Shape) -> int { return s.area() }
 
-// HashMaps
-var scores = {"Alice": 95, "Bob": 87}
-scores["Charlie"] = 92
-var alice_score = scores["Alice"]
+// Closures and higher-order functions
+var nums = [1, 2, 3, 4, 5]
+var evens = nums.filter(fn(x: int) -> int { return x % 2 == 0 })
+var doubled = nums.map(fn(x: int) -> int { return x * 2 })
 
-// HashSets
-var tags = {:"rust", "systems", "programming"}
-tags.insert("wyn")
-var has_rust = tags.contains("rust")
-```
-```
+// Spawn/await concurrency (M:N scheduler, 2μs spawn)
+var f1 = spawn compute(1000)
+var f2 = spawn compute(2000)
+var r1 = await f1
+var r2 = await f2
 
-### Simple Variable Declaration
-
-```wyn
-var mutable = 10;      // Mutable
-const immutable = 20;  // Immutable
-```
-
-### Core Features
-
-- **Module system:** Nested modules with visibility control
-- **Type aliases:** `type UserId = int`
-- **Extension methods:** `impl Point { fn sum(self) -> int }`
-- **String interpolation:** `"Hello ${name}!"`
-- **Pattern matching:** Exhaustive enum matching
-- **Generics:** `Option<T>`, `Result<T, E>`
-- **Async/await:** Future-based concurrency
-- **Memory safety:** Automatic Reference Counting (ARC)
-- **100+ methods:** Comprehensive standard library
-
----
-
-## Example
-
-```wyn
-fn main() -> int {
-    // Collections with clean syntax
-    var scores = {"alice": 95, "bob": 87};
-    var tags = {:"urgent", "important"};
-    var numbers = [1, 2, 3, 4, 5];
-    
-    // Everything is an object - use method syntax
-    var len = numbers.len();
-    var has_three = numbers.contains(3);
-    var alice_score = scores["alice"];
-    
-    print(alice_score);  // 95
-    
-    return 0;
+// Result/Option types with ? operator
+fn divide(a: int, b: int) -> ResultInt {
+    if b == 0 { return Err("division by zero") }
+    return Ok(a / b)
 }
 ```
 
-### Module System
+## Standard Library — 27 Modules
 
-```wyn
-// utils/math.wyn
-pub fn add(a: int, b: int) -> int {
-    return a + b;
-}
+| Category | Modules |
+|----------|---------|
+| Core | String (29 methods), Array (19), HashMap (12), Math (20) |
+| Data | Json (16), Csv (7), Encoding (4), Regex (5) |
+| I/O | File (22), System (5), Terminal (4), Net (6), Http (9), Db (9) |
+| Concurrency | Task (7), StringBuilder (7) |
+| Crypto | Crypto (4), Uuid (1) |
+| Platform | Os (6), Path (4), DateTime (16), Process (2), Log (5), Url (2) |
+| GUI | Gui (30+, SDL2), Audio (5, SDL2_mixer) |
+| Testing | Test (12) |
 
-// main.wyn
-import utils.math
+See [docs/stdlib-reference.md](docs/stdlib-reference.md) for the full API.
 
-fn main() -> int {
-    var sum = math::add(1, 2);  // Short name
-    print(sum);
-    return 0;
-}
+## CLI
+
+```
+Develop:
+  wyn run <file>             Compile and run
+  wyn check <file>           Type-check without compiling
+  wyn fmt <file>             Format source file
+  wyn test                   Run project tests
+  wyn watch <file>           Watch and auto-rebuild
+  wyn repl                   Interactive REPL
+  wyn bench <file>           Benchmark with timing
+  wyn doc <file>             Generate documentation
+
+Build:
+  wyn build <file|dir>             Build binary
+  wyn build <file|dir> --shared    Build shared library (.so/.dylib/.dll)
+  wyn build <file|dir> --python    Build shared library + Python wrapper
+  wyn cross <target> <file>        Cross-compile (linux/macos/windows/ios/android)
+  wyn build-runtime                Precompile runtime for fast builds
+  wyn clean                        Remove build artifacts
+
+Packages:
+  wyn init [name]            Create new project
+  wyn pkg install <name>     Install a package
+  wyn pkg list               List installed packages
+  wyn pkg uninstall <name>   Uninstall a package
+  wyn pkg search <query>     Search package registry
+
+Tools:
+  wyn lsp                    Start language server (for editors)
+  wyn install                Install wyn to system PATH
+  wyn uninstall              Remove wyn from system PATH
+  wyn version                Show version
+  wyn help                   Show help
+
+Flags:
+  --fast                     Skip optimizations (fastest compile)
+  --release                  Full optimizations (-O2)
+  --debug                    Keep .c and .out artifacts
 ```
 
-See [docs/modules.md](docs/modules.md) for complete module guide.
+## Performance
 
----
+- Spawn: 2μs (matches Go goroutines)
+- Memory: 180 bytes/task (15x better than Go)
+- Compilation: 62ms cached, 1.1s first run
+- 64-bit integers throughout (long long)
 
-## Documentation
+## Editor Support
 
-- **User Guide:** See `docs/` directory
-- **Examples:** See `examples/` directory (30 examples)
-- **Changelog:** See [CHANGELOG.md](CHANGELOG.md)
+- **VS Code**: `vscode-wyn/` — syntax highlighting, all 27 modules
+- **Neovim**: `nvim-wyn/` — syntax highlighting, all keywords
+- **LSP**: `wyn lsp` — completions, hover, go-to-definition, rename, format
 
----
-
-## What's New
-
-See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
-
-### Latest Features (v1.4.0)
-
-- **Module system** - Nested modules, visibility control, relative imports
-- **Polymorphic print()** - Single print function for all types
-- **HashMap indexing** - `map["key"]` syntax for get/set
-- **HashMap Methods:** `.has()`, `.remove()`, `.len()` and `map["key"]` indexing
-- **HashSet methods** - `.add()`, `.contains()`, `.remove()`, `.len()`
-- **Consistent OO syntax** - All examples and docs use method-first approach
-
-### Previous Features
-
-- HashMap multi-type support (int, float, string, bool)
-- HashSet initialization syntax: `{:"item1", "item2"}`
-- Full standard library with 60+ functions
-- Object-oriented method syntax for all collections
-
-### Bug Fixes
-
-- Fixed impl methods calling other methods
-- Fixed HashMap implementation (remove, has, helpers)
-- Fixed binary expression type inference
-
-See [CHANGELOG.md](CHANGELOG.md) for complete details.
-
----
-
-## Testing
+## Building
 
 ```bash
-# Run all examples
-cd examples
-for f in *.wyn; do ../wyn "$f" && ./"${f}.out"; done
-
-# Run regression tests
-./tests/regression.sh
-
-# Run specific test
-./wyn tests/wyn/test_hashmap_multitypes.wyn
-./tests/wyn/test_hashmap_multitypes.wyn.out
+make                    # Build compiler
+make runtime            # Precompile runtime library
+wyn build-runtime       # Same, via CLI
 ```
 
----
-
-## Developer Tools (v1.4.0)
-
-### Project Management
+## Cross-Compilation
 
 ```bash
-# Create new project
-wyn init my-app
-
-# Auto-rebuild on changes
-wyn watch main.wyn
-
-# Install dependencies
-wyn install
-
-# Package management
-wyn pkg list
+wyn cross linux app.wyn     # Linux x86_64
+wyn cross macos app.wyn     # macOS
+wyn cross windows app.wyn   # Windows (needs mingw)
+wyn cross ios app.wyn       # iOS arm64
+wyn cross android app.wyn   # Android arm64 (needs NDK)
 ```
-
-### Project Configuration (wyn.toml)
-
-```toml
-[project]
-name = "my-app"
-version = "1.0.0"
-entry = "main.wyn"
-
-[dependencies]
-# Add package dependencies here
-```
-
-### Language Server
-
-```bash
-# Start LSP server for IDE integration
-wyn lsp
-```
-
----
 
 ## Project Structure
 
 ```
 wyn/
-├── src/           # Compiler source code
-├── examples/      # 30 example programs
-├── tests/         # Test suite
-├── docs/          # User documentation
-├── README.md      # This file
-└── CHANGELOG.md   # Version history
+├── src/            # Compiler source (C)
+├── runtime/        # Precompiled runtime library
+├── tests/          # Test suite (268+ assertions)
+├── docs/           # User documentation
+├── Makefile        # Build system
+├── README.md       # This file
+└── CHANGELOG.md    # Version history
 ```
 
----
+## Documentation
 
-## Building from Source
-
-```bash
-# Clean build
-make clean
-make
-
-# Check version
-./wyn --version
-
-# Run tests
-./tests/regression.sh
-```
-
----
-
-## Self-Hosting Compiler
-
-Wyn v1.5.0 includes a self-hosting compiler written in Wyn itself. The modular compiler demonstrates that Wyn can compile real-world programs, including its own compiler.
-
-### Modular Compiler Components
-
-```
-lib/
-├── lexer_module.wyn      # Tokenization (263 lines)
-├── parser_module.wyn     # Parsing (355 lines)
-├── checker_module.wyn    # Type checking (215 lines)
-├── codegen_module.wyn    # C code generation (221 lines)
-└── compiler_modular.wyn  # Integration (159 lines)
-```
-
-### Testing Self-Compilation
-
-```bash
-# Test self-compilation
-./tests/test_self_compilation.sh
-
-# Test bootstrap stability (reproducible builds)
-./tests/test_bootstrap_stability.sh
-```
-
-### Features Demonstrated
-
-- **Real implementations:** No stubs, all modules have working logic
-- **Modular design:** Each module <500 lines (compiler limit)
-- **Self-compilation:** Each module can compile itself
-- **Bootstrap stability:** Reproducible builds across generations
-- **Production ready:** Compiles real Wyn programs correctly
-
----
+- [Language Tutorial](docs/tutorial.md)
+- [Standard Library Reference](docs/stdlib-reference.md)
+- [Best Practices](docs/best-practices.md)
+- [Spawn Performance](docs/spawn-performance.md)
+- [Examples](docs/examples.md)
 
 ## License
 
-See LICENSE file for details.
+MIT
 
 ---
 
-## Links
-
-- **Changelog:** `CHANGELOG.md`
-
----
-
-**Wyn - A modern systems programming language where everything is an object.**
+**<https://wynlang.com>**

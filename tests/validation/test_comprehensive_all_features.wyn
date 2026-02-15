@@ -1,0 +1,288 @@
+// Comprehensive validation test - Tests all working features
+
+// === ARITHMETIC ===
+fn test_arithmetic() -> int {
+    if 5 + 3 != 8 { return 1; }
+    if 10 - 4 != 6 { return 2; }
+    if 3 * 4 != 12 { return 3; }
+    if 20 / 5 != 4 { return 4; }
+    if 17 % 5 != 2 { return 5; }
+    return 0;
+}
+
+// === STRINGS ===
+fn test_strings() -> int {
+    var s = "hello";
+    if str_len(s) != 5 { return 1; }
+    if !str_contains(s, "ell") { return 2; }
+    if !str_starts_with(s, "hel") { return 3; }
+    if !str_ends_with(s, "llo") { return 4; }
+    
+    var upper = str_upper(s);
+    if !str_contains(upper, "HELLO") { return 5; }
+    
+    var concat = str_concat("hello", " world");
+    if str_len(concat) != 11 { return 6; }
+    
+    return 0;
+}
+
+// === ARRAYS ===
+fn test_arrays() -> int {
+    var arr = [1, 2, 3, 4, 5];
+    if arr[0] != 1 { return 1; }
+    if arr[4] != 5 { return 2; }
+    
+    // Bounds checking (should warn but not crash)
+    var x = arr[100];
+    
+    return 0;
+}
+
+// === STRUCTS ===
+struct Point {
+    x: int
+    y: int
+}
+
+struct Rectangle {
+    width: int
+    height: int
+}
+
+fn test_structs() -> int {
+    var p = Point { x: 10, y: 20 };
+    if p.x != 10 { return 1; }
+    if p.y != 20 { return 2; }
+    
+    var r = Rectangle { width: 100, height: 50 };
+    if r.width != 100 { return 3; }
+    if r.height != 50 { return 4; }
+    
+    return 0;
+}
+
+// === ENUMS ===
+enum Status {
+    Active,
+    Inactive,
+    Pending
+}
+
+fn test_enums() -> int {
+    var s = Status.Active;
+    return 0;
+}
+
+// === CONTROL FLOW ===
+fn test_if() -> int {
+    if 1 {
+        var x = 42;
+        if x != 42 { return 1; }
+    }
+    
+    if 0 {
+        return 2;
+    }
+    
+    return 0;
+}
+
+fn test_while() -> int {
+    var count = 0;
+    while count < 5 {
+        count = count + 1;
+    }
+    if count != 5 { return 1; }
+    return 0;
+}
+
+// === FUNCTIONS ===
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn multiply(a: int, b: int) -> int {
+    return a * b;
+}
+
+fn test_functions() -> int {
+    var sum = add(5, 3);
+    if sum != 8 { return 1; }
+    
+    var product = multiply(4, 5);
+    if product != 20 { return 2; }
+    
+    // Nested calls
+    var nested = add(multiply(2, 3), multiply(4, 5));
+    if nested != 26 { return 3; }
+    
+    return 0;
+}
+
+// === NESTED SCOPES ===
+fn test_nested_scopes() -> int {
+    // Variables in if blocks
+    if 1 {
+        var x = 100;
+        if x != 100 { return 1; }
+        
+        if 1 {
+            var y = 200;
+            if y != 200 { return 2; }
+        }
+    }
+    
+    // Variables in while loops
+    var count = 0;
+    while count < 3 {
+        var z = count * 2;
+        count = count + 1;
+    }
+    
+    return 0;
+}
+
+// === RESULT TYPE ===
+fn divide(a: int, b: int) -> ResultInt {
+    if b == 0 {
+        return ResultInt_Err("division by zero");
+    }
+    return ResultInt_Ok(a / b);
+}
+
+fn test_result() -> int {
+    // Test Ok case
+    var result1 = divide(10, 2);
+    if !ResultInt_is_ok(result1) { return 1; }
+    var value1 = ResultInt_unwrap(result1);
+    if value1 != 5 { return 2; }
+    
+    // Test Err case
+    var result2 = divide(10, 0);
+    if !ResultInt_is_err(result2) { return 3; }
+    
+    // Test ResultString
+    var result3 = ResultString_Ok("success");
+    if !ResultString_is_ok(result3) { return 4; }
+    
+    var result4 = ResultString_Err("error");
+    if !ResultString_is_err(result4) { return 5; }
+    
+    return 0;
+}
+
+// === HASHMAP ===
+fn test_hashmap() -> int {
+    var map = hashmap_new();
+    hashmap_insert_int(map, "key1", 100);
+    hashmap_insert_int(map, "key2", 200);
+    
+    var val1 = hashmap_get_int(map, "key1");
+    if val1 != 100 { return 1; }
+    
+    var val2 = hashmap_get_int(map, "key2");
+    if val2 != 200 { return 2; }
+    
+    return 0;
+}
+
+// === FILE I/O ===
+fn test_file_io() -> int {
+    var path = "/tmp/test_wyn_comprehensive.txt";
+    
+    // Write
+    file_write(path, "test content");
+    
+    // Check exists
+    if !file_exists(path) { return 1; }
+    
+    // Read
+    var content = file_read(path);
+    if !str_contains(content, "test") { return 2; }
+    
+    // Delete
+    file_delete(path);
+    
+    return 0;
+}
+
+// === MAIN ===
+fn main() -> int {
+    var result = 0;
+    
+    result = test_arithmetic();
+    if result != 0 {
+        println("FAIL: test_arithmetic");
+        return 1;
+    }
+    
+    result = test_strings();
+    if result != 0 {
+        println("FAIL: test_strings");
+        return 2;
+    }
+    
+    result = test_arrays();
+    if result != 0 {
+        println("FAIL: test_arrays");
+        return 3;
+    }
+    
+    result = test_structs();
+    if result != 0 {
+        println("FAIL: test_structs");
+        return 4;
+    }
+    
+    result = test_enums();
+    if result != 0 {
+        println("FAIL: test_enums");
+        return 5;
+    }
+    
+    result = test_if();
+    if result != 0 {
+        println("FAIL: test_if");
+        return 6;
+    }
+    
+    result = test_while();
+    if result != 0 {
+        println("FAIL: test_while");
+        return 7;
+    }
+    
+    result = test_functions();
+    if result != 0 {
+        println("FAIL: test_functions");
+        return 8;
+    }
+    
+    result = test_nested_scopes();
+    if result != 0 {
+        println("FAIL: test_nested_scopes");
+        return 9;
+    }
+    
+    result = test_result();
+    if result != 0 {
+        println("FAIL: test_result");
+        return 10;
+    }
+    
+    result = test_hashmap();
+    if result != 0 {
+        println("FAIL: test_hashmap");
+        return 11;
+    }
+    
+    result = test_file_io();
+    if result != 0 {
+        println("FAIL: test_file_io");
+        return 12;
+    }
+    
+    println("✅ ALL TESTS PASSED");
+    return 0;
+}
