@@ -93,22 +93,20 @@ See [docs/stdlib-reference.md](docs/stdlib-reference.md) for the full API.
 ## CLI
 
 ```
-wyn run <file>          Compile and run
-wyn run <file> --shared Build as shared library (.so/.dylib/.dll)
-wyn run <file> --python Build shared library + Python wrapper
-wyn check <file>        Type-check without compiling
-wyn test                Run project tests
-wyn repl                Interactive REPL
-wyn bench <file>        Benchmark with timing
-wyn doc <file>          Generate documentation
+wyn run <file>               Compile and run
+wyn check <file>             Type-check without compiling
+wyn test                     Run project tests
+wyn repl                     Interactive REPL
+wyn bench <file>             Benchmark with timing
+wyn doc <file>               Generate documentation
 wyn build <dir>              Build project
-wyn build <dir> --shared    Build as shared library (.so/.dylib/.dll)
-wyn build <dir> --python    Build shared library + Python wrapper
-wyn cross <target> <f>  Cross-compile (linux/macos/windows/ios/android)
-wyn init [name]         Create new project
-wyn pkg install <name>  Install package
-wyn lsp                 Start language server
-wyn install             Install wyn to system PATH
+wyn build <dir> --shared     Build as shared library (.so/.dylib/.dll)
+wyn build <dir> --python     Build shared library + Python wrapper
+wyn cross <target> <f>       Cross-compile (linux/macos/windows/ios/android)
+wyn init [name]              Create new project
+wyn pkg install <name>       Install package
+wyn lsp                      Start language server
+wyn install                  Install wyn to system PATH
 ```
 
 ## Performance
@@ -169,4 +167,4 @@ MIT
 
 ---
 
-**https://wynlang.com**
+**<https://wynlang.com>**

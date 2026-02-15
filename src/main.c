@@ -416,43 +416,52 @@ int main(int argc, char** argv) {
     
     if (strcmp(command, "build") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn build <directory>\n");
+            fprintf(stderr, "Usage: wyn build <file|dir> [--shared|--python]\n");
             return 1;
         }
-        char* dir = argv[2];
+        // Detect flags
+        char* dir = NULL;
+        const char* build_flag = "";
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--shared") == 0) build_flag = " --shared";
+            else if (strcmp(argv[i], "--python") == 0) build_flag = " --python";
+            else if (!dir) dir = argv[i];
+        }
+        if (!dir) { fprintf(stderr, "Usage: wyn build <file|dir> [--shared|--python]\n"); return 1; }
         
-        // Look for main.wyn or src/main.wyn
+        // Accept a .wyn file directly or a directory
         char entry[512];
         struct stat st;
-        snprintf(entry, sizeof(entry), "%s/main.wyn", dir);
-        if (stat(entry, &st) != 0) {
-            snprintf(entry, sizeof(entry), "%s/src/main.wyn", dir);
+        if (stat(dir, &st) == 0 && S_ISREG(st.st_mode)) {
+            snprintf(entry, sizeof(entry), "%s", dir);
+        } else {
+            snprintf(entry, sizeof(entry), "%s/main.wyn", dir);
             if (stat(entry, &st) != 0) {
-                fprintf(stderr, "\033[31m✗\033[0m No main.wyn found in %s or %s/src\n", dir, dir);
-                return 1;
+                snprintf(entry, sizeof(entry), "%s/src/main.wyn", dir);
+                if (stat(entry, &st) != 0) {
+                    fprintf(stderr, "\033[31m✗\033[0m No main.wyn found in %s or %s/src\n", dir, dir);
+                    return 1;
+                }
             }
         }
         
-        printf("\033[1mBuilding\033[0m %s...\n", entry);
-        // Compile only — keep binary, clean .c
+        printf("\033[1mBuilding\033[0m %s%s...\n", entry, build_flag);
         char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "%s %s", argv[0], entry);
+        snprintf(cmd, sizeof(cmd), "%s run %s%s", argv[0], entry, build_flag);
         int result = system(cmd);
-        if (result == 0) {
-            // Remove .c, keep .out
+        if (result == 0 && build_flag[0] == 0) {
+            // Normal build: remove .c, rename .out to clean name
             char c_path[512];
             snprintf(c_path, sizeof(c_path), "%s.c", entry);
             unlink(c_path);
-            // Rename .out to clean name
             char out_path[512], bin_path[512];
             snprintf(out_path, sizeof(out_path), "%s.out", entry);
-            // Extract name: dir/main.wyn -> dir/main
             snprintf(bin_path, sizeof(bin_path), "%s", entry);
             char* dot = strrchr(bin_path, '.');
             if (dot) *dot = 0;
             rename(out_path, bin_path);
             printf("\033[32m✓\033[0m Built: %s\n", bin_path);
-        } else {
+        } else if (result != 0) {
             fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
         }
         return result == 0 ? 0 : 1;

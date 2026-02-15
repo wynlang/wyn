@@ -214,7 +214,7 @@ fn greet(name: string) -> string { return "Hello, " + name + "!" }
 ```
 
 ```bash
-wyn run mathlib.wyn --python
+wyn build mathlib.wyn --python
 # ✓ Built shared library: libmathlib.dylib
 # ✓ Generated Python wrapper: mathlib.py
 ```

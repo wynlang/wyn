@@ -34,8 +34,8 @@
 
 ### CLI
 
-- **New: `wyn run --python`** — compile to shared library + auto-generated Python wrapper with type hints
-- **New: `wyn run --shared`** — compile to shared library (`.so`/`.dylib`/`.dll`)
+- **New: `wyn build --python`** — compile to shared library + auto-generated Python wrapper with type hints
+- **New: `wyn build --shared`** — compile to shared library (`.so`/`.dylib`/`.dll`)
 - **New: `wyn repl`** — interactive REPL with definition accumulation
 - **New: `wyn bench`** — 5-run benchmark with avg/min/max
 - **New: `wyn doc`** — generate docs from source comments

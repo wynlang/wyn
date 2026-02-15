@@ -25,7 +25,7 @@ fn factorial(n: int) -> int {
 2. Build with `--python`:
 
 ```bash
-wyn run mathlib.wyn --python
+wyn build mathlib.wyn --python
 ```
 
 This produces:
@@ -85,7 +85,7 @@ fn shout(s: string) -> string {
 ```
 
 ```bash
-wyn run textlib.wyn --python
+wyn build textlib.wyn --python
 ```
 
 ```python
