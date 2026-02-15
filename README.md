@@ -2,7 +2,7 @@
 
 **1 language for everything — CLI, web, desktop, mobile, games.**
 
-Wyn compiles to C, runs everywhere, and ships with 26 stdlib modules out of the box.
+Wyn compiles to C, runs everywhere, and ships with 27 stdlib modules out of the box.
 
 ---
 
@@ -75,7 +75,7 @@ fn divide(a: int, b: int) -> ResultInt {
 }
 ```
 
-## Standard Library — 26 Modules
+## Standard Library — 27 Modules
 
 | Category | Modules |
 |----------|---------|
@@ -118,7 +118,7 @@ wyn install             Install wyn to system PATH
 
 ## Editor Support
 
-- **VS Code**: `vscode-wyn/` — syntax highlighting, all 26 modules
+- **VS Code**: `vscode-wyn/` — syntax highlighting, all 27 modules
 - **Neovim**: `nvim-wyn/` — syntax highlighting, all keywords
 - **LSP**: `wyn lsp` — completions, hover, go-to-definition, rename, format
 
