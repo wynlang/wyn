@@ -203,8 +203,33 @@ import utils
 // use functions from utils module
 ```
 
+## Python Libraries
+
+Wyn can compile your code into shared libraries that Python can call directly:
+
+```wyn
+// mathlib.wyn
+fn add(a: int, b: int) -> int { return a + b }
+fn greet(name: string) -> string { return "Hello, " + name + "!" }
+```
+
+```bash
+wyn run mathlib.wyn --python
+# ✓ Built shared library: libmathlib.dylib
+# ✓ Generated Python wrapper: mathlib.py
+```
+
+```python
+from mathlib import add, greet
+print(add(2, 3))        # 5
+print(greet("World"))    # Hello, World!
+```
+
+The generated wrapper includes Python type hints and handles string encoding automatically. See [Python Libraries](python-libraries.md) for the full guide.
+
 ## Next Steps
 
 - [Language Guide](language-guide.md) — Complete reference
 - [Standard Library](stdlib-reference.md) — All modules
-- [Sample Apps](../../sample-apps/) — 23 real-world programs
+- [Python Libraries](python-libraries.md) — Build Python packages with Wyn
+- [Sample Apps](../../sample-apps/) — 31 real-world programs
