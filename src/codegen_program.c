@@ -340,7 +340,10 @@ void codegen_program(Program* prog) {
                      fn->receiver_type.length, fn->receiver_type.start,
                      fn->name.length, fn->name.start);
             } else {
-                emit("%s %.*s(", return_type, fn->name.length, fn->name.start);
+                char _fn_name[256]; snprintf(_fn_name, sizeof(_fn_name), "%.*s", fn->name.length, fn->name.start);
+                const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                bool _is_ckw = false; for (int _k = 0; _ckw[_k]; _k++) { if (strcmp(_fn_name, _ckw[_k]) == 0) { _is_ckw = true; break; } }
+                emit("%s %s%.*s(", return_type, _is_ckw ? "_" : "", fn->name.length, fn->name.start);
             }
             for (int j = 0; j < fn->param_count; j++) {
                 if (j > 0) emit(", ");

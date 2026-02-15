@@ -219,7 +219,7 @@ void codegen_expr(Expr* expr) {
             }
             
             // Check if this is a C keyword that needs prefix
-            const char* c_keywords[] = {"double", "float", "int", "char", "void", "return", "if", "else", "while", "for", NULL};
+            const char* c_keywords[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
             bool is_c_keyword = false;
             for (int i = 0; c_keywords[i] != NULL; i++) {
                 if (strlen(temp_ident) == strlen(c_keywords[i]) && 
@@ -1362,6 +1362,8 @@ void codegen_expr(Expr* expr) {
                 snprintf(vn, 64, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
                 extern int is_known_array_var(const char*);
                 if (is_known_array_var(vn)) receiver_type = "array";
+                extern int is_known_sb_var(const char*);
+                if (is_known_sb_var(vn)) receiver_type = "stringbuilder";
             }
             
             // Fallback: if no type info, try to infer from expression
@@ -1663,6 +1665,17 @@ void codegen_expr(Expr* expr) {
                     if (strcmp(method_name, "values") == 0) {
                         emit("hashmap_values_string("); codegen_expr(expr->method_call.object); emit(")"); break;
                     }
+                }
+                
+                // StringBuilder dispatch
+                if (strcmp(receiver_type, "stringbuilder") == 0) {
+                    char mname[64]; snprintf(mname, 64, "%.*s", method.length, method.start);
+                    emit("StringBuilder_%s(", mname);
+                    codegen_expr(expr->method_call.object);
+                    for (int ai = 0; ai < expr->method_call.arg_count; ai++) {
+                        emit(", "); codegen_expr(expr->method_call.args[ai]);
+                    }
+                    emit(")"); break;
                 }
                 
                 fprintf(stderr, "Error: Unknown method '%.*s' for type '%s'\n", 

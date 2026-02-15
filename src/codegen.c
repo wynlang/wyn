@@ -238,6 +238,18 @@ int is_known_array_var(const char* name) {
     return 0;
 }
 
+static char* sb_var_names[64];
+static int sb_var_count = 0;
+static void register_sb_var(const char* name) {
+    if (sb_var_count < 64) { sb_var_names[sb_var_count++] = strdup(name);  }
+}
+int is_known_sb_var(const char* name) {
+    for (int i = 0; i < sb_var_count; i++) {
+        if (strcmp(sb_var_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
 static bool is_local_variable(const char* name) {
     for (int i = 0; i < current_local_count; i++) {
         if (strcmp(current_function_locals[i], name) == 0) {

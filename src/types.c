@@ -25,7 +25,6 @@ static const MethodSignature method_signatures[] = {
     {"string", "ends_with", "bool", 1},
     {"string", "index_of", "int", 1},    // Returns -1 if not found
     {"string", "replace", "string", 2},
-    {"string", "split", "array", 1},     // Returns Vec<string>
     {"string", "slice", "string", 2},
     {"string", "substring", "string", 2},
     {"string", "repeat", "string", 1},
@@ -186,7 +185,6 @@ static const MethodSignature method_signatures[] = {
     {"map", "contains", "bool", 1},
     {"map", "len", "int", 0},
     {"map", "is_empty", "bool", 0},
-    {"map", "keys", "array", 0},
     {"map", "values", "array", 0},
     {"map", "clear", "void", 0},
     {"map", "get_or_default", "int", 2},  // Returns value or default

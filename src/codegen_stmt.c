@@ -236,6 +236,16 @@ void codegen_stmt(Stmt* stmt) {
                     c_type = "WynMap";
                     needs_arc_management = true;
                 } else if (stmt->var.init->type == EXPR_METHOD_CALL) {
+                    // Check for module constructor: StringBuilder.new(), etc.
+                    if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
+                        char _on[64]; snprintf(_on, 64, "%.*s", stmt->var.init->method_call.object->token.length, stmt->var.init->method_call.object->token.start);
+                        char _mn[64]; snprintf(_mn, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                        if (strcmp(_on, "StringBuilder") == 0 && strcmp(_mn, "new") == 0) {
+                            c_type = "long long";
+                            { char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start); extern void register_sb_var(const char*); register_sb_var(_vn); }
+                            goto var_type_done;
+                        }
+                    }
                     // Quick check: if object is a known array and method returns array, type as WynArray
                     if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
                         char _vn[64]; snprintf(_vn, 64, "%.*s", stmt->var.init->method_call.object->token.length, stmt->var.init->method_call.object->token.start);
@@ -526,6 +536,21 @@ void codegen_stmt(Stmt* stmt) {
                     // Tuple type - use __auto_type (GCC/Clang extension)
                     c_type = "__auto_type";
                 } else if (stmt->var.init->type == EXPR_CALL) {
+                    // Detect module constructor calls first: Module.new()
+                    bool detected = false;
+                    if (stmt->var.init->call.callee->type == EXPR_FIELD_ACCESS) {
+                        Token mod = stmt->var.init->call.callee->field_access.object->token;
+                        Token meth = stmt->var.init->call.callee->field_access.field;
+                        if (meth.length == 3 && memcmp(meth.start, "new", 3) == 0) {
+                            if (mod.length == 13 && memcmp(mod.start, "StringBuilder", 13) == 0) {
+                                c_type = "long long"; detected = true;
+                                { char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start); extern void register_sb_var(const char*); register_sb_var(_vn); }
+                            } else if (mod.length == 7 && memcmp(mod.start, "HashMap", 7) == 0) {
+                                c_type = "WynHashMap*"; detected = true;
+                            }
+                        }
+                    }
+                    if (!detected) {
                     // Function call - check expr_type first, then use __auto_type
                     if (stmt->var.init->expr_type) {
                         switch (stmt->var.init->expr_type->kind) {
@@ -544,6 +569,7 @@ void codegen_stmt(Stmt* stmt) {
                         }
                     } else {
                         c_type = "__auto_type";
+                    }
                     }
                     // Track if this variable holds a closure (from a function returning fn type)
                     if (stmt->var.init->call.callee->type == EXPR_IDENT && lambda_var_count < 256) {
@@ -660,7 +686,7 @@ void codegen_stmt(Stmt* stmt) {
             if (stmt->var.init && stmt->var.init->type == EXPR_LAMBDA) {
                 // Function pointer syntax: int (*name)(params...)
                 // Check if name is a C keyword
-                const char* c_keywords[] = {"double", "float", "int", "char", "void", "return", "if", "else", "while", "for", "switch", "case", NULL};
+                const char* c_keywords[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
                 bool is_c_keyword = false;
                 for (int i = 0; c_keywords[i] != NULL; i++) {
                     if (stmt->var.name.length == strlen(c_keywords[i]) && 
@@ -870,7 +896,13 @@ void codegen_stmt(Stmt* stmt) {
                      stmt->fn.receiver_type.length, stmt->fn.receiver_type.start,
                      stmt->fn.name.length, stmt->fn.name.start);
             } else {
-                emit("%s %.*s(", return_type, stmt->fn.name.length, stmt->fn.name.start);
+                // Check for C keyword collision
+                char _fn_name[256];
+                snprintf(_fn_name, sizeof(_fn_name), "%.*s", stmt->fn.name.length, stmt->fn.name.start);
+                const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                bool _is_ckw = false;
+                for (int _k = 0; _ckw[_k]; _k++) { if (strcmp(_fn_name, _ckw[_k]) == 0) { _is_ckw = true; break; } }
+                emit("%s %s%.*s(", return_type, _is_ckw ? "_" : "", stmt->fn.name.length, stmt->fn.name.start);
             }
             for (int i = 0; i < stmt->fn.param_count; i++) {
                 if (i > 0) emit(", ");
