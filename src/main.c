@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mdoc\033[0m <file.wyn>          Generate documentation\n");
         
         fprintf(stderr, "\n\033[1mBuild:\033[0m\n");
-        fprintf(stderr, "  \033[32mbuild\033[0m <dir>             Build all .wyn files in directory\n");
+        fprintf(stderr, "  \033[32mbuild\033[0m <dir>             Build project (--shared / --python)\n");
         fprintf(stderr, "  \033[32mcross\033[0m <target> <file>   Cross-compile (linux/macos/windows/ios/android)\n");
         fprintf(stderr, "  \033[32mbuild-runtime\033[0m           Precompile runtime for fast builds\n");
         fprintf(stderr, "  \033[32mclean\033[0m                   Remove build artifacts\n");
@@ -243,7 +243,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mbench\033[0m <file.wyn>       Benchmark with timing\n");
         fprintf(stderr, "  \033[32mdoc\033[0m <file.wyn>         Generate documentation\n");
         fprintf(stderr, "\n\033[1mBuild:\033[0m\n");
-        fprintf(stderr, "  \033[32mbuild\033[0m <dir>             Build all .wyn files in directory\n");
+        fprintf(stderr, "  \033[32mbuild\033[0m <dir>             Build project (--shared / --python)\n");
         fprintf(stderr, "  \033[32mcross\033[0m <target> <file>   Cross-compile (linux/macos/windows/ios/android)\n");
         fprintf(stderr, "  \033[32mbuild-runtime\033[0m           Precompile runtime for fast builds\n");
         fprintf(stderr, "  \033[32mclean\033[0m                   Remove build artifacts\n");
@@ -1058,7 +1058,7 @@ int main(int argc, char** argv) {
         int keep_artifacts = 0;
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--debug") == 0) keep_artifacts = 1;
-            else if (strcmp(argv[i], "--fast") == 0 || strcmp(argv[i], "--release") == 0) {}
+            else if (strcmp(argv[i], "--fast") == 0 || strcmp(argv[i], "--release") == 0 || strcmp(argv[i], "--shared") == 0 || strcmp(argv[i], "--python") == 0) {}
             else if (!file) file = argv[i];
         }
         if (!file) {
@@ -1172,9 +1172,12 @@ int main(int argc, char** argv) {
         
         // Check for --fast flag (use -O0 for fastest compile)
         const char* opt_level = "-O1";
+        int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python
         for (int i = 3; i < argc; i++) {
-            if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; break; }
-            if (strcmp(argv[i], "--release") == 0) { opt_level = "-O2"; break; }
+            if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; }
+            if (strcmp(argv[i], "--release") == 0) { opt_level = "-O2"; }
+            if (strcmp(argv[i], "--shared") == 0) { shared_mode = 1; }
+            if (strcmp(argv[i], "--python") == 0) { shared_mode = 2; }
         }
         
         char compile_cmd[8192];
@@ -1203,8 +1206,131 @@ int main(int argc, char** argv) {
                 snprintf(redirect, sizeof(compile_cmd) - (redirect - compile_cmd), "%s%s%s", sqlite_flags, gui_flags, tail);
             }
         }
-        int result = system(compile_cmd);
         
+        // Shared library mode: compile as .so/.dylib instead of executable
+        if (shared_mode > 0) {
+            char lib_name[256] = {0};
+            const char* base = strrchr(file, '/');
+            base = base ? base + 1 : file;
+            snprintf(lib_name, sizeof(lib_name), "%s", base);
+            char* ldot = strrchr(lib_name, '.'); if (ldot) *ldot = 0;
+#ifdef __APPLE__
+            const char* lib_ext = "dylib"; const char* shared_flags = "-dynamiclib";
+#elif _WIN32
+            const char* lib_ext = "dll"; const char* shared_flags = "-shared";
+#else
+            const char* lib_ext = "so"; const char* shared_flags = "-shared";
+#endif
+            char lib_path[512];
+            snprintf(lib_path, sizeof(lib_path), "lib%s.%s", lib_name, lib_ext);
+            char shared_cmd[8192];
+            if (rt_check) {
+                snprintf(shared_cmd, sizeof(shared_cmd),
+                         "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s %s.c %s/runtime/libwyn_rt.a %s 2>wyn_cc_err.txt",
+                         opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, platform_libs);
+            } else {
+                snprintf(shared_cmd, sizeof(shared_cmd),
+                         "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
+                         opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
+            }
+            int result = system(shared_cmd);
+            if (result == 0) {
+                clock_gettime(CLOCK_MONOTONIC, &_ts_end);
+                double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
+                fprintf(stderr, "\033[32m✓\033[0m Built shared library: %s (%.0fms)\n", lib_path, _ms);
+            }
+            if (result == 0 && shared_mode == 2) {
+                char py_path[512]; snprintf(py_path, sizeof(py_path), "%s.py", lib_name);
+                FILE* py = fopen(py_path, "w");
+                if (py) {
+                    fprintf(py, "\"\"\"Auto-generated Python wrapper for %s.wyn — created by Wyn\"\"\"\n", lib_name);
+                    fprintf(py, "import ctypes, os\n\n");
+                    fprintf(py, "_dir = os.path.dirname(os.path.abspath(__file__))\n");
+                    fprintf(py, "_lib = ctypes.CDLL(os.path.join(_dir, \"%s\"))\n\n", lib_path);
+                    for (int fi = 0; fi < prog->count; fi++) {
+                        Stmt* s = prog->stmts[fi];
+                        if (s->type != STMT_FN) continue;
+                        if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
+                        if (s->fn.receiver_type.length > 0) continue;
+                        char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
+                        // C keyword prefix
+                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                        const char* cpfx = "";
+                        for (int k = 0; _ckw[k]; k++) { if (strcmp(fname, _ckw[k]) == 0) { cpfx = "_"; break; } }
+                        // Return type
+                        const char* py_res = "ctypes.c_longlong";
+                        int ret_is_str = 0;
+                        if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT) {
+                            Token rt = s->fn.return_type->token;
+                            if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) { py_res = "ctypes.c_char_p"; ret_is_str = 1; }
+                            else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) py_res = "ctypes.c_double";
+                            else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) py_res = "ctypes.c_bool";
+                        } else if (!s->fn.return_type) { py_res = "None"; }
+                        // Wyn signature as comment
+                        fprintf(py, "# %s(", fname);
+                        for (int p = 0; p < s->fn.param_count; p++) {
+                            if (p > 0) fprintf(py, ", ");
+                            fprintf(py, "%.*s: %.*s", s->fn.params[p].length, s->fn.params[p].start,
+                                    s->fn.param_types[p] ? s->fn.param_types[p]->token.length : 3,
+                                    s->fn.param_types[p] ? s->fn.param_types[p]->token.start : "int");
+                        }
+                        fprintf(py, ")");
+                        if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT)
+                            fprintf(py, " -> %.*s", s->fn.return_type->token.length, s->fn.return_type->token.start);
+                        fprintf(py, "\n");
+                        // argtypes
+                        fprintf(py, "_lib.%s%s.argtypes = [", cpfx, fname);
+                        for (int p = 0; p < s->fn.param_count; p++) {
+                            if (p > 0) fprintf(py, ", ");
+                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                                Token pt = s->fn.param_types[p]->token;
+                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(py, "ctypes.c_char_p");
+                                else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(py, "ctypes.c_double");
+                                else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(py, "ctypes.c_bool");
+                                else fprintf(py, "ctypes.c_longlong");
+                            } else fprintf(py, "ctypes.c_longlong");
+                        }
+                        fprintf(py, "]\n");
+                        fprintf(py, "_lib.%s%s.restype = %s\n\n", cpfx, fname, py_res);
+                        // Python wrapper function
+                        fprintf(py, "def %s(", fname);
+                        for (int p = 0; p < s->fn.param_count; p++) {
+                            if (p > 0) fprintf(py, ", ");
+                            fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
+                        }
+                        fprintf(py, "):\n");
+                        // Encode string params
+                        for (int p = 0; p < s->fn.param_count; p++) {
+                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                                Token pt = s->fn.param_types[p]->token;
+                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0)
+                                    fprintf(py, "    %.*s = %.*s.encode() if isinstance(%.*s, str) else %.*s\n",
+                                            s->fn.params[p].length, s->fn.params[p].start,
+                                            s->fn.params[p].length, s->fn.params[p].start,
+                                            s->fn.params[p].length, s->fn.params[p].start,
+                                            s->fn.params[p].length, s->fn.params[p].start);
+                            }
+                        }
+                        fprintf(py, "    _r = _lib.%s%s(", cpfx, fname);
+                        for (int p = 0; p < s->fn.param_count; p++) {
+                            if (p > 0) fprintf(py, ", ");
+                            fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
+                        }
+                        fprintf(py, ")\n");
+                        if (ret_is_str) fprintf(py, "    return _r.decode() if _r else \"\"\n");
+                        else if (strcmp(py_res, "None") != 0) fprintf(py, "    return _r\n");
+                        fprintf(py, "\n");
+                    }
+                    fclose(py);
+                    fprintf(stderr, "\033[32m✓\033[0m Generated Python wrapper: %s\n", py_path);
+                }
+            }
+            if (!keep_artifacts) { char cp[512]; snprintf(cp, sizeof(cp), "%s.c", file); unlink(cp); }
+            unlink("wyn_cc_err.txt");
+            return result == 0 ? 0 : 1;
+        }
+        
+        int result = system(compile_cmd);
         if (result == 0) {
             clock_gettime(CLOCK_MONOTONIC, &_ts_end);
             double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;

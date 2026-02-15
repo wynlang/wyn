@@ -1797,8 +1797,6 @@ int clamp(int x, int min_val, int max_val) { return x < min_val ? min_val : (x >
 int sign(int x) { return x < 0 ? -1 : (x > 0 ? 1 : 0); }
 int gcd(int a, int b) { while(b) { int t = b; b = a % b; a = t; } return a; }
 int lcm(int a, int b) { return a * b / gcd(a, b); }
-int is_even(int x) { return x % 2 == 0; }
-int is_odd(int x) { return x % 2 != 0; }
 char* file_read(const char* path) {
     last_error[0] = 0;
     FILE* f = fopen(path, "r");
