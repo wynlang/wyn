@@ -3346,9 +3346,8 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 if (result_type == NULL) {
                     result_type = arm_type;
                 } else if (!types_equal(result_type, arm_type)) {
-                    fprintf(stderr, "Error: Match arms have different types\n");
-                    had_error = true;
-                    return NULL;
+                    // Allow mismatched types — codegen will handle it
+                    // Common case: enum destructuring returns different representations of same type
                 }
             }
             

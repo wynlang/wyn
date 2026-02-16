@@ -3198,8 +3198,8 @@ static Stmt* parse_match_statement() {
             Token first_token = parser.current;
             advance();
             
-            // Check for enum variant: Color::Red or Result::Ok(val)
-            if (match(TOKEN_COLONCOLON)) {
+            // Check for enum variant: Color.Red or Color::Red or Result.Ok(val)
+            if (match(TOKEN_COLONCOLON) || match(TOKEN_DOT)) {
                 Token variant_name = parser.current;
                 expect(TOKEN_IDENT, "Expected variant name after '::'");
                 
@@ -3451,6 +3451,34 @@ static Pattern* parse_pattern() {
     if (check(TOKEN_IDENT)) {
         Token potential_struct = parser.current;
         advance();
+        
+        // Check for enum dot access: Shape.Circle or Shape.Circle(r)
+        if (match(TOKEN_DOT) || match(TOKEN_COLONCOLON)) {
+            Token variant_name = parser.current;
+            expect(TOKEN_IDENT, "Expected variant name");
+            
+            if (match(TOKEN_LPAREN)) {
+                // Shape.Circle(r) — enum variant with data
+                pattern->type = PATTERN_OPTION;
+                pattern->option.is_some = true;
+                pattern->option.enum_name = potential_struct;
+                pattern->option.variant_name = variant_name;
+                if (!check(TOKEN_RPAREN)) {
+                    pattern->option.inner = parse_pattern();
+                } else {
+                    pattern->option.inner = NULL;
+                }
+                expect(TOKEN_RPAREN, "Expected ')' after enum variant pattern");
+            } else {
+                // Shape.Point — enum variant without data
+                pattern->type = PATTERN_OPTION;
+                pattern->option.is_some = false;
+                pattern->option.enum_name = potential_struct;
+                pattern->option.variant_name = variant_name;
+                pattern->option.inner = NULL;
+            }
+            return pattern;
+        }
         
         // Check for enum variant with data: Some(x) or Option_Some(x)
         if (match(TOKEN_LPAREN)) {

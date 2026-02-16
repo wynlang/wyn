@@ -2190,6 +2190,7 @@ void codegen_expr(Expr* expr) {
             
             // Determine result type from first arm's expression
             const char* result_type = "int";
+            if (is_data_enum) result_type = "double"; // data enums often carry floats
             if (expr->match.arm_count > 0 && expr->match.arms[0].result) {
                 Expr* first_result = expr->match.arms[0].result;
                 if (first_result->type == EXPR_STRING) {
@@ -2260,17 +2261,35 @@ void codegen_expr(Expr* expr) {
                              match_id);
                     }
                 } else if (pat->type == PATTERN_OPTION && !pat->option.is_some) {
-                    // Simple enum variant without data: Color::Red
-                    // Generate: EnumName_VariantName
-                    emit("if (__match_val_%d == %.*s_%.*s) { ",
-                         match_id,
-                         pat->option.enum_name.length,
-                         pat->option.enum_name.start,
-                         pat->option.variant_name.length,
-                         pat->option.variant_name.start);
+                    // Simple enum variant: Color.Red or Shape.Point
+                    if (is_data_enum) {
+                        emit("if (__match_val_%d.tag == %.*s_%.*s_TAG) { ",
+                             match_id,
+                             pat->option.enum_name.length, pat->option.enum_name.start,
+                             pat->option.variant_name.length, pat->option.variant_name.start);
+                    } else {
+                        emit("if (__match_val_%d == %.*s_%.*s) { ",
+                             match_id,
+                             pat->option.enum_name.length, pat->option.enum_name.start,
+                             pat->option.variant_name.length, pat->option.variant_name.start);
+                    }
                 } else if (pat->type == PATTERN_OPTION && pat->option.is_some) {
-                    // Enum variant with data: Some(x), Ok(x), etc.
-                    // Check tag matches variant
+                    // Enum variant with data: Shape.Circle(r), Some(x), Ok(x)
+                    if (is_data_enum && pat->option.enum_name.length > 0) {
+                        // Data enum: compare .tag == EnumName_Variant_TAG
+                        emit("if (__match_val_%d.tag == %.*s_%.*s_TAG) { ",
+                             match_id,
+                             pat->option.enum_name.length, pat->option.enum_name.start,
+                             pat->option.variant_name.length, pat->option.variant_name.start);
+                        // Bind inner variable to .data.Variant_value
+                        if (pat->option.inner && pat->option.inner->type == PATTERN_IDENT) {
+                            emit("double %.*s = __match_val_%d.data.%.*s_value; ",
+                                 pat->option.inner->ident.name.length, pat->option.inner->ident.name.start,
+                                 match_id,
+                                 pat->option.variant_name.length, pat->option.variant_name.start);
+                        }
+                    } else {
+                    // Legacy: Some(x), Ok(x) etc.
                     emit("if (__match_val_%d.tag == %.*s_TAG) { ",
                          match_id,
                          pat->option.variant_name.length,
@@ -2325,6 +2344,7 @@ void codegen_expr(Expr* expr) {
                                  variant_start);
                         }
                     }
+                    } // close legacy else
                 } else {
                     // Unsupported pattern - treat as wildcard
                     emit("{ ");
