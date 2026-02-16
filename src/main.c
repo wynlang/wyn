@@ -839,16 +839,71 @@ int main(int argc, char** argv) {
     // wyn doc <file> — generate docs from source
     if (strcmp(command, "doc") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn doc <file.wyn>\n");
+            fprintf(stderr, "Usage: wyn doc <file.wyn> [--html]\n");
             return 1;
         }
-        char* source = read_file(argv[2]);
+        int html_mode = 0;
+        char* doc_file = NULL;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--html") == 0) html_mode = 1;
+            else if (!doc_file) doc_file = argv[i];
+        }
+        if (!doc_file) { fprintf(stderr, "Usage: wyn doc <file.wyn> [--html]\n"); return 1; }
+        
+        if (html_mode) {
+            // Generate HTML docs
+            char cmd[1024];
+            snprintf(cmd, sizeof(cmd), "%s doc %s 2>&1", argv[0], doc_file);
+            FILE* p = popen(cmd, "r");
+            if (!p) return 1;
+            
+            // Derive output filename
+            char out_path[512];
+            snprintf(out_path, sizeof(out_path), "%s", doc_file);
+            char* dot = strrchr(out_path, '.'); if (dot) *dot = 0;
+            strcat(out_path, ".html");
+            
+            FILE* out = fopen(out_path, "w");
+            fprintf(out, "<!DOCTYPE html><html><head><meta charset='utf-8'><title>%s</title>\n", doc_file);
+            fprintf(out, "<style>body{font-family:system-ui;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.6}"
+                         "h2{border-bottom:1px solid #ddd;padding-bottom:4px}code{background:#f4f4f4;padding:2px 6px;border-radius:3px}"
+                         "pre{background:#f4f4f4;padding:12px;border-radius:6px;overflow-x:auto}.comment{color:#666;font-style:italic}</style>\n");
+            fprintf(out, "</head><body><h1>%s</h1>\n", doc_file);
+            
+            char buf[4096];
+            while (fgets(buf, sizeof(buf), p)) {
+                // Strip ANSI codes
+                char clean[4096]; int ci = 0;
+                for (int i = 0; buf[i]; i++) {
+                    if (buf[i] == '\033') { while (buf[i] && buf[i] != 'm') i++; continue; }
+                    clean[ci++] = buf[i];
+                }
+                clean[ci] = 0;
+                
+                if (strncmp(clean, "## ", 3) == 0) {
+                    fprintf(out, "<h2><code>%s</code></h2>\n", clean + 3);
+                } else if (clean[0] == ' ' && clean[1] == ' ') {
+                    fprintf(out, "<p class='comment'>%s</p>\n", clean + 2);
+                } else if (clean[0] == '\n') {
+                    fprintf(out, "<br>\n");
+                } else {
+                    fprintf(out, "<p>%s</p>\n", clean);
+                }
+            }
+            pclose(p);
+            fprintf(out, "</body></html>\n");
+            fclose(out);
+            printf("\033[32m✓\033[0m Generated: %s\n", out_path);
+            return 0;
+        }
+        
+        char* source = read_file(doc_file);
         if (!source) {
             fprintf(stderr, "\033[31m✗\033[0m Cannot read %s\n", argv[2]);
             return 1;
         }
         
-        printf("\033[1m# %s\033[0m\n\n", argv[2]);
+        printf("\033[1m# %s\033[0m\n\n", doc_file);
         
         // Extract functions, structs, enums, traits with their comments
         char* p = source;
