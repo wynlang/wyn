@@ -1062,13 +1062,21 @@ int main(int argc, char** argv) {
             return 1;
         }
         char* file = NULL;
+        char* eval_code = NULL;
         
-        // Check for --debug flag and find file arg
+        // Check for --debug flag, -e eval, and find file arg
         int keep_artifacts = 0;
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--debug") == 0) keep_artifacts = 1;
             else if (strcmp(argv[i], "--fast") == 0 || strcmp(argv[i], "--release") == 0 || strcmp(argv[i], "--shared") == 0 || strcmp(argv[i], "--python") == 0) {}
+            else if (strcmp(argv[i], "-e") == 0 && i + 1 < argc) { eval_code = argv[++i]; }
             else if (!file) file = argv[i];
+        }
+        // Handle -e: write to temp file
+        if (eval_code) {
+            file = "/tmp/__wyn_eval.wyn";
+            FILE* ef = fopen(file, "w");
+            if (ef) { fprintf(ef, "%s\n", eval_code); fclose(ef); }
         }
         if (!file) {
             fprintf(stderr, "Usage: wyn run <file.wyn>\n");
