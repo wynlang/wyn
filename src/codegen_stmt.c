@@ -1722,7 +1722,9 @@ void codegen_stmt(Stmt* stmt) {
                     if ((method.length == 5 && memcmp(method.start, "split", 5) == 0) ||
                         (method.length == 5 && memcmp(method.start, "lines", 5) == 0) ||
                         (method.length == 5 && memcmp(method.start, "words", 5) == 0) ||
-                        (method.length == 5 && memcmp(method.start, "chars", 5) == 0)) {
+                        (method.length == 5 && memcmp(method.start, "chars", 5) == 0) ||
+                        (method.length == 4 && memcmp(method.start, "keys", 4) == 0) ||
+                        (method.length == 6 && memcmp(method.start, "values", 6) == 0)) {
                         is_string_array = true;
                     }
                 }
@@ -1738,7 +1740,7 @@ void codegen_stmt(Stmt* stmt) {
                         (var_len >= 4 && strncmp(var_name, "word", 4) == 0) ||
                         (var_len >= 4 && strncmp(var_name, "part", 4) == 0) ||
                         (var_len >= 4 && strncmp(var_name, "char", 4) == 0) ||
-                        (var_len == 1 && var_name[0] == 's')) {
+                        (var_len == 1 && var_name[0] == 's') || (var_len == 3 && strncmp(var_name, "key", 3) == 0) || (var_len == 3 && strncmp(var_name, "val", 3) == 0) || (var_len == 1 && var_name[0] == 'k') || (var_len == 1 && var_name[0] == 'v')) {
                         is_string_array = true;
                     }
                 }

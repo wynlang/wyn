@@ -456,7 +456,7 @@ void array_push_str(WynArray* arr, const char* value) {
         arr->data = realloc(arr->data, sizeof(WynValue) * arr->capacity);
     }
     arr->data[arr->count].type = WYN_TYPE_STRING;
-    arr->data[arr->count].data.string_val = value;
+    arr->data[arr->count].data.string_val = strdup(value);
     arr->count++;
 }
 void array_push_array(WynArray* arr, WynArray* nested) {
