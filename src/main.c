@@ -299,6 +299,27 @@ int main(int argc, char** argv) {
         return system(cmd2) == 0 ? 0 : 1;
     }
     
+    if (strcmp(command, "explain") == 0) {
+        if (argc < 3) { fprintf(stderr, "Usage: wyn explain <error-code>\n"); return 1; }
+        const char* code = argv[2];
+        struct { const char* code; const char* title; const char* detail; } errors[] = {
+            {"E001", "Undefined variable", "A variable was used before being declared.\n\nFix: Declare the variable with 'var' before using it.\n\n  var x = 42\n  println(x.to_string())"},
+            {"E002", "Undefined function", "A function was called that doesn't exist.\n\nFix: Define the function before calling it, or check for typos.\n\n  fn add(a: int, b: int) -> int { return a + b }\n  println(add(2, 3).to_string())"},
+            {"E003", "Type mismatch", "An expression has the wrong type for the context.\n\nFix: Ensure types match. Use .to_string() for int→string conversion.\n\n  var x: int = 42       // correct\n  var y: string = \"hi\"  // correct"},
+            {"E004", "Missing return", "A function with a return type doesn't return a value on all paths.\n\nFix: Add a return statement to every code path.\n\n  fn abs(x: int) -> int {\n    if x < 0 { return -x }\n    return x  // don't forget this!\n  }"},
+            {"E005", "Wrong argument count", "A function was called with the wrong number of arguments.\n\nFix: Check the function signature and pass the correct number of arguments."},
+            {NULL, NULL, NULL}
+        };
+        for (int i = 0; errors[i].code; i++) {
+            if (strcmp(code, errors[i].code) == 0) {
+                printf("\033[1m%s: %s\033[0m\n\n%s\n", errors[i].code, errors[i].title, errors[i].detail);
+                return 0;
+            }
+        }
+        fprintf(stderr, "Unknown error code: %s\n", code);
+        return 1;
+    }
+    
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0 || strcmp(command, "-v") == 0) {
         printf("\033[36mWyn\033[0m v%s\n", get_version());
         return 0;
@@ -406,7 +427,7 @@ int main(int argc, char** argv) {
         print_banner(get_version());
         fprintf(stderr, "\033[1mUsage:\033[0m wyn \033[33m<command>\033[0m [options]\n\n");
         fprintf(stderr, "\033[1mDevelop:\033[0m\n");
-        fprintf(stderr, "  \033[32mrun\033[0m <file.wyn>         Compile and run\n");
+        fprintf(stderr, "  \033[32mrun <file.wyn>         Compile and run (-e for eval)\n");
         fprintf(stderr, "  \033[32mcheck\033[0m <file.wyn>       Type-check without compiling\n");
         fprintf(stderr, "  \033[32mfmt\033[0m <file.wyn>         Format source file\n");
         fprintf(stderr, "  \033[32mtest\033[0m                    Run project tests\n");
