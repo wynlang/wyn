@@ -2887,6 +2887,47 @@ char* Db_query_one(long long handle, const char* sql) {
     return result;
 }
 
+// Parameterized queries — prevent SQL injection
+int Db_exec_p(long long handle, const char* sql, WynArray params) {
+    if (handle <= 0 || handle >= MAX_DB_HANDLES || !db_handles[handle]) return -1;
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db_handles[handle], sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+    for (int i = 0; i < params.count; i++) {
+        if (params.data[i].type == WYN_TYPE_STRING)
+            sqlite3_bind_text(stmt, i+1, params.data[i].data.string_val, -1, SQLITE_TRANSIENT);
+        else
+            sqlite3_bind_int64(stmt, i+1, params.data[i].data.int_val);
+    }
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return (rc == SQLITE_DONE || rc == SQLITE_OK) ? 0 : -1;
+}
+
+char* Db_query_p(long long handle, const char* sql, WynArray params) {
+    if (handle <= 0 || handle >= MAX_DB_HANDLES || !db_handles[handle]) return "";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db_handles[handle], sql, -1, &stmt, NULL) != SQLITE_OK) return "";
+    for (int i = 0; i < params.count; i++) {
+        if (params.data[i].type == WYN_TYPE_STRING)
+            sqlite3_bind_text(stmt, i+1, params.data[i].data.string_val, -1, SQLITE_TRANSIENT);
+        else
+            sqlite3_bind_int64(stmt, i+1, params.data[i].data.int_val);
+    }
+    char* result = malloc(65536); result[0] = 0;
+    int first_row = 1;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        if (!first_row) strcat(result, "\n"); first_row = 0;
+        int cols = sqlite3_column_count(stmt);
+        for (int c = 0; c < cols; c++) {
+            if (c > 0) strcat(result, "|");
+            const char* val = (const char*)sqlite3_column_text(stmt, c);
+            if (val) strcat(result, val);
+        }
+    }
+    sqlite3_finalize(stmt);
+    return result;
+}
+
 long long Db_last_insert_id(long long handle) {
     if (handle <= 0 || handle >= MAX_DB_HANDLES || !db_handles[handle]) return 0;
     return (long long)sqlite3_last_insert_rowid(db_handles[handle]);
