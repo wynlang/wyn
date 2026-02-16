@@ -639,9 +639,11 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "test") == 0) {
+        int parallel = 0;
+        for (int i = 2; i < argc; i++) { if (strcmp(argv[i], "--parallel") == 0) parallel = 1; }
         struct stat st;
-        // Prefer run_tests.wyn if it exists
-        if (stat("tests/run_tests.wyn", &st) == 0) {
+        // Prefer run_tests.wyn if it exists (unless --parallel)
+        if (!parallel && stat("tests/run_tests.wyn", &st) == 0) {
             printf("\033[1mRunning tests...\033[0m\n\n");
             char cmd[512];
             snprintf(cmd, sizeof(cmd), "%s run tests/run_tests.wyn", argv[0]);
@@ -669,6 +671,24 @@ int main(int argc, char** argv) {
             "echo; echo \"\\033[1mResults:\\033[0m $pass passed, $fail failed\"; "
             "[ $fail -eq 0 ]",
             argv[0]);
+        if (parallel) {
+            // Parallel: run all test files concurrently
+            snprintf(cmd, sizeof(cmd),
+                "echo '\\033[1mRunning tests in parallel...\\033[0m\\n'; "
+                "pass=0; fail=0; tmpdir=$(mktemp -d); "
+                "for f in tests/test_*.wyn tests/*/test_*.wyn; do "
+                "  [ -f \"$f\" ] || continue; "
+                "  ( %s run \"$f\" > /dev/null 2>&1; echo $? > \"$tmpdir/$(echo $f | tr / _)\" ) & "
+                "done; wait; "
+                "for r in \"$tmpdir\"/*; do "
+                "  f=$(basename \"$r\" | tr _ /); "
+                "  if [ \"$(cat $r)\" = \"0\" ]; then echo \"  \\033[32m✓\\033[0m $f\"; pass=$((pass+1)); "
+                "  else echo \"  \\033[31m✗\\033[0m $f\"; fail=$((fail+1)); fi; "
+                "done; rm -rf \"$tmpdir\"; "
+                "echo; echo \"\\033[1mResults:\\033[0m $pass passed, $fail failed\"; "
+                "[ $fail -eq 0 ]",
+                argv[0]);
+        }
         return system(cmd) == 0 ? 0 : 1;
     }
     
@@ -833,6 +853,25 @@ int main(int argc, char** argv) {
         }
         printf("\n\033[1mResults:\033[0m\n");
         printf("  avg: \033[32m%.1fms\033[0m  min: %.1fms  max: %.1fms\n", sum / 5, min, max);
+        
+        // Save results and compare with previous
+        char bench_file[512];
+        snprintf(bench_file, sizeof(bench_file), "%s.bench", argv[2]);
+        FILE* prev = fopen(bench_file, "r");
+        if (prev) {
+            double prev_avg;
+            if (fscanf(prev, "%lf", &prev_avg) == 1) {
+                double delta = (sum / 5) - prev_avg;
+                double pct = (delta / prev_avg) * 100;
+                if (delta < -1) printf("  \033[32m↓ %.1fms faster (%.1f%%)\033[0m vs previous\n", -delta, -pct);
+                else if (delta > 1) printf("  \033[31m↑ %.1fms slower (%.1f%%)\033[0m vs previous\n", delta, pct);
+                else printf("  \033[2m≈ same as previous\033[0m\n");
+            }
+            fclose(prev);
+        }
+        FILE* save = fopen(bench_file, "w");
+        if (save) { fprintf(save, "%.2f\n", sum / 5); fclose(save); }
+        
         return 0;
     }
     
