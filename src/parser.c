@@ -1483,7 +1483,15 @@ Stmt* statement() {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_RETURN;
         stmt->ret.value = expression();
-        match(TOKEN_SEMI);  // Optional semicolon
+        match(TOKEN_SEMI);
+        return stmt;
+    }
+    
+    if (match(TOKEN_DEFER)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_DEFER;
+        stmt->expr = expression();
+        match(TOKEN_SEMI);
         return stmt;
     }
     

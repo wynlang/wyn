@@ -115,6 +115,7 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 5 && memcmp(start, "await", 5) == 0) return TOKEN_AWAIT;
             break;
         case 'b': if (length == 5 && memcmp(start, "break", 5) == 0) return TOKEN_BREAK; break;
+        case 'd': if (length == 5 && memcmp(start, "defer", 5) == 0) return TOKEN_DEFER; break;
         case 'c': 
             if (length == 5 && memcmp(start, "const", 5) == 0) return TOKEN_CONST;
             if (length == 8 && memcmp(start, "continue", 8) == 0) return TOKEN_CONTINUE;

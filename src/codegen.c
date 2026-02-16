@@ -541,3 +541,11 @@ int get_current_shadow(const char* name) {
     }
     return 0;
 }
+
+// Defer stack
+static Expr* defer_stack[64];
+static int defer_count = 0;
+void push_defer(Expr* e) { if (defer_count < 64) defer_stack[defer_count++] = e; }
+int get_defer_count() { return defer_count; }
+Expr* get_defer(int i) { return defer_stack[i]; }
+void reset_defers() { defer_count = 0; }

@@ -2384,10 +2384,11 @@ void codegen_expr(Expr* expr) {
             // Start from the rightmost function and work backwards
             for (int i = expr->pipeline.stage_count - 1; i >= 1; i--) {
                 if (expr->pipeline.stages[i]->type == EXPR_IDENT) {
-                    // Simple function call
-                    emit("%.*s(", 
-                         expr->pipeline.stages[i]->token.length,
-                         expr->pipeline.stages[i]->token.start);
+                    char _pn[128]; snprintf(_pn, sizeof(_pn), "%.*s", expr->pipeline.stages[i]->token.length, expr->pipeline.stages[i]->token.start);
+                    const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                    const char* _pfx = "";
+                    for (int k = 0; _ckw[k]; k++) { if (strcmp(_pn, _ckw[k]) == 0) { _pfx = "_"; break; } }
+                    emit("%s%s(", _pfx, _pn);
                 } else if (expr->pipeline.stages[i]->type == EXPR_METHOD_CALL) {
                     // Method call - need to handle specially
                     // For now, just emit the method name as a function

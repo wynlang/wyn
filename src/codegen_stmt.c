@@ -783,6 +783,13 @@ void codegen_stmt(Stmt* stmt) {
             break;
         }
         case STMT_RETURN:
+            // Emit deferred calls before return (LIFO order)
+            {
+                extern int get_defer_count(); extern Expr* get_defer(int);
+                for (int _d = get_defer_count() - 1; _d >= 0; _d--) {
+                    codegen_expr(get_defer(_d)); emit(";\n");
+                }
+            }
             if (in_async_function) {
                 emit("*temp = ");
                 codegen_expr(stmt->ret.value);
@@ -795,6 +802,9 @@ void codegen_stmt(Stmt* stmt) {
             break;
         case STMT_BREAK:
             emit("break;\n");
+            break;
+        case STMT_DEFER:
+            { extern void push_defer(Expr*); push_defer(stmt->expr); }
             break;
         case STMT_CONTINUE:
             emit("continue;\n");
@@ -842,6 +852,7 @@ void codegen_stmt(Stmt* stmt) {
             break;
         case STMT_FN: {
             // Determine return type
+            { extern void reset_defers(); reset_defers(); }
             const char* return_type = stmt->fn.return_type ? "long long" : "void"; // default
             char return_type_buf[256] = {0};  // Buffer for custom return types
             bool is_async = stmt->fn.is_async;
@@ -1088,6 +1099,13 @@ void codegen_stmt(Stmt* stmt) {
             // Function body
             {
                 codegen_stmt(stmt->fn.body);
+                // Emit deferred calls at function end (LIFO)
+                {
+                    extern int get_defer_count(); extern Expr* get_defer(int);
+                    for (int _d = get_defer_count() - 1; _d >= 0; _d--) {
+                        emit("    "); codegen_expr(get_defer(_d)); emit(";\n");
+                    }
+                }
                 // Ensure main function always returns 0 if no explicit return
                 bool is_main = (stmt->fn.name.length == 4 && 
                                memcmp(stmt->fn.name.start, "main", 4) == 0);
