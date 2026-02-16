@@ -999,6 +999,8 @@ const char* lookup_module_fn_return_type(const char* fn_name) {
         {"System_exec", "string"}, {"System_env", "string"},
         {"Net_resolve", "string"}, {"Url_encode", "string"}, {"Url_decode", "string"},
         {"StringBuilder_to_string", "string"},
+        {"Template_render", "string"},
+        {"Template_render_string", "string"},
         {NULL, NULL}
     };
     for (int i = 0; fns[i].name; i++) {

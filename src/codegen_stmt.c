@@ -252,6 +252,16 @@ void codegen_stmt(Stmt* stmt) {
                             { char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start); extern void register_enum_var(const char*, const char*); register_enum_var(_vn, _on); }
                             goto var_type_done;
                         }
+                        // Check module function return type: Template.render -> string
+                        {
+                            extern const char* lookup_module_fn_return_type(const char*);
+                            char _fn[128]; snprintf(_fn, 128, "%s_%.*s", _on, stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                            const char* _rt = lookup_module_fn_return_type(_fn);
+                            if (_rt) {
+                                if (strcmp(_rt, "string") == 0) { c_type = "char*"; goto var_type_done; }
+                                if (strcmp(_rt, "array") == 0) { c_type = "WynArray"; goto var_type_done; }
+                            }
+                        }
                     }
                     // Quick check: if object is a known array and method returns array, type as WynArray
                     if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
