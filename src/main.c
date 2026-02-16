@@ -351,6 +351,34 @@ int main(int argc, char** argv) {
 #endif
     }
     
+    if (strcmp(command, "upgrade") == 0) {
+        printf("\033[1mChecking for updates...\033[0m\n");
+#ifdef __APPLE__
+#ifdef __aarch64__
+        const char* platform = "macos-arm64";
+#else
+        const char* platform = "macos-x64";
+#endif
+#elif _WIN32
+        const char* platform = "windows-x64";
+#else
+        const char* platform = "linux-x64";
+#endif
+        char cmd[1024];
+        snprintf(cmd, sizeof(cmd),
+            "latest=$(curl -sL https://api.github.com/repos/wynlang/wyn/releases/latest | grep tag_name | head -1 | sed 's/.*\"v//' | sed 's/\".*//');"
+            "if [ -z \"$latest\" ]; then echo '\033[31m✗\033[0m Could not check for updates'; exit 1; fi;"
+            "current='%s';"
+            "if [ \"$latest\" = \"$current\" ]; then echo '\033[32m✓\033[0m Already on latest version (v'$current')'; exit 0; fi;"
+            "echo 'Upgrading v'$current' → v'$latest'...';"
+            "curl -sL https://github.com/wynlang/wyn/releases/download/v$latest/wyn-%s -o /tmp/wyn_new && "
+            "chmod +x /tmp/wyn_new && "
+            "sudo mv /tmp/wyn_new /usr/local/bin/wyn && "
+            "echo '\033[32m✓\033[0m Upgraded to v'$latest",
+            get_version(), platform);
+        return system(cmd) == 0 ? 0 : 1;
+    }
+    
     if (strcmp(command, "uninstall") == 0) {
 #ifdef _WIN32
         fprintf(stderr, "On Windows, remove wyn.exe from your PATH manually.\n");
