@@ -729,9 +729,26 @@ void codegen_stmt(Stmt* stmt) {
                 }
                 emit(") = ");
             } else if (stmt->var.is_const && !stmt->var.is_mutable && !is_already_const) {
-                emit("const %s %.*s = ", c_type, stmt->var.name.length, stmt->var.name.start);
+                char _vn[128]; snprintf(_vn, sizeof(_vn), "%.*s", stmt->var.name.length, stmt->var.name.start);
+                extern int get_shadow_suffix(const char*);
+                int _ss = get_shadow_suffix(_vn);
+                if (_ss > 0) {
+                    emit("#undef %s\n", _vn);
+                    emit("const %s %s__%d = ", c_type, _vn, _ss);
+                    // We'll add the #define after the initializer
+                } else {
+                    emit("const %s %s = ", c_type, _vn);
+                }
             } else {
-                emit("%s %.*s = ", c_type, stmt->var.name.length, stmt->var.name.start);
+                char _vn[128]; snprintf(_vn, sizeof(_vn), "%.*s", stmt->var.name.length, stmt->var.name.start);
+                extern int get_shadow_suffix(const char*);
+                int _ss = get_shadow_suffix(_vn);
+                if (_ss > 0) {
+                    emit("#undef %s\n", _vn);
+                    emit("%s %s__%d = ", c_type, _vn, _ss);
+                } else {
+                    emit("%s %s = ", c_type, _vn);
+                }
             }
             
             // Register local variable for scope tracking
@@ -749,6 +766,15 @@ void codegen_stmt(Stmt* stmt) {
                 codegen_expr(stmt->var.init);
             }
             emit(";\n");
+            // Shadow define: redirect original name to suffixed version
+            {
+                char _svn[128]; snprintf(_svn, sizeof(_svn), "%.*s", stmt->var.name.length, stmt->var.name.start);
+                extern int get_current_shadow(const char*);
+                int _sc = get_current_shadow(_svn);
+                if (_sc > 0) {
+                    emit("#define %s %s__%d\n", _svn, _svn, _sc);
+                }
+            }
             
             // Track ARC-managed variables for automatic cleanup
             if (needs_arc_management && !stmt->var.is_const) {

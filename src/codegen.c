@@ -250,6 +250,26 @@ int is_known_sb_var(const char* name) {
     return 0;
 }
 
+// Variable shadowing: track declared names and return shadow suffix
+static struct { char name[64]; int count; } shadow_vars[512];
+static int shadow_var_count = 0;
+
+// Returns shadow count for a variable name (0 = first declaration)
+int get_shadow_suffix(const char* name) {
+    for (int i = 0; i < shadow_var_count; i++) {
+        if (strcmp(shadow_vars[i].name, name) == 0) {
+            return ++shadow_vars[i].count;
+        }
+    }
+    if (shadow_var_count < 512) {
+        strncpy(shadow_vars[shadow_var_count].name, name, 63);
+        shadow_vars[shadow_var_count].name[63] = 0;
+        shadow_vars[shadow_var_count].count = 0;
+        shadow_var_count++;
+    }
+    return 0;
+}
+
 static bool is_local_variable(const char* name) {
     for (int i = 0; i < current_local_count; i++) {
         if (strcmp(current_function_locals[i], name) == 0) {
@@ -514,3 +534,10 @@ void codegen_c_header() {
 
 // Program-level code generation and match statements
 #include "codegen_program.c"
+
+int get_current_shadow(const char* name) {
+    for (int i = 0; i < shadow_var_count; i++) {
+        if (strcmp(shadow_vars[i].name, name) == 0) return shadow_vars[i].count;
+    }
+    return 0;
+}
