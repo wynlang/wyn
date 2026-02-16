@@ -3885,3 +3885,92 @@ long long Csv_header_count(long long handle) {
 void System_gc() { wyn_arena_reset(); }
 
 #endif // WYN_RUNTIME_H
+
+
+// === Template Engine ===
+// Replaces ${key} in template strings with values from a HashMap context.
+// Auto HTML-escapes values. Use ${raw:key} for unescaped output.
+
+static char* html_escape(const char* s) {
+    if (!s) return "";
+    int len = strlen(s);
+    char* out = malloc(len * 6 + 1); // worst case: every char is &
+    char* p = out;
+    for (int i = 0; i < len; i++) {
+        switch (s[i]) {
+            case '<': memcpy(p, "&lt;", 4); p += 4; break;
+            case '>': memcpy(p, "&gt;", 4); p += 4; break;
+            case '&': memcpy(p, "&amp;", 5); p += 5; break;
+            case '"': memcpy(p, "&quot;", 6); p += 6; break;
+            default: *p++ = s[i];
+        }
+    }
+    *p = 0;
+    return out;
+}
+
+char* Template_render_string(const char* tmpl, WynHashMap* ctx) {
+    if (!tmpl) return "";
+    int tlen = strlen(tmpl);
+    char* result = malloc(tlen * 4 + 65536);
+    char* out = result;
+    
+    for (int i = 0; i < tlen; i++) {
+        if (tmpl[i] == '$' && i + 1 < tlen && tmpl[i+1] == '{') {
+            // Find closing }
+            int start = i + 2;
+            int end = start;
+            int depth = 1;
+            while (end < tlen && depth > 0) {
+                if (tmpl[end] == '{') depth++;
+                if (tmpl[end] == '}') depth--;
+                if (depth > 0) end++;
+            }
+            
+            char key[256] = {0};
+            int klen = end - start;
+            if (klen > 255) klen = 255;
+            memcpy(key, tmpl + start, klen);
+            
+            // Check for raw: prefix (no escaping)
+            int raw = 0;
+            char* lookup = key;
+            if (strncmp(key, "raw:", 4) == 0) { raw = 1; lookup = key + 4; }
+            
+            // Look up in context
+            extern char* hashmap_get_string(WynHashMap*, const char*);
+            char* val = hashmap_get_string(ctx, lookup);
+            if (val && val[0]) {
+                if (raw) {
+                    int vlen = strlen(val);
+                    memcpy(out, val, vlen); out += vlen;
+                } else {
+                    char* escaped = html_escape(val);
+                    int elen = strlen(escaped);
+                    memcpy(out, escaped, elen); out += elen;
+                    free(escaped);
+                }
+            }
+            i = end; // skip past }
+        } else {
+            *out++ = tmpl[i];
+        }
+    }
+    *out = 0;
+    return result;
+}
+
+char* Template_render(const char* path, WynHashMap* ctx) {
+    FILE* f = fopen(path, "r");
+    if (!f) return "";
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* tmpl = malloc(len + 1);
+    fread(tmpl, 1, len, f);
+    tmpl[len] = 0;
+    fclose(f);
+    char* result = Template_render_string(tmpl, ctx);
+    free(tmpl);
+    return result;
+}

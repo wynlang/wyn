@@ -1092,6 +1092,8 @@ void codegen_expr(Expr* expr) {
                         emit("StringBuilder_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "Crypto") == 0) {
                         emit("Crypto_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Template") == 0) {
+                        emit("Template_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "Encoding") == 0) {
                         emit("Encoding_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "Os") == 0) {
