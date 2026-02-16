@@ -156,6 +156,149 @@ int main(int argc, char** argv) {
     char* command = argv[1];
     
     // Handle --version and -v flags
+    // wyn deploy <target> — deploy to server via SSH
+    if (strcmp(command, "deploy") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: wyn deploy <target> [--dry-run]\n");
+            fprintf(stderr, "  Reads [deploy.<target>] from wyn.toml\n");
+            return 1;
+        }
+        const char* target = argv[2];
+        int dry_run = 0;
+        for (int i = 3; i < argc; i++) { if (strcmp(argv[i], "--dry-run") == 0) dry_run = 1; }
+        
+        // Read wyn.toml
+        FILE* toml = fopen("wyn.toml", "r");
+        if (!toml) { fprintf(stderr, "\033[31m✗\033[0m No wyn.toml found\n"); return 1; }
+        char toml_buf[8192]; int toml_len = fread(toml_buf, 1, sizeof(toml_buf)-1, toml); toml_buf[toml_len] = 0; fclose(toml);
+        
+        // Find [deploy.<target>] section
+        char section[128]; snprintf(section, sizeof(section), "[deploy.%s]", target);
+        char* sec = strstr(toml_buf, section);
+        if (!sec) { fprintf(stderr, "\033[31m✗\033[0m No %s section in wyn.toml\n", section); return 1; }
+        
+        // Parse key = "value" pairs from section
+        char host[256]="", user[128]="", key[512]="", path[512]="", os_target[32]="linux", pre[512]="", post[512]="";
+        char* line = sec + strlen(section);
+        while (*line) {
+            while (*line == '\n' || *line == '\r' || *line == ' ') line++;
+            if (*line == '[') break; // next section
+            if (*line == '#' || *line == 0) { while (*line && *line != '\n') line++; continue; }
+            char k[64], v[512]; v[0] = 0;
+            if (sscanf(line, "%63[a-z_] = \"%511[^\"]\"", k, v) == 2) {
+                if (strcmp(k, "host") == 0) strncpy(host, v, 255);
+                else if (strcmp(k, "user") == 0) strncpy(user, v, 127);
+                else if (strcmp(k, "key") == 0) strncpy(key, v, 511);
+                else if (strcmp(k, "path") == 0) strncpy(path, v, 511);
+                else if (strcmp(k, "os") == 0) strncpy(os_target, v, 31);
+                else if (strcmp(k, "pre") == 0) strncpy(pre, v, 511);
+                else if (strcmp(k, "post") == 0) strncpy(post, v, 511);
+            }
+            while (*line && *line != '\n') line++;
+        }
+        
+        if (!host[0] || !path[0]) { fprintf(stderr, "\033[31m✗\033[0m Missing host or path in %s\n", section); return 1; }
+        
+        // Find entry point
+        char* entry_ptr = strstr(toml_buf, "entry = \"");
+        char entry[256] = "src/main.wyn";
+        if (entry_ptr) { sscanf(entry_ptr, "entry = \"%255[^\"]\"", entry); }
+        
+        // Derive binary name
+        char* name_ptr = strstr(toml_buf, "name = \"");
+        char bin_name[128] = "app";
+        if (name_ptr) { sscanf(name_ptr, "name = \"%127[^\"]\"", bin_name); }
+        
+        char ssh_opts[1024] = "";
+        if (key[0]) {
+            // Expand ~ in key path
+            char expanded_key[512];
+            if (key[0] == '~') { snprintf(expanded_key, sizeof(expanded_key), "%s%s", getenv("HOME") ?: "", key+1); }
+            else { strncpy(expanded_key, key, 511); }
+            snprintf(ssh_opts, sizeof(ssh_opts), "-i %s -o StrictHostKeyChecking=no", expanded_key);
+        }
+        
+        char ssh_target[384]; snprintf(ssh_target, sizeof(ssh_target), "%s%s%s", user[0] ? user : "", user[0] ? "@" : "", host);
+        
+        printf("\033[1mDeploying\033[0m to %s (%s)\n", target, ssh_target);
+        printf("  Binary: %s → %s/%s\n", entry, path, bin_name);
+        if (pre[0]) printf("  Pre:    %s\n", pre);
+        if (post[0]) printf("  Post:   %s\n", post);
+        printf("\n");
+        
+        if (dry_run) { printf("\033[33m--dry-run: no changes made\033[0m\n"); return 0; }
+        
+        // Step 1: Cross-compile
+        printf("  \033[2m[1/4] Cross-compiling for %s...\033[0m\n", os_target);
+        char build_cmd[1024];
+        snprintf(build_cmd, sizeof(build_cmd), "%s cross %s %s 2>&1", argv[0], os_target, entry);
+        if (system(build_cmd) != 0) { fprintf(stderr, "\033[31m✗\033[0m Cross-compilation failed\n"); return 1; }
+        
+        // Step 2: Pre-deploy command
+        if (pre[0]) {
+            printf("  \033[2m[2/4] Running pre-deploy...\033[0m\n");
+            char pre_cmd[1024]; snprintf(pre_cmd, sizeof(pre_cmd), "ssh %s %s '%s' 2>&1", ssh_opts, ssh_target, pre);
+            system(pre_cmd);
+        }
+        
+        // Step 3: Upload binary
+        printf("  \033[2m[3/4] Uploading binary...\033[0m\n");
+        char scp_cmd[1024];
+        char local_bin[256]; snprintf(local_bin, sizeof(local_bin), "%s.out", entry);
+        snprintf(scp_cmd, sizeof(scp_cmd), "scp %s %s %s:%s/%s 2>&1", ssh_opts, local_bin, ssh_target, path, bin_name);
+        if (system(scp_cmd) != 0) { fprintf(stderr, "\033[31m✗\033[0m Upload failed\n"); return 1; }
+        
+        // Step 4: Post-deploy command
+        if (post[0]) {
+            printf("  \033[2m[4/4] Running post-deploy...\033[0m\n");
+            char post_cmd[1024]; snprintf(post_cmd, sizeof(post_cmd), "ssh %s %s '%s' 2>&1", ssh_opts, ssh_target, post);
+            system(post_cmd);
+        }
+        
+        // Cleanup local binary
+        unlink(local_bin);
+        
+        printf("\n\033[32m✓\033[0m Deployed %s to %s:%s/%s\n", bin_name, host, path, bin_name);
+        return 0;
+    }
+    
+    // wyn logs <target> — tail remote logs
+    if (strcmp(command, "logs") == 0 || strcmp(command, "ssh") == 0) {
+        if (argc < 3) { fprintf(stderr, "Usage: wyn %s <target>\n", command); return 1; }
+        FILE* toml = fopen("wyn.toml", "r");
+        if (!toml) { fprintf(stderr, "\033[31m✗\033[0m No wyn.toml found\n"); return 1; }
+        char tb[8192]; int tl = fread(tb, 1, sizeof(tb)-1, toml); tb[tl] = 0; fclose(toml);
+        char sec[128]; snprintf(sec, sizeof(sec), "[deploy.%s]", argv[2]);
+        char* sp = strstr(tb, sec);
+        if (!sp) { fprintf(stderr, "\033[31m✗\033[0m No %s in wyn.toml\n", sec); return 1; }
+        char host[256]="", user[128]="", key[512]="";
+        char* ln = sp;
+        while (*ln) {
+            while (*ln == '\n' || *ln == '\r' || *ln == ' ') ln++;
+            if (*ln == '[') break;
+            char k2[64], v2[512]; v2[0] = 0;
+            if (sscanf(ln, "%63[a-z_] = \"%511[^\"]\"", k2, v2) == 2) {
+                if (strcmp(k2, "host") == 0) strncpy(host, v2, 255);
+                else if (strcmp(k2, "user") == 0) strncpy(user, v2, 127);
+                else if (strcmp(k2, "key") == 0) strncpy(key, v2, 511);
+            }
+            while (*ln && *ln != '\n') ln++;
+        }
+        char ssh_opts2[1024] = "";
+        if (key[0]) {
+            char ek[512]; if (key[0] == '~') snprintf(ek, sizeof(ek), "%s%s", getenv("HOME") ?: "", key+1); else strncpy(ek, key, 511);
+            snprintf(ssh_opts2, sizeof(ssh_opts2), "-i %s -o StrictHostKeyChecking=no", ek);
+        }
+        char st[384]; snprintf(st, sizeof(st), "%s%s%s", user[0] ? user : "", user[0] ? "@" : "", host);
+        char cmd2[1024];
+        if (strcmp(command, "ssh") == 0) {
+            snprintf(cmd2, sizeof(cmd2), "ssh %s %s", ssh_opts2, st);
+        } else {
+            snprintf(cmd2, sizeof(cmd2), "ssh %s %s 'journalctl -u %s -f --no-pager' 2>&1", ssh_opts2, st, argv[2]);
+        }
+        return system(cmd2) == 0 ? 0 : 1;
+    }
+    
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0 || strcmp(command, "-v") == 0) {
         printf("\033[36mWyn\033[0m v%s\n", get_version());
         return 0;
