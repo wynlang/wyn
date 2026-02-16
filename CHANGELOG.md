@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.7.0 — 2026-02-17 (in development)
+
+### Language Features
+- **Full string interpolation** — `"${arr[1]}"`, `"${name.upper()}"`, `"${fn(x)}"` all work
+- **Single-quote strings** — `'no interpolation'`, enables nested quotes in `${}`
+- **Variable shadowing** — `var x = 1; var x = "hello"` works across types
+- **Enums with associated data** — `enum Shape { Circle(float), Point }` with destructuring match
+- **Pipe operator** — `5 |> double |> add1`
+- **Defer statement** — `defer cleanup()` runs at function exit in LIFO order
+- **Inclusive range** — `for i in 0..=5` includes 5
+- **Script mode** — no `fn main()` needed, shebang support, `wyn run -e 'code'`
+- **Type aliases** — `type UserId = int`
+- **`%=` operator** — compound modulo assignment
+
+### Standard Library
+- **Template engine** — `Template.render(path, ctx)` with `${if:}`, `${each:}`, `${include:}`, auto HTML-escape
+- **Parameterized SQL** — `Db.exec_p(db, "? ?", [val])` prevents injection
+- **HashMap.keys()/values()** return arrays (not strings)
+- **System.load_env(".env")** — load environment files
+- **String methods** — `.starts_with()`, `.ends_with()`, `.replace_all()`, `.pad_left()`, `.pad_right()`, `.chars()`, `.bytes()`
+
+### CLI
+- **`wyn deploy`** — deploy via SSH with wyn.toml config, `--dry-run`, `wyn ssh`, `wyn logs`
+- **`wyn init --web/--cli/--lib`** — project templates that compile immediately
+- **`wyn upgrade`** — self-update from GitHub releases
+- **`wyn doc --html`** — generate static HTML documentation
+- **`wyn bench`** — auto-compares with previous run
+- **`wyn test --parallel`** — concurrent test execution
+- **`wyn fmt <dir> --check`** — CI-friendly format checking
+- **`wyn explain E001`** — detailed error explanations
+- **`wyn build`** reads `entry` from `wyn.toml`
+
+### Developer Experience
+- **Error messages** show source code with line numbers and colored carets
+- **"Did you mean?"** suggestions for typos
+- **Warning** for `=` in if conditions (did you mean `==`?)
+- **REPL** auto-prints expression results
+- **Precompiled header** — 3.6x faster compilation (5s → 1.4s)
+- **Multi-file projects** — `import utils` loads `utils.wyn` from same directory
+
 ## v1.6.0 — 2026-02-16
 
 ### Language Features
