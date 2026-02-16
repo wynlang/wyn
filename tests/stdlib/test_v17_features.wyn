@@ -3,6 +3,8 @@ fn add1(x: int) -> int { return x + 1 }
 
 type Score = int
 
+enum Shape { Circle(float), Point }
+
 var defer_order = ""
 fn defer_append(s: string) { defer_order = defer_order + s }
 fn test_defer_order() {
@@ -72,6 +74,18 @@ fn main() -> int {
     var qr = Db.query(db, "SELECT COUNT(*) FROM t")
     Test.assert_eq_str(qr, "2", "param sql injection safe")
     Db.close(db)
+    
+    // Epic 5: Enum with data + destructuring
+    var shape = Shape.Circle(5.0)
+    var extracted = match shape {
+        Shape.Circle(r) => r
+        Shape.Point => 0.0
+    }
+    Test.assert(extracted > 4.0, "enum destructure")
+    
+    // Epic 1.5: Single-quote strings
+    var sq = 'single quotes'
+    Test.assert_eq_str(sq, "single quotes", "single quote str")
     
     Test.summary()
     return 0

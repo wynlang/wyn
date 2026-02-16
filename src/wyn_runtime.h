@@ -3909,15 +3909,20 @@ static char* html_escape(const char* s) {
     return out;
 }
 
+char* Template_render(const char* path, WynHashMap* ctx);
 char* Template_render_string(const char* tmpl, WynHashMap* ctx) {
     if (!tmpl) return "";
     int tlen = strlen(tmpl);
     char* result = malloc(tlen * 4 + 65536);
     char* out = result;
     
+    extern char* hashmap_get_string(WynHashMap*, const char*);
+    
+    int skip_depth = 0; // >0 means we're inside a false ${if:} block
+    int else_depth = 0; // track which depth level we're at for else
+    
     for (int i = 0; i < tlen; i++) {
         if (tmpl[i] == '$' && i + 1 < tlen && tmpl[i+1] == '{') {
-            // Find closing }
             int start = i + 2;
             int end = start;
             int depth = 1;
@@ -3932,28 +3937,54 @@ char* Template_render_string(const char* tmpl, WynHashMap* ctx) {
             if (klen > 255) klen = 255;
             memcpy(key, tmpl + start, klen);
             
-            // Check for raw: prefix (no escaping)
+            // Handle control flow
+            if (strncmp(key, "if:", 3) == 0) {
+                char* cond_key = key + 3;
+                char* val = hashmap_get_string(ctx, cond_key);
+                int truthy = (val && val[0] && strcmp(val, "false") != 0 && strcmp(val, "0") != 0);
+                if (!truthy) skip_depth++;
+                i = end; continue;
+            } else if (strcmp(key, "else") == 0) {
+                if (skip_depth == 1) { skip_depth = 0; } // was skipping, now include
+                else if (skip_depth == 0) { skip_depth = 1; } // was including, now skip
+                i = end; continue;
+            } else if (strcmp(key, "endif") == 0) {
+                if (skip_depth > 0) skip_depth--;
+                i = end; continue;
+            }
+            
+            // Skip content inside false if blocks
+            if (skip_depth > 0) { i = end; continue; }
+            
+            // Include partial: ${include:path}
+            if (strncmp(key, "include:", 8) == 0) {
+                char* inc_path = key + 8;
+                char* inc_content = Template_render(inc_path, ctx);
+                if (inc_content && inc_content[0]) {
+                    int ilen = strlen(inc_content);
+                    memcpy(out, inc_content, ilen); out += ilen;
+                }
+                i = end; continue;
+            }
+            
+            // Variable substitution
             int raw = 0;
             char* lookup = key;
             if (strncmp(key, "raw:", 4) == 0) { raw = 1; lookup = key + 4; }
             
-            // Look up in context
-            extern char* hashmap_get_string(WynHashMap*, const char*);
             char* val = hashmap_get_string(ctx, lookup);
             if (val && val[0]) {
                 if (raw) {
-                    int vlen = strlen(val);
-                    memcpy(out, val, vlen); out += vlen;
+                    int vlen = strlen(val); memcpy(out, val, vlen); out += vlen;
                 } else {
                     char* escaped = html_escape(val);
-                    int elen = strlen(escaped);
-                    memcpy(out, escaped, elen); out += elen;
+                    int elen = strlen(escaped); memcpy(out, escaped, elen); out += elen;
                     free(escaped);
                 }
             }
-            i = end; // skip past }
+            i = end;
         } else {
-            *out++ = tmpl[i];
+            if (skip_depth == 0) *out++ = tmpl[i];
         }
     }
     *out = 0;
