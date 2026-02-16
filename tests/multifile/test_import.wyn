@@ -1,0 +1,10 @@
+import mathlib
+
+fn main() -> int {
+    Test.init("Multi-file Import")
+    Test.assert_eq_int(mathlib.add(2, 3), 5, "import add")
+    Test.assert_eq_int(mathlib.multiply(4, 5), 20, "import multiply")
+    Test.assert_eq_str(mathlib.greet("Wyn"), "Hi Wyn", "import greet")
+    Test.summary()
+    return 0
+}

@@ -65,10 +65,11 @@ fn main() -> int {
         "tests/validation/test_json.wyn",
         "tests/validation/test_regex.wyn",
         "tests/validation/test_http.wyn",
-        "tests/stdlib/test_v17_features.wyn"
+        "tests/stdlib/test_v17_features.wyn",
+        "tests/multifile/test_import.wyn"
     ]
 
-    for i in 0..41 {
+    for i in 0..42 {
         var path = tests[i]
         var result = run_test(path)
         if result == 1 {
