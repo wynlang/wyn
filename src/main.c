@@ -745,6 +745,7 @@ int main(int argc, char** argv) {
         
         // Compile to C first
         char* source = read_file(file);
+        { extern void set_source_directory(const char*); set_source_directory(file); }
         init_lexer(source);
         init_parser();
         set_parser_filename(file);  // Set filename for better error messages
@@ -878,6 +879,7 @@ int main(int argc, char** argv) {
     if (strcmp(command, "check") == 0) {
         if (argc < 3) { fprintf(stderr, "Usage: wyn check <file.wyn>\n"); return 1; }
         char* file = argv[2];
+        { extern void set_source_directory(const char*); set_source_directory(file); }
         char* source = read_file(file);
         if (!source) { fprintf(stderr, "Error: Cannot read %s\n", file); return 1; }
         extern void preload_imports(const char* source);
@@ -970,6 +972,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         
+        { extern void set_source_directory(const char*); set_source_directory(file); }
         char* file = argv[2];
         char* source = read_file(file);
         
@@ -1138,6 +1141,9 @@ int main(int argc, char** argv) {
         }
         
         char* source = read_file(file);
+        
+        // Set source directory for module resolution
+        { extern void set_source_directory(const char*); set_source_directory(file); }
         
         // Pre-load all imports before parsing
         extern void preload_imports(const char* source);

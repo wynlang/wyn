@@ -1139,7 +1139,7 @@ void codegen_stmt(Stmt* stmt) {
             for (int i = 0; i < stmt->extern_fn.param_count; i++) {
                 if (i > 0) emit(", ");
                 
-                const char* param_type = "int"; // default
+                const char* param_type = "long long"; // default
                 if (stmt->extern_fn.param_types[i] && stmt->extern_fn.param_types[i]->type == EXPR_IDENT) {
                     Token type_name = stmt->extern_fn.param_types[i]->token;
                     if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
@@ -1582,12 +1582,12 @@ void codegen_stmt(Stmt* stmt) {
                     if (j > 0) emit(", ");
                     
                     // Determine parameter type
-                    const char* param_type = "int";
+                    const char* param_type = "long long";
                     char custom_type_buf[256] = {0};
                     if (method->param_types[j] && method->param_types[j]->type == EXPR_IDENT) {
                         Token type_name = method->param_types[j]->token;
                         if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-                            param_type = "int";
+                            param_type = "long long";
                         } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
                             param_type = "double";
                         } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
@@ -1936,7 +1936,7 @@ void codegen_stmt(Stmt* stmt) {
                                     if (j > 0) emit(", ");
                                     
                                     // Determine parameter type
-                                    const char* param_type = "int";
+                                    const char* param_type = "long long";
                                     static char custom_param_type[128];
                                     if (s->fn.param_types[j]) {
                                         if (s->fn.param_types[j]->type == EXPR_IDENT) {
@@ -1948,7 +1948,7 @@ void codegen_stmt(Stmt* stmt) {
                                             } else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) {
                                                 param_type = "bool";
                                             } else if (pt.length == 3 && memcmp(pt.start, "int", 3) == 0) {
-                                                param_type = "int";
+                                                param_type = "long long";
                                             } else if (pt.length == 5 && memcmp(pt.start, "array", 5) == 0) {
                                                 param_type = "WynArray";
                                             } else {
