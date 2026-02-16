@@ -12,6 +12,10 @@ typedef struct {
 } Lexer;
 
 static Lexer lexer;
+static Lexer saved_lexer;
+
+void save_lexer_state() { saved_lexer = lexer; }
+void restore_lexer_state() { lexer = saved_lexer; }
 
 void init_lexer(const char* source) {
     lexer.start = source;

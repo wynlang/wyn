@@ -8,6 +8,7 @@
 #include "test.h"
 #include "error.h"
 
+extern void init_lexer(const char* source);
 extern Token next_token();
 
 typedef struct {
@@ -238,19 +239,25 @@ static Expr* primary() {
                     if (expr_end < len) {
                         // Extract expression
                         int expr_len = expr_end - expr_start;
-                        char* expr_str = malloc(expr_len + 1);
+                        char* expr_str = malloc(expr_len + 2);
                         memcpy(expr_str, str + expr_start, expr_len);
-                        expr_str[expr_len] = '\0';
+                        expr_str[expr_len] = ';';
+                        expr_str[expr_len + 1] = '\0';
                         
-                        // For now, assume it's just a variable name
                         expr->string_interp.parts[expr->string_interp.count] = NULL;
                         
-                        // Create a simple identifier expression
-                        Expr* var_expr = alloc_expr();
-                        var_expr->type = EXPR_IDENT;
-                        var_expr->token.start = expr_str;
-                        var_expr->token.length = expr_len;
-                        expr->string_interp.expressions[expr->string_interp.count] = var_expr;
+                        // Parse the expression properly using the real parser
+                        extern void save_lexer_state();
+                        extern void restore_lexer_state();
+                        save_lexer_state();
+                        save_parser_state();
+                        init_lexer(expr_str);
+                        advance(); // prime the parser
+                        Expr* parsed_expr = expression();
+                        restore_parser_state();
+                        restore_lexer_state();
+                        
+                        expr->string_interp.expressions[expr->string_interp.count] = parsed_expr;
                         expr->string_interp.count++;
                         
                         i = expr_end; // Skip to after }

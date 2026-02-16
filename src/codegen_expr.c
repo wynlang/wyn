@@ -2449,36 +2449,23 @@ void codegen_expr(Expr* expr) {
             for (int i = 0; i < expr->string_interp.count; i++) {
                 if (expr->string_interp.expressions[i]) {
                     Expr* e = expr->string_interp.expressions[i];
-                    // Check if the "identifier" contains .to_string() (parsed as raw text)
-                    if (e->type == EXPR_IDENT && e->token.length > 12) {
-                        const char* ts = ".to_string()";
-                        int tsl = 12;
-                        if (e->token.length > tsl && 
-                            memcmp(e->token.start + e->token.length - tsl, ts, tsl) == 0) {
-                            // Extract var name before .to_string()
-                            // Use to_string() which handles both int and string
-                            emit(", to_string(");
-                            emit("%.*s", (int)(e->token.length - tsl), e->token.start);
-                            emit(")");
-                            continue;
-                        }
+                    // If expression is a method call to .to_string(), emit directly
+                    if (e->type == EXPR_METHOD_CALL && 
+                        e->method_call.method.length == 9 &&
+                        memcmp(e->method_call.method.start, "to_string", 9) == 0) {
+                        emit(", to_string(");
+                        codegen_expr(e->method_call.object);
+                        emit(")");
+                    } else if (e->type == EXPR_STRING) {
+                        // String literal — emit directly
+                        emit(", ");
+                        codegen_expr(e);
+                    } else {
+                        // Wrap any expression in to_string()
+                        emit(", to_string(");
+                        codegen_expr(e);
+                        emit(")");
                     }
-                    // Check for expressions with + - * (arithmetic in interpolation)
-                    if (e->type == EXPR_IDENT) {
-                        int has_op = 0;
-                        for (int k = 0; k < e->token.length; k++) {
-                            if (e->token.start[k] == '+' || e->token.start[k] == '-' || e->token.start[k] == '*') has_op = 1;
-                        }
-                        if (has_op) {
-                            emit(", int_to_string(");
-                            emit("%.*s", e->token.length, e->token.start);
-                            emit(")");
-                            continue;
-                        }
-                    }
-                    emit(", to_string(");
-                    codegen_expr(e);
-                    emit(")");
                 }
             }
             
