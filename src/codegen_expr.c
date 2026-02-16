@@ -961,6 +961,21 @@ void codegen_expr(Expr* expr) {
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
             
+            // Check if this is an enum constructor: Shape.Circle(5.0)
+            if (expr->method_call.object->type == EXPR_IDENT) {
+                char _obj[128]; snprintf(_obj, 128, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                extern int is_enum_type(const char*);
+                if (is_enum_type(_obj)) {
+                    emit("%s_%.*s(", _obj, method.length, method.start);
+                    for (int i = 0; i < expr->method_call.arg_count; i++) {
+                        if (i > 0) emit(", ");
+                        codegen_expr(expr->method_call.args[i]);
+                    }
+                    emit(")");
+                    break;
+                }
+            }
+            
             // Extension methods on struct types - CHECK THIS FIRST
             if (expr->method_call.object->expr_type && 
                 expr->method_call.object->expr_type->kind == TYPE_STRUCT) {

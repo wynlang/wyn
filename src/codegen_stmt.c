@@ -245,6 +245,12 @@ void codegen_stmt(Stmt* stmt) {
                             { char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start); extern void register_sb_var(const char*); register_sb_var(_vn); }
                             goto var_type_done;
                         }
+                        // Check if it's an enum constructor: Shape.Circle(5.0)
+                        extern int is_enum_type(const char*);
+                        if (is_enum_type(_on)) {
+                            c_type = _on; // Use enum type name directly
+                            goto var_type_done;
+                        }
                     }
                     // Quick check: if object is a known array and method returns array, type as WynArray
                     if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
@@ -1319,6 +1325,7 @@ void codegen_stmt(Stmt* stmt) {
             
             break;
         case STMT_ENUM:
+            { extern void register_enum_type(const char*); char _en[128]; snprintf(_en, 128, "%.*s", stmt->enum_decl.name.length, stmt->enum_decl.name.start); register_enum_type(_en); }
             // Check if any variant has data
             bool has_data = false;
             for (int i = 0; i < stmt->enum_decl.variant_count; i++) {

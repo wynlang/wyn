@@ -549,3 +549,16 @@ void push_defer(Expr* e) { if (defer_count < 64) defer_stack[defer_count++] = e;
 int get_defer_count() { return defer_count; }
 Expr* get_defer(int i) { return defer_stack[i]; }
 void reset_defers() { defer_count = 0; }
+
+// Enum name tracking for constructor detection
+static char* enum_type_names[64];
+static int enum_type_count = 0;
+void register_enum_type(const char* name) {
+    if (enum_type_count < 64) enum_type_names[enum_type_count++] = strdup(name);
+}
+int is_enum_type(const char* name) {
+    for (int i = 0; i < enum_type_count; i++) {
+        if (strcmp(enum_type_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
