@@ -3974,3 +3974,27 @@ char* Template_render(const char* path, WynHashMap* ctx) {
     free(tmpl);
     return result;
 }
+
+// === .env file loading ===
+void System_load_env(const char* path) {
+    FILE* f = fopen(path, "r");
+    if (!f) return;
+    char line[1024];
+    while (fgets(line, sizeof(line), f)) {
+        // Skip comments and empty lines
+        char* p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '#' || *p == '\n' || *p == 0) continue;
+        // Remove trailing newline
+        char* nl = strchr(p, '\n'); if (nl) *nl = 0;
+        char* eq = strchr(p, '=');
+        if (!eq) continue;
+        *eq = 0;
+        char* key = p;
+        char* val = eq + 1;
+        // Strip quotes from value
+        if (*val == '"' || *val == '\'') { val++; char* end = val + strlen(val) - 1; if (*end == '"' || *end == '\'') *end = 0; }
+        setenv(key, val, 1);
+    }
+    fclose(f);
+}
