@@ -21,6 +21,12 @@ void init_lexer(const char* source) {
     lexer.start = source;
     lexer.current = source;
     lexer.line = 1;
+    // Skip shebang line: #!/usr/bin/env wyn run
+    if (source[0] == '#' && source[1] == '!') {
+        while (*lexer.current && *lexer.current != '\n') lexer.current++;
+        if (*lexer.current == '\n') { lexer.current++; lexer.line++; }
+        lexer.start = lexer.current;
+    }
 }
 
 static bool is_at_end() {
