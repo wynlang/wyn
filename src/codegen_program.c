@@ -69,14 +69,17 @@ void codegen_program(Program* prog) {
         }
     }
     
-    // Generate module-level constants
+    // Generate module-level constants (only if has main — script mode puts them in wyn_main)
+    if (has_main) {
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_CONST) {
             codegen_stmt(prog->stmts[i]);
         }
     }
+    }
     
-    // Generate global variables
+    // Generate global variables (only if has main)
+    if (has_main) {
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_VAR) {
             Stmt* var_stmt = prog->stmts[i];
@@ -123,6 +126,7 @@ void codegen_program(Program* prog) {
             emit(";\n");
         }
     }
+    } // end if (has_main) for global vars
     
     // Generate forward declarations for struct methods
     for (int i = 0; i < prog->count; i++) {
@@ -559,9 +563,7 @@ void codegen_program(Program* prog) {
     
     // If no main function, create one that executes all statements
     if (!has_main) {
-        emit("int main(int argc, char** argv) {\n");
-        emit("    __wyn_argc = argc;\n");
-        emit("    __wyn_argv = argv;\n");
+        emit("long long wyn_main() {\n");
         
         // Special case: single expression should return its value
         if (prog->count == 1 && prog->stmts[0]->type == STMT_EXPR) {
@@ -581,7 +583,7 @@ void codegen_program(Program* prog) {
         } else {
             // Multiple statements or non-expression statements
             for (int i = 0; i < prog->count; i++) {
-                if (prog->stmts[i]->type != STMT_FN && prog->stmts[i]->type != STMT_CONST) {
+                if (prog->stmts[i]->type != STMT_FN && prog->stmts[i]->type != STMT_STRUCT && prog->stmts[i]->type != STMT_ENUM && prog->stmts[i]->type != STMT_TRAIT && prog->stmts[i]->type != STMT_IMPL && prog->stmts[i]->type != STMT_EXPORT) {
                     emit("    ");
                     codegen_stmt(prog->stmts[i]);
                 }
