@@ -764,7 +764,18 @@ int main(int argc, char** argv) {
                 strcat(history, line);
                 strcat(history, "\n");
             } else {
-                fprintf(f, "fn main() -> int {\n  %s\n  return 0\n}\n", line);
+                // Expression — wrap in println so result is visible
+                // Detect if it looks like a statement (assignment, println, etc.)
+                int is_stmt = (strncmp(line, "println", 7) == 0 || strncmp(line, "print(", 6) == 0 ||
+                              strstr(line, " = ") != NULL || strncmp(line, "if ", 3) == 0 ||
+                              strncmp(line, "for ", 4) == 0 || strncmp(line, "while ", 6) == 0 ||
+                              strstr(line, ".insert") != NULL || strstr(line, ".push") != NULL ||
+                              strstr(line, ".exec") != NULL || strstr(line, ".close") != NULL);
+                if (is_stmt) {
+                    fprintf(f, "fn main() -> int {\n  %s\n  return 0\n}\n", line);
+                } else {
+                    fprintf(f, "fn main() -> int {\n  println(%s)\n  return 0\n}\n", line);
+                }
             }
             fclose(f);
             
