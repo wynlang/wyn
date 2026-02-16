@@ -3537,6 +3537,12 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             }
             break;
         case STMT_IF:
+            // Warn about assignment in condition (= vs ==)
+            if (stmt->if_stmt.condition && stmt->if_stmt.condition->type == EXPR_ASSIGN) {
+                fprintf(stderr, "\033[33mWarning\033[0m at line %d: Assignment in if condition — did you mean '=='?\n",
+                        stmt->if_stmt.condition->token.line);
+                show_source_line(stmt->if_stmt.condition->token.line);
+            }
             check_expr(stmt->if_stmt.condition, scope);
             check_stmt(stmt->if_stmt.then_branch, scope);
             if (stmt->if_stmt.else_branch) {

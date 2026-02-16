@@ -619,7 +619,7 @@ int main(int argc, char** argv) {
             else if (strcmp(argv[i], "--python") == 0) build_flag = " --python";
             else if (!dir) dir = argv[i];
         }
-        if (!dir) { fprintf(stderr, "Usage: wyn build <file|dir> [--shared|--python]\n"); return 1; }
+        if (!dir) dir = ".";
         
         // Accept a .wyn file directly or a directory
         char entry[512];
@@ -627,12 +627,28 @@ int main(int argc, char** argv) {
         if (stat(dir, &st) == 0 && S_ISREG(st.st_mode)) {
             snprintf(entry, sizeof(entry), "%s", dir);
         } else {
-            snprintf(entry, sizeof(entry), "%s/main.wyn", dir);
-            if (stat(entry, &st) != 0) {
-                snprintf(entry, sizeof(entry), "%s/src/main.wyn", dir);
+            // Try wyn.toml first
+            char toml_path[512]; snprintf(toml_path, sizeof(toml_path), "%s/wyn.toml", dir);
+            FILE* toml = fopen(toml_path, "r");
+            int found_entry = 0;
+            if (toml) {
+                char tb[4096]; int tl = fread(tb, 1, sizeof(tb)-1, toml); tb[tl] = 0; fclose(toml);
+                char* ep = strstr(tb, "entry = \"");
+                if (ep) {
+                    char e[256]; if (sscanf(ep, "entry = \"%255[^\"]\"", e) == 1) {
+                        snprintf(entry, sizeof(entry), "%s/%s", dir, e);
+                        if (stat(entry, &st) == 0) found_entry = 1;
+                    }
+                }
+            }
+            if (!found_entry) {
+                snprintf(entry, sizeof(entry), "%s/main.wyn", dir);
                 if (stat(entry, &st) != 0) {
-                    fprintf(stderr, "\033[31m✗\033[0m No main.wyn found in %s or %s/src\n", dir, dir);
-                    return 1;
+                    snprintf(entry, sizeof(entry), "%s/src/main.wyn", dir);
+                    if (stat(entry, &st) != 0) {
+                        fprintf(stderr, "\033[31m✗\033[0m No main.wyn found in %s or %s/src\n", dir, dir);
+                        return 1;
+                    }
                 }
             }
         }
