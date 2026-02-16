@@ -248,7 +248,8 @@ void codegen_stmt(Stmt* stmt) {
                         // Check if it's an enum constructor: Shape.Circle(5.0)
                         extern int is_enum_type(const char*);
                         if (is_enum_type(_on)) {
-                            c_type = _on; // Use enum type name directly
+                            c_type = _on;
+                            { char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start); extern void register_enum_var(const char*, const char*); register_enum_var(_vn, _on); }
                             goto var_type_done;
                         }
                     }

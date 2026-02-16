@@ -2159,15 +2159,26 @@ void codegen_expr(Expr* expr) {
             
             // Get the type of the match value
             Type* match_type = expr->match.value->expr_type;
-            const char* type_name = "int";  // Default fallback
+            const char* type_name = "int";
             int type_name_len = 3;
+            int is_data_enum = 0;
             
-            if (match_type && match_type->kind == TYPE_ENUM && match_type->name.length > 0) {
-                type_name = match_type->name.start;
-                type_name_len = match_type->name.length;
-            } else if (match_type && match_type->kind == TYPE_STRING) {
-                type_name = "const char*";
-                type_name_len = 12;
+            // Check if match value is a data-carrying enum variable
+            if (expr->match.value->type == EXPR_IDENT) {
+                char _mv[128]; snprintf(_mv, 128, "%.*s", expr->match.value->token.length, expr->match.value->token.start);
+                extern const char* get_enum_var_type(const char*);
+                const char* _et = get_enum_var_type(_mv);
+                if (_et) { type_name = _et; type_name_len = strlen(_et); is_data_enum = 1; }
+            }
+            
+            if (!is_data_enum) {
+                if (match_type && match_type->kind == TYPE_ENUM && match_type->name.length > 0) {
+                    type_name = match_type->name.start;
+                    type_name_len = match_type->name.length;
+                } else if (match_type && match_type->kind == TYPE_STRING) {
+                    type_name = "const char*";
+                    type_name_len = 12;
+                }
             }
             
             // Store match value in temp variable
@@ -2231,11 +2242,13 @@ void codegen_expr(Expr* expr) {
                     }
                     
                     if (is_enum_variant) {
-                        // Enum variant - generate comparison
-                        emit("if (__match_val_%d == %.*s) { ",
-                             match_id,
-                             pat->ident.name.length,
-                             pat->ident.name.start);
+                        if (is_data_enum) {
+                            emit("if (__match_val_%d.tag == %.*s_TAG) { ",
+                                 match_id, pat->ident.name.length, pat->ident.name.start);
+                        } else {
+                            emit("if (__match_val_%d == %.*s) { ",
+                                 match_id, pat->ident.name.length, pat->ident.name.start);
+                        }
                     } else {
                         // Variable binding - always matches, bind variable
                         emit("{ %.*s %.*s = __match_val_%d; ",

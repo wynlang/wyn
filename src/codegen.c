@@ -562,3 +562,20 @@ int is_enum_type(const char* name) {
     }
     return 0;
 }
+
+// Track variables that hold data-carrying enum types
+static struct { char var_name[64]; char enum_name[64]; } enum_var_map[128];
+static int enum_var_count = 0;
+void register_enum_var(const char* var, const char* enum_type) {
+    if (enum_var_count < 128) {
+        strncpy(enum_var_map[enum_var_count].var_name, var, 63);
+        strncpy(enum_var_map[enum_var_count].enum_name, enum_type, 63);
+        enum_var_count++;
+    }
+}
+const char* get_enum_var_type(const char* var) {
+    for (int i = enum_var_count - 1; i >= 0; i--) {
+        if (strcmp(enum_var_map[i].var_name, var) == 0) return enum_var_map[i].enum_name;
+    }
+    return NULL;
+}
