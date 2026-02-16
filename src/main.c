@@ -899,9 +899,33 @@ int main(int argc, char** argv) {
     if (strcmp(command, "fmt") == 0) {
         extern int cmd_fmt(const char* file, int argc, char** argv);
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn fmt <file.wyn>\n");
-        fprintf(stderr, "  wyn check <file.wyn>     Type-check without compiling\n");
+            fprintf(stderr, "Usage: wyn fmt <file.wyn|directory> [--check]\n");
             return 1;
+        }
+        // Check for --check flag
+        int check_only = 0;
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--check") == 0) check_only = 1;
+        }
+        // If argument is a directory, format all .wyn files recursively
+        struct stat fmt_st;
+        if (stat(argv[2], &fmt_st) == 0 && S_ISDIR(fmt_st.st_mode)) {
+            char fmt_cmd[4096];
+            if (check_only) {
+                snprintf(fmt_cmd, sizeof(fmt_cmd),
+                    "changed=0; for f in $(find %s -name '*.wyn' -not -path '*/.archive/*'); do "
+                    "orig=$(cat \"$f\"); formatted=$(%s fmt \"$f\" 2>/dev/null && cat \"$f\"); "
+                    "if [ \"$orig\" != \"$formatted\" ]; then echo \"  ✗ $f\"; changed=1; fi; done; "
+                    "[ $changed -eq 0 ] && echo '✓ All files formatted' || exit 1",
+                    argv[2], argv[0]);
+            } else {
+                snprintf(fmt_cmd, sizeof(fmt_cmd),
+                    "count=0; for f in $(find %s -name '*.wyn' -not -path '*/.archive/*'); do "
+                    "%s fmt \"$f\" 2>/dev/null && count=$((count+1)); done; "
+                    "echo \"✓ Formatted $count files\"",
+                    argv[2], argv[0]);
+            }
+            return system(fmt_cmd) == 0 ? 0 : 1;
         }
         return cmd_fmt(argv[2], argc, argv);
     }
