@@ -3951,6 +3951,66 @@ char* Template_render_string(const char* tmpl, WynHashMap* ctx) {
             } else if (strcmp(key, "endif") == 0) {
                 if (skip_depth > 0) skip_depth--;
                 i = end; continue;
+            } else if (strncmp(key, "each:", 5) == 0) {
+                if (skip_depth > 0) { i = end; continue; }
+                // Find ${endeach} block
+                char* each_key = key + 5;
+                char* list_val = hashmap_get_string(ctx, each_key);
+                int block_start = end + 1;
+                // Find matching ${endeach}
+                int block_end = block_start;
+                int each_depth = 1;
+                while (block_end < tlen - 1) {
+                    if (tmpl[block_end] == '$' && tmpl[block_end+1] == '{') {
+                        char peek_key[64] = {0};
+                        int pk = block_end + 2, pe = pk;
+                        while (pe < tlen && tmpl[pe] != '}') pe++;
+                        int pkl = pe - pk; if (pkl > 63) pkl = 63;
+                        memcpy(peek_key, tmpl + pk, pkl);
+                        if (strcmp(peek_key, "endeach") == 0) { each_depth--; if (each_depth == 0) { block_end = pk - 2; break; } }
+                        if (strncmp(peek_key, "each:", 5) == 0) each_depth++;
+                    }
+                    block_end++;
+                }
+                // Extract block template
+                int blen = block_end - block_start;
+                char* block_tmpl = malloc(blen + 1);
+                memcpy(block_tmpl, tmpl + block_start, blen);
+                block_tmpl[blen] = 0;
+                // Iterate over comma-separated values — simple string replace
+                if (list_val && list_val[0]) {
+                    char* list_copy = strdup(list_val);
+                    char* pos = list_copy;
+                    while (pos && *pos) {
+                        while (*pos == ' ') pos++;
+                        char* comma = strchr(pos, ',');
+                        if (comma) *comma = 0;
+                        // Replace ${item} in block_tmpl with current item
+                        char* rendered = malloc(blen * 2 + strlen(pos) * 10 + 1);
+                        char* rp = rendered;
+                        for (int bi = 0; bi < blen; bi++) {
+                            if (block_tmpl[bi] == '$' && bi + 6 < blen && strncmp(block_tmpl + bi, "${item}", 7) == 0) {
+                                char* esc = html_escape(pos);
+                                int el = strlen(esc); memcpy(rp, esc, el); rp += el; free(esc);
+                                bi += 6;
+                            } else {
+                                *rp++ = block_tmpl[bi];
+                            }
+                        }
+                        *rp = 0;
+                        int rlen = rp - rendered;
+                        memcpy(out, rendered, rlen); out += rlen;
+                        free(rendered);
+                        pos = comma ? comma + 1 : NULL;
+                    }
+                    free(list_copy);
+                }
+                free(block_tmpl);
+                // Skip past ${endeach}
+                i = block_end;
+                while (i < tlen && !(tmpl[i] == '$' && tmpl[i+1] == '{')) i++;
+                if (i < tlen) { i += 2; while (i < tlen && tmpl[i] != '}') i++; }
+                continue;
             }
             
             // Skip content inside false if blocks
