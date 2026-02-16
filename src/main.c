@@ -323,7 +323,7 @@ int main(int argc, char** argv) {
     if (strcmp(command, "wisdom") == 0) {
         const char* lines[] = {
             "",
-            "  \033[36m✦ The Way of the Wyvern ✦\033[0m",
+            "  \033[36m✦ Flight Rules ✦\033[0m",
             "",
             "  One language is better than five.",
             "  Readable code is fast code — you'll optimize it.",
