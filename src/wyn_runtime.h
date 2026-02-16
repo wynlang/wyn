@@ -2066,7 +2066,28 @@ void Http_close_server(int fd) { if (fd >= 0) close(fd); }
 // HashMap.keys() -> newline-separated string of all keys
 // HashMap.len() -> number of entries
 extern char* hashmap_keys_string(WynHashMap* map);
-char* hashmap_keys(WynHashMap* map) { return hashmap_keys_string(map); }
+extern char* hashmap_values_string(WynHashMap* map);
+char* hashmap_keys_str(WynHashMap* map) { return hashmap_keys_string(map); }
+WynArray hashmap_keys(WynHashMap* map) {
+    WynArray arr = array_new();
+    char* raw = hashmap_keys_string(map);
+    if (!raw || raw[0] == 0) return arr;
+    char* copy = strdup(raw);
+    char* line = strtok(copy, "\n");
+    while (line) { if (line[0]) array_push_str(&arr, line); line = strtok(NULL, "\n"); }
+    free(copy);
+    return arr;
+}
+WynArray hashmap_values(WynHashMap* map) {
+    WynArray arr = array_new();
+    char* raw = hashmap_values_string(map);
+    if (!raw || raw[0] == 0) return arr;
+    char* copy = strdup(raw);
+    char* line = strtok(copy, "\n");
+    while (line) { if (line[0]) array_push_str(&arr, line); line = strtok(NULL, "\n"); }
+    free(copy);
+    return arr;
+}
 
 // String.split(delim) -> newline-separated string (use split_at for indexed access)
 char* string_split_to_str(const char* s, const char* delim) {

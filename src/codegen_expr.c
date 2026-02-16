@@ -1535,7 +1535,7 @@ void codegen_expr(Expr* expr) {
                     emit(")"); break;
                 }
                 if (strcmp(method_name, "values") == 0 && expr->method_call.arg_count == 0) {
-                    emit("hashmap_values_string(");
+                    emit("hashmap_values(");
                     codegen_expr(expr->method_call.object);
                     emit(")"); break;
                 }
@@ -1663,7 +1663,7 @@ void codegen_expr(Expr* expr) {
                         emit("hashmap_clear("); codegen_expr(expr->method_call.object); emit(")"); break;
                     }
                     if (strcmp(method_name, "values") == 0) {
-                        emit("hashmap_values_string("); codegen_expr(expr->method_call.object); emit(")"); break;
+                        emit("hashmap_values("); codegen_expr(expr->method_call.object); emit(")"); break;
                     }
                 }
                 

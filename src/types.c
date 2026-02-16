@@ -176,7 +176,7 @@ static const MethodSignature method_signatures[] = {
     {"map", "insert_int", "void", 2},
     {"map", "insert_string", "void", 2},
     {"map", "set_string", "void", 2},
-    {"map", "keys", "string", 0},
+    {"map", "keys", "array", 0},
     {"map", "len", "int", 0},
     {"map", "contains", "int", 1},
     {"map", "set_int", "void", 2},
