@@ -271,6 +271,15 @@ Token next_token() {
     }
     if (c == '"') return string();
     if (c == '\'') {
+        // Single-quote string (no interpolation)
+        while (peek() != '\'' && !is_at_end()) {
+            if (peek() == '\\') { advance(); if (!is_at_end()) advance(); }
+            else { if (peek() == '\n') lexer.line++; advance(); }
+        }
+        if (!is_at_end()) advance();
+        return make_token(TOKEN_STRING);
+    }
+    if (c == '\'') {
         // Character literal
         advance(); // Skip opening '
         if (peek() == '\\') advance(); // Handle escape
