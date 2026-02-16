@@ -35,6 +35,7 @@ void free_program(Program* prog);
 void codegen_c_header();
 void codegen_program(Program* prog);
 int create_new_project(const char* project_name);
+int create_new_project_with_template(const char* name, const char* template);
 
 static char* read_file(const char* path) {
     FILE* f = fopen(path, "r");
@@ -270,28 +271,27 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "init") == 0) {
-        static char input[256];  // Make it static to avoid stack issues
-        char* project_name;
+        static char input[256];
+        char* project_name = NULL;
+        const char* template = "default";
         
-        if (argc < 3) {
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--web") == 0) template = "web";
+            else if (strcmp(argv[i], "--cli") == 0) template = "cli";
+            else if (strcmp(argv[i], "--lib") == 0) template = "lib";
+            else if (!project_name) project_name = argv[i];
+        }
+        
+        if (!project_name) {
             printf("Enter project name: ");
             fflush(stdout);
             if (fgets(input, sizeof(input), stdin)) {
-                // Remove newline
                 input[strcspn(input, "\n")] = 0;
-                if (strlen(input) == 0) {
-                    fprintf(stderr, "Error: Project name cannot be empty\n");
-                    return 1;
-                }
+                if (strlen(input) == 0) { fprintf(stderr, "Error: Project name cannot be empty\n"); return 1; }
                 project_name = input;
-            } else {
-                fprintf(stderr, "Error: Failed to read project name\n");
-                return 1;
-            }
-        } else {
-            project_name = argv[2];
+            } else { return 1; }
         }
-        return create_new_project(project_name);
+        return create_new_project_with_template(project_name, template);
     }
     
     if (strcmp(command, "watch") == 0) {
@@ -1757,5 +1757,104 @@ int create_new_project(const char* project_name) {
     printf("\nTo build and run:\n  cd %s\n  wyn run src/main.wyn\n", project_name);
     printf("\nTo run tests:\n  wyn run tests/test_main.wyn\n");
     
+    return 0;
+}
+
+int create_new_project_with_template(const char* name, const char* template) {
+    if (strcmp(template, "default") == 0) return create_new_project(name);
+    
+    char cmd[512]; FILE* f;
+    snprintf(cmd, sizeof(cmd), "mkdir -p %s/src %s/tests %s/templates", name, name, name);
+    system(cmd);
+    
+    // wyn.toml
+    snprintf(cmd, sizeof(cmd), "%s/wyn.toml", name);
+    f = fopen(cmd, "w");
+    fprintf(f, "[project]\nname = \"%s\"\nversion = \"0.1.0\"\nentry = \"src/main.wyn\"\n", name);
+    if (strcmp(template, "web") == 0) {
+        fprintf(f, "\n[deploy.dev]\nhost = \"localhost\"\nuser = \"deploy\"\nkey = \"~/.ssh/id_ed25519\"\npath = \"/opt/%s\"\nos = \"linux\"\npre = \"systemctl stop %s\"\npost = \"systemctl start %s\"\n", name, name, name);
+    }
+    fclose(f);
+    
+    // .gitignore
+    snprintf(cmd, sizeof(cmd), "%s/.gitignore", name);
+    f = fopen(cmd, "w");
+    fprintf(f, "*.wyn.c\n*.wyn.out\n*.out\nwyn_cc_err.txt\n*.db\n");
+    fclose(f);
+    
+    // README
+    snprintf(cmd, sizeof(cmd), "%s/README.md", name);
+    f = fopen(cmd, "w");
+    fprintf(f, "# %s\n\n", name);
+    if (strcmp(template, "web") == 0) fprintf(f, "A web application built with Wyn.\n\n```bash\nwyn run src/main.wyn\n# Server running at http://localhost:8080\n```\n");
+    else if (strcmp(template, "cli") == 0) fprintf(f, "A CLI tool built with Wyn.\n\n```bash\nwyn build .\nwyn run src/main.wyn\n```\n");
+    else if (strcmp(template, "lib") == 0) fprintf(f, "A Wyn library for Python.\n\n```bash\nwyn build src/main.wyn --python\npython3 test.py\n```\n");
+    fclose(f);
+    
+    // main.wyn
+    snprintf(cmd, sizeof(cmd), "%s/src/main.wyn", name);
+    f = fopen(cmd, "w");
+    if (strcmp(template, "web") == 0) {
+        fprintf(f,
+            "fn handle(method: string, path: string, body: string, fd: int) {\n"
+            "    if path == \"/\" {\n"
+            "        Http.respond(fd, 200, \"<h1>Welcome to %s</h1><p>Edit src/main.wyn to get started.</p>\")\n"
+            "        return\n"
+            "    }\n"
+            "    if path == \"/api/hello\" {\n"
+            "        Http.respond_json(fd, 200, \"{\\\"message\\\": \\\"hello\\\"}\")\n"
+            "        return\n"
+            "    }\n"
+            "    Http.respond(fd, 404, \"Not Found\")\n"
+            "}\n\n"
+            "fn main() -> int {\n"
+            "    println(\"Starting %s on http://localhost:8080\")\n"
+            "    var server = Http.listen(8080)\n"
+            "    while true {\n"
+            "        var req = Http.accept(server)\n"
+            "        if req > 0 {\n"
+            "            var method = Http.method(req)\n"
+            "            var path = Http.path(req)\n"
+            "            var body = Http.body(req)\n"
+            "            handle(method, path, body, req)\n"
+            "            Http.close_client(req)\n"
+            "        }\n"
+            "    }\n"
+            "    return 0\n"
+            "}\n", name, name);
+    } else if (strcmp(template, "cli") == 0) {
+        fprintf(f,
+            "fn main() -> int {\n"
+            "    println(\"%s v0.1.0\")\n"
+            "    println(\"Usage: %s <command>\")\n"
+            "    println(\"  hello    Say hello\")\n"
+            "    println(\"  version  Show version\")\n"
+            "    return 0\n"
+            "}\n", name, name);
+    } else if (strcmp(template, "lib") == 0) {
+        fprintf(f,
+            "// %s — a Wyn library\n"
+            "// Build: wyn build src/main.wyn --python\n\n"
+            "fn add(a: int, b: int) -> int {\n"
+            "    return a + b\n"
+            "}\n\n"
+            "fn greet(name: string) -> string {\n"
+            "    return \"Hello from %s, \" + name + \"!\"\n"
+            "}\n\n"
+            "fn main() -> int { return 0 }\n", name, name);
+    }
+    fclose(f);
+    
+    // test
+    snprintf(cmd, sizeof(cmd), "%s/tests/test_main.wyn", name);
+    f = fopen(cmd, "w");
+    fprintf(f, "fn main() -> int {\n    Test.init(\"%s\")\n    Test.assert(1 == 1, \"basic\")\n    Test.summary()\n    return 0\n}\n", name);
+    fclose(f);
+    
+    printf("\033[32m✓\033[0m Created %s project: %s/\n\n", template, name);
+    printf("  %s/wyn.toml\n  %s/src/main.wyn\n  %s/tests/test_main.wyn\n  %s/README.md\n  %s/.gitignore\n\n", name, name, name, name, name);
+    if (strcmp(template, "web") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n  # Open http://localhost:8080\n", name);
+    else if (strcmp(template, "cli") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn hello\n", name);
+    else if (strcmp(template, "lib") == 0) printf("Build:\n  cd %s && wyn build src/main.wyn --python\n  python3 -c \"from main import add; print(add(2,3))\"\n", name);
     return 0;
 }
