@@ -320,6 +320,32 @@ int main(int argc, char** argv) {
         return 1;
     }
     
+    if (strcmp(command, "wisdom") == 0) {
+        const char* lines[] = {
+            "",
+            "  \033[36m✦ The Way of the Wyvern ✦\033[0m",
+            "",
+            "  One language is better than five.",
+            "  Readable code is fast code — you'll optimize it.",
+            "  Ship the binary, not the runtime.",
+            "  If it compiles, it should work.",
+            "  The best abstraction is the one you don't notice.",
+            "  Concurrency should be a verb, not a thesis.",
+            "  Every program starts as a script.",
+            "  Errors are values. Handle them or don't — but know which.",
+            "  A tool you don't use is a tool you don't need.",
+            "  Simple today, powerful tomorrow.",
+            "  The compiler is your first user.",
+            "  Deploy on Friday. Your binary doesn't have dependencies.",
+            "",
+            "  \033[2m— Wynter\033[0m",
+            "",
+            NULL
+        };
+        for (int i = 0; lines[i]; i++) printf("%s\n", lines[i]);
+        return 0;
+    }
+    
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0 || strcmp(command, "-v") == 0) {
         printf("\033[36mWyn\033[0m v%s\n", get_version());
         return 0;
