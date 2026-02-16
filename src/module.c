@@ -65,6 +65,24 @@ bool is_builtin_module(const char* module_name) {
 
 // Pre-scan source for imports and load them
 void preload_imports(const char* source) {
+    // Easter egg: import wisdom
+    if (strstr(source, "import wisdom")) {
+        printf("\n  \033[36m✦ Flight Rules ✦\033[0m\n\n"
+               "  One language is better than five.\n"
+               "  Readable code is fast code — you'll optimize it.\n"
+               "  Ship the binary, not the runtime.\n"
+               "  If it compiles, it should work.\n"
+               "  The best abstraction is the one you don't notice.\n"
+               "  Concurrency should be a verb, not a thesis.\n"
+               "  Every program starts as a script.\n"
+               "  Errors are values. Handle them or don't — but know which.\n"
+               "  A tool you don't use is a tool you don't need.\n"
+               "  Simple today, powerful tomorrow.\n"
+               "  The compiler is your first user.\n"
+               "  Deploy on Friday. Your binary doesn't have dependencies.\n\n"
+               "  \033[2m— Wynter\033[0m\n\n");
+        exit(0);
+    }
     const char* p = source;
     bool in_comment = false;
     bool in_line_comment = false;
