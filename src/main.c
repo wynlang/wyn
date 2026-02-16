@@ -683,7 +683,16 @@ int main(int argc, char** argv) {
             "ar rcs runtime/libwyn_rt.a runtime/obj/*.o && "
             "echo 'Built runtime/libwyn_rt.a'",
             wyn_root, wyn_root);
-        return system(cmd);
+        int rt_result = system(cmd);
+        if (rt_result == 0) {
+            // Also build precompiled header for faster compilation
+            char pch_cmd[1024];
+            snprintf(pch_cmd, sizeof(pch_cmd), "gcc -std=c11 -O0 -w %s/src/wyn_runtime.h -o %s/src/wyn_runtime.h.gch", wyn_root, wyn_root);
+            if (system(pch_cmd) == 0) {
+                printf("Built precompiled header\n");
+            }
+        }
+        return rt_result;
     }
     
     if (strcmp(command, "clean") == 0) {
