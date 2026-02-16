@@ -574,8 +574,14 @@ static Expr* primary() {
                 comp->list_comp.var_name = parser.previous;
                 expect(TOKEN_IN, "Expected 'in' after variable name");
                 comp->list_comp.iter_start = expression();
-                if (match(TOKEN_DOTDOT)) {
+                if (match(TOKEN_DOTDOT) || match(TOKEN_DOTDOTEQ)) {
+                    bool incl = (parser.previous.type == TOKEN_DOTDOTEQ);
                     comp->list_comp.iter_end = expression();
+                    if (incl) {
+                        Expr* one = alloc_expr(); one->type = EXPR_INT; one->token.start = "1"; one->token.length = 1;
+                        Expr* plus = alloc_expr(); plus->type = EXPR_BINARY; plus->binary.left = comp->list_comp.iter_end; plus->binary.right = one; plus->binary.op.type = TOKEN_PLUS; plus->binary.op.start = "+"; plus->binary.op.length = 1;
+                        comp->list_comp.iter_end = plus;
+                    }
                 } else {
                     comp->list_comp.iter_end = NULL; // iterating array
                 }
@@ -1786,9 +1792,16 @@ Stmt* statement() {
                 Expr* iter_expr = expression();
                 
                 // Check if this is a range (has ..) or array iteration
-                if (match(TOKEN_DOTDOT)) {
-                    // Range-based for loop: for i in 0..10
+                if (match(TOKEN_DOTDOT) || match(TOKEN_DOTDOTEQ)) {
+                    bool inclusive = (parser.previous.type == TOKEN_DOTDOTEQ);
+                    // Range-based for loop: for i in 0..10 or 0..=10
                     Expr* end = expression();
+                    if (inclusive) {
+                        // Desugar ..= to ..(end+1)
+                        Expr* one = alloc_expr(); one->type = EXPR_INT; one->token.start = "1"; one->token.length = 1;
+                        Expr* plus = alloc_expr(); plus->type = EXPR_BINARY; plus->binary.left = end; plus->binary.right = one; plus->binary.op.type = TOKEN_PLUS; plus->binary.op.start = "+"; plus->binary.op.length = 1;
+                        end = plus;
+                    }
                     
                     // If we had opening parens, expect closing parens
                     if (has_parens) {

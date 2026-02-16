@@ -283,6 +283,7 @@ Token next_token() {
         case '.': 
             if (match('.')) {
                 if (match('.')) return make_token(TOKEN_DOTDOTDOT);
+                if (match('=')) return make_token(TOKEN_DOTDOTEQ);
                 return make_token(TOKEN_DOTDOT);
             }
             return make_token(TOKEN_DOT);

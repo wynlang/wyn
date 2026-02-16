@@ -1379,7 +1379,7 @@ void codegen_expr(Expr* expr) {
                     strcmp(mname, "repeat") == 0 || strcmp(mname, "index_of") == 0 ||
                     strcmp(mname, "substring") == 0 || strcmp(mname, "split_at") == 0 ||
                     strcmp(mname, "split_count") == 0 || strcmp(mname, "to_int") == 0 ||
-                    strcmp(mname, "to_float") == 0) {
+                    strcmp(mname, "to_float") == 0 || strcmp(mname, "bytes") == 0 || strcmp(mname, "chars") == 0) {
                     receiver_type = "string";
                 }
             }

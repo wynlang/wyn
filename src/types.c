@@ -17,6 +17,7 @@ static const MethodSignature method_signatures[] = {
     {"string", "title", "string", 0},
     {"string", "reverse", "string", 0},
     {"string", "to_bytes", "array", 0},  // Returns Vec<int>
+    {"string", "bytes", "array", 0},
     {"string", "chars", "array", 0},     // Returns Vec<string>
     {"string", "len", "int", 0},
     {"string", "is_empty", "bool", 0},
@@ -337,6 +338,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
             out->c_function = "string_chars"; return true;
         }
         if (strcmp(method_name, "to_bytes") == 0 && arg_count == 0) {
+        }
+        if (strcmp(method_name, "bytes") == 0 && arg_count == 0) {
+            out->c_function = "string_to_bytes"; return true;
             out->c_function = "string_to_bytes"; return true;
         }
         if (strcmp(method_name, "pad_left") == 0 && arg_count == 2) {
