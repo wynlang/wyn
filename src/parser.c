@@ -1331,7 +1331,7 @@ static Expr* assignment() {
     }
     
     if (match(TOKEN_EQ) || match(TOKEN_PLUSEQ) || match(TOKEN_MINUSEQ) || 
-        match(TOKEN_STAREQ) || match(TOKEN_SLASHEQ)) {
+        match(TOKEN_STAREQ) || match(TOKEN_SLASHEQ) || match(TOKEN_PERCENTEQ)) {
         if (expr->type == EXPR_IDENT) {
             Token op = parser.previous;
             Expr* assign = alloc_expr();
@@ -1352,6 +1352,7 @@ static Expr* assignment() {
                 else if (op.type == TOKEN_MINUSEQ) { bin_op.type = TOKEN_MINUS; bin_op.start = "-"; bin_op.length = 1; }
                 else if (op.type == TOKEN_STAREQ) { bin_op.type = TOKEN_STAR; bin_op.start = "*"; bin_op.length = 1; }
                 else if (op.type == TOKEN_SLASHEQ) { bin_op.type = TOKEN_SLASH; bin_op.start = "/"; bin_op.length = 1; }
+                else if (op.type == TOKEN_PERCENTEQ) { bin_op.type = TOKEN_PERCENT; bin_op.start = "%"; bin_op.length = 1; }
                 
                 binary->binary.op = bin_op;
                 assign->assign.value = binary;

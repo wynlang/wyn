@@ -758,7 +758,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         
-        check_program(prog);
+        { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         if (checker_had_error()) {
             fprintf(stderr, "Compilation failed due to errors\n");
             free(source);
@@ -889,7 +889,7 @@ int main(int argc, char** argv) {
         check_all_modules();
         Program* prog = parse_program();
         if (!prog) { fprintf(stderr, "Parse error\n"); free(source); return 1; }
-        check_program(prog);
+        { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         if (checker_had_error()) { free(source); return 1; }
         printf("✓ %s: no errors\n", file);
         free(source);
@@ -962,7 +962,7 @@ int main(int argc, char** argv) {
         }
         
         // Type check
-        check_program(prog);
+        { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         
         if (checker_had_error()) {
             fprintf(stderr, "Compilation failed due to errors\n");
@@ -1125,7 +1125,7 @@ int main(int argc, char** argv) {
         }
         
         // Type check
-        check_program(prog);
+        { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         
         if (checker_had_error()) {
             fprintf(stderr, "Compilation failed due to errors\n");
@@ -1470,7 +1470,7 @@ int main(int argc, char** argv) {
     }
     
     // Type check
-    check_program(prog);
+    { extern void set_checker_source(const char*, const char*); set_checker_source(source, argv[3]); } check_program(prog);
     
     if (checker_had_error()) {
         fprintf(stderr, "Compilation failed due to errors\n");

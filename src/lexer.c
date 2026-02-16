@@ -303,7 +303,7 @@ Token next_token() {
             return make_token(TOKEN_MINUS);
         case '*': return match('=') ? make_token(TOKEN_STAREQ) : make_token(TOKEN_STAR);
         case '/': return match('=') ? make_token(TOKEN_SLASHEQ) : make_token(TOKEN_SLASH);
-        case '%': return make_token(TOKEN_PERCENT);
+        case '%': if (match('=')) return make_token(TOKEN_PERCENTEQ); return make_token(TOKEN_PERCENT);
         case '&': return match('&') ? make_token(TOKEN_AMPAMP) : make_token(TOKEN_AMP);
         case '|': 
             if (match('|')) return make_token(TOKEN_PIPEPIPE);

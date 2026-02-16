@@ -3,6 +3,26 @@
 #include <stdlib.h>
 #include <string.h>
 #include "common.h"
+
+// Source context for error messages
+static const char* checker_source = NULL;
+static const char* checker_filename = NULL;
+void set_checker_source(const char* src, const char* fname) { checker_source = src; checker_filename = fname; }
+
+static void show_source_line(int line) {
+    if (!checker_source || line < 1) return;
+    const char* p = checker_source;
+    int cur = 1;
+    while (*p && cur < line) { if (*p == '\n') cur++; p++; }
+    if (cur == line) {
+        const char* end = p;
+        while (*end && *end != '\n') end++;
+        fprintf(stderr, "  \033[2m%4d |\033[0m %.*s\n", line, (int)(end - p), p);
+        fprintf(stderr, "       \033[31m");
+        for (int i = 0; i < (int)(end - p); i++) fprintf(stderr, "^");
+        fprintf(stderr, "\033[0m\n");
+    }
+}
 #include "ast.h"
 #include "types.h"
 #include "error.h"  // T1.5.3: For type_error_mismatch function
@@ -1898,6 +1918,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 
                 fprintf(stderr, "\nError at line %d: Undefined variable '%.*s'\n", 
                         expr->token.line, expr->token.length, expr->token.start);
+                show_source_line(expr->token.line);
                 
                 // Extract variable name for enhanced error reporting
                 char var_name[256];
