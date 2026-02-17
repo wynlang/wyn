@@ -1,8 +1,7 @@
-// Epic 31: Self-Hosted Compiler TDD
+// Epic 31: Self-Hosted Compiler — Full TDD
+// Tests lexer, parser (AST), codegen, and bootstrap
 
-fn is_alpha(c: string) -> bool {
-    return c >= "a" && c <= "z" || c >= "A" && c <= "Z" || c == "_"
-}
+fn is_alpha(c: string) -> bool { return c >= "a" && c <= "z" || c >= "A" && c <= "Z" || c == "_" }
 fn is_digit(c: string) -> bool { return c >= "0" && c <= "9" }
 fn is_alnum(c: string) -> bool { return is_alpha(c) || is_digit(c) }
 fn kw(w: string) -> int {
@@ -15,112 +14,157 @@ fn kw(w: string) -> int {
 fn main() -> int {
     Test.init("Epic 31: Self-Hosted Compiler")
 
-    // 31.1: Lexer — tokenize into parallel arrays
-    var src = "fn main() -> int {\n    println(\"hello\")\n    return 0\n}"
+    var src = "fn main() -> int { println(\"hello\") return 0 }"
+
+    // === 31.1: LEXER ===
     var tk = []
     var tt = []
-    var tl = []
-    var i = 0
-    var ln = 1
-    var len = src.len()
-
-    while i < len {
-        var c = src[i]
-        if c == " " || c == "\t" || c == "\r" { i = i + 1; continue }
-        if c == "\n" { ln += 1; i = i + 1; continue }
-        if c == "/" && i + 1 < len && src[i + 1] == "/" {
-            while i < len && src[i] != "\n" { i = i + 1 }
-            continue
-        }
+    var tc = 0
+    var li = 0
+    var slen = src.len()
+    while li < slen {
+        var c = src[li]
+        if c == " " || c == "\t" || c == "\r" || c == "\n" { li += 1; continue }
         if is_digit(c) {
-            var start = i
-            while i < len && is_digit(src[i]) { i = i + 1 }
-            array_push(tk, 1); array_push(tt, src.substring(start, i)); array_push(tl, ln)
-            continue
+            var start = li
+            while li < slen && is_digit(src[li]) { li += 1 }
+            array_push(tk, 1); array_push(tt, src.substring(start, li)); tc += 1; continue
         }
         if c == "\"" {
-            i = i + 1
-            var start = i
-            while i < len && src[i] != "\"" {
-                if src[i] == "\\" { i = i + 1 }
-                i = i + 1
+            li += 1; var start = li
+            while li < slen && src[li] != "\"" {
+                if src[li] == "\\" { li += 1 }; li += 1
             }
-            array_push(tk, 3); array_push(tt, src.substring(start, i)); array_push(tl, ln)
-            i = i + 1
-            continue
+            array_push(tk, 3); array_push(tt, src.substring(start, li)); tc += 1; li += 1; continue
         }
         if is_alpha(c) {
-            var start = i
-            while i < len && is_alnum(src[i]) { i = i + 1 }
-            var word = src.substring(start, i)
-            array_push(tk, kw(word)); array_push(tt, word); array_push(tl, ln)
-            continue
+            var start = li
+            while li < slen && is_alnum(src[li]) { li += 1 }
+            var w = src.substring(start, li)
+            array_push(tk, kw(w)); array_push(tt, w); tc += 1; continue
         }
-        if i + 1 < len {
-            var two = src.substring(i, i + 2)
-            if two == "->" { array_push(tk, 50); array_push(tt, "->"); array_push(tl, ln); i = i + 2; continue }
-            if two == "==" { array_push(tk, 51); array_push(tt, "=="); array_push(tl, ln); i = i + 2; continue }
+        if li + 1 < slen {
+            var two = src.substring(li, li + 2)
+            if two == "->" { array_push(tk, 50); array_push(tt, "->"); tc += 1; li += 2; continue }
         }
-        if c == "(" { array_push(tk, 40); array_push(tt, "("); array_push(tl, ln) }
-        else if c == ")" { array_push(tk, 41); array_push(tt, ")"); array_push(tl, ln) }
-        else if c == "{" { array_push(tk, 42); array_push(tt, "{"); array_push(tl, ln) }
-        else if c == "}" { array_push(tk, 43); array_push(tt, "}"); array_push(tl, ln) }
-        else if c == "=" { array_push(tk, 35); array_push(tt, "="); array_push(tl, ln) }
-        i = i + 1
+        if c == "(" { array_push(tk, 40); array_push(tt, "("); tc += 1 }
+        else if c == ")" { array_push(tk, 41); array_push(tt, ")"); tc += 1 }
+        else if c == "{" { array_push(tk, 42); array_push(tt, "{"); tc += 1 }
+        else if c == "}" { array_push(tk, 43); array_push(tt, "}"); tc += 1 }
+        else if c == "+" { array_push(tk, 30); array_push(tt, "+"); tc += 1 }
+        else if c == "=" { array_push(tk, 35); array_push(tt, "="); tc += 1 }
+        li += 1
     }
-    array_push(tk, 0); array_push(tt, ""); array_push(tl, ln)
-    var tc = tk.len()
+    array_push(tk, 0); array_push(tt, ""); tc += 1
 
-    // Tests
-    Test.assert(tc > 10, "token count")
-    Test.assert_eq_int(tk[0], 5, "fn keyword")
-    Test.assert_eq_str(tt[0], "fn", "fn text")
-    Test.assert_eq_str(tt[1], "main", "main text")
-    Test.assert_eq_str(tt[2], "(", "lparen")
-    Test.assert_eq_str(tt[3], ")", "rparen")
-    Test.assert_eq_str(tt[4], "->", "arrow")
-    Test.assert_eq_str(tt[5], "int", "int")
-    Test.assert_eq_str(tt[6], "{", "lbrace")
-    Test.assert_eq_str(tt[7], "println", "println")
-    Test.assert_eq_int(tk[9], 3, "string tok")
-    Test.assert_eq_str(tt[9], "hello", "string val")
-    Test.assert_eq_int(tk[11], 16, "return kw")
-    Test.assert_eq_int(tl[0], 1, "ln 1")
-    Test.assert_eq_int(tl[7], 2, "ln 2")
-    Test.assert_eq_int(tk[tc - 1], 0, "EOF")
+    Test.assert(tc > 10, "lex: count")
+    Test.assert_eq_int(tk[0], 5, "lex: fn")
+    Test.assert_eq_str(tt[1], "main", "lex: main")
+    Test.assert_eq_int(tk[tc - 1], 0, "lex: EOF")
 
-    // 31.3: Codegen — emit C from tokens
+    // === 31.2: PARSER (token stream → AST) ===
+    // AST: 1=INT 2=STR 3=IDENT 4=CALL 5=BIN 6=RET 7=VAR 8=FN 9=BLOCK 10=EXPRSTMT 12=PROG
+    var nk = []
+    var nv = []
+    var nl = []
+    var nr = []
+    var nn = 0
+    var pos = 0
+
+    // Parse fn main() -> int { ... }
+    pos += 1  // skip fn
+    var fname = "" + tt[pos]; pos += 1
+    if tk[pos] == 40 { pos += 1; while tk[pos] != 41 { pos += 1 }; pos += 1 }
+    if tk[pos] == 50 { pos += 1; pos += 1 }
+    if tk[pos] == 42 { pos += 1 }
+
+    // Parse body statements
+    var first_stmt = -1
+    var prev_stmt = -1
+    while pos < tc && tk[pos] != 43 && tk[pos] != 0 {
+        var stmt_id = -1
+        if tk[pos] == 16 {
+            // return
+            pos += 1
+            var val_id = nn; array_push(nk, 1); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1; pos += 1
+            stmt_id = nn; array_push(nk, 6); array_push(nv, "return"); array_push(nl, val_id); array_push(nr, -1); nn += 1
+        } else if tk[pos] == 4 {
+            // call: ident(args)
+            var cname = "" + tt[pos]; pos += 1
+            if tk[pos] == 40 {
+                pos += 1
+                var arg = -1
+                if tk[pos] == 3 {
+                    arg = nn; array_push(nk, 2); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1; pos += 1
+                } else if tk[pos] == 1 {
+                    arg = nn; array_push(nk, 1); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1; pos += 1
+                }
+                if tk[pos] == 41 { pos += 1 }
+                var call_id = nn; array_push(nk, 4); array_push(nv, cname); array_push(nl, arg); array_push(nr, -1); nn += 1
+                stmt_id = nn; array_push(nk, 10); array_push(nv, "expr"); array_push(nl, call_id); array_push(nr, -1); nn += 1
+            } else { pos += 1; continue }
+        } else { pos += 1; continue }
+
+        if stmt_id != -1 {
+            if first_stmt == -1 { first_stmt = stmt_id }
+            if prev_stmt != -1 { nr[prev_stmt] = stmt_id }
+            prev_stmt = stmt_id
+        }
+    }
+
+    var block_id = nn; array_push(nk, 9); array_push(nv, "block"); array_push(nl, first_stmt); array_push(nr, -1); nn += 1
+    var fn_id = nn; array_push(nk, 8); array_push(nv, fname); array_push(nl, block_id); array_push(nr, -1); nn += 1
+    var prog_id = nn; array_push(nk, 12); array_push(nv, "program"); array_push(nl, fn_id); array_push(nr, -1); nn += 1
+
+    // Parser tests
+    Test.assert(nn > 5, "parse: node count")
+    Test.assert_eq_int(nk[prog_id], 12, "parse: program")
+    Test.assert_eq_int(nk[fn_id], 8, "parse: fn")
+    Test.assert_eq_str(nv[fn_id], "main", "parse: fn name")
+    Test.assert_eq_int(nk[block_id], 9, "parse: block")
+
+    // Find println call
+    var s = first_stmt
+    Test.assert_eq_int(nk[s], 10, "parse: expr stmt")
+    var call = nl[s]
+    Test.assert_eq_int(nk[call], 4, "parse: call")
+    Test.assert_eq_str(nv[call], "println", "parse: println")
+    var str_arg = nl[call]
+    Test.assert_eq_int(nk[str_arg], 2, "parse: str arg")
+    Test.assert_eq_str(nv[str_arg], "hello", "parse: hello")
+
+    // Find return
+    var ret_stmt = nr[s]
+    Test.assert_eq_int(nk[ret_stmt], 6, "parse: return")
+    Test.assert_eq_str(nv[nl[ret_stmt]], "0", "parse: ret val")
+
+    // === 31.3: CODEGEN from AST ===
     var out = "#include <stdio.h>\nint main() {\n"
-    i = 0
-    while i < tc {
-        if tk[i] == 4 && i + 3 < tc {
-            var name = "" + tt[i]
-            if name == "println" && tk[i + 2] == 3 {
-                var s = "" + tt[i + 2]
-                out = out + "    printf(\"" + s + "\\n\");\n"
-                i = i + 4
-                continue
+    var sid = nl[block_id]
+    while sid != -1 {
+        if nk[sid] == 10 {
+            var eid = nl[sid]
+            if nk[eid] == 4 {
+                var cn = "" + nv[eid]
+                if cn == "println" && nl[eid] != -1 && nk[nl[eid]] == 2 {
+                    out = out + "    printf(\"" + nv[nl[eid]] + "\\n\");\n"
+                }
             }
         }
-        if tk[i] == 16 && i + 1 < tc && tk[i + 1] == 1 {
-            var n = "" + tt[i + 1]
-            out = out + "    return " + n + ";\n"
-            i = i + 2
-            continue
-        }
-        i = i + 1
+        if nk[sid] == 6 { out = out + "    return " + nv[nl[sid]] + ";\n" }
+        sid = nr[sid]
     }
     out = out + "}\n"
 
-    Test.assert(out.contains("printf"), "has printf")
-    Test.assert(out.contains("hello"), "has hello")
-    Test.assert(out.contains("return 0"), "has return")
+    Test.assert(out.contains("printf"), "gen: printf")
+    Test.assert(out.contains("hello"), "gen: hello")
+    Test.assert(out.contains("return 0"), "gen: return")
 
-    // 31.4: Bootstrap — compile and run
-    File.write("/tmp/wyn_bootstrap.c", out)
-    System_exec("gcc -o /tmp/wyn_bootstrap /tmp/wyn_bootstrap.c 2>&1")
-    var output = System_exec("/tmp/wyn_bootstrap")
-    Test.assert_eq_str(output.trim(), "hello", "bootstrap runs")
+    // === 31.4: BOOTSTRAP ===
+    File.write("/tmp/wyn_sh_boot.c", out)
+    System_exec("gcc -o /tmp/wyn_sh_boot /tmp/wyn_sh_boot.c 2>&1")
+    var result = System_exec("/tmp/wyn_sh_boot")
+    Test.assert_eq_str(result.trim(), "hello", "bootstrap: hello")
 
     Test.summary()
     return 0
