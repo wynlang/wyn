@@ -64,3 +64,8 @@ Please include:
 2. OS and architecture
 3. Minimal `.wyn` file that reproduces the issue
 4. Expected vs actual output
+
+## Questions & Discussion
+
+- **GitHub Discussions**: [github.com/wynlang/wyn/discussions](https://github.com/wynlang/wyn/discussions)
+- **Bug Reports**: Use the issue templates on GitHub

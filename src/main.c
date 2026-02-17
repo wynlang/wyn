@@ -369,7 +369,7 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0 || strcmp(command, "-v") == 0) {
-        printf("\033[36mWyn\033[0m v%s\n", get_version());
+        printf("\033[36mWyn\033[0m v%s  \033[2m— Wynter the Wyvern\033[0m\n", get_version());
         return 0;
     }
     
