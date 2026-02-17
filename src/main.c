@@ -1701,7 +1701,7 @@ int main(int argc, char** argv) {
             if (c_source) {
                 char exe_path[512];
                 snprintf(exe_path, sizeof(exe_path), "%s.out", file);
-                int tcc_result = wyn_tcc_compile_to_exe(c_source, exe_path, wyn_root, NULL);
+                int tcc_result = wyn_tcc_compile_to_exe(c_source, exe_path, wyn_root, sqlite_flags[0] ? "-DWYN_USE_SQLITE" : NULL);
                 free(c_source);
                 if (tcc_result == 0) {
                     clock_gettime(CLOCK_MONOTONIC, &_ts_end);

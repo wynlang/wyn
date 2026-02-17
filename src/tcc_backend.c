@@ -22,6 +22,8 @@ int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
     fputs(c_source, f);
     fclose(f);
 
+    const char* extra_flags = (include_path && include_path[0]) ? include_path : "";
+    
     // Use pre-compiled TCC runtime library for speed
     char rt_tcc[512];
     snprintf(rt_tcc, sizeof(rt_tcc), "%s/vendor/tcc/lib/libwyn_rt_tcc.a", wyn_root);
@@ -30,9 +32,9 @@ int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
     if (access(rt_tcc, R_OK) == 0) {
         // Fast path: pre-compiled runtime + wrapper source
         snprintf(cmd, sizeof(cmd),
-            "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -w "
+            "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/sqlite -w %s "
             "%s %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
-            tcc_bin, output_path, wyn_root, wyn_root, c_path, wyn_root, wyn_root, rt_tcc);
+            tcc_bin, output_path, wyn_root, wyn_root, wyn_root, extra_flags, c_path, wyn_root, wyn_root, rt_tcc);
     } else {
         // Fallback: compile runtime from source
         snprintf(cmd, sizeof(cmd),
