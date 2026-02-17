@@ -22,8 +22,10 @@ void codegen_program(Program* prog) {
     // So we do a quick scan to find and generate them first
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_FN) {
-            // Scan function body for lambdas
             scan_for_lambdas(prog->stmts[i]->fn.body);
+        } else {
+            // Also scan top-level statements (script mode, var decls, etc.)
+            scan_stmt_for_lambdas(prog->stmts[i]);
         }
     }
     

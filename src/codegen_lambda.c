@@ -331,6 +331,11 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 }
             }
             break;
+        case EXPR_PIPELINE:
+            for (int i = 0; i < expr->pipeline.stage_count; i++) {
+                scan_expr_for_lambdas(expr->pipeline.stages[i]);
+            }
+            break;
         default:
             break;
     }
