@@ -326,6 +326,47 @@ int main(int argc, char** argv) {
         return 0;
     }
     
+    if (strcmp(command, "doctor") == 0) {
+        printf("\033[1mWyn Doctor\033[0m — checking your setup\n\n");
+        int issues = 0;
+        
+        // Determine wyn root
+        char doc_root[512];
+        strncpy(doc_root, argv[0], sizeof(doc_root)-1);
+        char* last_slash = strrchr(doc_root, '/');
+        if (last_slash) *last_slash = 0; else strcpy(doc_root, ".");
+        
+        // Check compiler
+        int has_gcc = (system("gcc --version > /dev/null 2>&1") == 0);
+        printf("  %s C compiler (gcc/clang)\n", has_gcc ? "\033[32m✓\033[0m" : "\033[31m✗\033[0m");
+        if (!has_gcc) { printf("    Install: xcode-select --install (macOS) or apt install gcc (Linux)\n"); issues++; }
+        
+        // Check wyn binary
+        printf("  \033[32m✓\033[0m Wyn compiler v%s\n", get_version());
+        
+        // Check runtime library
+        char rt_path[512]; snprintf(rt_path, sizeof(rt_path), "%s/runtime/libwyn_rt.a", doc_root);
+        int has_rt = (access(rt_path, F_OK) == 0);
+        printf("  %s Precompiled runtime\n", has_rt ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
+        if (!has_rt) printf("    Run: wyn build-runtime (speeds up compilation 3x)\n");
+        
+        // Check PATH
+        int in_path = (system("which wyn > /dev/null 2>&1") == 0);
+        printf("  %s wyn in PATH\n", in_path ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
+        if (!in_path) printf("    Run: wyn install\n");
+        
+        // Check SQLite
+        int has_sqlite = (system("pkg-config --exists sqlite3 2>/dev/null") == 0 || 
+                         system("test -f /usr/lib/libsqlite3.so 2>/dev/null") == 0 ||
+                         system("test -f /opt/homebrew/lib/libsqlite3.dylib 2>/dev/null") == 0);
+        printf("  %s SQLite (for Db module)\n", has_sqlite ? "\033[32m✓\033[0m" : "\033[33m○\033[0m optional");
+        
+        printf("\n");
+        if (issues == 0) printf("\033[32m✓ Everything looks good!\033[0m\n");
+        else printf("\033[31m%d issue(s) found.\033[0m Fix them and run wyn doctor again.\n", issues);
+        return issues > 0 ? 1 : 0;
+    }
+    
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0 || strcmp(command, "-v") == 0) {
         printf("\033[36mWyn\033[0m v%s\n", get_version());
         return 0;
