@@ -2367,8 +2367,26 @@ int create_new_project_with_template(const char* name, const char* template) {
     snprintf(cmd, sizeof(cmd), "%s/README.md", name);
     f = fopen(cmd, "w");
     fprintf(f, "# %s\n\n", name);
-    if (strcmp(template, "web") == 0) fprintf(f, "A web application built with Wyn.\n\n```bash\nwyn run src/main.wyn\n# Server running at http://localhost:8080\n```\n");
-    else if (strcmp(template, "cli") == 0) fprintf(f, "A CLI tool built with Wyn.\n\n```bash\nwyn build .\nwyn run src/main.wyn\n```\n");
+    if (strcmp(template, "web") == 0) fprintf(f,
+        "A REST API built with [Wyn](https://wynlang.com).\n\n"
+        "## Quick Start\n\n"
+        "```bash\nwyn run src/main.wyn\n```\n\n"
+        "Open http://localhost:8080\n\n"
+        "## API\n\n"
+        "| Method | Path | Description |\n"
+        "|--------|------|-------------|\n"
+        "| GET | `/` | HTML home page |\n"
+        "| GET | `/api/items` | List items (JSON) |\n"
+        "| POST | `/api/items` | Create item |\n"
+        "| GET | `/api/health` | Health check |\n\n"
+        "## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n\n"
+        "## Deploy\n\n```bash\nwyn deploy dev\n```\n");
+    else if (strcmp(template, "cli") == 0) fprintf(f,
+        "A CLI tool built with [Wyn](https://wynlang.com).\n\n"
+        "## Usage\n\n"
+        "```bash\nwyn run src/main.wyn help\nwyn run src/main.wyn info\nwyn run src/main.wyn run <file>\nwyn run src/main.wyn list\n```\n\n"
+        "## Build\n\n```bash\nwyn build .\n./%s --help\n```\n\n"
+        "## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n", name);
     else if (strcmp(template, "lib") == 0) fprintf(f, "A Wyn library for Python.\n\n```bash\nwyn build src/main.wyn --python\npython3 test.py\n```\n");
     fclose(f);
     
@@ -2377,41 +2395,169 @@ int create_new_project_with_template(const char* name, const char* template) {
     f = fopen(cmd, "w");
     if (strcmp(template, "web") == 0) {
         fprintf(f,
+            "// %s — REST API with JSON, SQLite, and HTML templates\n\n"
+            "fn json_response(fd: int, status: int, data: string) {\n"
+            "    Http.set_header(\"Content-Type\", \"application/json\")\n"
+            "    Http.respond(fd, status, data)\n"
+            "}\n\n"
+            "fn html_response(fd: int, status: int, body: string) {\n"
+            "    Http.set_header(\"Content-Type\", \"text/html\")\n"
+            "    Http.respond(fd, status, body)\n"
+            "}\n\n"
+            "fn init_db() -> int {\n"
+            "    var db = Db.open(\"%s.db\")\n"
+            "    Db.exec(db, \"CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)\")\n"
+            "    return db\n"
+            "}\n\n"
             "fn handle(method: string, path: string, body: string, fd: int) {\n"
-            "    if path == \"/\" {\n"
-            "        Http.respond(fd, 200, \"<h1>Welcome to %s</h1><p>Edit src/main.wyn to get started.</p>\")\n"
+            "    // --- HTML Pages ---\n"
+            "    if method == \"GET\" && path == \"/\" {\n"
+            "        var ctx = HashMap.new()\n"
+            "        ctx.insert(\"title\", \"%s\")\n"
+            "        ctx.insert(\"version\", \"0.1.0\")\n"
+            "        var html = Template.render(\"templates/index.html\", ctx)\n"
+            "        html_response(fd, 200, html)\n"
             "        return\n"
-            "    }\n"
-            "    if path == \"/api/hello\" {\n"
-            "        Http.respond_json(fd, 200, \"{\\\"message\\\": \\\"hello\\\"}\")\n"
+            "    }\n\n"
+            "    // --- JSON API ---\n"
+            "    if method == \"GET\" && path == \"/api/items\" {\n"
+            "        var db = init_db()\n"
+            "        var result = Db.query(db, \"SELECT name FROM items ORDER BY id DESC LIMIT 50\")\n"
+            "        Db.close(db)\n"
+            "        json_response(fd, 200, \"{\\\"items\\\": [\" + result + \"]}\")\n"
             "        return\n"
-            "    }\n"
-            "    Http.respond(fd, 404, \"Not Found\")\n"
+            "    }\n\n"
+            "    if method == \"POST\" && path == \"/api/items\" {\n"
+            "        var db = init_db()\n"
+            "        if body.len() > 0 {\n"
+            "            Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [body])\n"
+            "        }\n"
+            "        Db.close(db)\n"
+            "        json_response(fd, 201, \"{\\\"status\\\": \\\"created\\\"}\")\n"
+            "        return\n"
+            "    }\n\n"
+            "    if method == \"GET\" && path == \"/api/health\" {\n"
+            "        json_response(fd, 200, \"{\\\"status\\\": \\\"ok\\\"}\")\n"
+            "        return\n"
+            "    }\n\n"
+            "    json_response(fd, 404, \"{\\\"error\\\": \\\"not found\\\"}\")\n"
             "}\n\n"
             "fn main() -> int {\n"
-            "    println(\"Starting %s on http://localhost:8080\")\n"
-            "    var server = Http.listen(8080)\n"
+            "    var port = 8080\n"
+            "    println(\"%s running on http://localhost:\" + int_to_string(port))\n"
+            "    println(\"  GET  /              — HTML home page\")\n"
+            "    println(\"  GET  /api/items     — list items (JSON)\")\n"
+            "    println(\"  POST /api/items     — create item\")\n"
+            "    println(\"  GET  /api/health    — health check\")\n"
+            "    var db = init_db()\n"
+            "    Db.close(db)\n"
+            "    var server = Http.listen(port)\n"
             "    while true {\n"
             "        var req = Http.accept(server)\n"
             "        if req > 0 {\n"
-            "            var method = Http.method(req)\n"
-            "            var path = Http.path(req)\n"
-            "            var body = Http.body(req)\n"
-            "            handle(method, path, body, req)\n"
+            "            handle(Http.method(req), Http.path(req), Http.body(req), req)\n"
             "            Http.close_client(req)\n"
             "        }\n"
             "    }\n"
             "    return 0\n"
-            "}\n", name, name);
+            "}\n", name, name, name, name);
+        
+        // Create HTML template
+        snprintf(cmd, sizeof(cmd), "%s/templates/index.html", name);
+        f = fopen(cmd, "w");
+        fprintf(f,
+            "<!DOCTYPE html>\n<html>\n<head>\n"
+            "  <title>${title}</title>\n"
+            "  <style>\n"
+            "    body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #333; }\n"
+            "    h1 { color: #0066cc; }\n"
+            "    code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }\n"
+            "    pre { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; overflow-x: auto; }\n"
+            "    .endpoint { margin: 8px 0; }\n"
+            "    .method { font-weight: bold; color: #0066cc; }\n"
+            "  </style>\n"
+            "</head>\n<body>\n"
+            "  <h1>${title}</h1>\n"
+            "  <p>v${version} — built with <a href=\"https://wynlang.com\">Wyn</a></p>\n"
+            "  <h2>API Endpoints</h2>\n"
+            "  <div class=\"endpoint\"><span class=\"method\">GET</span> <code>/api/items</code> — list items</div>\n"
+            "  <div class=\"endpoint\"><span class=\"method\">POST</span> <code>/api/items</code> — create item</div>\n"
+            "  <div class=\"endpoint\"><span class=\"method\">GET</span> <code>/api/health</code> — health check</div>\n"
+            "  <h2>Quick Start</h2>\n"
+            "  <pre>curl http://localhost:8080/api/health\ncurl -X POST -d 'My Item' http://localhost:8080/api/items\ncurl http://localhost:8080/api/items</pre>\n"
+            "</body>\n</html>\n");
+        fclose(f);
+        
+        // Reopen main.wyn file pointer for the rest of the function
+        snprintf(cmd, sizeof(cmd), "%s/src/main.wyn", name);
+        // Already written above, skip
+        f = NULL;
     } else if (strcmp(template, "cli") == 0) {
         fprintf(f,
-            "fn main() -> int {\n"
+            "// %s — CLI tool with arg parsing and colored output\n\n"
+            "fn print_help() {\n"
             "    println(\"%s v0.1.0\")\n"
-            "    println(\"Usage: %s <command>\")\n"
-            "    println(\"  hello    Say hello\")\n"
-            "    println(\"  version  Show version\")\n"
+            "    println(\"\")\n"
+            "    println(\"Usage: %s <command> [options]\")\n"
+            "    println(\"\")\n"
+            "    println(\"Commands:\")\n"
+            "    println(\"  run <file>     Process a file\")\n"
+            "    println(\"  list           List items\")\n"
+            "    println(\"  info           Show system info\")\n"
+            "    println(\"  help           Show this help\")\n"
+            "    println(\"  version        Show version\")\n"
+            "}\n\n"
+            "fn cmd_info() {\n"
+            "    println(\"%s v0.1.0\")\n"
+            "    println(\"  OS:   \" + System_exec(\"uname -s\").trim())\n"
+            "    println(\"  Arch: \" + System_exec(\"uname -m\").trim())\n"
+            "    println(\"  Dir:  \" + System_exec(\"pwd\").trim())\n"
+            "}\n\n"
+            "fn cmd_run(file: string) {\n"
+            "    var content = File.read(file)\n"
+            "    if content.len() == 0 {\n"
+            "        println(\"Error: could not read: \" + file)\n"
+            "        return\n"
+            "    }\n"
+            "    var lines = content.split(\"\\n\")\n"
+            "    println(\"Processed \" + int_to_string(lines.len()) + \" lines from \" + file)\n"
+            "}\n\n"
+            "fn cmd_list() {\n"
+            "    var items = [\"alpha\", \"beta\", \"gamma\"]\n"
+            "    for item in items {\n"
+            "        println(\"  - \" + item)\n"
+            "    }\n"
+            "    println(\"\")\n"
+            "    println(int_to_string(items.len()) + \" items\")\n"
+            "}\n\n"
+            "fn main() -> int {\n"
+            "    var args = System.args()\n"
+            "    if args.len() < 2 {\n"
+            "        print_help()\n"
+            "        return 0\n"
+            "    }\n"
+            "    var cmd = args[1]\n"
+            "    if cmd == \"help\" || cmd == \"--help\" || cmd == \"-h\" {\n"
+            "        print_help()\n"
+            "    } else if cmd == \"version\" || cmd == \"--version\" || cmd == \"-v\" {\n"
+            "        println(\"%s v0.1.0\")\n"
+            "    } else if cmd == \"info\" {\n"
+            "        cmd_info()\n"
+            "    } else if cmd == \"list\" {\n"
+            "        cmd_list()\n"
+            "    } else if cmd == \"run\" {\n"
+            "        if args.len() < 3 {\n"
+            "            println(\"Usage: %s run <file>\")\n"
+            "            return 1\n"
+            "        }\n"
+            "        cmd_run(args[2])\n"
+            "    } else {\n"
+            "        println(\"Unknown command: \" + cmd)\n"
+            "        println(\"Run '%s --help' for usage\")\n"
+            "        return 1\n"
+            "    }\n"
             "    return 0\n"
-            "}\n", name, name);
+            "}\n", name, name, name, name, name, name, name);
     } else if (strcmp(template, "lib") == 0) {
         fprintf(f,
             "// %s — a Wyn library\n"
@@ -2424,18 +2570,57 @@ int create_new_project_with_template(const char* name, const char* template) {
             "}\n\n"
             "fn main() -> int { return 0 }\n", name, name);
     }
-    fclose(f);
+    if (f) fclose(f);
     
     // test
     snprintf(cmd, sizeof(cmd), "%s/tests/test_main.wyn", name);
     f = fopen(cmd, "w");
-    fprintf(f, "fn main() -> int {\n    Test.init(\"%s\")\n    Test.assert(1 == 1, \"basic\")\n    Test.summary()\n    return 0\n}\n", name);
+    if (strcmp(template, "web") == 0) {
+        fprintf(f,
+            "fn main() -> int {\n"
+            "    Test.init(\"%s\")\n\n"
+            "    // Database\n"
+            "    var db = Db.open(\"/tmp/%s_test.db\")\n"
+            "    Db.exec(db, \"CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)\")\n"
+            "    Db.exec(db, \"DELETE FROM items\")\n"
+            "    Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [\"test\"])\n"
+            "    var count = Db.query(db, \"SELECT COUNT(*) FROM items\")\n"
+            "    Test.assert_eq_str(count, \"1\", \"db insert\")\n"
+            "    Db.close(db)\n\n"
+            "    // SQL injection prevention\n"
+            "    var db2 = Db.open(\"/tmp/%s_test.db\")\n"
+            "    Db.exec_p(db2, \"INSERT INTO items (name) VALUES (?)\", [\"'; DROP TABLE items; --\"])\n"
+            "    var count2 = Db.query(db2, \"SELECT COUNT(*) FROM items\")\n"
+            "    Test.assert_eq_str(count2, \"2\", \"sql injection safe\")\n"
+            "    Db.close(db2)\n\n"
+            "    Test.summary()\n"
+            "    return 0\n"
+            "}\n", name, name, name);
+    } else if (strcmp(template, "cli") == 0) {
+        fprintf(f,
+            "fn main() -> int {\n"
+            "    Test.init(\"%s\")\n\n"
+            "    // String operations\n"
+            "    Test.assert(\"hello\".starts_with(\"he\"), \"starts_with\")\n"
+            "    Test.assert(\"hello\".ends_with(\"lo\"), \"ends_with\")\n"
+            "    Test.assert_eq_str(\"hello\".upper(), \"HELLO\", \"upper\")\n"
+            "    Test.assert_eq_int(\"a,b,c\".split(\",\").len(), 3, \"split\")\n\n"
+            "    // File I/O\n"
+            "    File.write(\"/tmp/%s_test.txt\", \"hello\")\n"
+            "    var content = File.read(\"/tmp/%s_test.txt\")\n"
+            "    Test.assert_eq_str(content, \"hello\", \"file roundtrip\")\n\n"
+            "    Test.summary()\n"
+            "    return 0\n"
+            "}\n", name, name, name);
+    } else {
+        fprintf(f, "fn main() -> int {\n    Test.init(\"%s\")\n    Test.assert(1 == 1, \"basic\")\n    Test.summary()\n    return 0\n}\n", name);
+    }
     fclose(f);
     
     printf("\033[32m✓\033[0m Created %s project: %s/\n\n", template, name);
     printf("  %s/wyn.toml\n  %s/src/main.wyn\n  %s/tests/test_main.wyn\n  %s/README.md\n  %s/.gitignore\n\n", name, name, name, name, name);
     if (strcmp(template, "web") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n  # Open http://localhost:8080\n", name);
-    else if (strcmp(template, "cli") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn hello\n", name);
+    else if (strcmp(template, "cli") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n\nWith args (build first):\n  wyn build . && ./%s list\n", name, name);
     else if (strcmp(template, "lib") == 0) printf("Build:\n  cd %s && wyn build src/main.wyn --python\n  python3 -c \"from main import add; print(add(2,3))\"\n", name);
     return 0;
 }

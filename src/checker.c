@@ -2661,6 +2661,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     snprintf(ns_method, sizeof(ns_method), "%s_%s", obj_name, method_name);
                     Token ns_tok = {TOKEN_IDENT, ns_method, (int)strlen(ns_method), 0};
                     Symbol* ns_sym = find_symbol(global_scope, ns_tok);
+                    // Also try :: form (System::args)
+                    if (!ns_sym) {
+                        char ns_method2[256];
+                        snprintf(ns_method2, sizeof(ns_method2), "%s::%s", obj_name, method_name);
+                        Token ns_tok2 = {TOKEN_IDENT, ns_method2, (int)strlen(ns_method2), 0};
+                        ns_sym = find_symbol(global_scope, ns_tok2);
+                    }
                     if (ns_sym && ns_sym->type && ns_sym->type->kind == TYPE_FUNCTION) {
                         Type* ret = ns_sym->type->fn_type.return_type;
                         if (ret) {
