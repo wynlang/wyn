@@ -21,7 +21,7 @@
 #include "toml.h"
 #include "semver.h"
 
-#define REGISTRY_HOST "pkg.wynlang.com"
+#define REGISTRY_HOST "github.com"
 #define REGISTRY_PORT 443  // HTTPS
 #define BUFFER_SIZE 8192
 
@@ -150,8 +150,8 @@ int registry_search(const char *query) {
     
     if (http_get(REGISTRY_HOST, path, &response) != 0) {
         fprintf(stderr, "Error: Failed to connect to package registry\n");
-        fprintf(stderr, "Note: Registry server may not be deployed yet\n");
-        fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
+        fprintf(stderr, "Note: Use Git-based packages instead\n");
+        fprintf(stderr, "Visit https://github.com/topics/wyn-package for packages\n");
         return 1;
     }
     
@@ -172,8 +172,8 @@ int registry_info(const char *package) {
     
     if (http_get(REGISTRY_HOST, path, &response) != 0) {
         fprintf(stderr, "Error: Failed to connect to package registry\n");
-        fprintf(stderr, "Note: Registry server may not be deployed yet\n");
-        fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
+        fprintf(stderr, "Note: Use Git-based packages instead\n");
+        fprintf(stderr, "Visit https://github.com/topics/wyn-package for packages\n");
         return 1;
     }
     
@@ -194,8 +194,8 @@ int registry_versions(const char *package) {
     
     if (http_get(REGISTRY_HOST, path, &response) != 0) {
         fprintf(stderr, "Error: Failed to connect to package registry\n");
-        fprintf(stderr, "Note: Registry server may not be deployed yet\n");
-        fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
+        fprintf(stderr, "Note: Use Git-based packages instead\n");
+        fprintf(stderr, "Visit https://github.com/topics/wyn-package for packages\n");
         return 1;
     }
     
@@ -239,8 +239,8 @@ int registry_install(const char *package_spec) {
     
     if (http_get(REGISTRY_HOST, path, &response) != 0) {
         fprintf(stderr, "Error: Failed to connect to package registry\n");
-        fprintf(stderr, "Note: Registry server may not be deployed yet\n");
-        fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
+        fprintf(stderr, "Note: Use Git-based packages instead\n");
+        fprintf(stderr, "Visit https://github.com/topics/wyn-package for packages\n");
         return 1;
     }
     
@@ -329,7 +329,7 @@ int registry_publish(int dry_run) {
     // TODO: Create tarball and upload via HTTP POST
     fprintf(stderr, "Error: Publish functionality requires registry server\n");
     fprintf(stderr, "Note: Registry server not deployed yet (coming in v1.5.1)\n");
-    fprintf(stderr, "Visit https://pkg.wynlang.com for updates\n");
+    fprintf(stderr, "Visit https://github.com/topics/wyn-package for packages\n");
     
     wyn_config_free(config);
     return 1;

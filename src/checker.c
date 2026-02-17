@@ -2113,15 +2113,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     if (expr->call.arg_count >= 2) {
                         Type* arr_type = check_expr(expr->call.args[0], scope);
                         Type* val_type = check_expr(expr->call.args[1], scope);
-                        // Update array element type if we can determine it
+                        // Update array element type — but only if consistent
                         if (arr_type && arr_type->kind == TYPE_ARRAY && val_type) {
-                            arr_type->array_type.element_type = val_type;
+                            Type* existing = arr_type->array_type.element_type;
+                            if (!existing) {
+                                arr_type->array_type.element_type = val_type;
+                            } else if (existing->kind != val_type->kind) {
+                                fprintf(stderr, "Error at line %d: Cannot push %s into array of %s\n",
+                                    func_name.line,
+                                    val_type->kind == TYPE_STRING ? "string" : "int",
+                                    existing->kind == TYPE_STRING ? "string" : "int");
+                                fprintf(stderr, "  \033[34mHelp:\033[0m Use separate arrays for different types\n");
+                                had_error = true;
+                            }
                         }
-                        // Also update the symbol's type
                         if (expr->call.args[0]->type == EXPR_IDENT) {
                             Symbol* sym = find_symbol(scope, expr->call.args[0]->token);
                             if (sym && sym->type && sym->type->kind == TYPE_ARRAY && val_type) {
-                                sym->type->array_type.element_type = val_type;
+                                Type* existing = sym->type->array_type.element_type;
+                                if (!existing) {
+                                    sym->type->array_type.element_type = val_type;
+                                } else if (existing->kind != val_type->kind) {
+                                    sym->type->array_type.element_type = NULL;
+                                }
                             }
                         }
                     }
@@ -3135,7 +3149,19 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Token struct_name = expr->struct_init.type_name;
             
             if (wyn_is_generic_struct(struct_name)) {
-                // This is a generic struct - infer type arguments from field values
+                // Check for string fields in generic structs — not yet supported
+                for (int i = 0; i < expr->struct_init.field_count; i++) {
+                    Type* field_type = check_expr(expr->struct_init.field_values[i], scope);
+                    if (field_type && field_type->kind == TYPE_STRING) {
+                        fprintf(stderr, "Error at line %d: Generic struct '%.*s' does not support string fields yet\n",
+                            expr->token.line, struct_name.length, struct_name.start);
+                        fprintf(stderr, "  \033[34mHelp:\033[0m Use a concrete struct: struct MyStruct { name: string }\n");
+                        had_error = true;
+                        break;
+                    }
+                }
+                
+                // Infer type arguments from field values
                 Type** type_args = malloc(sizeof(Type*) * expr->struct_init.field_count);
                 int type_arg_count = 0;
                 

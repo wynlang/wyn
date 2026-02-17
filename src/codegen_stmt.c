@@ -1212,7 +1212,8 @@ void codegen_stmt(Stmt* stmt) {
                             }
                         }
                         if (is_type_param) {
-                            // Type parameter — use long long (works for int, pointer-sized for strings)
+                            // Type parameter — use long long (works for int/bool)
+                            // String fields in generic structs need concrete struct types
                             c_type = "long long";
                         } else if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                             c_type = "long long";

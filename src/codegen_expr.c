@@ -291,27 +291,15 @@ void codegen_expr(Expr* expr) {
                 if (!left_is_int && expr->binary.left->type == EXPR_INT) left_is_int = true;
                 if (!right_is_int && expr->binary.right->type == EXPR_INT) right_is_int = true;
                 
-                // Check if variable name suggests string type
+                // Check if variable name suggests string type — USE TYPE INFO INSTEAD
                 if (!left_is_string && expr->binary.left->type == EXPR_IDENT) {
-                    Token name = expr->binary.left->token;
-                    if ((name.length == 4 && memcmp(name.start, "name", 4) == 0) ||
-                        (name.length == 4 && memcmp(name.start, "text", 4) == 0) ||
-                        (name.length == 4 && memcmp(name.start, "line", 4) == 0) ||
-                        (name.length == 4 && memcmp(name.start, "word", 4) == 0) ||
-                        (name.length == 3 && memcmp(name.start, "str", 3) == 0) ||
-                        (name.length == 1 && name.start[0] == 's')) {
+                    if (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_STRING) {
                         left_is_string = true;
                         left_is_int = false;
                     }
                 }
                 if (!right_is_string && expr->binary.right->type == EXPR_IDENT) {
-                    Token name = expr->binary.right->token;
-                    if ((name.length == 4 && memcmp(name.start, "name", 4) == 0) ||
-                        (name.length == 4 && memcmp(name.start, "text", 4) == 0) ||
-                        (name.length == 4 && memcmp(name.start, "line", 4) == 0) ||
-                        (name.length == 4 && memcmp(name.start, "word", 4) == 0) ||
-                        (name.length == 3 && memcmp(name.start, "str", 3) == 0) ||
-                        (name.length == 1 && name.start[0] == 's')) {
+                    if (expr->binary.right->expr_type && expr->binary.right->expr_type->kind == TYPE_STRING) {
                         right_is_string = true;
                         right_is_int = false;
                     }
@@ -2482,38 +2470,53 @@ void codegen_expr(Expr* expr) {
             emit(")");
             break;
         case EXPR_PIPELINE: {
-            // Generate nested function calls: f(g(h(x)))
-            // For x |> f |> g |> h, generate h(g(f(x)))
-            
-            // Start from the rightmost function and work backwards
-            for (int i = expr->pipeline.stage_count - 1; i >= 1; i--) {
-                if (expr->pipeline.stages[i]->type == EXPR_IDENT) {
-                    char _pn[128]; snprintf(_pn, sizeof(_pn), "%.*s", expr->pipeline.stages[i]->token.length, expr->pipeline.stages[i]->token.start);
-                    const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
-                    const char* _pfx = "";
-                    for (int k = 0; _ckw[k]; k++) { if (strcmp(_pn, _ckw[k]) == 0) { _pfx = "_"; break; } }
-                    emit("%s%s(", _pfx, _pn);
-                } else if (expr->pipeline.stages[i]->type == EXPR_METHOD_CALL) {
-                    emit("%.*s(", 
-                         expr->pipeline.stages[i]->method_call.method.length,
-                         expr->pipeline.stages[i]->method_call.method.start);
-                } else if (expr->pipeline.stages[i]->type == EXPR_LAMBDA) {
-                    // Lambda: emit as inline call — (lambda)(
-                    emit("("); codegen_expr(expr->pipeline.stages[i]); emit(")(");
-                    // The value will be emitted next, then we close with )
-                    // But we need to skip the normal close — handle specially
-                } else {
-                    // Generic expression — wrap in call
-                    emit("("); codegen_expr(expr->pipeline.stages[i]); emit(")(");
-                }
+            // Check if any stage is a lambda — if so, use sequential temp vars
+            bool has_lambda = false;
+            for (int i = 1; i < expr->pipeline.stage_count; i++) {
+                if (expr->pipeline.stages[i]->type == EXPR_LAMBDA) { has_lambda = true; break; }
             }
             
-            // Emit the first stage (the value)
-            codegen_expr(expr->pipeline.stages[0]);
-            
-            // Close all the function calls
-            for (int i = 1; i < expr->pipeline.stage_count; i++) {
-                emit(")");
+            if (has_lambda) {
+                // Sequential: { auto __p0 = x; auto __p1 = f1(__p0); auto __p2 = f2(__p1); __pN; }
+                static int pipe_id = 0;
+                int pid = pipe_id++;
+                emit("({ ");
+                emit("long long __p%d_0 = (long long)(", pid);
+                codegen_expr(expr->pipeline.stages[0]);
+                emit("); ");
+                for (int i = 1; i < expr->pipeline.stage_count; i++) {
+                    emit("long long __p%d_%d = ", pid, i);
+                    if (expr->pipeline.stages[i]->type == EXPR_LAMBDA) {
+                        emit("("); codegen_expr(expr->pipeline.stages[i]); emit(")");
+                    } else if (expr->pipeline.stages[i]->type == EXPR_IDENT) {
+                        codegen_expr(expr->pipeline.stages[i]);
+                    } else {
+                        emit("("); codegen_expr(expr->pipeline.stages[i]); emit(")");
+                    }
+                    emit("(__p%d_%d); ", pid, i - 1);
+                }
+                emit("__p%d_%d; })", pid, expr->pipeline.stage_count - 1);
+            } else {
+                // Original nested call approach for non-lambda pipes
+                for (int i = expr->pipeline.stage_count - 1; i >= 1; i--) {
+                    if (expr->pipeline.stages[i]->type == EXPR_IDENT) {
+                        char _pn[128]; snprintf(_pn, sizeof(_pn), "%.*s", expr->pipeline.stages[i]->token.length, expr->pipeline.stages[i]->token.start);
+                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                        const char* _pfx = "";
+                        for (int k = 0; _ckw[k]; k++) { if (strcmp(_pn, _ckw[k]) == 0) { _pfx = "_"; break; } }
+                        emit("%s%s(", _pfx, _pn);
+                    } else if (expr->pipeline.stages[i]->type == EXPR_METHOD_CALL) {
+                        emit("%.*s(", 
+                             expr->pipeline.stages[i]->method_call.method.length,
+                             expr->pipeline.stages[i]->method_call.method.start);
+                    } else {
+                        emit("("); codegen_expr(expr->pipeline.stages[i]); emit(")(");
+                    }
+                }
+                codegen_expr(expr->pipeline.stages[0]);
+                for (int i = 1; i < expr->pipeline.stage_count; i++) {
+                    emit(")");
+                }
             }
             break;
         }

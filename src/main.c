@@ -675,14 +675,14 @@ int main(int argc, char** argv) {
             if (!found) printf("  No packages found matching '%s'\n", argv[3]);
             return 0;
         } else if (strcmp(argv[2], "login") == 0) {
-            // Register with pkg.wynlang.com and save API key
+            // Register with github.com/topics/wyn-package and save API key
             char username[256];
             printf("Username: "); fflush(stdout);
             if (!fgets(username, sizeof(username), stdin)) return 1;
             username[strcspn(username, "\n")] = 0;
             char cmd[1024];
-            snprintf(cmd, sizeof(cmd), "curl -s -X POST https://pkg.wynlang.com/api/register -d '%s'", username);
-            printf("Registering with pkg.wynlang.com...\n");
+            snprintf(cmd, sizeof(cmd), "curl -s -X POST https://github.com/topics/wyn-package/api/register -d '%s'", username);
+            printf("Registering with github.com/topics/wyn-package...\n");
             FILE* fp = popen(cmd, "r");
             char buf[1024] = {0};
             if (fp) { fread(buf, 1, sizeof(buf)-1, fp); pclose(fp); }

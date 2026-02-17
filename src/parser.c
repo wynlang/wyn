@@ -79,6 +79,7 @@ static Stmt* parse_break_statement(); // T1.4.2: Control Flow Agent addition
 static Stmt* parse_continue_statement(); // T1.4.2: Control Flow Agent addition
 static Stmt* parse_match_statement(); // T1.4.3: Control Flow Agent addition
 static Expr* parse_type(); // T2.5.1: Optional Type Implementation
+static Expr* logical_or(); // Forward declaration for lambda body parsing
 static Expr* parse_result_type(); // TASK-026: Result type parsing
 static Stmt* impl_block(); // T2.5.3: Enhanced Struct System
 static Stmt* trait_decl(); // T3.2.1: Trait Definitions
@@ -799,7 +800,8 @@ static Expr* primary() {
             
             expect(TOKEN_RBRACE, "Expected '}' after lambda block body");
         } else {
-            lambda_expr->lambda.body = expression();
+            // Parse body as logical_or (not full expression) to avoid consuming |> in pipes
+            lambda_expr->lambda.body = logical_or();
         }
         
         // Initialize capture fields (will be filled by capture analysis)
@@ -2753,7 +2755,12 @@ Stmt* enum_decl() {
     stmt->enum_decl.variant_type_counts = malloc(sizeof(int) * 32);
     
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-        expect(TOKEN_IDENT, "Expected variant name");
+        // Accept identifiers and keywords that are commonly used as variant names
+        if (check(TOKEN_IDENT) || check(TOKEN_NONE) || check(TOKEN_SOME) || check(TOKEN_OK) || check(TOKEN_ERR) || check(TOKEN_TRUE) || check(TOKEN_FALSE)) {
+            advance();
+        } else {
+            expect(TOKEN_IDENT, "Expected variant name");
+        }
         stmt->enum_decl.variants[stmt->enum_decl.variant_count] = parser.previous;
         
         // Check for associated data: Ok(int) or Err(string)
@@ -3285,7 +3292,11 @@ static Stmt* parse_match_statement() {
             // Check for enum variant: Color.Red or Color::Red or Result.Ok(val)
             if (match(TOKEN_COLONCOLON) || match(TOKEN_DOT)) {
                 Token variant_name = parser.current;
-                expect(TOKEN_IDENT, "Expected variant name after '::'");
+                if (check(TOKEN_IDENT) || check(TOKEN_NONE) || check(TOKEN_SOME) || check(TOKEN_OK) || check(TOKEN_ERR)) {
+                    advance();
+                } else {
+                    expect(TOKEN_IDENT, "Expected variant name after '::'");
+                }
                 
                 // Check for destructuring: Result::Ok(val)
                 if (match(TOKEN_LPAREN)) {
@@ -3539,7 +3550,11 @@ static Pattern* parse_pattern() {
         // Check for enum dot access: Shape.Circle or Shape.Circle(r)
         if (match(TOKEN_DOT) || match(TOKEN_COLONCOLON)) {
             Token variant_name = parser.current;
-            expect(TOKEN_IDENT, "Expected variant name");
+            if (check(TOKEN_IDENT) || check(TOKEN_NONE) || check(TOKEN_SOME) || check(TOKEN_OK) || check(TOKEN_ERR)) {
+                advance();
+            } else {
+                expect(TOKEN_IDENT, "Expected variant name");
+            }
             
             if (match(TOKEN_LPAREN)) {
                 // Shape.Circle(r) — enum variant with data
@@ -3616,8 +3631,12 @@ static Pattern* parse_pattern() {
             expect(TOKEN_RBRACE, "Expected '}' after struct pattern");
             return pattern;
         } else if (match(TOKEN_DOT)) {
-            // Enum variant: Color.Red -> Color_Red
-            expect(TOKEN_IDENT, "Expected variant name after '.'");
+            // Enum variant: Color.Red, Shape.None
+            if (check(TOKEN_IDENT) || check(TOKEN_NONE) || check(TOKEN_SOME) || check(TOKEN_OK) || check(TOKEN_ERR)) {
+                advance();
+            } else {
+                expect(TOKEN_IDENT, "Expected variant name after '.'");
+            }
             pattern->type = PATTERN_IDENT;
             char* buf = safe_malloc(256);
             int len = snprintf(buf, 256, "%.*s_%.*s",
