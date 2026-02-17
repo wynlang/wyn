@@ -1522,6 +1522,59 @@ Stmt* statement() {
         Stmt* stmt = alloc_stmt();
         WynTokenType decl_type = parser.previous.type;
         
+        // Array destructuring: var [a, b, c] = expr
+        if (decl_type == TOKEN_VAR && match(TOKEN_LBRACKET)) {
+            // Parse variable names
+            Token names[16]; int name_count = 0;
+            while (!check(TOKEN_RBRACKET) && !check(TOKEN_EOF) && name_count < 16) {
+                expect(TOKEN_IDENT, "Expected variable name in destructuring");
+                names[name_count++] = parser.previous;
+                if (!match(TOKEN_COMMA)) break;
+            }
+            expect(TOKEN_RBRACKET, "Expected ']' after destructuring");
+            expect(TOKEN_EQ, "Expected '=' after destructuring pattern");
+            Expr* init = expression();
+            
+            // Desugar into a block: { var __arr = init; var a = __arr[0]; var b = __arr[1]; ... }
+            stmt->type = STMT_BLOCK;
+            stmt->block.stmts = malloc(sizeof(Stmt*) * (name_count + 1));
+            stmt->block.count = name_count + 1;
+            
+            // var __destruct = init
+            Stmt* arr_stmt = alloc_stmt();
+            arr_stmt->type = STMT_VAR;
+            arr_stmt->var.is_const = false; arr_stmt->var.is_mutable = true;
+            static char destruct_name[] = "__destruct";
+            arr_stmt->var.name.start = destruct_name; arr_stmt->var.name.length = 10;
+            arr_stmt->var.init = init; arr_stmt->var.type = NULL;
+            stmt->block.stmts[0] = arr_stmt;
+            
+            // var a = __destruct[0], var b = __destruct[1], ...
+            for (int i = 0; i < name_count; i++) {
+                Stmt* vs = alloc_stmt();
+                vs->type = STMT_VAR;
+                vs->var.is_const = false; vs->var.is_mutable = true;
+                vs->var.name = names[i]; vs->var.type = NULL;
+                // Build __destruct[i]
+                Expr* arr_ref = alloc_expr();
+                arr_ref->type = EXPR_IDENT;
+                arr_ref->token.start = destruct_name; arr_ref->token.length = 10;
+                Expr* idx = alloc_expr();
+                idx->type = EXPR_INT;
+                static char idx_bufs[16][4];
+                snprintf(idx_bufs[i], 4, "%d", i);
+                idx->token.start = idx_bufs[i]; idx->token.length = strlen(idx_bufs[i]);
+                Expr* index_expr = alloc_expr();
+                index_expr->type = EXPR_INDEX;
+                index_expr->index.array = arr_ref;
+                index_expr->index.index = idx;
+                vs->var.init = index_expr;
+                stmt->block.stmts[i + 1] = vs;
+            }
+            match(TOKEN_SEMI);
+            return stmt;
+        }
+        
         if (decl_type == TOKEN_CONST) {
             stmt->type = STMT_CONST;
             stmt->const_stmt.is_const = true;

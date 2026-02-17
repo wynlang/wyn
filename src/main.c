@@ -1647,12 +1647,47 @@ int main(int argc, char** argv) {
         
         // Check for --fast flag (use -O0 for fastest compile)
         const char* opt_level = "-O1";
-        int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python
+        int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python, 3=--wasm, 4=--node
         for (int i = 3; i < argc; i++) {
             if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; }
             if (strcmp(argv[i], "--release") == 0) { opt_level = "-O2"; }
             if (strcmp(argv[i], "--shared") == 0) { shared_mode = 1; }
             if (strcmp(argv[i], "--python") == 0) { shared_mode = 2; }
+            if (strcmp(argv[i], "--wasm") == 0) { shared_mode = 3; }
+            if (strcmp(argv[i], "--node") == 0) { shared_mode = 4; }
+        }
+        
+        // WASM target
+        if (shared_mode == 3) {
+            if (system("which emcc > /dev/null 2>&1") != 0) {
+                fprintf(stderr, "\033[31m✗\033[0m Emscripten not found.\n");
+                fprintf(stderr, "  Install: https://emscripten.org/docs/getting_started/downloads.html\n");
+                fprintf(stderr, "  Then: wyn build %s --wasm\n", file);
+                return 1;
+            }
+            // Compile to WASM
+            char wasm_cmd[8192];
+            char wasm_out[256];
+            snprintf(wasm_out, sizeof(wasm_out), "%s", file);
+            char* dot = strrchr(wasm_out, '.'); if (dot) *dot = 0;
+            snprintf(wasm_cmd, sizeof(wasm_cmd),
+                "emcc -O2 -s WASM=1 -s EXPORTED_RUNTIME_METHODS='[\"cwrap\"]' -I %s/src -o %s.html %s.c -lm 2>&1",
+                wyn_root, wasm_out, file);
+            printf("\033[1mBuilding WASM\033[0m %s...\n", file);
+            int r = system(wasm_cmd);
+            if (r == 0) fprintf(stderr, "\033[32m✓\033[0m Built: %s.html, %s.js, %s.wasm\n", wasm_out, wasm_out, wasm_out);
+            if (!keep_artifacts) { char cp[512]; snprintf(cp, sizeof(cp), "%s.c", file); unlink(cp); }
+            return r == 0 ? 0 : 1;
+        }
+        
+        // Node.js addon
+        if (shared_mode == 4) {
+            if (system("node -e 'process.exit(0)' > /dev/null 2>&1") != 0) {
+                fprintf(stderr, "\033[31m✗\033[0m Node.js not found.\n");
+                return 1;
+            }
+            fprintf(stderr, "\033[33m○\033[0m --node support coming soon. Use --python for now.\n");
+            return 1;
         }
         
         char compile_cmd[8192];
