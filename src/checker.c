@@ -2108,6 +2108,25 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     check_expr(expr->call.args[1], scope);
                     expr->expr_type = builtin_int;
                     return builtin_int;
+                } else if (strcmp(name_buf, "array_push") == 0 || strcmp(name_buf, "array_push_str") == 0) {
+                    // array_push(arr, val) — infer element type from val
+                    if (expr->call.arg_count >= 2) {
+                        Type* arr_type = check_expr(expr->call.args[0], scope);
+                        Type* val_type = check_expr(expr->call.args[1], scope);
+                        // Update array element type if we can determine it
+                        if (arr_type && arr_type->kind == TYPE_ARRAY && val_type) {
+                            arr_type->array_type.element_type = val_type;
+                        }
+                        // Also update the symbol's type
+                        if (expr->call.args[0]->type == EXPR_IDENT) {
+                            Symbol* sym = find_symbol(scope, expr->call.args[0]->token);
+                            if (sym && sym->type && sym->type->kind == TYPE_ARRAY && val_type) {
+                                sym->type->array_type.element_type = val_type;
+                            }
+                        }
+                    }
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
                 } else if (strcmp(name_buf, "file_exists") == 0) {
                     // file_exists(path) - returns int
                     if (expr->call.arg_count != 1) {

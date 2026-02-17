@@ -780,6 +780,14 @@ void codegen_expr(Expr* expr) {
                 bool is_array_push_str = (expr->call.callee->type == EXPR_IDENT && 
                                      expr->call.callee->token.length == 14 &&
                                      memcmp(expr->call.callee->token.start, "array_push_str", 14) == 0);
+                // Auto-detect: array_push with string value → array_push_str
+                if (is_array_push && !is_array_push_str && expr->call.arg_count >= 2) {
+                    Expr* val = expr->call.args[1];
+                    if (val->type == EXPR_STRING || val->type == EXPR_STRING_INTERP ||
+                        (val->expr_type && val->expr_type->kind == TYPE_STRING)) {
+                        is_array_push_str = true;
+                    }
+                }
                 // Treat array_push_str like array_push for address-taking
                 if (is_array_push_str) is_array_push = true;
                 bool is_array_pop = (expr->call.callee->type == EXPR_IDENT && 
@@ -942,28 +950,9 @@ void codegen_expr(Expr* expr) {
                     // For array_pop, take address of first argument (the array)
                     if ((is_array_push || is_array_pop) && i == 0) {
                         emit("&");
-                    } else if (is_array_push && i == 1) {
-                        // Check if value is a string — use array_push_str instead
-                        bool is_str_val = false;
-                        if (expr->call.args[1]->type == EXPR_STRING || 
-                            expr->call.args[1]->type == EXPR_STRING_INTERP ||
-                            (expr->call.args[1]->expr_type && expr->call.args[1]->expr_type->kind == TYPE_STRING)) {
-                            is_str_val = true;
-                        }
-                        // Also check for method calls that return strings (substring, etc.)
-                        if (expr->call.args[1]->type == EXPR_METHOD_CALL) {
-                            is_str_val = true;  // Most method calls on strings return strings
-                        }
-                        if (expr->call.args[1]->type == EXPR_CALL) {
-                            // Check if function returns string
-                            if (expr->call.args[1]->expr_type && expr->call.args[1]->expr_type->kind == TYPE_STRING) {
-                                is_str_val = true;
-                            }
-                        }
-                        if (!is_str_val) {
-                            emit("(void*)(intptr_t)");
-                        }
                     }
+                    // No cast needed for array_push second arg — 
+                    // array_push takes long long, array_push_str takes const char*
                     
                     // Check if this argument needs trait object wrapping
                     if (expr->call.callee->type == EXPR_IDENT) {

@@ -1,0 +1,127 @@
+// Epic 31: Self-Hosted Compiler TDD
+
+fn is_alpha(c: string) -> bool {
+    return c >= "a" && c <= "z" || c >= "A" && c <= "Z" || c == "_"
+}
+fn is_digit(c: string) -> bool { return c >= "0" && c <= "9" }
+fn is_alnum(c: string) -> bool { return is_alpha(c) || is_digit(c) }
+fn kw(w: string) -> int {
+    if w == "fn" { return 5 }
+    if w == "var" { return 8 }
+    if w == "return" { return 16 }
+    return 4
+}
+
+fn main() -> int {
+    Test.init("Epic 31: Self-Hosted Compiler")
+
+    // 31.1: Lexer — tokenize into parallel arrays
+    var src = "fn main() -> int {\n    println(\"hello\")\n    return 0\n}"
+    var tk = []
+    var tt = []
+    var tl = []
+    var i = 0
+    var ln = 1
+    var len = src.len()
+
+    while i < len {
+        var c = src[i]
+        if c == " " || c == "\t" || c == "\r" { i = i + 1; continue }
+        if c == "\n" { ln += 1; i = i + 1; continue }
+        if c == "/" && i + 1 < len && src[i + 1] == "/" {
+            while i < len && src[i] != "\n" { i = i + 1 }
+            continue
+        }
+        if is_digit(c) {
+            var start = i
+            while i < len && is_digit(src[i]) { i = i + 1 }
+            array_push(tk, 1); array_push(tt, src.substring(start, i)); array_push(tl, ln)
+            continue
+        }
+        if c == "\"" {
+            i = i + 1
+            var start = i
+            while i < len && src[i] != "\"" {
+                if src[i] == "\\" { i = i + 1 }
+                i = i + 1
+            }
+            array_push(tk, 3); array_push(tt, src.substring(start, i)); array_push(tl, ln)
+            i = i + 1
+            continue
+        }
+        if is_alpha(c) {
+            var start = i
+            while i < len && is_alnum(src[i]) { i = i + 1 }
+            var word = src.substring(start, i)
+            array_push(tk, kw(word)); array_push(tt, word); array_push(tl, ln)
+            continue
+        }
+        if i + 1 < len {
+            var two = src.substring(i, i + 2)
+            if two == "->" { array_push(tk, 50); array_push(tt, "->"); array_push(tl, ln); i = i + 2; continue }
+            if two == "==" { array_push(tk, 51); array_push(tt, "=="); array_push(tl, ln); i = i + 2; continue }
+        }
+        if c == "(" { array_push(tk, 40); array_push(tt, "("); array_push(tl, ln) }
+        else if c == ")" { array_push(tk, 41); array_push(tt, ")"); array_push(tl, ln) }
+        else if c == "{" { array_push(tk, 42); array_push(tt, "{"); array_push(tl, ln) }
+        else if c == "}" { array_push(tk, 43); array_push(tt, "}"); array_push(tl, ln) }
+        else if c == "=" { array_push(tk, 35); array_push(tt, "="); array_push(tl, ln) }
+        i = i + 1
+    }
+    array_push(tk, 0); array_push(tt, ""); array_push(tl, ln)
+    var tc = tk.len()
+
+    // Tests
+    Test.assert(tc > 10, "token count")
+    Test.assert_eq_int(tk[0], 5, "fn keyword")
+    Test.assert_eq_str(tt[0], "fn", "fn text")
+    Test.assert_eq_str(tt[1], "main", "main text")
+    Test.assert_eq_str(tt[2], "(", "lparen")
+    Test.assert_eq_str(tt[3], ")", "rparen")
+    Test.assert_eq_str(tt[4], "->", "arrow")
+    Test.assert_eq_str(tt[5], "int", "int")
+    Test.assert_eq_str(tt[6], "{", "lbrace")
+    Test.assert_eq_str(tt[7], "println", "println")
+    Test.assert_eq_int(tk[9], 3, "string tok")
+    Test.assert_eq_str(tt[9], "hello", "string val")
+    Test.assert_eq_int(tk[11], 16, "return kw")
+    Test.assert_eq_int(tl[0], 1, "ln 1")
+    Test.assert_eq_int(tl[7], 2, "ln 2")
+    Test.assert_eq_int(tk[tc - 1], 0, "EOF")
+
+    // 31.3: Codegen — emit C from tokens
+    var out = "#include <stdio.h>\nint main() {\n"
+    i = 0
+    while i < tc {
+        if tk[i] == 4 && i + 3 < tc {
+            var name = "" + tt[i]
+            if name == "println" && tk[i + 2] == 3 {
+                var s = "" + tt[i + 2]
+                out = out + "    printf(\"" + s + "\\n\");\n"
+                i = i + 4
+                continue
+            }
+        }
+        if tk[i] == 16 && i + 1 < tc && tk[i + 1] == 1 {
+            var n = "" + tt[i + 1]
+            out = out + "    return " + n + ";\n"
+            i = i + 2
+            continue
+        }
+        i = i + 1
+    }
+    out = out + "}\n"
+
+    Test.assert(out.contains("printf"), "has printf")
+    Test.assert(out.contains("hello"), "has hello")
+    Test.assert(out.contains("return 0"), "has return")
+
+    // 31.4: Bootstrap — compile and run
+    File.write("/tmp/wyn_bootstrap.c", out)
+    System_exec("gcc -o /tmp/wyn_bootstrap /tmp/wyn_bootstrap.c 2>&1")
+    var output = System_exec("/tmp/wyn_bootstrap")
+    Test.assert_eq_str(output.trim(), "hello", "bootstrap runs")
+
+    Test.summary()
+    return 0
+}
