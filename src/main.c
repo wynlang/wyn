@@ -1647,27 +1647,16 @@ int main(int argc, char** argv) {
         
         // Check for --fast flag (use -O0 for fastest compile)
         const char* opt_level = "-O1";
-        int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python, 3=--wasm, 4=--node
+        int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python, 4=--node
         for (int i = 3; i < argc; i++) {
             if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; }
             if (strcmp(argv[i], "--release") == 0) { opt_level = "-O2"; }
             if (strcmp(argv[i], "--shared") == 0) { shared_mode = 1; }
             if (strcmp(argv[i], "--python") == 0) { shared_mode = 2; }
-            if (strcmp(argv[i], "--wasm") == 0) { shared_mode = 3; }
             if (strcmp(argv[i], "--node") == 0) { shared_mode = 4; }
         }
         
         // WASM target — early check
-        if (shared_mode == 3) {
-            if (system("which emcc > /dev/null 2>&1") != 0) {
-                fprintf(stderr, "\033[31m✗\033[0m Emscripten not found.\n");
-                fprintf(stderr, "  Install: https://emscripten.org/docs/getting_started/downloads.html\n");
-                fprintf(stderr, "  Then: wyn build <file> --wasm\n");
-                return 1;
-            }
-            // Will be handled after codegen (shared_mode == 3)
-        }
-        
         // Node.js — build shared lib + JS wrapper
         if (shared_mode == 4) { shared_mode = 1; }
         int generate_node = 0;
