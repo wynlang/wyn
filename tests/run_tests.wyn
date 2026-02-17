@@ -70,10 +70,11 @@ fn main() -> int {
         "tests/stdlib/test_epic29_struct_returns.wyn",
         "tests/stdlib/test_epic30_char.wyn",
         "tests/stdlib/test_epic31_self_hosted.wyn",
+        "tests/stdlib/test_deferred_features.wyn",
         "tests/multifile/test_import.wyn"
     ]
 
-    for i in 0..46 {
+    for i in 0..47 {
         var path = tests[i]
         var result = run_test(path)
         if result == 1 {

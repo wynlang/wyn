@@ -752,6 +752,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "slice") == 0 && arg_count == 2) {
             out->c_function = "wyn_array_slice_range"; return true;
         }
+        if (strcmp(method_name, "slice") == 0 && arg_count == 1) {
+            out->c_function = "wyn_array_slice_from"; return true;
+        }
         if (strcmp(method_name, "join") == 0 && arg_count == 1) {
             out->c_function = "array_join_str"; return true;
         }

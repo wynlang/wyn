@@ -1522,13 +1522,21 @@ Stmt* statement() {
         Stmt* stmt = alloc_stmt();
         WynTokenType decl_type = parser.previous.type;
         
-        // Array destructuring: var [a, b, c] = expr
+        // Array destructuring: var [a, b, c] = expr  or  var [first, ...rest] = expr
         if (decl_type == TOKEN_VAR && match(TOKEN_LBRACKET)) {
-            // Parse variable names
+            // Parse variable names, with optional ...rest spread
             Token names[16]; int name_count = 0;
+            int spread_index = -1; // index of ...rest element
             while (!check(TOKEN_RBRACKET) && !check(TOKEN_EOF) && name_count < 16) {
-                expect(TOKEN_IDENT, "Expected variable name in destructuring");
-                names[name_count++] = parser.previous;
+                if (match(TOKEN_DOTDOTDOT)) {
+                    // Spread: ...rest
+                    spread_index = name_count;
+                    expect(TOKEN_IDENT, "Expected variable name after '...'");
+                    names[name_count++] = parser.previous;
+                } else {
+                    expect(TOKEN_IDENT, "Expected variable name in destructuring");
+                    names[name_count++] = parser.previous;
+                }
                 if (!match(TOKEN_COMMA)) break;
             }
             expect(TOKEN_RBRACKET, "Expected ']' after destructuring");
@@ -1550,25 +1558,48 @@ Stmt* statement() {
             stmt->block.stmts[0] = arr_stmt;
             
             // var a = __destruct[0], var b = __destruct[1], ...
+            // For spread: var rest = __destruct.slice(i)
             for (int i = 0; i < name_count; i++) {
                 Stmt* vs = alloc_stmt();
                 vs->type = STMT_VAR;
                 vs->var.is_const = false; vs->var.is_mutable = true;
                 vs->var.name = names[i]; vs->var.type = NULL;
-                // Build __destruct[i]
+                
                 Expr* arr_ref = alloc_expr();
                 arr_ref->type = EXPR_IDENT;
                 arr_ref->token.start = destruct_name; arr_ref->token.length = 10;
-                Expr* idx = alloc_expr();
-                idx->type = EXPR_INT;
-                static char idx_bufs[16][4];
-                snprintf(idx_bufs[i], 4, "%d", i);
-                idx->token.start = idx_bufs[i]; idx->token.length = strlen(idx_bufs[i]);
-                Expr* index_expr = alloc_expr();
-                index_expr->type = EXPR_INDEX;
-                index_expr->index.array = arr_ref;
-                index_expr->index.index = idx;
-                vs->var.init = index_expr;
+                
+                if (i == spread_index) {
+                    // Spread: var rest = __destruct.slice(i)
+                    Expr* idx = alloc_expr();
+                    idx->type = EXPR_INT;
+                    char* spread_buf = malloc(8);
+                    snprintf(spread_buf, 8, "%d", i);
+                    idx->token.start = spread_buf; idx->token.length = strlen(spread_buf);
+                    
+                    Expr* slice_call = alloc_expr();
+                    slice_call->type = EXPR_METHOD_CALL;
+                    slice_call->method_call.object = arr_ref;
+                    static char slice_name[] = "slice";
+                    slice_call->method_call.method.start = slice_name;
+                    slice_call->method_call.method.length = 5;
+                    slice_call->method_call.args = malloc(sizeof(Expr*));
+                    slice_call->method_call.args[0] = idx;
+                    slice_call->method_call.arg_count = 1;
+                    vs->var.init = slice_call;
+                } else {
+                    // Normal: var a = __destruct[i]
+                    Expr* idx = alloc_expr();
+                    idx->type = EXPR_INT;
+                    static char idx_bufs[16][4];
+                    snprintf(idx_bufs[i], 4, "%d", i);
+                    idx->token.start = idx_bufs[i]; idx->token.length = strlen(idx_bufs[i]);
+                    Expr* index_expr = alloc_expr();
+                    index_expr->type = EXPR_INDEX;
+                    index_expr->index.array = arr_ref;
+                    index_expr->index.index = idx;
+                    vs->var.init = index_expr;
+                }
                 stmt->block.stmts[i + 1] = vs;
             }
             match(TOKEN_SEMI);

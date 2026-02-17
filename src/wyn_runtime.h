@@ -701,6 +701,9 @@ WynArray wyn_array_slice_range(WynArray arr, int start, int end) {
     }
     return result;
 }
+WynArray wyn_array_slice_from(WynArray arr, int start) {
+    return wyn_array_slice_range(arr, start, arr.count);
+}
 char* array_join(WynArray arr, const char* sep) {
     if (arr.count == 0) return "";
     int total_len = 0;
