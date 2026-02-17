@@ -321,28 +321,8 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "wisdom") == 0) {
-        const char* lines[] = {
-            "",
-            "  \033[36m✦ Flight Rules ✦\033[0m",
-            "",
-            "  One language is better than five.",
-            "  Readable code is fast code — you'll optimize it.",
-            "  Ship the binary, not the runtime.",
-            "  If it compiles, it should work.",
-            "  The best abstraction is the one you don't notice.",
-            "  Concurrency should be a verb, not a thesis.",
-            "  Every program starts as a script.",
-            "  Errors are values. Handle them or don't — but know which.",
-            "  A tool you don't use is a tool you don't need.",
-            "  Simple today, powerful tomorrow.",
-            "  The compiler is your first user.",
-            "  Deploy on Friday. Your binary doesn't have dependencies.",
-            "",
-            "  \033[2m— Wynter\033[0m",
-            "",
-            NULL
-        };
-        for (int i = 0; lines[i]; i++) printf("%s\n", lines[i]);
+        extern void print_flight_rules();
+        print_flight_rules();
         return 0;
     }
     
@@ -2205,4 +2185,29 @@ int create_new_project_with_template(const char* name, const char* template) {
     else if (strcmp(template, "cli") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn hello\n", name);
     else if (strcmp(template, "lib") == 0) printf("Build:\n  cd %s && wyn build src/main.wyn --python\n  python3 -c \"from main import add; print(add(2,3))\"\n", name);
     return 0;
+}
+
+void print_flight_rules() {
+    const char* lines[] = {
+        "",
+        "  \033[36m✦ Flight Rules ✦\033[0m",
+        "",
+        "  One language is better than five.",
+        "  Readable code is fast code — you'll optimize it.",
+        "  Ship the binary, not the runtime.",
+        "  If it compiles, it should work.",
+        "  The best abstraction is the one you don't notice.",
+        "  Concurrency should be a verb, not a thesis.",
+        "  Every program starts as a script.",
+        "  Errors are values. Handle them or don't — but know which.",
+        "  A tool you don't use is a tool you don't need.",
+        "  Simple today, powerful tomorrow.",
+        "  The compiler is your first user.",
+        "  Deploy on Friday. Your binary doesn't have dependencies.",
+        "",
+        "  \033[2m— Wynter\033[0m",
+        "",
+        NULL
+    };
+    for (int i = 0; lines[i]; i++) printf("%s\n", lines[i]);
 }
