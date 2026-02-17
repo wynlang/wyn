@@ -556,6 +556,7 @@ int main(int argc, char** argv) {
         
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--web") == 0) template = "web";
+            else if (strcmp(argv[i], "--api") == 0) template = "api";
             else if (strcmp(argv[i], "--cli") == 0) template = "cli";
             else if (strcmp(argv[i], "--lib") == 0) template = "lib";
             else if (!project_name) project_name = argv[i];
@@ -2352,7 +2353,7 @@ int create_new_project_with_template(const char* name, const char* template) {
     snprintf(cmd, sizeof(cmd), "%s/wyn.toml", name);
     f = fopen(cmd, "w");
     fprintf(f, "[project]\nname = \"%s\"\nversion = \"0.1.0\"\nentry = \"src/main.wyn\"\n", name);
-    if (strcmp(template, "web") == 0) {
+    if (strcmp(template, "web") == 0 || strcmp(template, "api") == 0) {
         fprintf(f, "\n[deploy.dev]\nhost = \"localhost\"\nuser = \"deploy\"\nkey = \"~/.ssh/id_ed25519\"\npath = \"/opt/%s\"\nos = \"linux\"\npre = \"systemctl stop %s\"\npost = \"systemctl start %s\"\n", name, name, name);
     }
     fclose(f);
@@ -2379,6 +2380,29 @@ int create_new_project_with_template(const char* name, const char* template) {
         "| GET | `/api/items` | List items (JSON) |\n"
         "| POST | `/api/items` | Create item |\n"
         "| GET | `/api/health` | Health check |\n\n"
+        "## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n\n"
+        "## Deploy\n\n```bash\nwyn deploy dev\n```\n");
+    else if (strcmp(template, "api") == 0) fprintf(f,
+        "A REST API built with [Wyn](https://wynlang.com).\n\n"
+        "## Quick Start\n\n"
+        "```bash\nwyn run src/main.wyn\n```\n\n"
+        "## Endpoints\n\n"
+        "| Method | Path | Description |\n"
+        "|--------|------|-------------|\n"
+        "| GET | `/health` | Health check |\n"
+        "| GET | `/ready` | Readiness check |\n"
+        "| GET | `/api/items` | List all items |\n"
+        "| POST | `/api/items` | Create item (body = name) |\n"
+        "| GET | `/api/items/:id` | Get item by ID |\n"
+        "| DELETE | `/api/items/:id` | Delete item |\n\n"
+        "## Examples\n\n"
+        "```bash\n"
+        "curl http://localhost:8080/health\n"
+        "curl -X POST -d 'My Item' http://localhost:8080/api/items\n"
+        "curl http://localhost:8080/api/items\n"
+        "curl http://localhost:8080/api/items/1\n"
+        "curl -X DELETE http://localhost:8080/api/items/1\n"
+        "```\n\n"
         "## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n\n"
         "## Deploy\n\n```bash\nwyn deploy dev\n```\n");
     else if (strcmp(template, "cli") == 0) fprintf(f,
@@ -2492,6 +2516,90 @@ int create_new_project_with_template(const char* name, const char* template) {
         snprintf(cmd, sizeof(cmd), "%s/src/main.wyn", name);
         // Already written above, skip
         f = NULL;
+    } else if (strcmp(template, "api") == 0) {
+        fprintf(f,
+            "// %s — REST API with JSON, parameterized routes, SQLite\n\n"
+            "fn init_db() -> int {\n"
+            "    var db = Db.open(\"%s.db\")\n"
+            "    Db.exec(db, \"CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)\")\n"
+            "    return db\n"
+            "}\n\n"
+            "fn get_items(ctx: HashMap) {\n"
+            "    var fd = ctx.get(\"fd\").to_int()\n"
+            "    var db = init_db()\n"
+            "    var rows = Db.query(db, \"SELECT id, name, created_at FROM items ORDER BY id DESC LIMIT 100\")\n"
+            "    Db.close(db)\n"
+            "    Http.respond_json(fd, 200, \"{\\\"items\\\": [\" + rows + \"]}\")\n"
+            "}\n\n"
+            "fn get_item(ctx: HashMap, id: string) {\n"
+            "    var fd = ctx.get(\"fd\").to_int()\n"
+            "    var db = init_db()\n"
+            "    var row = Db.query_p(db, \"SELECT id, name, created_at FROM items WHERE id = ?\", [id])\n"
+            "    Db.close(db)\n"
+            "    if row.len() == 0 {\n"
+            "        Http.respond_json(fd, 404, \"{\\\"error\\\": \\\"not found\\\"}\")\n"
+            "        return\n"
+            "    }\n"
+            "    Http.respond_json(fd, 200, row)\n"
+            "}\n\n"
+            "fn create_item(ctx: HashMap) {\n"
+            "    var fd = ctx.get(\"fd\").to_int()\n"
+            "    var body = ctx.get(\"body\")\n"
+            "    if body.len() == 0 {\n"
+            "        Http.respond_json(fd, 400, \"{\\\"error\\\": \\\"body required\\\"}\")\n"
+            "        return\n"
+            "    }\n"
+            "    var db = init_db()\n"
+            "    Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [body])\n"
+            "    Db.close(db)\n"
+            "    Http.respond_json(fd, 201, \"{\\\"status\\\": \\\"created\\\"}\")\n"
+            "}\n\n"
+            "fn delete_item(ctx: HashMap, id: string) {\n"
+            "    var fd = ctx.get(\"fd\").to_int()\n"
+            "    var db = init_db()\n"
+            "    Db.exec_p(db, \"DELETE FROM items WHERE id = ?\", [id])\n"
+            "    Db.close(db)\n"
+            "    Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"deleted\\\"}\")\n"
+            "}\n\n"
+            "fn handle(raw: string) {\n"
+            "    var ctx = Http.parse_request(raw)\n"
+            "    var method = ctx.get(\"method\")\n"
+            "    var path = ctx.get(\"path\")\n"
+            "    var fd = ctx.get(\"fd\").to_int()\n\n"
+            "    // Health + readiness\n"
+            "    if path == \"/health\"  { Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ok\\\"}\"); return }\n"
+            "    if path == \"/ready\"   { Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ready\\\"}\"); return }\n\n"
+            "    // Routes\n"
+            "    var params = HashMap.new()\n"
+            "    if method == \"GET\"  && path == \"/api/items\"                          { get_items(ctx); return }\n"
+            "    if method == \"POST\" && path == \"/api/items\"                          { create_item(ctx); return }\n"
+            "    if method == \"GET\"  && Http.route_match(\"/api/items/:id\", path, params) { get_item(ctx, params.get(\"id\")); return }\n"
+            "    if method == \"DELETE\" && Http.route_match(\"/api/items/:id\", path, params) { delete_item(ctx, params.get(\"id\")); return }\n\n"
+            "    Http.respond_json(fd, 404, \"{\\\"error\\\": \\\"not found\\\"}\")\n"
+            "}\n\n"
+            "fn main() -> int {\n"
+            "    var port = 8080\n"
+            "    println(\"%s running on http://localhost:\" + int_to_string(port))\n"
+            "    println(\"\")\n"
+            "    println(\"  GET    /health          — health check\")\n"
+            "    println(\"  GET    /ready           — readiness check\")\n"
+            "    println(\"  GET    /api/items       — list items\")\n"
+            "    println(\"  POST   /api/items       — create item\")\n"
+            "    println(\"  GET    /api/items/:id   — get item\")\n"
+            "    println(\"  DELETE /api/items/:id   — delete item\")\n"
+            "    println(\"\")\n"
+            "    init_db()\n"
+            "    var server = Http.serve(port)\n"
+            "    while true {\n"
+            "        var raw = Http.accept(server)\n"
+            "        if raw.len() > 0 {\n"
+            "            spawn handle(raw)\n"
+            "        }\n"
+            "    }\n"
+            "    return 0\n"
+            "}\n", name, name, name);
+        fclose(f);
+        f = NULL;
     } else if (strcmp(template, "cli") == 0) {
         fprintf(f,
             "// %s — CLI tool with arg parsing and colored output\n\n"
@@ -2596,6 +2704,34 @@ int create_new_project_with_template(const char* name, const char* template) {
             "    Test.summary()\n"
             "    return 0\n"
             "}\n", name, name, name);
+    } else if (strcmp(template, "api") == 0) {
+        fprintf(f,
+            "fn main() -> int {\n"
+            "    Test.init(\"%s\")\n\n"
+            "    // Database CRUD\n"
+            "    var db = Db.open(\"/tmp/%s_test.db\")\n"
+            "    Db.exec(db, \"CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)\")\n"
+            "    Db.exec(db, \"DELETE FROM items\")\n\n"
+            "    // Create\n"
+            "    Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [\"alpha\"])\n"
+            "    Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [\"beta\"])\n"
+            "    var count = Db.query(db, \"SELECT COUNT(*) FROM items\")\n"
+            "    Test.assert_eq_str(count, \"2\", \"create items\")\n\n"
+            "    // Read\n"
+            "    var name = Db.query(db, \"SELECT name FROM items WHERE id = 1\")\n"
+            "    Test.assert_eq_str(name, \"alpha\", \"read item\")\n\n"
+            "    // Delete\n"
+            "    Db.exec(db, \"DELETE FROM items WHERE id = 1\")\n"
+            "    var count2 = Db.query(db, \"SELECT COUNT(*) FROM items\")\n"
+            "    Test.assert_eq_str(count2, \"1\", \"delete item\")\n\n"
+            "    // SQL injection\n"
+            "    Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [\"'; DROP TABLE items; --\"])\n"
+            "    var count3 = Db.query(db, \"SELECT COUNT(*) FROM items\")\n"
+            "    Test.assert_eq_str(count3, \"2\", \"injection safe\")\n\n"
+            "    Db.close(db)\n"
+            "    Test.summary()\n"
+            "    return 0\n"
+            "}\n", name, name);
     } else if (strcmp(template, "cli") == 0) {
         fprintf(f,
             "fn main() -> int {\n"
@@ -2620,6 +2756,7 @@ int create_new_project_with_template(const char* name, const char* template) {
     printf("\033[32m✓\033[0m Created %s project: %s/\n\n", template, name);
     printf("  %s/wyn.toml\n  %s/src/main.wyn\n  %s/tests/test_main.wyn\n  %s/README.md\n  %s/.gitignore\n\n", name, name, name, name, name);
     if (strcmp(template, "web") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n  # Open http://localhost:8080\n", name);
+    else if (strcmp(template, "api") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n\nTest:\n  curl http://localhost:8080/health\n  curl -X POST -d 'My Item' http://localhost:8080/api/items\n  curl http://localhost:8080/api/items\n", name);
     else if (strcmp(template, "cli") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n\nWith args (build first):\n  wyn build . && ./%s list\n", name, name);
     else if (strcmp(template, "lib") == 0) printf("Build:\n  cd %s && wyn build src/main.wyn --python\n  python3 -c \"from main import add; print(add(2,3))\"\n", name);
     return 0;

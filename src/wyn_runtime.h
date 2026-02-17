@@ -2033,6 +2033,69 @@ void Http_respond(long long client_fd, long long status, const char* content_typ
     close((int)client_fd);
 }
 
+// --- Route matching: /users/:id → extracts params ---
+int Http_route_match(const char* pattern, const char* path, WynHashMap* params) {
+    const char* p = pattern;
+    const char* u = path;
+    while (*p && *u) {
+        if (*p == ':') {
+            // Extract param name
+            p++;
+            char name[64]; int ni = 0;
+            while (*p && *p != '/' && ni < 63) name[ni++] = *p++;
+            name[ni] = 0;
+            // Extract param value
+            char val[256]; int vi = 0;
+            while (*u && *u != '/' && vi < 255) val[vi++] = *u++;
+            val[vi] = 0;
+            if (params) hashmap_insert(params, strdup(name), strdup(val));
+        } else {
+            if (*p != *u) return 0;
+            p++; u++;
+        }
+    }
+    // Both must be consumed (or both at trailing /)
+    return (*p == 0 && *u == 0) || (*p == 0 && *u == '/' && *(u+1) == 0);
+}
+
+// Parse request string "METHOD|PATH|BODY|FD" into a HashMap context
+WynHashMap* Http_parse_request(const char* raw) {
+    WynHashMap* ctx = hashmap_new();
+    if (!raw || !raw[0]) return ctx;
+    char* copy = strdup(raw);
+    char* method = copy;
+    char* path = strchr(method, '|');
+    if (path) { *path = 0; path++; } else { path = ""; }
+    char* body = strchr(path, '|');
+    if (body) { *body = 0; body++; } else { body = ""; }
+    char* fd_str = strchr(body, '|');
+    if (fd_str) { *fd_str = 0; fd_str++; } else { fd_str = "0"; }
+    hashmap_insert(ctx, strdup("method"), strdup(method));
+    hashmap_insert(ctx, strdup("path"), strdup(path));
+    hashmap_insert(ctx, strdup("body"), strdup(body));
+    hashmap_insert(ctx, strdup("fd"), strdup(fd_str));
+    // Parse query string
+    char* q = strchr(path, '?');
+    if (q) { *q = 0; hashmap_insert(ctx, strdup("query"), strdup(q + 1)); }
+    free(copy);
+    return ctx;
+}
+
+int Http_ctx_fd(WynHashMap* ctx) {
+    const char* fd_str = hashmap_get_string(ctx, "fd");
+    return fd_str ? atoi(fd_str) : 0;
+}
+
+void Http_respond_json(int fd, int status, const char* json) {
+    http_send_response(fd, status, "application/json", json);
+    close(fd);
+}
+
+void Http_respond_html(int fd, int status, const char* html) {
+    http_send_response(fd, status, "text/html", html);
+    close(fd);
+}
+
 int Http_serve(int port) {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) return -1;
