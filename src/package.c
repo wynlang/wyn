@@ -130,10 +130,18 @@ static int install_git(const char* name, const char* url) {
         system(cmd);
     }
     
+    // Normalize URL: add https:// if missing protocol
+    char full_url[512];
+    if (strstr(url, "://") || strstr(url, "git@")) {
+        snprintf(full_url, sizeof(full_url), "%s", url);
+    } else {
+        snprintf(full_url, sizeof(full_url), "https://%s", url);
+    }
+    
     // Clone
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "git clone --depth 1 '%s' '%s' 2>&1", url, dest);
-    printf("  Cloning %s...\n", url);
+    snprintf(cmd, sizeof(cmd), "git clone --depth 1 '%s' '%s' 2>&1", full_url, dest);
+    printf("  Cloning %s...\n", full_url);
     int result = system(cmd);
     
     if (result == 0) {
@@ -214,7 +222,8 @@ int package_install(const char* spec) {
             source[slen] = '\0';
             
             // Determine source type
-            if (strstr(source, "github.com") || strstr(source, "git@") || strstr(source, ".git")) {
+            if (strstr(source, "://") || strstr(source, "git@") || strstr(source, ".git") ||
+                strstr(source, "github.com") || strstr(source, "gitlab.com") || strstr(source, "bitbucket.org")) {
                 install_git(name, source);
             } else {
                 install_local(name, source);
@@ -229,7 +238,8 @@ int package_install(const char* spec) {
     
     // Install single package by name/path/url
     // Detect if it's a git URL
-    if (strstr(spec, "github.com") || strstr(spec, "git@") || strstr(spec, ".git") || strstr(spec, "://")) {
+    if (strstr(spec, "://") || strstr(spec, "git@") || strstr(spec, ".git") ||
+        strstr(spec, "github.com") || strstr(spec, "gitlab.com") || strstr(spec, "bitbucket.org")) {
         // Extract name from URL
         const char* name = strrchr(spec, '/');
         if (name) name++; else name = spec;
