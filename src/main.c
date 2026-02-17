@@ -362,33 +362,46 @@ int main(int argc, char** argv) {
         char* last_slash = strrchr(doc_root, '/');
         if (last_slash) *last_slash = 0; else strcpy(doc_root, ".");
         
-        // Check compiler
-        int has_gcc = (system("gcc --version > /dev/null 2>&1") == 0);
-        printf("  %s C compiler (gcc/clang)\n", has_gcc ? "\033[32m✓\033[0m" : "\033[31m✗\033[0m");
-        if (!has_gcc) { printf("    Install: xcode-select --install (macOS) or apt install gcc (Linux)\n"); issues++; }
-        
         // Check wyn binary
         printf("  \033[32m✓\033[0m Wyn compiler v%s\n", get_version());
         
-        // Check runtime library
+        // Check bundled TCC
+        char tcc_path[512]; snprintf(tcc_path, sizeof(tcc_path), "%s/vendor/tcc/bin/tcc", doc_root);
+        int has_tcc = (access(tcc_path, X_OK) == 0);
+        printf("  %s Bundled TCC backend\n", has_tcc ? "\033[32m✓\033[0m" : "\033[31m✗\033[0m");
+        if (!has_tcc) { printf("    Missing: %s\n", tcc_path); issues++; }
+        
+        // Check TCC runtime
+        char rt_tcc[512]; snprintf(rt_tcc, sizeof(rt_tcc), "%s/vendor/tcc/lib/libwyn_rt_tcc.a", doc_root);
+        int has_rt_tcc = (access(rt_tcc, F_OK) == 0);
+        printf("  %s TCC runtime (with SQLite)\n", has_rt_tcc ? "\033[32m✓\033[0m" : "\033[31m✗\033[0m");
+        if (!has_rt_tcc) { printf("    Missing: %s\n", rt_tcc); issues++; }
+        
+        // Check system cc (for --release)
+        const char* cc = detect_cc();
+        int has_cc = (system("cc --version > /dev/null 2>&1") == 0 || 
+                     system("gcc --version > /dev/null 2>&1") == 0);
+        printf("  %s System C compiler for --release (%s)\n", has_cc ? "\033[32m✓\033[0m" : "\033[33m○\033[0m", cc);
+        if (!has_cc) printf("    Optional: install for optimized builds (xcode-select --install)\n");
+        
+        // Check precompiled runtime (for system cc)
         char rt_path[512]; snprintf(rt_path, sizeof(rt_path), "%s/runtime/libwyn_rt.a", doc_root);
         int has_rt = (access(rt_path, F_OK) == 0);
-        printf("  %s Precompiled runtime\n", has_rt ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
-        if (!has_rt) printf("    Run: wyn build-runtime (speeds up compilation 3x)\n");
+        printf("  %s Precompiled runtime (system cc)\n", has_rt ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
+        if (!has_rt) printf("    Optional: run 'wyn build-runtime' for faster --release builds\n");
         
         // Check PATH
         int in_path = (system("which wyn > /dev/null 2>&1") == 0);
         printf("  %s wyn in PATH\n", in_path ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
         if (!in_path) printf("    Run: wyn install\n");
         
-        // Check SQLite
-        int has_sqlite = (system("pkg-config --exists sqlite3 2>/dev/null") == 0 || 
-                         system("test -f /usr/lib/libsqlite3.so 2>/dev/null") == 0 ||
-                         system("test -f /opt/homebrew/lib/libsqlite3.dylib 2>/dev/null") == 0);
-        printf("  %s SQLite (for Db module)\n", has_sqlite ? "\033[32m✓\033[0m" : "\033[33m○\033[0m optional");
+        // Check git (for packages)
+        int has_git = (system("git --version > /dev/null 2>&1") == 0);
+        printf("  %s git (for packages)\n", has_git ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
+        if (!has_git) printf("    Optional: install git for 'wyn pkg install'\n");
         
         printf("\n");
-        if (issues == 0) printf("\033[32m✓ Everything looks good!\033[0m\n");
+        if (issues == 0) printf("\033[32m✓ All good! No external dependencies needed.\033[0m\n");
         else printf("\033[31m%d issue(s) found.\033[0m Fix them and run wyn doctor again.\n", issues);
         return issues > 0 ? 1 : 0;
     }
