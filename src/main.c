@@ -630,6 +630,9 @@ int main(int argc, char** argv) {
         if (strcmp(argv[2], "list") == 0) {
             return package_list();
         } else if (strcmp(argv[2], "install") == 0) {
+            if (argc >= 4) {
+                return package_install(argv[3]);
+            }
             return package_install(".");
         } else if (strcmp(argv[2], "uninstall") == 0) {
             if (argc < 4) {
