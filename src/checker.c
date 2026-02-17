@@ -501,7 +501,7 @@ void init_checker() {
         "file_move", "file_list_dir", "file_mkdir", "file_rmdir", "file_is_file", "file_is_dir",
         // NOTE: file_read, file_write, sys_exec are registered separately with proper types
         "random_int", "random_range", "random_float", "seed_random", "time_now", "time_format",
-        "range", "array_new", "array_push", "array_pop", "array_length_dyn", "len",
+        "range", "array_new", "array_push", "array_push_str", "array_pop", "array_length_dyn", "len",
         "assert_eq", "assert_true", "assert_false", "panic", "todo",
         "exit_program", "sleep_ms", "getenv_var", "setenv_var",
         "Error", "TypeError", "ValueError", "DivisionByZeroError", "print_error",

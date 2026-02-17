@@ -1,0 +1,151 @@
+// Epic 31: Self-Hosted Compiler — Lexer
+// Tokenizes Wyn source code into an array of tokens
+
+// Token types (matching C compiler's enum)
+enum TokenType {
+    EOF_TOK,
+    INT_TOK, FLOAT_TOK, STRING_TOK, IDENT_TOK,
+    FN_TOK, STRUCT_TOK, ENUM_TOK, VAR_TOK, CONST_TOK,
+    IF_TOK, ELSE_TOK, MATCH_TOK, FOR_TOK, WHILE_TOK, IN_TOK,
+    RETURN_TOK, BREAK_TOK, CONTINUE_TOK, IMPORT_TOK, EXPORT_TOK,
+    TRUE_TOK, FALSE_TOK,
+    PLUS_TOK, MINUS_TOK, STAR_TOK, SLASH_TOK, PERCENT_TOK,
+    EQ_TOK, EQEQ_TOK, BANG_TOK, BANGEQ_TOK,
+    LT_TOK, GT_TOK, LTEQ_TOK, GTEQ_TOK,
+    LPAREN_TOK, RPAREN_TOK, LBRACE_TOK, RBRACE_TOK,
+    LBRACKET_TOK, RBRACKET_TOK,
+    COMMA_TOK, COLON_TOK, SEMI_TOK, DOT_TOK, ARROW_TOK,
+    AND_TOK, OR_TOK, PIPE_GT_TOK
+}
+
+struct Token {
+    type: int
+    text: string
+    line: int
+}
+
+fn lex(source: string) -> Array<Token> {
+    var tokens = []
+    var i = 0
+    var line = 1
+    var len = source.len()
+
+    while i < len {
+        var c = source[i]
+
+        // Skip whitespace
+        if c == " " || c == "\t" || c == "\r" {
+            i = i + 1
+            continue
+        }
+        if c == "\n" {
+            line = line + 1
+            i = i + 1
+            continue
+        }
+
+        // Skip line comments
+        if c == "/" && i + 1 < len && source[i + 1] == "/" {
+            while i < len && source[i] != "\n" {
+                i = i + 1
+            }
+            continue
+        }
+
+        // Numbers
+        if c >= "0" && c <= "9" {
+            var start = i
+            while i < len && source[i] >= "0" && source[i] <= "9" {
+                i = i + 1
+            }
+            var num_text = source.substring(start, i)
+            array_push(tokens, Token { type: 1, text: num_text, line: line })
+            continue
+        }
+
+        // Strings
+        if c == "\"" {
+            var start = i
+            i = i + 1
+            while i < len && source[i] != "\"" {
+                if source[i] == "\\" { i = i + 1 }
+                i = i + 1
+            }
+            i = i + 1
+            var str_text = source.substring(start + 1, i - 1)
+            array_push(tokens, Token { type: 3, text: str_text, line: line })
+            continue
+        }
+
+        // Identifiers and keywords
+        if (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_" {
+            var start = i
+            while i < len && ((source[i] >= "a" && source[i] <= "z") || (source[i] >= "A" && source[i] <= "Z") || (source[i] >= "0" && source[i] <= "9") || source[i] == "_") {
+                i = i + 1
+            }
+            var word = source.substring(start, i)
+            var tok_type = 4
+            if word == "fn" { tok_type = 5 }
+            else if word == "struct" { tok_type = 6 }
+            else if word == "enum" { tok_type = 7 }
+            else if word == "var" { tok_type = 8 }
+            else if word == "const" { tok_type = 9 }
+            else if word == "if" { tok_type = 10 }
+            else if word == "else" { tok_type = 11 }
+            else if word == "match" { tok_type = 12 }
+            else if word == "for" { tok_type = 13 }
+            else if word == "while" { tok_type = 14 }
+            else if word == "in" { tok_type = 15 }
+            else if word == "return" { tok_type = 16 }
+            else if word == "break" { tok_type = 17 }
+            else if word == "continue" { tok_type = 18 }
+            else if word == "import" { tok_type = 19 }
+            else if word == "export" { tok_type = 20 }
+            else if word == "true" { tok_type = 21 }
+            else if word == "false" { tok_type = 22 }
+            array_push(tokens, Token { type: tok_type, text: word, line: line })
+            continue
+        }
+
+        // Two-character operators
+        if i + 1 < len {
+            var two = source.substring(i, i + 2)
+            if two == "==" { array_push(tokens, Token { type: 26, text: "==", line: line }); i = i + 2; continue }
+            if two == "!=" { array_push(tokens, Token { type: 28, text: "!=", line: line }); i = i + 2; continue }
+            if two == "<=" { array_push(tokens, Token { type: 31, text: "<=", line: line }); i = i + 2; continue }
+            if two == ">=" { array_push(tokens, Token { type: 32, text: ">=", line: line }); i = i + 2; continue }
+            if two == "->" { array_push(tokens, Token { type: 39, text: "->", line: line }); i = i + 2; continue }
+            if two == "&&" { array_push(tokens, Token { type: 40, text: "&&", line: line }); i = i + 2; continue }
+            if two == "||" { array_push(tokens, Token { type: 41, text: "||", line: line }); i = i + 2; continue }
+            if two == "|>" { array_push(tokens, Token { type: 42, text: "|>", line: line }); i = i + 2; continue }
+        }
+
+        // Single-character operators
+        if c == "+" { array_push(tokens, Token { type: 23, text: "+", line: line }); i = i + 1; continue }
+        if c == "-" { array_push(tokens, Token { type: 24, text: "-", line: line }); i = i + 1; continue }
+        if c == "*" { array_push(tokens, Token { type: 25, text: "*", line: line }); i = i + 1; continue }
+        if c == "/" { array_push(tokens, Token { type: 26, text: "/", line: line }); i = i + 1; continue }
+        if c == "%" { array_push(tokens, Token { type: 27, text: "%", line: line }); i = i + 1; continue }
+        if c == "=" { array_push(tokens, Token { type: 25, text: "=", line: line }); i = i + 1; continue }
+        if c == "!" { array_push(tokens, Token { type: 27, text: "!", line: line }); i = i + 1; continue }
+        if c == "<" { array_push(tokens, Token { type: 29, text: "<", line: line }); i = i + 1; continue }
+        if c == ">" { array_push(tokens, Token { type: 30, text: ">", line: line }); i = i + 1; continue }
+        if c == "(" { array_push(tokens, Token { type: 33, text: "(", line: line }); i = i + 1; continue }
+        if c == ")" { array_push(tokens, Token { type: 34, text: ")", line: line }); i = i + 1; continue }
+        if c == "{" { array_push(tokens, Token { type: 35, text: "{", line: line }); i = i + 1; continue }
+        if c == "}" { array_push(tokens, Token { type: 36, text: "}", line: line }); i = i + 1; continue }
+        if c == "[" { array_push(tokens, Token { type: 37, text: "[", line: line }); i = i + 1; continue }
+        if c == "]" { array_push(tokens, Token { type: 38, text: "]", line: line }); i = i + 1; continue }
+        if c == "," { array_push(tokens, Token { type: 39, text: ",", line: line }); i = i + 1; continue }
+        if c == ":" { array_push(tokens, Token { type: 40, text: ":", line: line }); i = i + 1; continue }
+        if c == ";" { array_push(tokens, Token { type: 41, text: ";", line: line }); i = i + 1; continue }
+        if c == "." { array_push(tokens, Token { type: 42, text: ".", line: line }); i = i + 1; continue }
+
+        // Unknown character — skip
+        i = i + 1
+    }
+
+    // Add EOF token
+    array_push(tokens, Token { type: 0, text: "", line: line })
+    return tokens
+}

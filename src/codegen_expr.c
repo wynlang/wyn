@@ -777,6 +777,11 @@ void codegen_expr(Expr* expr) {
                 bool is_array_push = (expr->call.callee->type == EXPR_IDENT && 
                                      expr->call.callee->token.length == 10 &&
                                      memcmp(expr->call.callee->token.start, "array_push", 10) == 0);
+                bool is_array_push_str = (expr->call.callee->type == EXPR_IDENT && 
+                                     expr->call.callee->token.length == 14 &&
+                                     memcmp(expr->call.callee->token.start, "array_push_str", 14) == 0);
+                // Treat array_push_str like array_push for address-taking
+                if (is_array_push_str) is_array_push = true;
                 bool is_array_pop = (expr->call.callee->type == EXPR_IDENT && 
                                     expr->call.callee->token.length == 9 &&
                                     memcmp(expr->call.callee->token.start, "array_pop", 9) == 0);
@@ -857,7 +862,11 @@ void codegen_expr(Expr* expr) {
                                 if (current_module_prefix && !is_module_qualified && !is_internal_call) {
                                     emit("%s_", current_module_prefix);
                                 }
-                                codegen_expr(expr->call.callee);
+                                if (is_array_push_str) {
+                                    emit("array_push_str");
+                                } else {
+                                    codegen_expr(expr->call.callee);
+                                }
                             }
                         } else {
                             // Check if we're in a module and need to prefix
@@ -885,7 +894,11 @@ void codegen_expr(Expr* expr) {
                             if (current_module_prefix && !is_module_qualified && !is_internal_call) {
                                 emit("%s_", current_module_prefix);
                             }
-                            codegen_expr(expr->call.callee);
+                            if (is_array_push_str) {
+                                emit("array_push_str");
+                            } else {
+                                codegen_expr(expr->call.callee);
+                            }
                         }
                     }
                 } else {
@@ -930,7 +943,26 @@ void codegen_expr(Expr* expr) {
                     if ((is_array_push || is_array_pop) && i == 0) {
                         emit("&");
                     } else if (is_array_push && i == 1) {
-                        emit("(void*)(intptr_t)");
+                        // Check if value is a string — use array_push_str instead
+                        bool is_str_val = false;
+                        if (expr->call.args[1]->type == EXPR_STRING || 
+                            expr->call.args[1]->type == EXPR_STRING_INTERP ||
+                            (expr->call.args[1]->expr_type && expr->call.args[1]->expr_type->kind == TYPE_STRING)) {
+                            is_str_val = true;
+                        }
+                        // Also check for method calls that return strings (substring, etc.)
+                        if (expr->call.args[1]->type == EXPR_METHOD_CALL) {
+                            is_str_val = true;  // Most method calls on strings return strings
+                        }
+                        if (expr->call.args[1]->type == EXPR_CALL) {
+                            // Check if function returns string
+                            if (expr->call.args[1]->expr_type && expr->call.args[1]->expr_type->kind == TYPE_STRING) {
+                                is_str_val = true;
+                            }
+                        }
+                        if (!is_str_val) {
+                            emit("(void*)(intptr_t)");
+                        }
                     }
                     
                     // Check if this argument needs trait object wrapping
