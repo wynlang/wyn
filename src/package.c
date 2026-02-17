@@ -137,7 +137,25 @@ static int install_git(const char* name, const char* url) {
     int result = system(cmd);
     
     if (result == 0) {
-        printf("  ✓ Installed %s from git\n", name);
+        // Validate: must contain at least one .wyn file
+        char check[1024];
+        snprintf(check, sizeof(check), "find '%s' -name '*.wyn' -maxdepth 2 | head -1", dest);
+        FILE* fp = popen(check, "r");
+        char buf[256] = "";
+        if (fp) { fgets(buf, sizeof(buf), fp); pclose(fp); }
+        if (buf[0] == '\0') {
+            fprintf(stderr, "  \033[31m✗\033[0m Not a valid Wyn package: no .wyn files found in %s\n", url);
+            char rm[1024]; snprintf(rm, sizeof(rm), "rm -rf '%s'", dest); system(rm);
+            return 1;
+        }
+        // Warn if no wyn.toml
+        char toml_path[512];
+        snprintf(toml_path, sizeof(toml_path), "%s/wyn.toml", dest);
+        struct stat ts;
+        if (stat(toml_path, &ts) != 0) {
+            printf("  \033[33m⚠\033[0m No wyn.toml found — package may not have version info\n");
+        }
+        printf("  \033[32m✓\033[0m Installed %s\n", name);
         printf("    → %s\n", dest);
         return 0;
     }
