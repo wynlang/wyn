@@ -1047,7 +1047,26 @@ void codegen_expr(Expr* expr) {
                 // Treat as module if it's loaded OR if it's a built-in
                 // BUT NOT if it's a local variable or parameter
                 bool is_local = is_parameter(module_name) || is_local_variable(module_name);
-                if (!is_local && (is_module_loaded(module_name) || is_builtin_module(module_name))) {
+                // Check if it's a loaded module (by full name or short name)
+                bool is_loaded_module = is_module_loaded(module_name) || is_builtin_module(module_name);
+                char resolved_mod_name[256] = "";
+                if (!is_loaded_module && !is_local) {
+                    // Check short names: "utils" might be "lib/utils"
+                    extern int get_all_modules_raw(void** out, int max);
+                    void* _mods[64]; int _mc = get_all_modules_raw(_mods, 64);
+                    for (int _mi = 0; _mi < _mc; _mi++) {
+                        typedef struct { char* name; void* ast; } _ME;
+                        _ME* _mod = (_ME*)_mods[_mi];
+                        char* _sl = strrchr(_mod->name, '/');
+                        const char* _sn = _sl ? _sl + 1 : _mod->name;
+                        if (strcmp(_sn, module_name) == 0) {
+                            is_loaded_module = true;
+                            strncpy(resolved_mod_name, _mod->name, 255);
+                            break;
+                        }
+                    }
+                }
+                if (!is_local && is_loaded_module) {
                     // Special case: some modules use lowercase C functions
                     if (strcmp(module_name, "Http") == 0) {
                         // Http.get/post/put/delete -> http_ (simple string API)
@@ -1105,7 +1124,13 @@ void codegen_expr(Expr* expr) {
                     } else if (strcmp(module_name, "Process") == 0) {
                         emit("Process_%.*s(", method.length, method.start);
                     } else {
-                        emit("%.*s_%.*s(", obj_name.length, obj_name.start, method.length, method.start);
+                        // Use resolved module name if available (e.g., "lib/utils" -> "lib_utils")
+                        if (resolved_mod_name[0]) {
+                            const char* c_mod = module_to_c_ident(resolved_mod_name);
+                            emit("%s_%.*s(", c_mod, method.length, method.start);
+                        } else {
+                            emit("%.*s_%.*s(", obj_name.length, obj_name.start, method.length, method.start);
+                        }
                     }
                     for (int i = 0; i < expr->method_call.arg_count; i++) {
                         if (i > 0) emit(", ");
@@ -2440,11 +2465,17 @@ void codegen_expr(Expr* expr) {
                     for (int k = 0; _ckw[k]; k++) { if (strcmp(_pn, _ckw[k]) == 0) { _pfx = "_"; break; } }
                     emit("%s%s(", _pfx, _pn);
                 } else if (expr->pipeline.stages[i]->type == EXPR_METHOD_CALL) {
-                    // Method call - need to handle specially
-                    // For now, just emit the method name as a function
                     emit("%.*s(", 
                          expr->pipeline.stages[i]->method_call.method.length,
                          expr->pipeline.stages[i]->method_call.method.start);
+                } else if (expr->pipeline.stages[i]->type == EXPR_LAMBDA) {
+                    // Lambda: emit as inline call — (lambda)(
+                    emit("("); codegen_expr(expr->pipeline.stages[i]); emit(")(");
+                    // The value will be emitted next, then we close with )
+                    // But we need to skip the normal close — handle specially
+                } else {
+                    // Generic expression — wrap in call
+                    emit("("); codegen_expr(expr->pipeline.stages[i]); emit(")(");
                 }
             }
             

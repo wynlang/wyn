@@ -1090,6 +1090,23 @@ void init_checker() {
             add_symbol(global_scope, ns_tok, builtin_int, false);
         }
     }
+    
+    // Register loaded user modules as namespace symbols
+    {
+        extern int get_all_modules_raw(void** out, int max);
+        void* mods[64]; int mc = get_all_modules_raw(mods, 64);
+        for (int mi = 0; mi < mc; mi++) {
+            typedef struct { char* name; void* ast; } ME;
+            ME* mod = (ME*)mods[mi];
+            // Register short name (last segment after /)
+            char* slash = strrchr(mod->name, '/');
+            const char* short_name = slash ? slash + 1 : mod->name;
+            Token ns_tok = {TOKEN_IDENT, short_name, (int)strlen(short_name), 0};
+            if (!find_symbol(global_scope, ns_tok)) {
+                add_symbol(global_scope, ns_tok, builtin_int, false);
+            }
+        }
+    }
 
     // File namespace methods
     struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* ret; } file_ns_fns[] = {
@@ -2584,7 +2601,23 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     expr->method_call.object->token.start);
                 // Only treat as namespace if it's a known builtin module
                 extern bool is_builtin_module(const char* name);
-                if (is_builtin_module(obj_name)) {
+                extern bool is_module_loaded(const char* name);
+                // Check builtin modules and loaded user modules (including short names)
+                bool is_known_module = is_builtin_module(obj_name) || is_module_loaded(obj_name);
+                // Also check if it's a short name of a loaded module (e.g., "utils" for "lib/utils")
+                if (!is_known_module) {
+                    extern int get_all_modules_raw(void** out, int max);
+                    void* mods[64]; int mc = get_all_modules_raw(mods, 64);
+                    for (int mi = 0; mi < mc; mi++) {
+                        typedef struct { char* name; void* ast; } ME;
+                        ME* mod = (ME*)mods[mi];
+                        // Check if obj_name matches the last segment of the module path
+                        char* slash = strrchr(mod->name, '/');
+                        const char* short_name = slash ? slash + 1 : mod->name;
+                        if (strcmp(short_name, obj_name) == 0) { is_known_module = true; break; }
+                    }
+                }
+                if (is_known_module) {
                     char ns_method[256];
                     snprintf(ns_method, sizeof(ns_method), "%s_%s", obj_name, method_name);
                     Token ns_tok = {TOKEN_IDENT, ns_method, (int)strlen(ns_method), 0};
