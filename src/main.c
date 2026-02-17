@@ -1657,37 +1657,22 @@ int main(int argc, char** argv) {
             if (strcmp(argv[i], "--node") == 0) { shared_mode = 4; }
         }
         
-        // WASM target
+        // WASM target — early check
         if (shared_mode == 3) {
             if (system("which emcc > /dev/null 2>&1") != 0) {
                 fprintf(stderr, "\033[31m✗\033[0m Emscripten not found.\n");
                 fprintf(stderr, "  Install: https://emscripten.org/docs/getting_started/downloads.html\n");
-                fprintf(stderr, "  Then: wyn build %s --wasm\n", file);
+                fprintf(stderr, "  Then: wyn build <file> --wasm\n");
                 return 1;
             }
-            // Compile to WASM
-            char wasm_cmd[8192];
-            char wasm_out[256];
-            snprintf(wasm_out, sizeof(wasm_out), "%s", file);
-            char* dot = strrchr(wasm_out, '.'); if (dot) *dot = 0;
-            snprintf(wasm_cmd, sizeof(wasm_cmd),
-                "emcc -O2 -s WASM=1 -s EXPORTED_RUNTIME_METHODS='[\"cwrap\"]' -I %s/src -o %s.html %s.c -lm 2>&1",
-                wyn_root, wasm_out, file);
-            printf("\033[1mBuilding WASM\033[0m %s...\n", file);
-            int r = system(wasm_cmd);
-            if (r == 0) fprintf(stderr, "\033[32m✓\033[0m Built: %s.html, %s.js, %s.wasm\n", wasm_out, wasm_out, wasm_out);
-            if (!keep_artifacts) { char cp[512]; snprintf(cp, sizeof(cp), "%s.c", file); unlink(cp); }
-            return r == 0 ? 0 : 1;
+            // Will be handled after codegen (shared_mode == 3)
         }
         
-        // Node.js addon
-        if (shared_mode == 4) {
-            if (system("node -e 'process.exit(0)' > /dev/null 2>&1") != 0) {
-                fprintf(stderr, "\033[31m✗\033[0m Node.js not found.\n");
-                return 1;
-            }
-            fprintf(stderr, "\033[33m○\033[0m --node support coming soon. Use --python for now.\n");
-            return 1;
+        // Node.js — build shared lib + JS wrapper
+        if (shared_mode == 4) { shared_mode = 1; }
+        int generate_node = 0;
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--node") == 0) { generate_node = 1; break; }
         }
         
         char compile_cmd[8192];
@@ -1847,6 +1832,73 @@ int main(int argc, char** argv) {
                     }
                     fclose(py);
                     fprintf(stderr, "\033[32m✓\033[0m Generated Python wrapper: %s\n", py_path);
+                }
+            }
+            // Generate Node.js wrapper if --node
+            if (result == 0 && generate_node) {
+                char js_path[512]; snprintf(js_path, sizeof(js_path), "%s.js", lib_name);
+                FILE* js = fopen(js_path, "w");
+                if (js) {
+                    fprintf(js, "// Auto-generated Node.js wrapper for %s.wyn — created by Wyn\n", lib_name);
+                    fprintf(js, "const ffi = require('ffi-napi');\n");
+                    fprintf(js, "const path = require('path');\n\n");
+                    fprintf(js, "const ext = process.platform === 'darwin' ? 'dylib' : process.platform === 'win32' ? 'dll' : 'so';\n");
+                    fprintf(js, "const lib = ffi.Library(path.join(__dirname, `lib%s.${ext}`), {\n", lib_name);
+                    
+                    int first_fn = 1;
+                    for (int fi = 0; fi < prog->count; fi++) {
+                        Stmt* s = prog->stmts[fi];
+                        if (s->type != STMT_FN) continue;
+                        if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
+                        if (s->fn.receiver_type.length > 0) continue;
+                        
+                        char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
+                        // C keyword prefix
+                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                        const char* cpfx = "";
+                        for (int k = 0; _ckw[k]; k++) { if (strcmp(fname, _ckw[k]) == 0) { cpfx = "_"; break; } }
+                        
+                        // Return type
+                        const char* js_ret = "'int64'";
+                        if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT) {
+                            Token rt = s->fn.return_type->token;
+                            if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) js_ret = "'string'";
+                            else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) js_ret = "'double'";
+                            else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) js_ret = "'bool'";
+                        } else if (!s->fn.return_type) { js_ret = "'void'"; }
+                        
+                        if (!first_fn) fprintf(js, ",\n");
+                        fprintf(js, "  '%s%s': [%s, [", cpfx, fname, js_ret);
+                        for (int p = 0; p < s->fn.param_count; p++) {
+                            if (p > 0) fprintf(js, ", ");
+                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                                Token pt = s->fn.param_types[p]->token;
+                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(js, "'string'");
+                                else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(js, "'double'");
+                                else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(js, "'bool'");
+                                else fprintf(js, "'int64'");
+                            } else fprintf(js, "'int64'");
+                        }
+                        fprintf(js, "]]");
+                        first_fn = 0;
+                    }
+                    fprintf(js, "\n});\n\n");
+                    
+                    // Export wrapper functions
+                    for (int fi = 0; fi < prog->count; fi++) {
+                        Stmt* s = prog->stmts[fi];
+                        if (s->type != STMT_FN) continue;
+                        if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
+                        if (s->fn.receiver_type.length > 0) continue;
+                        char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
+                        const char* cpfx = "";
+                        const char* _ckw2[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                        for (int k = 0; _ckw2[k]; k++) { if (strcmp(fname, _ckw2[k]) == 0) { cpfx = "_"; break; } }
+                        fprintf(js, "exports.%s = lib.%s%s;\n", fname, cpfx, fname);
+                    }
+                    fclose(js);
+                    fprintf(stderr, "\033[32m✓\033[0m Generated Node.js wrapper: %s\n", js_path);
+                    fprintf(stderr, "  Install ffi-napi: npm install ffi-napi\n");
                 }
             }
             if (!keep_artifacts) { char cp[512]; snprintf(cp, sizeof(cp), "%s.c", file); unlink(cp); }
