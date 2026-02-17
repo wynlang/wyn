@@ -79,7 +79,16 @@ static void get_packages_dir(char* buf, size_t size) {
     }
 }
 
-// Install from local path
+// Check if a string looks like a git URL
+static int is_git_url(const char* s) {
+    if (!s || !s[0]) return 0;
+    if (s[0] == '.' || s[0] == '/' || s[0] == '~') return 0;  // local path
+    if (strstr(s, "://") || strstr(s, "git@") || strstr(s, ".git")) return 1;
+    const char* dot = strchr(s, '.');
+    const char* slash = strchr(s, '/');
+    if (dot && slash && dot < slash) return 1;
+    return 0;
+}
 static int install_local(const char* name, const char* source_path) {
     char pkg_dir[512];
     get_packages_dir(pkg_dir, sizeof(pkg_dir));
@@ -222,8 +231,7 @@ int package_install(const char* spec) {
             source[slen] = '\0';
             
             // Determine source type
-            if (strstr(source, "://") || strstr(source, "git@") || strstr(source, ".git") ||
-                strstr(source, "github.com") || strstr(source, "gitlab.com") || strstr(source, "bitbucket.org")) {
+            if (is_git_url(source)) {
                 install_git(name, source);
             } else {
                 install_local(name, source);
@@ -238,8 +246,7 @@ int package_install(const char* spec) {
     
     // Install single package by name/path/url
     // Detect if it's a git URL
-    if (strstr(spec, "://") || strstr(spec, "git@") || strstr(spec, ".git") ||
-        strstr(spec, "github.com") || strstr(spec, "gitlab.com") || strstr(spec, "bitbucket.org")) {
+    if (is_git_url(spec)) {
         // Extract name from URL
         const char* name = strrchr(spec, '/');
         if (name) name++; else name = spec;
