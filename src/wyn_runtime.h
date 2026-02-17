@@ -2,8 +2,13 @@
 #define WYN_RUNTIME_H
 #define _POSIX_C_SOURCE 200809L
 
+// TCC compatibility: __auto_type is a GCC/Clang extension
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
 // Platform detection for mobile
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !defined(__TINYC__)
 #include <TargetConditionals.h>
 #if TARGET_OS_IOS || TARGET_OS_SIMULATOR
 #define WYN_MOBILE_IOS 1

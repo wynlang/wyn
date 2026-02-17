@@ -57,6 +57,11 @@ static const char* detect_cc(void) {
     return cc_path;
 }
 
+// TCC backend declarations
+extern int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
+                                   const char* wyn_root, const char* include_path);
+extern int wyn_tcc_available(void);
+
 static char* read_file(const char* path) {
     FILE* f = fopen(path, "r");
     if (!f) {
@@ -1680,8 +1685,43 @@ int main(int argc, char** argv) {
         // Node.js — build shared lib + JS wrapper
         if (shared_mode == 4) { shared_mode = 1; }
         int generate_node = 0;
+        int use_release = 0;
         for (int i = 3; i < argc; i++) {
-            if (strcmp(argv[i], "--node") == 0) { generate_node = 1; break; }
+            if (strcmp(argv[i], "--node") == 0) { generate_node = 1; }
+            if (strcmp(argv[i], "--release") == 0) { use_release = 1; }
+        }
+        
+        // Try TCC backend first (fast, no external deps) unless --release
+        if (!use_release && !shared_mode && !generate_node && wyn_tcc_available()) {
+            // Read the generated C source
+            char* c_source = read_file(out_path);
+            if (c_source) {
+                char exe_path[512];
+                snprintf(exe_path, sizeof(exe_path), "%s.out", file);
+                int tcc_result = wyn_tcc_compile_to_exe(c_source, exe_path, wyn_root, NULL);
+                free(c_source);
+                if (tcc_result == 0) {
+                    clock_gettime(CLOCK_MONOTONIC, &_ts_end);
+                    double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
+                    fprintf(stderr, "\033[2mCompiled in %.0fms (tcc)\033[0m\n", _ms);
+                    
+                    // Run the compiled binary
+                    char run_cmd[512];
+                    if (file[0] == '/') snprintf(run_cmd, 512, "%s.out", file);
+                    else snprintf(run_cmd, 512, "./%s.out", file);
+                    int result = system(run_cmd);
+                    free(source);
+                    if (!keep_artifacts) {
+                        char c_path[512]; snprintf(c_path, 512, "%s.c", file);
+                        char out_path2[512]; snprintf(out_path2, 512, "%s.out", file);
+                        unlink(c_path); unlink(out_path2);
+                    }
+                    unlink("wyn_cc_err.txt");
+                    if (WIFEXITED(result)) return WEXITSTATUS(result);
+                    return result;
+                }
+                // TCC failed — fall through to system cc
+            }
         }
         
         char compile_cmd[8192];
