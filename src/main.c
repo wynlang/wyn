@@ -511,7 +511,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     
-    if (strcmp(command, "init") == 0) {
+    if (strcmp(command, "init") == 0 || strcmp(command, "new") == 0) {
         static char input[256];
         char* project_name = NULL;
         const char* template = "default";
