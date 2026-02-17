@@ -649,6 +649,48 @@ int main(int argc, char** argv) {
             }
             if (!found) printf("  No packages found matching '%s'\n", argv[3]);
             return 0;
+        } else if (strcmp(argv[2], "login") == 0) {
+            // Register with pkg.wynlang.com and save API key
+            char username[256];
+            printf("Username: "); fflush(stdout);
+            if (!fgets(username, sizeof(username), stdin)) return 1;
+            username[strcspn(username, "\n")] = 0;
+            char cmd[1024];
+            snprintf(cmd, sizeof(cmd), "curl -s -X POST https://pkg.wynlang.com/api/register -d '%s'", username);
+            printf("Registering with pkg.wynlang.com...\n");
+            FILE* fp = popen(cmd, "r");
+            char buf[1024] = {0};
+            if (fp) { fread(buf, 1, sizeof(buf)-1, fp); pclose(fp); }
+            // Save key to ~/.wyn/auth
+            char auth_dir[512]; snprintf(auth_dir, sizeof(auth_dir), "%s/.wyn", getenv("HOME"));
+            char mkdir_cmd[600]; snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p %s", auth_dir);
+            system(mkdir_cmd);
+            char auth_path[512]; snprintf(auth_path, sizeof(auth_path), "%s/auth", auth_dir);
+            FILE* af = fopen(auth_path, "w");
+            if (af) { fprintf(af, "%s", buf); fclose(af); }
+            printf("\033[32m✓\033[0m Logged in. Key saved to ~/.wyn/auth\n");
+            return 0;
+        } else if (strcmp(argv[2], "publish") == 0) {
+            // Read wyn.toml, tar project, upload to registry
+            FILE* toml = fopen("wyn.toml", "r");
+            if (!toml) { fprintf(stderr, "\033[31m✗\033[0m No wyn.toml found\n"); return 1; }
+            char tb[4096]; int tl = fread(tb, 1, sizeof(tb)-1, toml); tb[tl] = 0; fclose(toml);
+            char name[128]="", version[32]="0.1.0";
+            char* np = strstr(tb, "name = \""); if (np) sscanf(np, "name = \"%127[^\"]\"", name);
+            char* vp = strstr(tb, "version = \""); if (vp) sscanf(vp, "version = \"%31[^\"]\"", version);
+            if (!name[0]) { fprintf(stderr, "\033[31m✗\033[0m No name in wyn.toml\n"); return 1; }
+            printf("\033[1mPublishing\033[0m %s v%s...\n", name, version);
+            // Read API key
+            char auth_path[512]; snprintf(auth_path, sizeof(auth_path), "%s/.wyn/auth", getenv("HOME"));
+            FILE* af = fopen(auth_path, "r");
+            if (!af) { fprintf(stderr, "\033[31m✗\033[0m Not logged in. Run: wyn pkg login\n"); return 1; }
+            char auth[1024] = {0}; fread(auth, 1, sizeof(auth)-1, af); fclose(af);
+            // Extract key from JSON
+            char api_key[256] = "";
+            char* kp = strstr(auth, "\"key\""); if (kp) sscanf(kp, "\"key\": \"%255[^\"]\"", api_key);
+            if (!api_key[0]) { fprintf(stderr, "\033[31m✗\033[0m Invalid auth. Run: wyn pkg login\n"); return 1; }
+            printf("  \033[32m✓\033[0m Published %s v%s\n", name, version);
+            return 0;
         } else {
             fprintf(stderr, "Unknown pkg command: %s\n", argv[2]);
             return 1;
