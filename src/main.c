@@ -37,6 +37,26 @@ void codegen_program(Program* prog);
 int create_new_project(const char* project_name);
 int create_new_project_with_template(const char* name, const char* template);
 
+// Detect available C backend: WYN_CC env > cc > gcc > clang
+static const char* detect_cc(void) {
+    static char cc_path[256] = "";
+    if (cc_path[0]) return cc_path;
+    char* env_cc = getenv("WYN_CC");
+    if (env_cc && env_cc[0]) { strncpy(cc_path, env_cc, 255); return cc_path; }
+    if (system("cc --version > /dev/null 2>&1") == 0) { strcpy(cc_path, "cc"); return cc_path; }
+    if (system("gcc --version > /dev/null 2>&1") == 0) { strcpy(cc_path, "gcc"); return cc_path; }
+    if (system("clang --version > /dev/null 2>&1") == 0) { strcpy(cc_path, "clang"); return cc_path; }
+    // No C compiler found
+    fprintf(stderr, "\033[31mError:\033[0m No C compiler found.\n");
+    fprintf(stderr, "  Wyn needs a C compiler backend. Install one of:\n");
+    fprintf(stderr, "    macOS:  xcode-select --install\n");
+    fprintf(stderr, "    Ubuntu: sudo apt install build-essential\n");
+    fprintf(stderr, "    Fedora: sudo dnf install gcc\n");
+    fprintf(stderr, "  Or set WYN_CC=/path/to/compiler\n");
+    strcpy(cc_path, "cc");
+    return cc_path;
+}
+
 static char* read_file(const char* path) {
     FILE* f = fopen(path, "r");
     if (!f) {
@@ -1665,6 +1685,7 @@ int main(int argc, char** argv) {
         }
         
         char compile_cmd[8192];
+        const char* cc = detect_cc();
         // Use precompiled runtime library for fast compilation
         // Falls back to source compilation if libwyn_rt.a doesn't exist
         char rt_lib[512];
@@ -1673,13 +1694,13 @@ int main(int argc, char** argv) {
         if (rt_check) {
             fclose(rt_check);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "gcc -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a %s 2>wyn_cc_err.txt",
-                     opt_level, wyn_root, file, file, wyn_root, wyn_root, platform_libs);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a %s 2>wyn_cc_err.txt",
+                     cc, opt_level, wyn_root, file, file, wyn_root, wyn_root, platform_libs);
         } else {
             // Fallback: compile from source
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "gcc -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
-                     opt_level, wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
+                     cc, opt_level, wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
         }
         // Append optional flags before the redirect
         if (sqlite_flags[0] || gui_flags[0]) {
