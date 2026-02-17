@@ -298,6 +298,8 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                 // Check for built-in types
                 if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                     return builtin_int;
+                } else if (type_name.length == 4 && memcmp(type_name.start, "char", 4) == 0) {
+                    return builtin_int;  // char is int in Wyn
                 } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
                     return builtin_string;
                 } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
@@ -1892,6 +1894,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 expr->expr_type = builtin_bool;
                 return builtin_bool;
             }
+            if (expr->token.length == 4 && memcmp(expr->token.start, "char", 4) == 0) {
+                expr->expr_type = builtin_int;  // char is int in Wyn
+                return builtin_int;
+            }
             if (expr->token.length == 4 && memcmp(expr->token.start, "void", 4) == 0) {
                 expr->expr_type = builtin_void;
                 return builtin_void;
@@ -3476,6 +3482,29 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         }
                     }
                     init_type = array_type;
+                } else if (stmt->var.type->type == EXPR_CALL && 
+                           stmt->var.type->call.callee && 
+                           stmt->var.type->call.callee->type == EXPR_IDENT) {
+                    // Handle generic type annotations: Array<T>, HashMap<K,V>, etc.
+                    Token type_name = stmt->var.type->call.callee->token;
+                    if ((type_name.length == 5 && memcmp(type_name.start, "Array", 5) == 0) ||
+                        (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0)) {
+                        init_type = make_type(TYPE_ARRAY);
+                    } else if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
+                        init_type = make_type(TYPE_MAP);
+                    } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
+                        init_type = make_type(TYPE_SET);
+                    } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
+                        init_type = make_type(TYPE_OPTIONAL);
+                    } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
+                        init_type = make_type(TYPE_RESULT);
+                    } else {
+                        init_type = check_expr(stmt->var.type, scope);
+                    }
+                    // Still check init expression
+                    if (stmt->var.init) {
+                        check_expr(stmt->var.init, scope);
+                    }
                 } else {
                     init_type = check_expr(stmt->var.type, scope);
                 }
@@ -4619,6 +4648,10 @@ void check_program(Program* prog) {
         hashset_new_type->fn_type.param_types = NULL;
         hashset_new_type->fn_type.return_type = make_type(TYPE_SET);
         add_symbol(global_scope, hashset_new_tok, hashset_new_type, false);
+        
+        // String module
+        Token string_mod_tok = {TOKEN_IDENT, "String", 6, 0};
+        add_symbol(global_scope, string_mod_tok, builtin_string, false);
         
         Token hashmap_insert_tok = {TOKEN_IDENT, "HashMap::insert", 15, 0};
         Type* hashmap_insert_type = make_type(TYPE_FUNCTION);

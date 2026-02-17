@@ -1739,10 +1739,20 @@ long long wyn_safe_mod(long long a, long long b) {
 }
 char* char_to_string(char x) { char* r = malloc(2); r[0] = x; r[1] = 0; return r; }
 int char_to_int(char x) { return (int)x; }
+char char_from_int(int x) { return (char)x; }
 bool char_is_alpha(char x) { return (x >= 'A' && x <= 'Z') || (x >= 'a' && x <= 'z'); }
 bool char_is_numeric(char x) { return x >= '0' && x <= '9'; }
 bool char_is_alphanumeric(char x) { return char_is_alpha(x) || char_is_numeric(x); }
 bool char_is_whitespace(char x) { return x == ' ' || x == '\t' || x == '\n' || x == '\r'; }
+char* String_from_chars(WynArray arr) {
+    char* r = malloc(arr.count + 1);
+    for (int i = 0; i < arr.count; i++) {
+        const char* s = arr.data[i].data.string_val;
+        r[i] = (s && *s) ? s[0] : 0;
+    }
+    r[arr.count] = 0;
+    return r;
+}
 bool char_is_uppercase(char x) { return x >= 'A' && x <= 'Z'; }
 bool char_is_lowercase(char x) { return x >= 'a' && x <= 'z'; }
 char char_to_upper(char x) { return (x >= 'a' && x <= 'z') ? x - 32 : x; }
@@ -1783,6 +1793,8 @@ long long str_parse_int(const char* s) {
     if(errno != 0 || end == s) return 0;
     return val;
 }
+long long str_ascii(const char* s) { return (s && *s) ? (unsigned char)s[0] : 0; }
+const char* String_char_from_int(long long n) { char* r = malloc(2); r[0] = (char)n; r[1] = 0; return r; }
 int str_parse_int_failed(int result) {
     return result == 0;
 }

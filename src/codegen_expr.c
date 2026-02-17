@@ -1123,6 +1123,14 @@ void codegen_expr(Expr* expr) {
                         emit("Log_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "Process") == 0) {
                         emit("Process_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "String") == 0) {
+                        if (method.length == 4 && memcmp(method.start, "char", 4) == 0) {
+                            emit("String_char_from_int(");
+                        } else if (method.length == 10 && memcmp(method.start, "from_chars", 10) == 0) {
+                            emit("String_from_chars(");
+                        } else {
+                            emit("String_%.*s(", method.length, method.start);
+                        }
                     } else {
                         // Use resolved module name if available (e.g., "lib/utils" -> "lib_utils")
                         if (resolved_mod_name[0]) {

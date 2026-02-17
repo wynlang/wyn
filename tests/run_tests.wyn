@@ -66,10 +66,13 @@ fn main() -> int {
         "tests/validation/test_regex.wyn",
         "tests/validation/test_http.wyn",
         "tests/stdlib/test_v17_features.wyn",
+        "tests/stdlib/test_epic28_generics.wyn",
+        "tests/stdlib/test_epic29_struct_returns.wyn",
+        "tests/stdlib/test_epic30_char.wyn",
         "tests/multifile/test_import.wyn"
     ]
 
-    for i in 0..42 {
+    for i in 0..45 {
         var path = tests[i]
         var result = run_test(path)
         if result == 1 {

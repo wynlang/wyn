@@ -1,0 +1,66 @@
+// Epic 30: Character-Level String Operations TDD
+// Required for self-hosted lexer
+// In Wyn, chars are single-character strings
+
+fn main() -> int {
+    Test.init("Epic 30: Char Operations")
+
+    // 30.1: char type (single-char string)
+    var c = 'a'
+    Test.assert_eq_str(c, "a", "char literal")
+
+    // 30.2: String indexing returns char
+    var s = "hello"
+    var ch = s[0]
+    Test.assert_eq_str(ch, "h", "string index")
+
+    // 30.3: Char comparison
+    var digit = '5'
+    Test.assert(digit >= "0", "char >= 0")
+    Test.assert(digit <= "9", "char <= 9")
+
+    // 30.4: Char to int (ASCII value)
+    var ascii_a = 'a'.ascii()
+    Test.assert_eq_int(ascii_a, 97, "char ascii")
+
+    var ascii_A = 'A'.ascii()
+    Test.assert_eq_int(ascii_A, 65, "char ascii A")
+
+    // 30.5: Int to char (ASCII to single-char string)
+    var from_int = String.char(65)
+    Test.assert_eq_str(from_int, "A", "String.char")
+
+    // 30.6: String from chars
+    var parts = ["h", "i"]
+    var built = parts.join("")
+    Test.assert_eq_str(built, "hi", "join chars")
+
+    // 30.7: Lexer-style scanning
+    var src = "x = 42"
+    var i = 0
+    // Skip identifier
+    while i < src.len() && src[i] >= "a" && src[i] <= "z" {
+        i = i + 1
+    }
+    Test.assert_eq_int(i, 1, "lexer scan ident")
+
+    // Skip whitespace
+    while i < src.len() && src[i] == " " {
+        i = i + 1
+    }
+    Test.assert_eq_int(i, 2, "lexer skip space")
+
+    // Check operator
+    Test.assert_eq_str(src[i], "=", "lexer found =")
+
+    // Skip to number
+    i = i + 2
+    var num_start = i
+    while i < src.len() && src[i] >= "0" && src[i] <= "9" {
+        i = i + 1
+    }
+    Test.assert_eq_int(i - num_start, 2, "lexer scan number")
+
+    Test.summary()
+    return 0
+}

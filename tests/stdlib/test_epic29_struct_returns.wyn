@@ -1,0 +1,70 @@
+// Epic 29: Struct Return Types & Methods TDD
+// 29.1 Functions returning structs
+// 29.2 Methods returning structs
+// 29.3 Nested structs
+// 29.4 Arrays of structs
+// 29.5 Method chaining
+
+struct Point {
+    x: int
+    y: int
+}
+
+struct Line {
+    start: Point
+    end: Point
+}
+
+fn make_point(x: int, y: int) -> Point {
+    return Point { x: x, y: y }
+}
+
+fn Point.translate(self, dx: int, dy: int) -> Point {
+    return Point { x: self.x + dx, y: self.y + dy }
+}
+
+fn Point.distance_sq(self) -> int {
+    return self.x * self.x + self.y * self.y
+}
+
+fn main() -> int {
+    Test.init("Epic 29: Struct Returns & Methods")
+
+    // 29.1: Function returning struct
+    var p = make_point(3, 4)
+    Test.assert_eq_int(p.x, 3, "fn returns struct .x")
+    Test.assert_eq_int(p.y, 4, "fn returns struct .y")
+
+    // 29.2: Method returning struct
+    var p2 = p.translate(10, 20)
+    Test.assert_eq_int(p2.x, 13, "method returns struct .x")
+    Test.assert_eq_int(p2.y, 24, "method returns struct .y")
+
+    // 29.3: Nested structs
+    var line = Line { start: Point { x: 0, y: 0 }, end: Point { x: 5, y: 5 } }
+    Test.assert_eq_int(line.start.x, 0, "nested struct start.x")
+    Test.assert_eq_int(line.end.x, 5, "nested struct end.x")
+
+    // 29.4: Arrays of structs
+    var points = [make_point(1, 1), make_point(2, 2), make_point(3, 3)]
+    Test.assert_eq_int(points.len(), 3, "array of structs len")
+
+    // 29.5: Method chaining
+    var p3 = make_point(0, 0).translate(5, 5).translate(1, 1)
+    Test.assert_eq_int(p3.x, 6, "chained .x")
+    Test.assert_eq_int(p3.y, 6, "chained .y")
+
+    // 29.2: Method returning int from struct
+    var d = make_point(3, 4).distance_sq()
+    Test.assert_eq_int(d, 25, "method on returned struct")
+
+    // 29.4: Struct with string field returned from function
+    var p4 = make_point(7, 8)
+    Test.assert_eq_int(p4.x + p4.y, 15, "struct field arithmetic")
+
+    // 29.3: Deep nesting access
+    Test.assert_eq_int(line.end.y, 5, "nested struct end.y")
+
+    Test.summary()
+    return 0
+}

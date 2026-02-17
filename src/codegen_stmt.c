@@ -173,10 +173,13 @@ void codegen_stmt(Stmt* stmt) {
                     c_type = "WynArray";
                     needs_arc_management = false;
                 } else if (stmt->var.type->type == EXPR_CALL) {
-                    // Handle generic type instantiation: HashMap<K,V>, Option<T>, etc.
+                    // Handle generic type instantiation: Array<T>, HashMap<K,V>, Option<T>, etc.
                     if (stmt->var.type->call.callee->type == EXPR_IDENT) {
                         Token type_name = stmt->var.type->call.callee->token;
-                        if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
+                        if ((type_name.length == 5 && memcmp(type_name.start, "Array", 5) == 0) ||
+                            (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0)) {
+                            c_type = "WynArray";
+                        } else if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
                             c_type = "WynHashMap*";
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             c_type = "WynHashSet*";
@@ -199,6 +202,8 @@ void codegen_stmt(Stmt* stmt) {
                         c_type = "double";
                     } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
                         c_type = "bool";
+                    } else if (type_name.length == 4 && memcmp(type_name.start, "char", 4) == 0) {
+                        c_type = "char";
                     } else {
                         // Custom struct/enum type - use the type name as-is
                         static char custom_type_buf[256];
@@ -1186,10 +1191,8 @@ void codegen_stmt(Stmt* stmt) {
             break;
         }
         case STMT_STRUCT:
-            // Skip generic structs - they will be handled by monomorphization
-            if (stmt->struct_decl.type_param_count > 0) {
-                break;
-            }
+            // For generic structs, emit with type params resolved to default C types
+            // Full monomorphization will generate specialized versions
             
             // T2.5.3: Enhanced struct system with ARC integration
             emit("typedef struct {\n");
@@ -1199,7 +1202,19 @@ void codegen_stmt(Stmt* stmt) {
                 if (stmt->struct_decl.field_types[i]) {
                     if (stmt->struct_decl.field_types[i]->type == EXPR_IDENT) {
                         Token type_name = stmt->struct_decl.field_types[i]->token;
-                        if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
+                        // Check if this is a type parameter
+                        bool is_type_param = false;
+                        for (int tp = 0; tp < stmt->struct_decl.type_param_count; tp++) {
+                            if (stmt->struct_decl.type_params[tp].length == type_name.length &&
+                                memcmp(stmt->struct_decl.type_params[tp].start, type_name.start, type_name.length) == 0) {
+                                is_type_param = true;
+                                break;
+                            }
+                        }
+                        if (is_type_param) {
+                            // Type parameter — use long long (works for int, pointer-sized for strings)
+                            c_type = "long long";
+                        } else if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                             c_type = "long long";
                         } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
                             c_type = "float";

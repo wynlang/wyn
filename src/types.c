@@ -45,6 +45,7 @@ static const MethodSignature method_signatures[] = {
     {"string", "count", "int", 1},           // Count occurrences
     {"string", "is_numeric", "bool", 0},     // Check if numeric (int or float)
     {"string", "to_int", "int", 0},          // Parse string to int
+    {"string", "ascii", "int", 0},           // ASCII value of first char
     {"string", "to_float", "float", 0},      // Parse string to float
     {"string", "parse_int", "int", 0},       // Parse string to int (alias)
     {"string", "parse_float", "float", 0},   // Parse string to float (alias)
@@ -420,6 +421,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "to_int") == 0 && arg_count == 0) {
             out->c_function = "str_parse_int"; return true;
+        }
+        if (strcmp(method_name, "ascii") == 0 && arg_count == 0) {
+            out->c_function = "str_ascii"; return true;
         }
         if (strcmp(method_name, "to_float") == 0 && arg_count == 0) {
             out->c_function = "str_parse_float"; return true;
