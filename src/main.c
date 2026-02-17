@@ -141,6 +141,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
         fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
         fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
+        fprintf(stderr, "  \033[32mdoctor\033[0m                  Check your setup\n");
         fprintf(stderr, "  \033[32mversion\033[0m                 Show version\n");
         fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
         
@@ -497,6 +498,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
         fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
         fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
+        fprintf(stderr, "  \033[32mdoctor\033[0m                  Check your setup\n");
         fprintf(stderr, "  \033[32mversion\033[0m                 Show version\n");
         fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
         fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
@@ -1454,8 +1456,17 @@ int main(int argc, char** argv) {
     
     if (strcmp(command, "run") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn run <file.wyn>\n");
-            return 1;
+            // Try to find main.wyn or read wyn.toml
+            struct stat _rs;
+            if (stat("wyn.toml", &_rs) == 0) {
+                FILE* _tf = fopen("wyn.toml", "r");
+                char _tb[4096]; int _tl = fread(_tb, 1, sizeof(_tb)-1, _tf); _tb[_tl] = 0; fclose(_tf);
+                char* _ep = strstr(_tb, "entry = \"");
+                if (_ep) { char _e[256]; if (sscanf(_ep, "entry = \"%255[^\"]\"", _e) == 1 && stat(_e, &_rs) == 0) { argc = 3; argv[2] = strdup(_e); } }
+            }
+            if (argc < 3 && stat("main.wyn", &_rs) == 0) { argc = 3; argv[2] = "main.wyn"; }
+            if (argc < 3 && stat("src/main.wyn", &_rs) == 0) { argc = 3; argv[2] = "src/main.wyn"; }
+            if (argc < 3) { fprintf(stderr, "Usage: wyn run <file.wyn>\n"); return 1; }
         }
         char* file = NULL;
         char* eval_code = NULL;
@@ -1510,6 +1521,12 @@ int main(int argc, char** argv) {
         }
         
         char* source = read_file(file);
+        
+        // Friendly message for empty files
+        if (!source || strlen(source) == 0 || (strlen(source) == 1 && source[0] == '\n')) {
+            printf("\033[33m○\033[0m Nothing to run. Try:\n\n  println(\"hello\")\n\n");
+            return 0;
+        }
         
         // Set source directory for module resolution
         { extern void set_source_directory(const char*); set_source_directory(file); }
