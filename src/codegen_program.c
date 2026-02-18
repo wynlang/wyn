@@ -624,10 +624,8 @@ void codegen_program(Program* prog) {
         emit("}\n");
     } else {
         // User defined main() is renamed to wyn_main during codegen
-        // wyn_wrapper.c provides the actual main() that calls wyn_main()
+        // main() wrapper is in wyn_wrapper.c (compiled into runtime libraries)
     }
-    
-    // Note: main() wrapper is provided by wyn_wrapper.c, not generated here
 }
 
 // T1.4.4: Control Flow Code Generation - Control Flow Agent addition

@@ -30,7 +30,7 @@ int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
 
     char cmd[4096];
     if (access(rt_tcc, R_OK) == 0) {
-        // Fast path: pre-compiled runtime + wrapper source
+        // Fast path: pre-compiled runtime + wrapper source (wrapper defines main())
         snprintf(cmd, sizeof(cmd),
             "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/sqlite -w %s "
             "%s %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
