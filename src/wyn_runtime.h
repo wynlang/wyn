@@ -1803,6 +1803,11 @@ long long str_parse_int(const char* s) {
 }
 long long str_ascii(const char* s) { return (s && *s) ? (unsigned char)s[0] : 0; }
 const char* String_char_from_int(long long n) { char* r = malloc(2); r[0] = (char)n; r[1] = 0; return r; }
+
+// Data.save/load — forward declared, defined after hashmap functions
+void Data_save(const char* path, WynHashMap* map);
+WynHashMap* Data_load(const char* path);
+extern void hashmap_insert_string(WynHashMap* map, const char* key, const char* value);
 int str_parse_int_failed(int result) {
     return result == 0;
 }
@@ -3966,6 +3971,58 @@ long long Csv_header_count(long long handle) {
 // System.gc() — reset arena allocator, freeing all temporary strings
 // Call at the end of each request loop iteration in servers
 void System_gc() { wyn_arena_reset(); }
+
+// Data.save/load implementation (after hashmap functions are available)
+void Data_save(const char* path, WynHashMap* map) {
+    FILE* f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f, "{\n");
+    char* keys = hashmap_keys_string(map);
+    if (keys && keys[0]) {
+        char* copy = strdup(keys);
+        char* line = strtok(copy, "\n");
+        int first = 1;
+        while (line) {
+            if (line[0]) {
+                if (!first) fprintf(f, ",\n");
+                const char* val = hashmap_get_string(map, line);
+                fprintf(f, "  \"%s\": \"%s\"", line, val ? val : "");
+                first = 0;
+            }
+            line = strtok(NULL, "\n");
+        }
+        free(copy);
+    }
+    fprintf(f, "\n}\n");
+    fclose(f);
+}
+
+WynHashMap* Data_load(const char* path) {
+    WynHashMap* map = hashmap_new();
+    FILE* f = fopen(path, "r");
+    if (!f) return map;
+    char buf[65536];
+    int len = fread(buf, 1, sizeof(buf) - 1, f);
+    buf[len] = 0;
+    fclose(f);
+    char* p = buf;
+    while (*p) {
+        char* kstart = strchr(p, '"'); if (!kstart) break; kstart++;
+        char* kend = strchr(kstart, '"'); if (!kend) break;
+        char* colon = strchr(kend, ':'); if (!colon) break;
+        char* vstart = strchr(colon, '"'); if (!vstart) break; vstart++;
+        char* vend = strchr(vstart, '"'); if (!vend) break;
+        int klen = kend - kstart, vlen = vend - vstart;
+        char key[256], val[256];
+        if (klen > 255) klen = 255;
+        if (vlen > 255) vlen = 255;
+        memcpy(key, kstart, klen); key[klen] = 0;
+        memcpy(val, vstart, vlen); val[vlen] = 0;
+        hashmap_insert_string(map, strdup(key), strdup(val));
+        p = vend + 1;
+    }
+    return map;
+}
 
 #endif // WYN_RUNTIME_H
 

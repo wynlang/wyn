@@ -4712,6 +4712,28 @@ void check_program(Program* prog) {
         Token string_mod_tok = {TOKEN_IDENT, "String", 6, 0};
         add_symbol(global_scope, string_mod_tok, builtin_string, false);
         
+        // Data module
+        Token data_mod_tok = {TOKEN_IDENT, "Data", 4, 0};
+        add_symbol(global_scope, data_mod_tok, builtin_int, false);
+        
+        // Data::save returns void, Data::load returns map
+        Token data_save_tok = {TOKEN_IDENT, "Data::save", 10, 0};
+        Type* data_save_type = make_type(TYPE_FUNCTION);
+        data_save_type->fn_type.param_count = 2;
+        data_save_type->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        data_save_type->fn_type.param_types[0] = builtin_string;
+        data_save_type->fn_type.param_types[1] = make_type(TYPE_MAP);
+        data_save_type->fn_type.return_type = builtin_void;
+        add_symbol(global_scope, data_save_tok, data_save_type, false);
+        
+        Token data_load_tok = {TOKEN_IDENT, "Data::load", 10, 0};
+        Type* data_load_type = make_type(TYPE_FUNCTION);
+        data_load_type->fn_type.param_count = 1;
+        data_load_type->fn_type.param_types = malloc(sizeof(Type*));
+        data_load_type->fn_type.param_types[0] = builtin_string;
+        data_load_type->fn_type.return_type = make_type(TYPE_MAP);
+        add_symbol(global_scope, data_load_tok, data_load_type, false);
+        
         Token hashmap_insert_tok = {TOKEN_IDENT, "HashMap::insert", 15, 0};
         Type* hashmap_insert_type = make_type(TYPE_FUNCTION);
         hashmap_insert_type->fn_type.param_count = 3;
