@@ -392,15 +392,19 @@ var max_value = Math.max(10, 20)
 ### Hash Maps
 
 ```wyn
-var map = HashMap.new()
-map.set("key1", "value1")
-map.set("key2", "value2")
+// Inline literal (preferred)
+var map = { "name": "Alice", "age": "30", "active": "true" }
+println(map.get("name"))  // Alice
 
-var value = map.get("key1")
-match value {
-    Some(v) => Terminal.print("Found: " + v)
-    None() => Terminal.print("Not found")
-}
+// Or build incrementally
+var config = HashMap.new()
+config.insert("host", "localhost")
+config.insert("port", "8080")
+
+// Save/load to JSON file
+Data.save("config.json", config)
+var loaded = Data.load("config.json")
+println(loaded.get("host"))  // localhost
 ```
 
 ### Testing
