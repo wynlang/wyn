@@ -433,6 +433,7 @@ void add_symbol(SymbolTable* scope, Token name, Type* type, bool is_mutable) {
     scope->symbols[scope->count].name = name;
     scope->symbols[scope->count].type = type;
     scope->symbols[scope->count].is_mutable = is_mutable;
+    scope->symbols[scope->count].is_used = false;
     scope->symbols[scope->count].next_overload = NULL;  // T1.5.3: Initialize overload chain
     scope->symbols[scope->count].mangled_name = NULL;   // T1.5.3: Initialize mangled name
     scope->count++;
@@ -1904,6 +1905,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             
             Symbol* sym = find_symbol(scope, expr->token);
+            if (sym) sym->is_used = true;
             if (!sym) {
                 // Check if this is a module-qualified name (e.g., math::add or math.add)
                 // If so, allow it - it will be resolved at codegen time
@@ -3750,6 +3752,18 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 check_stmt(fn->body, &fn_scope);
             }
             
+            // Warn about unused variables (for nested functions)
+            for (int j = fn->param_count; j < fn_scope.count; j++) {
+                Symbol* s = &fn_scope.symbols[j];
+                // Skip params and _ prefixed
+                if (j < fn->param_count) continue;
+                if (s->name.start[0] == '_') continue;
+                if (!s->is_used && s->name.length > 0) {
+                    fprintf(stderr, "\033[33mWarning:\033[0m unused variable '%.*s' (line %d)\n",
+                        s->name.length, s->name.start, s->name.line);
+                }
+            }
+            
             free(fn_scope.symbols);
             break;
         }
@@ -5310,6 +5324,16 @@ void check_program(Program* prog) {
             check_stmt(fn->body, &local_scope);
             current_function_return_type = NULL;
             current_self_type = NULL;
+            
+            // Warn about unused variables
+            for (int j = fn->param_count; j < local_scope.count; j++) {
+                Symbol* s = &local_scope.symbols[j];
+                if (!s->is_used && s->name.length > 0 && s->name.start[0] != '_') {
+                    fprintf(stderr, "\033[33mWarning:\033[0m unused variable '%.*s' (line %d)\n",
+                        s->name.length, s->name.start, s->name.line);
+                }
+            }
+            
             free(local_scope.symbols);
         } else {
             check_stmt(prog->stmts[i], global_scope);

@@ -126,9 +126,10 @@ typedef struct Symbol {
     Token name;
     Type* type;
     bool is_mutable;
+    bool is_used;                 // Track if variable is referenced after declaration
     // T1.5.3: Function overloading support
-    struct Symbol* next_overload;  // Linked list of overloaded functions
-    char* mangled_name;           // Mangled name for code generation
+    struct Symbol* next_overload;
+    char* mangled_name;
 } Symbol;
 
 typedef struct SymbolTable {
