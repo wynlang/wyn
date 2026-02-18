@@ -71,12 +71,8 @@ static void ensure_dir(const char* path) {
 
 // Get packages directory
 static void get_packages_dir(char* buf, size_t size) {
-    const char* home = getenv("HOME");
-    if (home) {
-        snprintf(buf, size, "%s/.wyn/packages", home);
-    } else {
-        snprintf(buf, size, "./wyn_modules");
-    }
+    // Project-local: wyn_modules/ in current directory
+    snprintf(buf, size, "./wyn_modules");
 }
 
 // Check if a string looks like a git URL
