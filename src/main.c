@@ -787,22 +787,81 @@ int main(int argc, char** argv) {
         }
         
         printf("\033[1mBuilding\033[0m %s%s...\n", entry, build_flag);
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "%s run %s%s", argv[0], entry, build_flag);
-        int result = system(cmd);
-        if (result == 0 && build_flag[0] == 0) {
-            // Normal build: remove .c, rename .out to clean name
-            char c_path[512];
-            snprintf(c_path, sizeof(c_path), "%s.c", entry);
-            unlink(c_path);
-            char out_path[512], bin_path[512];
-            snprintf(out_path, sizeof(out_path), "%s.out", entry);
-            snprintf(bin_path, sizeof(bin_path), "%s", entry);
-            char* dot = strrchr(bin_path, '.');
-            if (dot) *dot = 0;
-            rename(out_path, bin_path);
+        
+        // Compile only — don't run
+        char* source = read_file(entry);
+        if (!source) return 1;
+        
+        init_lexer(source);
+        init_parser();
+        set_parser_filename(entry);
+        init_checker();
+        
+        // Load imports
+        extern void preload_imports(const char* source);
+        extern void check_all_modules(void);
+        preload_imports(source);
+        check_all_modules();
+        
+        Program* prog = parse_program();
+        if (!prog) { fprintf(stderr, "Error: Failed to parse\n"); free(source); return 1; }
+        
+        { extern void set_checker_source(const char*, const char*); set_checker_source(source, entry); }
+        check_program(prog);
+        if (checker_had_error()) { fprintf(stderr, "Compilation failed\n"); free(source); return 1; }
+        
+        char out_c[256];
+        snprintf(out_c, sizeof(out_c), "%s.c", entry);
+        FILE* out_f = fopen(out_c, "w");
+        init_codegen(out_f);
+        codegen_c_header();
+        codegen_program(prog);
+        fclose(out_f);
+        
+        // Determine output binary name
+        char bin_path[512];
+        snprintf(bin_path, sizeof(bin_path), "%s", entry);
+        char* dot = strrchr(bin_path, '.'); if (dot) *dot = 0;
+        
+        // Determine wyn_root
+        char wyn_root[1024] = ".";
+        char exe_path[1024]; strncpy(exe_path, argv[0], sizeof(exe_path)-1);
+        char* ls = strrchr(exe_path, '/'); if (ls) { *ls = 0; snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path); }
+        
+        // Compile with TCC or system cc
+        const char* cc = detect_cc();
+        char tcc_bin[512]; snprintf(tcc_bin, sizeof(tcc_bin), "%s/vendor/tcc/bin/tcc", wyn_root);
+        char rt_tcc[512]; snprintf(rt_tcc, sizeof(rt_tcc), "%s/vendor/tcc/lib/libwyn_rt_tcc.a", wyn_root);
+        const char* sqlite_flags = strstr(source, "Db.") ? "-DWYN_USE_SQLITE" : "";
+        
+        char cmd[4096];
+        int result;
+        if (build_flag[0] == 0 && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0) {
+            snprintf(cmd, sizeof(cmd),
+                "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/sqlite -w %s "
+                "%s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s -lpthread -lm 2>/dev/null",
+                tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, sqlite_flags,
+                entry, wyn_root, wyn_root, rt_tcc);
+            result = system(cmd);
+        } else {
+            char rt_lib[512]; snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
+#ifdef __APPLE__
+            const char* plibs = "-lpthread -lm";
+#else
+            const char* plibs = "-lpthread -lm";
+#endif
+            snprintf(cmd, sizeof(cmd),
+                "%s -std=c11 -O2 -w -I %s/src -o %s %s.c %s -lpthread -lm 2>/dev/null",
+                cc, wyn_root, bin_path, entry, rt_lib);
+            result = system(cmd);
+        }
+        
+        unlink(out_c);
+        free(source);
+        
+        if (result == 0) {
             printf("\033[32m✓\033[0m Built: %s\n", bin_path);
-        } else if (result != 0) {
+        } else {
             fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
         }
         return result == 0 ? 0 : 1;

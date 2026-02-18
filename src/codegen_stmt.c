@@ -1746,7 +1746,7 @@ void codegen_stmt(Stmt* stmt) {
                 emit("    WynArray __iter_array = ");
                 codegen_expr(stmt->for_stmt.array_expr);
                 emit(";\n");
-                emit("    for (int __i = 0; __i < __iter_array.count; __i++) {\n");
+                emit("    for (long long __i = 0; __i < __iter_array.count; __i++) {\n");
                 // Use a generic approach - check element type at runtime
                 emit("        WynValue __elem = __iter_array.data[__i];\n");
                 emit("        ");

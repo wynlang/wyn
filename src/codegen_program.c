@@ -507,7 +507,16 @@ void codegen_program(Program* prog) {
     
     // Emit spawn wrapper functions (after forward declarations)
     if (spawn_wrapper_count > 0) {
-        emit("// Spawn wrapper functions\n");
+        emit("// Forward declarations for spawned functions\n");
+        for (int i = 0; i < spawn_wrapper_count; i++) {
+            emit("long long %s(", spawn_wrappers[i].func_name);
+            for (int j = 0; j < spawn_wrappers[i].arg_count; j++) {
+                if (j > 0) emit(", ");
+                emit("long long");
+            }
+            emit(");\n");
+        }
+        emit("\n// Spawn wrapper functions\n");
         for (int i = 0; i < spawn_wrapper_count; i++) {
             int ac = spawn_wrappers[i].arg_count;
             if (ac == 0) {

@@ -273,7 +273,7 @@ void codegen_expr(Expr* expr) {
             // Await: get result from future, handle NULL safely
             emit("({ void* __fr = future_get((Future*)(intptr_t)");
             codegen_expr(expr->await.expr);
-            emit("); __fr ? *(int*)__fr : 0; })");
+            emit("); __fr ? *(long long*)__fr : 0; })");
             break;
         case EXPR_BINARY:
             // Special handling for string concatenation with + operator
