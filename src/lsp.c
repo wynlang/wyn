@@ -336,7 +336,35 @@ static void handle_completion(const char* id, const char* msg) {
             "{\"label\":\"Ok\",\"kind\":12,\"detail\":\"Result constructor\"},"
             "{\"label\":\"Err\",\"kind\":12,\"detail\":\"Result constructor\"},"
             "{\"label\":\"Some\",\"kind\":12,\"detail\":\"Option constructor\"},"
-            "{\"label\":\"None\",\"kind\":12,\"detail\":\"Option constructor\"}]");
+            "{\"label\":\"None\",\"kind\":12,\"detail\":\"Option constructor\"}");
+        
+        // Scan installed packages for completions
+        char pkg_dir[512];
+        const char* home = getenv("HOME");
+        if (home) {
+            snprintf(pkg_dir, sizeof(pkg_dir), "%s/.wyn/packages", home);
+            char scan_cmd[1024];
+            snprintf(scan_cmd, sizeof(scan_cmd),
+                "for d in %s/*/; do "
+                "  name=$(basename \"$d\"); "
+                "  fns=$(grep -h '^fn ' \"$d\"src/*.wyn \"$d\"*.wyn 2>/dev/null | sed 's/fn //;s/(.*//;s/ .*//' | tr '\\n' ', ' | sed 's/, $//'); "
+                "  [ -n \"$fns\" ] && printf ',{\"label\":\"%%s\",\"kind\":9,\"detail\":\"package: %%s\"}' \"$name\" \"$fns\"; "
+                "done", pkg_dir);
+            FILE* fp = popen(scan_cmd, "r");
+            if (fp) {
+                char pkg_buf[4096] = "";
+                fread(pkg_buf, 1, sizeof(pkg_buf) - 1, fp);
+                pclose(fp);
+                if (pkg_buf[0]) {
+                    // Append to buf (before the closing ])
+                    int blen = strlen(buf);
+                    snprintf(buf + blen, sizeof(buf) - blen, "%s", pkg_buf);
+                }
+            }
+        }
+        
+        // Close the JSON array
+        strncat(buf, "]", sizeof(buf) - strlen(buf) - 1);
     }
     send_response(id, buf);
 }

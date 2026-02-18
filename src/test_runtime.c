@@ -177,6 +177,7 @@ int Test_summary() {
     printf("Failed:  %d\n", test_state.failed);
     printf("Skipped: %d\n", test_state.skipped);
     printf("Time:    %.3fs\n", elapsed);
+    if (elapsed < 0.001) printf("         (< 1ms)\n");
     
     if (test_state.failed == 0) {
         printf("\n✓ All tests passed!\n\n");
