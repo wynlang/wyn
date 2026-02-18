@@ -832,16 +832,26 @@ int main(int argc, char** argv) {
         const char* cc = detect_cc();
         char tcc_bin[512]; snprintf(tcc_bin, sizeof(tcc_bin), "%s/vendor/tcc/bin/tcc", wyn_root);
         char rt_tcc[512]; snprintf(rt_tcc, sizeof(rt_tcc), "%s/vendor/tcc/lib/libwyn_rt_tcc.a", wyn_root);
-        const char* sqlite_flags = strstr(source, "Db.") ? "-DWYN_USE_SQLITE" : "";
+        const char* sqlite_flags = "";
+        const char* sqlite_src = "";
+        if (strstr(source, "Db.")) {
+            struct stat _ss;
+            if (stat("./packages/sqlite/src/sqlite3.c", &_ss) == 0) {
+                sqlite_flags = "-DWYN_USE_SQLITE -I ./packages/sqlite/src";
+                sqlite_src = " ./packages/sqlite/src/sqlite3.c";
+            } else {
+                sqlite_flags = "-DWYN_USE_SQLITE -lsqlite3";
+            }
+        }
         
         char cmd[4096];
         int result;
         if (build_flag[0] == 0 && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0) {
             snprintf(cmd, sizeof(cmd),
-                "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/sqlite -w %s "
-                "%s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s -lpthread -lm 2>/dev/null",
-                tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, sqlite_flags,
-                entry, wyn_root, wyn_root, rt_tcc);
+                "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -w %s "
+                "%s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s%s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
+                tcc_bin, bin_path, wyn_root, wyn_root, sqlite_flags,
+                entry, wyn_root, wyn_root, rt_tcc, sqlite_src);
             result = system(cmd);
         } else {
             char rt_lib[512]; snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
@@ -2591,57 +2601,30 @@ int create_new_project_with_template(const char* name, const char* template) {
             "    Db.exec(db, \"CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)\")\n"
             "    return db\n"
             "}\n\n"
-            "fn get_items(ctx: HashMap) {\n"
-            "    var fd = ctx.get(\"fd\").to_int()\n"
-            "    var db = init_db()\n"
-            "    var rows = Db.query(db, \"SELECT id, name, created_at FROM items ORDER BY id DESC LIMIT 100\")\n"
-            "    Db.close(db)\n"
-            "    Http.respond_json(fd, 200, \"{\\\"items\\\": [\" + rows + \"]}\")\n"
-            "}\n\n"
-            "fn get_item(ctx: HashMap, id: string) {\n"
-            "    var fd = ctx.get(\"fd\").to_int()\n"
-            "    var db = init_db()\n"
-            "    var row = Db.query_p(db, \"SELECT id, name, created_at FROM items WHERE id = ?\", [id])\n"
-            "    Db.close(db)\n"
-            "    if row.len() == 0 {\n"
-            "        Http.respond_json(fd, 404, \"{\\\"error\\\": \\\"not found\\\"}\")\n"
-            "        return\n"
-            "    }\n"
-            "    Http.respond_json(fd, 200, row)\n"
-            "}\n\n"
-            "fn create_item(ctx: HashMap) {\n"
-            "    var fd = ctx.get(\"fd\").to_int()\n"
-            "    var body = ctx.get(\"body\")\n"
-            "    if body.len() == 0 {\n"
-            "        Http.respond_json(fd, 400, \"{\\\"error\\\": \\\"body required\\\"}\")\n"
-            "        return\n"
-            "    }\n"
-            "    var db = init_db()\n"
-            "    Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [body])\n"
-            "    Db.close(db)\n"
-            "    Http.respond_json(fd, 201, \"{\\\"status\\\": \\\"created\\\"}\")\n"
-            "}\n\n"
-            "fn delete_item(ctx: HashMap, id: string) {\n"
-            "    var fd = ctx.get(\"fd\").to_int()\n"
-            "    var db = init_db()\n"
-            "    Db.exec_p(db, \"DELETE FROM items WHERE id = ?\", [id])\n"
-            "    Db.close(db)\n"
-            "    Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"deleted\\\"}\")\n"
-            "}\n\n"
             "fn handle(raw: string) {\n"
-            "    var ctx = Http.parse_request(raw)\n"
-            "    var method = ctx.get(\"method\")\n"
-            "    var path = ctx.get(\"path\")\n"
-            "    var fd = ctx.get(\"fd\").to_int()\n\n"
-            "    // Health + readiness\n"
-            "    if path == \"/health\"  { Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ok\\\"}\"); return }\n"
-            "    if path == \"/ready\"   { Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ready\\\"}\"); return }\n\n"
-            "    // Routes\n"
-            "    var params = {}\n"
-            "    if method == \"GET\"  && path == \"/api/items\"                          { get_items(ctx); return }\n"
-            "    if method == \"POST\" && path == \"/api/items\"                          { create_item(ctx); return }\n"
-            "    if method == \"GET\"  && Http.route_match(\"/api/items/:id\", path, params) { get_item(ctx, params.get(\"id\")); return }\n"
-            "    if method == \"DELETE\" && Http.route_match(\"/api/items/:id\", path, params) { delete_item(ctx, params.get(\"id\")); return }\n\n"
+            "    var parts = raw.split(\"|\")\n"
+            "    if parts.len() < 4 { return }\n"
+            "    var method = parts[0]\n"
+            "    var path = parts[1]\n"
+            "    var body = parts[2]\n"
+            "    var fd = parts[3].to_int()\n\n"
+            "    if path == \"/health\" { Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ok\\\"}\"); return }\n"
+            "    if path == \"/ready\"  { Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ready\\\"}\"); return }\n\n"
+            "    if method == \"GET\" && path == \"/api/items\" {\n"
+            "        var db = init_db()\n"
+            "        var rows = Db.query(db, \"SELECT name FROM items ORDER BY id DESC LIMIT 100\")\n"
+            "        Db.close(db)\n"
+            "        Http.respond_json(fd, 200, \"{\\\"items\\\": [\" + rows + \"]}\")\n"
+            "        return\n"
+            "    }\n\n"
+            "    if method == \"POST\" && path == \"/api/items\" {\n"
+            "        if body.len() == 0 { Http.respond_json(fd, 400, \"{\\\"error\\\": \\\"body required\\\"}\"); return }\n"
+            "        var db = init_db()\n"
+            "        Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [body])\n"
+            "        Db.close(db)\n"
+            "        Http.respond_json(fd, 201, \"{\\\"status\\\": \\\"created\\\"}\")\n"
+            "        return\n"
+            "    }\n\n"
             "    Http.respond_json(fd, 404, \"{\\\"error\\\": \\\"not found\\\"}\")\n"
             "}\n\n"
             "fn main() -> int {\n"
