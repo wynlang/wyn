@@ -2361,7 +2361,7 @@ int create_new_project_with_template(const char* name, const char* template) {
     // .gitignore
     snprintf(cmd, sizeof(cmd), "%s/.gitignore", name);
     f = fopen(cmd, "w");
-    fprintf(f, "*.wyn.c\n*.wyn.out\n*.out\nwyn_cc_err.txt\n*.db\nwyn_modules/\n");
+    fprintf(f, "*.wyn.c\n*.wyn.out\n*.out\nwyn_cc_err.txt\n*.db\npackages/\n");
     fclose(f);
     
     // README

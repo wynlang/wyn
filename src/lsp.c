@@ -338,10 +338,10 @@ static void handle_completion(const char* id, const char* msg) {
             "{\"label\":\"Some\",\"kind\":12,\"detail\":\"Option constructor\"},"
             "{\"label\":\"None\",\"kind\":12,\"detail\":\"Option constructor\"}");
         
-        // Scan installed packages for completions (project-local wyn_modules/)
+        // Scan installed packages for completions (project-local packages/)
         char scan_cmd[1024];
         snprintf(scan_cmd, sizeof(scan_cmd),
-            "for d in wyn_modules/*/; do "
+            "for d in packages/*/; do "
             "  name=$(basename \"$d\"); "
             "  fns=$(grep -h '^fn ' \"$d\"src/*.wyn \"$d\"*.wyn 2>/dev/null | sed 's/fn //;s/(.*//;s/ .*//' | tr '\\n' ', ' | sed 's/, $//'); "
             "  [ -n \"$fns\" ] && printf ',{\"label\":\"%%s\",\"kind\":9,\"detail\":\"package: %%s\"}' \"$name\" \"$fns\"; "

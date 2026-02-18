@@ -71,8 +71,8 @@ static void ensure_dir(const char* path) {
 
 // Get packages directory
 static void get_packages_dir(char* buf, size_t size) {
-    // Project-local: wyn_modules/ in current directory
-    snprintf(buf, size, "./wyn_modules");
+    // Project-local: packages/ in current directory
+    snprintf(buf, size, "./packages");
 }
 
 // Check if a string looks like a git URL
@@ -181,7 +181,7 @@ static int install_git(const char* name, const char* url) {
 int package_install(const char* spec) {
     if (!spec || strlen(spec) == 0 || strcmp(spec, ".") == 0) {
         // Install from wyn.toml in current directory
-        printf("Installing dependencies from wyn.toml...\n");
+        printf("Installing packages from wyn.toml...\n");
         
         struct stat st;
         if (stat("wyn.toml", &st) != 0) {
@@ -189,7 +189,7 @@ int package_install(const char* spec) {
             return 1;
         }
         
-        // Parse wyn.toml for [dependencies]
+        // Parse wyn.toml for [packages]
         FILE* f = fopen("wyn.toml", "r");
         if (!f) return 1;
         
@@ -204,7 +204,7 @@ int package_install(const char* spec) {
             char* end = trimmed + strlen(trimmed) - 1;
             while (end > trimmed && (*end == '\n' || *end == '\r' || *end == ' ')) *end-- = '\0';
             
-            if (strcmp(trimmed, "[dependencies]") == 0) { in_deps = 1; continue; }
+            if (strcmp(trimmed, "[packages]") == 0) { in_deps = 1; continue; }
             if (trimmed[0] == '[') { in_deps = 0; continue; }
             if (!in_deps || trimmed[0] == '#' || trimmed[0] == '\0') continue;
             
