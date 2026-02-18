@@ -81,12 +81,15 @@ void codegen_program(Program* prog) {
     }
     
     // Generate global variables (only if has main)
+    // Track arrays that need deferred initialization
+    int deferred_init_count = 0;
+    int deferred_init_indices[64];
     if (has_main) {
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_VAR) {
             Stmt* var_stmt = prog->stmts[i];
-            // Determine C type from initializer
             const char* c_type = "long long";
+            bool needs_deferred_init = false;
             if (var_stmt->var.init) {
                 if (var_stmt->var.init->type == EXPR_STRING) {
                     c_type = "const char*";
@@ -96,8 +99,8 @@ void codegen_program(Program* prog) {
                     c_type = "long long";
                 } else if (var_stmt->var.init->type == EXPR_ARRAY) {
                     c_type = "WynArray";
+                    needs_deferred_init = true;
                 } else if (var_stmt->var.init->type == EXPR_STRUCT_INIT) {
-                    // Use struct type name
                     emit("\n");
                     Token sname = var_stmt->var.init->struct_init.type_name;
                     emit("%.*s %.*s = ", sname.length, sname.start,
@@ -106,27 +109,44 @@ void codegen_program(Program* prog) {
                     emit(";\n");
                     continue;
                 } else if (var_stmt->var.init->type == EXPR_CALL) {
-                    // Function call init — check for HashMap.new() etc.
                     c_type = "WynHashMap*";
+                    needs_deferred_init = true;
+                } else if (var_stmt->var.init->type == EXPR_HASHMAP_LITERAL) {
+                    c_type = "WynHashMap*";
+                    needs_deferred_init = true;
+                } else if (var_stmt->var.init->type == EXPR_METHOD_CALL) {
+                    // HashMap.new(), etc. — needs runtime init
+                    needs_deferred_init = true;
                 }
-                // Check explicit type annotation
                 if (var_stmt->var.type && var_stmt->var.type->type == EXPR_IDENT) {
                     Token tn = var_stmt->var.type->token;
                     if (tn.length == 6 && memcmp(tn.start, "string", 6) == 0) c_type = "const char*";
                     else if (tn.length == 5 && memcmp(tn.start, "float", 5) == 0) c_type = "double";
-                    else if (tn.length == 4 && memcmp(tn.start, "bool", 4) == 0) c_type = "long long";
                 }
             }
             emit("\n");
-            emit("%s %.*s", c_type, var_stmt->var.name.length, var_stmt->var.name.start);
-            if (var_stmt->var.init) {
-                emit(" = ");
-                codegen_expr(var_stmt->var.init);
+            if (needs_deferred_init) {
+                // Declare without init — will be initialized in __wyn_init_globals
+                emit("%s %.*s;\n", c_type, var_stmt->var.name.length, var_stmt->var.name.start);
+                if (deferred_init_count < 64) deferred_init_indices[deferred_init_count++] = i;
             } else {
-                emit(" = 0");
+                emit("%s %.*s", c_type, var_stmt->var.name.length, var_stmt->var.name.start);
+                if (var_stmt->var.init) { emit(" = "); codegen_expr(var_stmt->var.init); }
+                else { emit(" = 0"); }
+                emit(";\n");
             }
+        }
+    }
+    // Emit deferred initializer function
+    if (deferred_init_count > 0) {
+        emit("\n__attribute__((constructor)) void __wyn_init_globals(void) {\n");
+        for (int d = 0; d < deferred_init_count; d++) {
+            Stmt* var_stmt = prog->stmts[deferred_init_indices[d]];
+            emit("    %.*s = ", var_stmt->var.name.length, var_stmt->var.name.start);
+            codegen_expr(var_stmt->var.init);
             emit(";\n");
         }
+        emit("}\n");
     }
     } // end if (has_main) for global vars
     

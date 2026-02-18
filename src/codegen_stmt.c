@@ -1212,9 +1212,42 @@ void codegen_stmt(Stmt* stmt) {
                             }
                         }
                         if (is_type_param) {
-                            // Type parameter — use long long (works for int/bool)
-                            // String fields in generic structs need concrete struct types
+                            // Determine concrete type from struct instantiations
                             c_type = "long long";
+                            bool found_first = false;
+                            bool type_conflict = false;
+                            if (current_program) {
+                                for (int si = 0; si < current_program->count && !type_conflict; si++) {
+                                    Stmt* s = current_program->stmts[si];
+                                    if (s->type != STMT_FN || !s->fn.body || s->fn.body->type != STMT_BLOCK) continue;
+                                    for (int bi = 0; bi < s->fn.body->block.count && !type_conflict; bi++) {
+                                        Stmt* bs = s->fn.body->block.stmts[bi];
+                                        if (bs->type != STMT_VAR || !bs->var.init || bs->var.init->type != EXPR_STRUCT_INIT) continue;
+                                        Expr* init = bs->var.init;
+                                        if (init->struct_init.type_name.length != stmt->struct_decl.name.length ||
+                                            memcmp(init->struct_init.type_name.start, stmt->struct_decl.name.start, stmt->struct_decl.name.length) != 0) continue;
+                                        if (i < init->struct_init.field_count) {
+                                            Expr* fv = init->struct_init.field_values[i];
+                                            const char* this_type = "long long";
+                                            if (fv && (fv->type == EXPR_STRING || fv->type == EXPR_STRING_INTERP ||
+                                                (fv->expr_type && fv->expr_type->kind == TYPE_STRING))) {
+                                                this_type = "const char*";
+                                            } else if (fv && (fv->type == EXPR_FLOAT ||
+                                                (fv->expr_type && fv->expr_type->kind == TYPE_FLOAT))) {
+                                                this_type = "double";
+                                            }
+                                            if (!found_first) { c_type = this_type; found_first = true; }
+                                            else if (strcmp(c_type, this_type) != 0) { type_conflict = true; }
+                                        }
+                                    }
+                                }
+                            }
+                            if (type_conflict) {
+                                fprintf(stderr, "Error: Generic struct '%.*s' used with conflicting types for field '%.*s'\n",
+                                    stmt->struct_decl.name.length, stmt->struct_decl.name.start,
+                                    stmt->struct_decl.fields[i].length, stmt->struct_decl.fields[i].start);
+                                fprintf(stderr, "  \033[34mHelp:\033[0m Use separate concrete structs for different field types\n");
+                            }
                         } else if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                             c_type = "long long";
                         } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {

@@ -3156,16 +3156,9 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Token struct_name = expr->struct_init.type_name;
             
             if (wyn_is_generic_struct(struct_name)) {
-                // Check for string fields in generic structs — not yet supported
+                // Check field types
                 for (int i = 0; i < expr->struct_init.field_count; i++) {
-                    Type* field_type = check_expr(expr->struct_init.field_values[i], scope);
-                    if (field_type && field_type->kind == TYPE_STRING) {
-                        fprintf(stderr, "Error at line %d: Generic struct '%.*s' does not support string fields yet\n",
-                            expr->token.line, struct_name.length, struct_name.start);
-                        fprintf(stderr, "  \033[34mHelp:\033[0m Use a concrete struct: struct MyStruct { name: string }\n");
-                        had_error = true;
-                        break;
-                    }
+                    check_expr(expr->struct_init.field_values[i], scope);
                 }
                 
                 // Infer type arguments from field values
