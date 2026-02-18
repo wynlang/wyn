@@ -150,9 +150,9 @@ static int install_git(const char* name, const char* url) {
     int result = system(cmd);
     
     if (result == 0) {
-        // Validate: must contain at least one .wyn file
+        // Validate: must contain .wyn files OR .c/.h files (C library package)
         char check[1024];
-        snprintf(check, sizeof(check), "find '%s' -name '*.wyn' -maxdepth 2 | head -1", dest);
+        snprintf(check, sizeof(check), "find '%s' \\( -name '*.wyn' -o -name '*.c' -o -name '*.h' \\) -maxdepth 3 | head -1", dest);
         FILE* fp = popen(check, "r");
         char buf[256] = "";
         if (fp) { fgets(buf, sizeof(buf), fp); pclose(fp); }
