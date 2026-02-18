@@ -432,7 +432,7 @@ wyn install https://github.com/user/wyn-package
 name = "my-app"
 version = "1.0.0"
 
-[dependencies]
+[packages]
 math-utils = { path = "./packages/math-utils" }
 http-client = { git = "https://github.com/user/wyn-http" }
 ```
