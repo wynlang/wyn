@@ -30,11 +30,24 @@ int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
 
     char cmd[4096];
     if (access(rt_tcc, R_OK) == 0) {
-        // Fast path: pre-compiled runtime + wrapper source (wrapper defines main())
+        // Fast path: pre-compiled runtime + wrapper source
+        // Check if project has sqlite package installed
+        char sqlite_src[512];
+        snprintf(sqlite_src, sizeof(sqlite_src), "./packages/sqlite/src/sqlite3.c");
+        const char* sqlite_inc = "";
+        const char* sqlite_file = "";
+        char sqlite_inc_buf[256] = "";
+        if (access(sqlite_src, R_OK) == 0) {
+            snprintf(sqlite_inc_buf, sizeof(sqlite_inc_buf), "-I ./packages/sqlite/src -DWYN_USE_SQLITE");
+            sqlite_inc = sqlite_inc_buf;
+            sqlite_file = sqlite_src;
+        }
+        
         snprintf(cmd, sizeof(cmd),
-            "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/sqlite -w %s "
-            "%s %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
-            tcc_bin, output_path, wyn_root, wyn_root, wyn_root, extra_flags, c_path, wyn_root, wyn_root, rt_tcc);
+            "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -w %s %s "
+            "%s %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s %s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
+            tcc_bin, output_path, wyn_root, wyn_root, extra_flags, sqlite_inc,
+            c_path, wyn_root, wyn_root, rt_tcc, sqlite_file);
     } else {
         // Fallback: compile runtime from source
         snprintf(cmd, sizeof(cmd),

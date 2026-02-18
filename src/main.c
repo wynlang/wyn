@@ -1743,7 +1743,16 @@ int main(int argc, char** argv) {
         }
         
         // Detect optional dependencies
-        const char* sqlite_flags = strstr(source, "Db.") ? " -DWYN_USE_SQLITE -lsqlite3" : "";
+        // SQLite: check for package in project, fall back to system library
+        const char* sqlite_flags = "";
+        if (strstr(source, "Db.")) {
+            struct stat _ss;
+            if (stat("./packages/sqlite/src/sqlite3.c", &_ss) == 0) {
+                sqlite_flags = " -DWYN_USE_SQLITE -I ./packages/sqlite/src ./packages/sqlite/src/sqlite3.c";
+            } else {
+                sqlite_flags = " -DWYN_USE_SQLITE -lsqlite3";
+            }
+        }
         const char* gui_flags = strstr(source, "Gui.") ? " -DWYN_USE_GUI $(pkg-config --cflags --libs sdl2 2>/dev/null || echo '-lSDL2') " : "";
         
         // Check for --fast flag (use -O0 for fastest compile)
@@ -1774,7 +1783,7 @@ int main(int argc, char** argv) {
             if (c_source) {
                 char exe_path[512];
                 snprintf(exe_path, sizeof(exe_path), "%s.out", file);
-                int tcc_result = wyn_tcc_compile_to_exe(c_source, exe_path, wyn_root, sqlite_flags[0] ? "-DWYN_USE_SQLITE" : NULL);
+                int tcc_result = wyn_tcc_compile_to_exe(c_source, exe_path, wyn_root, NULL);
                 free(c_source);
                 if (tcc_result == 0) {
                     clock_gettime(CLOCK_MONOTONIC, &_ts_end);
@@ -2413,6 +2422,7 @@ int create_new_project_with_template(const char* name, const char* template) {
     f = fopen(cmd, "w");
     fprintf(f, "[project]\nname = \"%s\"\nversion = \"0.1.0\"\nentry = \"src/main.wyn\"\n", name);
     if (strcmp(template, "web") == 0 || strcmp(template, "api") == 0) {
+        fprintf(f, "\n[packages]\nsqlite = { git = \"https://github.com/wynlang/sqlite\" }\n");
         fprintf(f, "\n[deploy.dev]\nhost = \"localhost\"\nuser = \"deploy\"\nkey = \"~/.ssh/id_ed25519\"\npath = \"/opt/%s\"\nos = \"linux\"\npre = \"systemctl stop %s\"\npost = \"systemctl start %s\"\n", name, name, name);
     }
     fclose(f);
@@ -2814,6 +2824,25 @@ int create_new_project_with_template(const char* name, const char* template) {
     
     printf("\033[32m✓\033[0m Created %s project: %s/\n\n", template, name);
     printf("  %s/wyn.toml\n  %s/src/main.wyn\n  %s/tests/test_main.wyn\n  %s/README.md\n  %s/.gitignore\n\n", name, name, name, name, name);
+    
+    // Auto-install packages for templates that need them
+    if (strcmp(template, "web") == 0 || strcmp(template, "api") == 0) {
+        printf("Installing packages...\n");
+        char install_cmd[1024];
+        // Copy sqlite from official-packages if available locally, otherwise note for user
+        char local_sqlite[512];
+        snprintf(local_sqlite, sizeof(local_sqlite), "%s/../official-packages/sqlite", name);
+        struct stat _ls;
+        snprintf(install_cmd, sizeof(install_cmd), "mkdir -p %s/packages/sqlite/src && cp %s/src/sqlite3.c %s/src/sqlite3.h %s/src/sqlite.wyn %s/wyn.toml %s/packages/sqlite/ 2>/dev/null && cp %s/src/*.c %s/src/*.h %s/packages/sqlite/src/ 2>/dev/null",
+            name, local_sqlite, local_sqlite, local_sqlite, local_sqlite, name, local_sqlite, local_sqlite, name);
+        if (stat(local_sqlite, &_ls) == 0) {
+            system(install_cmd);
+            printf("  \033[32m✓\033[0m sqlite package installed\n\n");
+        } else {
+            printf("  \033[33m⚠\033[0m Run: cd %s && wyn pkg install github.com/wynlang/sqlite\n\n", name);
+        }
+    }
+    
     if (strcmp(template, "web") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n  # Open http://localhost:8080\n", name);
     else if (strcmp(template, "api") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n\nTest:\n  curl http://localhost:8080/health\n  curl -X POST -d 'My Item' http://localhost:8080/api/items\n  curl http://localhost:8080/api/items\n", name);
     else if (strcmp(template, "cli") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n\nWith args (build first):\n  wyn build . && ./%s list\n", name, name);
