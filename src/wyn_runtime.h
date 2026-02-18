@@ -2294,6 +2294,31 @@ void Terminal_move(int row, int col) {
 void Terminal_write(const char* s) {
     write(STDOUT_FILENO, s, strlen(s));
 }
+// Colors and styles
+void Terminal_color(int fg) { printf("\033[%dm", fg); }
+void Terminal_bg(int bg) { printf("\033[%dm", bg + 10); }
+void Terminal_reset() { printf("\033[0m"); }
+void Terminal_bold() { printf("\033[1m"); }
+void Terminal_dim() { printf("\033[2m"); }
+void Terminal_underline() { printf("\033[4m"); }
+void Terminal_hide_cursor() { printf("\033[?25l"); }
+void Terminal_show_cursor() { printf("\033[?25h"); }
+// Colored print helpers
+void Terminal_print_color(const char* s, int fg) { printf("\033[%dm%s\033[0m", fg, s); }
+// Box drawing
+void Terminal_box(int row, int col, int w, int h) {
+    Terminal_move(row, col); printf("┌"); for(int i=0;i<w-2;i++) printf("─"); printf("┐");
+    for(int r=1;r<h-1;r++) { Terminal_move(row+r, col); printf("│"); Terminal_move(row+r, col+w-1); printf("│"); }
+    Terminal_move(row+h-1, col); printf("└"); for(int i=0;i<w-2;i++) printf("─"); printf("┘");
+}
+// Progress bar
+void Terminal_progress(int row, int col, int width, int percent) {
+    Terminal_move(row, col);
+    int filled = (width - 2) * percent / 100;
+    printf("[");
+    for(int i=0;i<width-2;i++) printf(i < filled ? "█" : "░");
+    printf("] %d%%", percent);
+}
 #endif // _WIN32 terminal guard
 
 // Http: Http.get() maps to http_get() (lowercase, returns string)
