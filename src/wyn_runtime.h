@@ -4250,7 +4250,11 @@ void System_load_env(const char* path) {
         char* val = eq + 1;
         // Strip quotes from value
         if (*val == '"' || *val == '\'') { val++; char* end = val + strlen(val) - 1; if (*end == '"' || *end == '\'') *end = 0; }
+        #ifdef _WIN32
+        _putenv_s(key, val);
+        #else
         setenv(key, val, 1);
+        #endif
     }
     fclose(f);
 }

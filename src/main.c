@@ -45,9 +45,18 @@ static const char* detect_cc(void) {
     if (cc_path[0]) return cc_path;
     char* env_cc = getenv("WYN_CC");
     if (env_cc && env_cc[0]) { strncpy(cc_path, env_cc, 255); return cc_path; }
-    if (system("cc --version > /dev/null 2>&1") == 0) { strcpy(cc_path, "cc"); return cc_path; }
-    if (system("gcc --version > /dev/null 2>&1") == 0) { strcpy(cc_path, "gcc"); return cc_path; }
-    if (system("clang --version > /dev/null 2>&1") == 0) { strcpy(cc_path, "clang"); return cc_path; }
+#ifdef _WIN32
+    const char* devnull = "> NUL 2>&1";
+#else
+    const char* devnull = "> /dev/null 2>&1";
+#endif
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "cc --version %s", devnull);
+    if (system(cmd) == 0) { strcpy(cc_path, "cc"); return cc_path; }
+    snprintf(cmd, sizeof(cmd), "gcc --version %s", devnull);
+    if (system(cmd) == 0) { strcpy(cc_path, "gcc"); return cc_path; }
+    snprintf(cmd, sizeof(cmd), "clang --version %s", devnull);
+    if (system(cmd) == 0) { strcpy(cc_path, "clang"); return cc_path; }
     // No C compiler found
     fprintf(stderr, "\033[31mError:\033[0m No C compiler found.\n");
     fprintf(stderr, "  Wyn needs a C compiler backend. Install one of:\n");
@@ -357,6 +366,11 @@ int main(int argc, char** argv) {
     if (strcmp(command, "doctor") == 0) {
         printf("\033[1mWyn Doctor\033[0m — checking your setup\n\n");
         int issues = 0;
+#ifdef _WIN32
+        const char* devnull = "> NUL 2>&1";
+#else
+        const char* devnull = "> /dev/null 2>&1";
+#endif
         
         // Determine wyn root
         char doc_root[512];
@@ -381,8 +395,10 @@ int main(int argc, char** argv) {
         
         // Check system cc (for --release)
         const char* cc = detect_cc();
-        int has_cc = (system("cc --version > /dev/null 2>&1") == 0 || 
-                     system("gcc --version > /dev/null 2>&1") == 0);
+        char doctor_cmd[128];
+        snprintf(doctor_cmd, sizeof(doctor_cmd), "cc --version %s", devnull);
+        int has_cc = (system(doctor_cmd) == 0);
+        if (!has_cc) { snprintf(doctor_cmd, sizeof(doctor_cmd), "gcc --version %s", devnull); has_cc = (system(doctor_cmd) == 0); }
         printf("  %s System C compiler for --release (%s)\n", has_cc ? "\033[32m✓\033[0m" : "\033[33m○\033[0m", cc);
         if (!has_cc) printf("    Optional: install for optimized builds (xcode-select --install)\n");
         
@@ -393,12 +409,18 @@ int main(int argc, char** argv) {
         if (!has_rt) printf("    Optional: run 'wyn build-runtime' for faster --release builds\n");
         
         // Check PATH
-        int in_path = (system("which wyn > /dev/null 2>&1") == 0);
+#ifdef _WIN32
+        snprintf(doctor_cmd, sizeof(doctor_cmd), "where wyn %s", devnull);
+#else
+        snprintf(doctor_cmd, sizeof(doctor_cmd), "which wyn %s", devnull);
+#endif
+        int in_path = (system(doctor_cmd) == 0);
         printf("  %s wyn in PATH\n", in_path ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
         if (!in_path) printf("    Run: wyn install\n");
         
         // Check git (for packages)
-        int has_git = (system("git --version > /dev/null 2>&1") == 0);
+        snprintf(doctor_cmd, sizeof(doctor_cmd), "git --version %s", devnull);
+        int has_git = (system(doctor_cmd) == 0);
         printf("  %s git (for packages)\n", has_git ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
         if (!has_git) printf("    Optional: install git for 'wyn pkg install'\n");
         
@@ -901,7 +923,11 @@ int main(int argc, char** argv) {
             const char* plibs = "-lpthread -lm";
 #endif
             snprintf(cmd, sizeof(cmd),
+#ifdef _WIN32
+                "%s -std=c11 -O2 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>NUL",
+#else
                 "%s -std=c11 -O2 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
+#endif
                 cc, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src);
             result = system(cmd);
         }
