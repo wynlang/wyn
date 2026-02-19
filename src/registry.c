@@ -245,10 +245,11 @@ int registry_install(const char *package_spec) {
     }
     
     if (response) {
-        // TODO: Parse JSON response and download package tarball
-        printf("Package info retrieved. Download functionality coming soon.\n");
+        // Registry not yet available
+        fprintf(stderr, "Error: Package registry not available yet\n");
+        fprintf(stderr, "Use Git URL instead: wyn pkg install github.com/wynlang/%s\n", package);
         free(response);
-        return 0;
+        return 1;
     }
     
     return 1;

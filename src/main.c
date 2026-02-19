@@ -861,8 +861,8 @@ int main(int argc, char** argv) {
             const char* plibs = "-lpthread -lm";
 #endif
             snprintf(cmd, sizeof(cmd),
-                "%s -std=c11 -O2 -w -I %s/src -o %s %s.c %s -lpthread -lm 2>/dev/null",
-                cc, wyn_root, bin_path, entry, rt_lib);
+                "%s -std=c11 -O2 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
+                cc, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src);
             result = system(cmd);
         }
         
