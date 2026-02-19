@@ -35,7 +35,7 @@ void free_program(Program* prog);
 void codegen_c_header();
 void codegen_program(Program* prog);
 int create_new_project(const char* project_name);
-int create_new_project_with_template(const char* name, const char* template);
+int create_new_project_with_template(const char* name, const char* template, const char* lib_target);
 
 // Detect available C backend: WYN_CC env > cc > gcc > clang
 static const char* detect_cc(void) {
@@ -553,13 +553,29 @@ int main(int argc, char** argv) {
         static char input[256];
         char* project_name = NULL;
         const char* template = "default";
+        const char* lib_target = NULL;
         
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--web") == 0) template = "web";
             else if (strcmp(argv[i], "--api") == 0) template = "api";
             else if (strcmp(argv[i], "--cli") == 0) template = "cli";
-            else if (strcmp(argv[i], "--lib") == 0) template = "lib";
+            else if (strcmp(argv[i], "--lib") == 0) {
+                template = "lib";
+                if (i + 1 < argc && argv[i+1][0] != '-') {
+                    lib_target = argv[++i];
+                }
+            }
             else if (!project_name) project_name = argv[i];
+        }
+        
+        // --lib without target: show help
+        if (strcmp(template, "lib") == 0 && !lib_target) {
+            printf("Library target required. Options:\n\n");
+            printf("  wyn init mylib --lib wyn      Wyn package (installable via wyn pkg install)\n");
+            printf("  wyn init mylib --lib python    Python extension module\n");
+            printf("  wyn init mylib --lib node      Node.js native addon (N-API)\n");
+            printf("  wyn init mylib --lib c         C shared library with header\n");
+            return 0;
         }
         
         if (!project_name) {
@@ -571,7 +587,7 @@ int main(int argc, char** argv) {
                 project_name = input;
             } else { return 1; }
         }
-        return create_new_project_with_template(project_name, template);
+        return create_new_project_with_template(project_name, template, lib_target);
     }
     
     if (strcmp(command, "watch") == 0) {
@@ -2449,7 +2465,7 @@ int create_new_project(const char* project_name) {
     return 0;
 }
 
-int create_new_project_with_template(const char* name, const char* template) {
+int create_new_project_with_template(const char* name, const char* template, const char* lib_target) {
     if (strcmp(template, "default") == 0) return create_new_project(name);
     
     // Check if wyn.toml already exists
@@ -2468,6 +2484,9 @@ int create_new_project_with_template(const char* name, const char* template) {
     snprintf(cmd, sizeof(cmd), "%s/wyn.toml", name);
     f = fopen(cmd, "w");
     fprintf(f, "[project]\nname = \"%s\"\nversion = \"0.1.0\"\nentry = \"src/main.wyn\"\n", name);
+    if (strcmp(template, "lib") == 0 && lib_target && strcmp(lib_target, "wyn") == 0) {
+        fprintf(f, "description = \"A Wyn package\"\n");
+    }
     if (strcmp(template, "web") == 0 || strcmp(template, "api") == 0) {
         fprintf(f, "\n[packages]\nsqlite = { git = \"https://github.com/wynlang/sqlite\" }\n");
         fprintf(f, "\n[deploy.dev]\nhost = \"localhost\"\nuser = \"deploy\"\nkey = \"~/.ssh/id_ed25519\"\npath = \"/opt/%s\"\nos = \"linux\"\npre = \"systemctl stop %s\"\npost = \"systemctl start %s\"\n", name, name, name);
@@ -2548,7 +2567,16 @@ int create_new_project_with_template(const char* name, const char* template) {
         "```bash\nwyn run src/main.wyn help\nwyn run src/main.wyn info\nwyn run src/main.wyn run <file>\nwyn run src/main.wyn list\n```\n\n"
         "## Build\n\n```bash\nwyn build .\n./%s --help\n```\n\n"
         "## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n", name);
-    else if (strcmp(template, "lib") == 0) fprintf(f, "A Wyn library for Python.\n\n```bash\nwyn build src/main.wyn --python\npython3 test.py\n```\n");
+    else if (strcmp(template, "lib") == 0) {
+        if (lib_target && strcmp(lib_target, "wyn") == 0)
+            fprintf(f, "A Wyn package.\n\n## Install\n\n```bash\nwyn pkg install github.com/yourname/%s\n```\n\n## Usage\n\n```wyn\nimport %s\nprintln(%s.greet())\n```\n", name, name, name);
+        else if (lib_target && strcmp(lib_target, "python") == 0)
+            fprintf(f, "A Python extension built with Wyn.\n\n## Build\n\n```bash\nwyn build src/main.wyn --python\n```\n\n## Usage\n\n```python\nfrom %s import add, greet\nprint(add(2, 3))    # 5\nprint(greet())       # Hello from %s, world!\n```\n", name, name);
+        else if (lib_target && strcmp(lib_target, "node") == 0)
+            fprintf(f, "A Node.js native addon built with Wyn.\n\n## Build\n\n```bash\nwyn build src/main.wyn --node\n```\n\n## Usage\n\n```js\nconst { add, greet } = require('./%s');\nconsole.log(add(2, 3));  // 5\nconsole.log(greet());     // Hello from %s, world!\n```\n", name, name);
+        else if (lib_target && strcmp(lib_target, "c") == 0)
+            fprintf(f, "A C shared library built with Wyn.\n\n## Build\n\n```bash\nwyn build src/main.wyn --shared\n```\n\n## Usage\n\n```c\n#include \"%s.h\"\nprintf(\"%%d\\n\", add(2, 3));\n```\n", name);
+    }
     fclose(f);
     
     // main.wyn
@@ -2741,16 +2769,54 @@ int create_new_project_with_template(const char* name, const char* template) {
             "    }\n"
             "}\n", name, name, name, name, name, name, name);
     } else if (strcmp(template, "lib") == 0) {
-        fprintf(f,
-            "// %s — a Wyn library\n"
-            "// Build: wyn build src/main.wyn --python\n\n"
-            "fn add(a: int, b: int) -> int {\n"
-            "    return a + b\n"
-            "}\n\n"
-            "fn greet(name: string) -> string {\n"
-            "    return \"Hello from %s, \" + name + \"!\"\n"
-            "}\n\n"
-            "fn main() {}\n", name, name);
+        if (lib_target && strcmp(lib_target, "wyn") == 0) {
+            // Wyn package — installable via wyn pkg install
+            fprintf(f,
+                "// %s — a Wyn package\n"
+                "// Install: wyn pkg install github.com/yourname/%s\n\n"
+                "pub fn add(a: int, b: int) -> int {\n"
+                "    return a + b\n"
+                "}\n\n"
+                "pub fn greet(name: string = \"world\") -> string {\n"
+                "    return \"Hello from %s, \" + name + \"!\"\n"
+                "}\n", name, name, name);
+        } else if (lib_target && strcmp(lib_target, "python") == 0) {
+            fprintf(f,
+                "// %s — Python extension module\n"
+                "// Build: wyn build src/main.wyn --python\n"
+                "// Usage: python3 -c \"from %s import add; print(add(2, 3))\"\n\n"
+                "pub fn add(a: int, b: int) -> int {\n"
+                "    return a + b\n"
+                "}\n\n"
+                "pub fn greet(name: string = \"world\") -> string {\n"
+                "    return \"Hello from %s, \" + name + \"!\"\n"
+                "}\n\n"
+                "fn main() {}\n", name, name, name);
+        } else if (lib_target && strcmp(lib_target, "node") == 0) {
+            fprintf(f,
+                "// %s — Node.js native addon (N-API)\n"
+                "// Build: wyn build src/main.wyn --node\n"
+                "// Usage: const lib = require('./%s'); console.log(lib.add(2, 3));\n\n"
+                "pub fn add(a: int, b: int) -> int {\n"
+                "    return a + b\n"
+                "}\n\n"
+                "pub fn greet(name: string = \"world\") -> string {\n"
+                "    return \"Hello from %s, \" + name + \"!\"\n"
+                "}\n\n"
+                "fn main() {}\n", name, name, name);
+        } else if (lib_target && strcmp(lib_target, "c") == 0) {
+            fprintf(f,
+                "// %s — C shared library\n"
+                "// Build: wyn build src/main.wyn --shared\n"
+                "// Produces: lib%s.so (Linux) / lib%s.dylib (macOS)\n\n"
+                "pub fn add(a: int, b: int) -> int {\n"
+                "    return a + b\n"
+                "}\n\n"
+                "pub fn greet(name: string = \"world\") -> string {\n"
+                "    return \"Hello from %s, \" + name + \"!\"\n"
+                "}\n\n"
+                "fn main() {}\n", name, name, name, name);
+        }
     }
     if (f) fclose(f);
     
@@ -2806,21 +2872,35 @@ int create_new_project_with_template(const char* name, const char* template) {
             "}\n", name, name);
     } else if (strcmp(template, "cli") == 0) {
         fprintf(f,
-            "fn main() {\n"
-            "    Test.init(\"%s\")\n\n"
-            "    // String operations\n"
-            "    Test.assert(\"hello\".starts_with(\"he\"), \"starts_with\")\n"
-            "    Test.assert(\"hello\".ends_with(\"lo\"), \"ends_with\")\n"
-            "    Test.assert_eq_str(\"hello\".upper(), \"HELLO\", \"upper\")\n"
-            "    Test.assert_eq_int(\"a,b,c\".split(\",\").len(), 3, \"split\")\n\n"
-            "    // File I/O\n"
+            "test \"starts_with\" {\n"
+            "    assert(\"hello\".starts_with(\"he\"))\n"
+            "}\n\n"
+            "test \"upper\" {\n"
+            "    assert_eq(\"hello\".upper(), \"HELLO\")\n"
+            "}\n\n"
+            "test \"split\" {\n"
+            "    assert_eq(\"a,b,c\".split(\",\").len(), 3)\n"
+            "}\n\n"
+            "test \"file roundtrip\" {\n"
             "    File.write(\"/tmp/%s_test.txt\", \"hello\")\n"
             "    var content = File.read(\"/tmp/%s_test.txt\")\n"
-            "    Test.assert_eq_str(content, \"hello\", \"file roundtrip\")\n\n"
-            "    Test.summary()\n"
+            "    assert_eq(content, \"hello\")\n"
+            "}\n", name, name);
+    } else if (strcmp(template, "lib") == 0) {
+        fprintf(f,
+            "fn add(a: int, b: int) -> int { return a + b }\n"
+            "fn greet(name: string = \"world\") -> string { return \"Hello from %s, \" + name + \"!\" }\n\n"
+            "test \"add\" {\n"
+            "    assert_eq(add(2, 3), 5)\n"
+            "    assert_eq(add(0, 0), 0)\n"
+            "    assert_eq(add(-1, 1), 0)\n"
+            "}\n\n"
+            "test \"greet\" {\n"
+            "    assert_eq(greet(), \"Hello from %s, world!\")\n"
+            "    assert_eq(greet(\"wyn\"), \"Hello from %s, wyn!\")\n"
             "}\n", name, name, name);
     } else {
-        fprintf(f, "fn main() {\n    Test.init(\"%s\")\n    Test.assert(1 == 1, \"basic\")\n    Test.summary()\n}\n", name);
+        fprintf(f, "test \"basic\" {\n    assert(1 + 1 == 2)\n}\n");
     }
     fclose(f);
     
@@ -2848,7 +2928,16 @@ int create_new_project_with_template(const char* name, const char* template) {
     if (strcmp(template, "web") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n  # Open http://localhost:8080\n", name);
     else if (strcmp(template, "api") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n\nTest:\n  curl http://localhost:8080/health\n  curl -X POST -d 'My Item' http://localhost:8080/api/items\n  curl http://localhost:8080/api/items\n", name);
     else if (strcmp(template, "cli") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n\nWith args (build first):\n  wyn build . && ./%s list\n", name, name);
-    else if (strcmp(template, "lib") == 0) printf("Build:\n  cd %s && wyn build src/main.wyn --python\n  python3 -c \"from main import add; print(add(2,3))\"\n", name);
+    else if (strcmp(template, "lib") == 0) {
+        if (lib_target && strcmp(lib_target, "wyn") == 0)
+            printf("Run:\n  cd %s && wyn test\n\nPublish:\n  git push → wyn pkg install github.com/yourname/%s\n", name, name);
+        else if (lib_target && strcmp(lib_target, "python") == 0)
+            printf("Build:\n  cd %s && wyn build src/main.wyn --python\n\nTest:\n  python3 -c \"from %s import add; print(add(2, 3))\"\n", name, name);
+        else if (lib_target && strcmp(lib_target, "node") == 0)
+            printf("Build:\n  cd %s && wyn build src/main.wyn --node\n\nTest:\n  node -e \"const lib = require('./%s'); console.log(lib.add(2, 3))\"\n", name, name);
+        else if (lib_target && strcmp(lib_target, "c") == 0)
+            printf("Build:\n  cd %s && wyn build src/main.wyn --shared\n\nProduces: lib%s.so / lib%s.dylib\n", name, name, name);
+    }
     return 0;
 }
 
