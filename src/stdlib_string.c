@@ -232,6 +232,7 @@ char* wyn_string_pad_right(const char* str, int width, const char* pad_char) {
     
     char pad = pad_char && pad_char[0] ? pad_char[0] : ' ';
     int pad_count = width - len;
+    (void)pad_count;
     char* result = malloc(width + 1);
     
     memcpy(result, str, len);

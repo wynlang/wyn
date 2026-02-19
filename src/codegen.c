@@ -35,8 +35,8 @@ static bool modules_emitted_this_compilation = false;
 static const char* current_module_prefix = NULL;
 
 // Identifier scope tracking for proper identifier resolution
-static IdentScope* current_ident_scope = NULL;
-static IdentScope* module_ident_scope = NULL;
+__attribute__((unused)) static IdentScope* current_ident_scope = NULL;
+__attribute__((unused)) static IdentScope* module_ident_scope = NULL;
 
 // Convert module name to C identifier (network/http -> network_http)
 static const char* module_to_c_ident(const char* module_name) {
@@ -169,7 +169,7 @@ static void clear_module_functions() {
     module_function_count = 0;
 }
 
-static void register_parameter(const char* name) {
+__attribute__((unused)) static void register_parameter(const char* name) {
     if (current_param_count < 64) {
         current_param_mut[current_param_count] = false;
         current_param_types[current_param_count][0] = 0;
@@ -468,11 +468,11 @@ static void track_var_with_type(const char* name, int len, const char* type) {
     scopes[scope_idx].count++;
 }
 
-static void track_string_var(const char* name, int len) {
+__attribute__((unused)) static void track_string_var(const char* name, int len) {
     track_var_with_type(name, len, "char*");
 }
 
-static void track_string_object(WynObject* obj) {
+__attribute__((unused)) static void track_string_object(WynObject* obj) {
     if (scope_depth > 0 && scopes[scope_depth - 1].string_count < 256) {
         scopes[scope_depth - 1].string_objects[scopes[scope_depth - 1].string_count++] = obj;
     }

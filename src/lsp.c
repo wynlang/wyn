@@ -27,14 +27,14 @@ typedef struct {
 static Document docs[100];
 static int doc_count = 0;
 
-static Document* find_document(const char* uri) {
+__attribute__((unused)) static Document* find_document(const char* uri) {
     for (int i = 0; i < doc_count; i++) {
         if (strcmp(docs[i].uri, uri) == 0) return &docs[i];
     }
     return NULL;
 }
 
-static Document* add_document(const char* uri, const char* content) {
+__attribute__((unused)) static Document* add_document(const char* uri, const char* content) {
     if (doc_count >= 100) return NULL;
     Document* doc = &docs[doc_count++];
     strncpy(doc->uri, uri, sizeof(doc->uri) - 1);
@@ -51,7 +51,7 @@ static void send_response(const char* id, const char* result) {
     fflush(stdout);
 }
 
-static void send_notification(const char* method, const char* params) {
+__attribute__((unused)) static void send_notification(const char* method, const char* params) {
     char msg[4096];
     snprintf(msg, sizeof(msg), "{\"jsonrpc\":\"2.0\",\"method\":\"%s\",\"params\":%s}", 
              method, params);
@@ -170,6 +170,7 @@ static void handle_definition(const char* id, const char* msg) {
     
     int line = atoi(line_str + 7);
     int character = atoi(char_str + 12);
+    (void)character;
     
     // Real implementation would find definition in AST
     char def[512];
@@ -191,6 +192,7 @@ static void handle_references(const char* id, const char* msg) {
     
     int line = atoi(line_str + 7);
     int character = atoi(char_str + 12);
+    (void)character;
     
     // Real implementation would find all references in AST
     char refs[1024];
@@ -213,6 +215,7 @@ static void handle_rename(const char* id, const char* msg) {
     
     int line = atoi(line_str + 7);
     int character = atoi(char_str + 12);
+     (void)character;
     name_str += 11;
     char new_name[128] = {0};
     char* name_end = strchr(name_str, '"');
@@ -232,6 +235,7 @@ static void handle_rename(const char* id, const char* msg) {
 }
 
 static void handle_format(const char* id, const char* msg) {
+    (void)msg;
     // Real implementation would format the document
     const char* edits = "[]";  // No edits for now
     send_response(id, edits);

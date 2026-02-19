@@ -221,6 +221,7 @@ void codegen_expr(Expr* expr) {
             // Check if this is a C keyword that needs prefix
             const char* c_keywords[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
             bool is_c_keyword = false;
+            (void)is_c_keyword;
             for (int i = 0; c_keywords[i] != NULL; i++) {
                 if (strlen(temp_ident) == strlen(c_keywords[i]) && 
                     strcmp(temp_ident, c_keywords[i]) == 0) {

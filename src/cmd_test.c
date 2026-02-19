@@ -17,6 +17,8 @@ typedef struct {
 } TestResults;
 
 int cmd_test(const char* test_dir, int argc, char** argv) {
+    (void)argc;
+    (void)argv;
 #ifdef _WIN32
     (void)test_dir;
     (void)argc;

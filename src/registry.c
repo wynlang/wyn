@@ -257,6 +257,7 @@ int registry_install(const char *package_spec) {
 }
 
 int registry_resolve_version(const char *package, const char *constraint, char *resolved_version, size_t buf_size) {
+    (void)constraint;
     char path[512];
     char *response = NULL;
     

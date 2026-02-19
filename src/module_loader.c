@@ -71,6 +71,7 @@ void extract_exports(Program* module, SymbolTable* target_scope, ImportStmt* imp
 
 // Merge exported functions from module into target program
 void merge_module_exports(Program* module, Program* target, ImportStmt* import) {
+    (void)import;
     if (!module || !target) return;
     
     // Merge ALL functions for codegen (including private ones for dependencies)

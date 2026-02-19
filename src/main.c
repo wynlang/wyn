@@ -933,6 +933,7 @@ int main(int argc, char** argv) {
             char rt_lib[512]; snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
 #ifdef __APPLE__
             const char* plibs = "-lpthread -lm";
+            (void)plibs;
 #else
             const char* plibs = "-lpthread -lm";
 #endif
@@ -1194,137 +1195,11 @@ int main(int argc, char** argv) {
         return 0;
     }
     
-    // wyn doc <file> — generate docs from source
+    // wyn doc <file> [--html] — generate docs from source
     if (strcmp(command, "doc") == 0) {
-        if (argc < 3) {
-            fprintf(stderr, "Usage: wyn doc <file.wyn> [--html]\n");
-            return 1;
-        }
-        int html_mode = 0;
-        char* doc_file = NULL;
-        for (int i = 2; i < argc; i++) {
-            if (strcmp(argv[i], "--html") == 0) html_mode = 1;
-            else if (!doc_file) doc_file = argv[i];
-        }
-        if (!doc_file) { fprintf(stderr, "Usage: wyn doc <file.wyn> [--html]\n"); return 1; }
-        
-        if (html_mode) {
-            // Generate HTML docs
-            char cmd[1024];
-            snprintf(cmd, sizeof(cmd), "%s doc %s 2>&1", argv[0], doc_file);
-            FILE* p = popen(cmd, "r");
-            if (!p) return 1;
-            
-            // Derive output filename
-            char out_path[512];
-            snprintf(out_path, sizeof(out_path), "%s", doc_file);
-            char* dot = strrchr(out_path, '.'); if (dot) *dot = 0;
-            strcat(out_path, ".html");
-            
-            FILE* out = fopen(out_path, "w");
-            fprintf(out, "<!DOCTYPE html><html><head><meta charset='utf-8'><title>%s</title>\n", doc_file);
-            fprintf(out, "<style>body{font-family:system-ui;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.6}"
-                         "h2{border-bottom:1px solid #ddd;padding-bottom:4px}code{background:#f4f4f4;padding:2px 6px;border-radius:3px}"
-                         "pre{background:#f4f4f4;padding:12px;border-radius:6px;overflow-x:auto}.comment{color:#666;font-style:italic}</style>\n");
-            fprintf(out, "</head><body><h1>%s</h1>\n", doc_file);
-            
-            char buf[4096];
-            while (fgets(buf, sizeof(buf), p)) {
-                // Strip ANSI codes
-                char clean[4096]; int ci = 0;
-                for (int i = 0; buf[i]; i++) {
-                    if (buf[i] == '\033') { while (buf[i] && buf[i] != 'm') i++; continue; }
-                    clean[ci++] = buf[i];
-                }
-                clean[ci] = 0;
-                
-                if (strncmp(clean, "## ", 3) == 0) {
-                    fprintf(out, "<h2><code>%s</code></h2>\n", clean + 3);
-                } else if (clean[0] == ' ' && clean[1] == ' ') {
-                    fprintf(out, "<p class='comment'>%s</p>\n", clean + 2);
-                } else if (clean[0] == '\n') {
-                    fprintf(out, "<br>\n");
-                } else {
-                    fprintf(out, "<p>%s</p>\n", clean);
-                }
-            }
-            pclose(p);
-            fprintf(out, "</body></html>\n");
-            fclose(out);
-            printf("\033[32m✓\033[0m Generated: %s\n", out_path);
-            return 0;
-        }
-        
-        char* source = read_file(doc_file);
-        if (!source) {
-            fprintf(stderr, "\033[31m✗\033[0m Cannot read %s\n", argv[2]);
-            return 1;
-        }
-        
-        printf("\033[1m# %s\033[0m\n\n", doc_file);
-        
-        // Extract functions, structs, enums, traits with their comments
-        char* p = source;
-        char prev_comment[4096] = "";
-        while (*p) {
-            // Capture comments
-            if (p[0] == '/' && p[1] == '/') {
-                char* start = p + 2;
-                while (*start == ' ') start++;
-                char* end = start;
-                while (*end && *end != '\n') end++;
-                int len = end - start;
-                if (len > 0 && len < 4000) {
-                    int plen = strlen(prev_comment);
-                    if (plen > 0) { prev_comment[plen] = '\n'; plen++; }
-                    memcpy(prev_comment + plen, start, len);
-                    prev_comment[plen + len] = 0;
-                }
-                p = *end ? end + 1 : end;
-                continue;
-            }
-            
-            // Check for definitions
-            int is_fn = (strncmp(p, "fn ", 3) == 0);
-            int is_pub_fn = (strncmp(p, "pub fn ", 7) == 0);
-            int is_struct = (strncmp(p, "struct ", 7) == 0);
-            int is_enum = (strncmp(p, "enum ", 5) == 0);
-            int is_trait = (strncmp(p, "trait ", 6) == 0);
-            
-            if (is_fn || is_pub_fn || is_struct || is_enum || is_trait) {
-                // Extract the signature (up to { or newline)
-                char* end = p;
-                while (*end && *end != '{' && *end != '\n') end++;
-                int len = end - p;
-                char sig[512];
-                if (len > 511) len = 511;
-                memcpy(sig, p, len);
-                sig[len] = 0;
-                // Trim trailing whitespace
-                while (len > 0 && (sig[len-1] == ' ' || sig[len-1] == '\t')) sig[--len] = 0;
-                
-                if (is_struct) printf("\033[33m## struct\033[0m ");
-                else if (is_enum) printf("\033[33m## enum\033[0m ");
-                else if (is_trait) printf("\033[33m## trait\033[0m ");
-                else printf("\033[32m## fn\033[0m ");
-                
-                printf("\033[1m%s\033[0m\n", sig + (is_pub_fn ? 7 : is_fn ? 3 : is_struct ? 7 : is_enum ? 5 : 6));
-                
-                if (prev_comment[0]) {
-                    printf("  %s\n", prev_comment);
-                }
-                printf("\n");
-                prev_comment[0] = 0;
-            } else if (*p != '\n' && *p != ' ' && *p != '\t') {
-                prev_comment[0] = 0;  // Reset comment if non-definition line
-            }
-            
-            // Advance to next line
-            while (*p && *p != '\n') p++;
-            if (*p) p++;
-        }
-        free(source);
-        return 0;
+        extern int cmd_doc(const char* file, int argc, char** argv);
+        if (argc < 3) { fprintf(stderr, "Usage: wyn doc <file.wyn> [--html]\n"); return 1; }
+        return cmd_doc(argv[2], argc, argv);
     }
     
     if (strcmp(command, "cross") == 0) {
@@ -1541,14 +1416,6 @@ int main(int argc, char** argv) {
         return cmd_repl(argc, argv);
     }
     
-    if (strcmp(command, "doc") == 0) {
-        extern int cmd_doc(const char* file, int argc, char** argv);
-        if (argc < 3) {
-            fprintf(stderr, "Usage: wyn doc <file.wyn>\n");
-            return 1;
-        }
-        return cmd_doc(argv[2], argc, argv);
-    }
     
     if (strcmp(command, "pkg") == 0) {
         extern int cmd_pkg(int argc, char** argv);
@@ -2421,7 +2288,7 @@ int main(int argc, char** argv) {
     } else {
         snprintf(compile_cmd, sizeof(compile_cmd),
                  "gcc %s -std=c11 -w -I %s/src -o %s %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c -lpthread -lm", 
-                 opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
+                 opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
     }
     
     int result = system(compile_cmd);

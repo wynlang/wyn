@@ -222,13 +222,20 @@ void set_source_directory(const char* source_file) {
     }
 }
 
+// Try .wyn then .🐉 extension
+#define TRY_RESOLVE(fmt, ...) do { \
+    snprintf(path, sizeof(path), fmt ".wyn", __VA_ARGS__); \
+    if (stat(path, &st) == 0) return strdup(path); \
+    snprintf(path, sizeof(path), fmt ".🐉", __VA_ARGS__); \
+    if (stat(path, &st) == 0) return strdup(path); \
+} while(0)
+
 char* resolve_module_path(const char* module_name) {
     char path[512];
     struct stat st;
     
     // 1. Source file directory
-    snprintf(path, sizeof(path), "%s/%s.wyn", source_directory, module_name);
-    if (stat(path, &st) == 0) return strdup(path);
+    TRY_RESOLVE("%s/%s", source_directory, module_name);
     
     // 2. Parent directory of source file
     char parent_dir[512];
@@ -236,25 +243,20 @@ char* resolve_module_path(const char* module_name) {
     char* last_slash = strrchr(parent_dir, '/');
     if (last_slash) {
         *last_slash = '\0';
-        snprintf(path, sizeof(path), "%s/%s.wyn", parent_dir, module_name);
-        if (stat(path, &st) == 0) return strdup(path);
+        TRY_RESOLVE("%s/%s", parent_dir, module_name);
     }
     
     // 3. Source file directory + modules/
-    snprintf(path, sizeof(path), "%s/modules/%s.wyn", source_directory, module_name);
-    if (stat(path, &st) == 0) return strdup(path);
+    TRY_RESOLVE("%s/modules/%s", source_directory, module_name);
     
     // 4. Current directory
-    snprintf(path, sizeof(path), "%s.wyn", module_name);
-    if (stat(path, &st) == 0) return strdup(path);
+    TRY_RESOLVE("%s", module_name);
     
     // 5. ./modules/ directory
-    snprintf(path, sizeof(path), "./modules/%s.wyn", module_name);
-    if (stat(path, &st) == 0) return strdup(path);
+    TRY_RESOLVE("./modules/%s", module_name);
     
     // 5. ./wyn_modules/ directory
-    snprintf(path, sizeof(path), "./wyn_modules/%s.wyn", module_name);
-    if (stat(path, &st) == 0) return strdup(path);
+    TRY_RESOLVE("./wyn_modules/%s", module_name);
     
     // 6. User packages: ~/.wyn/packages/module_name/module_name.wyn
     const char* home = getenv("HOME");

@@ -137,6 +137,7 @@ int wyn_array_last(int* arr, int len, int* found) {
 
 // Is empty: check if array is empty
 int wyn_array_is_empty(int* arr, int len) {
+    (void)arr;
     return len == 0;
 }
 

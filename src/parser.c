@@ -84,9 +84,9 @@ static Expr* parse_result_type(); // TASK-026: Result type parsing
 static Stmt* impl_block(); // T2.5.3: Enhanced Struct System
 static Stmt* trait_decl(); // T3.2.1: Trait Definitions
 static Pattern* parse_pattern(); // T3.3.1: Pattern parsing for destructuring
-static Stmt* parse_try_statement(); // TASK-026: Try statement parsing
-static Stmt* parse_catch_statement(); // TASK-026: Catch statement parsing
-static Expr* parse_try_expression(); // TASK-026: ? operator parsing
+__attribute__((unused)) static Stmt* parse_try_statement(); // TASK-026: Try statement parsing
+__attribute__((unused)) static Stmt* parse_catch_statement(); // TASK-026: Catch statement parsing
+__attribute__((unused)) static Expr* parse_try_expression(); // TASK-026: ? operator parsing
 void check_stmt(Stmt* stmt, SymbolTable* scope);
 void codegen_stmt(Stmt* stmt);
 
@@ -1048,6 +1048,7 @@ static Expr* call() {
                 // expr is the module identifier, field_or_method is the Type
                 static char combined_name[256];
                 int module_len = 0;
+                (void)module_len;
                 if (expr->type == EXPR_IDENT) {
                     module_len = expr->token.length;
                     snprintf(combined_name, 256, "%.*s.%.*s", 
@@ -3927,7 +3928,7 @@ static Expr* parse_result_type() {
     return result_expr;
 }
 
-static Stmt* parse_try_statement() {
+__attribute__((unused)) static Stmt* parse_try_statement() {
     // Parse try { ... } catch (Type var) { ... }
     Stmt* try_stmt = alloc_stmt();
     try_stmt->type = STMT_TRY;
@@ -3970,7 +3971,7 @@ static Stmt* parse_try_statement() {
     return try_stmt;
 }
 
-static Stmt* parse_catch_statement() {
+__attribute__((unused)) static Stmt* parse_catch_statement() {
     // Parse standalone catch statement
     Stmt* catch_stmt = alloc_stmt();
     catch_stmt->type = STMT_CATCH;
@@ -3993,7 +3994,7 @@ static Stmt* parse_catch_statement() {
     return catch_stmt;
 }
 
-static Expr* parse_try_expression() {
+__attribute__((unused)) static Expr* parse_try_expression() {
     // Parse expression? for error propagation
     Expr* expr = primary();
     
@@ -4008,7 +4009,7 @@ static Expr* parse_try_expression() {
 }
 
 // Update primary() to handle Result constructors and ? operator
-static Expr* primary_with_result() {
+__attribute__((unused)) static Expr* primary_with_result() {
     // Handle Ok() constructor
     if (match(TOKEN_OK)) {
         Expr* expr = alloc_expr();

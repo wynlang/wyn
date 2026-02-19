@@ -711,7 +711,7 @@ void codegen_stmt(Stmt* stmt) {
                 const char* c_keywords[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
                 bool is_c_keyword = false;
                 for (int i = 0; c_keywords[i] != NULL; i++) {
-                    if (stmt->var.name.length == strlen(c_keywords[i]) && 
+                    if ((int)stmt->var.name.length == (int)strlen(c_keywords[i]) && 
                         memcmp(stmt->var.name.start, c_keywords[i], stmt->var.name.length) == 0) {
                         is_c_keyword = true;
                         break;
@@ -878,6 +878,7 @@ void codegen_stmt(Stmt* stmt) {
             const char* return_type = stmt->fn.return_type ? "long long" : "void"; // default
             char return_type_buf[256] = {0};  // Buffer for custom return types
             bool is_async = stmt->fn.is_async;
+            (void)is_async;
             
             // main() always returns long long, even without -> int
             bool is_main_fn = (stmt->fn.name.length == 4 && memcmp(stmt->fn.name.start, "main", 4) == 0);
@@ -2207,6 +2208,7 @@ void codegen_stmt(Stmt* stmt) {
             // Module-level constants - emit as static const
             const char* c_type = "long long";
             bool type_has_const = false;
+            (void)type_has_const;
             
             // Determine type from initializer
             if (stmt->const_stmt.init) {

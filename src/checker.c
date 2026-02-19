@@ -4211,6 +4211,7 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 bool looks_like_enum_match = false;
                 char enum_name[64] = {0};
                 int enum_variant_count = 0;
+                (void)enum_variant_count;
                 
                 // Scan global scope for enum types and see if patterns match
                 for (int s = 0; s < global_scope->count; s++) {

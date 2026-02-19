@@ -5,6 +5,7 @@ void codegen_program(Program* prog) {
     current_program = prog;
     bool has_main = false;
     bool has_math_import = false;
+    (void)has_math_import;
     
     // Reset module emission flag for this compilation
     modules_emitted_this_compilation = false;
@@ -285,6 +286,7 @@ void codegen_program(Program* prog) {
             const char* return_type = fn->return_type ? "long long" : "void"; // default
             char return_type_buf[256] = {0};  // Buffer for custom return types
             bool is_async = fn->is_async;
+            (void)is_async;
             
             // main() always returns long long (int), even without -> int
             bool is_main_fn = (fn->name.length == 4 && memcmp(fn->name.start, "main", 4) == 0);
@@ -389,6 +391,7 @@ void codegen_program(Program* prog) {
                 const char* param_type = "long long"; // default
                 char struct_type_name[256] = {0};
                 bool is_struct_type = false;
+                (void)is_struct_type;
                 
                 // Extension method self parameter: use receiver type
                 if (fn->is_extension && j == 0 && !fn->param_types[j]) {
@@ -724,6 +727,7 @@ void codegen_match_statement(Stmt* stmt) {
     // Check if this is a simple integer match that can use switch
     bool can_use_switch = true;
     bool has_wildcard = false;
+    (void)has_wildcard;
     
     for (int i = 0; i < stmt->match_stmt.case_count; i++) {
         MatchCase* match_case = &stmt->match_stmt.cases[i];

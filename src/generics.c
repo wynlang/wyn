@@ -865,6 +865,7 @@ void wyn_generate_monomorphic_instances(void) {
 // Generate monomorphic instances for codegen integration
 void wyn_generate_monomorphic_instances_for_codegen(void* prog_ptr) {
     Program* prog = (Program*)prog_ptr;
+    (void)prog;
     GenericInstantiation* current = g_instantiations;
     
     // First, generate monomorphized struct definitions
