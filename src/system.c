@@ -20,7 +20,7 @@
     #define mkdir(path, mode) _mkdir(path)
     #define getpagesize() 4096
     #define realpath(path, resolved) _fullpath(resolved, path, _MAX_PATH)
-    #define basename(path) _basename(path)
+    #define basename(path) _wyn_basename(path)
     #define dirname(path) _dirname(path)
     #define close _close
     #define read _read

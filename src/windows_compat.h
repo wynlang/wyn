@@ -19,9 +19,8 @@ static inline char* _dirname(const char* path) {
     return dir;
 }
 
-// POSIX file access — MinGW provides access() via <unistd.h>
+// POSIX file access — provide access() for Windows
 #include <io.h>
-#include <unistd.h>
 #include <ctype.h>
 #ifndef F_OK
 #define F_OK 0
@@ -32,6 +31,13 @@ static inline char* _dirname(const char* path) {
 #ifndef R_OK
 #define R_OK 4
 #endif
+#ifndef W_OK
+#define W_OK 2
+#endif
+static inline int access(const char* path, int mode) {
+    // On Windows, X_OK is mapped to 0 (existence check)
+    return _access(path, mode);
+}
 
 // Case-insensitive substring search (POSIX strcasestr)
 static inline char* _wyn_strcasestr(const char* haystack, const char* needle) {

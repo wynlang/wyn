@@ -21,7 +21,7 @@
     #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
     #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
     #define dirname _dirname
-    #define basename _basename
+    #define basename _wyn_basename
 #else
     #include <sys/stat.h>
     #include <unistd.h>
