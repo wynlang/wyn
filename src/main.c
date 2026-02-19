@@ -890,6 +890,7 @@ int main(int argc, char** argv) {
         snprintf(out_c, sizeof(out_c), "%s.c", entry);
         FILE* out_f = fopen(out_c, "w");
         init_codegen(out_f);
+        { extern void codegen_set_slim_runtime(bool); codegen_set_slim_runtime(false); }
         codegen_c_header();
         codegen_program(prog);
         fclose(out_f);
@@ -1663,6 +1664,10 @@ int main(int argc, char** argv) {
         struct timespec _ts_start, _ts_end;
         clock_gettime(CLOCK_MONOTONIC, &_ts_start);
         init_codegen(out);
+        { extern void codegen_set_slim_runtime(bool);
+          bool _slim = false;
+          for (int _i = 2; _i < argc; _i++) if (strcmp(argv[_i], "--release") == 0) _slim = true;
+          codegen_set_slim_runtime(_slim); }
         codegen_c_header();
         codegen_program(prog);
         fclose(out);

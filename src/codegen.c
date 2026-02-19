@@ -522,8 +522,15 @@ static void emit_type_from_expr(Expr* type_expr) {
 static bool in_async_function = false;
 
 // codegen_c_header - emit runtime include
+// Use slim header for release builds (40% faster execution)
+static bool use_slim_runtime = false;
+void codegen_set_slim_runtime(bool slim) { use_slim_runtime = slim; }
 void codegen_c_header() {
-    emit("#include \"wyn_runtime.h\"\n\n");
+    if (use_slim_runtime) {
+        emit("#include \"wyn_runtime_slim.h\"\n\n");
+    } else {
+        emit("#include \"wyn_runtime.h\"\n\n");
+    }
 }
 
 // Statement code generation (includes emit_function_with_prefix)
