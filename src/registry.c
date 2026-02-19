@@ -6,6 +6,7 @@
     #include <winsock2.h>
     #include <ws2tcpip.h>
     #include <windows.h>
+    #include "windows_compat.h"
     #define close closesocket
 #else
     #define _POSIX_C_SOURCE 200809L

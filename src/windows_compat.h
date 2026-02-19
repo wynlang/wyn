@@ -3,7 +3,10 @@
 
 #ifdef _WIN32
 
-// Windows compatibility stubs for functions that don't exist on Windows
+#include <ctype.h>
+
+// --- File path helpers ---
+
 static inline char* _wyn_basename(const char* path) {
     const char* base = strrchr(path, '\\');
     if (!base) base = strrchr(path, '/');
@@ -19,14 +22,10 @@ static inline char* _dirname(const char* path) {
     return dir;
 }
 
-// POSIX file access — provide access() for Windows
-#include <io.h>
-#include <ctype.h>
+// --- POSIX access() via Win32 API (no _access dependency) ---
+
 #ifndef F_OK
 #define F_OK 0
-#endif
-#ifndef X_OK
-#define X_OK 0  // Windows has no execute bit; check existence instead
 #endif
 #ifndef R_OK
 #define R_OK 4
@@ -34,12 +33,25 @@ static inline char* _dirname(const char* path) {
 #ifndef W_OK
 #define W_OK 2
 #endif
+#ifndef X_OK
+#define X_OK 0  // Windows has no execute bit; maps to existence check
+#endif
+
+// Uses GetFileAttributesA (always available via windows.h).
+// Avoids _access which doesn't exist on all MinGW distributions.
 static inline int access(const char* path, int mode) {
-    // On Windows, X_OK is mapped to 0 (existence check)
-    return _access(path, mode);
+    DWORD attrs = GetFileAttributesA(path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return -1;  // doesn't exist
+    if ((mode & W_OK) && (attrs & FILE_ATTRIBUTE_READONLY)) return -1;
+    return 0;
 }
 
-// Case-insensitive substring search (POSIX strcasestr)
+// --- POSIX getpid() ---
+
+#define getpid() ((int)GetCurrentProcessId())
+
+// --- strcasestr (not in any Windows CRT) ---
+
 static inline char* _wyn_strcasestr(const char* haystack, const char* needle) {
     if (!needle[0]) return (char*)haystack;
     for (; *haystack; haystack++) {
@@ -51,7 +63,8 @@ static inline char* _wyn_strcasestr(const char* haystack, const char* needle) {
 }
 #define strcasestr _wyn_strcasestr
 
-// Windows compatibility shims for Unix functions
+// --- Process/signal stubs (no fork/pipe/waitpid on Windows) ---
+
 #define fork() (-1)
 #define pipe(fds) (-1)
 #define dup2(oldfd, newfd) (-1)
@@ -67,20 +80,23 @@ static inline char* _wyn_strcasestr(const char* haystack, const char* needle) {
 #define STDOUT_FILENO 1
 #define STDERR_FILENO 2
 
-// Signal handling stubs
+// --- Signal handling stubs ---
+
 struct sigaction { void* sa_handler; void* sa_mask; int sa_flags; };
 #define sigemptyset(set) (0)
 #define sigaction(sig, act, oldact) (-1)
 #define SIG_IGN ((void*)1)
 #define SIG_DFL ((void*)0)
 
-// System info stubs
+// --- System info stubs ---
+
 struct utsname { char sysname[65]; char nodename[65]; char release[65]; char version[65]; char machine[65]; };
 #define uname(buf) (-1)
 #define sysconf(name) (-1)
 #define _SC_NPROCESSORS_ONLN 84
 
-// Directory reading stubs for missing dirent functionality
+// --- Directory stubs ---
+
 typedef struct { int dummy; } DIR;
 #define opendir(path) NULL
 #define closedir(dir) (-1)
