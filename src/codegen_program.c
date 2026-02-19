@@ -286,6 +286,10 @@ void codegen_program(Program* prog) {
             char return_type_buf[256] = {0};  // Buffer for custom return types
             bool is_async = fn->is_async;
             
+            // main() always returns long long (int), even without -> int
+            bool is_main_fn = (fn->name.length == 4 && memcmp(fn->name.start, "main", 4) == 0);
+            if (is_main_fn) return_type = "long long";
+            
             if (fn->return_type) {
                 if (fn->return_type->type == EXPR_CALL) {
                     // Generic type instantiation: HashMap<K,V>, Option<T>, Result<T,E>

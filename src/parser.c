@@ -2243,7 +2243,9 @@ Stmt* function() {
     expect(TOKEN_RBRACE, "Expected '}' after function body");
     
     // Mark last expression as implicit return if function has return type
-    if (stmt->fn.return_type) {
+    // Skip for main() — it auto-inserts return 0
+    bool is_main = (stmt->fn.name.length == 4 && memcmp(stmt->fn.name.start, "main", 4) == 0);
+    if (stmt->fn.return_type && !is_main) {
         mark_implicit_return(body);
     }
     

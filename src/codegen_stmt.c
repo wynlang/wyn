@@ -879,6 +879,10 @@ void codegen_stmt(Stmt* stmt) {
             char return_type_buf[256] = {0};  // Buffer for custom return types
             bool is_async = stmt->fn.is_async;
             
+            // main() always returns long long, even without -> int
+            bool is_main_fn = (stmt->fn.name.length == 4 && memcmp(stmt->fn.name.start, "main", 4) == 0);
+            if (is_main_fn) return_type = "long long";
+            
             if (stmt->fn.return_type) {
                 if (stmt->fn.return_type->type == EXPR_CALL) {
                     // Generic type instantiation: HashMap<K,V>, Option<T>, Result<T,E>
@@ -1128,11 +1132,17 @@ void codegen_stmt(Stmt* stmt) {
                         emit("    "); codegen_expr(get_defer(_d)); emit(";\n");
                     }
                 }
-                // Ensure main function always returns 0 if no explicit return
+                // Auto-insert return 0 at end of main if not already there
                 bool is_main = (stmt->fn.name.length == 4 && 
                                memcmp(stmt->fn.name.start, "main", 4) == 0);
-                if (is_main && !stmt->fn.return_type) {
-                    emit("    return 0;\n");
+                if (is_main) {
+                    // Check if last statement is already a return
+                    bool has_return = false;
+                    if (stmt->fn.body && stmt->fn.body->type == STMT_BLOCK && stmt->fn.body->block.count > 0) {
+                        Stmt* last = stmt->fn.body->block.stmts[stmt->fn.body->block.count - 1];
+                        if (last && last->type == STMT_RETURN) has_return = true;
+                    }
+                    if (!has_return) emit("    return 0;\n");
                 }
             }
             

@@ -1018,7 +1018,7 @@ int main(int argc, char** argv) {
             fprintf(f, "%s\n", history);
             if (is_def) {
                 fprintf(f, "%s\n", line);
-                fprintf(f, "fn main() -> int { return 0 }\n");
+                fprintf(f, "fn main() {}\n");
                 // Add to history
                 strcat(history, line);
                 strcat(history, "\n");
@@ -1031,9 +1031,9 @@ int main(int argc, char** argv) {
                               strstr(line, ".insert") != NULL || strstr(line, ".push") != NULL ||
                               strstr(line, ".exec") != NULL || strstr(line, ".close") != NULL);
                 if (is_stmt) {
-                    fprintf(f, "fn main() -> int {\n  %s\n  return 0\n}\n", line);
+                    fprintf(f, "fn main() {\n  %s\n}\n", line);
                 } else {
-                    fprintf(f, "fn main() -> int {\n  println(%s)\n  return 0\n}\n", line);
+                    fprintf(f, "fn main() {\n  println(%s)\n}\n", line);
                 }
             }
             fclose(f);
@@ -2395,7 +2395,7 @@ int create_new_project(const char* project_name) {
         fprintf(stderr, "Error: Failed to create main.wyn\n");
         return 1;
     }
-    fprintf(main_file, "fn main() -> int {\n    print(\"Hello from %s!\")\n    return 0\n}\n", project_name);
+    fprintf(main_file, "fn main() {\n    print(\"Hello from %s!\")\n}\n", project_name);
     fclose(main_file);
     
     // Create test file
@@ -2405,7 +2405,7 @@ int create_new_project(const char* project_name) {
         fprintf(stderr, "Error: Failed to create test file\n");
         return 1;
     }
-    fprintf(test_file, "// Tests for %s\n\nfn test_basic() -> int {\n    // Add your tests here\n    return 0\n}\n\nfn main() -> int {\n    test_basic()\n    print(\"All tests passed!\")\n    return 0\n}\n", project_name);
+    fprintf(test_file, "// Tests for %s\n\nfn test_basic() -> int {\n    // Add your tests here\n    return 0\n}\n\nfn main() {\n    test_basic()\n    print(\"All tests passed!\")\n}\n", project_name);
     fclose(test_file);
     
     // Create README.md
@@ -2555,7 +2555,7 @@ int create_new_project_with_template(const char* name, const char* template) {
             "    }\n\n"
             "    Http.respond_json(fd, 404, \"{\\\"error\\\": \\\"not found\\\"}\")\n"
             "}\n\n"
-            "fn main() -> int {\n"
+            "fn main() {\n"
             "    var port = 8080\n"
             "    println(\"%s running on http://localhost:\" + int_to_string(port))\n"
             "    println(\"\")\n"
@@ -2572,7 +2572,6 @@ int create_new_project_with_template(const char* name, const char* template) {
             "            spawn handle(raw)\n"
             "        }\n"
             "    }\n"
-            "    return 0\n"
             "}\n", name, name, name, name);
         
         fclose(f);
@@ -2611,7 +2610,7 @@ int create_new_project_with_template(const char* name, const char* template) {
             "    }\n\n"
             "    Http.respond_json(fd, 404, \"{\\\"error\\\": \\\"not found\\\"}\")\n"
             "}\n\n"
-            "fn main() -> int {\n"
+            "fn main() {\n"
             "    var port = 8080\n"
             "    println(\"%s running on http://localhost:\" + int_to_string(port))\n"
             "    println(\"\")\n"
@@ -2630,7 +2629,6 @@ int create_new_project_with_template(const char* name, const char* template) {
             "            spawn handle(raw)\n"
             "        }\n"
             "    }\n"
-            "    return 0\n"
             "}\n", name, name, name);
         fclose(f);
         f = NULL;
@@ -2672,7 +2670,7 @@ int create_new_project_with_template(const char* name, const char* template) {
             "    println(\"\")\n"
             "    println(int_to_string(items.len()) + \" items\")\n"
             "}\n\n"
-            "fn main() -> int {\n"
+            "fn main() {\n"
             "    var args = System.args()\n"
             "    if args.len() < 2 {\n"
             "        print_help()\n"
@@ -2698,7 +2696,6 @@ int create_new_project_with_template(const char* name, const char* template) {
             "        println(\"Run '%s --help' for usage\")\n"
             "        return 1\n"
             "    }\n"
-            "    return 0\n"
             "}\n", name, name, name, name, name, name, name);
     } else if (strcmp(template, "lib") == 0) {
         fprintf(f,
@@ -2710,7 +2707,7 @@ int create_new_project_with_template(const char* name, const char* template) {
             "fn greet(name: string) -> string {\n"
             "    return \"Hello from %s, \" + name + \"!\"\n"
             "}\n\n"
-            "fn main() -> int { return 0 }\n", name, name);
+            "fn main() {}\n", name, name);
     }
     if (f) fclose(f);
     
@@ -2719,7 +2716,7 @@ int create_new_project_with_template(const char* name, const char* template) {
     f = fopen(cmd, "w");
     if (strcmp(template, "web") == 0) {
         fprintf(f,
-            "fn main() -> int {\n"
+            "fn main() {\n"
             "    Test.init(\"%s\")\n\n"
             "    // Database\n"
             "    var db = Db.open(\"/tmp/%s_test.db\")\n"
@@ -2736,11 +2733,10 @@ int create_new_project_with_template(const char* name, const char* template) {
             "    Test.assert_eq_str(count2, \"2\", \"sql injection safe\")\n"
             "    Db.close(db2)\n\n"
             "    Test.summary()\n"
-            "    return 0\n"
             "}\n", name, name, name);
     } else if (strcmp(template, "api") == 0) {
         fprintf(f,
-            "fn main() -> int {\n"
+            "fn main() {\n"
             "    Test.init(\"%s\")\n\n"
             "    // Database CRUD\n"
             "    var db = Db.open(\"/tmp/%s_test.db\")\n"
@@ -2764,11 +2760,10 @@ int create_new_project_with_template(const char* name, const char* template) {
             "    Test.assert_eq_str(count3, \"2\", \"injection safe\")\n\n"
             "    Db.close(db)\n"
             "    Test.summary()\n"
-            "    return 0\n"
             "}\n", name, name);
     } else if (strcmp(template, "cli") == 0) {
         fprintf(f,
-            "fn main() -> int {\n"
+            "fn main() {\n"
             "    Test.init(\"%s\")\n\n"
             "    // String operations\n"
             "    Test.assert(\"hello\".starts_with(\"he\"), \"starts_with\")\n"
@@ -2780,10 +2775,9 @@ int create_new_project_with_template(const char* name, const char* template) {
             "    var content = File.read(\"/tmp/%s_test.txt\")\n"
             "    Test.assert_eq_str(content, \"hello\", \"file roundtrip\")\n\n"
             "    Test.summary()\n"
-            "    return 0\n"
             "}\n", name, name, name);
     } else {
-        fprintf(f, "fn main() -> int {\n    Test.init(\"%s\")\n    Test.assert(1 == 1, \"basic\")\n    Test.summary()\n    return 0\n}\n", name);
+        fprintf(f, "fn main() {\n    Test.init(\"%s\")\n    Test.assert(1 == 1, \"basic\")\n    Test.summary()\n}\n", name);
     }
     fclose(f);
     
