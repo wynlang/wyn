@@ -3,6 +3,11 @@
 fn run_test(path: string) -> int {
     var cmd = "./wyn run " + path + " 2>&1"
     var output = System_exec(cmd)
+    // If ./wyn failed (Windows), try wyn.exe
+    if output.len() == 0 {
+        cmd = "wyn.exe run " + path + " 2>&1"
+        output = System_exec(cmd)
+    }
 
     if output.contains("compilation failed") {
         return 0
@@ -88,9 +93,9 @@ fn main() -> int {
     println("")
     println("Results: " + pass.to_string() + " pass, " + fail.to_string() + " fail")
 
-    // Clean up artifacts
-    System_exec("find tests -name '*.wyn.c' -delete 2>/dev/null")
-    System_exec("find tests -name '*.wyn.out' -delete 2>/dev/null")
+    // Clean up artifacts (Unix only — silently fails on Windows)
+    System_exec("find tests -name '*.wyn.c' -delete 2>/dev/null || true")
+    System_exec("find tests -name '*.wyn.out' -delete 2>/dev/null || true")
 
     if fail > 0 {
         return 1

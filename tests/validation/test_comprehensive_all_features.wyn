@@ -14,12 +14,12 @@ fn test_arithmetic() -> int {
 fn test_strings() -> int {
     var s = "hello";
     if s.len() != 5 { return 1; }
-    if !(s.contains("ell")) { return 2; }
-    if !(s.starts_with("hel")) { return 3; }
-    if !(s.ends_with("llo")) { return 4; }
+    if !s.contains("ell") { return 2; }
+    if !s.starts_with("hel") { return 3; }
+    if !s.ends_with("llo") { return 4; }
     
     var upper = s.upper();
-    if !(upper.contains("HELLO")) { return 5; }
+    if !upper.contains("HELLO") { return 5; }
     
     var concat = "hello".concat(" world");
     if concat.len() != 11 { return 6; }
@@ -199,7 +199,7 @@ fn test_file_io() -> int {
     
     // Read
     var content = file_read(path);
-    if !(content.contains("test")) { return 2; }
+    if !content.contains("test") { return 2; }
     
     // Delete
     file_delete(path);
