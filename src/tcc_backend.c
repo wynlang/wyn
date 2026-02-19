@@ -4,7 +4,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include "windows_compat.h"
+#else
 #include <unistd.h>
+#endif
 
 int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
                            const char* wyn_root, const char* include_path) {

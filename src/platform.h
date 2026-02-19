@@ -26,8 +26,9 @@
 
 // Platform-specific includes
 #ifdef WYN_PLATFORM_WINDOWS
-    #include <windows.h>
     #include <winsock2.h>
+    #include <windows.h>
+    #include "windows_compat.h"
     #define WYN_PATH_SEP "\\"
     #define WYN_EXE_EXT ".exe"
 #else

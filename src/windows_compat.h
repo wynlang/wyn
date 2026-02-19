@@ -19,6 +19,32 @@ static inline char* _dirname(const char* path) {
     return dir;
 }
 
+// POSIX file access constants and function
+#include <io.h>
+#include <ctype.h>
+#ifndef F_OK
+#define F_OK 0
+#endif
+#ifndef X_OK
+#define X_OK 0  // Windows has no execute bit; check existence instead
+#endif
+#ifndef R_OK
+#define R_OK 4
+#endif
+#define access(path, mode) _access(path, (mode) == X_OK ? F_OK : (mode))
+
+// Case-insensitive substring search (POSIX strcasestr)
+static inline char* _wyn_strcasestr(const char* haystack, const char* needle) {
+    if (!needle[0]) return (char*)haystack;
+    for (; *haystack; haystack++) {
+        const char *h = haystack, *n = needle;
+        while (*h && *n && (tolower((unsigned char)*h) == tolower((unsigned char)*n))) { h++; n++; }
+        if (!*n) return (char*)haystack;
+    }
+    return NULL;
+}
+#define strcasestr _wyn_strcasestr
+
 // Windows compatibility shims for Unix functions
 #define fork() (-1)
 #define pipe(fds) (-1)

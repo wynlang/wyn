@@ -2053,7 +2053,7 @@ int Http_route_match(const char* pattern, const char* path, WynHashMap* params) 
             char val[256]; int vi = 0;
             while (*u && *u != '/' && vi < 255) val[vi++] = *u++;
             val[vi] = 0;
-            if (params) hashmap_insert(params, strdup(name), strdup(val));
+            if (params) hashmap_insert_string(params, strdup(name), strdup(val));
         } else {
             if (*p != *u) return 0;
             p++; u++;
@@ -2075,13 +2075,13 @@ WynHashMap* Http_parse_request(const char* raw) {
     if (body) { *body = 0; body++; } else { body = ""; }
     char* fd_str = strchr(body, '|');
     if (fd_str) { *fd_str = 0; fd_str++; } else { fd_str = "0"; }
-    hashmap_insert(ctx, strdup("method"), strdup(method));
-    hashmap_insert(ctx, strdup("path"), strdup(path));
-    hashmap_insert(ctx, strdup("body"), strdup(body));
-    hashmap_insert(ctx, strdup("fd"), strdup(fd_str));
+    hashmap_insert_string(ctx, strdup("method"), strdup(method));
+    hashmap_insert_string(ctx, strdup("path"), strdup(path));
+    hashmap_insert_string(ctx, strdup("body"), strdup(body));
+    hashmap_insert_string(ctx, strdup("fd"), strdup(fd_str));
     // Parse query string
     char* q = strchr(path, '?');
-    if (q) { *q = 0; hashmap_insert(ctx, strdup("query"), strdup(q + 1)); }
+    if (q) { *q = 0; hashmap_insert_string(ctx, strdup("query"), strdup(q + 1)); }
     free(copy);
     return ctx;
 }
