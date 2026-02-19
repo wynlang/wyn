@@ -670,26 +670,48 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "Usage: wyn pkg search <query>\n");
                 return 1;
             }
-            // Search installed packages and registry
-            char pkg_dir[512];
-            snprintf(pkg_dir, sizeof(pkg_dir), "%s/.wyn/packages", getenv("HOME"));
             printf("\033[1mSearching for '%s'...\033[0m\n\n", argv[3]);
             
-            // Search local packages
-            char cmd[1024];
-            snprintf(cmd, sizeof(cmd), "ls -1 %s 2>/dev/null | grep -i '%s'", pkg_dir, argv[3]);
-            FILE* fp = popen(cmd, "r");
+            // Official packages
+            static const char* pkgs[][2] = {
+                {"sqlite", "SQLite embedded database"},
+                {"redis", "Redis client (pure Wyn, RESP protocol)"},
+                {"pg", "PostgreSQL driver (wraps libpq)"},
+                {"mysql", "MySQL/MariaDB driver"},
+                {"http-client", "HTTP client with JSON, auth, headers"},
+                {"https", "HTTPS/TLS server and client (wraps mbedTLS)"},
+                {"jwt", "JSON Web Token encode/decode"},
+                {"dotenv", "Load .env files"},
+                {"log", "Structured logging with levels"},
+                {"args", "CLI argument parser"},
+                {"color", "Named terminal colors"},
+                {"table", "Formatted terminal tables"},
+                {"cache", "In-memory key-value cache"},
+                {"retry", "Retry with exponential backoff"},
+                {"validate", "Email, URL, IP validation"},
+                {"yaml", "YAML parser"},
+                {"xml", "XML parser"},
+                {"markdown", "Markdown to HTML"},
+                {"base64", "Base64 encode/decode"},
+                {"tar", "Read tar archives"},
+                {"zip", "Read/write ZIP archives"},
+                {"cron", "Schedule recurring tasks"},
+                {"test-http", "HTTP test helpers"},
+                {"gui", "Desktop GUI (wraps SDL2)"},
+                {"raylib", "2D/3D graphics and games"},
+                {"image", "Load PNG/JPG/BMP (wraps stb_image)"},
+                {"audio", "Audio playback (wraps miniaudio)"},
+                {NULL, NULL}
+            };
             int found = 0;
-            if (fp) {
-                char buf[256];
-                while (fgets(buf, sizeof(buf), fp)) {
-                    buf[strcspn(buf, "\n")] = 0;
-                    printf("  \033[32m●\033[0m %s \033[2m(installed)\033[0m\n", buf);
+            for (int pi = 0; pkgs[pi][0]; pi++) {
+                if (strcasestr(pkgs[pi][0], argv[3]) || strcasestr(pkgs[pi][1], argv[3])) {
+                    printf("  \033[36m%s\033[0m — %s\n", pkgs[pi][0], pkgs[pi][1]);
+                    printf("    wyn pkg install github.com/wynlang/%s\n\n", pkgs[pi][0]);
                     found++;
                 }
-                pclose(fp);
             }
-            if (!found) printf("  No packages found matching '%s'\n", argv[3]);
+            if (!found) printf("  No packages found matching '%s'\n\n  Browse: https://github.com/wynlang/awesome-wyn\n", argv[3]);
             return 0;
         } else if (strcmp(argv[2], "login") == 0) {
             // Register with github.com/topics/wyn-package and save API key
@@ -2456,6 +2478,27 @@ int create_new_project_with_template(const char* name, const char* template) {
     snprintf(cmd, sizeof(cmd), "%s/.gitignore", name);
     f = fopen(cmd, "w");
     fprintf(f, "*.wyn.c\n*.wyn.out\n*.out\nwyn_cc_err.txt\n*.db\npackages/\n");
+    fclose(f);
+    
+    // .github/workflows/test.yml
+    snprintf(cmd, sizeof(cmd), "mkdir -p %s/.github/workflows", name);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "%s/.github/workflows/test.yml", name);
+    f = fopen(cmd, "w");
+    fprintf(f,
+        "name: Test\n"
+        "on: [push, pull_request]\n"
+        "jobs:\n"
+        "  test:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - name: Install Wyn\n"
+        "        run: curl -fsSL https://wynlang.com/install.sh | sh\n"
+        "      - name: Test\n"
+        "        run: wyn test\n"
+        "      - name: Build\n"
+        "        run: wyn build .\n");
     fclose(f);
     
     // README
