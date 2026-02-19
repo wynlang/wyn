@@ -5,7 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <time.h>
 #ifndef _WIN32
 #include <sys/wait.h>
@@ -35,6 +37,55 @@ void free_program(Program* prog);
 void codegen_c_header();
 void codegen_program(Program* prog);
 int create_new_project(const char* project_name);
+int create_new_project_with_template(const char* name, const char* template, const char* lib_target);
+
+// Wynter encouragement on compilation failure
+static const char* wynter_compile_tips[] = {
+    "Check the error above — the line number points to the problem.",
+    "Try 'wyn check' to see all type errors without compiling.",
+    "Common fix: make sure all variables are declared before use.",
+    "Stuck? Simplify the code, get it working, then add complexity.",
+    "String interpolation uses ${expr} — make sure quotes match.",
+};
+static int wynter_compile_tip_idx = 0;
+static void wynter_encourage(void) {
+    fprintf(stderr, "  \033[36m🐉 Wynter:\033[0m %s\n",
+            wynter_compile_tips[wynter_compile_tip_idx++ % 5]);
+}
+
+// Detect available C backend: WYN_CC env > cc > gcc > clang
+static const char* detect_cc(void) {
+    static char cc_path[256] = "";
+    if (cc_path[0]) return cc_path;
+    char* env_cc = getenv("WYN_CC");
+    if (env_cc && env_cc[0]) { strncpy(cc_path, env_cc, 255); return cc_path; }
+#ifdef _WIN32
+    const char* devnull = "> NUL 2>&1";
+#else
+    const char* devnull = "> /dev/null 2>&1";
+#endif
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "cc --version %s", devnull);
+    if (system(cmd) == 0) { strcpy(cc_path, "cc"); return cc_path; }
+    snprintf(cmd, sizeof(cmd), "gcc --version %s", devnull);
+    if (system(cmd) == 0) { strcpy(cc_path, "gcc"); return cc_path; }
+    snprintf(cmd, sizeof(cmd), "clang --version %s", devnull);
+    if (system(cmd) == 0) { strcpy(cc_path, "clang"); return cc_path; }
+    // No C compiler found
+    fprintf(stderr, "\033[31mError:\033[0m No C compiler found.\n");
+    fprintf(stderr, "  Wyn needs a C compiler backend. Install one of:\n");
+    fprintf(stderr, "    macOS:  xcode-select --install\n");
+    fprintf(stderr, "    Ubuntu: sudo apt install build-essential\n");
+    fprintf(stderr, "    Fedora: sudo dnf install gcc\n");
+    fprintf(stderr, "  Or set WYN_CC=/path/to/compiler\n");
+    strcpy(cc_path, "cc");
+    return cc_path;
+}
+
+// TCC backend declarations
+extern int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
+                                   const char* wyn_root, const char* include_path);
+extern int wyn_tcc_available(void);
 
 static char* read_file(const char* path) {
     FILE* f = fopen(path, "r");
@@ -86,7 +137,7 @@ static char* get_version() {
             }
             fclose(f);
         }
-        if (version[0] == 0) strcpy(version, "1.6.0");
+        if (version[0] == 0) strcpy(version, "1.7.0");
         
         // Add LLVM backend indicator
         #ifdef WITH_LLVM
@@ -140,6 +191,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
         fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
         fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
+        fprintf(stderr, "  \033[32mdoctor\033[0m                  Check your setup\n");
         fprintf(stderr, "  \033[32mversion\033[0m                 Show version\n");
         fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
         
@@ -155,8 +207,245 @@ int main(int argc, char** argv) {
     char* command = argv[1];
     
     // Handle --version and -v flags
+    // wyn deploy <target> — deploy to server via SSH
+    if (strcmp(command, "deploy") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: wyn deploy <target> [--dry-run]\n");
+            fprintf(stderr, "  Reads [deploy.<target>] from wyn.toml\n");
+            return 1;
+        }
+        const char* target = argv[2];
+        int dry_run = 0;
+        for (int i = 3; i < argc; i++) { if (strcmp(argv[i], "--dry-run") == 0) dry_run = 1; }
+        
+        // Read wyn.toml
+        FILE* toml = fopen("wyn.toml", "r");
+        if (!toml) { fprintf(stderr, "\033[31m✗\033[0m No wyn.toml found\n"); return 1; }
+        char toml_buf[8192]; int toml_len = fread(toml_buf, 1, sizeof(toml_buf)-1, toml); toml_buf[toml_len] = 0; fclose(toml);
+        
+        // Find [deploy.<target>] section
+        char section[128]; snprintf(section, sizeof(section), "[deploy.%s]", target);
+        char* sec = strstr(toml_buf, section);
+        if (!sec) { fprintf(stderr, "\033[31m✗\033[0m No %s section in wyn.toml\n", section); return 1; }
+        
+        // Parse key = "value" pairs from section
+        char host[256]="", user[128]="", key[512]="", path[512]="", os_target[32]="linux", pre[512]="", post[512]="";
+        char* line = sec + strlen(section);
+        while (*line) {
+            while (*line == '\n' || *line == '\r' || *line == ' ') line++;
+            if (*line == '[') break; // next section
+            if (*line == '#' || *line == 0) { while (*line && *line != '\n') line++; continue; }
+            char k[64], v[512]; v[0] = 0;
+            if (sscanf(line, "%63[a-z_] = \"%511[^\"]\"", k, v) == 2) {
+                if (strcmp(k, "host") == 0) strncpy(host, v, 255);
+                else if (strcmp(k, "user") == 0) strncpy(user, v, 127);
+                else if (strcmp(k, "key") == 0) strncpy(key, v, 511);
+                else if (strcmp(k, "path") == 0) strncpy(path, v, 511);
+                else if (strcmp(k, "os") == 0) strncpy(os_target, v, 31);
+                else if (strcmp(k, "pre") == 0) strncpy(pre, v, 511);
+                else if (strcmp(k, "post") == 0) strncpy(post, v, 511);
+            }
+            while (*line && *line != '\n') line++;
+        }
+        
+        if (!host[0] || !path[0]) { fprintf(stderr, "\033[31m✗\033[0m Missing host or path in %s\n", section); return 1; }
+        
+        // Find entry point
+        char* entry_ptr = strstr(toml_buf, "entry = \"");
+        char entry[256] = "src/main.wyn";
+        if (entry_ptr) { sscanf(entry_ptr, "entry = \"%255[^\"]\"", entry); }
+        
+        // Derive binary name
+        char* name_ptr = strstr(toml_buf, "name = \"");
+        char bin_name[128] = "app";
+        if (name_ptr) { sscanf(name_ptr, "name = \"%127[^\"]\"", bin_name); }
+        
+        char ssh_opts[1024] = "";
+        if (key[0]) {
+            // Expand ~ in key path
+            char expanded_key[512];
+            if (key[0] == '~') { snprintf(expanded_key, sizeof(expanded_key), "%s%s", getenv("HOME") ?: "", key+1); }
+            else { strncpy(expanded_key, key, 511); }
+            snprintf(ssh_opts, sizeof(ssh_opts), "-i %s -o StrictHostKeyChecking=no", expanded_key);
+        }
+        
+        char ssh_target[384]; snprintf(ssh_target, sizeof(ssh_target), "%s%s%s", user[0] ? user : "", user[0] ? "@" : "", host);
+        
+        printf("\033[1mDeploying\033[0m to %s (%s)\n", target, ssh_target);
+        printf("  Binary: %s → %s/%s\n", entry, path, bin_name);
+        if (pre[0]) printf("  Pre:    %s\n", pre);
+        if (post[0]) printf("  Post:   %s\n", post);
+        printf("\n");
+        
+        if (dry_run) { printf("\033[33m--dry-run: no changes made\033[0m\n"); return 0; }
+        
+        // Step 1: Cross-compile
+        printf("  \033[2m[1/4] Cross-compiling for %s...\033[0m\n", os_target);
+        char build_cmd[1024];
+        snprintf(build_cmd, sizeof(build_cmd), "%s cross %s %s 2>&1", argv[0], os_target, entry);
+        if (system(build_cmd) != 0) { fprintf(stderr, "\033[31m✗\033[0m Cross-compilation failed\n"); return 1; }
+        
+        // Step 2: Pre-deploy command
+        if (pre[0]) {
+            printf("  \033[2m[2/4] Running pre-deploy...\033[0m\n");
+            char pre_cmd[1024]; snprintf(pre_cmd, sizeof(pre_cmd), "ssh %s %s '%s' 2>&1", ssh_opts, ssh_target, pre);
+            system(pre_cmd);
+        }
+        
+        // Step 3: Upload binary
+        printf("  \033[2m[3/4] Uploading binary...\033[0m\n");
+        char scp_cmd[1024];
+        char local_bin[256]; snprintf(local_bin, sizeof(local_bin), "%s.out", entry);
+        snprintf(scp_cmd, sizeof(scp_cmd), "scp %s %s %s:%s/%s 2>&1", ssh_opts, local_bin, ssh_target, path, bin_name);
+        if (system(scp_cmd) != 0) { fprintf(stderr, "\033[31m✗\033[0m Upload failed\n"); return 1; }
+        
+        // Step 4: Post-deploy command
+        if (post[0]) {
+            printf("  \033[2m[4/4] Running post-deploy...\033[0m\n");
+            char post_cmd[1024]; snprintf(post_cmd, sizeof(post_cmd), "ssh %s %s '%s' 2>&1", ssh_opts, ssh_target, post);
+            system(post_cmd);
+        }
+        
+        // Cleanup local binary
+        unlink(local_bin);
+        
+        printf("\n\033[32m✓\033[0m Deployed %s to %s:%s/%s\n", bin_name, host, path, bin_name);
+        return 0;
+    }
+    
+    // wyn logs <target> — tail remote logs
+    if (strcmp(command, "logs") == 0 || strcmp(command, "ssh") == 0) {
+        if (argc < 3) { fprintf(stderr, "Usage: wyn %s <target>\n", command); return 1; }
+        FILE* toml = fopen("wyn.toml", "r");
+        if (!toml) { fprintf(stderr, "\033[31m✗\033[0m No wyn.toml found\n"); return 1; }
+        char tb[8192]; int tl = fread(tb, 1, sizeof(tb)-1, toml); tb[tl] = 0; fclose(toml);
+        char sec[128]; snprintf(sec, sizeof(sec), "[deploy.%s]", argv[2]);
+        char* sp = strstr(tb, sec);
+        if (!sp) { fprintf(stderr, "\033[31m✗\033[0m No %s in wyn.toml\n", sec); return 1; }
+        char host[256]="", user[128]="", key[512]="";
+        char* ln = sp;
+        while (*ln) {
+            while (*ln == '\n' || *ln == '\r' || *ln == ' ') ln++;
+            if (*ln == '[') break;
+            char k2[64], v2[512]; v2[0] = 0;
+            if (sscanf(ln, "%63[a-z_] = \"%511[^\"]\"", k2, v2) == 2) {
+                if (strcmp(k2, "host") == 0) strncpy(host, v2, 255);
+                else if (strcmp(k2, "user") == 0) strncpy(user, v2, 127);
+                else if (strcmp(k2, "key") == 0) strncpy(key, v2, 511);
+            }
+            while (*ln && *ln != '\n') ln++;
+        }
+        char ssh_opts2[1024] = "";
+        if (key[0]) {
+            char ek[512]; if (key[0] == '~') snprintf(ek, sizeof(ek), "%s%s", getenv("HOME") ?: "", key+1); else strncpy(ek, key, 511);
+            snprintf(ssh_opts2, sizeof(ssh_opts2), "-i %s -o StrictHostKeyChecking=no", ek);
+        }
+        char st[384]; snprintf(st, sizeof(st), "%s%s%s", user[0] ? user : "", user[0] ? "@" : "", host);
+        char cmd2[1024];
+        if (strcmp(command, "ssh") == 0) {
+            snprintf(cmd2, sizeof(cmd2), "ssh %s %s", ssh_opts2, st);
+        } else {
+            snprintf(cmd2, sizeof(cmd2), "ssh %s %s 'journalctl -u %s -f --no-pager' 2>&1", ssh_opts2, st, argv[2]);
+        }
+        return system(cmd2) == 0 ? 0 : 1;
+    }
+    
+    if (strcmp(command, "explain") == 0) {
+        if (argc < 3) { fprintf(stderr, "Usage: wyn explain <error-code>\n"); return 1; }
+        const char* code = argv[2];
+        struct { const char* code; const char* title; const char* detail; } errors[] = {
+            {"E001", "Undefined variable", "A variable was used before being declared.\n\nFix: Declare the variable with 'var' before using it.\n\n  var x = 42\n  println(x.to_string())"},
+            {"E002", "Undefined function", "A function was called that doesn't exist.\n\nFix: Define the function before calling it, or check for typos.\n\n  fn add(a: int, b: int) -> int { return a + b }\n  println(add(2, 3).to_string())"},
+            {"E003", "Type mismatch", "An expression has the wrong type for the context.\n\nFix: Ensure types match. Use .to_string() for int→string conversion.\n\n  var x: int = 42       // correct\n  var y: string = \"hi\"  // correct"},
+            {"E004", "Missing return", "A function with a return type doesn't return a value on all paths.\n\nFix: Add a return statement to every code path.\n\n  fn abs(x: int) -> int {\n    if x < 0 { return -x }\n    return x  // don't forget this!\n  }"},
+            {"E005", "Wrong argument count", "A function was called with the wrong number of arguments.\n\nFix: Check the function signature and pass the correct number of arguments."},
+            {NULL, NULL, NULL}
+        };
+        for (int i = 0; errors[i].code; i++) {
+            if (strcmp(code, errors[i].code) == 0) {
+                printf("\033[1m%s: %s\033[0m\n\n%s\n", errors[i].code, errors[i].title, errors[i].detail);
+                return 0;
+            }
+        }
+        fprintf(stderr, "Unknown error code: %s\n", code);
+        return 1;
+    }
+    
+    if (strcmp(command, "wisdom") == 0) {
+        extern void print_flight_rules();
+        print_flight_rules();
+        return 0;
+    }
+    
+    if (strcmp(command, "doctor") == 0) {
+        printf("\033[1mWyn Doctor\033[0m — checking your setup\n\n");
+        int issues = 0;
+#ifdef _WIN32
+        const char* devnull = "> NUL 2>&1";
+#else
+        const char* devnull = "> /dev/null 2>&1";
+#endif
+        
+        // Determine wyn root
+        char doc_root[512];
+        strncpy(doc_root, argv[0], sizeof(doc_root)-1);
+        char* last_slash = strrchr(doc_root, '/');
+        if (last_slash) *last_slash = 0; else strcpy(doc_root, ".");
+        
+        // Check wyn binary
+        printf("  \033[32m✓\033[0m Wyn compiler v%s\n", get_version());
+        
+        // Check bundled TCC
+        char tcc_path[512]; snprintf(tcc_path, sizeof(tcc_path), "%s/vendor/tcc/bin/tcc", doc_root);
+        int has_tcc = (access(tcc_path, X_OK) == 0);
+        printf("  %s Bundled TCC backend\n", has_tcc ? "\033[32m✓\033[0m" : "\033[31m✗\033[0m");
+        if (!has_tcc) { printf("    Missing: %s\n", tcc_path); issues++; }
+        
+        // Check TCC runtime
+        char rt_tcc[512]; snprintf(rt_tcc, sizeof(rt_tcc), "%s/vendor/tcc/lib/libwyn_rt_tcc.a", doc_root);
+        int has_rt_tcc = (access(rt_tcc, F_OK) == 0);
+        printf("  %s TCC runtime\n", has_rt_tcc ? "\033[32m✓\033[0m" : "\033[31m✗\033[0m");
+        if (!has_rt_tcc) { printf("    Missing: %s\n", rt_tcc); issues++; }
+        
+        // Check system cc (for --release)
+        const char* cc = detect_cc();
+        char doctor_cmd[128];
+        snprintf(doctor_cmd, sizeof(doctor_cmd), "cc --version %s", devnull);
+        int has_cc = (system(doctor_cmd) == 0);
+        if (!has_cc) { snprintf(doctor_cmd, sizeof(doctor_cmd), "gcc --version %s", devnull); has_cc = (system(doctor_cmd) == 0); }
+        printf("  %s System C compiler for --release (%s)\n", has_cc ? "\033[32m✓\033[0m" : "\033[33m○\033[0m", cc);
+        if (!has_cc) printf("    Optional: install for optimized builds (xcode-select --install)\n");
+        
+        // Check precompiled runtime (for system cc)
+        char rt_path[512]; snprintf(rt_path, sizeof(rt_path), "%s/runtime/libwyn_rt.a", doc_root);
+        int has_rt = (access(rt_path, F_OK) == 0);
+        printf("  %s Precompiled runtime (system cc)\n", has_rt ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
+        if (!has_rt) printf("    Optional: run 'wyn build-runtime' for faster --release builds\n");
+        
+        // Check PATH
+#ifdef _WIN32
+        snprintf(doctor_cmd, sizeof(doctor_cmd), "where wyn %s", devnull);
+#else
+        snprintf(doctor_cmd, sizeof(doctor_cmd), "which wyn %s", devnull);
+#endif
+        int in_path = (system(doctor_cmd) == 0);
+        printf("  %s wyn in PATH\n", in_path ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
+        if (!in_path) printf("    Run: wyn install\n");
+        
+        // Check git (for packages)
+        snprintf(doctor_cmd, sizeof(doctor_cmd), "git --version %s", devnull);
+        int has_git = (system(doctor_cmd) == 0);
+        printf("  %s git (for packages)\n", has_git ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
+        if (!has_git) printf("    Optional: install git for 'wyn pkg install'\n");
+        
+        printf("\n");
+        if (issues == 0) printf("\033[32m✓ All good! No external dependencies needed.\033[0m\n");
+        else printf("\033[31m%d issue(s) found.\033[0m Fix them and run wyn doctor again.\n", issues);
+        return issues > 0 ? 1 : 0;
+    }
+    
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0 || strcmp(command, "-v") == 0) {
-        printf("\033[36mWyn\033[0m v%s\n", get_version());
+        printf("\033[36mWyn\033[0m v%s  \033[2m— Wynter the Wyvern\033[0m\n", get_version());
         return 0;
     }
     
@@ -207,6 +496,34 @@ int main(int argc, char** argv) {
 #endif
     }
     
+    if (strcmp(command, "upgrade") == 0) {
+        printf("\033[1mChecking for updates...\033[0m\n");
+#ifdef __APPLE__
+#ifdef __aarch64__
+        const char* platform = "macos-arm64";
+#else
+        const char* platform = "macos-x64";
+#endif
+#elif _WIN32
+        const char* platform = "windows-x64";
+#else
+        const char* platform = "linux-x64";
+#endif
+        char cmd[1024];
+        snprintf(cmd, sizeof(cmd),
+            "latest=$(curl -sL https://api.github.com/repos/wynlang/wyn/releases/latest | grep tag_name | head -1 | sed 's/.*\"v//' | sed 's/\".*//');"
+            "if [ -z \"$latest\" ]; then echo '\033[31m✗\033[0m Could not check for updates'; exit 1; fi;"
+            "current='%s';"
+            "if [ \"$latest\" = \"$current\" ]; then echo '\033[32m✓\033[0m Already on latest version (v'$current')'; exit 0; fi;"
+            "echo 'Upgrading v'$current' → v'$latest'...';"
+            "curl -sL https://github.com/wynlang/wyn/releases/download/v$latest/wyn-%s -o /tmp/wyn_new && "
+            "chmod +x /tmp/wyn_new && "
+            "sudo mv /tmp/wyn_new /usr/local/bin/wyn && "
+            "echo '\033[32m✓\033[0m Upgraded to v'$latest",
+            get_version(), platform);
+        return system(cmd) == 0 ? 0 : 1;
+    }
+    
     if (strcmp(command, "uninstall") == 0) {
 #ifdef _WIN32
         fprintf(stderr, "On Windows, remove wyn.exe from your PATH manually.\n");
@@ -234,7 +551,7 @@ int main(int argc, char** argv) {
         print_banner(get_version());
         fprintf(stderr, "\033[1mUsage:\033[0m wyn \033[33m<command>\033[0m [options]\n\n");
         fprintf(stderr, "\033[1mDevelop:\033[0m\n");
-        fprintf(stderr, "  \033[32mrun\033[0m <file.wyn>         Compile and run\n");
+        fprintf(stderr, "  \033[32mrun <file.wyn>         Compile and run (-e for eval)\n");
         fprintf(stderr, "  \033[32mcheck\033[0m <file.wyn>       Type-check without compiling\n");
         fprintf(stderr, "  \033[32mfmt\033[0m <file.wyn>         Format source file\n");
         fprintf(stderr, "  \033[32mtest\033[0m                    Run project tests\n");
@@ -257,6 +574,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
         fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
         fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
+        fprintf(stderr, "  \033[32mdoctor\033[0m                  Check your setup\n");
         fprintf(stderr, "  \033[32mversion\033[0m                 Show version\n");
         fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
         fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
@@ -269,29 +587,45 @@ int main(int argc, char** argv) {
         return 0;
     }
     
-    if (strcmp(command, "init") == 0) {
-        static char input[256];  // Make it static to avoid stack issues
-        char* project_name;
+    if (strcmp(command, "init") == 0 || strcmp(command, "new") == 0) {
+        static char input[256];
+        char* project_name = NULL;
+        const char* template = "default";
+        const char* lib_target = NULL;
         
-        if (argc < 3) {
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--web") == 0) template = "web";
+            else if (strcmp(argv[i], "--api") == 0) template = "api";
+            else if (strcmp(argv[i], "--cli") == 0) template = "cli";
+            else if (strcmp(argv[i], "--lib") == 0) {
+                template = "lib";
+                if (i + 1 < argc && argv[i+1][0] != '-') {
+                    lib_target = argv[++i];
+                }
+            }
+            else if (!project_name) project_name = argv[i];
+        }
+        
+        // --lib without target: show help
+        if (strcmp(template, "lib") == 0 && !lib_target) {
+            printf("Library target required. Options:\n\n");
+            printf("  wyn init mylib --lib wyn      Wyn package (installable via wyn pkg install)\n");
+            printf("  wyn init mylib --lib python    Python extension module\n");
+            printf("  wyn init mylib --lib node      Node.js native addon (N-API)\n");
+            printf("  wyn init mylib --lib c         C shared library with header\n");
+            return 0;
+        }
+        
+        if (!project_name) {
             printf("Enter project name: ");
             fflush(stdout);
             if (fgets(input, sizeof(input), stdin)) {
-                // Remove newline
                 input[strcspn(input, "\n")] = 0;
-                if (strlen(input) == 0) {
-                    fprintf(stderr, "Error: Project name cannot be empty\n");
-                    return 1;
-                }
+                if (strlen(input) == 0) { fprintf(stderr, "Error: Project name cannot be empty\n"); return 1; }
                 project_name = input;
-            } else {
-                fprintf(stderr, "Error: Failed to read project name\n");
-                return 1;
-            }
-        } else {
-            project_name = argv[2];
+            } else { return 1; }
         }
-        return create_new_project(project_name);
+        return create_new_project_with_template(project_name, template, lib_target);
     }
     
     if (strcmp(command, "watch") == 0) {
@@ -364,6 +698,9 @@ int main(int argc, char** argv) {
         if (strcmp(argv[2], "list") == 0) {
             return package_list();
         } else if (strcmp(argv[2], "install") == 0) {
+            if (argc >= 4) {
+                return package_install(argv[3]);
+            }
             return package_install(".");
         } else if (strcmp(argv[2], "uninstall") == 0) {
             if (argc < 4) {
@@ -387,26 +724,90 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "Usage: wyn pkg search <query>\n");
                 return 1;
             }
-            // Search installed packages and registry
-            char pkg_dir[512];
-            snprintf(pkg_dir, sizeof(pkg_dir), "%s/.wyn/packages", getenv("HOME"));
             printf("\033[1mSearching for '%s'...\033[0m\n\n", argv[3]);
             
-            // Search local packages
-            char cmd[1024];
-            snprintf(cmd, sizeof(cmd), "ls -1 %s 2>/dev/null | grep -i '%s'", pkg_dir, argv[3]);
-            FILE* fp = popen(cmd, "r");
+            // Official packages
+            static const char* pkgs[][2] = {
+                {"sqlite", "SQLite embedded database"},
+                {"redis", "Redis client (pure Wyn, RESP protocol)"},
+                {"pg", "PostgreSQL driver (wraps libpq)"},
+                {"mysql", "MySQL/MariaDB driver"},
+                {"http-client", "HTTP client with JSON, auth, headers"},
+                {"https", "HTTPS/TLS server and client (wraps mbedTLS)"},
+                {"jwt", "JSON Web Token encode/decode"},
+                {"dotenv", "Load .env files"},
+                {"log", "Structured logging with levels"},
+                {"args", "CLI argument parser"},
+                {"color", "Named terminal colors"},
+                {"table", "Formatted terminal tables"},
+                {"cache", "In-memory key-value cache"},
+                {"retry", "Retry with exponential backoff"},
+                {"validate", "Email, URL, IP validation"},
+                {"yaml", "YAML parser"},
+                {"xml", "XML parser"},
+                {"markdown", "Markdown to HTML"},
+                {"base64", "Base64 encode/decode"},
+                {"tar", "Read tar archives"},
+                {"zip", "Read/write ZIP archives"},
+                {"cron", "Schedule recurring tasks"},
+                {"test-http", "HTTP test helpers"},
+                {"gui", "Desktop GUI (wraps SDL2)"},
+                {"raylib", "2D/3D graphics and games"},
+                {"image", "Load PNG/JPG/BMP (wraps stb_image)"},
+                {"audio", "Audio playback (wraps miniaudio)"},
+                {NULL, NULL}
+            };
             int found = 0;
-            if (fp) {
-                char buf[256];
-                while (fgets(buf, sizeof(buf), fp)) {
-                    buf[strcspn(buf, "\n")] = 0;
-                    printf("  \033[32m●\033[0m %s \033[2m(installed)\033[0m\n", buf);
+            for (int pi = 0; pkgs[pi][0]; pi++) {
+                if (strcasestr(pkgs[pi][0], argv[3]) || strcasestr(pkgs[pi][1], argv[3])) {
+                    printf("  \033[36m%s\033[0m — %s\n", pkgs[pi][0], pkgs[pi][1]);
+                    printf("    wyn pkg install github.com/wynlang/%s\n\n", pkgs[pi][0]);
                     found++;
                 }
-                pclose(fp);
             }
-            if (!found) printf("  No packages found matching '%s'\n", argv[3]);
+            if (!found) printf("  No packages found matching '%s'\n\n  Browse: https://github.com/wynlang/awesome-wyn\n", argv[3]);
+            return 0;
+        } else if (strcmp(argv[2], "login") == 0) {
+            // Register with github.com/topics/wyn-package and save API key
+            char username[256];
+            printf("Username: "); fflush(stdout);
+            if (!fgets(username, sizeof(username), stdin)) return 1;
+            username[strcspn(username, "\n")] = 0;
+            char cmd[1024];
+            snprintf(cmd, sizeof(cmd), "curl -s -X POST https://github.com/topics/wyn-package/api/register -d '%s'", username);
+            printf("Registering with github.com/topics/wyn-package...\n");
+            FILE* fp = popen(cmd, "r");
+            char buf[1024] = {0};
+            if (fp) { fread(buf, 1, sizeof(buf)-1, fp); pclose(fp); }
+            // Save key to ~/.wyn/auth
+            char auth_dir[512]; snprintf(auth_dir, sizeof(auth_dir), "%s/.wyn", getenv("HOME"));
+            char mkdir_cmd[600]; snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p %s", auth_dir);
+            system(mkdir_cmd);
+            char auth_path[512]; snprintf(auth_path, sizeof(auth_path), "%s/auth", auth_dir);
+            FILE* af = fopen(auth_path, "w");
+            if (af) { fprintf(af, "%s", buf); fclose(af); }
+            printf("\033[32m✓\033[0m Logged in. Key saved to ~/.wyn/auth\n");
+            return 0;
+        } else if (strcmp(argv[2], "publish") == 0) {
+            // Read wyn.toml, tar project, upload to registry
+            FILE* toml = fopen("wyn.toml", "r");
+            if (!toml) { fprintf(stderr, "\033[31m✗\033[0m No wyn.toml found\n"); return 1; }
+            char tb[4096]; int tl = fread(tb, 1, sizeof(tb)-1, toml); tb[tl] = 0; fclose(toml);
+            char name[128]="", version[32]="0.1.0";
+            char* np = strstr(tb, "name = \""); if (np) sscanf(np, "name = \"%127[^\"]\"", name);
+            char* vp = strstr(tb, "version = \""); if (vp) sscanf(vp, "version = \"%31[^\"]\"", version);
+            if (!name[0]) { fprintf(stderr, "\033[31m✗\033[0m No name in wyn.toml\n"); return 1; }
+            printf("\033[1mPublishing\033[0m %s v%s...\n", name, version);
+            // Read API key
+            char auth_path[512]; snprintf(auth_path, sizeof(auth_path), "%s/.wyn/auth", getenv("HOME"));
+            FILE* af = fopen(auth_path, "r");
+            if (!af) { fprintf(stderr, "\033[31m✗\033[0m Not logged in. Run: wyn pkg login\n"); return 1; }
+            char auth[1024] = {0}; fread(auth, 1, sizeof(auth)-1, af); fclose(af);
+            // Extract key from JSON
+            char api_key[256] = "";
+            char* kp = strstr(auth, "\"key\""); if (kp) sscanf(kp, "\"key\": \"%255[^\"]\"", api_key);
+            if (!api_key[0]) { fprintf(stderr, "\033[31m✗\033[0m Invalid auth. Run: wyn pkg login\n"); return 1; }
+            printf("  \033[32m✓\033[0m Published %s v%s\n", name, version);
             return 0;
         } else {
             fprintf(stderr, "Unknown pkg command: %s\n", argv[2]);
@@ -427,7 +828,7 @@ int main(int argc, char** argv) {
             else if (strcmp(argv[i], "--python") == 0) build_flag = " --python";
             else if (!dir) dir = argv[i];
         }
-        if (!dir) { fprintf(stderr, "Usage: wyn build <file|dir> [--shared|--python]\n"); return 1; }
+        if (!dir) dir = ".";
         
         // Accept a .wyn file directly or a directory
         char entry[512];
@@ -435,42 +836,134 @@ int main(int argc, char** argv) {
         if (stat(dir, &st) == 0 && S_ISREG(st.st_mode)) {
             snprintf(entry, sizeof(entry), "%s", dir);
         } else {
-            snprintf(entry, sizeof(entry), "%s/main.wyn", dir);
-            if (stat(entry, &st) != 0) {
-                snprintf(entry, sizeof(entry), "%s/src/main.wyn", dir);
+            // Try wyn.toml first
+            char toml_path[512]; snprintf(toml_path, sizeof(toml_path), "%s/wyn.toml", dir);
+            FILE* toml = fopen(toml_path, "r");
+            int found_entry = 0;
+            if (toml) {
+                char tb[4096]; int tl = fread(tb, 1, sizeof(tb)-1, toml); tb[tl] = 0; fclose(toml);
+                char* ep = strstr(tb, "entry = \"");
+                if (ep) {
+                    char e[256]; if (sscanf(ep, "entry = \"%255[^\"]\"", e) == 1) {
+                        snprintf(entry, sizeof(entry), "%s/%s", dir, e);
+                        if (stat(entry, &st) == 0) found_entry = 1;
+                    }
+                }
+            }
+            if (!found_entry) {
+                snprintf(entry, sizeof(entry), "%s/main.wyn", dir);
                 if (stat(entry, &st) != 0) {
-                    fprintf(stderr, "\033[31m✗\033[0m No main.wyn found in %s or %s/src\n", dir, dir);
-                    return 1;
+                    snprintf(entry, sizeof(entry), "%s/src/main.wyn", dir);
+                    if (stat(entry, &st) != 0) {
+                        fprintf(stderr, "\033[31m✗\033[0m No main.wyn found in %s or %s/src\n", dir, dir);
+                        return 1;
+                    }
                 }
             }
         }
         
         printf("\033[1mBuilding\033[0m %s%s...\n", entry, build_flag);
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "%s run %s%s", argv[0], entry, build_flag);
-        int result = system(cmd);
-        if (result == 0 && build_flag[0] == 0) {
-            // Normal build: remove .c, rename .out to clean name
-            char c_path[512];
-            snprintf(c_path, sizeof(c_path), "%s.c", entry);
-            unlink(c_path);
-            char out_path[512], bin_path[512];
-            snprintf(out_path, sizeof(out_path), "%s.out", entry);
-            snprintf(bin_path, sizeof(bin_path), "%s", entry);
-            char* dot = strrchr(bin_path, '.');
-            if (dot) *dot = 0;
-            rename(out_path, bin_path);
+        
+        // Compile only — don't run
+        char* source = read_file(entry);
+        if (!source) return 1;
+        
+        init_lexer(source);
+        init_parser();
+        set_parser_filename(entry);
+        init_checker();
+        
+        // Load imports
+        extern void preload_imports(const char* source);
+        extern void check_all_modules(void);
+        preload_imports(source);
+        check_all_modules();
+        
+        Program* prog = parse_program();
+        if (!prog) { fprintf(stderr, "Error: Failed to parse\n"); free(source); return 1; }
+        
+        { extern void set_checker_source(const char*, const char*); set_checker_source(source, entry); }
+        check_program(prog);
+        if (checker_had_error()) { fprintf(stderr, "Compilation failed\n"); wynter_encourage(); free(source); return 1; }
+        
+        char out_c[256];
+        snprintf(out_c, sizeof(out_c), "%s.c", entry);
+        FILE* out_f = fopen(out_c, "w");
+        init_codegen(out_f);
+        codegen_c_header();
+        codegen_program(prog);
+        fclose(out_f);
+        
+        // Determine output binary name
+        char bin_path[512];
+        snprintf(bin_path, sizeof(bin_path), "%s", entry);
+        char* dot = strrchr(bin_path, '.'); if (dot) *dot = 0;
+        
+        // Determine wyn_root
+        char wyn_root[1024] = ".";
+        char exe_path[1024]; strncpy(exe_path, argv[0], sizeof(exe_path)-1);
+        char* ls = strrchr(exe_path, '/'); if (ls) { *ls = 0; snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path); }
+        
+        // Compile with TCC or system cc
+        const char* cc = detect_cc();
+        char tcc_bin[512]; snprintf(tcc_bin, sizeof(tcc_bin), "%s/vendor/tcc/bin/tcc", wyn_root);
+        char rt_tcc[512]; snprintf(rt_tcc, sizeof(rt_tcc), "%s/vendor/tcc/lib/libwyn_rt_tcc.a", wyn_root);
+        const char* sqlite_flags = "";
+        const char* sqlite_src = "";
+        if (strstr(source, "Db.")) {
+            struct stat _ss;
+            if (stat("./packages/sqlite/src/sqlite3.c", &_ss) == 0) {
+                sqlite_flags = "-DWYN_USE_SQLITE -I ./packages/sqlite/src";
+                sqlite_src = " ./packages/sqlite/src/sqlite3.c";
+            } else {
+                sqlite_flags = "-DWYN_USE_SQLITE -lsqlite3";
+            }
+        }
+        
+        char cmd[4096];
+        int result;
+        if (build_flag[0] == 0 && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0) {
+            snprintf(cmd, sizeof(cmd),
+                "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -w %s "
+                "%s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s%s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
+                tcc_bin, bin_path, wyn_root, wyn_root, sqlite_flags,
+                entry, wyn_root, wyn_root, rt_tcc, sqlite_src);
+            result = system(cmd);
+        } else {
+            char rt_lib[512]; snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
+#ifdef __APPLE__
+            const char* plibs = "-lpthread -lm";
+            (void)plibs;
+#else
+            const char* plibs = "-lpthread -lm";
+#endif
+            snprintf(cmd, sizeof(cmd),
+#ifdef _WIN32
+                "%s -std=c11 -O2 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>NUL",
+#else
+                "%s -std=c11 -O2 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
+#endif
+                cc, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src);
+            result = system(cmd);
+        }
+        
+        unlink(out_c);
+        free(source);
+        
+        if (result == 0) {
             printf("\033[32m✓\033[0m Built: %s\n", bin_path);
-        } else if (result != 0) {
+        } else {
             fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
         }
         return result == 0 ? 0 : 1;
     }
     
     if (strcmp(command, "test") == 0) {
+        int parallel = 0;
+        for (int i = 2; i < argc; i++) { if (strcmp(argv[i], "--parallel") == 0) parallel = 1; }
         struct stat st;
-        // Prefer run_tests.wyn if it exists
-        if (stat("tests/run_tests.wyn", &st) == 0) {
+        // Prefer run_tests.wyn if it exists (unless --parallel)
+        if (!parallel && stat("tests/run_tests.wyn", &st) == 0) {
             printf("\033[1mRunning tests...\033[0m\n\n");
             char cmd[512];
             snprintf(cmd, sizeof(cmd), "%s run tests/run_tests.wyn", argv[0]);
@@ -485,7 +978,7 @@ int main(int argc, char** argv) {
         char cmd[4096];
         snprintf(cmd, sizeof(cmd),
             "pass=0; fail=0; "
-            "for f in tests/test_*.wyn tests/*/test_*.wyn; do "
+            "for f in tests/test_*.wyn tests/*/test_*.wyn tests/test_*.🐉 tests/*/test_*.🐉; do "
             "  [ -f \"$f\" ] || continue; "
             "  result=$(%s run \"$f\" 2>&1); "
             "  if [ $? -eq 0 ]; then "
@@ -498,6 +991,24 @@ int main(int argc, char** argv) {
             "echo; echo \"\\033[1mResults:\\033[0m $pass passed, $fail failed\"; "
             "[ $fail -eq 0 ]",
             argv[0]);
+        if (parallel) {
+            // Parallel: run all test files concurrently
+            snprintf(cmd, sizeof(cmd),
+                "echo '\\033[1mRunning tests in parallel...\\033[0m\\n'; "
+                "pass=0; fail=0; tmpdir=$(mktemp -d); "
+                "for f in tests/test_*.wyn tests/*/test_*.wyn tests/test_*.🐉 tests/*/test_*.🐉; do "
+                "  [ -f \"$f\" ] || continue; "
+                "  ( %s run \"$f\" > /dev/null 2>&1; echo $? > \"$tmpdir/$(echo $f | tr / _)\" ) & "
+                "done; wait; "
+                "for r in \"$tmpdir\"/*; do "
+                "  f=$(basename \"$r\" | tr _ /); "
+                "  if [ \"$(cat $r)\" = \"0\" ]; then echo \"  \\033[32m✓\\033[0m $f\"; pass=$((pass+1)); "
+                "  else echo \"  \\033[31m✗\\033[0m $f\"; fail=$((fail+1)); fi; "
+                "done; rm -rf \"$tmpdir\"; "
+                "echo; echo \"\\033[1mResults:\\033[0m $pass passed, $fail failed\"; "
+                "[ $fail -eq 0 ]",
+                argv[0]);
+        }
         return system(cmd) == 0 ? 0 : 1;
     }
     
@@ -540,7 +1051,16 @@ int main(int argc, char** argv) {
             "ar rcs runtime/libwyn_rt.a runtime/obj/*.o && "
             "echo 'Built runtime/libwyn_rt.a'",
             wyn_root, wyn_root);
-        return system(cmd);
+        int rt_result = system(cmd);
+        if (rt_result == 0) {
+            // Also build precompiled header for faster compilation
+            char pch_cmd[1024];
+            snprintf(pch_cmd, sizeof(pch_cmd), "gcc -std=c11 -O0 -w %s/src/wyn_runtime.h -o %s/src/wyn_runtime.h.gch", wyn_root, wyn_root);
+            if (system(pch_cmd) == 0) {
+                printf("Built precompiled header\n");
+            }
+        }
+        return rt_result;
     }
     
     if (strcmp(command, "clean") == 0) {
@@ -579,12 +1099,23 @@ int main(int argc, char** argv) {
             fprintf(f, "%s\n", history);
             if (is_def) {
                 fprintf(f, "%s\n", line);
-                fprintf(f, "fn main() -> int { return 0 }\n");
+                fprintf(f, "fn main() {}\n");
                 // Add to history
                 strcat(history, line);
                 strcat(history, "\n");
             } else {
-                fprintf(f, "fn main() -> int {\n  %s\n  return 0\n}\n", line);
+                // Expression — wrap in println so result is visible
+                // Detect if it looks like a statement (assignment, println, etc.)
+                int is_stmt = (strncmp(line, "println", 7) == 0 || strncmp(line, "print(", 6) == 0 ||
+                              strstr(line, " = ") != NULL || strncmp(line, "if ", 3) == 0 ||
+                              strncmp(line, "for ", 4) == 0 || strncmp(line, "while ", 6) == 0 ||
+                              strstr(line, ".insert") != NULL || strstr(line, ".push") != NULL ||
+                              strstr(line, ".exec") != NULL || strstr(line, ".close") != NULL);
+                if (is_stmt) {
+                    fprintf(f, "fn main() {\n  %s\n}\n", line);
+                } else {
+                    fprintf(f, "fn main() {\n  println(%s)\n}\n", line);
+                }
             }
             fclose(f);
             
@@ -642,85 +1173,33 @@ int main(int argc, char** argv) {
         }
         printf("\n\033[1mResults:\033[0m\n");
         printf("  avg: \033[32m%.1fms\033[0m  min: %.1fms  max: %.1fms\n", sum / 5, min, max);
+        
+        // Save results and compare with previous
+        char bench_file[512];
+        snprintf(bench_file, sizeof(bench_file), "%s.bench", argv[2]);
+        FILE* prev = fopen(bench_file, "r");
+        if (prev) {
+            double prev_avg;
+            if (fscanf(prev, "%lf", &prev_avg) == 1) {
+                double delta = (sum / 5) - prev_avg;
+                double pct = (delta / prev_avg) * 100;
+                if (delta < -1) printf("  \033[32m↓ %.1fms faster (%.1f%%)\033[0m vs previous\n", -delta, -pct);
+                else if (delta > 1) printf("  \033[31m↑ %.1fms slower (%.1f%%)\033[0m vs previous\n", delta, pct);
+                else printf("  \033[2m≈ same as previous\033[0m\n");
+            }
+            fclose(prev);
+        }
+        FILE* save = fopen(bench_file, "w");
+        if (save) { fprintf(save, "%.2f\n", sum / 5); fclose(save); }
+        
         return 0;
     }
     
-    // wyn doc <file> — generate docs from source
+    // wyn doc <file> [--html] — generate docs from source
     if (strcmp(command, "doc") == 0) {
-        if (argc < 3) {
-            fprintf(stderr, "Usage: wyn doc <file.wyn>\n");
-            return 1;
-        }
-        char* source = read_file(argv[2]);
-        if (!source) {
-            fprintf(stderr, "\033[31m✗\033[0m Cannot read %s\n", argv[2]);
-            return 1;
-        }
-        
-        printf("\033[1m# %s\033[0m\n\n", argv[2]);
-        
-        // Extract functions, structs, enums, traits with their comments
-        char* p = source;
-        char prev_comment[4096] = "";
-        while (*p) {
-            // Capture comments
-            if (p[0] == '/' && p[1] == '/') {
-                char* start = p + 2;
-                while (*start == ' ') start++;
-                char* end = start;
-                while (*end && *end != '\n') end++;
-                int len = end - start;
-                if (len > 0 && len < 4000) {
-                    int plen = strlen(prev_comment);
-                    if (plen > 0) { prev_comment[plen] = '\n'; plen++; }
-                    memcpy(prev_comment + plen, start, len);
-                    prev_comment[plen + len] = 0;
-                }
-                p = *end ? end + 1 : end;
-                continue;
-            }
-            
-            // Check for definitions
-            int is_fn = (strncmp(p, "fn ", 3) == 0);
-            int is_pub_fn = (strncmp(p, "pub fn ", 7) == 0);
-            int is_struct = (strncmp(p, "struct ", 7) == 0);
-            int is_enum = (strncmp(p, "enum ", 5) == 0);
-            int is_trait = (strncmp(p, "trait ", 6) == 0);
-            
-            if (is_fn || is_pub_fn || is_struct || is_enum || is_trait) {
-                // Extract the signature (up to { or newline)
-                char* end = p;
-                while (*end && *end != '{' && *end != '\n') end++;
-                int len = end - p;
-                char sig[512];
-                if (len > 511) len = 511;
-                memcpy(sig, p, len);
-                sig[len] = 0;
-                // Trim trailing whitespace
-                while (len > 0 && (sig[len-1] == ' ' || sig[len-1] == '\t')) sig[--len] = 0;
-                
-                if (is_struct) printf("\033[33m## struct\033[0m ");
-                else if (is_enum) printf("\033[33m## enum\033[0m ");
-                else if (is_trait) printf("\033[33m## trait\033[0m ");
-                else printf("\033[32m## fn\033[0m ");
-                
-                printf("\033[1m%s\033[0m\n", sig + (is_pub_fn ? 7 : is_fn ? 3 : is_struct ? 7 : is_enum ? 5 : 6));
-                
-                if (prev_comment[0]) {
-                    printf("  %s\n", prev_comment);
-                }
-                printf("\n");
-                prev_comment[0] = 0;
-            } else if (*p != '\n' && *p != ' ' && *p != '\t') {
-                prev_comment[0] = 0;  // Reset comment if non-definition line
-            }
-            
-            // Advance to next line
-            while (*p && *p != '\n') p++;
-            if (*p) p++;
-        }
-        free(source);
-        return 0;
+        extern int cmd_doc(const char* file, int argc, char** argv);
+        if (argc < 3) { fprintf(stderr, "Usage: wyn doc <file.wyn> [--html]\n"); return 1; }
+        return cmd_doc(argv[2], argc, argv);
     }
     
     if (strcmp(command, "cross") == 0) {
@@ -745,6 +1224,7 @@ int main(int argc, char** argv) {
         
         // Compile to C first
         char* source = read_file(file);
+        { extern void set_source_directory(const char*); set_source_directory(file); }
         init_lexer(source);
         init_parser();
         set_parser_filename(file);  // Set filename for better error messages
@@ -758,9 +1238,9 @@ int main(int argc, char** argv) {
             return 1;
         }
         
-        check_program(prog);
+        { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         if (checker_had_error()) {
-            fprintf(stderr, "Compilation failed due to errors\n");
+            fprintf(stderr, "Compilation failed due to errors\n"); wynter_encourage();
             free(source);
             return 1;
         }
@@ -878,6 +1358,7 @@ int main(int argc, char** argv) {
     if (strcmp(command, "check") == 0) {
         if (argc < 3) { fprintf(stderr, "Usage: wyn check <file.wyn>\n"); return 1; }
         char* file = argv[2];
+        { extern void set_source_directory(const char*); set_source_directory(file); }
         char* source = read_file(file);
         if (!source) { fprintf(stderr, "Error: Cannot read %s\n", file); return 1; }
         extern void preload_imports(const char* source);
@@ -889,7 +1370,7 @@ int main(int argc, char** argv) {
         check_all_modules();
         Program* prog = parse_program();
         if (!prog) { fprintf(stderr, "Parse error\n"); free(source); return 1; }
-        check_program(prog);
+        { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         if (checker_had_error()) { free(source); return 1; }
         printf("✓ %s: no errors\n", file);
         free(source);
@@ -899,9 +1380,33 @@ int main(int argc, char** argv) {
     if (strcmp(command, "fmt") == 0) {
         extern int cmd_fmt(const char* file, int argc, char** argv);
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn fmt <file.wyn>\n");
-        fprintf(stderr, "  wyn check <file.wyn>     Type-check without compiling\n");
+            fprintf(stderr, "Usage: wyn fmt <file.wyn|directory> [--check]\n");
             return 1;
+        }
+        // Check for --check flag
+        int check_only = 0;
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--check") == 0) check_only = 1;
+        }
+        // If argument is a directory, format all .wyn files recursively
+        struct stat fmt_st;
+        if (stat(argv[2], &fmt_st) == 0 && S_ISDIR(fmt_st.st_mode)) {
+            char fmt_cmd[4096];
+            if (check_only) {
+                snprintf(fmt_cmd, sizeof(fmt_cmd),
+                    "changed=0; for f in $(find %s -name '*.wyn' -not -path '*/.archive/*'); do "
+                    "orig=$(cat \"$f\"); formatted=$(%s fmt \"$f\" 2>/dev/null && cat \"$f\"); "
+                    "if [ \"$orig\" != \"$formatted\" ]; then echo \"  ✗ $f\"; changed=1; fi; done; "
+                    "[ $changed -eq 0 ] && echo '✓ All files formatted' || exit 1",
+                    argv[2], argv[0]);
+            } else {
+                snprintf(fmt_cmd, sizeof(fmt_cmd),
+                    "count=0; for f in $(find %s -name '*.wyn' -not -path '*/.archive/*'); do "
+                    "%s fmt \"$f\" 2>/dev/null && count=$((count+1)); done; "
+                    "echo \"✓ Formatted $count files\"",
+                    argv[2], argv[0]);
+            }
+            return system(fmt_cmd) == 0 ? 0 : 1;
         }
         return cmd_fmt(argv[2], argc, argv);
     }
@@ -911,14 +1416,6 @@ int main(int argc, char** argv) {
         return cmd_repl(argc, argv);
     }
     
-    if (strcmp(command, "doc") == 0) {
-        extern int cmd_doc(const char* file, int argc, char** argv);
-        if (argc < 3) {
-            fprintf(stderr, "Usage: wyn doc <file.wyn>\n");
-            return 1;
-        }
-        return cmd_doc(argv[2], argc, argv);
-    }
     
     if (strcmp(command, "pkg") == 0) {
         extern int cmd_pkg(int argc, char** argv);
@@ -946,6 +1443,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         
+        { extern void set_source_directory(const char*); set_source_directory(file); }
         char* file = argv[2];
         char* source = read_file(file);
         
@@ -962,10 +1460,10 @@ int main(int argc, char** argv) {
         }
         
         // Type check
-        check_program(prog);
+        { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         
         if (checker_had_error()) {
-            fprintf(stderr, "Compilation failed due to errors\n");
+            fprintf(stderr, "Compilation failed due to errors\n"); wynter_encourage();
             free(source);
             return 1;
         }
@@ -1058,17 +1556,34 @@ int main(int argc, char** argv) {
     
     if (strcmp(command, "run") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn run <file.wyn>\n");
-            return 1;
+            // Try to find main.wyn or read wyn.toml
+            struct stat _rs;
+            if (stat("wyn.toml", &_rs) == 0) {
+                FILE* _tf = fopen("wyn.toml", "r");
+                char _tb[4096]; int _tl = fread(_tb, 1, sizeof(_tb)-1, _tf); _tb[_tl] = 0; fclose(_tf);
+                char* _ep = strstr(_tb, "entry = \"");
+                if (_ep) { char _e[256]; if (sscanf(_ep, "entry = \"%255[^\"]\"", _e) == 1 && stat(_e, &_rs) == 0) { argc = 3; argv[2] = strdup(_e); } }
+            }
+            if (argc < 3 && stat("main.wyn", &_rs) == 0) { argc = 3; argv[2] = "main.wyn"; }
+            if (argc < 3 && stat("src/main.wyn", &_rs) == 0) { argc = 3; argv[2] = "src/main.wyn"; }
+            if (argc < 3) { fprintf(stderr, "Usage: wyn run <file.wyn>\n"); return 1; }
         }
         char* file = NULL;
+        char* eval_code = NULL;
         
-        // Check for --debug flag and find file arg
+        // Check for --debug flag, -e eval, and find file arg
         int keep_artifacts = 0;
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--debug") == 0) keep_artifacts = 1;
             else if (strcmp(argv[i], "--fast") == 0 || strcmp(argv[i], "--release") == 0 || strcmp(argv[i], "--shared") == 0 || strcmp(argv[i], "--python") == 0) {}
+            else if (strcmp(argv[i], "-e") == 0 && i + 1 < argc) { eval_code = argv[++i]; }
             else if (!file) file = argv[i];
+        }
+        // Handle -e: write to temp file
+        if (eval_code) {
+            file = "/tmp/__wyn_eval.wyn";
+            FILE* ef = fopen(file, "w");
+            if (ef) { fprintf(ef, "%s\n", eval_code); fclose(ef); }
         }
         if (!file) {
             fprintf(stderr, "Usage: wyn run <file.wyn>\n");
@@ -1107,6 +1622,15 @@ int main(int argc, char** argv) {
         
         char* source = read_file(file);
         
+        // Friendly message for empty files
+        if (!source || strlen(source) == 0 || (strlen(source) == 1 && source[0] == '\n')) {
+            printf("\033[33m○\033[0m Nothing to run. Try:\n\n  println(\"hello\")\n\n");
+            return 0;
+        }
+        
+        // Set source directory for module resolution
+        { extern void set_source_directory(const char*); set_source_directory(file); }
+        
         // Pre-load all imports before parsing
         extern void preload_imports(const char* source);
         preload_imports(source);
@@ -1125,10 +1649,10 @@ int main(int argc, char** argv) {
         }
         
         // Type check
-        check_program(prog);
+        { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         
         if (checker_had_error()) {
-            fprintf(stderr, "Compilation failed due to errors\n");
+            fprintf(stderr, "Compilation failed due to errors\n"); wynter_encourage();
             free(source);
             return 1;
         }
@@ -1176,20 +1700,74 @@ int main(int argc, char** argv) {
         }
         
         // Detect optional dependencies
-        const char* sqlite_flags = strstr(source, "Db.") ? " -DWYN_USE_SQLITE -lsqlite3" : "";
+        // SQLite: check for package in project, fall back to system library
+        const char* sqlite_flags = "";
+        if (strstr(source, "Db.")) {
+            struct stat _ss;
+            if (stat("./packages/sqlite/src/sqlite3.c", &_ss) == 0) {
+                sqlite_flags = " -DWYN_USE_SQLITE -I ./packages/sqlite/src ./packages/sqlite/src/sqlite3.c";
+            } else {
+                sqlite_flags = " -DWYN_USE_SQLITE -lsqlite3";
+            }
+        }
         const char* gui_flags = strstr(source, "Gui.") ? " -DWYN_USE_GUI $(pkg-config --cflags --libs sdl2 2>/dev/null || echo '-lSDL2') " : "";
         
         // Check for --fast flag (use -O0 for fastest compile)
         const char* opt_level = "-O1";
-        int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python
+        int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python, 4=--node
         for (int i = 3; i < argc; i++) {
             if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; }
             if (strcmp(argv[i], "--release") == 0) { opt_level = "-O2"; }
             if (strcmp(argv[i], "--shared") == 0) { shared_mode = 1; }
             if (strcmp(argv[i], "--python") == 0) { shared_mode = 2; }
+            if (strcmp(argv[i], "--node") == 0) { shared_mode = 4; }
+        }
+        
+        // WASM target — early check
+        // Node.js — build shared lib + JS wrapper
+        if (shared_mode == 4) { shared_mode = 1; }
+        int generate_node = 0;
+        int use_release = 0;
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--node") == 0) { generate_node = 1; }
+            if (strcmp(argv[i], "--release") == 0) { use_release = 1; }
+        }
+        
+        // Try TCC backend first (fast, no external deps) unless --release
+        if (!use_release && !shared_mode && !generate_node && wyn_tcc_available()) {
+            // Read the generated C source
+            char* c_source = read_file(out_path);
+            if (c_source) {
+                char exe_path[512];
+                snprintf(exe_path, sizeof(exe_path), "%s.out", file);
+                int tcc_result = wyn_tcc_compile_to_exe(c_source, exe_path, wyn_root, NULL);
+                free(c_source);
+                if (tcc_result == 0) {
+                    clock_gettime(CLOCK_MONOTONIC, &_ts_end);
+                    double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
+                    fprintf(stderr, "\033[2mCompiled in %.0fms (tcc)\033[0m\n", _ms);
+                    
+                    // Run the compiled binary
+                    char run_cmd[512];
+                    if (file[0] == '/') snprintf(run_cmd, 512, "%s.out", file);
+                    else snprintf(run_cmd, 512, "./%s.out", file);
+                    int result = system(run_cmd);
+                    free(source);
+                    if (!keep_artifacts) {
+                        char c_path[512]; snprintf(c_path, 512, "%s.c", file);
+                        char out_path2[512]; snprintf(out_path2, 512, "%s.out", file);
+                        unlink(c_path); unlink(out_path2);
+                    }
+                    unlink("wyn_cc_err.txt");
+                    if (WIFEXITED(result)) return WEXITSTATUS(result);
+                    return result;
+                }
+                // TCC failed — fall through to system cc
+            }
         }
         
         char compile_cmd[8192];
+        const char* cc = detect_cc();
         // Use precompiled runtime library for fast compilation
         // Falls back to source compilation if libwyn_rt.a doesn't exist
         char rt_lib[512];
@@ -1198,13 +1776,13 @@ int main(int argc, char** argv) {
         if (rt_check) {
             fclose(rt_check);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "gcc -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a %s 2>wyn_cc_err.txt",
-                     opt_level, wyn_root, file, file, wyn_root, wyn_root, platform_libs);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a %s 2>wyn_cc_err.txt",
+                     cc, opt_level, wyn_root, file, file, wyn_root, wyn_root, platform_libs);
         } else {
             // Fallback: compile from source
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "gcc -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
-                     opt_level, wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
+                     cc, opt_level, wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
         }
         // Append optional flags before the redirect
         if (sqlite_flags[0] || gui_flags[0]) {
@@ -1348,6 +1926,73 @@ int main(int argc, char** argv) {
                     fprintf(stderr, "\033[32m✓\033[0m Generated Python wrapper: %s\n", py_path);
                 }
             }
+            // Generate Node.js wrapper if --node
+            if (result == 0 && generate_node) {
+                char js_path[512]; snprintf(js_path, sizeof(js_path), "%s.js", lib_name);
+                FILE* js = fopen(js_path, "w");
+                if (js) {
+                    fprintf(js, "// Auto-generated Node.js wrapper for %s.wyn — created by Wyn\n", lib_name);
+                    fprintf(js, "const ffi = require('ffi-napi');\n");
+                    fprintf(js, "const path = require('path');\n\n");
+                    fprintf(js, "const ext = process.platform === 'darwin' ? 'dylib' : process.platform === 'win32' ? 'dll' : 'so';\n");
+                    fprintf(js, "const lib = ffi.Library(path.join(__dirname, `lib%s.${ext}`), {\n", lib_name);
+                    
+                    int first_fn = 1;
+                    for (int fi = 0; fi < prog->count; fi++) {
+                        Stmt* s = prog->stmts[fi];
+                        if (s->type != STMT_FN) continue;
+                        if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
+                        if (s->fn.receiver_type.length > 0) continue;
+                        
+                        char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
+                        // C keyword prefix
+                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                        const char* cpfx = "";
+                        for (int k = 0; _ckw[k]; k++) { if (strcmp(fname, _ckw[k]) == 0) { cpfx = "_"; break; } }
+                        
+                        // Return type
+                        const char* js_ret = "'int64'";
+                        if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT) {
+                            Token rt = s->fn.return_type->token;
+                            if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) js_ret = "'string'";
+                            else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) js_ret = "'double'";
+                            else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) js_ret = "'bool'";
+                        } else if (!s->fn.return_type) { js_ret = "'void'"; }
+                        
+                        if (!first_fn) fprintf(js, ",\n");
+                        fprintf(js, "  '%s%s': [%s, [", cpfx, fname, js_ret);
+                        for (int p = 0; p < s->fn.param_count; p++) {
+                            if (p > 0) fprintf(js, ", ");
+                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                                Token pt = s->fn.param_types[p]->token;
+                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(js, "'string'");
+                                else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(js, "'double'");
+                                else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(js, "'bool'");
+                                else fprintf(js, "'int64'");
+                            } else fprintf(js, "'int64'");
+                        }
+                        fprintf(js, "]]");
+                        first_fn = 0;
+                    }
+                    fprintf(js, "\n});\n\n");
+                    
+                    // Export wrapper functions
+                    for (int fi = 0; fi < prog->count; fi++) {
+                        Stmt* s = prog->stmts[fi];
+                        if (s->type != STMT_FN) continue;
+                        if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
+                        if (s->fn.receiver_type.length > 0) continue;
+                        char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
+                        const char* cpfx = "";
+                        const char* _ckw2[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                        for (int k = 0; _ckw2[k]; k++) { if (strcmp(fname, _ckw2[k]) == 0) { cpfx = "_"; break; } }
+                        fprintf(js, "exports.%s = lib.%s%s;\n", fname, cpfx, fname);
+                    }
+                    fclose(js);
+                    fprintf(stderr, "\033[32m✓\033[0m Generated Node.js wrapper: %s\n", js_path);
+                    fprintf(stderr, "  Install ffi-napi: npm install ffi-napi\n");
+                }
+            }
             if (!keep_artifacts) { char cp[512]; snprintf(cp, sizeof(cp), "%s.c", file); unlink(cp); }
             unlink("wyn_cc_err.txt");
             return result == 0 ? 0 : 1;
@@ -1362,6 +2007,7 @@ int main(int argc, char** argv) {
         if (result != 0) {
             fprintf(stderr, "Error: compilation failed (internal codegen error)\n");
             fprintf(stderr, "Run with WYN_DEBUG=1 for details\n");
+            wynter_encourage();
             if (getenv("WYN_DEBUG")) {
                 FILE* err_file = fopen("wyn_cc_err.txt", "r");
                 if (err_file) {
@@ -1470,10 +2116,10 @@ int main(int argc, char** argv) {
     }
     
     // Type check
-    check_program(prog);
+    { extern void set_checker_source(const char*, const char*); set_checker_source(source, argv[3]); } check_program(prog);
     
     if (checker_had_error()) {
-        fprintf(stderr, "Compilation failed due to errors\n");
+        fprintf(stderr, "Compilation failed due to errors\n"); wynter_encourage();
         free(source);
         return 1;
     }
@@ -1642,7 +2288,7 @@ int main(int argc, char** argv) {
     } else {
         snprintf(compile_cmd, sizeof(compile_cmd),
                  "gcc %s -std=c11 -w -I %s/src -o %s %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c -lpthread -lm", 
-                 opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
+                 opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
     }
     
     int result = system(compile_cmd);
@@ -1660,6 +2306,13 @@ int main(int argc, char** argv) {
 
 int create_new_project(const char* project_name) {
     char path[512];
+    
+    // Check if wyn.toml already exists
+    snprintf(path, sizeof(path), "%s/wyn.toml", project_name);
+    if (access(path, F_OK) == 0) {
+        fprintf(stderr, "Error: %s/wyn.toml already exists. Use a new directory.\n", project_name);
+        return 1;
+    }
     
     // Create directories
     snprintf(path, sizeof(path), "mkdir -p %s/src %s/tests", project_name, project_name);
@@ -1690,7 +2343,7 @@ int create_new_project(const char* project_name) {
         fprintf(stderr, "Error: Failed to create main.wyn\n");
         return 1;
     }
-    fprintf(main_file, "fn main() -> int {\n    print(\"Hello from %s!\")\n    return 0\n}\n", project_name);
+    fprintf(main_file, "fn main() {\n    print(\"Hello from %s!\")\n}\n", project_name);
     fclose(main_file);
     
     // Create test file
@@ -1700,7 +2353,7 @@ int create_new_project(const char* project_name) {
         fprintf(stderr, "Error: Failed to create test file\n");
         return 1;
     }
-    fprintf(test_file, "// Tests for %s\n\nfn test_basic() -> int {\n    // Add your tests here\n    return 0\n}\n\nfn main() -> int {\n    test_basic()\n    print(\"All tests passed!\")\n    return 0\n}\n", project_name);
+    fprintf(test_file, "// Tests for %s\n\nfn test_basic() -> int {\n    // Add your tests here\n    return 0\n}\n\nfn main() {\n    test_basic()\n    print(\"All tests passed!\")\n}\n", project_name);
     fclose(test_file);
     
     // Create README.md
@@ -1720,4 +2373,505 @@ int create_new_project(const char* project_name) {
     printf("\nTo run tests:\n  wyn run tests/test_main.wyn\n");
     
     return 0;
+}
+
+int create_new_project_with_template(const char* name, const char* template, const char* lib_target) {
+    if (strcmp(template, "default") == 0) return create_new_project(name);
+    
+    // Check if wyn.toml already exists
+    char check[512];
+    snprintf(check, sizeof(check), "%s/wyn.toml", name);
+    if (access(check, F_OK) == 0) {
+        fprintf(stderr, "Error: %s/wyn.toml already exists. Use a new directory.\n", name);
+        return 1;
+    }
+    
+    char cmd[512]; FILE* f;
+    snprintf(cmd, sizeof(cmd), "mkdir -p %s/src %s/tests", name, name);
+    system(cmd);
+    
+    // wyn.toml
+    snprintf(cmd, sizeof(cmd), "%s/wyn.toml", name);
+    f = fopen(cmd, "w");
+    fprintf(f, "[project]\nname = \"%s\"\nversion = \"0.1.0\"\nentry = \"src/main.wyn\"\n", name);
+    if (strcmp(template, "lib") == 0 && lib_target && strcmp(lib_target, "wyn") == 0) {
+        fprintf(f, "description = \"A Wyn package\"\n");
+    }
+    if (strcmp(template, "web") == 0 || strcmp(template, "api") == 0) {
+        fprintf(f, "\n[packages]\nsqlite = { git = \"https://github.com/wynlang/sqlite\" }\n");
+        fprintf(f, "\n[deploy.dev]\nhost = \"localhost\"\nuser = \"deploy\"\nkey = \"~/.ssh/id_ed25519\"\npath = \"/opt/%s\"\nos = \"linux\"\npre = \"systemctl stop %s\"\npost = \"systemctl start %s\"\n", name, name, name);
+    }
+    fclose(f);
+    
+    // .gitignore
+    snprintf(cmd, sizeof(cmd), "%s/.gitignore", name);
+    f = fopen(cmd, "w");
+    fprintf(f, "*.wyn.c\n*.wyn.out\n*.out\nwyn_cc_err.txt\n*.db\npackages/\n");
+    fclose(f);
+    
+    // .github/workflows/test.yml
+    snprintf(cmd, sizeof(cmd), "mkdir -p %s/.github/workflows", name);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "%s/.github/workflows/test.yml", name);
+    f = fopen(cmd, "w");
+    fprintf(f,
+        "name: Test\n"
+        "on: [push, pull_request]\n"
+        "jobs:\n"
+        "  test:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - name: Install Wyn\n"
+        "        run: curl -fsSL https://wynlang.com/install.sh | sh\n"
+        "      - name: Test\n"
+        "        run: wyn test\n"
+        "      - name: Build\n"
+        "        run: wyn build .\n");
+    fclose(f);
+    
+    // README
+    snprintf(cmd, sizeof(cmd), "%s/README.md", name);
+    f = fopen(cmd, "w");
+    fprintf(f, "# %s\n\n", name);
+    if (strcmp(template, "web") == 0) fprintf(f,
+        "A REST API built with [Wyn](https://wynlang.com).\n\n"
+        "## Quick Start\n\n"
+        "```bash\nwyn run src/main.wyn\n```\n\n"
+        "Open http://localhost:8080\n\n"
+        "## API\n\n"
+        "| Method | Path | Description |\n"
+        "|--------|------|-------------|\n"
+        "| GET | `/` | HTML home page |\n"
+        "| GET | `/api/items` | List items (JSON) |\n"
+        "| POST | `/api/items` | Create item |\n"
+        "| GET | `/api/health` | Health check |\n\n"
+        "## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n\n"
+        "## Deploy\n\n```bash\nwyn deploy dev\n```\n");
+    else if (strcmp(template, "api") == 0) fprintf(f,
+        "A REST API built with [Wyn](https://wynlang.com).\n\n"
+        "## Quick Start\n\n"
+        "```bash\nwyn run src/main.wyn\n```\n\n"
+        "## Endpoints\n\n"
+        "| Method | Path | Description |\n"
+        "|--------|------|-------------|\n"
+        "| GET | `/health` | Health check |\n"
+        "| GET | `/ready` | Readiness check |\n"
+        "| GET | `/api/items` | List all items |\n"
+        "| POST | `/api/items` | Create item (body = name) |\n"
+        "| GET | `/api/items/:id` | Get item by ID |\n"
+        "| DELETE | `/api/items/:id` | Delete item |\n\n"
+        "## Examples\n\n"
+        "```bash\n"
+        "curl http://localhost:8080/health\n"
+        "curl -X POST -d 'My Item' http://localhost:8080/api/items\n"
+        "curl http://localhost:8080/api/items\n"
+        "curl http://localhost:8080/api/items/1\n"
+        "curl -X DELETE http://localhost:8080/api/items/1\n"
+        "```\n\n"
+        "## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n\n"
+        "## Deploy\n\n```bash\nwyn deploy dev\n```\n");
+    else if (strcmp(template, "cli") == 0) fprintf(f,
+        "A CLI tool built with [Wyn](https://wynlang.com).\n\n"
+        "## Usage\n\n"
+        "```bash\nwyn run src/main.wyn help\nwyn run src/main.wyn info\nwyn run src/main.wyn run <file>\nwyn run src/main.wyn list\n```\n\n"
+        "## Build\n\n```bash\nwyn build .\n./%s --help\n```\n\n"
+        "## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n", name);
+    else if (strcmp(template, "lib") == 0) {
+        if (lib_target && strcmp(lib_target, "wyn") == 0)
+            fprintf(f, "A Wyn package.\n\n## Install\n\n```bash\nwyn pkg install github.com/yourname/%s\n```\n\n## Usage\n\n```wyn\nimport %s\nprintln(%s.greet())\n```\n", name, name, name);
+        else if (lib_target && strcmp(lib_target, "python") == 0)
+            fprintf(f, "A Python extension built with Wyn.\n\n## Build\n\n```bash\nwyn build src/main.wyn --python\n```\n\n## Usage\n\n```python\nfrom %s import add, greet\nprint(add(2, 3))    # 5\nprint(greet())       # Hello from %s, world!\n```\n", name, name);
+        else if (lib_target && strcmp(lib_target, "node") == 0)
+            fprintf(f, "A Node.js native addon built with Wyn.\n\n## Build\n\n```bash\nwyn build src/main.wyn --node\n```\n\n## Usage\n\n```js\nconst { add, greet } = require('./%s');\nconsole.log(add(2, 3));  // 5\nconsole.log(greet());     // Hello from %s, world!\n```\n", name, name);
+        else if (lib_target && strcmp(lib_target, "c") == 0)
+            fprintf(f, "A C shared library built with Wyn.\n\n## Build\n\n```bash\nwyn build src/main.wyn --shared\n```\n\n## Usage\n\n```c\n#include \"%s.h\"\nprintf(\"%%d\\n\", add(2, 3));\n```\n", name);
+    }
+    fclose(f);
+    
+    // main.wyn
+    snprintf(cmd, sizeof(cmd), "%s/src/main.wyn", name);
+    f = fopen(cmd, "w");
+    if (strcmp(template, "web") == 0) {
+        fprintf(f,
+            "// %s — Web app with JSON API, SQLite, and HTML\n\n"
+            "fn init_db() -> int {\n"
+            "    var db = Db.open(\"%s.db\")\n"
+            "    Db.exec(db, \"CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)\")\n"
+            "    return db\n"
+            "}\n\n"
+            "fn home_page() -> string {\n"
+            "    return \"<html><body><h1>%s</h1><p>Built with <a href=\\\"https://wynlang.com\\\">Wyn</a></p>\"\n"
+            "        + \"<h2>API</h2><pre>GET  /api/items\\nPOST /api/items\\nGET  /api/health</pre></body></html>\"\n"
+            "}\n\n"
+            "fn handle(raw: string) {\n"
+            "    var parts = raw.split(\"|\")\n"
+            "    if parts.len() < 4 { return }\n"
+            "    var method = parts[0]\n"
+            "    var path = parts[1]\n"
+            "    var body = parts[2]\n"
+            "    var fd = parts[3].to_int()\n\n"
+            "    if method == \"GET\" && path == \"/\" {\n"
+            "        Http.respond_html(fd, 200, home_page())\n"
+            "        return\n"
+            "    }\n\n"
+            "    if method == \"GET\" && path == \"/api/health\" {\n"
+            "        Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ok\\\"}\")\n"
+            "        return\n"
+            "    }\n\n"
+            "    if method == \"GET\" && path == \"/api/items\" {\n"
+            "        var db = init_db()\n"
+            "        var rows = Db.query(db, \"SELECT name FROM items ORDER BY id DESC LIMIT 50\")\n"
+            "        Db.close(db)\n"
+            "        Http.respond_json(fd, 200, \"{\\\"items\\\": [\" + rows + \"]}\")\n"
+            "        return\n"
+            "    }\n\n"
+            "    if method == \"POST\" && path == \"/api/items\" {\n"
+            "        if body.len() == 0 { Http.respond_json(fd, 400, \"{\\\"error\\\": \\\"body required\\\"}\"); return }\n"
+            "        var db = init_db()\n"
+            "        Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [body])\n"
+            "        Db.close(db)\n"
+            "        Http.respond_json(fd, 201, \"{\\\"status\\\": \\\"created\\\"}\")\n"
+            "        return\n"
+            "    }\n\n"
+            "    Http.respond_json(fd, 404, \"{\\\"error\\\": \\\"not found\\\"}\")\n"
+            "}\n\n"
+            "fn main() {\n"
+            "    var port = 8080\n"
+            "    println(\"%s running on http://localhost:\" + int_to_string(port))\n"
+            "    println(\"\")\n"
+            "    println(\"  GET  /              — home page\")\n"
+            "    println(\"  GET  /api/items     — list items (JSON)\")\n"
+            "    println(\"  POST /api/items     — create item\")\n"
+            "    println(\"  GET  /api/health    — health check\")\n"
+            "    println(\"\")\n"
+            "    init_db()\n"
+            "    var server = Http.serve(port)\n"
+            "    while true {\n"
+            "        var raw = Http.accept(server)\n"
+            "        if raw.len() > 0 {\n"
+            "            spawn handle(raw)\n"
+            "        }\n"
+            "    }\n"
+            "}\n", name, name, name, name);
+        
+        fclose(f);
+        f = NULL;
+    } else if (strcmp(template, "api") == 0) {
+        fprintf(f,
+            "// %s — REST API with JSON, parameterized routes, SQLite\n\n"
+            "fn init_db() -> int {\n"
+            "    var db = Db.open(\"%s.db\")\n"
+            "    Db.exec(db, \"CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)\")\n"
+            "    return db\n"
+            "}\n\n"
+            "fn handle(raw: string) {\n"
+            "    var parts = raw.split(\"|\")\n"
+            "    if parts.len() < 4 { return }\n"
+            "    var method = parts[0]\n"
+            "    var path = parts[1]\n"
+            "    var body = parts[2]\n"
+            "    var fd = parts[3].to_int()\n\n"
+            "    if path == \"/health\" { Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ok\\\"}\"); return }\n"
+            "    if path == \"/ready\"  { Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ready\\\"}\"); return }\n\n"
+            "    if method == \"GET\" && path == \"/api/items\" {\n"
+            "        var db = init_db()\n"
+            "        var rows = Db.query(db, \"SELECT name FROM items ORDER BY id DESC LIMIT 100\")\n"
+            "        Db.close(db)\n"
+            "        Http.respond_json(fd, 200, \"{\\\"items\\\": [\" + rows + \"]}\")\n"
+            "        return\n"
+            "    }\n\n"
+            "    if method == \"POST\" && path == \"/api/items\" {\n"
+            "        if body.len() == 0 { Http.respond_json(fd, 400, \"{\\\"error\\\": \\\"body required\\\"}\"); return }\n"
+            "        var db = init_db()\n"
+            "        Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [body])\n"
+            "        Db.close(db)\n"
+            "        Http.respond_json(fd, 201, \"{\\\"status\\\": \\\"created\\\"}\")\n"
+            "        return\n"
+            "    }\n\n"
+            "    Http.respond_json(fd, 404, \"{\\\"error\\\": \\\"not found\\\"}\")\n"
+            "}\n\n"
+            "fn main() {\n"
+            "    var port = 8080\n"
+            "    println(\"%s running on http://localhost:\" + int_to_string(port))\n"
+            "    println(\"\")\n"
+            "    println(\"  GET    /health          — health check\")\n"
+            "    println(\"  GET    /ready           — readiness check\")\n"
+            "    println(\"  GET    /api/items       — list items\")\n"
+            "    println(\"  POST   /api/items       — create item\")\n"
+            "    println(\"  GET    /api/items/:id   — get item\")\n"
+            "    println(\"  DELETE /api/items/:id   — delete item\")\n"
+            "    println(\"\")\n"
+            "    init_db()\n"
+            "    var server = Http.serve(port)\n"
+            "    while true {\n"
+            "        var raw = Http.accept(server)\n"
+            "        if raw.len() > 0 {\n"
+            "            spawn handle(raw)\n"
+            "        }\n"
+            "    }\n"
+            "}\n", name, name, name);
+        fclose(f);
+        f = NULL;
+    } else if (strcmp(template, "cli") == 0) {
+        fprintf(f,
+            "// %s — CLI tool with arg parsing and colored output\n\n"
+            "fn print_help() {\n"
+            "    println(\"%s v0.1.0\")\n"
+            "    println(\"\")\n"
+            "    println(\"Usage: %s <command> [options]\")\n"
+            "    println(\"\")\n"
+            "    println(\"Commands:\")\n"
+            "    println(\"  run <file>     Process a file\")\n"
+            "    println(\"  list           List items\")\n"
+            "    println(\"  info           Show system info\")\n"
+            "    println(\"  help           Show this help\")\n"
+            "    println(\"  version        Show version\")\n"
+            "}\n\n"
+            "fn cmd_info() {\n"
+            "    println(\"%s v0.1.0\")\n"
+            "    println(\"  OS:   \" + System_exec(\"uname -s\").trim())\n"
+            "    println(\"  Arch: \" + System_exec(\"uname -m\").trim())\n"
+            "    println(\"  Dir:  \" + System_exec(\"pwd\").trim())\n"
+            "}\n\n"
+            "fn cmd_run(file: string) {\n"
+            "    var content = File.read(file)\n"
+            "    if content.len() == 0 {\n"
+            "        println(\"Error: could not read: \" + file)\n"
+            "        return\n"
+            "    }\n"
+            "    var lines = content.split(\"\\n\")\n"
+            "    println(\"Processed \" + int_to_string(lines.len()) + \" lines from \" + file)\n"
+            "}\n\n"
+            "fn cmd_list() {\n"
+            "    var items = [\"alpha\", \"beta\", \"gamma\"]\n"
+            "    for item in items {\n"
+            "        println(\"  - \" + item)\n"
+            "    }\n"
+            "    println(\"\")\n"
+            "    println(int_to_string(items.len()) + \" items\")\n"
+            "}\n\n"
+            "fn main() {\n"
+            "    var args = System.args()\n"
+            "    if args.len() < 2 {\n"
+            "        print_help()\n"
+            "        return 0\n"
+            "    }\n"
+            "    var cmd = args[1]\n"
+            "    if cmd == \"help\" || cmd == \"--help\" || cmd == \"-h\" {\n"
+            "        print_help()\n"
+            "    } else if cmd == \"version\" || cmd == \"--version\" || cmd == \"-v\" {\n"
+            "        println(\"%s v0.1.0\")\n"
+            "    } else if cmd == \"info\" {\n"
+            "        cmd_info()\n"
+            "    } else if cmd == \"list\" {\n"
+            "        cmd_list()\n"
+            "    } else if cmd == \"run\" {\n"
+            "        if args.len() < 3 {\n"
+            "            println(\"Usage: %s run <file>\")\n"
+            "            return 1\n"
+            "        }\n"
+            "        cmd_run(args[2])\n"
+            "    } else {\n"
+            "        println(\"Unknown command: \" + cmd)\n"
+            "        println(\"Run '%s --help' for usage\")\n"
+            "        return 1\n"
+            "    }\n"
+            "}\n", name, name, name, name, name, name, name);
+    } else if (strcmp(template, "lib") == 0) {
+        if (lib_target && strcmp(lib_target, "wyn") == 0) {
+            // Wyn package — installable via wyn pkg install
+            fprintf(f,
+                "// %s — a Wyn package\n"
+                "// Install: wyn pkg install github.com/yourname/%s\n\n"
+                "pub fn add(a: int, b: int) -> int {\n"
+                "    return a + b\n"
+                "}\n\n"
+                "pub fn greet(name: string = \"world\") -> string {\n"
+                "    return \"Hello from %s, \" + name + \"!\"\n"
+                "}\n", name, name, name);
+        } else if (lib_target && strcmp(lib_target, "python") == 0) {
+            fprintf(f,
+                "// %s — Python extension module\n"
+                "// Build: wyn build src/main.wyn --python\n"
+                "// Usage: python3 -c \"from %s import add; print(add(2, 3))\"\n\n"
+                "pub fn add(a: int, b: int) -> int {\n"
+                "    return a + b\n"
+                "}\n\n"
+                "pub fn greet(name: string = \"world\") -> string {\n"
+                "    return \"Hello from %s, \" + name + \"!\"\n"
+                "}\n\n"
+                "fn main() {}\n", name, name, name);
+        } else if (lib_target && strcmp(lib_target, "node") == 0) {
+            fprintf(f,
+                "// %s — Node.js native addon (N-API)\n"
+                "// Build: wyn build src/main.wyn --node\n"
+                "// Usage: const lib = require('./%s'); console.log(lib.add(2, 3));\n\n"
+                "pub fn add(a: int, b: int) -> int {\n"
+                "    return a + b\n"
+                "}\n\n"
+                "pub fn greet(name: string = \"world\") -> string {\n"
+                "    return \"Hello from %s, \" + name + \"!\"\n"
+                "}\n\n"
+                "fn main() {}\n", name, name, name);
+        } else if (lib_target && strcmp(lib_target, "c") == 0) {
+            fprintf(f,
+                "// %s — C shared library\n"
+                "// Build: wyn build src/main.wyn --shared\n"
+                "// Produces: lib%s.so (Linux) / lib%s.dylib (macOS)\n\n"
+                "pub fn add(a: int, b: int) -> int {\n"
+                "    return a + b\n"
+                "}\n\n"
+                "pub fn greet(name: string = \"world\") -> string {\n"
+                "    return \"Hello from %s, \" + name + \"!\"\n"
+                "}\n\n"
+                "fn main() {}\n", name, name, name, name);
+        }
+    }
+    if (f) fclose(f);
+    
+    // test
+    snprintf(cmd, sizeof(cmd), "%s/tests/test_main.wyn", name);
+    f = fopen(cmd, "w");
+    if (strcmp(template, "web") == 0) {
+        fprintf(f,
+            "fn main() {\n"
+            "    Test.init(\"%s\")\n\n"
+            "    // Database\n"
+            "    var db = Db.open(\"/tmp/%s_test.db\")\n"
+            "    Db.exec(db, \"CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)\")\n"
+            "    Db.exec(db, \"DELETE FROM items\")\n"
+            "    Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [\"test\"])\n"
+            "    var count = Db.query(db, \"SELECT COUNT(*) FROM items\")\n"
+            "    Test.assert_eq_str(count, \"1\", \"db insert\")\n"
+            "    Db.close(db)\n\n"
+            "    // SQL injection prevention\n"
+            "    var db2 = Db.open(\"/tmp/%s_test.db\")\n"
+            "    Db.exec_p(db2, \"INSERT INTO items (name) VALUES (?)\", [\"'; DROP TABLE items; --\"])\n"
+            "    var count2 = Db.query(db2, \"SELECT COUNT(*) FROM items\")\n"
+            "    Test.assert_eq_str(count2, \"2\", \"sql injection safe\")\n"
+            "    Db.close(db2)\n\n"
+            "    Test.summary()\n"
+            "}\n", name, name, name);
+    } else if (strcmp(template, "api") == 0) {
+        fprintf(f,
+            "fn main() {\n"
+            "    Test.init(\"%s\")\n\n"
+            "    // Database CRUD\n"
+            "    var db = Db.open(\"/tmp/%s_test.db\")\n"
+            "    Db.exec(db, \"CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)\")\n"
+            "    Db.exec(db, \"DELETE FROM items\")\n\n"
+            "    // Create\n"
+            "    Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [\"alpha\"])\n"
+            "    Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [\"beta\"])\n"
+            "    var count = Db.query(db, \"SELECT COUNT(*) FROM items\")\n"
+            "    Test.assert_eq_str(count, \"2\", \"create items\")\n\n"
+            "    // Read\n"
+            "    var name = Db.query(db, \"SELECT name FROM items WHERE id = 1\")\n"
+            "    Test.assert_eq_str(name, \"alpha\", \"read item\")\n\n"
+            "    // Delete\n"
+            "    Db.exec(db, \"DELETE FROM items WHERE id = 1\")\n"
+            "    var count2 = Db.query(db, \"SELECT COUNT(*) FROM items\")\n"
+            "    Test.assert_eq_str(count2, \"1\", \"delete item\")\n\n"
+            "    // SQL injection\n"
+            "    Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [\"'; DROP TABLE items; --\"])\n"
+            "    var count3 = Db.query(db, \"SELECT COUNT(*) FROM items\")\n"
+            "    Test.assert_eq_str(count3, \"2\", \"injection safe\")\n\n"
+            "    Db.close(db)\n"
+            "    Test.summary()\n"
+            "}\n", name, name);
+    } else if (strcmp(template, "cli") == 0) {
+        fprintf(f,
+            "test \"starts_with\" {\n"
+            "    assert(\"hello\".starts_with(\"he\"))\n"
+            "}\n\n"
+            "test \"upper\" {\n"
+            "    assert_eq(\"hello\".upper(), \"HELLO\")\n"
+            "}\n\n"
+            "test \"split\" {\n"
+            "    assert_eq(\"a,b,c\".split(\",\").len(), 3)\n"
+            "}\n\n"
+            "test \"file roundtrip\" {\n"
+            "    File.write(\"/tmp/%s_test.txt\", \"hello\")\n"
+            "    var content = File.read(\"/tmp/%s_test.txt\")\n"
+            "    assert_eq(content, \"hello\")\n"
+            "}\n", name, name);
+    } else if (strcmp(template, "lib") == 0) {
+        fprintf(f,
+            "fn add(a: int, b: int) -> int { return a + b }\n"
+            "fn greet(name: string = \"world\") -> string { return \"Hello from %s, \" + name + \"!\" }\n\n"
+            "test \"add\" {\n"
+            "    assert_eq(add(2, 3), 5)\n"
+            "    assert_eq(add(0, 0), 0)\n"
+            "    assert_eq(add(-1, 1), 0)\n"
+            "}\n\n"
+            "test \"greet\" {\n"
+            "    assert_eq(greet(), \"Hello from %s, world!\")\n"
+            "    assert_eq(greet(\"wyn\"), \"Hello from %s, wyn!\")\n"
+            "}\n", name, name, name);
+    } else {
+        fprintf(f, "test \"basic\" {\n    assert(1 + 1 == 2)\n}\n");
+    }
+    fclose(f);
+    
+    printf("\033[32m✓\033[0m Created %s project: %s/\n\n", template, name);
+    printf("  %s/wyn.toml\n  %s/src/main.wyn\n  %s/tests/test_main.wyn\n  %s/README.md\n  %s/.gitignore\n\n", name, name, name, name, name);
+    
+    // Auto-install packages for templates that need them
+    if (strcmp(template, "web") == 0 || strcmp(template, "api") == 0) {
+        printf("Installing packages...\n");
+        char install_cmd[1024];
+        // Copy sqlite from official-packages if available locally, otherwise note for user
+        char local_sqlite[512];
+        snprintf(local_sqlite, sizeof(local_sqlite), "%s/../official-packages/sqlite", name);
+        struct stat _ls;
+        snprintf(install_cmd, sizeof(install_cmd), "mkdir -p %s/packages/sqlite/src && cp %s/src/sqlite3.c %s/src/sqlite3.h %s/src/sqlite.wyn %s/wyn.toml %s/packages/sqlite/ 2>/dev/null && cp %s/src/*.c %s/src/*.h %s/packages/sqlite/src/ 2>/dev/null",
+            name, local_sqlite, local_sqlite, local_sqlite, local_sqlite, name, local_sqlite, local_sqlite, name);
+        if (stat(local_sqlite, &_ls) == 0) {
+            system(install_cmd);
+            printf("  \033[32m✓\033[0m sqlite package installed\n\n");
+        } else {
+            printf("  \033[33m⚠\033[0m Run: cd %s && wyn pkg install github.com/wynlang/sqlite\n\n", name);
+        }
+    }
+    
+    if (strcmp(template, "web") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n  # Open http://localhost:8080\n", name);
+    else if (strcmp(template, "api") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n\nTest:\n  curl http://localhost:8080/health\n  curl -X POST -d 'My Item' http://localhost:8080/api/items\n  curl http://localhost:8080/api/items\n", name);
+    else if (strcmp(template, "cli") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n\nWith args (build first):\n  wyn build . && ./%s list\n", name, name);
+    else if (strcmp(template, "lib") == 0) {
+        if (lib_target && strcmp(lib_target, "wyn") == 0)
+            printf("Run:\n  cd %s && wyn test\n\nPublish:\n  git push → wyn pkg install github.com/yourname/%s\n", name, name);
+        else if (lib_target && strcmp(lib_target, "python") == 0)
+            printf("Build:\n  cd %s && wyn build src/main.wyn --python\n\nTest:\n  python3 -c \"from %s import add; print(add(2, 3))\"\n", name, name);
+        else if (lib_target && strcmp(lib_target, "node") == 0)
+            printf("Build:\n  cd %s && wyn build src/main.wyn --node\n\nTest:\n  node -e \"const lib = require('./%s'); console.log(lib.add(2, 3))\"\n", name, name);
+        else if (lib_target && strcmp(lib_target, "c") == 0)
+            printf("Build:\n  cd %s && wyn build src/main.wyn --shared\n\nProduces: lib%s.so / lib%s.dylib\n", name, name, name);
+    }
+    return 0;
+}
+
+void print_flight_rules() {
+    const char* lines[] = {
+        "",
+        "  \033[36m✦ Flight Rules ✦\033[0m",
+        "",
+        "  One language is better than five.",
+        "  Readable code is fast code — you'll optimize it.",
+        "  Ship the binary, not the runtime.",
+        "  If it compiles, it should work.",
+        "  The best abstraction is the one you don't notice.",
+        "  Concurrency should be a verb, not a thesis.",
+        "  Every program starts as a script.",
+        "  Errors are values. Handle them or don't — but know which.",
+        "  A tool you don't use is a tool you don't need.",
+        "  Simple today, powerful tomorrow.",
+        "  The compiler is your first user.",
+        "  Deploy on Friday. Your binary doesn't have dependencies.",
+        "",
+        "  \033[2m— Wynter\033[0m",
+        "",
+        NULL
+    };
+    for (int i = 0; lines[i]; i++) printf("%s\n", lines[i]);
 }

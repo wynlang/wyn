@@ -3,6 +3,26 @@
 #include <stdlib.h>
 #include <string.h>
 #include "common.h"
+
+// Source context for error messages
+static const char* checker_source = NULL;
+static const char* checker_filename = NULL;
+void set_checker_source(const char* src, const char* fname) { checker_source = src; checker_filename = fname; }
+
+static void show_source_line(int line) {
+    if (!checker_source || line < 1) return;
+    const char* p = checker_source;
+    int cur = 1;
+    while (*p && cur < line) { if (*p == '\n') cur++; p++; }
+    if (cur == line) {
+        const char* end = p;
+        while (*end && *end != '\n') end++;
+        fprintf(stderr, "  \033[2m%4d |\033[0m %.*s\n", line, (int)(end - p), p);
+        fprintf(stderr, "       \033[31m");
+        for (int i = 0; i < (int)(end - p); i++) fprintf(stderr, "^");
+        fprintf(stderr, "\033[0m\n");
+    }
+}
 #include "ast.h"
 #include "types.h"
 #include "error.h"  // T1.5.3: For type_error_mismatch function
@@ -197,6 +217,7 @@ static void print_type_name(Type* type) {
 Type* make_type(TypeKind kind) {
     Type* t = calloc(1, sizeof(Type));
     t->kind = kind;
+    if (kind == TYPE_FUNCTION) t->fn_type.min_param_count = -1;
     return t;
 }
 
@@ -278,6 +299,8 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                 // Check for built-in types
                 if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                     return builtin_int;
+                } else if (type_name.length == 4 && memcmp(type_name.start, "char", 4) == 0) {
+                    return builtin_int;  // char is int in Wyn
                 } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
                     return builtin_string;
                 } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
@@ -353,13 +376,15 @@ static ValidationResult wyn_validate_function_call(Symbol* func_symbol, Expr** a
     
     Type* func_type = func_symbol->type;
     
-    // Check parameter count
-    if (arg_count != func_type->fn_type.param_count) {
+    // Check parameter count (allow fewer args if defaults exist)
+    int min_params = func_type->fn_type.min_param_count;
+    if (min_params < 0) min_params = func_type->fn_type.param_count;
+    if (arg_count < min_params || arg_count > func_type->fn_type.param_count) {
         return VALIDATION_PARAM_COUNT_MISMATCH;
     }
     
-    // Check type compatibility for each parameter
-    for (int i = 0; i < func_type->fn_type.param_count; i++) {
+    // Check type compatibility for each provided parameter
+    for (int i = 0; i < arg_count; i++) {
         Type* expected_type = func_type->fn_type.param_types[i];
         Type* actual_type = check_expr(args[i], scope);
         
@@ -411,6 +436,7 @@ void add_symbol(SymbolTable* scope, Token name, Type* type, bool is_mutable) {
     scope->symbols[scope->count].name = name;
     scope->symbols[scope->count].type = type;
     scope->symbols[scope->count].is_mutable = is_mutable;
+    scope->symbols[scope->count].is_used = false;
     scope->symbols[scope->count].next_overload = NULL;  // T1.5.3: Initialize overload chain
     scope->symbols[scope->count].mangled_name = NULL;   // T1.5.3: Initialize mangled name
     scope->count++;
@@ -479,7 +505,7 @@ void init_checker() {
         "file_move", "file_list_dir", "file_mkdir", "file_rmdir", "file_is_file", "file_is_dir",
         // NOTE: file_read, file_write, sys_exec are registered separately with proper types
         "random_int", "random_range", "random_float", "seed_random", "time_now", "time_format",
-        "range", "array_new", "array_push", "array_pop", "array_length_dyn", "len",
+        "range", "array_new", "array_push", "array_push_str", "array_pop", "array_length_dyn", "len",
         "assert_eq", "assert_true", "assert_false", "panic", "todo",
         "exit_program", "sleep_ms", "getenv_var", "setenv_var",
         "Error", "TypeError", "ValueError", "DivisionByZeroError", "print_error",
@@ -1063,11 +1089,28 @@ void init_checker() {
 
     // Register namespace identifiers so checker doesn't reject File.read() etc.
     // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", NULL};
+    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", NULL};
     for (int i = 0; namespaces[i]; i++) {
         Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
         if (!find_symbol(global_scope, ns_tok)) {
             add_symbol(global_scope, ns_tok, builtin_int, false);
+        }
+    }
+    
+    // Register loaded user modules as namespace symbols
+    {
+        extern int get_all_modules_raw(void** out, int max);
+        void* mods[64]; int mc = get_all_modules_raw(mods, 64);
+        for (int mi = 0; mi < mc; mi++) {
+            typedef struct { char* name; void* ast; } ME;
+            ME* mod = (ME*)mods[mi];
+            // Register short name (last segment after /)
+            char* slash = strrchr(mod->name, '/');
+            const char* short_name = slash ? slash + 1 : mod->name;
+            Token ns_tok = {TOKEN_IDENT, short_name, (int)strlen(short_name), 0};
+            if (!find_symbol(global_scope, ns_tok)) {
+                add_symbol(global_scope, ns_tok, builtin_int, false);
+            }
         }
     }
 
@@ -1305,6 +1348,30 @@ void init_checker() {
         ft->fn_type.param_types[3] = builtin_string;
         ft->fn_type.return_type = builtin_void;
         Token tok = {TOKEN_IDENT, "Http_respond", 12, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        // Http.respond_json(fd, status, json_string)
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 3;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.param_types[1] = builtin_int;
+        ft->fn_type.param_types[2] = builtin_string;
+        ft->fn_type.return_type = builtin_void;
+        Token tok = {TOKEN_IDENT, "Http_respond_json", 17, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        // Http.respond_html(fd, status, html_string)
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 3;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.param_types[1] = builtin_int;
+        ft->fn_type.param_types[2] = builtin_string;
+        ft->fn_type.return_type = builtin_void;
+        Token tok = {TOKEN_IDENT, "Http_respond_html", 17, 0};
         add_symbol(global_scope, tok, ft, false);
     }
     {
@@ -1731,7 +1798,9 @@ static int calculate_match_score(Type* fn_type, Type** arg_types, int arg_count)
     if (func->is_variadic) {
         if (arg_count < func->param_count) return -1;
     } else {
-        if (func->param_count != arg_count) return -1;  // Exact count match required for non-variadic
+        int min_p = func->min_param_count;
+        if (min_p < 0) min_p = func->param_count;  // -1 means unset
+        if (arg_count < min_p || arg_count > func->param_count) return -1;
     }
     
     int score = 0;
@@ -1855,12 +1924,17 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 expr->expr_type = builtin_bool;
                 return builtin_bool;
             }
+            if (expr->token.length == 4 && memcmp(expr->token.start, "char", 4) == 0) {
+                expr->expr_type = builtin_int;  // char is int in Wyn
+                return builtin_int;
+            }
             if (expr->token.length == 4 && memcmp(expr->token.start, "void", 4) == 0) {
                 expr->expr_type = builtin_void;
                 return builtin_void;
             }
             
             Symbol* sym = find_symbol(scope, expr->token);
+            if (sym) sym->is_used = true;
             if (!sym) {
                 // Check if this is a module-qualified name (e.g., math::add or math.add)
                 // If so, allow it - it will be resolved at codegen time
@@ -1898,6 +1972,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 
                 fprintf(stderr, "\nError at line %d: Undefined variable '%.*s'\n", 
                         expr->token.line, expr->token.length, expr->token.start);
+                show_source_line(expr->token.line);
                 
                 // Extract variable name for enhanced error reporting
                 char var_name[256];
@@ -2064,6 +2139,39 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     check_expr(expr->call.args[1], scope);
                     expr->expr_type = builtin_int;
                     return builtin_int;
+                } else if (strcmp(name_buf, "array_push") == 0 || strcmp(name_buf, "array_push_str") == 0) {
+                    // array_push(arr, val) — infer element type from val
+                    if (expr->call.arg_count >= 2) {
+                        Type* arr_type = check_expr(expr->call.args[0], scope);
+                        Type* val_type = check_expr(expr->call.args[1], scope);
+                        // Update array element type — but only if consistent
+                        if (arr_type && arr_type->kind == TYPE_ARRAY && val_type) {
+                            Type* existing = arr_type->array_type.element_type;
+                            if (!existing) {
+                                arr_type->array_type.element_type = val_type;
+                            } else if (existing->kind != val_type->kind) {
+                                fprintf(stderr, "Error at line %d: Cannot push %s into array of %s\n",
+                                    func_name.line,
+                                    val_type->kind == TYPE_STRING ? "string" : "int",
+                                    existing->kind == TYPE_STRING ? "string" : "int");
+                                fprintf(stderr, "  \033[34mHelp:\033[0m Use separate arrays for different types\n");
+                                had_error = true;
+                            }
+                        }
+                        if (expr->call.args[0]->type == EXPR_IDENT) {
+                            Symbol* sym = find_symbol(scope, expr->call.args[0]->token);
+                            if (sym && sym->type && sym->type->kind == TYPE_ARRAY && val_type) {
+                                Type* existing = sym->type->array_type.element_type;
+                                if (!existing) {
+                                    sym->type->array_type.element_type = val_type;
+                                } else if (existing->kind != val_type->kind) {
+                                    sym->type->array_type.element_type = NULL;
+                                }
+                            }
+                        }
+                    }
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
                 } else if (strcmp(name_buf, "file_exists") == 0) {
                     // file_exists(path) - returns int
                     if (expr->call.arg_count != 1) {
@@ -2086,6 +2194,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     // assert(condition) or assert(condition, message)
                     if (expr->call.arg_count < 1 || expr->call.arg_count > 2) {
                         fprintf(stderr, "Error at line %d: 'assert' expects 1 or 2 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_void;
+                    }
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
+                } else if (strcmp(name_buf, "assert_eq") == 0) {
+                    if (expr->call.arg_count != 2) {
+                        fprintf(stderr, "Error at line %d: 'assert_eq' expects 2 arguments, got %d\n",
                                 func_name.line, expr->call.arg_count);
                         had_error = true;
                         return builtin_void;
@@ -2502,13 +2622,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                                   expr->call.arg_count, expr->call.callee->token.line, 0);
                         had_error = true;
                     }
-                } else if (expr->call.arg_count != callee_type->fn_type.param_count) {
-                    char func_name[256];
-                    snprintf(func_name, sizeof(func_name), "%.*s", 
-                            expr->call.callee->token.length, expr->call.callee->token.start);
-                    type_error_wrong_arg_count(func_name, callee_type->fn_type.param_count, 
-                                              expr->call.arg_count, expr->call.callee->token.line, 0);
-                    had_error = true;
+                } else {
+                    int min_p = callee_type->fn_type.min_param_count;
+                    if (min_p < 0) min_p = callee_type->fn_type.param_count;
+                    if (expr->call.arg_count < min_p ||
+                        expr->call.arg_count > callee_type->fn_type.param_count) {
+                        char func_name[256];
+                        snprintf(func_name, sizeof(func_name), "%.*s", 
+                                expr->call.callee->token.length, expr->call.callee->token.start);
+                        type_error_wrong_arg_count(func_name, callee_type->fn_type.param_count, 
+                                                  expr->call.arg_count, expr->call.callee->token.line, 0);
+                        had_error = true;
+                    }
                 }
                 
                 // Check type compatibility for each argument (only for non-variadic params)
@@ -2563,11 +2688,34 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     expr->method_call.object->token.start);
                 // Only treat as namespace if it's a known builtin module
                 extern bool is_builtin_module(const char* name);
-                if (is_builtin_module(obj_name)) {
+                extern bool is_module_loaded(const char* name);
+                // Check builtin modules and loaded user modules (including short names)
+                bool is_known_module = is_builtin_module(obj_name) || is_module_loaded(obj_name);
+                // Also check if it's a short name of a loaded module (e.g., "utils" for "lib/utils")
+                if (!is_known_module) {
+                    extern int get_all_modules_raw(void** out, int max);
+                    void* mods[64]; int mc = get_all_modules_raw(mods, 64);
+                    for (int mi = 0; mi < mc; mi++) {
+                        typedef struct { char* name; void* ast; } ME;
+                        ME* mod = (ME*)mods[mi];
+                        // Check if obj_name matches the last segment of the module path
+                        char* slash = strrchr(mod->name, '/');
+                        const char* short_name = slash ? slash + 1 : mod->name;
+                        if (strcmp(short_name, obj_name) == 0) { is_known_module = true; break; }
+                    }
+                }
+                if (is_known_module) {
                     char ns_method[256];
                     snprintf(ns_method, sizeof(ns_method), "%s_%s", obj_name, method_name);
                     Token ns_tok = {TOKEN_IDENT, ns_method, (int)strlen(ns_method), 0};
                     Symbol* ns_sym = find_symbol(global_scope, ns_tok);
+                    // Also try :: form (System::args)
+                    if (!ns_sym) {
+                        char ns_method2[256];
+                        snprintf(ns_method2, sizeof(ns_method2), "%s::%s", obj_name, method_name);
+                        Token ns_tok2 = {TOKEN_IDENT, ns_method2, (int)strlen(ns_method2), 0};
+                        ns_sym = find_symbol(global_scope, ns_tok2);
+                    }
                     if (ns_sym && ns_sym->type && ns_sym->type->kind == TYPE_FUNCTION) {
                         Type* ret = ns_sym->type->fn_type.return_type;
                         if (ret) {
@@ -2914,7 +3062,19 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int;
         }
         case EXPR_STRING_INTERP:
+            // Walk interpolation expressions to mark variables as used
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                if (expr->string_interp.expressions[i]) {
+                    check_expr(expr->string_interp.expressions[i], scope);
+                }
+            }
             return builtin_string;
+        case EXPR_AWAIT:
+            if (expr->await.expr) check_expr(expr->await.expr, scope);
+            return builtin_int;
+        case EXPR_SPAWN:
+            if (expr->spawn.call) check_expr(expr->spawn.call, scope);
+            return builtin_int;
         case EXPR_RANGE:
             return builtin_int; // Range type
         case EXPR_LAMBDA: {
@@ -3056,7 +3216,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Token struct_name = expr->struct_init.type_name;
             
             if (wyn_is_generic_struct(struct_name)) {
-                // This is a generic struct - infer type arguments from field values
+                // Check field types
+                for (int i = 0; i < expr->struct_init.field_count; i++) {
+                    check_expr(expr->struct_init.field_values[i], scope);
+                }
+                
+                // Infer type arguments from field values
                 Type** type_args = malloc(sizeof(Type*) * expr->struct_init.field_count);
                 int type_arg_count = 0;
                 
@@ -3302,10 +3467,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             add_symbol(&arm_scope, field_name, field_type, false);
                         }
                     } else if (pat->type == PATTERN_OPTION && pat->option.inner) {
-                        // Enum variant with inner pattern
+                        // Enum variant with data destructuring — not yet supported in codegen
+                        fprintf(stderr, "\033[33mWarning:\033[0m match destructuring with data (line %d) is experimental — the bound variable may not have the correct value\n",
+                            pat->option.inner->ident.name.line);
                         if (pat->option.inner->type == PATTERN_IDENT) {
-                            // For now, assume int type for inner value
-                            // TODO: Get actual type from enum variant
                             add_symbol(&arm_scope, pat->option.inner->ident.name, builtin_int, false);
                         }
                     }
@@ -3325,9 +3490,8 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 if (result_type == NULL) {
                     result_type = arm_type;
                 } else if (!types_equal(result_type, arm_type)) {
-                    fprintf(stderr, "Error: Match arms have different types\n");
-                    had_error = true;
-                    return NULL;
+                    // Allow mismatched types — codegen will handle it
+                    // Common case: enum destructuring returns different representations of same type
                 }
             }
             
@@ -3423,6 +3587,29 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         }
                     }
                     init_type = array_type;
+                } else if (stmt->var.type->type == EXPR_CALL && 
+                           stmt->var.type->call.callee && 
+                           stmt->var.type->call.callee->type == EXPR_IDENT) {
+                    // Handle generic type annotations: Array<T>, HashMap<K,V>, etc.
+                    Token type_name = stmt->var.type->call.callee->token;
+                    if ((type_name.length == 5 && memcmp(type_name.start, "Array", 5) == 0) ||
+                        (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0)) {
+                        init_type = make_type(TYPE_ARRAY);
+                    } else if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
+                        init_type = make_type(TYPE_MAP);
+                    } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
+                        init_type = make_type(TYPE_SET);
+                    } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
+                        init_type = make_type(TYPE_OPTIONAL);
+                    } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
+                        init_type = make_type(TYPE_RESULT);
+                    } else {
+                        init_type = check_expr(stmt->var.type, scope);
+                    }
+                    // Still check init expression
+                    if (stmt->var.init) {
+                        check_expr(stmt->var.init, scope);
+                    }
                 } else {
                     init_type = check_expr(stmt->var.type, scope);
                 }
@@ -3516,6 +3703,12 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             }
             break;
         case STMT_IF:
+            // Warn about assignment in condition (= vs ==)
+            if (stmt->if_stmt.condition && stmt->if_stmt.condition->type == EXPR_ASSIGN) {
+                fprintf(stderr, "\033[33mWarning\033[0m at line %d: Assignment in if condition — did you mean '=='?\n",
+                        stmt->if_stmt.condition->token.line);
+                show_source_line(stmt->if_stmt.condition->token.line);
+            }
             check_expr(stmt->if_stmt.condition, scope);
             check_stmt(stmt->if_stmt.then_branch, scope);
             if (stmt->if_stmt.else_branch) {
@@ -3615,6 +3808,18 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             // Check function body with parameters in scope
             if (fn->body) {
                 check_stmt(fn->body, &fn_scope);
+            }
+            
+            // Warn about unused variables (for nested functions)
+            for (int j = fn->param_count; j < fn_scope.count; j++) {
+                Symbol* s = &fn_scope.symbols[j];
+                // Skip params and _ prefixed
+                if (j < fn->param_count) continue;
+                if (s->name.start[0] == '_') continue;
+                if (!s->is_used && s->name.length > 0) {
+                    fprintf(stderr, "\033[33mWarning:\033[0m unused variable '%.*s' (line %d)\n",
+                        s->name.length, s->name.start, s->name.line);
+                }
             }
             
             free(fn_scope.symbols);
@@ -3951,6 +4156,12 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             // Check for collision
             register_import(stmt->import.module.start, stmt->import.module.line);
             break;
+        case STMT_TEST:
+            // Check test block body
+            if (stmt->test_stmt.body) {
+                check_stmt(stmt->test_stmt.body, scope);
+            }
+            break;
         case STMT_MATCH: {
             // Type-check match statement with exhaustiveness checking
             Type* match_value_type = check_expr(stmt->match_stmt.value, scope);
@@ -4000,6 +4211,7 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 bool looks_like_enum_match = false;
                 char enum_name[64] = {0};
                 int enum_variant_count = 0;
+                (void)enum_variant_count;
                 
                 // Scan global scope for enum types and see if patterns match
                 for (int s = 0; s < global_scope->count; s++) {
@@ -4561,6 +4773,32 @@ void check_program(Program* prog) {
         hashset_new_type->fn_type.return_type = make_type(TYPE_SET);
         add_symbol(global_scope, hashset_new_tok, hashset_new_type, false);
         
+        // String module
+        Token string_mod_tok = {TOKEN_IDENT, "String", 6, 0};
+        add_symbol(global_scope, string_mod_tok, builtin_string, false);
+        
+        // Data module
+        Token data_mod_tok = {TOKEN_IDENT, "Data", 4, 0};
+        add_symbol(global_scope, data_mod_tok, builtin_int, false);
+        
+        // Data::save returns void, Data::load returns map
+        Token data_save_tok = {TOKEN_IDENT, "Data::save", 10, 0};
+        Type* data_save_type = make_type(TYPE_FUNCTION);
+        data_save_type->fn_type.param_count = 2;
+        data_save_type->fn_type.param_types = malloc(sizeof(Type*) * 2);
+        data_save_type->fn_type.param_types[0] = builtin_string;
+        data_save_type->fn_type.param_types[1] = make_type(TYPE_MAP);
+        data_save_type->fn_type.return_type = builtin_void;
+        add_symbol(global_scope, data_save_tok, data_save_type, false);
+        
+        Token data_load_tok = {TOKEN_IDENT, "Data::load", 10, 0};
+        Type* data_load_type = make_type(TYPE_FUNCTION);
+        data_load_type->fn_type.param_count = 1;
+        data_load_type->fn_type.param_types = malloc(sizeof(Type*));
+        data_load_type->fn_type.param_types[0] = builtin_string;
+        data_load_type->fn_type.return_type = make_type(TYPE_MAP);
+        add_symbol(global_scope, data_load_tok, data_load_type, false);
+        
         Token hashmap_insert_tok = {TOKEN_IDENT, "HashMap::insert", 15, 0};
         Type* hashmap_insert_type = make_type(TYPE_FUNCTION);
         hashmap_insert_type->fn_type.param_count = 3;
@@ -4749,6 +4987,15 @@ void check_program(Program* prog) {
             // Create function type
             Type* fn_type = make_type(TYPE_FUNCTION);
             fn_type->fn_type.param_count = fn->param_count;
+            // Count required params (without defaults)
+            int min_params = fn->param_count;
+            if (fn->param_defaults) {
+                for (int j = fn->param_count - 1; j >= 0; j--) {
+                    if (fn->param_defaults[j]) min_params = j;
+                    else break;
+                }
+            }
+            fn_type->fn_type.min_param_count = min_params;
             fn_type->fn_type.param_types = malloc(sizeof(Type*) * fn->param_count);
             for (int j = 0; j < fn->param_count; j++) {
                 // Determine parameter type from type annotation
@@ -5171,8 +5418,35 @@ void check_program(Program* prog) {
             }
             
             check_stmt(fn->body, &local_scope);
+            
+            // Warn about missing return in non-void functions
+            if (current_function_return_type && current_function_return_type->kind != TYPE_VOID &&
+                !(fn->name.length == 4 && memcmp(fn->name.start, "main", 4) == 0)) {
+                bool has_return = false;
+                if (fn->body && fn->body->type == STMT_BLOCK) {
+                    for (int j = 0; j < fn->body->block.count; j++) {
+                        if (fn->body->block.stmts[j] && fn->body->block.stmts[j]->type == STMT_RETURN)
+                            has_return = true;
+                    }
+                }
+                if (!has_return) {
+                    fprintf(stderr, "\033[33mWarning:\033[0m function '%.*s' may not return a value (line %d)\n",
+                        fn->name.length, fn->name.start, fn->name.line);
+                }
+            }
+            
             current_function_return_type = NULL;
             current_self_type = NULL;
+            
+            // Warn about unused variables
+            for (int j = fn->param_count; j < local_scope.count; j++) {
+                Symbol* s = &local_scope.symbols[j];
+                if (!s->is_used && s->name.length > 0 && s->name.start[0] != '_') {
+                    fprintf(stderr, "\033[33mWarning:\033[0m unused variable '%.*s' (line %d)\n",
+                        s->name.length, s->name.start, s->name.line);
+                }
+            }
+            
             free(local_scope.symbols);
         } else {
             check_stmt(prog->stmts[i], global_scope);

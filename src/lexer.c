@@ -12,11 +12,21 @@ typedef struct {
 } Lexer;
 
 static Lexer lexer;
+static Lexer saved_lexer;
+
+void save_lexer_state() { saved_lexer = lexer; }
+void restore_lexer_state() { lexer = saved_lexer; }
 
 void init_lexer(const char* source) {
     lexer.start = source;
     lexer.current = source;
     lexer.line = 1;
+    // Skip shebang line: #!/usr/bin/env wyn run
+    if (source[0] == '#' && source[1] == '!') {
+        while (*lexer.current && *lexer.current != '\n') lexer.current++;
+        if (*lexer.current == '\n') { lexer.current++; lexer.line++; }
+        lexer.start = lexer.current;
+    }
 }
 
 static bool is_at_end() {
@@ -106,11 +116,13 @@ static WynTokenType keyword_type(const char* start, int length) {
         case 'a': 
             if (length == 3 && memcmp(start, "and", 3) == 0) return TOKEN_AND;
             if (length == 2 && memcmp(start, "as", 2) == 0) return TOKEN_AS;
-            if (length == 6 && memcmp(start, "assert", 6) == 0) return TOKEN_ASSERT;
+            // 'assert' is a regular function, not a keyword
+            // if (length == 6 && memcmp(start, "assert", 6) == 0) return TOKEN_ASSERT;
             if (length == 5 && memcmp(start, "async", 5) == 0) return TOKEN_ASYNC;
             if (length == 5 && memcmp(start, "await", 5) == 0) return TOKEN_AWAIT;
             break;
         case 'b': if (length == 5 && memcmp(start, "break", 5) == 0) return TOKEN_BREAK; break;
+        case 'd': if (length == 5 && memcmp(start, "defer", 5) == 0) return TOKEN_DEFER; break;
         case 'c': 
             if (length == 5 && memcmp(start, "const", 5) == 0) return TOKEN_CONST;
             if (length == 8 && memcmp(start, "continue", 8) == 0) return TOKEN_CONTINUE;
@@ -260,6 +272,15 @@ Token next_token() {
     }
     if (c == '"') return string();
     if (c == '\'') {
+        // Single-quote string (no interpolation)
+        while (peek() != '\'' && !is_at_end()) {
+            if (peek() == '\\') { advance(); if (!is_at_end()) advance(); }
+            else { if (peek() == '\n') lexer.line++; advance(); }
+        }
+        if (!is_at_end()) advance();
+        return make_token(TOKEN_STRING);
+    }
+    if (c == '\'') {
         // Character literal
         advance(); // Skip opening '
         if (peek() == '\\') advance(); // Handle escape
@@ -279,6 +300,7 @@ Token next_token() {
         case '.': 
             if (match('.')) {
                 if (match('.')) return make_token(TOKEN_DOTDOTDOT);
+                if (match('=')) return make_token(TOKEN_DOTDOTEQ);
                 return make_token(TOKEN_DOTDOT);
             }
             return make_token(TOKEN_DOT);
@@ -297,7 +319,7 @@ Token next_token() {
             return make_token(TOKEN_MINUS);
         case '*': return match('=') ? make_token(TOKEN_STAREQ) : make_token(TOKEN_STAR);
         case '/': return match('=') ? make_token(TOKEN_SLASHEQ) : make_token(TOKEN_SLASH);
-        case '%': return make_token(TOKEN_PERCENT);
+        case '%': if (match('=')) return make_token(TOKEN_PERCENTEQ); return make_token(TOKEN_PERCENT);
         case '&': return match('&') ? make_token(TOKEN_AMPAMP) : make_token(TOKEN_AMP);
         case '|': 
             if (match('|')) return make_token(TOKEN_PIPEPIPE);

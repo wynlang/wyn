@@ -205,7 +205,7 @@ static void* processor_loop(void* arg) {
             if (task) { atomic_store(&p->spinning, 0); execute_task(task); goto next; }
             #ifdef __x86_64__
             __asm__ volatile("pause");
-            #elif defined(__aarch64__)
+            #elif defined(__aarch64__) && !defined(__TINYC__)
             __asm__ volatile("isb");
             #endif
         }
@@ -236,7 +236,11 @@ static void* processor_loop(void* arg) {
 
 // === Public API ===
 
+#ifdef __TINYC__
+static int current_processor_id = -1;  // TCC: no __thread, use global (safe for single-threaded TCC builds)
+#else
 static __thread int current_processor_id = -1;
+#endif
 
 static void init_scheduler(void) {
     if (atomic_exchange(&initialized, 1)) return;

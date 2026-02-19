@@ -13,8 +13,6 @@
     #include <io.h>
     #include <sys/stat.h>
     #include "windows_compat.h"
-    #define access _access
-    #define F_OK 0
     #define mkdir(path, mode) _mkdir(path)
     #define rmdir _rmdir
     #define getcwd _getcwd
@@ -23,7 +21,7 @@
     #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
     #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
     #define dirname _dirname
-    #define basename _basename
+    #define basename _wyn_basename
 #else
     #include <sys/stat.h>
     #include <unistd.h>

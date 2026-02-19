@@ -35,8 +35,8 @@ static bool modules_emitted_this_compilation = false;
 static const char* current_module_prefix = NULL;
 
 // Identifier scope tracking for proper identifier resolution
-static IdentScope* current_ident_scope = NULL;
-static IdentScope* module_ident_scope = NULL;
+__attribute__((unused)) static IdentScope* current_ident_scope = NULL;
+__attribute__((unused)) static IdentScope* module_ident_scope = NULL;
 
 // Convert module name to C identifier (network/http -> network_http)
 static const char* module_to_c_ident(const char* module_name) {
@@ -169,7 +169,7 @@ static void clear_module_functions() {
     module_function_count = 0;
 }
 
-static void register_parameter(const char* name) {
+__attribute__((unused)) static void register_parameter(const char* name) {
     if (current_param_count < 64) {
         current_param_mut[current_param_count] = false;
         current_param_types[current_param_count][0] = 0;
@@ -246,6 +246,26 @@ static void register_sb_var(const char* name) {
 int is_known_sb_var(const char* name) {
     for (int i = 0; i < sb_var_count; i++) {
         if (strcmp(sb_var_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+// Variable shadowing: track declared names and return shadow suffix
+static struct { char name[64]; int count; } shadow_vars[512];
+static int shadow_var_count = 0;
+
+// Returns shadow count for a variable name (0 = first declaration)
+int get_shadow_suffix(const char* name) {
+    for (int i = 0; i < shadow_var_count; i++) {
+        if (strcmp(shadow_vars[i].name, name) == 0) {
+            return ++shadow_vars[i].count;
+        }
+    }
+    if (shadow_var_count < 512) {
+        strncpy(shadow_vars[shadow_var_count].name, name, 63);
+        shadow_vars[shadow_var_count].name[63] = 0;
+        shadow_vars[shadow_var_count].count = 0;
+        shadow_var_count++;
     }
     return 0;
 }
@@ -448,11 +468,11 @@ static void track_var_with_type(const char* name, int len, const char* type) {
     scopes[scope_idx].count++;
 }
 
-static void track_string_var(const char* name, int len) {
+__attribute__((unused)) static void track_string_var(const char* name, int len) {
     track_var_with_type(name, len, "char*");
 }
 
-static void track_string_object(WynObject* obj) {
+__attribute__((unused)) static void track_string_object(WynObject* obj) {
     if (scope_depth > 0 && scopes[scope_depth - 1].string_count < 256) {
         scopes[scope_depth - 1].string_objects[scopes[scope_depth - 1].string_count++] = obj;
     }
@@ -514,3 +534,77 @@ void codegen_c_header() {
 
 // Program-level code generation and match statements
 #include "codegen_program.c"
+
+int get_current_shadow(const char* name) {
+    for (int i = 0; i < shadow_var_count; i++) {
+        if (strcmp(shadow_vars[i].name, name) == 0) return shadow_vars[i].count;
+    }
+    return 0;
+}
+
+// Defer stack
+static Expr* defer_stack[64];
+static int defer_count = 0;
+void push_defer(Expr* e) { if (defer_count < 64) defer_stack[defer_count++] = e; }
+int get_defer_count() { return defer_count; }
+Expr* get_defer(int i) { return defer_stack[i]; }
+void reset_defers() { defer_count = 0; }
+
+// Enum name tracking for constructor detection
+static char* enum_type_names[64];
+static int enum_type_count = 0;
+void register_enum_type(const char* name) {
+    if (enum_type_count < 64) enum_type_names[enum_type_count++] = strdup(name);
+}
+int is_enum_type(const char* name) {
+    for (int i = 0; i < enum_type_count; i++) {
+        if (strcmp(enum_type_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+// Track variables that hold data-carrying enum types
+static struct { char var_name[64]; char enum_name[64]; } enum_var_map[128];
+static int enum_var_count = 0;
+void register_enum_var(const char* var, const char* enum_type) {
+    if (enum_var_count < 128) {
+        strncpy(enum_var_map[enum_var_count].var_name, var, 63);
+        strncpy(enum_var_map[enum_var_count].enum_name, enum_type, 63);
+        enum_var_count++;
+    }
+}
+const char* get_enum_var_type(const char* var) {
+    for (int i = enum_var_count - 1; i >= 0; i--) {
+        if (strcmp(enum_var_map[i].var_name, var) == 0) return enum_var_map[i].enum_name;
+    }
+    return NULL;
+}
+
+// Function default parameter registry
+static struct { char name[128]; Expr** defaults; int param_count; } fn_defaults[256];
+static int fn_defaults_count = 0;
+
+void register_fn_defaults(const char* name, Expr** defaults, int param_count) {
+    if (fn_defaults_count < 256) {
+        strncpy(fn_defaults[fn_defaults_count].name, name, 127);
+        fn_defaults[fn_defaults_count].defaults = defaults;
+        fn_defaults[fn_defaults_count].param_count = param_count;
+        fn_defaults_count++;
+    }
+}
+
+Expr* get_fn_default(const char* name, int param_index) {
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, name) == 0 && param_index < fn_defaults[i].param_count) {
+            return fn_defaults[i].defaults[param_index];
+        }
+    }
+    return NULL;
+}
+
+int get_fn_param_count(const char* name) {
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, name) == 0) return fn_defaults[i].param_count;
+    }
+    return -1;
+}

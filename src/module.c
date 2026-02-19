@@ -53,7 +53,7 @@ bool is_builtin_module(const char* module_name) {
     const char* builtins[] = {
         "math", "Math", "File", "System", "Path", "DateTime", 
         "Json", "Http", "Regex", "Random", "HashMap", "HashSet", "Terminal",
-        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", NULL
+        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "String", "Data", NULL
     };
     for (int i = 0; builtins[i] != NULL; i++) {
         if (strcmp(module_name, builtins[i]) == 0) {
@@ -65,6 +65,12 @@ bool is_builtin_module(const char* module_name) {
 
 // Pre-scan source for imports and load them
 void preload_imports(const char* source) {
+    // Easter egg: import wisdom
+    if (strstr(source, "import wisdom")) {
+        extern void print_flight_rules();
+        print_flight_rules();
+        exit(0);
+    }
     const char* p = source;
     bool in_comment = false;
     bool in_line_comment = false;
@@ -216,13 +222,20 @@ void set_source_directory(const char* source_file) {
     }
 }
 
+// Try .wyn then .🐉 extension
+#define TRY_RESOLVE(fmt, ...) do { \
+    snprintf(path, sizeof(path), fmt ".wyn", __VA_ARGS__); \
+    if (stat(path, &st) == 0) return strdup(path); \
+    snprintf(path, sizeof(path), fmt ".🐉", __VA_ARGS__); \
+    if (stat(path, &st) == 0) return strdup(path); \
+} while(0)
+
 char* resolve_module_path(const char* module_name) {
     char path[512];
     struct stat st;
     
     // 1. Source file directory
-    snprintf(path, sizeof(path), "%s/%s.wyn", source_directory, module_name);
-    if (stat(path, &st) == 0) return strdup(path);
+    TRY_RESOLVE("%s/%s", source_directory, module_name);
     
     // 2. Parent directory of source file
     char parent_dir[512];
@@ -230,25 +243,20 @@ char* resolve_module_path(const char* module_name) {
     char* last_slash = strrchr(parent_dir, '/');
     if (last_slash) {
         *last_slash = '\0';
-        snprintf(path, sizeof(path), "%s/%s.wyn", parent_dir, module_name);
-        if (stat(path, &st) == 0) return strdup(path);
+        TRY_RESOLVE("%s/%s", parent_dir, module_name);
     }
     
     // 3. Source file directory + modules/
-    snprintf(path, sizeof(path), "%s/modules/%s.wyn", source_directory, module_name);
-    if (stat(path, &st) == 0) return strdup(path);
+    TRY_RESOLVE("%s/modules/%s", source_directory, module_name);
     
     // 4. Current directory
-    snprintf(path, sizeof(path), "%s.wyn", module_name);
-    if (stat(path, &st) == 0) return strdup(path);
+    TRY_RESOLVE("%s", module_name);
     
     // 5. ./modules/ directory
-    snprintf(path, sizeof(path), "./modules/%s.wyn", module_name);
-    if (stat(path, &st) == 0) return strdup(path);
+    TRY_RESOLVE("./modules/%s", module_name);
     
     // 5. ./wyn_modules/ directory
-    snprintf(path, sizeof(path), "./wyn_modules/%s.wyn", module_name);
-    if (stat(path, &st) == 0) return strdup(path);
+    TRY_RESOLVE("./wyn_modules/%s", module_name);
     
     // 6. User packages: ~/.wyn/packages/module_name/module_name.wyn
     const char* home = getenv("HOME");

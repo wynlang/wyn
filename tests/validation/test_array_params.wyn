@@ -13,7 +13,7 @@ fn show_array(arr: [int], n: int) {
     var s = "["
     for i in 0..n {
         if i > 0 { s = s + ", " }
-        s = s + int_to_string(arr[i])
+        s = s + arr[i].to_string()
     }
     println(s + "]")
 }

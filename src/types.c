@@ -17,6 +17,7 @@ static const MethodSignature method_signatures[] = {
     {"string", "title", "string", 0},
     {"string", "reverse", "string", 0},
     {"string", "to_bytes", "array", 0},  // Returns Vec<int>
+    {"string", "bytes", "array", 0},
     {"string", "chars", "array", 0},     // Returns Vec<string>
     {"string", "len", "int", 0},
     {"string", "is_empty", "bool", 0},
@@ -44,6 +45,7 @@ static const MethodSignature method_signatures[] = {
     {"string", "count", "int", 1},           // Count occurrences
     {"string", "is_numeric", "bool", 0},     // Check if numeric (int or float)
     {"string", "to_int", "int", 0},          // Parse string to int
+    {"string", "ascii", "int", 0},           // ASCII value of first char
     {"string", "to_float", "float", 0},      // Parse string to float
     {"string", "parse_int", "int", 0},       // Parse string to int (alias)
     {"string", "parse_float", "float", 0},   // Parse string to float (alias)
@@ -176,7 +178,7 @@ static const MethodSignature method_signatures[] = {
     {"map", "insert_int", "void", 2},
     {"map", "insert_string", "void", 2},
     {"map", "set_string", "void", 2},
-    {"map", "keys", "string", 0},
+    {"map", "keys", "array", 0},
     {"map", "len", "int", 0},
     {"map", "contains", "int", 1},
     {"map", "set_int", "void", 2},
@@ -337,6 +339,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
             out->c_function = "string_chars"; return true;
         }
         if (strcmp(method_name, "to_bytes") == 0 && arg_count == 0) {
+        }
+        if (strcmp(method_name, "bytes") == 0 && arg_count == 0) {
+            out->c_function = "string_to_bytes"; return true;
             out->c_function = "string_to_bytes"; return true;
         }
         if (strcmp(method_name, "pad_left") == 0 && arg_count == 2) {
@@ -416,6 +421,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "to_int") == 0 && arg_count == 0) {
             out->c_function = "str_parse_int"; return true;
+        }
+        if (strcmp(method_name, "ascii") == 0 && arg_count == 0) {
+            out->c_function = "str_ascii"; return true;
         }
         if (strcmp(method_name, "to_float") == 0 && arg_count == 0) {
             out->c_function = "str_parse_float"; return true;
@@ -744,6 +752,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "slice") == 0 && arg_count == 2) {
             out->c_function = "wyn_array_slice_range"; return true;
         }
+        if (strcmp(method_name, "slice") == 0 && arg_count == 1) {
+            out->c_function = "wyn_array_slice_from"; return true;
+        }
         if (strcmp(method_name, "join") == 0 && arg_count == 1) {
             out->c_function = "array_join_str"; return true;
         }
@@ -995,6 +1006,8 @@ const char* lookup_module_fn_return_type(const char* fn_name) {
         {"System_exec", "string"}, {"System_env", "string"},
         {"Net_resolve", "string"}, {"Url_encode", "string"}, {"Url_decode", "string"},
         {"StringBuilder_to_string", "string"},
+        {"Template_render", "string"},
+        {"Template_render_string", "string"},
         {NULL, NULL}
     };
     for (int i = 0; fns[i].name; i++) {

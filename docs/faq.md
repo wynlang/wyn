@@ -1,7 +1,7 @@
 # Frequently Asked Questions
 
-![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)
-**Latest: v1.6.0**
+![Version](https://img.shields.io/badge/version-1.7.0-blue.svg)
+**Latest: v1.7.0**
 
 Common questions and answers about the Wyn programming language.
 
@@ -22,7 +22,7 @@ Wyn is a modern systems programming language with an "everything is an object" p
 
 ### Is Wyn production ready?
 
-Yes! Wyn v1.6.0 is production ready with:
+Yes! Wyn v1.7.0 is production ready with:
 - ✅ Complete language implementation
 - ✅ 150+ built-in methods
 - ✅ Comprehensive standard library
@@ -449,4 +449,4 @@ If you can't find the answer here:
    - Code examples if relevant
    - What you've already tried
 
-*This FAQ covers Wyn v1.6.0. For the latest updates, see the [GitHub repository](https://github.com/wynlang/wyn).*
+*This FAQ covers Wyn v1.7.0. For the latest updates, see the [GitHub repository](https://github.com/wynlang/wyn).*

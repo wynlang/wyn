@@ -8,7 +8,7 @@ fn main() -> int {
     // Strings are automatically freed
     var i = 0
     while i < 5 {
-        var s = str_upper("hello world")
+        var s = "hello world".upper()
         print_str(s)
         // No str_free needed - automatic!
         i = i + 1
@@ -20,7 +20,7 @@ fn main() -> int {
     
     // Works in if blocks too
     if 1 == 1 {
-        var greeting = str_concat("Hello", " Wyn")
+        var greeting = "Hello".concat(" Wyn")
         print_str(greeting)
         // Automatically freed at end of if block
     }
@@ -29,8 +29,8 @@ fn main() -> int {
     print_str("")
     
     // Multiple allocations
-    var s1 = str_concat("Part", " ")
-    var s2 = str_concat(s1, "One")
+    var s1 = "Part".concat(" ")
+    var s2 = s1.concat("One")
     print_str(s2)
     // Both s1 and s2 auto-freed at function end
     

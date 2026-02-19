@@ -2,8 +2,13 @@
 #define WYN_RUNTIME_H
 #define _POSIX_C_SOURCE 200809L
 
+// TCC compatibility: __auto_type is a GCC/Clang extension
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
 // Platform detection for mobile
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !defined(__TINYC__)
 #include <TargetConditionals.h>
 #if TARGET_OS_IOS || TARGET_OS_SIMULATOR
 #define WYN_MOBILE_IOS 1
@@ -456,7 +461,7 @@ void array_push_str(WynArray* arr, const char* value) {
         arr->data = realloc(arr->data, sizeof(WynValue) * arr->capacity);
     }
     arr->data[arr->count].type = WYN_TYPE_STRING;
-    arr->data[arr->count].data.string_val = value;
+    arr->data[arr->count].data.string_val = strdup(value);
     arr->count++;
 }
 void array_push_array(WynArray* arr, WynArray* nested) {
@@ -700,6 +705,9 @@ WynArray wyn_array_slice_range(WynArray arr, int start, int end) {
         result.data[result.count++] = arr.data[i];
     }
     return result;
+}
+WynArray wyn_array_slice_from(WynArray arr, int start) {
+    return wyn_array_slice_range(arr, start, arr.count);
 }
 char* array_join(WynArray arr, const char* sep) {
     if (arr.count == 0) return "";
@@ -1739,10 +1747,20 @@ long long wyn_safe_mod(long long a, long long b) {
 }
 char* char_to_string(char x) { char* r = malloc(2); r[0] = x; r[1] = 0; return r; }
 int char_to_int(char x) { return (int)x; }
+char char_from_int(int x) { return (char)x; }
 bool char_is_alpha(char x) { return (x >= 'A' && x <= 'Z') || (x >= 'a' && x <= 'z'); }
 bool char_is_numeric(char x) { return x >= '0' && x <= '9'; }
 bool char_is_alphanumeric(char x) { return char_is_alpha(x) || char_is_numeric(x); }
 bool char_is_whitespace(char x) { return x == ' ' || x == '\t' || x == '\n' || x == '\r'; }
+char* String_from_chars(WynArray arr) {
+    char* r = malloc(arr.count + 1);
+    for (int i = 0; i < arr.count; i++) {
+        const char* s = arr.data[i].data.string_val;
+        r[i] = (s && *s) ? s[0] : 0;
+    }
+    r[arr.count] = 0;
+    return r;
+}
 bool char_is_uppercase(char x) { return x >= 'A' && x <= 'Z'; }
 bool char_is_lowercase(char x) { return x >= 'a' && x <= 'z'; }
 char char_to_upper(char x) { return (x >= 'a' && x <= 'z') ? x - 32 : x; }
@@ -1783,6 +1801,13 @@ long long str_parse_int(const char* s) {
     if(errno != 0 || end == s) return 0;
     return val;
 }
+long long str_ascii(const char* s) { return (s && *s) ? (unsigned char)s[0] : 0; }
+const char* String_char_from_int(long long n) { char* r = malloc(2); r[0] = (char)n; r[1] = 0; return r; }
+
+// Data.save/load — forward declared, defined after hashmap functions
+void Data_save(const char* path, WynHashMap* map);
+WynHashMap* Data_load(const char* path);
+extern void hashmap_insert_string(WynHashMap* map, const char* key, const char* value);
 int str_parse_int_failed(int result) {
     return result == 0;
 }
@@ -2013,6 +2038,69 @@ void Http_respond(long long client_fd, long long status, const char* content_typ
     close((int)client_fd);
 }
 
+// --- Route matching: /users/:id → extracts params ---
+int Http_route_match(const char* pattern, const char* path, WynHashMap* params) {
+    const char* p = pattern;
+    const char* u = path;
+    while (*p && *u) {
+        if (*p == ':') {
+            // Extract param name
+            p++;
+            char name[64]; int ni = 0;
+            while (*p && *p != '/' && ni < 63) name[ni++] = *p++;
+            name[ni] = 0;
+            // Extract param value
+            char val[256]; int vi = 0;
+            while (*u && *u != '/' && vi < 255) val[vi++] = *u++;
+            val[vi] = 0;
+            if (params) hashmap_insert_string(params, strdup(name), strdup(val));
+        } else {
+            if (*p != *u) return 0;
+            p++; u++;
+        }
+    }
+    // Both must be consumed (or both at trailing /)
+    return (*p == 0 && *u == 0) || (*p == 0 && *u == '/' && *(u+1) == 0);
+}
+
+// Parse request string "METHOD|PATH|BODY|FD" into a HashMap context
+WynHashMap* Http_parse_request(const char* raw) {
+    WynHashMap* ctx = hashmap_new();
+    if (!raw || !raw[0]) return ctx;
+    char* copy = strdup(raw);
+    char* method = copy;
+    char* path = strchr(method, '|');
+    if (path) { *path = 0; path++; } else { path = ""; }
+    char* body = strchr(path, '|');
+    if (body) { *body = 0; body++; } else { body = ""; }
+    char* fd_str = strchr(body, '|');
+    if (fd_str) { *fd_str = 0; fd_str++; } else { fd_str = "0"; }
+    hashmap_insert_string(ctx, strdup("method"), strdup(method));
+    hashmap_insert_string(ctx, strdup("path"), strdup(path));
+    hashmap_insert_string(ctx, strdup("body"), strdup(body));
+    hashmap_insert_string(ctx, strdup("fd"), strdup(fd_str));
+    // Parse query string
+    char* q = strchr(path, '?');
+    if (q) { *q = 0; hashmap_insert_string(ctx, strdup("query"), strdup(q + 1)); }
+    free(copy);
+    return ctx;
+}
+
+int Http_ctx_fd(WynHashMap* ctx) {
+    const char* fd_str = hashmap_get_string(ctx, "fd");
+    return fd_str ? atoi(fd_str) : 0;
+}
+
+void Http_respond_json(int fd, int status, const char* json) {
+    http_send_response(fd, status, "application/json", json);
+    close(fd);
+}
+
+void Http_respond_html(int fd, int status, const char* html) {
+    http_send_response(fd, status, "text/html", html);
+    close(fd);
+}
+
 int Http_serve(int port) {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) return -1;
@@ -2066,7 +2154,28 @@ void Http_close_server(int fd) { if (fd >= 0) close(fd); }
 // HashMap.keys() -> newline-separated string of all keys
 // HashMap.len() -> number of entries
 extern char* hashmap_keys_string(WynHashMap* map);
-char* hashmap_keys(WynHashMap* map) { return hashmap_keys_string(map); }
+extern char* hashmap_values_string(WynHashMap* map);
+char* hashmap_keys_str(WynHashMap* map) { return hashmap_keys_string(map); }
+WynArray hashmap_keys(WynHashMap* map) {
+    WynArray arr = array_new();
+    char* raw = hashmap_keys_string(map);
+    if (!raw || raw[0] == 0) return arr;
+    char* copy = strdup(raw);
+    char* line = strtok(copy, "\n");
+    while (line) { if (line[0]) array_push_str(&arr, line); line = strtok(NULL, "\n"); }
+    free(copy);
+    return arr;
+}
+WynArray hashmap_values(WynHashMap* map) {
+    WynArray arr = array_new();
+    char* raw = hashmap_values_string(map);
+    if (!raw || raw[0] == 0) return arr;
+    char* copy = strdup(raw);
+    char* line = strtok(copy, "\n");
+    while (line) { if (line[0]) array_push_str(&arr, line); line = strtok(NULL, "\n"); }
+    free(copy);
+    return arr;
+}
 
 // String.split(delim) -> newline-separated string (use split_at for indexed access)
 char* string_split_to_str(const char* s, const char* delim) {
@@ -2184,6 +2293,31 @@ void Terminal_move(int row, int col) {
 }
 void Terminal_write(const char* s) {
     write(STDOUT_FILENO, s, strlen(s));
+}
+// Colors and styles
+void Terminal_color(int fg) { printf("\033[%dm", fg); }
+void Terminal_bg(int bg) { printf("\033[%dm", bg + 10); }
+void Terminal_reset() { printf("\033[0m"); }
+void Terminal_bold() { printf("\033[1m"); }
+void Terminal_dim() { printf("\033[2m"); }
+void Terminal_underline() { printf("\033[4m"); }
+void Terminal_hide_cursor() { printf("\033[?25l"); }
+void Terminal_show_cursor() { printf("\033[?25h"); }
+// Colored print helpers
+void Terminal_print_color(const char* s, int fg) { printf("\033[%dm%s\033[0m", fg, s); }
+// Box drawing
+void Terminal_box(int row, int col, int w, int h) {
+    Terminal_move(row, col); printf("┌"); for(int i=0;i<w-2;i++) printf("─"); printf("┐");
+    for(int r=1;r<h-1;r++) { Terminal_move(row+r, col); printf("│"); Terminal_move(row+r, col+w-1); printf("│"); }
+    Terminal_move(row+h-1, col); printf("└"); for(int i=0;i<w-2;i++) printf("─"); printf("┘");
+}
+// Progress bar
+void Terminal_progress(int row, int col, int width, int percent) {
+    Terminal_move(row, col);
+    int filled = (width - 2) * percent / 100;
+    printf("[");
+    for(int i=0;i<width-2;i++) printf(i < filled ? "█" : "░");
+    printf("] %d%%", percent);
 }
 #endif // _WIN32 terminal guard
 
@@ -2861,6 +2995,47 @@ char* Db_query_one(long long handle, const char* sql) {
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         const char* val = (const char*)sqlite3_column_text(stmt, 0);
         result = val ? strdup(val) : "";
+    }
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+// Parameterized queries — prevent SQL injection
+int Db_exec_p(long long handle, const char* sql, WynArray params) {
+    if (handle <= 0 || handle >= MAX_DB_HANDLES || !db_handles[handle]) return -1;
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db_handles[handle], sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+    for (int i = 0; i < params.count; i++) {
+        if (params.data[i].type == WYN_TYPE_STRING)
+            sqlite3_bind_text(stmt, i+1, params.data[i].data.string_val, -1, SQLITE_TRANSIENT);
+        else
+            sqlite3_bind_int64(stmt, i+1, params.data[i].data.int_val);
+    }
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return (rc == SQLITE_DONE || rc == SQLITE_OK) ? 0 : -1;
+}
+
+char* Db_query_p(long long handle, const char* sql, WynArray params) {
+    if (handle <= 0 || handle >= MAX_DB_HANDLES || !db_handles[handle]) return "";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db_handles[handle], sql, -1, &stmt, NULL) != SQLITE_OK) return "";
+    for (int i = 0; i < params.count; i++) {
+        if (params.data[i].type == WYN_TYPE_STRING)
+            sqlite3_bind_text(stmt, i+1, params.data[i].data.string_val, -1, SQLITE_TRANSIENT);
+        else
+            sqlite3_bind_int64(stmt, i+1, params.data[i].data.int_val);
+    }
+    char* result = malloc(65536); result[0] = 0;
+    int first_row = 1;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        if (!first_row) strcat(result, "\n"); first_row = 0;
+        int cols = sqlite3_column_count(stmt);
+        for (int c = 0; c < cols; c++) {
+            if (c > 0) strcat(result, "|");
+            const char* val = (const char*)sqlite3_column_text(stmt, c);
+            if (val) strcat(result, val);
+        }
     }
     sqlite3_finalize(stmt);
     return result;
@@ -3822,4 +3997,270 @@ long long Csv_header_count(long long handle) {
 // Call at the end of each request loop iteration in servers
 void System_gc() { wyn_arena_reset(); }
 
+// Data.save/load implementation (after hashmap functions are available)
+void Data_save(const char* path, WynHashMap* map) {
+    FILE* f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f, "{\n");
+    char* keys = hashmap_keys_string(map);
+    if (keys && keys[0]) {
+        char* copy = strdup(keys);
+        char* line = strtok(copy, "\n");
+        int first = 1;
+        while (line) {
+            if (line[0]) {
+                if (!first) fprintf(f, ",\n");
+                const char* val = hashmap_get_string(map, line);
+                fprintf(f, "  \"%s\": \"%s\"", line, val ? val : "");
+                first = 0;
+            }
+            line = strtok(NULL, "\n");
+        }
+        free(copy);
+    }
+    fprintf(f, "\n}\n");
+    fclose(f);
+}
+
+WynHashMap* Data_load(const char* path) {
+    WynHashMap* map = hashmap_new();
+    FILE* f = fopen(path, "r");
+    if (!f) return map;
+    char buf[65536];
+    int len = fread(buf, 1, sizeof(buf) - 1, f);
+    buf[len] = 0;
+    fclose(f);
+    char* p = buf;
+    while (*p) {
+        char* kstart = strchr(p, '"'); if (!kstart) break; kstart++;
+        char* kend = strchr(kstart, '"'); if (!kend) break;
+        char* colon = strchr(kend, ':'); if (!colon) break;
+        char* vstart = strchr(colon, '"'); if (!vstart) break; vstart++;
+        char* vend = strchr(vstart, '"'); if (!vend) break;
+        int klen = kend - kstart, vlen = vend - vstart;
+        char key[256], val[256];
+        if (klen > 255) klen = 255;
+        if (vlen > 255) vlen = 255;
+        memcpy(key, kstart, klen); key[klen] = 0;
+        memcpy(val, vstart, vlen); val[vlen] = 0;
+        hashmap_insert_string(map, strdup(key), strdup(val));
+        p = vend + 1;
+    }
+    return map;
+}
+
 #endif // WYN_RUNTIME_H
+
+
+// === Template Engine ===
+// Replaces ${key} in template strings with values from a HashMap context.
+// Auto HTML-escapes values. Use ${raw:key} for unescaped output.
+
+static char* html_escape(const char* s) {
+    if (!s) return "";
+    int len = strlen(s);
+    char* out = malloc(len * 6 + 1); // worst case: every char is &
+    char* p = out;
+    for (int i = 0; i < len; i++) {
+        switch (s[i]) {
+            case '<': memcpy(p, "&lt;", 4); p += 4; break;
+            case '>': memcpy(p, "&gt;", 4); p += 4; break;
+            case '&': memcpy(p, "&amp;", 5); p += 5; break;
+            case '"': memcpy(p, "&quot;", 6); p += 6; break;
+            default: *p++ = s[i];
+        }
+    }
+    *p = 0;
+    return out;
+}
+
+char* Template_render(const char* path, WynHashMap* ctx);
+char* Template_render_string(const char* tmpl, WynHashMap* ctx) {
+    if (!tmpl) return "";
+    int tlen = strlen(tmpl);
+    char* result = malloc(tlen * 4 + 65536);
+    char* out = result;
+    
+    extern char* hashmap_get_string(WynHashMap*, const char*);
+    
+    int skip_depth = 0; // >0 means we're inside a false ${if:} block
+    int else_depth = 0; // track which depth level we're at for else
+    
+    for (int i = 0; i < tlen; i++) {
+        if (tmpl[i] == '$' && i + 1 < tlen && tmpl[i+1] == '{') {
+            int start = i + 2;
+            int end = start;
+            int depth = 1;
+            while (end < tlen && depth > 0) {
+                if (tmpl[end] == '{') depth++;
+                if (tmpl[end] == '}') depth--;
+                if (depth > 0) end++;
+            }
+            
+            char key[256] = {0};
+            int klen = end - start;
+            if (klen > 255) klen = 255;
+            memcpy(key, tmpl + start, klen);
+            
+            // Handle control flow
+            if (strncmp(key, "if:", 3) == 0) {
+                char* cond_key = key + 3;
+                char* val = hashmap_get_string(ctx, cond_key);
+                int truthy = (val && val[0] && strcmp(val, "false") != 0 && strcmp(val, "0") != 0);
+                if (!truthy) skip_depth++;
+                i = end; continue;
+            } else if (strcmp(key, "else") == 0) {
+                if (skip_depth == 1) { skip_depth = 0; } // was skipping, now include
+                else if (skip_depth == 0) { skip_depth = 1; } // was including, now skip
+                i = end; continue;
+            } else if (strcmp(key, "endif") == 0) {
+                if (skip_depth > 0) skip_depth--;
+                i = end; continue;
+            } else if (strncmp(key, "each:", 5) == 0) {
+                if (skip_depth > 0) { i = end; continue; }
+                // Find ${endeach} block
+                char* each_key = key + 5;
+                char* list_val = hashmap_get_string(ctx, each_key);
+                int block_start = end + 1;
+                // Find matching ${endeach}
+                int block_end = block_start;
+                int each_depth = 1;
+                while (block_end < tlen - 1) {
+                    if (tmpl[block_end] == '$' && tmpl[block_end+1] == '{') {
+                        char peek_key[64] = {0};
+                        int pk = block_end + 2, pe = pk;
+                        while (pe < tlen && tmpl[pe] != '}') pe++;
+                        int pkl = pe - pk; if (pkl > 63) pkl = 63;
+                        memcpy(peek_key, tmpl + pk, pkl);
+                        if (strcmp(peek_key, "endeach") == 0) { each_depth--; if (each_depth == 0) { block_end = pk - 2; break; } }
+                        if (strncmp(peek_key, "each:", 5) == 0) each_depth++;
+                    }
+                    block_end++;
+                }
+                // Extract block template
+                int blen = block_end - block_start;
+                char* block_tmpl = malloc(blen + 1);
+                memcpy(block_tmpl, tmpl + block_start, blen);
+                block_tmpl[blen] = 0;
+                // Iterate over comma-separated values — simple string replace
+                if (list_val && list_val[0]) {
+                    char* list_copy = strdup(list_val);
+                    char* pos = list_copy;
+                    while (pos && *pos) {
+                        while (*pos == ' ') pos++;
+                        char* comma = strchr(pos, ',');
+                        if (comma) *comma = 0;
+                        // Replace ${item} in block_tmpl with current item
+                        char* rendered = malloc(blen * 2 + strlen(pos) * 10 + 1);
+                        char* rp = rendered;
+                        for (int bi = 0; bi < blen; bi++) {
+                            if (block_tmpl[bi] == '$' && bi + 6 < blen && strncmp(block_tmpl + bi, "${item}", 7) == 0) {
+                                char* esc = html_escape(pos);
+                                int el = strlen(esc); memcpy(rp, esc, el); rp += el; free(esc);
+                                bi += 6;
+                            } else {
+                                *rp++ = block_tmpl[bi];
+                            }
+                        }
+                        *rp = 0;
+                        int rlen = rp - rendered;
+                        memcpy(out, rendered, rlen); out += rlen;
+                        free(rendered);
+                        pos = comma ? comma + 1 : NULL;
+                    }
+                    free(list_copy);
+                }
+                free(block_tmpl);
+                // Skip past ${endeach}
+                i = block_end;
+                while (i < tlen && !(tmpl[i] == '$' && tmpl[i+1] == '{')) i++;
+                if (i < tlen) { i += 2; while (i < tlen && tmpl[i] != '}') i++; }
+                continue;
+            }
+            
+            // Skip content inside false if blocks
+            if (skip_depth > 0) { i = end; continue; }
+            
+            // Include partial: ${include:path}
+            if (strncmp(key, "include:", 8) == 0) {
+                char* inc_path = key + 8;
+                char* inc_content = Template_render(inc_path, ctx);
+                if (inc_content && inc_content[0]) {
+                    int ilen = strlen(inc_content);
+                    memcpy(out, inc_content, ilen); out += ilen;
+                }
+                i = end; continue;
+            }
+            
+            // Variable substitution
+            int raw = 0;
+            char* lookup = key;
+            if (strncmp(key, "raw:", 4) == 0) { raw = 1; lookup = key + 4; }
+            
+            char* val = hashmap_get_string(ctx, lookup);
+            if (val && val[0]) {
+                if (raw) {
+                    int vlen = strlen(val); memcpy(out, val, vlen); out += vlen;
+                } else {
+                    char* escaped = html_escape(val);
+                    int elen = strlen(escaped); memcpy(out, escaped, elen); out += elen;
+                    free(escaped);
+                }
+            }
+            i = end;
+        } else {
+            if (skip_depth == 0) *out++ = tmpl[i];
+        }
+    }
+    *out = 0;
+    return result;
+}
+
+char* Template_render(const char* path, WynHashMap* ctx) {
+    FILE* f = fopen(path, "r");
+    if (!f) return "";
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* tmpl = malloc(len + 1);
+    fread(tmpl, 1, len, f);
+    tmpl[len] = 0;
+    fclose(f);
+    char* result = Template_render_string(tmpl, ctx);
+    free(tmpl);
+    return result;
+}
+
+// === .env file loading ===
+void System_load_env(const char* path) {
+    FILE* f = fopen(path, "r");
+    if (!f) return;
+    char line[1024];
+    while (fgets(line, sizeof(line), f)) {
+        // Skip comments and empty lines
+        char* p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '#' || *p == '\n' || *p == 0) continue;
+        // Remove trailing newline
+        char* nl = strchr(p, '\n'); if (nl) *nl = 0;
+        char* eq = strchr(p, '=');
+        if (!eq) continue;
+        *eq = 0;
+        char* key = p;
+        char* val = eq + 1;
+        // Strip quotes from value
+        if (*val == '"' || *val == '\'') { val++; char* end = val + strlen(val) - 1; if (*end == '"' || *end == '\'') *end = 0; }
+        #ifdef _WIN32
+        _putenv_s(key, val);
+        #else
+        setenv(key, val, 1);
+        #endif
+    }
+    fclose(f);
+}
+
+// Test block support
+extern int wyn_test_fail_count;
+void wyn_assert(int condition);
+void wyn_assert_eq_int(long long actual, long long expected);
+void wyn_assert_eq_str(const char* actual, const char* expected);

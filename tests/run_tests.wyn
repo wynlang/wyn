@@ -3,17 +3,22 @@
 fn run_test(path: string) -> int {
     var cmd = "./wyn run " + path + " 2>&1"
     var output = System_exec(cmd)
+    // If ./wyn failed (Windows), try wyn.exe
+    if output.len() == 0 {
+        cmd = "wyn.exe run " + path + " 2>&1"
+        output = System_exec(cmd)
+    }
 
-    if str_contains(output, "compilation failed") {
+    if output.contains("compilation failed") {
         return 0
     }
-    if str_contains(output, "Failed to parse") {
+    if output.contains("Failed to parse") {
         return 0
     }
-    if str_contains(output, "Segmentation fault") {
+    if output.contains("Segmentation fault") {
         return 0
     }
-    if str_contains(output, "error:") {
+    if output.contains("error:") {
         return 0
     }
     return 1
@@ -64,10 +69,17 @@ fn main() -> int {
         "tests/validation/test_namespaced_api.wyn",
         "tests/validation/test_json.wyn",
         "tests/validation/test_regex.wyn",
-        "tests/validation/test_http.wyn"
+        "tests/validation/test_http.wyn",
+        "tests/stdlib/test_v17_features.wyn",
+        "tests/stdlib/test_epic28_generics.wyn",
+        "tests/stdlib/test_epic29_struct_returns.wyn",
+        "tests/stdlib/test_epic30_char.wyn",
+        "tests/stdlib/test_epic31_self_hosted.wyn",
+        "tests/stdlib/test_deferred_features.wyn",
+        "tests/multifile/test_import.wyn"
     ]
 
-    for i in 0..40 {
+    for i in 0..47 {
         var path = tests[i]
         var result = run_test(path)
         if result == 1 {
@@ -79,11 +91,11 @@ fn main() -> int {
     }
 
     println("")
-    println("Results: " + int_to_string(pass) + " pass, " + int_to_string(fail) + " fail")
+    println("Results: " + pass.to_string() + " pass, " + fail.to_string() + " fail")
 
-    // Clean up artifacts
-    System_exec("find tests -name '*.wyn.c' -delete 2>/dev/null")
-    System_exec("find tests -name '*.wyn.out' -delete 2>/dev/null")
+    // Clean up artifacts (Unix only — silently fails on Windows)
+    System_exec("find tests -name '*.wyn.c' -delete 2>/dev/null || true")
+    System_exec("find tests -name '*.wyn.out' -delete 2>/dev/null || true")
 
     if fail > 0 {
         return 1

@@ -75,6 +75,7 @@ typedef struct {
 typedef struct {
     Type** param_types;
     int param_count;
+    int min_param_count;  // params without defaults
     Type* return_type;
     bool is_variadic;  // Support for variadic functions (e.g., printf)
 } FunctionType;
@@ -126,9 +127,10 @@ typedef struct Symbol {
     Token name;
     Type* type;
     bool is_mutable;
+    bool is_used;                 // Track if variable is referenced after declaration
     // T1.5.3: Function overloading support
-    struct Symbol* next_overload;  // Linked list of overloaded functions
-    char* mangled_name;           // Mangled name for code generation
+    struct Symbol* next_overload;
+    char* mangled_name;
 } Symbol;
 
 typedef struct SymbolTable {

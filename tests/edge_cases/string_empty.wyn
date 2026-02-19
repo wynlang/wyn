@@ -12,7 +12,7 @@ fn main() -> int {
     print(count)
     
     // Test replace on empty string
-    var replaced = wyn_str_replace(empty, "x", "y")
+    var replaced = empty.replace("x", "y")
     print("Replace on empty string:")
     print(replaced)
     

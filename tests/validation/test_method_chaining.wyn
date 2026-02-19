@@ -11,7 +11,7 @@ fn Rect.perimeter(self) -> int {
 }
 
 fn Rect.describe(self) -> string {
-    return int_to_string(self.w) + "x" + int_to_string(self.h) + " area=" + int_to_string(self.area())
+    return self.w.to_string() + "x" + self.h.to_string() + " area=" + self.area().to_string()
 }
 
 fn main() -> int {

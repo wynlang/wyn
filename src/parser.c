@@ -8,6 +8,7 @@
 #include "test.h"
 #include "error.h"
 
+extern void init_lexer(const char* source);
 extern Token next_token();
 
 typedef struct {
@@ -78,13 +79,14 @@ static Stmt* parse_break_statement(); // T1.4.2: Control Flow Agent addition
 static Stmt* parse_continue_statement(); // T1.4.2: Control Flow Agent addition
 static Stmt* parse_match_statement(); // T1.4.3: Control Flow Agent addition
 static Expr* parse_type(); // T2.5.1: Optional Type Implementation
+static Expr* logical_or(); // Forward declaration for lambda body parsing
 static Expr* parse_result_type(); // TASK-026: Result type parsing
 static Stmt* impl_block(); // T2.5.3: Enhanced Struct System
 static Stmt* trait_decl(); // T3.2.1: Trait Definitions
 static Pattern* parse_pattern(); // T3.3.1: Pattern parsing for destructuring
-static Stmt* parse_try_statement(); // TASK-026: Try statement parsing
-static Stmt* parse_catch_statement(); // TASK-026: Catch statement parsing
-static Expr* parse_try_expression(); // TASK-026: ? operator parsing
+__attribute__((unused)) static Stmt* parse_try_statement(); // TASK-026: Try statement parsing
+__attribute__((unused)) static Stmt* parse_catch_statement(); // TASK-026: Catch statement parsing
+__attribute__((unused)) static Expr* parse_try_expression(); // TASK-026: ? operator parsing
 void check_stmt(Stmt* stmt, SymbolTable* scope);
 void codegen_stmt(Stmt* stmt);
 
@@ -166,7 +168,7 @@ static Expr* primary() {
     
     if (match(TOKEN_NOT) || match(TOKEN_MINUS) || match(TOKEN_BANG) || match(TOKEN_TILDE) || match(TOKEN_AMP)) {
         Token op = parser.previous;
-        Expr* operand = primary();
+        Expr* operand = call();
         Expr* unary = alloc_expr();
         unary->type = EXPR_UNARY;
         unary->unary.op = op;
@@ -238,19 +240,25 @@ static Expr* primary() {
                     if (expr_end < len) {
                         // Extract expression
                         int expr_len = expr_end - expr_start;
-                        char* expr_str = malloc(expr_len + 1);
+                        char* expr_str = malloc(expr_len + 2);
                         memcpy(expr_str, str + expr_start, expr_len);
-                        expr_str[expr_len] = '\0';
+                        expr_str[expr_len] = ';';
+                        expr_str[expr_len + 1] = '\0';
                         
-                        // For now, assume it's just a variable name
                         expr->string_interp.parts[expr->string_interp.count] = NULL;
                         
-                        // Create a simple identifier expression
-                        Expr* var_expr = alloc_expr();
-                        var_expr->type = EXPR_IDENT;
-                        var_expr->token.start = expr_str;
-                        var_expr->token.length = expr_len;
-                        expr->string_interp.expressions[expr->string_interp.count] = var_expr;
+                        // Parse the expression properly using the real parser
+                        extern void save_lexer_state();
+                        extern void restore_lexer_state();
+                        save_lexer_state();
+                        save_parser_state();
+                        init_lexer(expr_str);
+                        advance(); // prime the parser
+                        Expr* parsed_expr = expression();
+                        restore_parser_state();
+                        restore_lexer_state();
+                        
+                        expr->string_interp.expressions[expr->string_interp.count] = parsed_expr;
                         expr->string_interp.count++;
                         
                         i = expr_end; // Skip to after }
@@ -358,7 +366,12 @@ static Expr* primary() {
         
         // Check for qualified name: EnumName::Variant
         if (match(TOKEN_COLONCOLON)) {
-            expect(TOKEN_IDENT, "Expected identifier after '::'");
+            // Accept identifiers and keyword variant names (Some, None, Ok, Err)
+            if (!check(TOKEN_IDENT) && !check(TOKEN_SOME) && !check(TOKEN_NONE)) {
+                fprintf(stderr, "Error at line %d: Expected identifier after '::'\n", parser.current.line);
+                return NULL;
+            }
+            advance();
             Token variant = parser.previous;
             
             // Create a qualified identifier by combining them
@@ -567,8 +580,14 @@ static Expr* primary() {
                 comp->list_comp.var_name = parser.previous;
                 expect(TOKEN_IN, "Expected 'in' after variable name");
                 comp->list_comp.iter_start = expression();
-                if (match(TOKEN_DOTDOT)) {
+                if (match(TOKEN_DOTDOT) || match(TOKEN_DOTDOTEQ)) {
+                    bool incl = (parser.previous.type == TOKEN_DOTDOTEQ);
                     comp->list_comp.iter_end = expression();
+                    if (incl) {
+                        Expr* one = alloc_expr(); one->type = EXPR_INT; one->token.start = "1"; one->token.length = 1;
+                        Expr* plus = alloc_expr(); plus->type = EXPR_BINARY; plus->binary.left = comp->list_comp.iter_end; plus->binary.right = one; plus->binary.op.type = TOKEN_PLUS; plus->binary.op.start = "+"; plus->binary.op.length = 1;
+                        comp->list_comp.iter_end = plus;
+                    }
                 } else {
                     comp->list_comp.iter_end = NULL; // iterating array
                 }
@@ -786,7 +805,8 @@ static Expr* primary() {
             
             expect(TOKEN_RBRACE, "Expected '}' after lambda block body");
         } else {
-            lambda_expr->lambda.body = expression();
+            // Parse body as logical_or (not full expression) to avoid consuming |> in pipes
+            lambda_expr->lambda.body = logical_or();
         }
         
         // Initialize capture fields (will be filled by capture analysis)
@@ -1028,6 +1048,7 @@ static Expr* call() {
                 // expr is the module identifier, field_or_method is the Type
                 static char combined_name[256];
                 int module_len = 0;
+                (void)module_len;
                 if (expr->type == EXPR_IDENT) {
                     module_len = expr->token.length;
                     snprintf(combined_name, 256, "%.*s.%.*s", 
@@ -1318,7 +1339,7 @@ static Expr* assignment() {
     }
     
     if (match(TOKEN_EQ) || match(TOKEN_PLUSEQ) || match(TOKEN_MINUSEQ) || 
-        match(TOKEN_STAREQ) || match(TOKEN_SLASHEQ)) {
+        match(TOKEN_STAREQ) || match(TOKEN_SLASHEQ) || match(TOKEN_PERCENTEQ)) {
         if (expr->type == EXPR_IDENT) {
             Token op = parser.previous;
             Expr* assign = alloc_expr();
@@ -1339,6 +1360,7 @@ static Expr* assignment() {
                 else if (op.type == TOKEN_MINUSEQ) { bin_op.type = TOKEN_MINUS; bin_op.start = "-"; bin_op.length = 1; }
                 else if (op.type == TOKEN_STAREQ) { bin_op.type = TOKEN_STAR; bin_op.start = "*"; bin_op.length = 1; }
                 else if (op.type == TOKEN_SLASHEQ) { bin_op.type = TOKEN_SLASH; bin_op.start = "/"; bin_op.length = 1; }
+                else if (op.type == TOKEN_PERCENTEQ) { bin_op.type = TOKEN_PERCENT; bin_op.start = "%"; bin_op.length = 1; }
                 
                 binary->binary.op = bin_op;
                 assign->assign.value = binary;
@@ -1470,7 +1492,15 @@ Stmt* statement() {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_RETURN;
         stmt->ret.value = expression();
-        match(TOKEN_SEMI);  // Optional semicolon
+        match(TOKEN_SEMI);
+        return stmt;
+    }
+    
+    if (match(TOKEN_DEFER)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_DEFER;
+        stmt->expr = expression();
+        match(TOKEN_SEMI);
         return stmt;
     }
     
@@ -1499,6 +1529,90 @@ Stmt* statement() {
     if (match(TOKEN_VAR) || match(TOKEN_CONST)) {
         Stmt* stmt = alloc_stmt();
         WynTokenType decl_type = parser.previous.type;
+        
+        // Array destructuring: var [a, b, c] = expr  or  var [first, ...rest] = expr
+        if (decl_type == TOKEN_VAR && match(TOKEN_LBRACKET)) {
+            // Parse variable names, with optional ...rest spread
+            Token names[16]; int name_count = 0;
+            int spread_index = -1; // index of ...rest element
+            while (!check(TOKEN_RBRACKET) && !check(TOKEN_EOF) && name_count < 16) {
+                if (match(TOKEN_DOTDOTDOT)) {
+                    // Spread: ...rest
+                    spread_index = name_count;
+                    expect(TOKEN_IDENT, "Expected variable name after '...'");
+                    names[name_count++] = parser.previous;
+                } else {
+                    expect(TOKEN_IDENT, "Expected variable name in destructuring");
+                    names[name_count++] = parser.previous;
+                }
+                if (!match(TOKEN_COMMA)) break;
+            }
+            expect(TOKEN_RBRACKET, "Expected ']' after destructuring");
+            expect(TOKEN_EQ, "Expected '=' after destructuring pattern");
+            Expr* init = expression();
+            
+            // Desugar into a block: { var __arr = init; var a = __arr[0]; var b = __arr[1]; ... }
+            stmt->type = STMT_BLOCK;
+            stmt->block.stmts = malloc(sizeof(Stmt*) * (name_count + 1));
+            stmt->block.count = name_count + 1;
+            
+            // var __destruct = init
+            Stmt* arr_stmt = alloc_stmt();
+            arr_stmt->type = STMT_VAR;
+            arr_stmt->var.is_const = false; arr_stmt->var.is_mutable = true;
+            static char destruct_name[] = "__destruct";
+            arr_stmt->var.name.start = destruct_name; arr_stmt->var.name.length = 10;
+            arr_stmt->var.init = init; arr_stmt->var.type = NULL;
+            stmt->block.stmts[0] = arr_stmt;
+            
+            // var a = __destruct[0], var b = __destruct[1], ...
+            // For spread: var rest = __destruct.slice(i)
+            for (int i = 0; i < name_count; i++) {
+                Stmt* vs = alloc_stmt();
+                vs->type = STMT_VAR;
+                vs->var.is_const = false; vs->var.is_mutable = true;
+                vs->var.name = names[i]; vs->var.type = NULL;
+                
+                Expr* arr_ref = alloc_expr();
+                arr_ref->type = EXPR_IDENT;
+                arr_ref->token.start = destruct_name; arr_ref->token.length = 10;
+                
+                if (i == spread_index) {
+                    // Spread: var rest = __destruct.slice(i)
+                    Expr* idx = alloc_expr();
+                    idx->type = EXPR_INT;
+                    char* spread_buf = malloc(8);
+                    snprintf(spread_buf, 8, "%d", i);
+                    idx->token.start = spread_buf; idx->token.length = strlen(spread_buf);
+                    
+                    Expr* slice_call = alloc_expr();
+                    slice_call->type = EXPR_METHOD_CALL;
+                    slice_call->method_call.object = arr_ref;
+                    static char slice_name[] = "slice";
+                    slice_call->method_call.method.start = slice_name;
+                    slice_call->method_call.method.length = 5;
+                    slice_call->method_call.args = malloc(sizeof(Expr*));
+                    slice_call->method_call.args[0] = idx;
+                    slice_call->method_call.arg_count = 1;
+                    vs->var.init = slice_call;
+                } else {
+                    // Normal: var a = __destruct[i]
+                    Expr* idx = alloc_expr();
+                    idx->type = EXPR_INT;
+                    static char idx_bufs[16][4];
+                    snprintf(idx_bufs[i], 4, "%d", i);
+                    idx->token.start = idx_bufs[i]; idx->token.length = strlen(idx_bufs[i]);
+                    Expr* index_expr = alloc_expr();
+                    index_expr->type = EXPR_INDEX;
+                    index_expr->index.array = arr_ref;
+                    index_expr->index.index = idx;
+                    vs->var.init = index_expr;
+                }
+                stmt->block.stmts[i + 1] = vs;
+            }
+            match(TOKEN_SEMI);
+            return stmt;
+        }
         
         if (decl_type == TOKEN_CONST) {
             stmt->type = STMT_CONST;
@@ -1779,9 +1893,16 @@ Stmt* statement() {
                 Expr* iter_expr = expression();
                 
                 // Check if this is a range (has ..) or array iteration
-                if (match(TOKEN_DOTDOT)) {
-                    // Range-based for loop: for i in 0..10
+                if (match(TOKEN_DOTDOT) || match(TOKEN_DOTDOTEQ)) {
+                    bool inclusive = (parser.previous.type == TOKEN_DOTDOTEQ);
+                    // Range-based for loop: for i in 0..10 or 0..=10
                     Expr* end = expression();
+                    if (inclusive) {
+                        // Desugar ..= to ..(end+1)
+                        Expr* one = alloc_expr(); one->type = EXPR_INT; one->token.start = "1"; one->token.length = 1;
+                        Expr* plus = alloc_expr(); plus->type = EXPR_BINARY; plus->binary.left = end; plus->binary.right = one; plus->binary.op.type = TOKEN_PLUS; plus->binary.op.start = "+"; plus->binary.op.length = 1;
+                        end = plus;
+                    }
                     
                     // If we had opening parens, expect closing parens
                     if (has_parens) {
@@ -2123,7 +2244,9 @@ Stmt* function() {
     expect(TOKEN_RBRACE, "Expected '}' after function body");
     
     // Mark last expression as implicit return if function has return type
-    if (stmt->fn.return_type) {
+    // Skip for main() — it auto-inserts return 0
+    bool is_main = (stmt->fn.name.length == 4 && memcmp(stmt->fn.name.start, "main", 4) == 0);
+    if (stmt->fn.return_type && !is_main) {
         mark_implicit_return(body);
     }
     
@@ -2640,7 +2763,12 @@ Stmt* enum_decl() {
     stmt->enum_decl.variant_type_counts = malloc(sizeof(int) * 32);
     
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-        expect(TOKEN_IDENT, "Expected variant name");
+        // Accept identifiers and keywords that are commonly used as variant names
+        if (check(TOKEN_IDENT) || check(TOKEN_NONE) || check(TOKEN_SOME) || check(TOKEN_OK) || check(TOKEN_ERR) || check(TOKEN_TRUE) || check(TOKEN_FALSE)) {
+            advance();
+        } else {
+            expect(TOKEN_IDENT, "Expected variant name");
+        }
         stmt->enum_decl.variants[stmt->enum_decl.variant_count] = parser.previous;
         
         // Check for associated data: Ok(int) or Err(string)
@@ -3005,6 +3133,37 @@ Program* parse_program() {
         } else if (check(TOKEN_TEST)) {
             // T1.6.2: Testing Framework Agent addition
             prog->stmts[prog->count++] = parse_test_statement();
+        } else if (check(TOKEN_IDENT) && parser.current.length == 11 && memcmp(parser.current.start, "before_each", 11) == 0) {
+            // before_each { } — parsed as test block with special name
+            advance();
+            Stmt* stmt = alloc_stmt();
+            stmt->type = STMT_TEST;
+            stmt->test_stmt.name = parser.previous;
+            stmt->test_stmt.is_async = false;
+            expect(TOKEN_LBRACE, "Expected '{' after before_each");
+            stmt->test_stmt.body = alloc_stmt();
+            stmt->test_stmt.body->type = STMT_BLOCK;
+            stmt->test_stmt.body->block.stmts = safe_malloc(sizeof(Stmt*) * 256);
+            stmt->test_stmt.body->block.count = 0;
+            while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF))
+                stmt->test_stmt.body->block.stmts[stmt->test_stmt.body->block.count++] = statement();
+            expect(TOKEN_RBRACE, "Expected '}' after before_each body");
+            prog->stmts[prog->count++] = stmt;
+        } else if (check(TOKEN_IDENT) && parser.current.length == 10 && memcmp(parser.current.start, "after_each", 10) == 0) {
+            advance();
+            Stmt* stmt = alloc_stmt();
+            stmt->type = STMT_TEST;
+            stmt->test_stmt.name = parser.previous;
+            stmt->test_stmt.is_async = false;
+            expect(TOKEN_LBRACE, "Expected '{' after after_each");
+            stmt->test_stmt.body = alloc_stmt();
+            stmt->test_stmt.body->type = STMT_BLOCK;
+            stmt->test_stmt.body->block.stmts = safe_malloc(sizeof(Stmt*) * 256);
+            stmt->test_stmt.body->block.count = 0;
+            while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF))
+                stmt->test_stmt.body->block.stmts[stmt->test_stmt.body->block.count++] = statement();
+            expect(TOKEN_RBRACE, "Expected '}' after after_each body");
+            prog->stmts[prog->count++] = stmt;
         } else if (check(TOKEN_WHILE)) {
             // T1.4.1: Control Flow Agent addition
             prog->stmts[prog->count++] = parse_while_statement();
@@ -3035,9 +3194,14 @@ static Stmt* parse_test_statement() {
     Stmt* stmt = alloc_stmt();
     stmt->type = STMT_TEST;
     
-    // Parse test name
-    expect(TOKEN_IDENT, "Expected test name");
-    stmt->test_stmt.name = parser.previous;
+    // Parse test name (string or identifier)
+    if (check(TOKEN_STRING)) {
+        advance();
+        stmt->test_stmt.name = parser.previous;
+    } else {
+        expect(TOKEN_IDENT, "Expected test name");
+        stmt->test_stmt.name = parser.previous;
+    }
     stmt->test_stmt.is_async = false;
     
     // Parse test body
@@ -3169,10 +3333,14 @@ static Stmt* parse_match_statement() {
             Token first_token = parser.current;
             advance();
             
-            // Check for enum variant: Color::Red or Result::Ok(val)
-            if (match(TOKEN_COLONCOLON)) {
+            // Check for enum variant: Color.Red or Color::Red or Result.Ok(val)
+            if (match(TOKEN_COLONCOLON) || match(TOKEN_DOT)) {
                 Token variant_name = parser.current;
-                expect(TOKEN_IDENT, "Expected variant name after '::'");
+                if (check(TOKEN_IDENT) || check(TOKEN_NONE) || check(TOKEN_SOME) || check(TOKEN_OK) || check(TOKEN_ERR)) {
+                    advance();
+                } else {
+                    expect(TOKEN_IDENT, "Expected variant name after '::'");
+                }
                 
                 // Check for destructuring: Result::Ok(val)
                 if (match(TOKEN_LPAREN)) {
@@ -3204,9 +3372,27 @@ static Stmt* parse_match_statement() {
                     pattern->option.inner = NULL;
                 }
             } else {
-                // Just a simple identifier pattern
-                pattern->type = PATTERN_IDENT;
-                pattern->ident.name = first_token;
+                // Check for bare variant with data: Yep(val)
+                if (match(TOKEN_LPAREN)) {
+                    pattern->type = PATTERN_OPTION;
+                    pattern->option.is_some = true;
+                    pattern->option.variant_name = first_token;
+                    
+                    if (match(TOKEN_UNDERSCORE)) {
+                        pattern->option.inner = NULL;
+                    } else {
+                        Pattern* inner_pattern = safe_malloc(sizeof(Pattern));
+                        inner_pattern->type = PATTERN_IDENT;
+                        inner_pattern->ident.name = parser.current;
+                        expect(TOKEN_IDENT, "Expected identifier in destructuring pattern");
+                        pattern->option.inner = inner_pattern;
+                    }
+                    expect(TOKEN_RPAREN, "Expected ')' after destructuring pattern");
+                } else {
+                    // Just a simple identifier pattern
+                    pattern->type = PATTERN_IDENT;
+                    pattern->ident.name = first_token;
+                }
             }
         } else {
             fprintf(stderr, "Error at line %d: Expected pattern\n", parser.current.line);
@@ -3423,6 +3609,38 @@ static Pattern* parse_pattern() {
         Token potential_struct = parser.current;
         advance();
         
+        // Check for enum dot access: Shape.Circle or Shape.Circle(r)
+        if (match(TOKEN_DOT) || match(TOKEN_COLONCOLON)) {
+            Token variant_name = parser.current;
+            if (check(TOKEN_IDENT) || check(TOKEN_NONE) || check(TOKEN_SOME) || check(TOKEN_OK) || check(TOKEN_ERR)) {
+                advance();
+            } else {
+                expect(TOKEN_IDENT, "Expected variant name");
+            }
+            
+            if (match(TOKEN_LPAREN)) {
+                // Shape.Circle(r) — enum variant with data
+                pattern->type = PATTERN_OPTION;
+                pattern->option.is_some = true;
+                pattern->option.enum_name = potential_struct;
+                pattern->option.variant_name = variant_name;
+                if (!check(TOKEN_RPAREN)) {
+                    pattern->option.inner = parse_pattern();
+                } else {
+                    pattern->option.inner = NULL;
+                }
+                expect(TOKEN_RPAREN, "Expected ')' after enum variant pattern");
+            } else {
+                // Shape.Point — enum variant without data
+                pattern->type = PATTERN_OPTION;
+                pattern->option.is_some = false;
+                pattern->option.enum_name = potential_struct;
+                pattern->option.variant_name = variant_name;
+                pattern->option.inner = NULL;
+            }
+            return pattern;
+        }
+        
         // Check for enum variant with data: Some(x) or Option_Some(x)
         if (match(TOKEN_LPAREN)) {
             pattern->type = PATTERN_OPTION;  // Reuse PATTERN_OPTION for all enum variants
@@ -3475,8 +3693,12 @@ static Pattern* parse_pattern() {
             expect(TOKEN_RBRACE, "Expected '}' after struct pattern");
             return pattern;
         } else if (match(TOKEN_DOT)) {
-            // Enum variant: Color.Red -> Color_Red
-            expect(TOKEN_IDENT, "Expected variant name after '.'");
+            // Enum variant: Color.Red, Shape.None
+            if (check(TOKEN_IDENT) || check(TOKEN_NONE) || check(TOKEN_SOME) || check(TOKEN_OK) || check(TOKEN_ERR)) {
+                advance();
+            } else {
+                expect(TOKEN_IDENT, "Expected variant name after '.'");
+            }
             pattern->type = PATTERN_IDENT;
             char* buf = safe_malloc(256);
             int len = snprintf(buf, 256, "%.*s_%.*s",
@@ -3706,7 +3928,7 @@ static Expr* parse_result_type() {
     return result_expr;
 }
 
-static Stmt* parse_try_statement() {
+__attribute__((unused)) static Stmt* parse_try_statement() {
     // Parse try { ... } catch (Type var) { ... }
     Stmt* try_stmt = alloc_stmt();
     try_stmt->type = STMT_TRY;
@@ -3749,7 +3971,7 @@ static Stmt* parse_try_statement() {
     return try_stmt;
 }
 
-static Stmt* parse_catch_statement() {
+__attribute__((unused)) static Stmt* parse_catch_statement() {
     // Parse standalone catch statement
     Stmt* catch_stmt = alloc_stmt();
     catch_stmt->type = STMT_CATCH;
@@ -3772,7 +3994,7 @@ static Stmt* parse_catch_statement() {
     return catch_stmt;
 }
 
-static Expr* parse_try_expression() {
+__attribute__((unused)) static Expr* parse_try_expression() {
     // Parse expression? for error propagation
     Expr* expr = primary();
     
@@ -3787,7 +4009,7 @@ static Expr* parse_try_expression() {
 }
 
 // Update primary() to handle Result constructors and ? operator
-static Expr* primary_with_result() {
+__attribute__((unused)) static Expr* primary_with_result() {
     // Handle Ok() constructor
     if (match(TOKEN_OK)) {
         Expr* expr = alloc_expr();

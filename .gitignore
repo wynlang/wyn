@@ -42,3 +42,4 @@ runtime/libwyn_rt.a
 runtime/obj/
 wyn_cc_err.txt
 runtime/libwyn_runtime.a
+wyn_runtime.h.gch

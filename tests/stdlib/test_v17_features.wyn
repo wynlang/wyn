@@ -1,0 +1,92 @@
+fn dbl(x: int) -> int { return x * 2 }
+fn add1(x: int) -> int { return x + 1 }
+
+type Score = int
+
+enum Shape { Circle(float), Point }
+
+var defer_order = ""
+fn defer_append(s: string) { defer_order = defer_order + s }
+fn test_defer_order() {
+    defer defer_append("3")
+    defer defer_append("2")
+    defer_append("1")
+}
+
+fn main() -> int {
+    Test.init("v1.7 Features")
+    
+    // Full string interpolation
+    var arr = [10, 20, 30]
+    Test.assert_eq_str("${arr[1]}", "20", "interp index")
+    var h = "hello"
+    Test.assert_eq_str("${h.upper()}", "HELLO", "interp method")
+    Test.assert_eq_str("${2 + 3}", "5", "interp arith")
+    Test.assert_eq_str("${dbl(5)}", "10", "interp fn call")
+    
+    // Variable shadowing
+    var x = 1
+    var x = "shadowed"
+    Test.assert_eq_str(x, "shadowed", "shadow type change")
+    
+    // HashMap returns arrays
+    var m = HashMap.new()
+    m.insert("a", "1")
+    m.insert("b", "2")
+    Test.assert_eq_int(m.keys().len(), 2, "hm keys array")
+    Test.assert_eq_int(m.values().len(), 2, "hm values array")
+    
+    // Compound %= operator
+    var n = 17
+    n %= 5
+    Test.assert_eq_int(n, 2, "%= operator")
+    
+    // Pipe operator
+    var r = 5 |> dbl |> add1
+    Test.assert_eq_int(r, 11, "pipe operator")
+    
+    // Defer (LIFO order)
+    test_defer_order()
+    Test.assert_eq_str(defer_order, "123", "defer LIFO")
+    
+    // Type alias
+    var s: Score = 100
+    Test.assert_eq_int(s, 100, "type alias")
+    
+    // Inclusive range ..=
+    var sum = 0
+    for i in 0..=5 { sum += i }
+    Test.assert_eq_int(sum, 15, "..= inclusive")
+    
+    // String methods
+    Test.assert("hello".starts_with("he"), "starts_with")
+    Test.assert("hello".ends_with("lo"), "ends_with")
+    Test.assert_eq_str("aabb".replace_all("a", "x"), "xxbb", "replace_all")
+    Test.assert_eq_int("ABC".bytes().len(), 3, ".bytes()")
+    Test.assert_eq_int("abc".chars().len(), 3, ".chars()")
+    
+    // Parameterized SQL
+    var db = Db.open("/tmp/wyn_v17_test.db")
+    Db.exec(db, "DROP TABLE IF EXISTS t")
+    Db.exec(db, "CREATE TABLE t(v TEXT)")
+    Db.exec_p(db, "INSERT INTO t VALUES (?)", ["safe"])
+    Db.exec_p(db, "INSERT INTO t VALUES (?)", ["'; DROP TABLE t; --"])
+    var qr = Db.query(db, "SELECT COUNT(*) FROM t")
+    Test.assert_eq_str(qr, "2", "param sql injection safe")
+    Db.close(db)
+    
+    // Epic 5: Enum with data + destructuring
+    var shape = Shape.Circle(5.0)
+    var extracted = match shape {
+        Shape.Circle(r) => r
+        Shape.Point => 0.0
+    }
+    Test.assert(extracted > 4.0, "enum destructure")
+    
+    // Epic 1.5: Single-quote strings
+    var sq = 'single quotes'
+    Test.assert_eq_str(sq, "single quotes", "single quote str")
+    
+    Test.summary()
+    return 0
+}

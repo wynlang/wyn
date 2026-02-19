@@ -47,7 +47,7 @@ fn main() -> int {
     
     // Test replace on long string (limited to avoid memory issues)
     print("Testing replace...")
-    var replaced = wyn_str_replace(long_str, "0123", "XXXX")
+    var replaced = long_str.replace("0123", "XXXX")
     var new_len = wyn_string_len(replaced)
     print("Length after replace:")
     print(new_len)

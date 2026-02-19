@@ -24,7 +24,7 @@ fn main() -> int {
     
     // 3. Pipeline Operator
     print("3. Pipeline Operator:")
-    var processed = "  hello world  " |> str_upper |> str_trim
+    var processed = "  hello world  ".upper().trim()
     processed.print()  // "HELLO WORLD"
     
     var number_result = 5 |> abs_val

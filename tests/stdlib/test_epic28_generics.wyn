@@ -1,0 +1,66 @@
+// Epic 28: Generics TDD
+// Tests 28.1-28.4, 28.7
+
+fn identity<T>(x: T) -> T {
+    return x
+}
+
+fn max_val<T>(a: T, b: T) -> T {
+    if a > b { return a }
+    return b
+}
+
+struct Box<T> {
+    value: T
+}
+
+struct Pair<A, B> {
+    first: A
+    second: B
+}
+
+fn main() -> int {
+    Test.init("Epic 28: Generics")
+
+    // 28.3: Generic function — int
+    var a = identity(42)
+    Test.assert_eq_int(a, 42, "generic fn int")
+
+    // 28.3: Generic function — string
+    var b = identity("hello")
+    Test.assert_eq_str(b, "hello", "generic fn string")
+
+    // 28.3: Generic function — float
+    var c = identity(3.14)
+    Test.assert(c > 3.0, "generic fn float")
+
+    // 28.3: Generic function with comparison
+    var m = max_val(10, 20)
+    Test.assert_eq_int(m, 20, "generic max int")
+
+    // 28.1: Array<T> typed arrays
+    var nums: Array<int> = [1, 2, 3]
+    Test.assert_eq_int(nums.len(), 3, "Array<int> len")
+
+    var strs: Array<string> = ["a", "b"]
+    Test.assert_eq_int(strs.len(), 2, "Array<string> len")
+
+    // 28.2: HashMap<K,V> typed maps
+    var m2: HashMap<string, string> = HashMap.new()
+    m2.insert("key", "val")
+    Test.assert_eq_str(m2.get("key"), "val", "HashMap<K,V>")
+
+    // 28.4: Generic struct — int
+    var box_int = Box { value: 42 }
+    Test.assert_eq_int(box_int.value, 42, "Box<int> value")
+
+    // 28.4: Generic struct — two type params
+    var pair = Pair { first: 1, second: 2 }
+    Test.assert_eq_int(pair.first, 1, "Pair first")
+    Test.assert_eq_int(pair.second, 2, "Pair second")
+
+    // 28.6: Option<T> and Result<T,E> already tested in test_generic_syntax.wyn
+
+    Test.summary()
+    return 0
+}

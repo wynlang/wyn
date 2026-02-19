@@ -2,7 +2,7 @@
 
 **1 language for everything — CLI, web, desktop, mobile, games.**
 
-Wyn compiles to C, runs everywhere, and ships with 27 stdlib modules out of the box.
+Wyn compiles to C, runs everywhere, and ships with 27 official packages — zero external dependencies.
 
 ---
 
@@ -11,14 +11,16 @@ Wyn compiles to C, runs everywhere, and ships with 27 stdlib modules out of the 
 ```bash
 make                    # Build the compiler
 ./wyn install           # Install to PATH (optional)
-wyn run hello.wyn       # Compile and run
 ```
 
 ```wyn
-fn main() -> int {
-    println("Hello, World!")
-    return 0
-}
+// hello.wyn — no main() needed
+println("Hello, World!")
+```
+
+```bash
+wyn run hello.wyn       # Compile and run
+wyn run -e 'println("or inline")'
 ```
 
 ## Features
@@ -29,50 +31,58 @@ var name = "Wyn"
 const version = 2
 var pi = 3.14
 
-// String interpolation
+// Full string interpolation
+var arr = [10, 20, 30]
 println("${name} v${version}")
+println("${arr[1]}")           // 20
+println("${name.upper()}")     // WYN
+
+// Pipe operator
+fn double(x: int) -> int { return x * 2 }
+var result = 5 |> double       // 10
+
+// Enums with data + destructuring match
+enum Shape { Circle(float), Point }
+var s = Shape.Circle(5.0)
+var r = match s {
+    Shape.Circle(radius) => radius
+    Shape.Point => 0.0
+}
 
 // Structs with methods
-struct Point { x: int, y: int }
-impl Point {
-    fn distance(self) -> int { return self.x + self.y }
+struct User {
+    name: string
+    fn greet(self) -> string { return "Hi ${self.name}" }
 }
-
-// Enums with pattern matching
-enum Color { Red, Green, Blue }
-var c = Color.Green
-var label = match c {
-    Color.Red => "red"
-    Color.Green => "green"
-    Color.Blue => "blue"
-}
-
-// Traits with dynamic dispatch
-trait Shape {
-    fn area(self) -> int
-}
-struct Square { side: int }
-impl Shape for Square {
-    fn area(self) -> int { return self.side * self.side }
-}
-fn describe(s: Shape) -> int { return s.area() }
 
 // Closures and higher-order functions
 var nums = [1, 2, 3, 4, 5]
-var evens = nums.filter(fn(x: int) -> int { return x % 2 == 0 })
-var doubled = nums.map(fn(x: int) -> int { return x * 2 })
+var doubled = nums.map(fn(x) => x * 2)
+var squares = [x * x for x in 1..=5]
 
-// Spawn/await concurrency (M:N scheduler, 2μs spawn)
+// Spawn/await concurrency
 var f1 = spawn compute(1000)
 var f2 = spawn compute(2000)
 var r1 = await f1
-var r2 = await f2
 
-// Result/Option types with ? operator
+// Defer for cleanup
+fn process() {
+    var f = File.open("data.txt", "r")
+    defer File.close(f)
+    // file auto-closed on return
+}
+
+// Result/Option with ? operator
 fn divide(a: int, b: int) -> ResultInt {
     if b == 0 { return Err("division by zero") }
     return Ok(a / b)
 }
+
+// Template engine for web
+var html = Template.render("page.html", ctx)
+
+// Deploy in one command
+// wyn deploy prod
 ```
 
 ## Standard Library — 27 Modules
@@ -88,20 +98,20 @@ fn divide(a: int, b: int) -> ResultInt {
 | GUI | Gui (30+, SDL2), Audio (5, SDL2_mixer) |
 | Testing | Test (12) |
 
-See [docs/stdlib-reference.md](docs/stdlib-reference.md) for the full API.
+See [awesome-wyn](https://github.com/wynlang/awesome-wyn) for all official packages.
 
 ## CLI
 
 ```
 Develop:
-  wyn run <file>             Compile and run
-  wyn check <file>           Type-check without compiling
-  wyn fmt <file>             Format source file
-  wyn test                   Run project tests
-  wyn watch <file>           Watch and auto-rebuild
-  wyn repl                   Interactive REPL
-  wyn bench <file>           Benchmark with timing
-  wyn doc <file>             Generate documentation
+  wyn run <file>                   Compile and run
+  wyn check <file>                 Type-check without compiling
+  wyn fmt <file>                   Format source file
+  wyn test                         Run project tests
+  wyn watch <file>                 Watch and auto-rebuild
+  wyn repl                         Interactive REPL
+  wyn bench <file>                 Benchmark with timing
+  wyn doc <file>                   Generate documentation
 
 Build:
   wyn build <file|dir>             Build binary
@@ -112,36 +122,43 @@ Build:
   wyn clean                        Remove build artifacts
 
 Packages:
-  wyn init [name]            Create new project
-  wyn pkg install <name>     Install a package
-  wyn pkg list               List installed packages
-  wyn pkg uninstall <name>   Uninstall a package
-  wyn pkg search <query>     Search package registry
+  wyn init [name]                  Create new project
+  wyn init [name] --api            REST API with SQLite
+  wyn init [name] --web            Web app with HTML + JSON API
+  wyn init [name] --cli            CLI tool with arg parsing
+  wyn init [name] --lib wyn        Wyn package (installable)
+  wyn init [name] --lib python     Python extension module
+  wyn init [name] --lib node       Node.js native addon
+  wyn init [name] --lib c          C shared library
+  wyn pkg install <url>            Install a package
+  wyn pkg list                     List installed packages
+  wyn pkg search <query>           Search official packages
 
 Tools:
-  wyn lsp                    Start language server (for editors)
-  wyn install                Install wyn to system PATH
-  wyn uninstall              Remove wyn from system PATH
-  wyn version                Show version
-  wyn help                   Show help
+  wyn lsp                          Start language server (for editors)
+  wyn install                      Install wyn to system PATH
+  wyn uninstall                    Remove wyn from system PATH
+  wyn version                      Show version
+  wyn help                         Show help
 
 Flags:
-  --fast                     Skip optimizations (fastest compile)
-  --release                  Full optimizations (-O2)
-  --debug                    Keep .c and .out artifacts
+  --fast                           Skip optimizations (fastest compile)
+  --release                        Full optimizations (-O2)
+  --debug                          Keep .c and .out artifacts
 ```
 
 ## Performance
 
-- Spawn: 2μs (matches Go goroutines)
-- Memory: 180 bytes/task (15x better than Go)
-- Compilation: 62ms cached, 1.1s first run
-- 64-bit integers throughout (long long)
+- Hello world binary: 222KB, runs in 12ms
+- Compilation: 1.4s with precompiled runtime
+- Spawn: 2μs per task (matches Go goroutines)
+- Memory: 180 bytes/task
+- 64-bit integers throughout
 
 ## Editor Support
 
-- **VS Code**: `vscode-wyn/` — syntax highlighting, all 27 modules
-- **Neovim**: `nvim-wyn/` — syntax highlighting, all keywords
+- **VS Code**: [wynlang/vscode-wyn](https://github.com/wynlang/vscode-wyn) — syntax highlighting, all keywords and modules
+- **Neovim**: [wynlang/nvim-wyn](https://github.com/wynlang/nvim-wyn) — syntax highlighting, all keywords and modules
 - **LSP**: `wyn lsp` — completions, hover, go-to-definition, rename, format
 
 ## Building
@@ -178,7 +195,7 @@ wyn/
 ## Documentation
 
 - [Language Tutorial](docs/tutorial.md)
-- [Standard Library Reference](docs/stdlib-reference.md)
+- [Official Packages](https://github.com/wynlang/awesome-wyn)
 - [Best Practices](docs/best-practices.md)
 - [Spawn Performance](docs/spawn-performance.md)
 - [Examples](docs/examples.md)

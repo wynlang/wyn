@@ -27,14 +27,14 @@ typedef struct {
 static Document docs[100];
 static int doc_count = 0;
 
-static Document* find_document(const char* uri) {
+__attribute__((unused)) static Document* find_document(const char* uri) {
     for (int i = 0; i < doc_count; i++) {
         if (strcmp(docs[i].uri, uri) == 0) return &docs[i];
     }
     return NULL;
 }
 
-static Document* add_document(const char* uri, const char* content) {
+__attribute__((unused)) static Document* add_document(const char* uri, const char* content) {
     if (doc_count >= 100) return NULL;
     Document* doc = &docs[doc_count++];
     strncpy(doc->uri, uri, sizeof(doc->uri) - 1);
@@ -51,7 +51,7 @@ static void send_response(const char* id, const char* result) {
     fflush(stdout);
 }
 
-static void send_notification(const char* method, const char* params) {
+__attribute__((unused)) static void send_notification(const char* method, const char* params) {
     char msg[4096];
     snprintf(msg, sizeof(msg), "{\"jsonrpc\":\"2.0\",\"method\":\"%s\",\"params\":%s}", 
              method, params);
@@ -170,6 +170,7 @@ static void handle_definition(const char* id, const char* msg) {
     
     int line = atoi(line_str + 7);
     int character = atoi(char_str + 12);
+    (void)character;
     
     // Real implementation would find definition in AST
     char def[512];
@@ -191,6 +192,7 @@ static void handle_references(const char* id, const char* msg) {
     
     int line = atoi(line_str + 7);
     int character = atoi(char_str + 12);
+    (void)character;
     
     // Real implementation would find all references in AST
     char refs[1024];
@@ -213,6 +215,7 @@ static void handle_rename(const char* id, const char* msg) {
     
     int line = atoi(line_str + 7);
     int character = atoi(char_str + 12);
+     (void)character;
     name_str += 11;
     char new_name[128] = {0};
     char* name_end = strchr(name_str, '"');
@@ -232,6 +235,7 @@ static void handle_rename(const char* id, const char* msg) {
 }
 
 static void handle_format(const char* id, const char* msg) {
+    (void)msg;
     // Real implementation would format the document
     const char* edits = "[]";  // No edits for now
     send_response(id, edits);
@@ -332,10 +336,35 @@ static void handle_completion(const char* id, const char* msg) {
             "{\"label\":\"Log\",\"kind\":9,\"detail\":\"module: debug, info, warn, error, set_level\"},"
             "{\"label\":\"Process\",\"kind\":9,\"detail\":\"module: exec_capture, exec_status\"},"
             "{\"label\":\"Csv\",\"kind\":9,\"detail\":\"module: parse, get, get_field, row_count, header\"},"
+            "{\"label\":\"Template\",\"kind\":9,\"detail\":\"module: render, render_string\"},"
             "{\"label\":\"Ok\",\"kind\":12,\"detail\":\"Result constructor\"},"
             "{\"label\":\"Err\",\"kind\":12,\"detail\":\"Result constructor\"},"
             "{\"label\":\"Some\",\"kind\":12,\"detail\":\"Option constructor\"},"
-            "{\"label\":\"None\",\"kind\":12,\"detail\":\"Option constructor\"}]");
+            "{\"label\":\"None\",\"kind\":12,\"detail\":\"Option constructor\"}");
+        
+        // Scan installed packages for completions (project-local packages/)
+        char scan_cmd[1024];
+        snprintf(scan_cmd, sizeof(scan_cmd),
+            "for d in packages/*/; do "
+            "  name=$(basename \"$d\"); "
+            "  fns=$(grep -h '^fn ' \"$d\"src/*.wyn \"$d\"*.wyn 2>/dev/null | sed 's/fn //;s/(.*//;s/ .*//' | tr '\\n' ', ' | sed 's/, $//'); "
+            "  [ -n \"$fns\" ] && printf ',{\"label\":\"%%s\",\"kind\":9,\"detail\":\"package: %%s\"}' \"$name\" \"$fns\"; "
+            "done");
+        {
+            FILE* fp = popen(scan_cmd, "r");
+            if (fp) {
+                char pkg_buf[4096] = "";
+                fread(pkg_buf, 1, sizeof(pkg_buf) - 1, fp);
+                pclose(fp);
+                if (pkg_buf[0]) {
+                    int blen = strlen(buf);
+                    snprintf(buf + blen, sizeof(buf) - blen, "%s", pkg_buf);
+                }
+            }
+        }
+        
+        // Close the JSON array
+        strncat(buf, "]", sizeof(buf) - strlen(buf) - 1);
     }
     send_response(id, buf);
 }

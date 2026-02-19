@@ -215,6 +215,8 @@ bool wyn_pattern_matches(Pattern* pattern, Expr* value, SymbolTable* scope) {
                 return true;
             }
             return false;
+        case PATTERN_OR:
+            return false;
     }
     
     return false;
@@ -421,6 +423,7 @@ bool wyn_is_pattern_irrefutable(Pattern* pattern) {
         case PATTERN_LITERAL:
         case PATTERN_RANGE:
         case PATTERN_OPTION:
+        case PATTERN_OR:
             // These patterns can fail to match
             return false;
     }

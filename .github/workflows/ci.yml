@@ -27,6 +27,18 @@ jobs:
         run: choco install make mingw -y
         shell: pwsh
 
+      - name: Build TCC backend
+        if: runner.os == 'Linux'
+        run: |
+          git clone --depth 1 https://repo.or.cz/tinycc.git /tmp/tcc-src
+          cd /tmp/tcc-src
+          ./configure --prefix=$GITHUB_WORKSPACE/vendor/tcc
+          make -j$(nproc)
+          make install
+          ls -la $GITHUB_WORKSPACE/vendor/tcc/bin/tcc
+          echo "✅ TCC built for $(uname -m)"
+        shell: bash
+
       - name: Build compiler
         run: make clean && make
         shell: bash

@@ -1,6 +1,6 @@
 # Wyn Language Guide
 
-![Version](https://img.shields.io/badge/version-1.6.0-blue)
+![Version](https://img.shields.io/badge/version-1.7.0-blue)
 
 Wyn is a modern systems programming language that transpiles to C, combining the safety and expressiveness of modern languages with the performance and portability of C.
 
@@ -392,15 +392,19 @@ var max_value = Math.max(10, 20)
 ### Hash Maps
 
 ```wyn
-var map = HashMap.new()
-map.set("key1", "value1")
-map.set("key2", "value2")
+// Inline literal (preferred)
+var map = { "name": "Alice", "age": "30", "active": "true" }
+println(map.get("name"))  // Alice
 
-var value = map.get("key1")
-match value {
-    Some(v) => Terminal.print("Found: " + v)
-    None() => Terminal.print("Not found")
-}
+// Or build incrementally
+var config = HashMap.new()
+config.insert("host", "localhost")
+config.insert("port", "8080")
+
+// Save/load to JSON file
+Data.save("config.json", config)
+var loaded = Data.load("config.json")
+println(loaded.get("host"))  // localhost
 ```
 
 ### Testing
@@ -432,7 +436,7 @@ wyn install https://github.com/user/wyn-package
 name = "my-app"
 version = "1.0.0"
 
-[dependencies]
+[packages]
 math-utils = { path = "./packages/math-utils" }
 http-client = { git = "https://github.com/user/wyn-http" }
 ```
@@ -497,4 +501,4 @@ fn main() {
 }
 ```
 
-This guide covers the core features of Wyn v1.6.0. For more examples and advanced topics, explore the other documentation files in this directory.
+This guide covers the core features of Wyn v1.7.0. For more examples and advanced topics, explore the other documentation files in this directory.

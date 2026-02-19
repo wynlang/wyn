@@ -14,15 +14,13 @@
     #include "windows_compat.h"
     #define setenv(name, value, overwrite) _putenv_s(name, value)
     #define unsetenv(name) _putenv_s(name, "")
-    #define access _access
-    #define F_OK 0
     #define stat _stat
     #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
     #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
     #define mkdir(path, mode) _mkdir(path)
     #define getpagesize() 4096
     #define realpath(path, resolved) _fullpath(resolved, path, _MAX_PATH)
-    #define basename(path) _basename(path)
+    #define basename(path) _wyn_basename(path)
     #define dirname(path) _dirname(path)
     #define close _close
     #define read _read

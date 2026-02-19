@@ -9,7 +9,7 @@ struct Point { x: int, y: int }
 
 impl Display for Point {
     fn to_string(self) -> string {
-        return "Point(" + int_to_string(self.x) + ", " + int_to_string(self.y) + ")"
+        return "Point(" + self.x.to_string() + ", " + self.y.to_string() + ")"
     }
 }
 
@@ -17,7 +17,7 @@ struct Color { r: int, g: int, b: int }
 
 impl Display for Color {
     fn to_string(self) -> string {
-        return "Color(" + int_to_string(self.r) + "," + int_to_string(self.g) + "," + int_to_string(self.b) + ")"
+        return "Color(" + self.r.to_string() + "," + self.g.to_string() + "," + self.b.to_string() + ")"
     }
 }
 

@@ -736,66 +736,58 @@ void wyn_emit_monomorphic_function(GenericFunction* generic_fn, Type** type_args
     // This will be implemented when integrating with codegen
 }
 
+// Resolve a type annotation to a C type string, substituting type parameters with concrete types
+static const char* wyn_resolve_type_to_c(Token type_name, FnStmt* fn, Type** type_args, int type_arg_count) {
+    // Check if this is a type parameter
+    for (int i = 0; i < fn->type_param_count && i < type_arg_count; i++) {
+        if (fn->type_params[i].length == type_name.length &&
+            memcmp(fn->type_params[i].start, type_name.start, type_name.length) == 0) {
+            // Found matching type parameter — use concrete type
+            switch (type_args[i]->kind) {
+                case TYPE_STRING: return "const char*";
+                case TYPE_FLOAT:  return "double";
+                case TYPE_BOOL:   return "bool";
+                default:          return "long long";
+            }
+        }
+    }
+    // Not a type parameter — resolve literally
+    if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) return "long long";
+    if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) return "const char*";
+    if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) return "double";
+    if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) return "bool";
+    return "long long";
+}
+
 // Emit a monomorphic function declaration for codegen
 void wyn_emit_monomorphic_function_declaration(void* original_fn_ptr, Type** type_args, int type_arg_count, const char* monomorphic_name) {
     FnStmt* original_fn = (FnStmt*)original_fn_ptr;
-    // Forward declaration for wyn_emit function
     extern void wyn_emit(const char* fmt, ...);
     
-    if (!original_fn || !type_args || !monomorphic_name) {
-        return;
-    }
+    if (!original_fn || !type_args || !monomorphic_name) return;
     
-    // Determine return type from original function's return type annotation
-    const char* return_type = "int"; // Default
-    
+    // Resolve return type (may be a type parameter like T)
+    const char* return_type = "long long";
     if (original_fn->return_type && original_fn->return_type->type == EXPR_IDENT) {
-        Token type_name = original_fn->return_type->token;
-        if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-            return_type = "int";
-        } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
-            return_type = "char*";
-        } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
-            return_type = "double";
-        } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
-            return_type = "bool";
-        }
+        return_type = wyn_resolve_type_to_c(original_fn->return_type->token, original_fn, type_args, type_arg_count);
     }
     
-    // Generate function declaration
     wyn_emit("%s %s(", return_type, monomorphic_name);
     
-    // Generate parameters with concrete types
     for (int i = 0; i < original_fn->param_count; i++) {
         if (i > 0) wyn_emit(", ");
         
-        // Use type argument for parameter type
-        const char* param_type = "int"; // Default
-        char param_type_buf[256] = {0};
-        
-        if (i < type_arg_count && type_args[i]) {
+        const char* param_type = "long long";
+        if (original_fn->param_types && original_fn->param_types[i] && 
+            original_fn->param_types[i]->type == EXPR_IDENT) {
+            param_type = wyn_resolve_type_to_c(original_fn->param_types[i]->token, original_fn, type_args, type_arg_count);
+        } else if (i < type_arg_count && type_args[i]) {
+            // Fallback: use inferred type from call args
             switch (type_args[i]->kind) {
-                case TYPE_INT:
-                    param_type = "int";
-                    break;
-                case TYPE_FLOAT:
-                    param_type = "double";
-                    break;
-                case TYPE_STRING:
-                    param_type = "const char*";
-                    break;
-                case TYPE_BOOL:
-                    param_type = "bool";
-                    break;
-                case TYPE_STRUCT:
-                    snprintf(param_type_buf, sizeof(param_type_buf), "%.*s",
-                            type_args[i]->struct_type.name.length,
-                            type_args[i]->struct_type.name.start);
-                    param_type = param_type_buf;
-                    break;
-                default:
-                    param_type = "int";
-                    break;
+                case TYPE_STRING: param_type = "const char*"; break;
+                case TYPE_FLOAT:  param_type = "double"; break;
+                case TYPE_BOOL:   param_type = "bool"; break;
+                default:          param_type = "long long"; break;
             }
         }
         
@@ -809,66 +801,34 @@ void wyn_emit_monomorphic_function_declaration(void* original_fn_ptr, Type** typ
 // Emit a monomorphic function definition for codegen
 void wyn_emit_monomorphic_function_definition(void* original_fn_ptr, Type** type_args, int type_arg_count, const char* monomorphic_name) {
     FnStmt* original_fn = (FnStmt*)original_fn_ptr;
-    // Forward declaration for wyn_emit function
     extern void wyn_emit(const char* fmt, ...);
     extern void codegen_stmt(Stmt* stmt);
     
-    if (!original_fn || !type_args || !monomorphic_name) {
-        return;
-    }
+    if (!original_fn || !type_args || !monomorphic_name) return;
     
-    // Determine return type from original function's return type annotation
-    const char* return_type = "int"; // Default
-    
+    // Resolve return type (may be a type parameter like T)
+    const char* return_type = "long long";
     if (original_fn->return_type && original_fn->return_type->type == EXPR_IDENT) {
-        Token type_name = original_fn->return_type->token;
-        if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-            return_type = "int";
-        } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
-            return_type = "char*";
-        } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
-            return_type = "double";
-        } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
-            return_type = "bool";
-        }
+        return_type = wyn_resolve_type_to_c(original_fn->return_type->token, original_fn, type_args, type_arg_count);
     }
     
-    // Generate function signature
     wyn_emit("// Monomorphic instance of %.*s\n", 
          (int)original_fn->name.length, original_fn->name.start);
     wyn_emit("%s %s(", return_type, monomorphic_name);
     
-    // Generate parameters with concrete types
     for (int i = 0; i < original_fn->param_count; i++) {
         if (i > 0) wyn_emit(", ");
         
-        // Use type argument for parameter type
-        const char* param_type = "int"; // Default
-        char param_type_buf[256] = {0};
-        
-        if (i < type_arg_count && type_args[i]) {
+        const char* param_type = "long long";
+        if (original_fn->param_types && original_fn->param_types[i] && 
+            original_fn->param_types[i]->type == EXPR_IDENT) {
+            param_type = wyn_resolve_type_to_c(original_fn->param_types[i]->token, original_fn, type_args, type_arg_count);
+        } else if (i < type_arg_count && type_args[i]) {
             switch (type_args[i]->kind) {
-                case TYPE_INT:
-                    param_type = "int";
-                    break;
-                case TYPE_FLOAT:
-                    param_type = "double";
-                    break;
-                case TYPE_STRING:
-                    param_type = "const char*";
-                    break;
-                case TYPE_BOOL:
-                    param_type = "bool";
-                    break;
-                case TYPE_STRUCT:
-                    snprintf(param_type_buf, sizeof(param_type_buf), "%.*s",
-                            type_args[i]->struct_type.name.length,
-                            type_args[i]->struct_type.name.start);
-                    param_type = param_type_buf;
-                    break;
-                default:
-                    param_type = "int";
-                    break;
+                case TYPE_STRING: param_type = "const char*"; break;
+                case TYPE_FLOAT:  param_type = "double"; break;
+                case TYPE_BOOL:   param_type = "bool"; break;
+                default:          param_type = "long long"; break;
             }
         }
         
@@ -878,7 +838,6 @@ void wyn_emit_monomorphic_function_definition(void* original_fn_ptr, Type** type
     
     wyn_emit(") {\n");
     
-    // Generate function body
     if (original_fn->body) {
         codegen_stmt(original_fn->body);
     } else {
@@ -906,6 +865,7 @@ void wyn_generate_monomorphic_instances(void) {
 // Generate monomorphic instances for codegen integration
 void wyn_generate_monomorphic_instances_for_codegen(void* prog_ptr) {
     Program* prog = (Program*)prog_ptr;
+    (void)prog;
     GenericInstantiation* current = g_instantiations;
     
     // First, generate monomorphized struct definitions

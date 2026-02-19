@@ -58,7 +58,7 @@ void* future_get(Future* f) {
             return f->result;
         #ifdef __x86_64__
         __asm__ volatile("pause");
-        #elif defined(__aarch64__)
+        #elif defined(__aarch64__) && !defined(__TINYC__)
         __asm__ volatile("isb"); // instruction synchronization barrier — faster than yield
         #endif
     }

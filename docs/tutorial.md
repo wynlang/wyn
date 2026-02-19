@@ -187,7 +187,7 @@ Create `wyn.toml`:
 name = "myapp"
 version = "0.1.0"
 
-[dependencies]
+[packages]
 utils = "/path/to/utils"
 ```
 

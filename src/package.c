@@ -71,15 +71,20 @@ static void ensure_dir(const char* path) {
 
 // Get packages directory
 static void get_packages_dir(char* buf, size_t size) {
-    const char* home = getenv("HOME");
-    if (home) {
-        snprintf(buf, size, "%s/.wyn/packages", home);
-    } else {
-        snprintf(buf, size, "./wyn_modules");
-    }
+    // Project-local: packages/ in current directory
+    snprintf(buf, size, "./packages");
 }
 
-// Install from local path
+// Check if a string looks like a git URL
+static int is_git_url(const char* s) {
+    if (!s || !s[0]) return 0;
+    if (s[0] == '.' || s[0] == '/' || s[0] == '~') return 0;  // local path
+    if (strstr(s, "://") || strstr(s, "git@") || strstr(s, ".git")) return 1;
+    const char* dot = strchr(s, '.');
+    const char* slash = strchr(s, '/');
+    if (dot && slash && dot < slash) return 1;
+    return 0;
+}
 static int install_local(const char* name, const char* source_path) {
     char pkg_dir[512];
     get_packages_dir(pkg_dir, sizeof(pkg_dir));
@@ -89,9 +94,9 @@ static int install_local(const char* name, const char* source_path) {
     snprintf(dest, sizeof(dest), "%s/%s", pkg_dir, name);
     ensure_dir(dest);
     
-    // Copy .wyn files
+    // Copy .wyn and .🐉 files
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cp '%s'/*.wyn '%s/' 2>/dev/null", source_path, dest);
+    snprintf(cmd, sizeof(cmd), "cp '%s'/*.wyn '%s/' 2>/dev/null; cp '%s'/*.🐉 '%s/' 2>/dev/null", source_path, dest, source_path, dest);
     int result = system(cmd);
     
     if (result == 0) {
@@ -130,14 +135,40 @@ static int install_git(const char* name, const char* url) {
         system(cmd);
     }
     
+    // Normalize URL: add https:// if missing protocol
+    char full_url[512];
+    if (strstr(url, "://") || strstr(url, "git@")) {
+        snprintf(full_url, sizeof(full_url), "%s", url);
+    } else {
+        snprintf(full_url, sizeof(full_url), "https://%s", url);
+    }
+    
     // Clone
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "git clone --depth 1 '%s' '%s' 2>&1", url, dest);
-    printf("  Cloning %s...\n", url);
+    snprintf(cmd, sizeof(cmd), "git clone --depth 1 '%s' '%s' 2>&1", full_url, dest);
+    printf("  Cloning %s...\n", full_url);
     int result = system(cmd);
     
     if (result == 0) {
-        printf("  ✓ Installed %s from git\n", name);
+        // Validate: must contain .wyn files OR .c/.h files (C library package)
+        char check[1024];
+        snprintf(check, sizeof(check), "find '%s' \\( -name '*.wyn' -o -name '*.🐉' -o -name '*.c' -o -name '*.h' \\) -maxdepth 3 | head -1", dest);
+        FILE* fp = popen(check, "r");
+        char buf[256] = "";
+        if (fp) { fgets(buf, sizeof(buf), fp); pclose(fp); }
+        if (buf[0] == '\0') {
+            fprintf(stderr, "  \033[31m✗\033[0m Not a valid Wyn package: no .wyn/.🐉 files found in %s\n", url);
+            char rm[1024]; snprintf(rm, sizeof(rm), "rm -rf '%s'", dest); system(rm);
+            return 1;
+        }
+        // Warn if no wyn.toml
+        char toml_path[512];
+        snprintf(toml_path, sizeof(toml_path), "%s/wyn.toml", dest);
+        struct stat ts;
+        if (stat(toml_path, &ts) != 0) {
+            printf("  \033[33m⚠\033[0m No wyn.toml found — package may not have version info\n");
+        }
+        printf("  \033[32m✓\033[0m Installed %s\n", name);
         printf("    → %s\n", dest);
         return 0;
     }
@@ -150,7 +181,7 @@ static int install_git(const char* name, const char* url) {
 int package_install(const char* spec) {
     if (!spec || strlen(spec) == 0 || strcmp(spec, ".") == 0) {
         // Install from wyn.toml in current directory
-        printf("Installing dependencies from wyn.toml...\n");
+        printf("Installing packages from wyn.toml...\n");
         
         struct stat st;
         if (stat("wyn.toml", &st) != 0) {
@@ -158,7 +189,7 @@ int package_install(const char* spec) {
             return 1;
         }
         
-        // Parse wyn.toml for [dependencies]
+        // Parse wyn.toml for [packages]
         FILE* f = fopen("wyn.toml", "r");
         if (!f) return 1;
         
@@ -173,7 +204,7 @@ int package_install(const char* spec) {
             char* end = trimmed + strlen(trimmed) - 1;
             while (end > trimmed && (*end == '\n' || *end == '\r' || *end == ' ')) *end-- = '\0';
             
-            if (strcmp(trimmed, "[dependencies]") == 0) { in_deps = 1; continue; }
+            if (strcmp(trimmed, "[packages]") == 0) { in_deps = 1; continue; }
             if (trimmed[0] == '[') { in_deps = 0; continue; }
             if (!in_deps || trimmed[0] == '#' || trimmed[0] == '\0') continue;
             
@@ -196,7 +227,7 @@ int package_install(const char* spec) {
             source[slen] = '\0';
             
             // Determine source type
-            if (strstr(source, "github.com") || strstr(source, "git@") || strstr(source, ".git")) {
+            if (is_git_url(source)) {
                 install_git(name, source);
             } else {
                 install_local(name, source);
@@ -211,7 +242,7 @@ int package_install(const char* spec) {
     
     // Install single package by name/path/url
     // Detect if it's a git URL
-    if (strstr(spec, "github.com") || strstr(spec, "git@") || strstr(spec, ".git") || strstr(spec, "://")) {
+    if (is_git_url(spec)) {
         // Extract name from URL
         const char* name = strrchr(spec, '/');
         if (name) name++; else name = spec;

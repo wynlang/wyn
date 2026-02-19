@@ -1,0 +1,322 @@
+// wyncc — Self-hosted Wyn compiler (Phase 1)
+// Compiles a subset of Wyn to C: fn, var, return, println, arithmetic, if/else, strings
+
+fn is_alpha(c: string) -> bool { return c >= "a" && c <= "z" || c >= "A" && c <= "Z" || c == "_" }
+fn is_digit(c: string) -> bool { return c >= "0" && c <= "9" }
+fn is_alnum(c: string) -> bool { return is_alpha(c) || is_digit(c) }
+fn kw(w: string) -> int {
+    if w == "fn" { return 5 }
+    if w == "var" { return 8 }
+    if w == "if" { return 10 }
+    if w == "else" { return 11 }
+    if w == "return" { return 16 }
+    if w == "true" { return 21 }
+    if w == "false" { return 22 }
+    return 4
+}
+
+fn main() -> int {
+    // Read source
+    var src = "fn main() -> int { println(\"hello\") return 0 }"
+
+    // === LEXER ===
+    var tk = []
+    var tt = []
+    var tc = 0
+    var li = 0
+    var slen = src.len()
+    while li < slen {
+        var c = src[li]
+        if c == " " || c == "\t" || c == "\r" || c == "\n" { li += 1; continue }
+        if c == "/" && li + 1 < slen && src[li + 1] == "/" {
+            while li < slen && src[li] != "\n" { li += 1 }
+            continue
+        }
+        if is_digit(c) {
+            var start = li
+            while li < slen && is_digit(src[li]) { li += 1 }
+            array_push(tk, 1); array_push(tt, src.substring(start, li)); tc += 1
+            continue
+        }
+        if c == "\"" {
+            li += 1
+            var start = li
+            while li < slen && src[li] != "\"" {
+                if src[li] == "\\" { li += 1 }
+                li += 1
+            }
+            array_push(tk, 3); array_push(tt, src.substring(start, li)); tc += 1
+            li += 1
+            continue
+        }
+        if is_alpha(c) {
+            var start = li
+            while li < slen && is_alnum(src[li]) { li += 1 }
+            var w = src.substring(start, li)
+            array_push(tk, kw(w)); array_push(tt, w); tc += 1
+            continue
+        }
+        if li + 1 < slen {
+            var two = src.substring(li, li + 2)
+            if two == "->" { array_push(tk, 50); array_push(tt, "->"); tc += 1; li += 2; continue }
+            if two == "==" { array_push(tk, 51); array_push(tt, "=="); tc += 1; li += 2; continue }
+            if two == "!=" { array_push(tk, 52); array_push(tt, "!="); tc += 1; li += 2; continue }
+            if two == "<=" { array_push(tk, 53); array_push(tt, "<="); tc += 1; li += 2; continue }
+            if two == ">=" { array_push(tk, 54); array_push(tt, ">="); tc += 1; li += 2; continue }
+        }
+        if c == "+" { array_push(tk, 30); array_push(tt, "+"); tc += 1 }
+        else if c == "-" { array_push(tk, 31); array_push(tt, "-"); tc += 1 }
+        else if c == "*" { array_push(tk, 32); array_push(tt, "*"); tc += 1 }
+        else if c == "/" { array_push(tk, 33); array_push(tt, "/"); tc += 1 }
+        else if c == "=" { array_push(tk, 35); array_push(tt, "="); tc += 1 }
+        else if c == "<" { array_push(tk, 37); array_push(tt, "<"); tc += 1 }
+        else if c == ">" { array_push(tk, 38); array_push(tt, ">"); tc += 1 }
+        else if c == "(" { array_push(tk, 40); array_push(tt, "("); tc += 1 }
+        else if c == ")" { array_push(tk, 41); array_push(tt, ")"); tc += 1 }
+        else if c == "{" { array_push(tk, 42); array_push(tt, "{"); tc += 1 }
+        else if c == "}" { array_push(tk, 43); array_push(tt, "}"); tc += 1 }
+        else if c == "," { array_push(tk, 46); array_push(tt, ","); tc += 1 }
+        else if c == ":" { array_push(tk, 47); array_push(tt, ":"); tc += 1 }
+        li += 1
+    }
+    array_push(tk, 0); array_push(tt, ""); tc += 1
+
+    // === PARSER ===
+    // AST nodes: kind, val, left (first child), right (next sibling)
+    // 1=INT 2=STR 3=IDENT 4=CALL 5=BINARY 6=RETURN 7=VAR 8=FN 9=BLOCK 10=EXPRSTMT 11=IF 12=PROG
+    var nk = []
+    var nv = []
+    var nl = []
+    var nr = []
+    var nn = 0
+    var pos = 0
+
+    // Recursive descent — we use a workaround for the lack of mutual recursion:
+    // Parse the token stream into AST nodes bottom-up
+
+    // Helper: peek/advance
+    // (inlined since we can't easily share arrays across functions)
+
+    // Parse the entire program token by token, building AST
+    // For each fn: parse fn header, then parse body stmts
+
+    // We'll parse one function at a time
+    var first_fn = -1
+    var prev_fn = -1
+
+    while pos < tc && tk[pos] != 0 {
+        if tk[pos] != 5 { pos += 1; continue }  // skip non-fn tokens
+        pos += 1  // skip 'fn'
+        var fname = "" + tt[pos]
+        pos += 1  // skip name
+        // skip (params)
+        if tk[pos] == 40 {
+            pos += 1
+            while pos < tc && tk[pos] != 41 { pos += 1 }
+            pos += 1  // skip )
+        }
+        // skip -> type
+        if tk[pos] == 50 { pos += 1; pos += 1 }
+        // expect {
+        if tk[pos] == 42 { pos += 1 }
+
+        // Parse block body
+        var first_stmt = -1
+        var prev_stmt = -1
+
+        while pos < tc && tk[pos] != 43 && tk[pos] != 0 {
+            var stmt_id = -1
+
+            // return expr
+            if tk[pos] == 16 {
+                pos += 1
+                // parse expression
+                var expr_id = -1
+
+                // Simple expression parser (handles int, string, ident, call, binary)
+                // Primary
+                if tk[pos] == 1 {
+                    var v = "" + tt[pos]; pos += 1
+                    expr_id = nn; array_push(nk, 1); array_push(nv, v); array_push(nl, -1); array_push(nr, -1); nn += 1
+                } else if tk[pos] == 3 {
+                    var v = "" + tt[pos]; pos += 1
+                    expr_id = nn; array_push(nk, 2); array_push(nv, v); array_push(nl, -1); array_push(nr, -1); nn += 1
+                } else if tk[pos] == 4 {
+                    var name = "" + tt[pos]; pos += 1
+                    if tk[pos] == 40 {
+                        // call
+                        pos += 1  // (
+                        var arg1 = -1
+                        if tk[pos] != 41 {
+                            if tk[pos] == 3 {
+                                arg1 = nn; array_push(nk, 2); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1
+                                pos += 1
+                            } else if tk[pos] == 1 {
+                                arg1 = nn; array_push(nk, 1); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1
+                                pos += 1
+                            } else if tk[pos] == 4 {
+                                arg1 = nn; array_push(nk, 3); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1
+                                pos += 1
+                            }
+                            // skip additional args
+                            while tk[pos] == 46 { pos += 1; pos += 1 }
+                        }
+                        if tk[pos] == 41 { pos += 1 }
+                        expr_id = nn; array_push(nk, 4); array_push(nv, name); array_push(nl, arg1); array_push(nr, -1); nn += 1
+                    } else {
+                        expr_id = nn; array_push(nk, 3); array_push(nv, name); array_push(nl, -1); array_push(nr, -1); nn += 1
+                    }
+                }
+
+                // Check for binary operator
+                if tk[pos] == 30 || tk[pos] == 31 || tk[pos] == 32 || tk[pos] == 33 {
+                    var op = "" + tt[pos]; pos += 1
+                    var right = -1
+                    if tk[pos] == 1 {
+                        right = nn; array_push(nk, 1); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1; pos += 1
+                    } else if tk[pos] == 4 {
+                        right = nn; array_push(nk, 3); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1; pos += 1
+                    }
+                    var bin = nn; array_push(nk, 5); array_push(nv, op); array_push(nl, expr_id); array_push(nr, right); nn += 1
+                    expr_id = bin
+                }
+
+                stmt_id = nn; array_push(nk, 6); array_push(nv, "return"); array_push(nl, expr_id); array_push(nr, -1); nn += 1
+            }
+            // var name = expr
+            else if tk[pos] == 8 {
+                pos += 1
+                var vname = "" + tt[pos]; pos += 1
+                if tk[pos] == 47 { pos += 1; pos += 1 }  // skip : type
+                if tk[pos] == 35 { pos += 1 }  // skip =
+                var init_id = -1
+                if tk[pos] == 1 {
+                    init_id = nn; array_push(nk, 1); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1; pos += 1
+                } else if tk[pos] == 3 {
+                    init_id = nn; array_push(nk, 2); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1; pos += 1
+                } else if tk[pos] == 4 {
+                    init_id = nn; array_push(nk, 3); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1; pos += 1
+                }
+                stmt_id = nn; array_push(nk, 7); array_push(nv, vname); array_push(nl, init_id); array_push(nr, -1); nn += 1
+            }
+            // expression statement (function call)
+            else if tk[pos] == 4 {
+                var cname = "" + tt[pos]; pos += 1
+                if tk[pos] == 40 {
+                    pos += 1
+                    var carg = -1
+                    if tk[pos] != 41 {
+                        if tk[pos] == 3 {
+                            carg = nn; array_push(nk, 2); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1; pos += 1
+                        } else if tk[pos] == 1 {
+                            carg = nn; array_push(nk, 1); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1; pos += 1
+                        } else if tk[pos] == 4 {
+                            carg = nn; array_push(nk, 3); array_push(nv, "" + tt[pos]); array_push(nl, -1); array_push(nr, -1); nn += 1; pos += 1
+                        }
+                        while tk[pos] == 46 { pos += 1; pos += 1 }
+                    }
+                    if tk[pos] == 41 { pos += 1 }
+                    var call_id = nn; array_push(nk, 4); array_push(nv, cname); array_push(nl, carg); array_push(nr, -1); nn += 1
+                    stmt_id = nn; array_push(nk, 10); array_push(nv, "expr"); array_push(nl, call_id); array_push(nr, -1); nn += 1
+                } else {
+                    pos += 1
+                    continue
+                }
+            }
+            else {
+                pos += 1
+                continue
+            }
+
+            if stmt_id != -1 {
+                if first_stmt == -1 { first_stmt = stmt_id }
+                if prev_stmt != -1 { nr[prev_stmt] = stmt_id }
+                prev_stmt = stmt_id
+            }
+        }
+        if tk[pos] == 43 { pos += 1 }  // skip }
+
+        var block_id = nn; array_push(nk, 9); array_push(nv, "block"); array_push(nl, first_stmt); array_push(nr, -1); nn += 1
+        var fn_id = nn; array_push(nk, 8); array_push(nv, fname); array_push(nl, block_id); array_push(nr, -1); nn += 1
+
+        if first_fn == -1 { first_fn = fn_id }
+        if prev_fn != -1 { nr[prev_fn] = fn_id }
+        prev_fn = fn_id
+    }
+
+    var prog_id = nn; array_push(nk, 12); array_push(nv, "program"); array_push(nl, first_fn); array_push(nr, -1); nn += 1
+
+    // === CODEGEN from AST ===
+    var out = "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n"
+
+    // Walk functions
+    var fid = nl[prog_id]
+    while fid != -1 {
+        var fn_name = "" + nv[fid]
+        if fn_name == "main" {
+            out = out + "int main() {\n"
+        } else {
+            out = out + "long long " + fn_name + "() {\n"
+        }
+
+        // Walk block
+        var bid = nl[fid]
+        var sid = nl[bid]
+        while sid != -1 {
+            var sk = nk[sid]
+            if sk == 10 {
+                // expr stmt
+                var eid = nl[sid]
+                if nk[eid] == 4 {
+                    var cn = "" + nv[eid]
+                    if cn == "println" {
+                        var aid = nl[eid]
+                        if aid != -1 && nk[aid] == 2 {
+                            out = out + "    printf(\"" + nv[aid] + "\\n\");\n"
+                        } else if aid != -1 && nk[aid] == 3 {
+                            out = out + "    printf(\"%lld\\n\", (long long)" + nv[aid] + ");\n"
+                        } else if aid != -1 && nk[aid] == 1 {
+                            out = out + "    printf(\"" + nv[aid] + "\\n\");\n"
+                        }
+                    }
+                }
+            }
+            if sk == 6 {
+                // return
+                var vid = nl[sid]
+                if vid != -1 && nk[vid] == 5 {
+                    // binary expression — inline gen
+                    var lv = nl[vid]
+                    var rv = nr[vid]
+                    var op = "" + nv[vid]
+                    if rv != -1 && nk[rv] == 5 {
+                        // nested: a op (b op2 c)
+                        out = out + "    return (" + nv[lv] + " " + op + " (" + nv[nl[rv]] + " " + nv[rv] + " " + nv[nr[rv]] + "));\n"
+                    } else {
+                        out = out + "    return (" + nv[lv] + " " + op + " " + nv[rv] + ");\n"
+                    }
+                } else if vid != -1 {
+                    out = out + "    return " + nv[vid] + ";\n"
+                }
+            }
+            if sk == 7 {
+                // var decl
+                var vn = "" + nv[sid]
+                var vi = nl[sid]
+                if vi != -1 && nk[vi] == 2 {
+                    out = out + "    const char* " + vn + " = \"" + nv[vi] + "\";\n"
+                } else if vi != -1 {
+                    out = out + "    long long " + vn + " = " + nv[vi] + ";\n"
+                }
+            }
+            sid = nr[sid]
+        }
+
+        out = out + "}\n\n"
+        fid = nr[fid]
+    }
+
+    // Output
+    println(out)
+    return 0
+}

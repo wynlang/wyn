@@ -15,7 +15,7 @@ fn main() -> int {
     
     // Test with method calls (simpler version)
     var text = "hello"
-    var upper_text = text |> str_upper
+    var upper_text = text.upper()
     upper_text.print()  // Should print "HELLO"
     
     return 0

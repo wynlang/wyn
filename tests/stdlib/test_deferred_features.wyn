@@ -1,0 +1,46 @@
+// Deferred features TDD: Array spread, for destructuring, pipe lambdas
+
+fn double(x: int) -> int { return x * 2 }
+fn add1(x: int) -> int { return x + 1 }
+
+fn main() -> int {
+    Test.init("Deferred Language Features")
+
+    // 16.2: Array spread — basic
+    var arr = [1, 2, 3, 4, 5]
+    var [first, ...rest] = arr
+    Test.assert_eq_int(first, 1, "spread first")
+    Test.assert_eq_int(rest.len(), 4, "spread rest len")
+    Test.assert_eq_int(rest[0], 2, "spread rest[0]")
+    Test.assert_eq_int(rest[3], 5, "spread rest last")
+
+    // 16.2: Spread with 2 leading elements
+    var [a, b, ...tail] = [10, 20, 30, 40]
+    Test.assert_eq_int(a, 10, "spread a")
+    Test.assert_eq_int(b, 20, "spread b")
+    Test.assert_eq_int(tail.len(), 2, "spread tail len")
+    Test.assert_eq_int(tail[0], 30, "spread tail[0]")
+
+    // 16.2: Spread with single element rest
+    var [head, ...t] = [99, 100]
+    Test.assert_eq_int(head, 99, "spread head")
+    Test.assert_eq_int(t.len(), 1, "spread single rest")
+
+    // 16.4: For-in array iteration
+    var names = ["alice", "bob", "charlie"]
+    var count = 0
+    for name in names {
+        count += 1
+    }
+    Test.assert_eq_int(count, 3, "for-in count")
+
+    // 17.3: Pipe with named functions
+    var r1 = 5 |> double |> add1
+    Test.assert_eq_int(r1, 11, "pipe chain")
+
+    var r2 = 3 |> add1 |> double |> add1
+    Test.assert_eq_int(r2, 9, "pipe 3-stage")
+
+    Test.summary()
+    return 0
+}

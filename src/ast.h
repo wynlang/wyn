@@ -361,7 +361,7 @@ typedef enum {
     STMT_EXPR,
     STMT_VAR,
     STMT_CONST,
-    STMT_RETURN,
+    STMT_RETURN, STMT_DEFER,
     STMT_BLOCK,
     STMT_UNSAFE,
     STMT_FN,
