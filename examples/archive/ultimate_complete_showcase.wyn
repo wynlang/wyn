@@ -65,7 +65,7 @@ fn main() {
     print("   Length:")
     text.length().print()
     print("   Trimmed:")
-    str_trim(text).print()
+    text.trim().print()
     print("   Upper:")
     text.upper().print()
     print("   Lower:")
@@ -77,9 +77,9 @@ fn main() {
     print("   Concatenation:")
     text.concat(" v3.0").print()
     print("   Replace spaces:")
-    str_replace(text, " ", "_").print()
+    text.replace(" ", "_").print()
     print("   Reverse:")
-    str_reverse("Programming").print()
+    "Programming".reverse().print()
     
     print("5. ADVANCED MAP DATA STRUCTURES:")
     var database = map[string, int]{"users": 10000, "posts": 50000, "comments": 150000}
@@ -171,13 +171,13 @@ fn main() {
     
     print("11. STRING CONVERSIONS & PARSING:")
     print("   String to int:")
-    str_to_int("54321").print()
+    "54321".to_int().print()
     print("   Int to string:")
-    int_to_str(98765).print()
+    98765.to_string().print()
     print("   Parse float:")
-    str_parse_float("2.71828").print()
+    "2.71828".to_float().print()
     print("   String repeat:")
-    str_repeat("*=*", 4).print()
+    "*=*".repeat(4).print()
     
     print("12. TIME & SYSTEM OPERATIONS:")
     var timestamp = time_now()

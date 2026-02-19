@@ -4,10 +4,10 @@
 fn main() -> int {
     // Test: HTTP GET request
     var response = http_get("http://httpbin.org/get")
-    if str_len(response) > 0 {
-        println("HTTP GET: received " + int_to_string(str_len(response)) + " bytes")
+    if response.len() > 0 {
+        println("HTTP GET: received " + response.len(.to_string()) + " bytes")
         // Check it contains expected JSON
-        if str_contains(response, "httpbin") {
+        if response.contains("httpbin") {
             println("  ✓ Response contains expected content")
         } else {
             println("  ✗ Unexpected response")

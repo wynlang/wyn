@@ -41,8 +41,8 @@ fn main() -> int {
     print(ends1)
     
     // Test replace with Unicode
-    var replaced1 = wyn_str_replace(unicode1, "世界", "World")
-    var replaced2 = wyn_str_replace(unicode2, "ñ", "n")
+    var replaced1 = unicode1.replace("世界", "World")
+    var replaced2 = unicode2.replace("ñ", "n")
     print("Replace '世界' with 'World':")
     print(replaced1)
     print("Replace 'ñ' with 'n':")

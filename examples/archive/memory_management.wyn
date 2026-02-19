@@ -6,7 +6,7 @@ fn main() -> int {
     print_str("")
     
     // String operations allocate memory
-    var upper = str_upper("hello world")
+    var upper = "hello world".upper()
     print_str("Uppercase:")
     print_str(upper)
     
@@ -17,8 +17,8 @@ fn main() -> int {
     print_str("")
     
     // Multiple operations
-    var s1 = str_concat("Hello", " ")
-    var s2 = str_concat(s1, "World")
+    var s1 = "Hello".concat(" ")
+    var s2 = s1.concat("World")
     print_str("Concatenated:")
     print_str(s2)
     

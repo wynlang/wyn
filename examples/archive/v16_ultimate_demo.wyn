@@ -3,7 +3,7 @@ fn main() -> int {
     
     // Core v1.6 features still work
     print("1. Pipeline + If Expressions:")
-    var result = "  hello  " |> str_upper |> str_trim
+    var result = "  hello  ".upper().trim()
     var status = if result.length() > 3 { "long" } else { "short" }
     result.print()
     status.print()
@@ -45,7 +45,7 @@ fn main() -> int {
     // Combined modern syntax
     print("6. Combined Modern Features:")
     var final_result = if "test".length() > 2 { 
-        "test" |> str_upper |> str_capitalize
+        "test".upper().capitalize()
     } else { 
         "short" 
     }

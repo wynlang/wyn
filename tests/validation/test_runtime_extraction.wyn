@@ -22,7 +22,7 @@ fn safe_div(a: int, b: int) -> ResultInt {
 
 fn main() -> int {
     // Strings
-    println(str_upper("hello"))
+    println("hello".upper())
 
     // Structs + methods
     var p = Point { x: 3, y: 4 }

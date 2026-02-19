@@ -27,7 +27,7 @@ fn test_csv_parser() -> int {
     var age_str = split_get(csv, ",", 1);
     var city = split_get(csv, ",", 2);
     
-    var age = str_to_int(age_str);
+    var age = age_str.to_int();
     
     if age != 30 {
         return 2;
@@ -80,17 +80,17 @@ fn test_calculator() -> int {
 fn test_string_processor() -> int {
     var text = "Hello, World!";
     
-    var len = str_len(text);
+    var len = text.len();
     if len != 13 {
         return 8;
     }
     
-    if str_contains(text, "World") == 0 {
+    if text.contains("World") == 0 {
         return 9;
     }
     
-    var upper = str_upper(text);
-    var lower = str_lower(text);
+    var upper = text.upper();
+    var lower = text.lower();
     
     return 0;
 }

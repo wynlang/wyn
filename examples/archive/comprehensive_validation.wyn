@@ -9,7 +9,7 @@ var first = "Hello"
 var second = "World"
 var result = first + " " + second
 print("  String concatenation:", result)
-var upper = str_upper(result)
+var upper = result.upper()
 print("  String functions:", upper)
 print("  ✅ String operations: COMPLETE")
 

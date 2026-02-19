@@ -19,7 +19,7 @@ fn main() {
     print("   Length:")
     text.length().print()
     print("   Trimmed:")
-    str_trim(text).print()
+    text.trim().print()
     print("   Upper case:")
     text.upper().print()
     print("   Lower case:")
@@ -31,9 +31,9 @@ fn main() {
     print("   Concatenation:")
     text.concat(" v2.0+").print()
     print("   Built-in str_len:")
-    str_len(text).print()
+    text.len().print()
     print("   Built-in str_upper:")
-    str_upper(text).print()
+    text.upper().print()
     
     print("3. ADVANCED MAP DATA STRUCTURE:")
     var system = map[string, int]{"cpu": 85, "memory": 70, "disk": 45}

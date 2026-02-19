@@ -61,8 +61,8 @@ fn main() -> int {
     }
     
     // Test replace with escape sequences
-    var no_newlines = wyn_str_replace(newline_str, "\n", " ")
-    var no_tabs = wyn_str_replace(tab_str, "\t", " ")
+    var no_newlines = newline_str.replace("\n", " ")
+    var no_tabs = tab_str.replace("\t", " ")
     print("Replace newlines with spaces:")
     print(no_newlines)
     print("Replace tabs with spaces:")

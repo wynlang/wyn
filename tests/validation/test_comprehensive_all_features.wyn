@@ -13,16 +13,16 @@ fn test_arithmetic() -> int {
 // === STRINGS ===
 fn test_strings() -> int {
     var s = "hello";
-    if str_len(s) != 5 { return 1; }
-    if !str_contains(s, "ell") { return 2; }
-    if !str_starts_with(s, "hel") { return 3; }
-    if !str_ends_with(s, "llo") { return 4; }
+    if s.len() != 5 { return 1; }
+    if !(s.contains("ell")) { return 2; }
+    if !(s.starts_with("hel")) { return 3; }
+    if !(s.ends_with("llo")) { return 4; }
     
-    var upper = str_upper(s);
-    if !str_contains(upper, "HELLO") { return 5; }
+    var upper = s.upper();
+    if !(upper.contains("HELLO")) { return 5; }
     
-    var concat = str_concat("hello", " world");
-    if str_len(concat) != 11 { return 6; }
+    var concat = "hello".concat(" world");
+    if concat.len() != 11 { return 6; }
     
     return 0;
 }
@@ -199,7 +199,7 @@ fn test_file_io() -> int {
     
     // Read
     var content = file_read(path);
-    if !str_contains(content, "test") { return 2; }
+    if !(content.contains("test")) { return 2; }
     
     // Delete
     file_delete(path);
