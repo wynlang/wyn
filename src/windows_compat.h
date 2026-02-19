@@ -4,7 +4,7 @@
 #ifdef _WIN32
 
 // Windows compatibility stubs for functions that don't exist on Windows
-static inline char* _basename(const char* path) {
+static inline char* _wyn_basename(const char* path) {
     const char* base = strrchr(path, '\\');
     if (!base) base = strrchr(path, '/');
     return base ? (char*)(base + 1) : (char*)path;
@@ -19,8 +19,9 @@ static inline char* _dirname(const char* path) {
     return dir;
 }
 
-// POSIX file access constants and function
+// POSIX file access — MinGW provides access() via <unistd.h>
 #include <io.h>
+#include <unistd.h>
 #include <ctype.h>
 #ifndef F_OK
 #define F_OK 0
@@ -31,7 +32,6 @@ static inline char* _dirname(const char* path) {
 #ifndef R_OK
 #define R_OK 4
 #endif
-#define access(path, mode) _access(path, (mode) == X_OK ? F_OK : (mode))
 
 // Case-insensitive substring search (POSIX strcasestr)
 static inline char* _wyn_strcasestr(const char* haystack, const char* needle) {

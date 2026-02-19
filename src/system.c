@@ -14,8 +14,6 @@
     #include "windows_compat.h"
     #define setenv(name, value, overwrite) _putenv_s(name, value)
     #define unsetenv(name) _putenv_s(name, "")
-    #define access _access
-    #define F_OK 0
     #define stat _stat
     #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
     #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)

@@ -13,8 +13,6 @@
     #include <io.h>
     #include <sys/stat.h>
     #include "windows_compat.h"
-    #define access _access
-    #define F_OK 0
     #define mkdir(path, mode) _mkdir(path)
     #define rmdir _rmdir
     #define getcwd _getcwd
