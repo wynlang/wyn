@@ -1,0 +1,6 @@
+// Startup time — minimal program
+// Tests: compiler + runtime initialization overhead
+
+fn main() -> int {
+    return 0
+}
