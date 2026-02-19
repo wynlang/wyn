@@ -116,7 +116,8 @@ static WynTokenType keyword_type(const char* start, int length) {
         case 'a': 
             if (length == 3 && memcmp(start, "and", 3) == 0) return TOKEN_AND;
             if (length == 2 && memcmp(start, "as", 2) == 0) return TOKEN_AS;
-            if (length == 6 && memcmp(start, "assert", 6) == 0) return TOKEN_ASSERT;
+            // 'assert' is a regular function, not a keyword
+            // if (length == 6 && memcmp(start, "assert", 6) == 0) return TOKEN_ASSERT;
             if (length == 5 && memcmp(start, "async", 5) == 0) return TOKEN_ASYNC;
             if (length == 5 && memcmp(start, "await", 5) == 0) return TOKEN_AWAIT;
             break;

@@ -2198,6 +2198,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                     expr->expr_type = builtin_void;
                     return builtin_void;
+                } else if (strcmp(name_buf, "assert_eq") == 0) {
+                    if (expr->call.arg_count != 2) {
+                        fprintf(stderr, "Error at line %d: 'assert_eq' expects 2 arguments, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_void;
+                    }
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        check_expr(expr->call.args[i], scope);
+                    }
+                    expr->expr_type = builtin_void;
+                    return builtin_void;
                 }
                 
                 // Math functions
@@ -4133,6 +4145,12 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             add_symbol(scope, stmt->import.module, builtin_int, false);
             // Check for collision
             register_import(stmt->import.module.start, stmt->import.module.line);
+            break;
+        case STMT_TEST:
+            // Check test block body
+            if (stmt->test_stmt.body) {
+                check_stmt(stmt->test_stmt.body, scope);
+            }
             break;
         case STMT_MATCH: {
             // Type-check match statement with exhaustiveness checking

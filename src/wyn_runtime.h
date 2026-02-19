@@ -4254,3 +4254,9 @@ void System_load_env(const char* path) {
     }
     fclose(f);
 }
+
+// Test block support
+extern int wyn_test_fail_count;
+void wyn_assert(int condition);
+void wyn_assert_eq_int(long long actual, long long expected);
+void wyn_assert_eq_str(const char* actual, const char* expected);

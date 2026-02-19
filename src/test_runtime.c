@@ -18,6 +18,35 @@ typedef struct {
 
 static TestState test_state = {0, 0, 0, 0, 0.0};
 
+// Global fail counter for test blocks
+int wyn_test_fail_count = 0;
+
+// Simple assert for test blocks (no message, just condition)
+void wyn_assert(int condition) {
+    if (!condition) {
+        wyn_test_fail_count++;
+        fprintf(stderr, "    \033[31massert failed\033[0m\n");
+    }
+}
+
+void wyn_assert_eq_int(long long actual, long long expected) {
+    if (actual != expected) {
+        wyn_test_fail_count++;
+        fprintf(stderr, "    \033[31massert_eq failed\033[0m\n");
+        fprintf(stderr, "      expected: %lld\n", expected);
+        fprintf(stderr, "      got:      %lld\n", actual);
+    }
+}
+
+void wyn_assert_eq_str(const char* actual, const char* expected) {
+    if (!actual || !expected || strcmp(actual, expected) != 0) {
+        wyn_test_fail_count++;
+        fprintf(stderr, "    \033[31massert_eq failed\033[0m\n");
+        fprintf(stderr, "      expected: \"%s\"\n", expected ? expected : "(null)");
+        fprintf(stderr, "      got:      \"%s\"\n", actual ? actual : "(null)");
+    }
+}
+
 // Get current time in seconds
 static double get_time() {
     struct timespec ts;

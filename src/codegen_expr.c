@@ -412,6 +412,34 @@ void codegen_expr(Expr* expr) {
             }
             break;
         case EXPR_CALL:
+            // Handle assert() and assert_eq() for test blocks
+            if (expr->call.callee->type == EXPR_IDENT) {
+                Token fn = expr->call.callee->token;
+                if (fn.length == 6 && memcmp(fn.start, "assert", 6) == 0 && expr->call.arg_count == 1) {
+                    emit("wyn_assert(");
+                    codegen_expr(expr->call.args[0]);
+                    emit(")");
+                    break;
+                }
+                if (fn.length == 9 && memcmp(fn.start, "assert_eq", 9) == 0 && expr->call.arg_count == 2) {
+                    // Type dispatch: string vs int
+                    Type* arg_type = expr->call.args[0]->expr_type;
+                    bool is_str = (arg_type && arg_type->kind == TYPE_STRING);
+                    // Also check if first arg is a string literal or method returning string
+                    if (!is_str && expr->call.args[0]->type == EXPR_STRING) is_str = true;
+                    if (!is_str && expr->call.args[1]->type == EXPR_STRING) is_str = true;
+                    if (is_str) {
+                        emit("wyn_assert_eq_str(");
+                    } else {
+                        emit("wyn_assert_eq_int(");
+                    }
+                    codegen_expr(expr->call.args[0]);
+                    emit(", ");
+                    codegen_expr(expr->call.args[1]);
+                    emit(")");
+                    break;
+                }
+            }
             // Check if callee is a closure variable (WynClosure)
             // Heuristic: if callee is an identifier that starts with lowercase
             // and is not a known built-in function, it might be a closure variable

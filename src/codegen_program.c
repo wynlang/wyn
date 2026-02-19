@@ -597,7 +597,79 @@ void codegen_program(Program* prog) {
     }
     
     // If no main function, create one that executes all statements
-    if (!has_main) {
+    // Check for test blocks
+    int test_count = 0;
+    Stmt* before_each_body = NULL;
+    Stmt* after_each_body = NULL;
+    for (int i = 0; i < prog->count; i++) {
+        if (prog->stmts[i]->type == STMT_TEST) test_count++;
+    }
+    
+    if (!has_main && test_count > 0) {
+        // Generate test runner main
+        emit("long long wyn_main() {\n");
+        emit("    int __test_pass = 0, __test_fail = 0;\n");
+        
+        // Find before_each/after_each (parsed as test blocks with special names)
+        for (int i = 0; i < prog->count; i++) {
+            if (prog->stmts[i]->type == STMT_TEST) {
+                Token name = prog->stmts[i]->test_stmt.name;
+                if (name.length >= 11 && memcmp(name.start, "before_each", 11) == 0)
+                    before_each_body = prog->stmts[i]->test_stmt.body;
+                else if (name.length >= 10 && memcmp(name.start, "after_each", 10) == 0)
+                    after_each_body = prog->stmts[i]->test_stmt.body;
+            }
+        }
+        
+        for (int i = 0; i < prog->count; i++) {
+            if (prog->stmts[i]->type != STMT_TEST) continue;
+            Token name = prog->stmts[i]->test_stmt.name;
+            // Skip before_each/after_each
+            if (name.length >= 10 && (memcmp(name.start, "before_each", 11) == 0 || memcmp(name.start, "after_each", 10) == 0))
+                continue;
+            
+            // Strip quotes from string name
+            const char* tname = name.start;
+            int tname_len = name.length;
+            if (tname_len >= 2 && tname[0] == '"') { tname++; tname_len -= 2; }
+            
+            emit("    { // test: %.*s\n", tname_len, tname);
+            emit("        int __prev_fail = wyn_test_fail_count;\n");
+            
+            // before_each
+            if (before_each_body) {
+                emit("        // before_each\n");
+                codegen_stmt(before_each_body);
+            }
+            
+            // test body
+            codegen_stmt(prog->stmts[i]->test_stmt.body);
+            
+            // after_each
+            if (after_each_body) {
+                emit("        // after_each\n");
+                codegen_stmt(after_each_body);
+            }
+            
+            emit("        if (wyn_test_fail_count == __prev_fail) {\n");
+            emit("            printf(\"  \\033[32m✓\\033[0m %.*s\\n\");\n", tname_len, tname);
+            emit("            __test_pass++;\n");
+            emit("        } else {\n");
+            emit("            printf(\"  \\033[31m✗\\033[0m %.*s\\n\");\n", tname_len, tname);
+            emit("            __test_fail++;\n");
+            emit("        }\n");
+            emit("    }\n");
+        }
+        
+        emit("    printf(\"\\n\");\n");
+        emit("    if (__test_fail == 0) {\n");
+        emit("        printf(\"\\033[32m%%d tests passed\\033[0m\\n\", __test_pass);\n");
+        emit("    } else {\n");
+        emit("        printf(\"\\033[31m%%d passed, %%d failed\\033[0m\\n\", __test_pass, __test_fail);\n");
+        emit("    }\n");
+        emit("    return __test_fail > 0 ? 1 : 0;\n");
+        emit("}\n");
+    } else if (!has_main) {
         emit("long long wyn_main() {\n");
         
         // Special case: single expression should return its value

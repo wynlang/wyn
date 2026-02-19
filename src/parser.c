@@ -3132,6 +3132,37 @@ Program* parse_program() {
         } else if (check(TOKEN_TEST)) {
             // T1.6.2: Testing Framework Agent addition
             prog->stmts[prog->count++] = parse_test_statement();
+        } else if (check(TOKEN_IDENT) && parser.current.length == 11 && memcmp(parser.current.start, "before_each", 11) == 0) {
+            // before_each { } — parsed as test block with special name
+            advance();
+            Stmt* stmt = alloc_stmt();
+            stmt->type = STMT_TEST;
+            stmt->test_stmt.name = parser.previous;
+            stmt->test_stmt.is_async = false;
+            expect(TOKEN_LBRACE, "Expected '{' after before_each");
+            stmt->test_stmt.body = alloc_stmt();
+            stmt->test_stmt.body->type = STMT_BLOCK;
+            stmt->test_stmt.body->block.stmts = safe_malloc(sizeof(Stmt*) * 256);
+            stmt->test_stmt.body->block.count = 0;
+            while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF))
+                stmt->test_stmt.body->block.stmts[stmt->test_stmt.body->block.count++] = statement();
+            expect(TOKEN_RBRACE, "Expected '}' after before_each body");
+            prog->stmts[prog->count++] = stmt;
+        } else if (check(TOKEN_IDENT) && parser.current.length == 10 && memcmp(parser.current.start, "after_each", 10) == 0) {
+            advance();
+            Stmt* stmt = alloc_stmt();
+            stmt->type = STMT_TEST;
+            stmt->test_stmt.name = parser.previous;
+            stmt->test_stmt.is_async = false;
+            expect(TOKEN_LBRACE, "Expected '{' after after_each");
+            stmt->test_stmt.body = alloc_stmt();
+            stmt->test_stmt.body->type = STMT_BLOCK;
+            stmt->test_stmt.body->block.stmts = safe_malloc(sizeof(Stmt*) * 256);
+            stmt->test_stmt.body->block.count = 0;
+            while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF))
+                stmt->test_stmt.body->block.stmts[stmt->test_stmt.body->block.count++] = statement();
+            expect(TOKEN_RBRACE, "Expected '}' after after_each body");
+            prog->stmts[prog->count++] = stmt;
         } else if (check(TOKEN_WHILE)) {
             // T1.4.1: Control Flow Agent addition
             prog->stmts[prog->count++] = parse_while_statement();
@@ -3162,9 +3193,14 @@ static Stmt* parse_test_statement() {
     Stmt* stmt = alloc_stmt();
     stmt->type = STMT_TEST;
     
-    // Parse test name
-    expect(TOKEN_IDENT, "Expected test name");
-    stmt->test_stmt.name = parser.previous;
+    // Parse test name (string or identifier)
+    if (check(TOKEN_STRING)) {
+        advance();
+        stmt->test_stmt.name = parser.previous;
+    } else {
+        expect(TOKEN_IDENT, "Expected test name");
+        stmt->test_stmt.name = parser.previous;
+    }
     stmt->test_stmt.is_async = false;
     
     // Parse test body
