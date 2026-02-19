@@ -2,7 +2,7 @@
 
 **1 language for everything — CLI, web, desktop, mobile, games.**
 
-Wyn compiles to C, runs everywhere, and ships with 27 stdlib modules out of the box.
+Wyn compiles to C, runs everywhere, and ships with 27 official packages — zero external dependencies.
 
 ---
 
@@ -98,7 +98,7 @@ var html = Template.render("page.html", ctx)
 | GUI | Gui (30+, SDL2), Audio (5, SDL2_mixer) |
 | Testing | Test (12) |
 
-See [docs/stdlib-reference.md](docs/stdlib-reference.md) for the full API.
+See [awesome-wyn](https://github.com/wynlang/awesome-wyn) for all official packages.
 
 ## CLI
 
@@ -189,7 +189,7 @@ wyn/
 ## Documentation
 
 - [Language Tutorial](docs/tutorial.md)
-- [Standard Library Reference](docs/stdlib-reference.md)
+- [Official Packages](https://github.com/wynlang/awesome-wyn)
 - [Best Practices](docs/best-practices.md)
 - [Spawn Performance](docs/spawn-performance.md)
 - [Examples](docs/examples.md)

@@ -75,7 +75,7 @@ int cmd_fmt(const char* file, int argc, char** argv) {
 int cmd_repl(int argc, char** argv) {
     (void)argc; (void)argv;
     // Read version from VERSION file
-    char version[32] = "1.6.0";
+    char version[32] = "1.7.0";
     FILE* vf = fopen("VERSION", "r");
     if (!vf) vf = fopen("../VERSION", "r");
     if (vf) {
@@ -652,11 +652,11 @@ int cmd_version(int argc, char** argv) {
             if (newline) *newline = 0;
             printf("Wyn v%s\n", version);
         } else {
-            printf("Wyn v1.2.1\n");
+            printf("Wyn v1.7.0\n");
         }
         fclose(f);
     } else {
-        printf("Wyn v1.2.1\n");
+        printf("Wyn v1.7.0\n");
     }
     return 0;
 }

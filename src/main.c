@@ -112,7 +112,7 @@ static char* get_version() {
             }
             fclose(f);
         }
-        if (version[0] == 0) strcpy(version, "1.6.0");
+        if (version[0] == 0) strcpy(version, "1.7.0");
         
         // Add LLVM backend indicator
         #ifdef WITH_LLVM
@@ -374,7 +374,7 @@ int main(int argc, char** argv) {
         // Check TCC runtime
         char rt_tcc[512]; snprintf(rt_tcc, sizeof(rt_tcc), "%s/vendor/tcc/lib/libwyn_rt_tcc.a", doc_root);
         int has_rt_tcc = (access(rt_tcc, F_OK) == 0);
-        printf("  %s TCC runtime (with SQLite)\n", has_rt_tcc ? "\033[32m✓\033[0m" : "\033[31m✗\033[0m");
+        printf("  %s TCC runtime\n", has_rt_tcc ? "\033[32m✓\033[0m" : "\033[31m✗\033[0m");
         if (!has_rt_tcc) { printf("    Missing: %s\n", rt_tcc); issues++; }
         
         // Check system cc (for --release)
@@ -2424,7 +2424,7 @@ int create_new_project_with_template(const char* name, const char* template) {
     if (strcmp(template, "default") == 0) return create_new_project(name);
     
     char cmd[512]; FILE* f;
-    snprintf(cmd, sizeof(cmd), "mkdir -p %s/src %s/tests %s/templates", name, name, name);
+    snprintf(cmd, sizeof(cmd), "mkdir -p %s/src %s/tests", name, name);
     system(cmd);
     
     // wyn.toml
@@ -2498,100 +2498,69 @@ int create_new_project_with_template(const char* name, const char* template) {
     f = fopen(cmd, "w");
     if (strcmp(template, "web") == 0) {
         fprintf(f,
-            "// %s — REST API with JSON, SQLite, and HTML templates\n\n"
-            "fn json_response(fd: int, status: int, data: string) {\n"
-            "    Http.set_header(\"Content-Type\", \"application/json\")\n"
-            "    Http.respond(fd, status, data)\n"
-            "}\n\n"
-            "fn html_response(fd: int, status: int, body: string) {\n"
-            "    Http.set_header(\"Content-Type\", \"text/html\")\n"
-            "    Http.respond(fd, status, body)\n"
-            "}\n\n"
+            "// %s — Web app with JSON API, SQLite, and HTML\n\n"
             "fn init_db() -> int {\n"
             "    var db = Db.open(\"%s.db\")\n"
             "    Db.exec(db, \"CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)\")\n"
             "    return db\n"
             "}\n\n"
-            "fn handle(method: string, path: string, body: string, fd: int) {\n"
-            "    // --- HTML Pages ---\n"
+            "fn home_page() -> string {\n"
+            "    return \"<html><body><h1>%s</h1><p>Built with <a href=\\\"https://wynlang.com\\\">Wyn</a></p>\"\n"
+            "        + \"<h2>API</h2><pre>GET  /api/items\\nPOST /api/items\\nGET  /api/health</pre></body></html>\"\n"
+            "}\n\n"
+            "fn handle(raw: string) {\n"
+            "    var parts = raw.split(\"|\")\n"
+            "    if parts.len() < 4 { return }\n"
+            "    var method = parts[0]\n"
+            "    var path = parts[1]\n"
+            "    var body = parts[2]\n"
+            "    var fd = parts[3].to_int()\n\n"
             "    if method == \"GET\" && path == \"/\" {\n"
-            "        var ctx = { \"title\": \"%s\", \"version\": \"0.1.0\" }\n"
-            "        var html = Template.render(\"templates/index.html\", ctx)\n"
-            "        html_response(fd, 200, html)\n"
-            "        return\n"
-            "    }\n\n"
-            "    // --- JSON API ---\n"
-            "    if method == \"GET\" && path == \"/api/items\" {\n"
-            "        var db = init_db()\n"
-            "        var result = Db.query(db, \"SELECT name FROM items ORDER BY id DESC LIMIT 50\")\n"
-            "        Db.close(db)\n"
-            "        json_response(fd, 200, \"{\\\"items\\\": [\" + result + \"]}\")\n"
-            "        return\n"
-            "    }\n\n"
-            "    if method == \"POST\" && path == \"/api/items\" {\n"
-            "        var db = init_db()\n"
-            "        if body.len() > 0 {\n"
-            "            Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [body])\n"
-            "        }\n"
-            "        Db.close(db)\n"
-            "        json_response(fd, 201, \"{\\\"status\\\": \\\"created\\\"}\")\n"
+            "        Http.respond_html(fd, 200, home_page())\n"
             "        return\n"
             "    }\n\n"
             "    if method == \"GET\" && path == \"/api/health\" {\n"
-            "        json_response(fd, 200, \"{\\\"status\\\": \\\"ok\\\"}\")\n"
+            "        Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ok\\\"}\")\n"
             "        return\n"
             "    }\n\n"
-            "    json_response(fd, 404, \"{\\\"error\\\": \\\"not found\\\"}\")\n"
+            "    if method == \"GET\" && path == \"/api/items\" {\n"
+            "        var db = init_db()\n"
+            "        var rows = Db.query(db, \"SELECT name FROM items ORDER BY id DESC LIMIT 50\")\n"
+            "        Db.close(db)\n"
+            "        Http.respond_json(fd, 200, \"{\\\"items\\\": [\" + rows + \"]}\")\n"
+            "        return\n"
+            "    }\n\n"
+            "    if method == \"POST\" && path == \"/api/items\" {\n"
+            "        if body.len() == 0 { Http.respond_json(fd, 400, \"{\\\"error\\\": \\\"body required\\\"}\"); return }\n"
+            "        var db = init_db()\n"
+            "        Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [body])\n"
+            "        Db.close(db)\n"
+            "        Http.respond_json(fd, 201, \"{\\\"status\\\": \\\"created\\\"}\")\n"
+            "        return\n"
+            "    }\n\n"
+            "    Http.respond_json(fd, 404, \"{\\\"error\\\": \\\"not found\\\"}\")\n"
             "}\n\n"
             "fn main() -> int {\n"
             "    var port = 8080\n"
             "    println(\"%s running on http://localhost:\" + int_to_string(port))\n"
-            "    println(\"  GET  /              — HTML home page\")\n"
+            "    println(\"\")\n"
+            "    println(\"  GET  /              — home page\")\n"
             "    println(\"  GET  /api/items     — list items (JSON)\")\n"
             "    println(\"  POST /api/items     — create item\")\n"
             "    println(\"  GET  /api/health    — health check\")\n"
-            "    var db = init_db()\n"
-            "    Db.close(db)\n"
-            "    var server = Http.listen(port)\n"
+            "    println(\"\")\n"
+            "    init_db()\n"
+            "    var server = Http.serve(port)\n"
             "    while true {\n"
-            "        var req = Http.accept(server)\n"
-            "        if req > 0 {\n"
-            "            handle(Http.method(req), Http.path(req), Http.body(req), req)\n"
-            "            Http.close_client(req)\n"
+            "        var raw = Http.accept(server)\n"
+            "        if raw.len() > 0 {\n"
+            "            spawn handle(raw)\n"
             "        }\n"
             "    }\n"
             "    return 0\n"
             "}\n", name, name, name, name);
         
-        // Create HTML template
-        snprintf(cmd, sizeof(cmd), "%s/templates/index.html", name);
-        f = fopen(cmd, "w");
-        fprintf(f,
-            "<!DOCTYPE html>\n<html>\n<head>\n"
-            "  <title>${title}</title>\n"
-            "  <style>\n"
-            "    body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #333; }\n"
-            "    h1 { color: #0066cc; }\n"
-            "    code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }\n"
-            "    pre { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; overflow-x: auto; }\n"
-            "    .endpoint { margin: 8px 0; }\n"
-            "    .method { font-weight: bold; color: #0066cc; }\n"
-            "  </style>\n"
-            "</head>\n<body>\n"
-            "  <h1>${title}</h1>\n"
-            "  <p>v${version} — built with <a href=\"https://wynlang.com\">Wyn</a></p>\n"
-            "  <h2>API Endpoints</h2>\n"
-            "  <div class=\"endpoint\"><span class=\"method\">GET</span> <code>/api/items</code> — list items</div>\n"
-            "  <div class=\"endpoint\"><span class=\"method\">POST</span> <code>/api/items</code> — create item</div>\n"
-            "  <div class=\"endpoint\"><span class=\"method\">GET</span> <code>/api/health</code> — health check</div>\n"
-            "  <h2>Quick Start</h2>\n"
-            "  <pre>curl http://localhost:8080/api/health\ncurl -X POST -d 'My Item' http://localhost:8080/api/items\ncurl http://localhost:8080/api/items</pre>\n"
-            "</body>\n</html>\n");
         fclose(f);
-        
-        // Reopen main.wyn file pointer for the rest of the function
-        snprintf(cmd, sizeof(cmd), "%s/src/main.wyn", name);
-        // Already written above, skip
         f = NULL;
     } else if (strcmp(template, "api") == 0) {
         fprintf(f,

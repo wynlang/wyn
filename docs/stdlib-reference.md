@@ -1,4 +1,4 @@
-# Wyn Standard Library Reference — v1.6.0
+# Wyn Standard Library Reference — v1.7.0
 
 27 modules, 270+ methods. All cross-platform (POSIX).
 

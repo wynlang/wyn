@@ -1348,6 +1348,30 @@ void init_checker() {
         add_symbol(global_scope, tok, ft, false);
     }
     {
+        // Http.respond_json(fd, status, json_string)
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 3;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.param_types[1] = builtin_int;
+        ft->fn_type.param_types[2] = builtin_string;
+        ft->fn_type.return_type = builtin_void;
+        Token tok = {TOKEN_IDENT, "Http_respond_json", 17, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
+        // Http.respond_html(fd, status, html_string)
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 3;
+        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
+        ft->fn_type.param_types[0] = builtin_int;
+        ft->fn_type.param_types[1] = builtin_int;
+        ft->fn_type.param_types[2] = builtin_string;
+        ft->fn_type.return_type = builtin_void;
+        Token tok = {TOKEN_IDENT, "Http_respond_html", 17, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+    {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = 2;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 2);

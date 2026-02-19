@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.7.0 — 2026-02-17 (in development)
+## v1.7.0 — 2026-02-19
 
 ### Language Features
 - **Full string interpolation** — `"${arr[1]}"`, `"${name.upper()}"`, `"${fn(x)}"` all work

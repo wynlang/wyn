@@ -1,6 +1,6 @@
 # Wyn Language Guide
 
-![Version](https://img.shields.io/badge/version-1.6.0-blue)
+![Version](https://img.shields.io/badge/version-1.7.0-blue)
 
 Wyn is a modern systems programming language that transpiles to C, combining the safety and expressiveness of modern languages with the performance and portability of C.
 
@@ -501,4 +501,4 @@ fn main() {
 }
 ```
 
-This guide covers the core features of Wyn v1.6.0. For more examples and advanced topics, explore the other documentation files in this directory.
+This guide covers the core features of Wyn v1.7.0. For more examples and advanced topics, explore the other documentation files in this directory.
