@@ -123,10 +123,16 @@ Build:
 
 Packages:
   wyn init [name]            Create new project
-  wyn pkg install <name>     Install a package
+  wyn init [name] --api      REST API with SQLite
+  wyn init [name] --web      Web app with HTML + JSON API
+  wyn init [name] --cli      CLI tool with arg parsing
+  wyn init [name] --lib wyn  Wyn package (installable)
+  wyn init [name] --lib python  Python extension module
+  wyn init [name] --lib node    Node.js native addon
+  wyn init [name] --lib c       C shared library
+  wyn pkg install <url>      Install a package
   wyn pkg list               List installed packages
-  wyn pkg uninstall <name>   Uninstall a package
-  wyn pkg search <query>     Search package registry
+  wyn pkg search <query>     Search official packages
 
 Tools:
   wyn lsp                    Start language server (for editors)
