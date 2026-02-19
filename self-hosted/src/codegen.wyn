@@ -1,0 +1,283 @@
+// Self-Hosted Codegen — Wyn AST → C source
+// Takes ParseExprResult/ParseStmtResult from the Wyn parser and emits C
+
+// Expression type constants
+// EXPR_INT_LITERAL = 0, EXPR_IDENTIFIER = 5, EXPR_BINARY = 7
+// EXPR_UNARY = 8, EXPR_CALL = 9
+
+// Statement type constants
+// STMT_FN_DECL = 0, STMT_VAR_DECL = 1, STMT_EXPR = 2
+// STMT_RETURN = 3, STMT_IF = 4, STMT_WHILE = 5
+
+// Operator tokens
+// PLUS=23 MINUS=24 STAR=25 SLASH=26 PERCENT=27
+// EQ_EQ=28 BANG_EQ=29 LT=30 LT_EQ=31 GT=32 GT_EQ=33
+// AND_AND=34 OR_OR=35 BANG=36
+
+// Type constants
+// TYPE_INT=0 TYPE_FLOAT=1 TYPE_STRING=2 TYPE_BOOL=3 TYPE_VOID=4
+
+fn op_to_c(op: int) -> string {
+    if op == 23 { return "+" }
+    if op == 24 { return "-" }
+    if op == 25 { return "*" }
+    if op == 26 { return "/" }
+    if op == 27 { return "%" }
+    if op == 28 { return "==" }
+    if op == 29 { return "!=" }
+    if op == 30 { return "<" }
+    if op == 31 { return "<=" }
+    if op == 32 { return ">" }
+    if op == 33 { return ">=" }
+    if op == 34 { return "&&" }
+    if op == 35 { return "||" }
+    return "?"
+}
+
+fn type_to_c(t: int) -> string {
+    if t == 0 { return "long long" }
+    if t == 1 { return "double" }
+    if t == 2 { return "const char*" }
+    if t == 3 { return "int" }
+    if t == 4 { return "void" }
+    return "long long"
+}
+
+// Emit C for an expression, given the flat expression array
+fn emit_expr(expr_types: [int], expr_ints: [int], expr_strings: [string],
+             expr_ops: [int], expr_lefts: [int], expr_rights: [int],
+             idx: int) -> string {
+    var t = expr_types[idx]
+
+    // INT literal
+    if t == 0 { return expr_ints[idx].to_string() }
+
+    // STRING literal
+    if t == 2 { return "\"" + expr_strings[idx] + "\"" }
+
+    // BOOL literal
+    if t == 3 {
+        if expr_ints[idx] == 1 { return "1" }
+        return "0"
+    }
+
+    // IDENTIFIER
+    if t == 5 {
+        var name = expr_strings[idx]
+        if name == "println" { return "wyn_println" }
+        if name == "print" { return "wyn_print" }
+        return name
+    }
+
+    // BINARY
+    if t == 7 {
+        var left = emit_expr(expr_types, expr_ints, expr_strings, expr_ops, expr_lefts, expr_rights, expr_lefts[idx])
+        var right = emit_expr(expr_types, expr_ints, expr_strings, expr_ops, expr_lefts, expr_rights, expr_rights[idx])
+        return "(" + left + " " + op_to_c(expr_ops[idx]) + " " + right + ")"
+    }
+
+    // UNARY
+    if t == 8 {
+        var operand = emit_expr(expr_types, expr_ints, expr_strings, expr_ops, expr_lefts, expr_rights, expr_lefts[idx])
+        if expr_ops[idx] == 36 { return "(!" + operand + ")" }
+        if expr_ops[idx] == 24 { return "(-" + operand + ")" }
+        return operand
+    }
+
+    // CALL — simplified: callee(args)
+    if t == 9 {
+        var callee = emit_expr(expr_types, expr_ints, expr_strings, expr_ops, expr_lefts, expr_rights, expr_lefts[idx])
+        // arg_count in expr_ints[idx], args start at expr_rights[idx]
+        var argc = expr_ints[idx]
+        var args_start = expr_rights[idx]
+        var out = callee + "("
+        var i = 0
+        while i < argc {
+            if i > 0 { out = out + ", " }
+            out = out + emit_expr(expr_types, expr_ints, expr_strings, expr_ops, expr_lefts, expr_rights, args_start + i)
+            i = i + 1
+        }
+        return out + ")"
+    }
+
+    return "/* unknown expr */"
+}
+
+// Emit C for a statement
+fn emit_stmt(stmt_types: [int], stmt_names: [string], stmt_ret_types: [int],
+             stmt_expr_idxs: [int], stmt_has_init: [int],
+             expr_types: [int], expr_ints: [int], expr_strings: [string],
+             expr_ops: [int], expr_lefts: [int], expr_rights: [int],
+             idx: int, indent: string) -> string {
+    var t = stmt_types[idx]
+
+    // RETURN
+    if t == 3 {
+        var val = emit_expr(expr_types, expr_ints, expr_strings, expr_ops, expr_lefts, expr_rights, stmt_expr_idxs[idx])
+        return indent + "return " + val + ";\n"
+    }
+
+    // VAR_DECL
+    if t == 1 {
+        var name = stmt_names[idx]
+        if stmt_has_init[idx] == 1 {
+            var val = emit_expr(expr_types, expr_ints, expr_strings, expr_ops, expr_lefts, expr_rights, stmt_expr_idxs[idx])
+            return indent + "long long " + name + " = " + val + ";\n"
+        }
+        return indent + "long long " + name + " = 0;\n"
+    }
+
+    // EXPR_STMT
+    if t == 2 {
+        var val = emit_expr(expr_types, expr_ints, expr_strings, expr_ops, expr_lefts, expr_rights, stmt_expr_idxs[idx])
+        return indent + val + ";\n"
+    }
+
+    return indent + "/* unknown stmt */\n"
+}
+
+// Emit a complete function
+fn emit_fn(name: string, ret_type: int, body_stmts: [int], body_count: int,
+           stmt_types: [int], stmt_names: [string], stmt_ret_types: [int],
+           stmt_expr_idxs: [int], stmt_has_init: [int],
+           expr_types: [int], expr_ints: [int], expr_strings: [string],
+           expr_ops: [int], expr_lefts: [int], expr_rights: [int]) -> string {
+    var c_name = name
+    if name == "main" { c_name = "wyn_main" }
+    var out = type_to_c(ret_type) + " " + c_name + "(void) {\n"
+    var i = 0
+    while i < body_count {
+        out = out + emit_stmt(stmt_types, stmt_names, stmt_ret_types,
+                              stmt_expr_idxs, stmt_has_init,
+                              expr_types, expr_ints, expr_strings,
+                              expr_ops, expr_lefts, expr_rights,
+                              body_stmts[i], "    ")
+        i = i + 1
+    }
+    out = out + "}\n"
+    return out
+}
+
+// Generate a complete C program with runtime stubs
+fn emit_program_header() -> string {
+    return "#include <stdio.h>\n#include <stdlib.h>\nvoid wyn_println(long long v) { printf(\"%lld\\n\", v); }\nvoid wyn_print(const char* s) { printf(\"%s\", s); }\n\n"
+}
+
+fn emit_program_footer() -> string {
+    return "\nint main(void) { return (int)wyn_main(); }\n"
+}
+
+// === Test: manual AST construction → C output ===
+fn main() -> int {
+    println("=== Self-Hosted Codegen Test ===")
+
+    // Build AST for: fn main() -> int { return 42 }
+    // Expression: IntLiteral(42) at index 0
+    var expr_types = [0]
+    var expr_ints = [42]
+    var expr_strings = [""]
+    var expr_ops = [0]
+    var expr_lefts = [0]
+    var expr_rights = [0]
+
+    // Statement: Return(expr_idx=0) at index 0
+    var stmt_types = [3]
+    var stmt_names = [""]
+    var stmt_ret_types = [0]
+    var stmt_expr_idxs = [0]
+    var stmt_has_init = [0]
+
+    // Function body: [stmt 0]
+    var body = [0]
+
+    // Emit
+    var header = emit_program_header()
+    var fn_code = emit_fn("main", 0, body, 1,
+                          stmt_types, stmt_names, stmt_ret_types,
+                          stmt_expr_idxs, stmt_has_init,
+                          expr_types, expr_ints, expr_strings,
+                          expr_ops, expr_lefts, expr_rights)
+    var footer = emit_program_footer()
+    var c_code = header + fn_code + footer
+
+    // Verify output contains expected C
+    if !c_code.contains("return 42") {
+        println("FAIL: missing 'return 42'")
+        println(c_code)
+        return 1
+    }
+    if !c_code.contains("wyn_main") {
+        println("FAIL: missing 'wyn_main'")
+        return 2
+    }
+    if !c_code.contains("int main(void)") {
+        println("FAIL: missing 'int main(void)'")
+        return 3
+    }
+    println("  ✓ return 42 → C")
+
+    // Test 2: fn main() -> int { var x = 10 return x + 1 }
+    // Expressions: [0]=IntLiteral(10), [1]=Ident("x"), [2]=IntLiteral(1), [3]=Binary(+, left=1, right=2)
+    var e2_types = [0, 5, 0, 7]
+    var e2_ints = [10, 0, 1, 0]
+    var e2_strings = ["", "x", "", ""]
+    var e2_ops = [0, 0, 0, 23]
+    var e2_lefts = [0, 0, 0, 1]
+    var e2_rights = [0, 0, 0, 2]
+
+    // Statements: [0]=VarDecl("x", init=expr0), [1]=Return(expr3)
+    var s2_types = [1, 3]
+    var s2_names = ["x", ""]
+    var s2_ret_types = [0, 0]
+    var s2_expr_idxs = [0, 3]
+    var s2_has_init = [1, 0]
+
+    var body2 = [0, 1]
+    var fn2 = emit_fn("main", 0, body2, 2,
+                       s2_types, s2_names, s2_ret_types,
+                       s2_expr_idxs, s2_has_init,
+                       e2_types, e2_ints, e2_strings,
+                       e2_ops, e2_lefts, e2_rights)
+
+    if !fn2.contains("long long x = 10") {
+        println("FAIL: missing var decl")
+        println(fn2)
+        return 4
+    }
+    if !fn2.contains("return (x + 1)") {
+        println("FAIL: missing return x+1")
+        println(fn2)
+        return 5
+    }
+    println("  ✓ var + binary expr → C")
+
+    // Test 3: Actually compile and run the generated C
+    var full = emit_program_header() + fn2 + emit_program_footer()
+    File.write("/tmp/wyn_self_test.c", full)
+    var result = System_exec("cc -o /tmp/wyn_self_test /tmp/wyn_self_test.c 2>&1")
+    if result.contains("error") {
+        println("FAIL: C compilation failed")
+        println(result)
+        return 6
+    }
+    var output = System_exec("/tmp/wyn_self_test")
+    // x=10, return x+1 = 11
+    if !output.contains("11") {
+        // The program returns 11 as exit code, doesn't print
+        // Check exit code instead
+        var exit_result = System_exec("/tmp/wyn_self_test; echo $?")
+        if !exit_result.contains("11") {
+            println("FAIL: expected exit code 11")
+            println("Got: " + exit_result)
+            return 7
+        }
+    }
+    println("  ✓ generated C compiles and runs correctly")
+
+    // Cleanup
+    System_exec("rm -f /tmp/wyn_self_test /tmp/wyn_self_test.c")
+
+    println("")
+    println("=== All Codegen Tests PASS ===")
+    return 0
+}
