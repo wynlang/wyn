@@ -952,6 +952,13 @@ void codegen_stmt(Stmt* stmt) {
                                    memcmp(stmt->fn.name.start, "main", 4) == 0);
             
             // Function signature
+            // Optimization: inline hint for small non-main functions
+            {
+                int _bsc = 0;
+                if (stmt->fn.body && stmt->fn.body->type == STMT_BLOCK) _bsc = stmt->fn.body->block.count;
+                if (!is_main_fn && _bsc > 0 && _bsc <= 5) emit("static inline ");
+            }
+            
             if (is_main_function) {
                 emit("%s wyn_main(", return_type);
             } else if (stmt->fn.is_extension) {
