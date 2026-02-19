@@ -39,6 +39,20 @@ void codegen_program(Program* prog);
 int create_new_project(const char* project_name);
 int create_new_project_with_template(const char* name, const char* template, const char* lib_target);
 
+// Wynter encouragement on compilation failure
+static const char* wynter_compile_tips[] = {
+    "Check the error above — the line number points to the problem.",
+    "Try 'wyn check' to see all type errors without compiling.",
+    "Common fix: make sure all variables are declared before use.",
+    "Stuck? Simplify the code, get it working, then add complexity.",
+    "String interpolation uses ${expr} — make sure quotes match.",
+};
+static int wynter_compile_tip_idx = 0;
+static void wynter_encourage(void) {
+    fprintf(stderr, "  \033[36m🐉 Wynter:\033[0m %s\n",
+            wynter_compile_tips[wynter_compile_tip_idx++ % 5]);
+}
+
 // Detect available C backend: WYN_CC env > cc > gcc > clang
 static const char* detect_cc(void) {
     static char cc_path[256] = "";
@@ -870,7 +884,7 @@ int main(int argc, char** argv) {
         
         { extern void set_checker_source(const char*, const char*); set_checker_source(source, entry); }
         check_program(prog);
-        if (checker_had_error()) { fprintf(stderr, "Compilation failed\n"); free(source); return 1; }
+        if (checker_had_error()) { fprintf(stderr, "Compilation failed\n"); wynter_encourage(); free(source); return 1; }
         
         char out_c[256];
         snprintf(out_c, sizeof(out_c), "%s.c", entry);
@@ -1351,7 +1365,7 @@ int main(int argc, char** argv) {
         
         { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         if (checker_had_error()) {
-            fprintf(stderr, "Compilation failed due to errors\n");
+            fprintf(stderr, "Compilation failed due to errors\n"); wynter_encourage();
             free(source);
             return 1;
         }
@@ -1582,7 +1596,7 @@ int main(int argc, char** argv) {
         { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         
         if (checker_had_error()) {
-            fprintf(stderr, "Compilation failed due to errors\n");
+            fprintf(stderr, "Compilation failed due to errors\n"); wynter_encourage();
             free(source);
             return 1;
         }
@@ -1771,7 +1785,7 @@ int main(int argc, char** argv) {
         { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         
         if (checker_had_error()) {
-            fprintf(stderr, "Compilation failed due to errors\n");
+            fprintf(stderr, "Compilation failed due to errors\n"); wynter_encourage();
             free(source);
             return 1;
         }
@@ -2126,6 +2140,7 @@ int main(int argc, char** argv) {
         if (result != 0) {
             fprintf(stderr, "Error: compilation failed (internal codegen error)\n");
             fprintf(stderr, "Run with WYN_DEBUG=1 for details\n");
+            wynter_encourage();
             if (getenv("WYN_DEBUG")) {
                 FILE* err_file = fopen("wyn_cc_err.txt", "r");
                 if (err_file) {
@@ -2237,7 +2252,7 @@ int main(int argc, char** argv) {
     { extern void set_checker_source(const char*, const char*); set_checker_source(source, argv[3]); } check_program(prog);
     
     if (checker_had_error()) {
-        fprintf(stderr, "Compilation failed due to errors\n");
+        fprintf(stderr, "Compilation failed due to errors\n"); wynter_encourage();
         free(source);
         return 1;
     }

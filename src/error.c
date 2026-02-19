@@ -32,6 +32,55 @@ void report_error_with_suggestion(ErrorCode code, const char* filename, int line
     error->suggestion = suggestion ? strdup(suggestion) : NULL;
 }
 
+// Wynter the Wyvern — friendly tips on errors
+static const char* wynter_tips_type[] = {
+    "Wyn is strongly typed — that keeps your code safe at runtime.",
+    "Use .to_string() or int_to_str() to convert between types.",
+    "Type annotations help: fn add(a: int, b: int) -> int",
+    "var x: int = 5  — explicit types catch bugs early.",
+    NULL
+};
+static const char* wynter_tips_syntax[] = {
+    "Wyn doesn't need semicolons — just remove it!",
+    "Blocks use { } and conditions don't need parentheses.",
+    "Check for matching braces — every { needs a }.",
+    "Strings use double quotes. Interpolation: \"${expr}\"",
+    NULL
+};
+static const char* wynter_tips_undefined[] = {
+    "Functions must be defined before they're called.",
+    "Did you forget an import? Try: import \"module_name\"",
+    "Check spelling — Wyn is case-sensitive.",
+    "Stdlib functions use Module.method() style: Math.sqrt(x)",
+    NULL
+};
+static const char* wynter_tips_general[] = {
+    "Run 'wyn check' to type-check without compiling.",
+    "Run 'wyn doctor' to verify your setup.",
+    "Need help? Check the docs: wyn doc",
+    "Use 'wyn fmt' to auto-format your code.",
+    NULL
+};
+
+static int wynter_tip_counter = 0;
+
+static const char* wynter_tip_for(ErrorCode code) {
+    const char** tips;
+    if (code >= 3000 && code < 4000) {
+        if (code == ERR_UNDEFINED_VARIABLE || code == ERR_UNDEFINED_FUNCTION)
+            tips = wynter_tips_undefined;
+        else
+            tips = wynter_tips_type;
+    } else if (code >= 2000 && code < 3000) {
+        tips = wynter_tips_syntax;
+    } else {
+        tips = wynter_tips_general;
+    }
+    int count = 0;
+    while (tips[count]) count++;
+    return tips[wynter_tip_counter++ % count];
+}
+
 void print_error(WynError* error) {
     const char* severity_str = (error->severity == ERROR_FATAL) ? "FATAL" :
                               (error->severity == ERROR_ERROR) ? "ERROR" : "WARNING";
@@ -45,6 +94,8 @@ void print_error(WynError* error) {
     if (error->suggestion) {
         printf("  Suggestion: %s\n", error->suggestion);
     }
+    
+    printf("  \033[36m🐉 Wynter:\033[0m %s\n", wynter_tip_for(error->code));
 }
 
 bool has_errors(void) {
@@ -399,6 +450,7 @@ void show_error_context(const char* filename, int line, int column, const char* 
     if (suggestion) {
         printf("help: %s\n", suggestion);
     }
+    printf("  \033[36m🐉 Wynter:\033[0m %s\n", wynter_tip_for(ERR_UNEXPECTED_TOKEN));
     printf("\n");
     
     // Free lines
