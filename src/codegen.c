@@ -579,3 +579,32 @@ const char* get_enum_var_type(const char* var) {
     }
     return NULL;
 }
+
+// Function default parameter registry
+static struct { char name[128]; Expr** defaults; int param_count; } fn_defaults[256];
+static int fn_defaults_count = 0;
+
+void register_fn_defaults(const char* name, Expr** defaults, int param_count) {
+    if (fn_defaults_count < 256) {
+        strncpy(fn_defaults[fn_defaults_count].name, name, 127);
+        fn_defaults[fn_defaults_count].defaults = defaults;
+        fn_defaults[fn_defaults_count].param_count = param_count;
+        fn_defaults_count++;
+    }
+}
+
+Expr* get_fn_default(const char* name, int param_index) {
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, name) == 0 && param_index < fn_defaults[i].param_count) {
+            return fn_defaults[i].defaults[param_index];
+        }
+    }
+    return NULL;
+}
+
+int get_fn_param_count(const char* name) {
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, name) == 0) return fn_defaults[i].param_count;
+    }
+    return -1;
+}

@@ -992,6 +992,23 @@ void codegen_expr(Expr* expr) {
                     codegen_expr(expr->call.args[i]);
                     arg_done: ;
                 }
+                // Fill in default arguments if fewer args provided
+                if (expr->call.callee->type == EXPR_IDENT) {
+                    char _cfn[128]; snprintf(_cfn, 128, "%.*s", expr->call.callee->token.length, expr->call.callee->token.start);
+                    extern int get_fn_param_count(const char*);
+                    extern Expr* get_fn_default(const char*, int);
+                    int total_params = get_fn_param_count(_cfn);
+                    if (total_params > 0 && expr->call.arg_count < total_params) {
+                        for (int di = expr->call.arg_count; di < total_params; di++) {
+                            Expr* def = get_fn_default(_cfn, di);
+                            if (def) {
+                                if (di > 0 || (is_lambda_call && lambda_var_idx >= 0 && lambda_var_info[lambda_var_idx].capture_count > 0))
+                                    emit(", ");
+                                codegen_expr(def);
+                            }
+                        }
+                    }
+                }
                 emit(")");
             }
             break;

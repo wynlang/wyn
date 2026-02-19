@@ -217,6 +217,7 @@ static void print_type_name(Type* type) {
 Type* make_type(TypeKind kind) {
     Type* t = calloc(1, sizeof(Type));
     t->kind = kind;
+    if (kind == TYPE_FUNCTION) t->fn_type.min_param_count = -1;
     return t;
 }
 
@@ -375,13 +376,15 @@ static ValidationResult wyn_validate_function_call(Symbol* func_symbol, Expr** a
     
     Type* func_type = func_symbol->type;
     
-    // Check parameter count
-    if (arg_count != func_type->fn_type.param_count) {
+    // Check parameter count (allow fewer args if defaults exist)
+    int min_params = func_type->fn_type.min_param_count;
+    if (min_params < 0) min_params = func_type->fn_type.param_count;
+    if (arg_count < min_params || arg_count > func_type->fn_type.param_count) {
         return VALIDATION_PARAM_COUNT_MISMATCH;
     }
     
-    // Check type compatibility for each parameter
-    for (int i = 0; i < func_type->fn_type.param_count; i++) {
+    // Check type compatibility for each provided parameter
+    for (int i = 0; i < arg_count; i++) {
         Type* expected_type = func_type->fn_type.param_types[i];
         Type* actual_type = check_expr(args[i], scope);
         
@@ -1795,7 +1798,9 @@ static int calculate_match_score(Type* fn_type, Type** arg_types, int arg_count)
     if (func->is_variadic) {
         if (arg_count < func->param_count) return -1;
     } else {
-        if (func->param_count != arg_count) return -1;  // Exact count match required for non-variadic
+        int min_p = func->min_param_count;
+        if (min_p < 0) min_p = func->param_count;  // -1 means unset
+        if (arg_count < min_p || arg_count > func->param_count) return -1;
     }
     
     int score = 0;
@@ -2617,13 +2622,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                                   expr->call.arg_count, expr->call.callee->token.line, 0);
                         had_error = true;
                     }
-                } else if (expr->call.arg_count != callee_type->fn_type.param_count) {
-                    char func_name[256];
-                    snprintf(func_name, sizeof(func_name), "%.*s", 
-                            expr->call.callee->token.length, expr->call.callee->token.start);
-                    type_error_wrong_arg_count(func_name, callee_type->fn_type.param_count, 
-                                              expr->call.arg_count, expr->call.callee->token.line, 0);
-                    had_error = true;
+                } else {
+                    int min_p = callee_type->fn_type.min_param_count;
+                    if (min_p < 0) min_p = callee_type->fn_type.param_count;
+                    if (expr->call.arg_count < min_p ||
+                        expr->call.arg_count > callee_type->fn_type.param_count) {
+                        char func_name[256];
+                        snprintf(func_name, sizeof(func_name), "%.*s", 
+                                expr->call.callee->token.length, expr->call.callee->token.start);
+                        type_error_wrong_arg_count(func_name, callee_type->fn_type.param_count, 
+                                                  expr->call.arg_count, expr->call.callee->token.line, 0);
+                        had_error = true;
+                    }
                 }
                 
                 // Check type compatibility for each argument (only for non-variadic params)
@@ -4976,6 +4986,15 @@ void check_program(Program* prog) {
             // Create function type
             Type* fn_type = make_type(TYPE_FUNCTION);
             fn_type->fn_type.param_count = fn->param_count;
+            // Count required params (without defaults)
+            int min_params = fn->param_count;
+            if (fn->param_defaults) {
+                for (int j = fn->param_count - 1; j >= 0; j--) {
+                    if (fn->param_defaults[j]) min_params = j;
+                    else break;
+                }
+            }
+            fn_type->fn_type.min_param_count = min_params;
             fn_type->fn_type.param_types = malloc(sizeof(Type*) * fn->param_count);
             for (int j = 0; j < fn->param_count; j++) {
                 // Determine parameter type from type annotation

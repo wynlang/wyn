@@ -361,6 +361,13 @@ void codegen_program(Program* prog) {
             bool is_main_function = (fn->name.length == 4 && 
                                    memcmp(fn->name.start, "main", 4) == 0);
             
+            // Register default parameters
+            if (fn->param_defaults) {
+                char _fn[128]; snprintf(_fn, 128, "%.*s", fn->name.length, fn->name.start);
+                extern void register_fn_defaults(const char*, Expr**, int);
+                register_fn_defaults(_fn, fn->param_defaults, fn->param_count);
+            }
+            
             // Function forward declaration
             if (is_main_function) {
                 emit("%s wyn_main(", return_type);

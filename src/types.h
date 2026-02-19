@@ -75,6 +75,7 @@ typedef struct {
 typedef struct {
     Type** param_types;
     int param_count;
+    int min_param_count;  // params without defaults
     Type* return_type;
     bool is_variadic;  // Support for variadic functions (e.g., printf)
 } FunctionType;
