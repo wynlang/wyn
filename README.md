@@ -2,16 +2,28 @@
 
 **1 language for everything — CLI, web, desktop, mobile, games.**
 
-Wyn compiles to C, runs everywhere, and ships with 27 official packages — zero external dependencies.
+47 tests. 27 packages. 5 platforms. Zero dependencies.
+
+## Install
+
+**macOS / Linux**
+```bash
+curl -fsSL https://wynlang.com/install.sh | sh
+```
+
+**Windows**
+```powershell
+irm https://wynlang.com/install.ps1 | iex
+```
+
+**From source**
+```bash
+make && ./wyn install
+```
 
 ---
 
 ## Quick Start
-
-```bash
-make                    # Build the compiler
-./wyn install           # Install to PATH (optional)
-```
 
 ```wyn
 // hello.wyn — no main() needed
