@@ -3,9 +3,10 @@
 
 fn main() -> int {
     // Test: HTTP GET request
-    var response = http_get("http://httpbin.org/get")
-    if response.len() > 0 {
-        println("HTTP GET: received " + response.len(.to_string()) + " bytes")
+    var response: string = Http.get("http://httpbin.org/get")
+    var rlen = response.len()
+    if rlen > 0 {
+        println("HTTP GET: received " + rlen.to_string() + " bytes")
         // Check it contains expected JSON
         if response.contains("httpbin") {
             println("  ✓ Response contains expected content")
