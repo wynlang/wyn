@@ -104,14 +104,14 @@ See [awesome-wyn](https://github.com/wynlang/awesome-wyn) for all official packa
 
 ```
 Develop:
-  wyn run <file>             Compile and run
-  wyn check <file>           Type-check without compiling
-  wyn fmt <file>             Format source file
-  wyn test                   Run project tests
-  wyn watch <file>           Watch and auto-rebuild
-  wyn repl                   Interactive REPL
-  wyn bench <file>           Benchmark with timing
-  wyn doc <file>             Generate documentation
+  wyn run <file>                   Compile and run
+  wyn check <file>                 Type-check without compiling
+  wyn fmt <file>                   Format source file
+  wyn test                         Run project tests
+  wyn watch <file>                 Watch and auto-rebuild
+  wyn repl                         Interactive REPL
+  wyn bench <file>                 Benchmark with timing
+  wyn doc <file>                   Generate documentation
 
 Build:
   wyn build <file|dir>             Build binary
@@ -122,29 +122,29 @@ Build:
   wyn clean                        Remove build artifacts
 
 Packages:
-  wyn init [name]            Create new project
-  wyn init [name] --api      REST API with SQLite
-  wyn init [name] --web      Web app with HTML + JSON API
-  wyn init [name] --cli      CLI tool with arg parsing
-  wyn init [name] --lib wyn  Wyn package (installable)
-  wyn init [name] --lib python  Python extension module
-  wyn init [name] --lib node    Node.js native addon
-  wyn init [name] --lib c       C shared library
-  wyn pkg install <url>      Install a package
-  wyn pkg list               List installed packages
-  wyn pkg search <query>     Search official packages
+  wyn init [name]                  Create new project
+  wyn init [name] --api            REST API with SQLite
+  wyn init [name] --web            Web app with HTML + JSON API
+  wyn init [name] --cli            CLI tool with arg parsing
+  wyn init [name] --lib wyn        Wyn package (installable)
+  wyn init [name] --lib python     Python extension module
+  wyn init [name] --lib node       Node.js native addon
+  wyn init [name] --lib c          C shared library
+  wyn pkg install <url>            Install a package
+  wyn pkg list                     List installed packages
+  wyn pkg search <query>           Search official packages
 
 Tools:
-  wyn lsp                    Start language server (for editors)
-  wyn install                Install wyn to system PATH
-  wyn uninstall              Remove wyn from system PATH
-  wyn version                Show version
-  wyn help                   Show help
+  wyn lsp                          Start language server (for editors)
+  wyn install                      Install wyn to system PATH
+  wyn uninstall                    Remove wyn from system PATH
+  wyn version                      Show version
+  wyn help                         Show help
 
 Flags:
-  --fast                     Skip optimizations (fastest compile)
-  --release                  Full optimizations (-O2)
-  --debug                    Keep .c and .out artifacts
+  --fast                           Skip optimizations (fastest compile)
+  --release                        Full optimizations (-O2)
+  --debug                          Keep .c and .out artifacts
 ```
 
 ## Performance
@@ -157,8 +157,8 @@ Flags:
 
 ## Editor Support
 
-- **VS Code**: `vscode-wyn/` — syntax highlighting, all 27 modules
-- **Neovim**: `nvim-wyn/` — syntax highlighting, all keywords
+- **VS Code**: [wynlang/vscode-wyn](https://github.com/wynlang/vscode-wyn) — syntax highlighting, all keywords and modules
+- **Neovim**: [wynlang/nvim-wyn](https://github.com/wynlang/nvim-wyn) — syntax highlighting, all keywords and modules
 - **LSP**: `wyn lsp` — completions, hover, go-to-definition, rename, format
 
 ## Building
