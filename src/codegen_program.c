@@ -613,6 +613,12 @@ void codegen_program(Program* prog) {
     }
     
     if (!has_main && test_count > 0) {
+        // Emit global variables before test runner
+        for (int i = 0; i < prog->count; i++) {
+            if (prog->stmts[i]->type == STMT_VAR) {
+                codegen_stmt(prog->stmts[i]);
+            }
+        }
         // Generate test runner main
         emit("long long wyn_main() {\n");
         emit("    int __test_pass = 0, __test_fail = 0;\n");
