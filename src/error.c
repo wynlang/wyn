@@ -35,7 +35,7 @@ void report_error_with_suggestion(ErrorCode code, const char* filename, int line
 // Wynter the Wyvern — friendly tips on errors
 static const char* wynter_tips_type[] = {
     "Wyn is strongly typed — that keeps your code safe at runtime.",
-    "Use .to_string() or int_to_str() to convert between types.",
+    "Use .to_string() or .to_int() to convert between types.",
     "Type annotations help: fn add(a: int, b: int) -> int",
     "var x: int = 5  — explicit types catch bugs early.",
     NULL
@@ -176,13 +176,13 @@ static const char* get_conversion_suggestion(const char* from_type, const char* 
         return "use (int) cast to truncate decimal part";
     }
     if (strcmp(from_type, "string") == 0 && strcmp(to_type, "int") == 0) {
-        return "use str_to_int() function to parse the string";
+        return "use .to_int() to parse the string";
     }
     if (strcmp(from_type, "int") == 0 && strcmp(to_type, "string") == 0) {
-        return "use int_to_str() function to convert";
+        return "use .to_string() to convert";
     }
     if (strcmp(from_type, "array") == 0 && strcmp(to_type, "string") == 0) {
-        return "use arr_join() to convert array to string";
+        return "use .join() to convert array to string";
     }
     if (strstr(from_type, "HashMap") && strstr(to_type, "int")) {
         return "access map values with map[key] syntax";
@@ -359,9 +359,9 @@ void type_suggest_conversion(const char* from_type, const char* to_type) {
     } else if (strcmp(from_type, "float") == 0 && strcmp(to_type, "int") == 0) {
         snprintf(suggestion, sizeof(suggestion), "Use explicit cast: (int)value (note: this truncates the decimal part)");
     } else if (strcmp(from_type, "string") == 0 && strcmp(to_type, "int") == 0) {
-        snprintf(suggestion, sizeof(suggestion), "Use string to integer conversion function: parse_int(value)");
+        snprintf(suggestion, sizeof(suggestion), "Use method syntax: value.to_int()");
     } else if (strcmp(from_type, "int") == 0 && strcmp(to_type, "string") == 0) {
-        snprintf(suggestion, sizeof(suggestion), "Use integer to string conversion: to_string(value)");
+        snprintf(suggestion, sizeof(suggestion), "Use method syntax: value.to_string()");
     } else {
         snprintf(suggestion, sizeof(suggestion), "Check if conversion between '%s' and '%s' is supported", from_type, to_type);
     }
