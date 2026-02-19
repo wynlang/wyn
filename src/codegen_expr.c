@@ -2317,7 +2317,24 @@ void codegen_expr(Expr* expr) {
                     }
                 } else if (pat->type == PATTERN_OPTION && pat->option.is_some) {
                     // Enum variant with data: Shape.Circle(r), Some(x), Ok(x)
-                    if (is_data_enum && pat->option.enum_name.length > 0) {
+                    if (!is_data_enum) {
+                        // Simple enum — treat like a plain variant match, ignore inner binding
+                        if (pat->option.enum_name.length > 0) {
+                            emit("if (__match_val_%d == %.*s_%.*s) { ",
+                                 match_id,
+                                 pat->option.enum_name.length, pat->option.enum_name.start,
+                                 pat->option.variant_name.length, pat->option.variant_name.start);
+                        } else {
+                            emit("if (__match_val_%d == %.*s) { ",
+                                 match_id,
+                                 pat->option.variant_name.length, pat->option.variant_name.start);
+                        }
+                        // Declare inner variable as 0 (data not available in simple enums)
+                        if (pat->option.inner && pat->option.inner->type == PATTERN_IDENT) {
+                            emit("int %.*s = 0; ",
+                                 pat->option.inner->ident.name.length, pat->option.inner->ident.name.start);
+                        }
+                    } else if (is_data_enum && pat->option.enum_name.length > 0) {
                         // Data enum: compare .tag == EnumName_Variant_TAG
                         emit("if (__match_val_%d.tag == %.*s_%.*s_TAG) { ",
                              match_id,

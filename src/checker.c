@@ -3040,7 +3040,19 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int;
         }
         case EXPR_STRING_INTERP:
+            // Walk interpolation expressions to mark variables as used
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                if (expr->string_interp.expressions[i]) {
+                    check_expr(expr->string_interp.expressions[i], scope);
+                }
+            }
             return builtin_string;
+        case EXPR_AWAIT:
+            if (expr->await.expr) check_expr(expr->await.expr, scope);
+            return builtin_int;
+        case EXPR_SPAWN:
+            if (expr->spawn.call) check_expr(expr->spawn.call, scope);
+            return builtin_int;
         case EXPR_RANGE:
             return builtin_int; // Range type
         case EXPR_LAMBDA: {
@@ -3433,10 +3445,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             add_symbol(&arm_scope, field_name, field_type, false);
                         }
                     } else if (pat->type == PATTERN_OPTION && pat->option.inner) {
-                        // Enum variant with inner pattern
+                        // Enum variant with data destructuring — not yet supported in codegen
+                        fprintf(stderr, "\033[33mWarning:\033[0m match destructuring with data (line %d) is experimental — the bound variable may not have the correct value\n",
+                            pat->option.inner->ident.name.line);
                         if (pat->option.inner->type == PATTERN_IDENT) {
-                            // For now, assume int type for inner value
-                            // TODO: Get actual type from enum variant
                             add_symbol(&arm_scope, pat->option.inner->ident.name, builtin_int, false);
                         }
                     }
@@ -5368,6 +5380,23 @@ void check_program(Program* prog) {
             }
             
             check_stmt(fn->body, &local_scope);
+            
+            // Warn about missing return in non-void functions
+            if (current_function_return_type && current_function_return_type->kind != TYPE_VOID &&
+                !(fn->name.length == 4 && memcmp(fn->name.start, "main", 4) == 0)) {
+                bool has_return = false;
+                if (fn->body && fn->body->type == STMT_BLOCK) {
+                    for (int j = 0; j < fn->body->block.count; j++) {
+                        if (fn->body->block.stmts[j] && fn->body->block.stmts[j]->type == STMT_RETURN)
+                            has_return = true;
+                    }
+                }
+                if (!has_return) {
+                    fprintf(stderr, "\033[33mWarning:\033[0m function '%.*s' may not return a value (line %d)\n",
+                        fn->name.length, fn->name.start, fn->name.line);
+                }
+            }
+            
             current_function_return_type = NULL;
             current_self_type = NULL;
             

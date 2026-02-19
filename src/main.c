@@ -2359,6 +2359,13 @@ int main(int argc, char** argv) {
 int create_new_project(const char* project_name) {
     char path[512];
     
+    // Check if wyn.toml already exists
+    snprintf(path, sizeof(path), "%s/wyn.toml", project_name);
+    if (access(path, F_OK) == 0) {
+        fprintf(stderr, "Error: %s/wyn.toml already exists. Use a new directory.\n", project_name);
+        return 1;
+    }
+    
     // Create directories
     snprintf(path, sizeof(path), "mkdir -p %s/src %s/tests", project_name, project_name);
     if (system(path) != 0) {
@@ -2422,6 +2429,14 @@ int create_new_project(const char* project_name) {
 
 int create_new_project_with_template(const char* name, const char* template) {
     if (strcmp(template, "default") == 0) return create_new_project(name);
+    
+    // Check if wyn.toml already exists
+    char check[512];
+    snprintf(check, sizeof(check), "%s/wyn.toml", name);
+    if (access(check, F_OK) == 0) {
+        fprintf(stderr, "Error: %s/wyn.toml already exists. Use a new directory.\n", name);
+        return 1;
+    }
     
     char cmd[512]; FILE* f;
     snprintf(cmd, sizeof(cmd), "mkdir -p %s/src %s/tests", name, name);

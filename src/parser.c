@@ -366,7 +366,12 @@ static Expr* primary() {
         
         // Check for qualified name: EnumName::Variant
         if (match(TOKEN_COLONCOLON)) {
-            expect(TOKEN_IDENT, "Expected identifier after '::'");
+            // Accept identifiers and keyword variant names (Some, None, Ok, Err)
+            if (!check(TOKEN_IDENT) && !check(TOKEN_SOME) && !check(TOKEN_NONE)) {
+                fprintf(stderr, "Error at line %d: Expected identifier after '::'\n", parser.current.line);
+                return NULL;
+            }
+            advance();
             Token variant = parser.previous;
             
             // Create a qualified identifier by combining them
@@ -3328,9 +3333,27 @@ static Stmt* parse_match_statement() {
                     pattern->option.inner = NULL;
                 }
             } else {
-                // Just a simple identifier pattern
-                pattern->type = PATTERN_IDENT;
-                pattern->ident.name = first_token;
+                // Check for bare variant with data: Yep(val)
+                if (match(TOKEN_LPAREN)) {
+                    pattern->type = PATTERN_OPTION;
+                    pattern->option.is_some = true;
+                    pattern->option.variant_name = first_token;
+                    
+                    if (match(TOKEN_UNDERSCORE)) {
+                        pattern->option.inner = NULL;
+                    } else {
+                        Pattern* inner_pattern = safe_malloc(sizeof(Pattern));
+                        inner_pattern->type = PATTERN_IDENT;
+                        inner_pattern->ident.name = parser.current;
+                        expect(TOKEN_IDENT, "Expected identifier in destructuring pattern");
+                        pattern->option.inner = inner_pattern;
+                    }
+                    expect(TOKEN_RPAREN, "Expected ')' after destructuring pattern");
+                } else {
+                    // Just a simple identifier pattern
+                    pattern->type = PATTERN_IDENT;
+                    pattern->ident.name = first_token;
+                }
             }
         } else {
             fprintf(stderr, "Error at line %d: Expected pattern\n", parser.current.line);
