@@ -1750,6 +1750,20 @@ void codegen_stmt(Stmt* stmt) {
             }
             break;
         case STMT_IF:
+            // Dead code elimination: skip if(false) entirely, emit only else
+            if (stmt->if_stmt.condition->type == EXPR_BOOL &&
+                stmt->if_stmt.condition->token.length == 5 &&
+                memcmp(stmt->if_stmt.condition->token.start, "false", 5) == 0) {
+                if (stmt->if_stmt.else_branch) codegen_stmt(stmt->if_stmt.else_branch);
+                break;
+            }
+            // Dead code elimination: skip else on if(true)
+            if (stmt->if_stmt.condition->type == EXPR_BOOL &&
+                stmt->if_stmt.condition->token.length == 4 &&
+                memcmp(stmt->if_stmt.condition->token.start, "true", 4) == 0) {
+                codegen_stmt(stmt->if_stmt.then_branch);
+                break;
+            }
             emit("if (");
             codegen_expr(stmt->if_stmt.condition);
             emit(") {\n");

@@ -277,6 +277,28 @@ void codegen_expr(Expr* expr) {
             emit("); __fr ? *(long long*)__fr : 0; })");
             break;
         case EXPR_BINARY:
+            // Constant folding: if both sides are int literals, compute at compile time
+            if (expr->binary.left->type == EXPR_INT && expr->binary.right->type == EXPR_INT) {
+                long long l = strtoll(expr->binary.left->token.start, NULL, 0);
+                long long r = strtoll(expr->binary.right->token.start, NULL, 0);
+                long long result = 0;
+                bool folded = true;
+                switch (expr->binary.op.type) {
+                    case TOKEN_PLUS: result = l + r; break;
+                    case TOKEN_MINUS: result = l - r; break;
+                    case TOKEN_STAR: result = l * r; break;
+                    case TOKEN_SLASH: result = r != 0 ? l / r : 0; break;
+                    case TOKEN_PERCENT: result = r != 0 ? l % r : 0; break;
+                    case TOKEN_EQEQ: result = l == r; break;
+                    case TOKEN_BANGEQ: result = l != r; break;
+                    case TOKEN_LT: result = l < r; break;
+                    case TOKEN_LTEQ: result = l <= r; break;
+                    case TOKEN_GT: result = l > r; break;
+                    case TOKEN_GTEQ: result = l >= r; break;
+                    default: folded = false; break;
+                }
+                if (folded) { emit("%lld", result); break; }
+            }
             // Special handling for string concatenation with + operator
             if (expr->binary.op.type == TOKEN_PLUS) {
                 // Check if either operand is actually a string type
@@ -398,6 +420,28 @@ void codegen_expr(Expr* expr) {
                     codegen_expr(expr->binary.right);
                     emit(")");
                 } else {
+                    // Strength reduction: x * 2 → x << 1, x / 2 → x >> 1, x % 2 → x & 1
+                    if (expr->binary.right->type == EXPR_INT) {
+                        long long rv = strtoll(expr->binary.right->token.start, NULL, 0);
+                        if (expr->binary.op.type == TOKEN_STAR && rv == 2) {
+                            emit("("); codegen_expr(expr->binary.left); emit(" << 1)"); break;
+                        }
+                        if (expr->binary.op.type == TOKEN_STAR && rv == 4) {
+                            emit("("); codegen_expr(expr->binary.left); emit(" << 2)"); break;
+                        }
+                        if (expr->binary.op.type == TOKEN_STAR && rv == 8) {
+                            emit("("); codegen_expr(expr->binary.left); emit(" << 3)"); break;
+                        }
+                        if (expr->binary.op.type == TOKEN_SLASH && rv == 2) {
+                            emit("("); codegen_expr(expr->binary.left); emit(" >> 1)"); break;
+                        }
+                        if (expr->binary.op.type == TOKEN_SLASH && rv == 4) {
+                            emit("("); codegen_expr(expr->binary.left); emit(" >> 2)"); break;
+                        }
+                        if (expr->binary.op.type == TOKEN_PERCENT && rv == 2) {
+                            emit("("); codegen_expr(expr->binary.left); emit(" & 1)"); break;
+                        }
+                    }
                     emit("(");
                     codegen_expr(expr->binary.left);
                     if (expr->binary.op.type == TOKEN_AND || expr->binary.op.type == TOKEN_AMPAMP) {
