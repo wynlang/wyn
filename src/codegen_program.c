@@ -375,7 +375,8 @@ void codegen_program(Program* prog) {
             int _body_stmt_count = 0;
             if (fn->body && fn->body->type == STMT_BLOCK) _body_stmt_count = fn->body->block.count;
             bool _emit_inline = (!is_main_function && _body_stmt_count > 0 && _body_stmt_count <= 5);
-            if (_emit_inline) emit("static inline ");
+            if (_emit_inline) emit("__attribute__((hot)) static inline ");
+            else if (!is_main_function) emit("__attribute__((hot)) ");
             
             if (is_main_function) {
                 emit("%s wyn_main(", return_type);

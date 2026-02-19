@@ -956,7 +956,8 @@ void codegen_stmt(Stmt* stmt) {
             {
                 int _bsc = 0;
                 if (stmt->fn.body && stmt->fn.body->type == STMT_BLOCK) _bsc = stmt->fn.body->block.count;
-                if (!is_main_fn && _bsc > 0 && _bsc <= 5) emit("static inline ");
+                if (!is_main_fn && _bsc > 0 && _bsc <= 5) emit("__attribute__((hot)) static inline ");
+                else if (!is_main_fn) emit("__attribute__((hot)) ");
             }
             
             if (is_main_function) {
