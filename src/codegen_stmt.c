@@ -1131,8 +1131,51 @@ void codegen_stmt(Stmt* stmt) {
             }
 
             // Function body
+            // TCO: detect tail-recursive calls and convert to goto loop
+            bool _is_tco = false;
+            char _tco_fn_name[256] = {0};
+            if (stmt->fn.body && stmt->fn.body->type == STMT_BLOCK && stmt->fn.body->block.count > 0) {
+                Stmt* last = stmt->fn.body->block.stmts[stmt->fn.body->block.count - 1];
+                // Check: last stmt is return + call to self
+                if (last->type == STMT_RETURN && last->ret.value &&
+                    last->ret.value->type == EXPR_CALL &&
+                    last->ret.value->call.callee->type == EXPR_IDENT) {
+                    Token callee = last->ret.value->call.callee->token;
+                    if (callee.length == stmt->fn.name.length &&
+                        memcmp(callee.start, stmt->fn.name.start, callee.length) == 0) {
+                        _is_tco = true;
+                        snprintf(_tco_fn_name, sizeof(_tco_fn_name), "%.*s", (int)stmt->fn.name.length, stmt->fn.name.start);
+                    }
+                }
+                // Also check: last stmt is if/else where both branches return self
+                if (!_is_tco && last->type == STMT_IF) {
+                    // Check the else branch for tail call (common pattern: if base { return val } return self(...))
+                    // This is handled by the simpler case above when the last stmt IS the return
+                }
+            }
+            if (_is_tco) emit("    __tco_start: ;\n");
             {
-                codegen_stmt(stmt->fn.body);
+                // If TCO, emit all statements except the last (which we'll convert)
+                if (_is_tco && stmt->fn.body->type == STMT_BLOCK) {
+                    for (int _s = 0; _s < stmt->fn.body->block.count - 1; _s++) {
+                        codegen_stmt(stmt->fn.body->block.stmts[_s]);
+                    }
+                    // Emit the tail call as parameter reassignment + goto
+                    Stmt* last = stmt->fn.body->block.stmts[stmt->fn.body->block.count - 1];
+                    Expr* call = last->ret.value;
+                    // Assign new values to temps first (avoid order-dependent issues)
+                    for (int _a = 0; _a < call->call.arg_count && _a < stmt->fn.param_count; _a++) {
+                        emit("    __auto_type __tco_%d = ", _a);
+                        codegen_expr(call->call.args[_a]);
+                        emit(";\n");
+                    }
+                    for (int _a = 0; _a < call->call.arg_count && _a < stmt->fn.param_count; _a++) {
+                        emit("    %.*s = __tco_%d;\n", stmt->fn.params[_a].length, stmt->fn.params[_a].start, _a);
+                    }
+                    emit("    goto __tco_start;\n");
+                } else {
+                    codegen_stmt(stmt->fn.body);
+                }
                 // Emit deferred calls at function end (LIFO)
                 {
                     extern int get_defer_count(); extern Expr* get_defer(int);
