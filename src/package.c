@@ -94,9 +94,9 @@ static int install_local(const char* name, const char* source_path) {
     snprintf(dest, sizeof(dest), "%s/%s", pkg_dir, name);
     ensure_dir(dest);
     
-    // Copy .wyn files
+    // Copy .wyn and .🐉 files
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cp '%s'/*.wyn '%s/' 2>/dev/null", source_path, dest);
+    snprintf(cmd, sizeof(cmd), "cp '%s'/*.wyn '%s/' 2>/dev/null; cp '%s'/*.🐉 '%s/' 2>/dev/null", source_path, dest, source_path, dest);
     int result = system(cmd);
     
     if (result == 0) {
@@ -152,12 +152,12 @@ static int install_git(const char* name, const char* url) {
     if (result == 0) {
         // Validate: must contain .wyn files OR .c/.h files (C library package)
         char check[1024];
-        snprintf(check, sizeof(check), "find '%s' \\( -name '*.wyn' -o -name '*.c' -o -name '*.h' \\) -maxdepth 3 | head -1", dest);
+        snprintf(check, sizeof(check), "find '%s' \\( -name '*.wyn' -o -name '*.🐉' -o -name '*.c' -o -name '*.h' \\) -maxdepth 3 | head -1", dest);
         FILE* fp = popen(check, "r");
         char buf[256] = "";
         if (fp) { fgets(buf, sizeof(buf), fp); pclose(fp); }
         if (buf[0] == '\0') {
-            fprintf(stderr, "  \033[31m✗\033[0m Not a valid Wyn package: no .wyn files found in %s\n", url);
+            fprintf(stderr, "  \033[31m✗\033[0m Not a valid Wyn package: no .wyn/.🐉 files found in %s\n", url);
             char rm[1024]; snprintf(rm, sizeof(rm), "rm -rf '%s'", dest); system(rm);
             return 1;
         }

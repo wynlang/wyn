@@ -978,7 +978,7 @@ int main(int argc, char** argv) {
         char cmd[4096];
         snprintf(cmd, sizeof(cmd),
             "pass=0; fail=0; "
-            "for f in tests/test_*.wyn tests/*/test_*.wyn; do "
+            "for f in tests/test_*.wyn tests/*/test_*.wyn tests/test_*.🐉 tests/*/test_*.🐉; do "
             "  [ -f \"$f\" ] || continue; "
             "  result=$(%s run \"$f\" 2>&1); "
             "  if [ $? -eq 0 ]; then "
@@ -996,7 +996,7 @@ int main(int argc, char** argv) {
             snprintf(cmd, sizeof(cmd),
                 "echo '\\033[1mRunning tests in parallel...\\033[0m\\n'; "
                 "pass=0; fail=0; tmpdir=$(mktemp -d); "
-                "for f in tests/test_*.wyn tests/*/test_*.wyn; do "
+                "for f in tests/test_*.wyn tests/*/test_*.wyn tests/test_*.🐉 tests/*/test_*.🐉; do "
                 "  [ -f \"$f\" ] || continue; "
                 "  ( %s run \"$f\" > /dev/null 2>&1; echo $? > \"$tmpdir/$(echo $f | tr / _)\" ) & "
                 "done; wait; "
