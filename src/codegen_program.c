@@ -372,10 +372,38 @@ void codegen_program(Program* prog) {
             
             // Function forward declaration
             // Optimization: inline hint for small non-main functions
+            // Don't inline spawned functions (called from worker threads)
             int _body_stmt_count = 0;
             if (fn->body && fn->body->type == STMT_BLOCK) _body_stmt_count = fn->body->block.count;
-            bool _emit_inline = (!is_main_function && _body_stmt_count > 0 && _body_stmt_count <= 5);
-            if (_emit_inline) emit("__attribute__((hot)) static inline ");
+            bool _is_spawned_fn = false;
+            { char _fnm[256]; int _fnl = fn->name.length < 255 ? fn->name.length : 255;
+              memcpy(_fnm, fn->name.start, _fnl); _fnm[_fnl] = '\0';
+              for (int _si = 0; _si < spawn_wrapper_count; _si++) {
+                  if (strcmp(spawn_wrappers[_si].func_name, _fnm) == 0) { _is_spawned_fn = true; break; }
+              }
+            }
+            bool _emit_inline = (!is_main_function && !_is_spawned_fn && _body_stmt_count > 0 && _body_stmt_count <= 5);
+            // Detect self-recursive functions for always_inline hint
+            bool _is_recursive = false;
+            if (!is_main_function && fn->body && fn->body->type == STMT_BLOCK) {
+                for (int _s = 0; _s < fn->body->block.count && !_is_recursive; _s++) {
+                    Stmt* _st = fn->body->block.stmts[_s];
+                    if (_st->type == STMT_RETURN && _st->ret.value &&
+                        _st->ret.value->type == EXPR_BINARY) {
+                        // Check if either side of binary expr calls self
+                        Expr* _l = _st->ret.value->binary.left;
+                        Expr* _r = _st->ret.value->binary.right;
+                        if ((_l && _l->type == EXPR_CALL && _l->call.callee->type == EXPR_IDENT &&
+                             _l->call.callee->token.length == fn->name.length &&
+                             memcmp(_l->call.callee->token.start, fn->name.start, fn->name.length) == 0) ||
+                            (_r && _r->type == EXPR_CALL && _r->call.callee->type == EXPR_IDENT &&
+                             _r->call.callee->token.length == fn->name.length &&
+                             memcmp(_r->call.callee->token.start, fn->name.start, fn->name.length) == 0))
+                            _is_recursive = true;
+                    }
+                }
+            }
+            if (_emit_inline || (_is_recursive && !_is_spawned_fn)) emit("__attribute__((hot)) static inline ");
             else if (!is_main_function) emit("__attribute__((hot)) ");
             
             if (is_main_function) {
@@ -562,24 +590,26 @@ void codegen_program(Program* prog) {
             int ac = spawn_wrappers[i].arg_count;
             if (ac == 0) {
                 emit("void* __spawn_wrapper_%s(void* arg) {\n", spawn_wrappers[i].func_name);
-                emit("    long long* result = malloc(sizeof(long long));\n");
-                emit("    *result = %s();\n", spawn_wrappers[i].func_name);
-                emit("    return result;\n");
+                emit("    return (void*)(intptr_t)%s();\n", spawn_wrappers[i].func_name);
+                emit("}\n\n");
+            } else if (ac == 1) {
+                // Single arg: passed directly as void*, no struct
+                emit("void* __spawn_wrapper_%s_1(void* arg) {\n", spawn_wrappers[i].func_name);
+                emit("    return (void*)(intptr_t)%s((long long)(intptr_t)arg);\n", spawn_wrappers[i].func_name);
                 emit("}\n\n");
             } else {
                 emit("void* __spawn_wrapper_%s_%d(void* arg) {\n", spawn_wrappers[i].func_name, ac);
                 emit("    struct { ");
                 for (int j = 0; j < ac; j++) emit("long long a%d; ", j);
                 emit("} *args = arg;\n");
-                emit("    long long* result = malloc(sizeof(long long));\n");
-                emit("    *result = (long long)%s(", spawn_wrappers[i].func_name);
+                emit("    long long __r = (long long)%s(", spawn_wrappers[i].func_name);
                 for (int j = 0; j < ac; j++) {
                     if (j > 0) emit(", ");
                     emit("args->a%d", j);
                 }
                 emit(");\n");
                 emit("    free(args);\n");
-                emit("    return result;\n");
+                emit("    return (void*)(intptr_t)__r;\n");
                 emit("}\n\n");
             }
         }

@@ -10,6 +10,7 @@ extern int wyn_main(void);
 extern int __wyn_argc;
 extern char** __wyn_argv;
 
+__attribute__((flatten))
 int main(int argc, char** argv) {
     // Initialize arguments for Wyn interface
     wyn_init_args(argc, argv);

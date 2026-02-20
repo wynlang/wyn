@@ -11,7 +11,7 @@
 #include "future.h"
 
 #define MAX_PROCESSORS 64
-#define LOCAL_QUEUE_SIZE 256  // Power of 2, per-processor
+#define LOCAL_QUEUE_SIZE 4096  // Power of 2, per-processor
 #define GLOBAL_BATCH 32
 
 typedef void (*TaskFunc)(void*);
@@ -24,18 +24,38 @@ typedef struct Task {
     struct Task* next;
 } Task;
 
-// === Lock-free task pool ===
-#define TASK_POOL_SIZE 8192
+// === Lock-free task pool with recycling ===
+#define TASK_POOL_SIZE (64 * 1024)  // 64K tasks = 2MB slab
 static Task task_pool[TASK_POOL_SIZE];
 static _Atomic int task_pool_head = 0;
-static Task* task_overflow = NULL;
-static pthread_mutex_t overflow_lock = PTHREAD_MUTEX_INITIALIZER;
+static _Atomic(Task*) task_free_list = NULL;  // lock-free free list
 
 static Task* alloc_task(void) {
+    // Try free list first
+    Task* t = atomic_load_explicit(&task_free_list, memory_order_acquire);
+    while (t) {
+        if (atomic_compare_exchange_weak_explicit(&task_free_list, &t, t->next,
+                memory_order_acq_rel, memory_order_acquire))
+            return t;
+    }
+    // Slab
     int idx = atomic_fetch_add(&task_pool_head, 1);
     if (idx < TASK_POOL_SIZE) return &task_pool[idx];
-    // Overflow: malloc
     return malloc(sizeof(Task));
+}
+
+static void recycle_task(Task* t) {
+    // Only recycle slab tasks
+    if (t >= task_pool && t < task_pool + TASK_POOL_SIZE) {
+        Task* old_head;
+        do {
+            old_head = atomic_load_explicit(&task_free_list, memory_order_relaxed);
+            t->next = old_head;
+        } while (!atomic_compare_exchange_weak_explicit(&task_free_list, &old_head, t,
+                 memory_order_release, memory_order_relaxed));
+    } else {
+        free(t);
+    }
 }
 
 // === Per-processor local deque (single-producer, multi-consumer) ===
@@ -65,13 +85,22 @@ static inline Task* deque_pop(WorkDeque* d) {
     atomic_store_explicit(&d->top, t, memory_order_seq_cst);
     int b = atomic_load_explicit(&d->bottom, memory_order_seq_cst);
     if (b <= t) {
+        // More than one element — no race
         return atomic_load_explicit(&d->buffer[t & (LOCAL_QUEUE_SIZE - 1)], memory_order_relaxed);
     }
-    if (b == t + 1) {
-        // Last element — race with stealers
-        atomic_store_explicit(&d->top, t + 1, memory_order_relaxed);
+    Task* task = NULL;
+    if (b == t) {
+        // Last element — race with stealers, use CAS
+        Task* item = atomic_load_explicit(&d->buffer[t & (LOCAL_QUEUE_SIZE - 1)], memory_order_relaxed);
+        int expected = t;
+        if (atomic_compare_exchange_strong_explicit(&d->bottom, &expected, t + 1,
+                memory_order_seq_cst, memory_order_relaxed)) {
+            task = item;  // We won the race
+        }
     }
-    return NULL;
+    // Empty or lost race — reset top
+    atomic_store_explicit(&d->top, t + 1, memory_order_relaxed);
+    return task;
 }
 
 static inline Task* deque_steal(WorkDeque* d) {
@@ -129,6 +158,8 @@ typedef struct {
     pthread_t thread;
     _Atomic int spinning;  // 1 if looking for work
     _Atomic int parked;    // 1 if sleeping
+    int steal_hits;        // recent successful steals (adaptive spinning)
+    _Atomic(Task*) runnext; // LIFO fast slot — next task to run (like Go's P.runnext)
     pthread_mutex_t park_lock;
     pthread_cond_t park_cond;
 } Processor;
@@ -164,17 +195,31 @@ static inline void execute_task(Task* task) {
         task->func(task->arg);
     }
     atomic_fetch_add(&total_completed, 1);
+    recycle_task(task);
 }
 
-// Try to steal work from another processor
+// Try to steal work from another processor (batch: steal up to half)
 static Task* try_steal(int self_id) {
     int n = atomic_load(&num_processors);
-    // Random starting point to reduce contention
     int start = self_id + 1;
     for (int i = 0; i < n - 1; i++) {
         int victim = (start + i) % n;
         Task* task = deque_steal(&processors[victim].deque);
-        if (task) return task;
+        if (task) {
+            // Batch steal: grab more tasks and push to our local deque
+            if (self_id >= 0) {
+                for (int b = 0; b < 31; b++) {  // steal up to 32 total
+                    Task* extra = deque_steal(&processors[victim].deque);
+                    if (!extra) break;
+                    if (!deque_push(&processors[self_id].deque, extra)) {
+                        // Our deque is full, push to global
+                        global_queue_push(extra);
+                        break;
+                    }
+                }
+            }
+            return task;
+        }
     }
     return NULL;
 }
@@ -184,8 +229,12 @@ static void* processor_loop(void* arg) {
     Processor* p = (Processor*)arg;
     
     while (!atomic_load(&scheduler_shutdown)) {
-        // 1. Try local deque first (LIFO — cache-friendly)
-        Task* task = deque_pop(&p->deque);
+        // 0. Check runnext fast slot (LIFO — most recently spawned task)
+        Task* task = atomic_exchange_explicit(&p->runnext, NULL, memory_order_acquire);
+        if (task) { execute_task(task); continue; }
+        
+        // 1. Try local deque (LIFO — cache-friendly)
+        task = deque_pop(&p->deque);
         if (task) { execute_task(task); continue; }
         
         // 2. Try global queue
@@ -194,11 +243,12 @@ static void* processor_loop(void* arg) {
         
         // 3. Try stealing from others
         task = try_steal(p->id);
-        if (task) { execute_task(task); continue; }
+        if (task) { p->steal_hits = (p->steal_hits < 8) ? p->steal_hits + 1 : 8; execute_task(task); continue; }
         
-        // 4. Spin briefly before parking — use CPU hints, no sched_yield
+        // 4. Adaptive spin: spin longer if steals have been succeeding recently
         atomic_store(&p->spinning, 1);
-        for (int spins = 0; spins < 32; spins++) {
+        int spin_limit = 16 + p->steal_hits * 16;  // 16-144 spins based on success
+        for (int spins = 0; spins < spin_limit; spins++) {
             task = global_queue_pop();
             if (task) { atomic_store(&p->spinning, 0); execute_task(task); goto next; }
             task = try_steal(p->id);
@@ -211,7 +261,8 @@ static void* processor_loop(void* arg) {
         }
         atomic_store(&p->spinning, 0);
         
-        // 5. Park with short timeout
+        // 5. Park with short timeout — decay steal_hits on park
+        p->steal_hits = p->steal_hits > 0 ? p->steal_hits - 1 : 0;
         pthread_mutex_lock(&p->park_lock);
         atomic_store(&p->parked, 1);
         task = global_queue_pop();
@@ -223,7 +274,7 @@ static void* processor_loop(void* arg) {
         }
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
-        ts.tv_nsec += 500000; // 500μs
+        ts.tv_nsec += 100000; // 100μs — fast wake for burst workloads
         if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
         pthread_cond_timedwait(&p->park_cond, &p->park_lock, &ts);
         atomic_store(&p->parked, 0);
@@ -249,17 +300,33 @@ static void init_scheduler(void) {
     if (cpus < 1) cpus = 4;
     if (cpus > MAX_PROCESSORS) cpus = MAX_PROCESSORS;
     
+    // Reserve processor 0 for the main thread
     atomic_store(&num_processors, cpus);
     global_queue_init();
     
-    for (int i = 0; i < cpus; i++) {
+    processors[0].id = 0;
+    deque_init(&processors[0].deque);
+    atomic_store(&processors[0].spinning, 0);
+    atomic_store(&processors[0].parked, 0);
+    atomic_store(&processors[0].runnext, NULL);
+    pthread_mutex_init(&processors[0].park_lock, NULL);
+    pthread_cond_init(&processors[0].park_cond, NULL);
+    current_processor_id = 0;  // Main thread uses processor 0's deque
+    
+    for (int i = 1; i < cpus; i++) {
         processors[i].id = i;
         deque_init(&processors[i].deque);
         atomic_store(&processors[i].spinning, 0);
         atomic_store(&processors[i].parked, 0);
+        atomic_store(&processors[i].runnext, NULL);
         pthread_mutex_init(&processors[i].park_lock, NULL);
         pthread_cond_init(&processors[i].park_cond, NULL);
-        pthread_create(&processors[i].thread, NULL, processor_loop, &processors[i]);
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        pthread_attr_setstacksize(&attr, 256 * 1024);  // 256KB worker stacks (default is 8MB)
+        pthread_create(&processors[i].thread, &attr, processor_loop, &processors[i]);
+        pthread_attr_destroy(&attr);
     }
 }
 
@@ -271,15 +338,20 @@ void wyn_spawn_fast(TaskFunc func, void* arg) {
     t->arg = arg;
     t->future = NULL;
     
-    atomic_fetch_add(&total_spawned, 1);
+    long spawned = atomic_fetch_add(&total_spawned, 1);
     
-    // Try to push to current processor's local deque
+    // LIFO: try runnext fast slot first (like Go's P.runnext)
     if (current_processor_id >= 0) {
-        deque_push(&processors[current_processor_id].deque, t);
+        Task* old = atomic_exchange_explicit(&processors[current_processor_id].runnext, t, memory_order_release);
+        if (old) {
+            // Displaced task goes to deque
+            if (!deque_push(&processors[current_processor_id].deque, old))
+                global_queue_push(old);
+        }
     } else {
         global_queue_push(t);
     }
-    wake_processor();
+    if ((spawned & 63) == 0) wake_processor();
 }
 
 Future* wyn_spawn_async(TaskFuncWithReturn func, void* arg) {
@@ -291,11 +363,19 @@ Future* wyn_spawn_async(TaskFuncWithReturn func, void* arg) {
     t->arg = arg;
     t->future = future;
     
-    atomic_fetch_add(&total_spawned, 1);
+    long spawned = atomic_fetch_add(&total_spawned, 1);
     
-    // Push to global queue (spawns from main thread go global)
-    global_queue_push(t);
-    wake_processor();
+    // LIFO: try runnext fast slot first
+    if (current_processor_id >= 0) {
+        Task* old = atomic_exchange_explicit(&processors[current_processor_id].runnext, t, memory_order_release);
+        if (old) {
+            if (!deque_push(&processors[current_processor_id].deque, old))
+                global_queue_push(old);
+        }
+    } else {
+        global_queue_push(t);
+    }
+    if ((spawned & 63) == 0) wake_processor();
     
     return future;
 }

@@ -43,7 +43,7 @@ typedef struct {
         void* struct_val;
     } data;
 } WynValue;
-typedef struct WynArray { WynValue* data; int count; int capacity; } WynArray;
+typedef struct WynArray { WynValue* restrict data; int count; int capacity; } WynArray;
 typedef struct { int start; int end; int current; } WynRange;
 typedef struct { const char* message; const char* type; } WynError;
 typedef struct { WynArray arr; } Queue;
@@ -69,6 +69,99 @@ typedef struct { CsvRow* rows; int row_count; char** headers; int header_count; 
 void wyn_arena_reset();
 char* wyn_str_alloc(size_t len);
 char* wyn_strdup(const char* s);
+
+// Future/spawn declarations
+typedef struct Future Future;
+typedef void (*TaskFunc)(void*);
+typedef void* (*TaskFuncWithReturn)(void*);
+void wyn_spawn_fast(TaskFunc func, void* arg);
+Future* wyn_spawn_async(TaskFuncWithReturn func, void* arg);
+Future* future_new(void);
+void future_set(Future* f, void* result);
+void* future_get(Future* f);
+void future_free(Future* f);
+int future_is_ready(Future* f);
+
+// WebSocket module
+int Ws_connect(const char* url);
+int Ws_send(int sock, const char* msg);
+char* Ws_recv(int sock);
+void Ws_close(int sock);
+
+// Socket module
+int Socket_connect(const char* host, int port);
+int Socket_send(int sock, const char* data, int len);
+char* Socket_recv(int sock, int max_len);
+void Socket_close(int sock);
+
+// Test runtime
+extern int wyn_test_fail_count;
+void wyn_assert(int condition);
+void wyn_assert_eq_int(long long a, long long b);
+void wyn_assert_eq_str(const char* a, const char* b);
+
+// === Module function declarations (for slim header builds) ===
+
+// Http
+int Http_listen(int port);
+int Http_accept(int server_fd);
+char* Http_method(int req);
+char* Http_path(int req);
+char* Http_body(int req);
+void Http_respond(int fd, int status, const char* body);
+void Http_respond_json(int fd, int status, const char* json);
+void Http_respond_with_header(int fd, int status, const char* content_type, const char* body);
+void Http_close_client(int fd);
+void Http_close_server(int fd);
+int Http_status(int req);
+
+// Json
+long long Json_new(void);
+void Json_set(long long j, const char* key, const char* val);
+void Json_set_string(long long j, const char* key, const char* val);
+void Json_set_int(long long j, const char* key, long long val);
+char* Json_get_string(long long j, const char* key);
+long long Json_get_int(long long j, const char* key);
+char* Json_stringify(long long j);
+long long Json_parse(const char* s);
+int Json_has(long long j, const char* key);
+char* Json_to_pretty_string(long long j);
+
+// File
+char* File_read(const char* path);
+int File_write(const char* path, const char* content);
+int File_exists(const char* path);
+int File_delete(const char* path);
+char* File_cwd(void);
+
+// Db
+long long Db_open(const char* path);
+void Db_close(long long db);
+long long Db_exec(long long db, const char* sql);
+long long Db_exec_p(long long db, const char* sql, ...);
+char* Db_query(long long db, const char* sql);
+char* Db_query_p(long long db, const char* sql, ...);
+char* Db_query_one(long long db, const char* sql);
+
+// System
+char* System_exec(const char* cmd);
+void System_gc(void);
+
+// Crypto / Encoding
+char* Crypto_sha256(const char* data);
+char* Crypto_hmac_sha256(const char* key, const char* data);
+char* Encoding_base64_encode(const char* data);
+char* Encoding_base64_decode(const char* data);
+
+// Uuid
+char* Uuid_generate(void);
+
+// DateTime
+long long DateTime_now(void);
+
+// Env
+char* Env_get(const char* key);
+int Env_set(const char* key, const char* val);
 WynClosure wyn_closure_new(void* fn, void* env);
 int wyn_closure_call_int(WynClosure c, int arg);
 const char* wyn_string_concat_safe(const char* left, const char* right);
@@ -96,6 +189,13 @@ bool array_contains_str(WynArray arr, const char* value);
 int array_index_of_str(WynArray arr, const char* value);
 void array_remove_str(WynArray* arr, const char* value);
 void array_push(WynArray* arr, long long value);
+
+// Lightweight int array for spawn futures
+typedef struct { long long* data; int count; int capacity; } WynIntArray;
+WynIntArray int_array_new();
+void int_array_push(WynIntArray* a, long long v);
+long long int_array_get(WynIntArray a, int i);
+int int_array_len(WynIntArray a);
 int array_pop(WynArray* arr);
 int array_index_of(WynArray arr, int value);
 void array_reverse(WynArray* arr);
@@ -122,10 +222,22 @@ bool range_has_next(WynRange* r);
 int range_next(WynRange* r);
 int string_length(const char* str);
 char* string_substring(const char* str, int start, int end);
-int string_contains(const char* str, const char* substr);
+static inline int string_contains(const char* str, const char* substr) { return strstr(str, substr) != NULL; }
 char* string_concat(const char* a, const char* b);
-char* string_upper(const char* str);
-char* string_lower(const char* str);
+static inline char* string_upper(const char* str) {
+    size_t len = strlen(str);
+    char* r = wyn_str_alloc(len);
+    for (size_t i = 0; i < len; i++) r[i] = (str[i] >= 'a' && str[i] <= 'z') ? str[i] - 32 : str[i];
+    r[len] = '\0';
+    return r;
+}
+static inline char* string_lower(const char* str) {
+    size_t len = strlen(str);
+    char* r = wyn_str_alloc(len);
+    for (size_t i = 0; i < len; i++) r[i] = (str[i] >= 'A' && str[i] <= 'Z') ? str[i] + 32 : str[i];
+    r[len] = '\0';
+    return r;
+}
 int string_is_alpha(const char* str);
 int string_is_digit(const char* str);
 int string_is_alnum(const char* str);
@@ -141,8 +253,25 @@ int string_is_empty(const char* str);
 int string_starts_with(const char* str, const char* prefix);
 int string_ends_with(const char* str, const char* suffix);
 int string_index_of(const char* str, const char* substr);
-char* string_replace(const char* str, const char* old, const char* new);
-char* string_replace_all(const char* str, const char* old, const char* new);
+static inline char* string_replace(const char* str, const char* old, const char* new_str) {
+    size_t ol = strlen(old), nl = strlen(new_str), sl = strlen(str);
+    if (!ol) return wyn_strdup(str);
+    // Count occurrences
+    int cnt = 0; const char* p = str;
+    while ((p = strstr(p, old))) { cnt++; p += ol; }
+    if (!cnt) return wyn_strdup(str);
+    char* r = wyn_str_alloc(sl + cnt * (nl - ol));
+    char* d = r; p = str;
+    while (*p) {
+        const char* m = strstr(p, old);
+        if (m == p) { memcpy(d, new_str, nl); d += nl; p += ol; }
+        else if (m) { size_t n = m - p; memcpy(d, p, n); d += n; }
+        else { strcpy(d, p); d += strlen(p); break; }
+    }
+    *d = '\0';
+    return r;
+}
+static inline char* string_replace_all(const char* str, const char* old, const char* new_str) { return string_replace(str, old, new_str); }
 int string_last_index_of(const char* str, const char* substr);
 char* string_slice(const char* str, int start, int end);
 char* string_repeat(const char* str, int count);
@@ -330,10 +459,7 @@ int file_exists(const char* path);
 int file_delete(const char* path);
 int file_copy(const char* src, const char* dst);
 int file_move(const char* src, const char* dst);
-char* File_read(const char* p);
-int File_write(const char* p, const char* d);
-int File_exists(const char* p);
-int File_delete(const char* p);
+// File module — declared in module declarations block above
 int File_copy(const char* s, const char* d);
 int File_move(const char* s, const char* d);
 long long File_size(const char* p);
@@ -342,31 +468,23 @@ int File_is_file(const char* p);
 int File_mkdir(const char* p);
 char* File_list_dir(const char* p);
 int File_append(const char* p, const char* d);
-char* File_cwd();
 long long File_open(const char* path, const char* mode);
 char* File_read_line(long long handle);
 int File_write_line(long long handle, const char* data);
 int File_eof(long long handle);
 void File_close(long long handle);
-void Http_respond(long long client_fd, long long status, const char* content_type, const char* body);
+// Http, Json, etc. declared in module declarations block above
 int Http_route_match(const char* pattern, const char* path, WynHashMap* params);
 WynHashMap* Http_parse_request(const char* raw);
 int Http_ctx_fd(WynHashMap* ctx);
-void Http_respond_json(int fd, int status, const char* json);
 void Http_respond_html(int fd, int status, const char* html);
 int Http_serve(int port);
-char* Http_accept(int server_fd);
-void Http_close_server(int fd);
 char* hashmap_keys_str(WynHashMap* map);
 WynArray hashmap_keys(WynHashMap* map);
 WynArray hashmap_values(WynHashMap* map);
 char* string_split_to_str(const char* s, const char* delim);
 WynHashSet* HashSet_new();
-WynJson* Json_new();
-void Json_set(WynJson* j, const char* k, const char* v);
-void Json_set_string(WynJson* j, const char* k, const char* v);
-void Json_set_int(WynJson* j, const char* k, int v);
-void Json_set_bool(WynJson* j, const char* k, int v);
+// Json declared in module declarations block above
 void Terminal_raw_mode();
 void Terminal_restore();
 int Terminal_read_key();
@@ -534,24 +652,17 @@ long long Task_channel(long long capacity);
 void Task_send(long long handle, long long value);
 long long Task_recv(long long handle);
 void Task_close(long long handle);
-long long Db_open(const char* path);
-int Db_exec(long long handle, const char* sql);
-char* Db_query(long long handle, const char* sql);
-char* Db_query_one(long long handle, const char* sql);
-int Db_exec_p(long long handle, const char* sql, WynArray params);
-char* Db_query_p(long long handle, const char* sql, WynArray params);
+// Db declared in module declarations block above
 long long Db_last_insert_id(long long handle);
 char* Db_error(long long handle);
-void Db_close(long long handle);
 long long StringBuilder_new();
 void StringBuilder_append(long long handle, const char* s);
 long long StringBuilder_len(long long handle);
 void StringBuilder_clear(long long handle);
 void StringBuilder_free(long long handle);
-long long Json_parse(const char* text);
+// Json_parse declared in module declarations block above
 char* Json_get(long long root, const char* key);
 long long Json_get_int(long long root, const char* key);
-long long Json_has(long long root, const char* key);
 long long Json_array_len(long long node);
 long long Json_array_get(long long node, long long index);
 char* Json_node_str(long long node);
@@ -627,7 +738,6 @@ long long Db_table_exists(long long handle, const char* table_name);
 void Test_assert_not_contains(const char* haystack, const char* needle, const char* msg);
 void Http_set_timeout(long long seconds);
 long long Http_timeout();
-char* Json_to_pretty_string(WynJson* j);
 long long Csv_parse(const char* text);
 long long Csv_row_count(long long handle);
 const char* Csv_get(long long handle, long long row, long long col);
@@ -644,8 +754,43 @@ void System_load_env(const char* path);
 
 // Inline codegen helpers
 static inline char* int_to_string(long long n) { static char __buf[32]; snprintf(__buf, sizeof(__buf), "%lld", n); return __buf; }
-static inline char* to_string(long long n) { static char __buf[32]; snprintf(__buf, sizeof(__buf), "%lld", n); return __buf; }
 static inline char* float_to_string(double n) { static char __buf[64]; snprintf(__buf, sizeof(__buf), "%g", n); return __buf; }
-static inline void println(const char* s) { if(s) puts(s); else puts("null"); }
+static inline char* str_to_string(const char* s) { return (char*)s; }
+static inline char* bool_to_string(bool b) { return b ? "true" : "false"; }
+
+// _Generic macros for type-dispatched print/println/to_string
+#define print_no_nl(x) _Generic((x), \
+    int: print_int_no_nl, \
+    double: print_float_no_nl, \
+    char*: print_str_no_nl, \
+    const char*: print_str_no_nl, \
+    bool: print_bool_no_nl, \
+    WynArray: print_array_no_nl, \
+    default: print_int_no_nl)(x)
+
+#define print(x) _Generic((x), \
+    int: print_int_no_nl, \
+    long: print_int_no_nl, \
+    long long: print_int_no_nl, \
+    float: print_float_no_nl, \
+    double: print_float_no_nl, \
+    char*: print_str_no_nl, \
+    const char*: print_str_no_nl, \
+    bool: print_bool_no_nl, \
+    WynArray: print_array, \
+    default: print_int_no_nl)(x)
+
+#define println(x) do { print(x); printf("\n"); } while(0)
+
+#define to_string(x) _Generic((x), \
+    int: int_to_string, \
+    long: int_to_string, \
+    long long: int_to_string, \
+    double: float_to_string, \
+    char*: str_to_string, \
+    const char*: str_to_string, \
+    bool: bool_to_string, \
+    default: int_to_string)(x)
+
 static inline void print_val(const char* s) { if(s) fputs(s, stdout); }
 #endif

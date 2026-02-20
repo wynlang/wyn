@@ -197,7 +197,7 @@ int main(int argc, char** argv) {
         
         fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
         fprintf(stderr, "  \033[33m--fast\033[0m                  Skip optimizations (fastest compile)\n");
-        fprintf(stderr, "  \033[33m--release               Full optimizations (-O2)\n");
+        fprintf(stderr, "  \033[33m--release               Full optimizations (-O3)\n");
         fprintf(stderr, "  \033[33m--debug\033[0m                Keep .c and .out artifacts\n");
         
         fprintf(stderr, "\n\033[2mhttps://wynlang.com\033[0m\n");
@@ -445,7 +445,14 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0 || strcmp(command, "-v") == 0) {
-        printf("\033[36mWyn\033[0m v%s  \033[2m— Wynter the Wyvern\033[0m\n", get_version());
+        printf("\033[36m"
+            "    /\\_/\\\n"
+            "   / o o \\   \033[0m\033[1mWyn\033[0m v%s\n"
+            "\033[36m  (  >.<  )  \033[0m\033[2m1 language for everything\033[0m\n"
+            "\033[36m   \\_^_/\n"
+            "  /|     |\\\n"
+            " (_|     |_)  \033[0m\033[2m🐉 Wynter the Wyvern\033[0m\n\n",
+            get_version());
         return 0;
     }
     
@@ -579,7 +586,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
         fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
         fprintf(stderr, "  \033[33m--fast\033[0m                  Skip optimizations (fastest compile)\n");
-        fprintf(stderr, "  \033[33m--release               Full optimizations (-O2)\n");
+        fprintf(stderr, "  \033[33m--release               Full optimizations (-O3)\n");
         fprintf(stderr, "  \033[33m--debug\033[0m                Keep .c and .out artifacts\n");
         fprintf(stderr, "\n\033[1mCross-compile targets:\033[0m\n");
         fprintf(stderr, "  linux, macos, windows, ios, android\n");
@@ -823,9 +830,13 @@ int main(int argc, char** argv) {
         // Detect flags
         char* dir = NULL;
         const char* build_flag = "";
+        int build_release = 0;
+        int build_pgo = 0;
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--shared") == 0) build_flag = " --shared";
             else if (strcmp(argv[i], "--python") == 0) build_flag = " --python";
+            else if (strcmp(argv[i], "--release") == 0) build_release = 1;
+            else if (strcmp(argv[i], "--pgo") == 0) build_pgo = 1;
             else if (!dir) dir = argv[i];
         }
         if (!dir) dir = ".";
@@ -890,7 +901,10 @@ int main(int argc, char** argv) {
         snprintf(out_c, sizeof(out_c), "%s.c", entry);
         FILE* out_f = fopen(out_c, "w");
         init_codegen(out_f);
-        { extern void codegen_set_slim_runtime(bool); codegen_set_slim_runtime(false); }
+        { extern void codegen_set_slim_runtime(bool);
+          bool _slim = false;
+          for (int _i = 2; _i < argc; _i++) if (strcmp(argv[_i], "--release") == 0) _slim = true;
+          codegen_set_slim_runtime(_slim); }
         codegen_c_header();
         codegen_program(prog);
         fclose(out_f);
@@ -923,15 +937,15 @@ int main(int argc, char** argv) {
         
         char cmd[4096];
         int result;
-        if (build_flag[0] == 0 && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0) {
+        char rt_lib[512]; snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
+        if (build_flag[0] == 0 && !build_release && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0) {
             snprintf(cmd, sizeof(cmd),
                 "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -w %s "
-                "%s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s%s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
+                "%s.c %s/src/wyn_arena.c %s/src/stdlib_string.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s%s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
                 tcc_bin, bin_path, wyn_root, wyn_root, sqlite_flags,
-                entry, wyn_root, wyn_root, rt_tcc, sqlite_src);
+                entry, wyn_root, wyn_root, wyn_root, wyn_root, rt_tcc, sqlite_src);
             result = system(cmd);
         } else {
-            char rt_lib[512]; snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
 #ifdef __APPLE__
             const char* plibs = "-lpthread -lm";
             (void)plibs;
@@ -940,18 +954,69 @@ int main(int argc, char** argv) {
 #endif
             snprintf(cmd, sizeof(cmd),
 #ifdef _WIN32
-                "%s -std=c11 -O2 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>NUL",
+                "%s -std=c11 -O3 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>NUL",
 #else
-                "%s -std=c11 -O2 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
+                "%s -std=c11 -O3 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
 #endif
                 cc, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src);
             result = system(cmd);
         }
         
-        unlink(out_c);
+        // Don't unlink C file yet if PGO is requested
+        if (!build_pgo) unlink(out_c);
         free(source);
         
-        if (result == 0) {
+        if (result == 0 && build_pgo && build_release) {
+            // PGO: three-phase build using the generated C file
+            printf("\033[1mPGO\033[0m Phase 1: instrumented build...\n");
+            char pgo_gen[2048];
+            snprintf(pgo_gen, sizeof(pgo_gen),
+                "%s -std=c11 -O3 -w -fprofile-instr-generate -I %s/src -o %s.pgo_gen %s.c %s%s -lpthread -lm 2>/dev/null",
+                cc, wyn_root, entry, entry, rt_lib, sqlite_src);
+            if (system(pgo_gen) != 0) {
+                fprintf(stderr, "PGO: instrumented build failed (compiler may not support PGO)\n");
+                unlink(out_c);
+                goto pgo_done;
+            }
+            
+            // Phase 2: run instrumented binary to generate profile
+            printf("\033[1mPGO\033[0m Phase 2: collecting profile...\n");
+            char pgo_run[1024];
+            snprintf(pgo_run, sizeof(pgo_run), "LLVM_PROFILE_FILE=%s.profraw %s.pgo_gen >/dev/null 2>&1", entry, entry);
+            system(pgo_run);
+            
+            // Merge profile data
+            char pgo_merge[1024];
+            snprintf(pgo_merge, sizeof(pgo_merge),
+                "xcrun llvm-profdata merge -output=%s.profdata %s.profraw 2>/dev/null || "
+                "llvm-profdata merge -output=%s.profdata %s.profraw 2>/dev/null",
+                entry, entry, entry, entry);
+            if (system(pgo_merge) != 0) {
+                fprintf(stderr, "PGO: profile merge failed (llvm-profdata not found)\n");
+                goto pgo_cleanup;
+            }
+            
+            // Phase 3: recompile with profile data
+            printf("\033[1mPGO\033[0m Phase 3: optimized build...\n");
+            char pgo_use[2048];
+            snprintf(pgo_use, sizeof(pgo_use),
+                "%s -std=c11 -O3 -w -fprofile-instr-use=%s.profdata -I %s/src -o %s %s.c %s%s -lpthread -lm 2>/dev/null",
+                cc, entry, wyn_root, bin_path, entry, rt_lib, sqlite_src);
+            result = system(pgo_use);
+            
+            pgo_cleanup:
+            // Clean up PGO artifacts
+            { char tmp[512];
+              snprintf(tmp, sizeof(tmp), "%s.pgo_gen", entry); unlink(tmp);
+              snprintf(tmp, sizeof(tmp), "%s.profraw", entry); unlink(tmp);
+              snprintf(tmp, sizeof(tmp), "%s.profdata", entry); unlink(tmp);
+            }
+            unlink(out_c);
+            pgo_done:
+            if (result == 0) {
+                printf("\033[32m✓\033[0m Built with PGO: %s\n", bin_path);
+            }
+        } else if (result == 0) {
             printf("\033[32m✓\033[0m Built: %s\n", bin_path);
         } else {
             fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
@@ -1019,7 +1084,7 @@ int main(int argc, char** argv) {
         char cmd[4096];
         snprintf(cmd, sizeof(cmd),
             "cd %s && mkdir -p runtime/obj && "
-            "for f in src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c "
+            "for f in src/wyn_arena.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c "
             "src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c "
             "src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c "
             "src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c "
@@ -1041,7 +1106,7 @@ int main(int argc, char** argv) {
         }
         snprintf(cmd, sizeof(cmd),
             "mkdir -p %s/runtime/obj && cd %s && "
-            "for f in src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c "
+            "for f in src/wyn_arena.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c "
             "src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c "
             "src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c "
             "src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c "
@@ -1143,55 +1208,109 @@ int main(int argc, char** argv) {
     // wyn bench <file> — run with timing
     if (strcmp(command, "bench") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn bench <file.wyn>\n");
+            fprintf(stderr, "Usage: wyn bench <file.wyn> [--iterations N] [--compare]\n");
             return 1;
         }
-        printf("\033[1mBenchmarking\033[0m %s\n\n", argv[2]);
         
-        // Run 5 times and report
-        char cmd[512];
-        double times[5];
-        for (int i = 0; i < 5; i++) {
+        const char* file = argv[2];
+        int iterations = 10;
+        int compare_only = 0;
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--iterations") == 0 && i + 1 < argc) { iterations = atoi(argv[++i]); }
+            else if (strcmp(argv[i], "--compare") == 0) { compare_only = 1; }
+        }
+        if (iterations < 1) iterations = 1;
+        if (iterations > 10000) iterations = 10000;
+        
+        // Compile once with --release
+        printf("\033[1mBenchmarking\033[0m %s (%d iterations)\n\n", file, iterations);
+        char build_cmd[1024];
+        snprintf(build_cmd, sizeof(build_cmd), "%s build %s --release 2>/dev/null", argv[0], file);
+        if (system(build_cmd) != 0) {
+            fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
+            return 1;
+        }
+        
+        // Determine binary path (strip .wyn extension)
+        char bin[512];
+        snprintf(bin, sizeof(bin), "%s", file);
+        char* dot = strrchr(bin, '.'); if (dot) *dot = '\0';
+        
+        // Check previous results for --compare
+        char bench_file[512];
+        snprintf(bench_file, sizeof(bench_file), "%s.bench", file);
+        if (compare_only) {
+            FILE* prev = fopen(bench_file, "r");
+            if (!prev) { fprintf(stderr, "No previous benchmark data: %s\n", bench_file); return 1; }
+            double prev_avg, prev_min, prev_p99;
+            if (fscanf(prev, "%lf %lf %lf", &prev_avg, &prev_min, &prev_p99) >= 1) {
+                printf("  Previous: avg=%.1fms min=%.1fms p99=%.1fms\n", prev_avg, prev_min, prev_p99);
+            }
+            fclose(prev);
+            printf("  Run again without --compare to update.\n");
+            return 0;
+        }
+        
+        // Run N iterations, time execution only
+        double* times = malloc(sizeof(double) * iterations);
+        for (int i = 0; i < iterations; i++) {
             struct timespec start, end;
+            char run_cmd[512];
+            snprintf(run_cmd, sizeof(run_cmd), "%s > /dev/null 2>&1", bin);
             clock_gettime(CLOCK_MONOTONIC, &start);
-            snprintf(cmd, sizeof(cmd), "%s run %s > /dev/null 2>&1", argv[0], argv[2]);
-            int r = system(cmd);
+            int r = system(run_cmd);
             clock_gettime(CLOCK_MONOTONIC, &end);
-            if (r != 0) {
-                fprintf(stderr, "\033[31m✗\033[0m Compilation/execution failed\n");
-                return 1;
+            if (r != 0 && i == 0) {
+                fprintf(stderr, "\033[31m✗\033[0m Execution failed\n");
+                free(times); return 1;
             }
             times[i] = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1e6;
-            printf("  Run %d: \033[33m%.1fms\033[0m\n", i + 1, times[i]);
+            if (iterations <= 20) printf("  Run %d: \033[33m%.1fms\033[0m\n", i + 1, times[i]);
         }
         
-        // Stats
-        double sum = 0, min = times[0], max = times[0];
-        for (int i = 0; i < 5; i++) {
-            sum += times[i];
-            if (times[i] < min) min = times[i];
-            if (times[i] > max) max = times[i];
-        }
+        // Sort for percentiles
+        for (int i = 0; i < iterations - 1; i++)
+            for (int j = i + 1; j < iterations; j++)
+                if (times[j] < times[i]) { double t = times[i]; times[i] = times[j]; times[j] = t; }
+        
+        double sum = 0, min = times[0], max = times[iterations - 1];
+        for (int i = 0; i < iterations; i++) sum += times[i];
+        double avg = sum / iterations;
+        double median = times[iterations / 2];
+        int p99_idx = (int)(iterations * 0.99); if (p99_idx >= iterations) p99_idx = iterations - 1;
+        double p99 = times[p99_idx];
+        double ops_sec = (avg > 0) ? 1000.0 / avg : 0;
+        
         printf("\n\033[1mResults:\033[0m\n");
-        printf("  avg: \033[32m%.1fms\033[0m  min: %.1fms  max: %.1fms\n", sum / 5, min, max);
+        printf("  min:    \033[32m%.1fms\033[0m\n", min);
+        printf("  avg:    %.1fms\n", avg);
+        printf("  median: %.1fms\n", median);
+        printf("  p99:    %.1fms\n", p99);
+        printf("  max:    %.1fms\n", max);
+        printf("  ops/s:  %.0f\n", ops_sec);
         
-        // Save results and compare with previous
-        char bench_file[512];
-        snprintf(bench_file, sizeof(bench_file), "%s.bench", argv[2]);
+        // Compare with previous
         FILE* prev = fopen(bench_file, "r");
         if (prev) {
-            double prev_avg;
-            if (fscanf(prev, "%lf", &prev_avg) == 1) {
-                double delta = (sum / 5) - prev_avg;
+            double prev_avg, prev_min, prev_p99;
+            if (fscanf(prev, "%lf %lf %lf", &prev_avg, &prev_min, &prev_p99) >= 1) {
+                double delta = avg - prev_avg;
                 double pct = (delta / prev_avg) * 100;
-                if (delta < -1) printf("  \033[32m↓ %.1fms faster (%.1f%%)\033[0m vs previous\n", -delta, -pct);
-                else if (delta > 1) printf("  \033[31m↑ %.1fms slower (%.1f%%)\033[0m vs previous\n", delta, pct);
-                else printf("  \033[2m≈ same as previous\033[0m\n");
+                if (delta < -1) printf("\n  \033[32m↓ %.1fms faster (%.1f%%)\033[0m vs previous\n", -delta, -pct);
+                else if (delta > 1) printf("\n  \033[31m↑ %.1fms slower (%.1f%%)\033[0m vs previous\n", delta, pct);
+                else printf("\n  \033[2m≈ same as previous\033[0m\n");
             }
             fclose(prev);
         }
+        
+        // Save results
         FILE* save = fopen(bench_file, "w");
-        if (save) { fprintf(save, "%.2f\n", sum / 5); fclose(save); }
+        if (save) { fprintf(save, "%.2f %.2f %.2f\n", avg, min, p99); fclose(save); }
+        
+        // Cleanup binary
+        unlink(bin);
+        char c_file[512]; snprintf(c_file, sizeof(c_file), "%s.c", file); unlink(c_file);
+        free(times);
         
         return 0;
     }
@@ -1199,7 +1318,11 @@ int main(int argc, char** argv) {
     // wyn doc <file> [--html] — generate docs from source
     if (strcmp(command, "doc") == 0) {
         extern int cmd_doc(const char* file, int argc, char** argv);
-        if (argc < 3) { fprintf(stderr, "Usage: wyn doc <file.wyn> [--html]\n"); return 1; }
+        extern int cmd_doc_project(int argc, char** argv);
+        // If no file arg or file is --html, do project-level docs
+        if (argc < 3 || (argc == 3 && strcmp(argv[2], "--html") == 0)) {
+            return cmd_doc_project(argc, argv);
+        }
         return cmd_doc(argv[2], argc, argv);
     }
     
@@ -1722,7 +1845,7 @@ int main(int argc, char** argv) {
         int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python, 4=--node
         for (int i = 3; i < argc; i++) {
             if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; }
-            if (strcmp(argv[i], "--release") == 0) { opt_level = "-O2"; }
+            if (strcmp(argv[i], "--release") == 0) { opt_level = "-O3"; }
             if (strcmp(argv[i], "--shared") == 0) { shared_mode = 1; }
             if (strcmp(argv[i], "--python") == 0) { shared_mode = 2; }
             if (strcmp(argv[i], "--node") == 0) { shared_mode = 4; }
@@ -1786,8 +1909,8 @@ int main(int argc, char** argv) {
         } else {
             // Fallback: compile from source
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
-                     cc, opt_level, wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/src/wyn_arena.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
+                     cc, opt_level, wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
         }
         // Append optional flags before the redirect
         if (sqlite_flags[0] || gui_flags[0]) {
@@ -1822,8 +1945,8 @@ int main(int argc, char** argv) {
                          opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, platform_libs);
             } else {
                 snprintf(shared_cmd, sizeof(shared_cmd),
-                         "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
-                         opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
+                         "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s %s.c %s/src/wyn_arena.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
+                         opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
             }
             int result = system(shared_cmd);
             if (result == 0) {
@@ -2292,8 +2415,8 @@ int main(int argc, char** argv) {
                  opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root);
     } else {
         snprintf(compile_cmd, sizeof(compile_cmd),
-                 "gcc %s -std=c11 -w -I %s/src -o %s %s.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c -lpthread -lm", 
-                 opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
+                 "gcc %s -std=c11 -w -I %s/src -o %s %s.c %s/src/wyn_arena.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c -lpthread -lm", 
+                 opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
     }
     
     int result = system(compile_cmd);

@@ -1,0 +1,42 @@
+// TDD: Spawn and concurrency tests
+
+fn square(n: int) -> int {
+    return n * n
+}
+
+fn add_one(n: int) -> int {
+    return n + 1
+}
+
+fn main() -> int {
+    // Test 1: spawn + await returns correct value
+    var f1 = spawn square(5)
+    var r1 = await f1
+    if r1 != 25 { println("FAIL: spawn square(5) = ${r1}, expected 25"); return 1 }
+
+    // Test 2: multiple spawn + await
+    var f2 = spawn square(10)
+    var f3 = spawn add_one(99)
+    var r2 = await f2
+    var r3 = await f3
+    if r2 != 100 { println("FAIL: spawn square(10) = ${r2}, expected 100"); return 2 }
+    if r3 != 100 { println("FAIL: spawn add_one(99) = ${r3}, expected 100"); return 3 }
+
+    // Test 3: fire-and-forget spawn (should not crash)
+    for i in 0..100 {
+        spawn square(i)
+    }
+
+    // Test 4: spawn with channel
+    var ch = Task.channel(128)
+    for i in 0..10 {
+        spawn square(i)
+    }
+
+    // Test 5: many spawns don't crash
+    for i in 0..10000 {
+        spawn square(i)
+    }
+
+    return 0
+}

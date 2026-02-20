@@ -104,67 +104,8 @@
 #include "hashset.h"
 
 // === Arena Allocator for string memory management ===
-// Prevents memory leaks in long-running programs (servers, daemons)
-// Usage: wyn_arena_reset() at the end of each request/iteration
-typedef struct WynArenaBlock {
-    char* data;
-    size_t used;
-    size_t capacity;
-    struct WynArenaBlock* next;
-} WynArenaBlock;
-
-static WynArenaBlock* _wyn_arena_head = NULL;
-static WynArenaBlock* _wyn_arena_current = NULL;
-
-static WynArenaBlock* wyn_arena_new_block(size_t min_size) {
-    size_t cap = min_size < 65536 ? 65536 : min_size;
-    WynArenaBlock* b = malloc(sizeof(WynArenaBlock));
-    b->data = malloc(cap);
-    b->used = 0;
-    b->capacity = cap;
-    b->next = NULL;
-    return b;
-}
-
-static void* wyn_arena_alloc(size_t size) {
-    if (!_wyn_arena_current) {
-        _wyn_arena_head = wyn_arena_new_block(size);
-        _wyn_arena_current = _wyn_arena_head;
-    }
-    // Align to 8 bytes
-    size = (size + 7) & ~7;
-    if (_wyn_arena_current->used + size > _wyn_arena_current->capacity) {
-        WynArenaBlock* b = wyn_arena_new_block(size);
-        _wyn_arena_current->next = b;
-        _wyn_arena_current = b;
-    }
-    void* ptr = _wyn_arena_current->data + _wyn_arena_current->used;
-    _wyn_arena_current->used += size;
-    return ptr;
-}
-
-// Reset arena — call at end of each request/loop iteration
-void wyn_arena_reset() {
-    WynArenaBlock* b = _wyn_arena_head;
-    while (b) {
-        b->used = 0;
-        b = b->next;
-    }
-    _wyn_arena_current = _wyn_arena_head;
-}
-
-// Arena-aware string allocation
-char* wyn_str_alloc(size_t len) {
-    return (char*)wyn_arena_alloc(len + 1);
-}
-
-char* wyn_strdup(const char* s) {
-    if (!s) return "";
-    size_t len = strlen(s);
-    char* r = wyn_str_alloc(len);
-    memcpy(r, s, len + 1);
-    return r;
-}
+// Implementation in wyn_arena.c — shared across all compilation units
+#include "wyn_arena.h"
 
 // Global argc/argv for System::args()
 int __wyn_argc = 0;
@@ -246,6 +187,10 @@ int TcpServer_accept(TcpServer* server);
 void TcpServer_close(TcpServer* server);
 
 // Socket module
+int Socket_connect(const char* host, int port);
+int Socket_send(int sock, const char* data, int len);
+char* Socket_recv(int sock, int max_len);
+void Socket_close(int sock);
 int Socket_set_timeout(int sock, int seconds);
 int Socket_set_nonblocking(int sock);
 int Socket_poll_read(int sock, int timeout_ms);
@@ -254,6 +199,12 @@ char* Socket_read_line(int sock);
 // Url module
 char* Url_encode(const char* str);
 char* Url_decode(const char* str);
+
+// WebSocket module
+int Ws_connect(const char* url);
+int Ws_send(int sock, const char* msg);
+char* Ws_recv(int sock);
+void Ws_close(int sock);
 
 // String module
 int wyn_string_len(const char* str);
@@ -410,6 +361,8 @@ char* wyn_crypto_base64_encode(const char* data, size_t len);
 char* wyn_crypto_base64_decode(const char* data, size_t* out_len);
 void wyn_crypto_random_bytes(char* buffer, size_t len);
 char* wyn_crypto_random_hex(size_t len);
+char* Crypto_sha1(const char* data);
+char* Crypto_sha1_base64(const char* data);
 char* wyn_crypto_xor_cipher(const char* data, size_t len, const char* key, size_t key_len);
 
 // Math module
@@ -441,33 +394,54 @@ typedef struct {
     } data;
 } WynValue;
 
-typedef struct WynArray { WynValue* data; int count; int capacity; } WynArray;
+typedef struct WynArray { WynValue* restrict data; int count; int capacity; } WynArray;
+// Aligned realloc for better cache/SIMD behavior
+static inline WynValue* wyn_array_realloc(WynValue* old, int old_cap, int new_cap) {
+    size_t size = sizeof(WynValue) * new_cap;
+#if defined(__TINYC__)
+    // TCC: use standard realloc
+    WynValue* p = realloc(old, size);
+#else
+    size = (size + 15) & ~15;  // round up to 16-byte alignment
+    WynValue* p;
+#if defined(_WIN32)
+    p = _aligned_malloc(size, 16);
+#else
+    p = aligned_alloc(16, size);
+#endif
+    if (old && old_cap > 0) { memcpy(p, old, sizeof(WynValue) * old_cap); free(old); }
+#endif
+    return p;
+}
 WynArray wyn_array_map(WynArray arr, long long (*fn)(long long));
 WynArray wyn_array_filter(WynArray arr, long long (*fn)(long long));
 long long wyn_array_reduce(WynArray arr, long long (*fn)(long long, long long), long long initial);
 WynArray array_new() { WynArray arr = {0}; return arr; }
-void array_push_int(WynArray* arr, long long value) {
+void array_push_int(WynArray* restrict arr, long long value) {
     if (arr->count >= arr->capacity) {
-        arr->capacity = arr->capacity == 0 ? 4 : arr->capacity * 2;
-        arr->data = realloc(arr->data, sizeof(WynValue) * arr->capacity);
+        int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
+        arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
+        arr->capacity = new_cap;
     }
     arr->data[arr->count].type = WYN_TYPE_INT;
     arr->data[arr->count].data.int_val = value;
     arr->count++;
 }
-void array_push_str(WynArray* arr, const char* value) {
+void array_push_str(WynArray* restrict arr, const char* value) {
     if (arr->count >= arr->capacity) {
-        arr->capacity = arr->capacity == 0 ? 4 : arr->capacity * 2;
-        arr->data = realloc(arr->data, sizeof(WynValue) * arr->capacity);
+        int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
+        arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
+        arr->capacity = new_cap;
     }
     arr->data[arr->count].type = WYN_TYPE_STRING;
     arr->data[arr->count].data.string_val = strdup(value);
     arr->count++;
 }
-void array_push_array(WynArray* arr, WynArray* nested) {
+void array_push_array(WynArray* restrict arr, WynArray* nested) {
     if (arr->count >= arr->capacity) {
-        arr->capacity = arr->capacity == 0 ? 4 : arr->capacity * 2;
-        arr->data = realloc(arr->data, sizeof(WynValue) * arr->capacity);
+        int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
+        arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
+        arr->capacity = new_cap;
     }
     arr->data[arr->count].type = WYN_TYPE_ARRAY;
     arr->data[arr->count].data.array_val = nested;
@@ -544,10 +518,28 @@ void array_remove_str(WynArray* arr, const char* value) {
         }
     }
 }
+// Lightweight int array — 8 bytes per element (vs 16 for WynArray)
+// Used internally for spawn future collection
+typedef struct { long long* data; int count; int capacity; } WynIntArray;
+WynIntArray int_array_new() { WynIntArray a = {0}; return a; }
+void int_array_push(WynIntArray* a, long long v) {
+    if (a->count >= a->capacity) {
+        a->capacity = a->capacity == 0 ? 8 : a->capacity * 2;
+        a->data = realloc(a->data, sizeof(long long) * a->capacity);
+    }
+    a->data[a->count++] = v;
+}
+long long int_array_get(WynIntArray a, int i) {
+    if (i < 0 || i >= a.count) return 0;
+    return a.data[i];
+}
+int int_array_len(WynIntArray a) { return a.count; }
+
 void array_push(WynArray* arr, long long value) {
     if (arr->count >= arr->capacity) {
-        arr->capacity = arr->capacity == 0 ? 4 : arr->capacity * 2;
-        arr->data = realloc(arr->data, sizeof(WynValue) * arr->capacity);
+        int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
+        arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
+        arr->capacity = new_cap;
     }
     arr->data[arr->count].type = WYN_TYPE_INT;
     arr->data[arr->count].data.int_val = value;
@@ -660,8 +652,9 @@ void array_remove_at(WynArray* arr, int index) {
 void array_insert(WynArray* arr, int index, int value) {
     if (index < 0 || index > arr->count) return;
     if (arr->count >= arr->capacity) {
-        arr->capacity = arr->capacity == 0 ? 4 : arr->capacity * 2;
-        arr->data = realloc(arr->data, sizeof(WynValue) * arr->capacity);
+        int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
+        arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
+        arr->capacity = new_cap;
     }
     for (int i = arr->count; i > index; i--) {
         arr->data[i] = arr->data[i-1];
@@ -721,7 +714,7 @@ char* array_join(WynArray arr, const char* sep) {
         }
         if (i < arr.count - 1) total_len += sep_len;
     }
-    char* result = malloc(total_len + 1);
+    char* result = wyn_str_alloc(total_len);
     result[0] = '\0';
     for (int i = 0; i < arr.count; i++) {
         if (arr.data[i].type == WYN_TYPE_STRING) {
@@ -781,7 +774,7 @@ char* string_concat(const char* a, const char* b) {
 }
 char* string_upper(const char* str) {
     int len = strlen(str);
-    char* result = wyn_str_alloc(len + 1);
+    char* result = wyn_str_alloc(len);
     for (int i = 0; i < len; i++) {
         result[i] = toupper(str[i]);
     }
@@ -790,7 +783,7 @@ char* string_upper(const char* str) {
 }
 char* string_lower(const char* str) {
     int len = strlen(str);
-    char* result = wyn_str_alloc(len + 1);
+    char* result = wyn_str_alloc(len);
     for (int i = 0; i < len; i++) {
         result[i] = tolower(str[i]);
     }
@@ -828,7 +821,7 @@ int string_is_whitespace(const char* str) {
 const char* string_char_at(const char* str, int index) {
     int len = strlen(str);
     if (index < 0 || index >= len) return "";
-    char* result = malloc(2);
+    char* result = wyn_str_alloc(1);
     result[0] = str[index];
     result[1] = '\0';
     return result;
@@ -900,7 +893,7 @@ char* string_replace(const char* str, const char* old, const char* new) {
     while ((p = strstr(p, old))) { count++; p += old_len; }
     int new_len = strlen(new);
     int result_len = strlen(str) + count * (new_len - old_len);
-    char* result = malloc(result_len + 1);
+    char* result = wyn_str_alloc(result_len);
     char* r = result;
     p = str;
     while (*p) {
@@ -932,14 +925,14 @@ char* string_slice(const char* str, int start, int end) {
     if (end > len) end = len;
     if (start >= end) return wyn_strdup("");
     int slice_len = end - start;
-    char* result = malloc(slice_len + 1);
+    char* result = wyn_str_alloc(slice_len);
     memcpy(result, str + start, slice_len);
     result[slice_len] = '\0';
     return result;
 }
 char* string_repeat(const char* str, int count) {
     int len = strlen(str);
-    char* result = malloc(len * count + 1);
+    char* result = wyn_str_alloc(len * count);
     for (int i = 0; i < count; i++) memcpy(result + i * len, str, len);
     result[len * count] = '\0';
     return result;
@@ -994,7 +987,7 @@ WynArray string_split(const char* str, const char* delim) {
             break;
         }
         int len = found - p;
-        char* seg = malloc(len + 1);
+        char* seg = wyn_str_alloc(len);
         memcpy(seg, p, len);
         seg[len] = 0;
         array_push_str(&arr, seg);
@@ -1005,7 +998,7 @@ WynArray string_split(const char* str, const char* delim) {
 const char* wyn_string_charat(const char* str, int index) {
     int len = strlen(str);
     if (index < 0 || index >= len) return "";
-    char* result = malloc(2);
+    char* result = wyn_str_alloc(1);
     result[0] = str[index];
     result[1] = '\0';
     return result;
@@ -1013,7 +1006,7 @@ const char* wyn_string_charat(const char* str, int index) {
 WynArray string_chars(const char* str) {
     WynArray arr = array_new();
     for (int i = 0; str[i] != '\0'; i++) {
-        char* ch = malloc(2);
+        char* ch = wyn_str_alloc(1);
         ch[0] = str[i];
         ch[1] = '\0';
         array_push_str(&arr, ch);
@@ -1031,7 +1024,7 @@ char* string_pad_left(const char* str, int width, const char* pad) {
     int len = strlen(str);
     if (len >= width) return wyn_strdup(str);
     int pad_len = width - len;
-    char* result = malloc(width + 1);
+    char* result = wyn_str_alloc(width);
     for (int i = 0; i < pad_len; i++) result[i] = pad[0];
     strcpy(result + pad_len, str);
     return result;
@@ -1040,7 +1033,7 @@ char* string_pad_right(const char* str, int width, const char* pad) {
     int len = strlen(str);
     if (len >= width) return wyn_strdup(str);
     int pad_len = width - len;
-    char* result = malloc(width + 1);
+    char* result = wyn_str_alloc(width);
     strcpy(result, str);
     for (int i = len; i < width; i++) result[i] = pad[0];
     result[width] = '\0';
@@ -1114,7 +1107,7 @@ int int_is_zero(int n) { return n == 0; }
 int int_sign(int n) { return (n > 0) - (n < 0); }
 char* int_to_binary(int n) {
     if (n == 0) return "0";
-    char* result = malloc(33);
+    char* result = wyn_str_alloc(32);
     int i = 0;
     unsigned int num = (unsigned int)n;
     while (num > 0) {
@@ -1130,7 +1123,7 @@ char* int_to_binary(int n) {
     return result;
 }
 char* int_to_hex(int n) {
-    char* result = malloc(12);
+    char* result = wyn_str_alloc(11);
     sprintf(result, "%x", n);
     return result;
 }
@@ -2918,17 +2911,13 @@ long long Task_channel(long long capacity) {
 }
 void Task_send(long long handle, long long value) {
     if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return;
-    long long* boxed = malloc(sizeof(long long));
-    *boxed = value;
-    wyn_task_send(task_registry[handle], boxed);
+    // Send value directly — no boxing
+    wyn_task_send(task_registry[handle], (void*)(intptr_t)value);
 }
 long long Task_recv(long long handle) {
     if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return 0;
     void* ptr = wyn_task_recv(task_registry[handle]);
-    if (!ptr) return 0;
-    long long val = *(long long*)ptr;
-    free(ptr);
-    return val;
+    return (long long)(intptr_t)ptr;
 }
 void Task_close(long long handle) {
     if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return;

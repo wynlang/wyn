@@ -271,10 +271,10 @@ void codegen_expr(Expr* expr) {
             codegen_expr(expr->unary.operand);
             break;
         case EXPR_AWAIT:
-            // Await: get result from future, handle NULL safely
-            emit("({ void* __fr = future_get((Future*)(intptr_t)");
+            // Await: get result from future — value stored directly via intptr_t
+            emit("(long long)(intptr_t)future_get((Future*)(intptr_t)");
             codegen_expr(expr->await.expr);
-            emit("); __fr ? *(long long*)__fr : 0; })");
+            emit(")");
             break;
         case EXPR_BINARY:
             // Constant folding: if both sides are int literals, compute at compile time
@@ -554,9 +554,13 @@ void codegen_expr(Expr* expr) {
                 
                 if (expr->call.arg_count == 1) {
                     // Single argument - use the _Generic macro for type dispatch
+                    // Escape analysis: string interp arg to print doesn't escape
+                    bool prev_skip = codegen_skip_strdup;
+                    if (expr->call.args[0]->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
                     emit("print(");
                     codegen_expr(expr->call.args[0]);
                     emit(")");
+                    codegen_skip_strdup = prev_skip;
                 } else if (expr->call.arg_count >= 2 && 
                            expr->call.args[0]->type == EXPR_STRING) {
                     // Format string with {} placeholders: print("Value: {}", x)
@@ -648,6 +652,17 @@ void codegen_expr(Expr* expr) {
                     }
                     emit("printf(\"\\n\"); })");
                 }
+            } else if (expr->call.callee->type == EXPR_IDENT && 
+                       expr->call.callee->token.length == 7 &&
+                       memcmp(expr->call.callee->token.start, "println", 7) == 0 &&
+                       expr->call.arg_count == 1) {
+                // Escape analysis: string interp arg to println doesn't escape
+                bool prev_skip = codegen_skip_strdup;
+                if (expr->call.args[0]->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
+                emit("println(");
+                codegen_expr(expr->call.args[0]);
+                emit(")");
+                codegen_skip_strdup = prev_skip;
             } else if (expr->call.callee->type == EXPR_IDENT && 
                        expr->call.callee->token.length == 8 &&
                        memcmp(expr->call.callee->token.start, "get_argc", 8) == 0) {
@@ -1060,6 +1075,22 @@ void codegen_expr(Expr* expr) {
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
             
+            // Spawn array: intercept .push() and [i] for WynIntArray
+            if (expr->method_call.object->type == EXPR_IDENT &&
+                method.length == 4 && memcmp(method.start, "push", 4) == 0 &&
+                expr->method_call.arg_count == 1) {
+                char _on[256]; int _ol = expr->method_call.object->token.length < 255 ? expr->method_call.object->token.length : 255;
+                memcpy(_on, expr->method_call.object->token.start, _ol); _on[_ol] = '\0';
+                if (is_spawn_array(_on)) {
+                    emit("int_array_push(&(");
+                    codegen_expr(expr->method_call.object);
+                    emit("), (long long)(");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit("))");
+                    break;
+                }
+            }
+            
             // Check if this is an enum constructor: Shape.Circle(5.0)
             if (expr->method_call.object->type == EXPR_IDENT) {
                 char _obj[128]; snprintf(_obj, 128, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
@@ -1300,6 +1331,19 @@ void codegen_expr(Expr* expr) {
                         break;
                     }
                     // Default: int/pointer push with cast
+                    // Check if this is a spawn array (WynIntArray)
+                    if (expr->method_call.object->type == EXPR_IDENT) {
+                        char _on[256]; int _ol = expr->method_call.object->token.length < 255 ? expr->method_call.object->token.length : 255;
+                        memcpy(_on, expr->method_call.object->token.start, _ol); _on[_ol] = '\0';
+                        if (is_spawn_array(_on)) {
+                            emit("int_array_push(&(");
+                            codegen_expr(expr->method_call.object);
+                            emit("), (long long)(");
+                            codegen_expr(expr->method_call.args[0]);
+                            emit("))");
+                            break;
+                        }
+                    }
                     emit("array_push(&(");
                     codegen_expr(expr->method_call.object);
                     emit("), (long long)(");
@@ -1848,6 +1892,14 @@ void codegen_expr(Expr* expr) {
                     } else if (strcmp(mname, "reverse") == 0) {
                         emit("array_reverse_copy("); codegen_expr(expr->method_call.object); emit(")"); break;
                     } else if (strcmp(mname, "push") == 0) {
+                        // Check if this is a spawn array (WynIntArray)
+                        if (expr->method_call.object->type == EXPR_IDENT) {
+                            char _on[256]; int _ol = expr->method_call.object->token.length < 255 ? expr->method_call.object->token.length : 255;
+                            memcpy(_on, expr->method_call.object->token.start, _ol); _on[_ol] = '\0';
+                            if (is_spawn_array(_on)) {
+                                emit("int_array_push(&("); codegen_expr(expr->method_call.object); emit("), (long long)("); codegen_expr(expr->method_call.args[0]); emit("))"); break;
+                            }
+                        }
                         emit("array_push(&("); codegen_expr(expr->method_call.object); emit("), (long long)("); codegen_expr(expr->method_call.args[0]); emit("))"); break;
                     } else if (strcmp(mname, "pop") == 0) {
                         emit("array_pop_int(&("); codegen_expr(expr->method_call.object); emit("))"); break;
@@ -1871,6 +1923,10 @@ void codegen_expr(Expr* expr) {
             // Generate simple array creation
             static int arr_counter = 0;
             int arr_id = arr_counter++;
+            if (codegen_emit_int_array && expr->array.count == 0) {
+                emit("({ WynIntArray __arr_%d = int_array_new(); __arr_%d; })", arr_id, arr_id);
+                break;
+            }
             emit("({ WynArray __arr_%d = array_new(); ", arr_id);
             for (int i = 0; i < expr->array.count; i++) {
                 Expr* elem = expr->array.elements[i];
@@ -1998,6 +2054,19 @@ void codegen_expr(Expr* expr) {
                 codegen_expr(expr->index.index);
                 emit(")");
             } else {
+                // Check if this is a spawn array (WynIntArray)
+                if (expr->index.array->type == EXPR_IDENT) {
+                    char _on[256]; int _ol = expr->index.array->token.length < 255 ? expr->index.array->token.length : 255;
+                    memcpy(_on, expr->index.array->token.start, _ol); _on[_ol] = '\0';
+                    if (is_spawn_array(_on)) {
+                        emit("int_array_get(");
+                        codegen_expr(expr->index.array);
+                        emit(", ");
+                        codegen_expr(expr->index.index);
+                        emit(")");
+                        break;
+                    }
+                }
                 // Array indexing with tagged union support
                 // Determine if this is a string array by checking the source
                 bool is_string_array = false;
@@ -2646,7 +2715,7 @@ void codegen_expr(Expr* expr) {
             break;
         case EXPR_STRING_INTERP: {
             // String interpolation: "Hello ${name}" -> sprintf format
-            emit("({ char __buf[8192]; sprintf(__buf, \"");
+            emit("({ char __buf[512]; snprintf(__buf, 512, \"");
             
             // Build format string - use %s for everything and convert with _Generic
             for (int i = 0; i < expr->string_interp.count; i++) {
@@ -2690,7 +2759,7 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
-            emit("); wyn_strdup(__buf); })");
+            emit("); %s; })", codegen_skip_strdup ? "__buf" : "wyn_strdup(__buf)");
             break;
         }
         case EXPR_RANGE:
@@ -2754,6 +2823,11 @@ void codegen_expr(Expr* expr) {
                 
                 if (arg_count == 0) {
                     emit("wyn_spawn_async((TaskFuncWithReturn)__spawn_wrapper_%s, NULL)", func_name);
+                } else if (arg_count == 1) {
+                    // Single arg: pass directly as void* — no malloc
+                    emit("wyn_spawn_async((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
+                    codegen_expr(call->call.args[0]);
+                    emit("))");
                 } else {
                     // Create args struct and pass to wrapper
                     spawn_id_counter++;
