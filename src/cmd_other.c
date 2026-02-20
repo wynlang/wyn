@@ -167,6 +167,150 @@ int cmd_repl(int argc, char** argv) {
     return 0;
 }
 
+int cmd_doc_project(int argc, char** argv) {
+    (void)argc; (void)argv;
+    // Scan for .wyn files in current directory and src/
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "find . -maxdepth 3 -name '*.wyn' -o -name '*.🐉' 2>/dev/null | grep -v node_modules | grep -v packages | grep -v vendor | sort");
+    FILE* fp = popen(cmd, "r");
+    if (!fp) { fprintf(stderr, "Error: Cannot scan for .wyn files\n"); return 1; }
+    
+    char files[256][512];
+    int file_count = 0;
+    char line[512];
+    while (fgets(line, sizeof(line), fp) && file_count < 256) {
+        char* nl = strchr(line, '\n'); if (nl) *nl = '\0';
+        if (line[0]) strcpy(files[file_count++], line);
+    }
+    pclose(fp);
+    
+    if (file_count == 0) { fprintf(stderr, "No .wyn files found\n"); return 1; }
+    
+    // Collect doc entries from all files
+    typedef struct { char type[16]; char sig[512]; char doc[2048]; char file[256]; } DocEntry;
+    DocEntry* entries = malloc(sizeof(DocEntry) * 4096);
+    int entry_count = 0;
+    
+    for (int fi = 0; fi < file_count; fi++) {
+        FILE* f = fopen(files[fi], "r");
+        if (!f) continue;
+        char comment[4096] = "";
+        int in_comment = 0;
+        while (fgets(line, sizeof(line), f)) {
+            if (strncmp(line, "//", 2) == 0) {
+                if (strlen(comment) + strlen(line) < sizeof(comment) - 4)
+                    strcat(comment, line + (line[2] == ' ' ? 3 : 2));
+                in_comment = 1;
+            } else if ((strncmp(line, "fn ", 3) == 0 || strncmp(line, "struct ", 7) == 0 || strncmp(line, "enum ", 5) == 0) && entry_count < 4096) {
+                DocEntry* e = &entries[entry_count++];
+                if (strncmp(line, "fn ", 3) == 0) strcpy(e->type, "Function");
+                else if (strncmp(line, "struct ", 7) == 0) strcpy(e->type, "Struct");
+                else strcpy(e->type, "Enum");
+                char* nl2 = strchr(line, '\n'); if (nl2) *nl2 = '\0';
+                strncpy(e->sig, line, sizeof(e->sig) - 1);
+                if (in_comment) strncpy(e->doc, comment, sizeof(e->doc) - 1);
+                else e->doc[0] = '\0';
+                strncpy(e->file, files[fi], sizeof(e->file) - 1);
+                comment[0] = '\0'; in_comment = 0;
+            } else if (strlen(line) > 1 && line[0] != ' ' && line[0] != '\t') {
+                comment[0] = '\0'; in_comment = 0;
+            }
+        }
+        fclose(f);
+    }
+    
+    // Generate HTML
+    system("mkdir -p docs");
+    FILE* out = fopen("docs/index.html", "w");
+    if (!out) { fprintf(stderr, "Error: Cannot write docs/index.html\n"); free(entries); return 1; }
+    
+    fprintf(out, "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">\n");
+    fprintf(out, "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n");
+    fprintf(out, "<title>Wyn Project Documentation</title>\n<style>\n");
+    fprintf(out,
+        ":root{--bg:#fff;--fg:#1a2332;--sidebar:#f8f9fa;--border:#e2e6ec;--accent:#00d2ff;--code-bg:#f4f3f3;--card:#fff}\n"
+        "[data-theme=dark]{--bg:#1a1a2e;--fg:#e0e0e0;--sidebar:#16213e;--border:#2a2a4a;--accent:#4fc3f7;--code-bg:#16213e;--card:#1e1e3f}\n"
+        "*{margin:0;padding:0;box-sizing:border-box}\n"
+        "body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--fg);display:flex;min-height:100vh}\n"
+        ".sidebar{width:280px;background:var(--sidebar);border-right:1px solid var(--border);padding:16px;position:fixed;height:100vh;overflow-y:auto}\n"
+        ".sidebar h2{font-size:16px;margin-bottom:12px}\n"
+        ".sidebar input{width:100%%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);margin-bottom:12px;font-size:13px}\n"
+        ".sidebar .module{font-size:12px;color:var(--accent);margin-top:14px;font-weight:600;text-transform:uppercase}\n"
+        ".sidebar a{display:block;padding:3px 8px;color:var(--fg);text-decoration:none;font-size:13px;border-radius:4px}\n"
+        ".sidebar a:hover{background:var(--accent);color:#fff}\n"
+        ".main{margin-left:280px;padding:32px 48px;max-width:900px;flex:1}\n"
+        ".main h1{margin-bottom:8px} .main .stats{color:#6b7280;margin-bottom:24px;font-size:14px}\n"
+        ".entry{margin-bottom:24px;border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--card)}\n"
+        ".entry h3{font-size:16px;margin-bottom:4px}\n"
+        ".entry .badge{display:inline-block;font-size:10px;padding:2px 6px;border-radius:4px;background:var(--accent);color:#fff;margin-right:6px}\n"
+        ".entry .file{font-size:11px;color:#6b7280}\n"
+        ".entry pre{background:var(--code-bg);padding:10px;border-radius:6px;overflow-x:auto;font-size:13px;font-family:'SF Mono',monospace;margin-top:8px}\n"
+        ".entry .doc{color:#6b7280;margin:6px 0;font-size:13px;white-space:pre-line}\n"
+        ".controls{display:flex;gap:8px;margin-bottom:16px}\n"
+        ".controls button{padding:4px 12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);cursor:pointer;font-size:12px}\n"
+        ".controls button:hover{background:var(--accent);color:#fff;border-color:var(--accent)}\n"
+        "@media(max-width:768px){.sidebar{display:none}.main{margin-left:0;padding:16px}}\n"
+    );
+    fprintf(out, "</style></head><body>\n");
+    
+    // Sidebar
+    fprintf(out, "<nav class=\"sidebar\">\n<h2>🐉 Project Docs</h2>\n");
+    fprintf(out, "<input type=\"text\" id=\"search\" placeholder=\"Search...\" oninput=\"filterDocs()\">\n");
+    const char* last_file = "";
+    for (int i = 0; i < entry_count; i++) {
+        if (strcmp(entries[i].file, last_file) != 0) {
+            // Module name from file path
+            const char* base = strrchr(entries[i].file, '/');
+            base = base ? base + 1 : entries[i].file;
+            fprintf(out, "<div class=\"module\">%s</div>\n", base);
+            last_file = entries[i].file;
+        }
+        char name[128] = "";
+        if (strncmp(entries[i].sig, "fn ", 3) == 0) sscanf(entries[i].sig + 3, "%127[^( ]", name);
+        else if (strncmp(entries[i].sig, "struct ", 7) == 0) sscanf(entries[i].sig + 7, "%127[^ {]", name);
+        else if (strncmp(entries[i].sig, "enum ", 5) == 0) sscanf(entries[i].sig + 5, "%127[^ {]", name);
+        if (!name[0]) strncpy(name, entries[i].sig, 40);
+        fprintf(out, "<a href=\"#e%d\">%s</a>\n", i, name);
+    }
+    fprintf(out, "</nav>\n");
+    
+    // Main content
+    fprintf(out, "<div class=\"main\">\n");
+    fprintf(out, "<h1>Project Documentation</h1>\n");
+    fprintf(out, "<div class=\"stats\">%d files · %d entries</div>\n", file_count, entry_count);
+    fprintf(out, "<div class=\"controls\"><button onclick=\"toggleTheme()\">Dark Mode</button></div>\n");
+    
+    last_file = "";
+    for (int i = 0; i < entry_count; i++) {
+        if (strcmp(entries[i].file, last_file) != 0) {
+            const char* base = strrchr(entries[i].file, '/');
+            base = base ? base + 1 : entries[i].file;
+            fprintf(out, "<h2 style=\"margin:24px 0 12px;border-bottom:1px solid var(--border);padding-bottom:8px\">%s</h2>\n", base);
+            last_file = entries[i].file;
+        }
+        fprintf(out, "<div class=\"entry\" id=\"e%d\" data-name=\"%s\">\n", i, entries[i].sig);
+        fprintf(out, "<span class=\"badge\">%s</span>", entries[i].type);
+        fprintf(out, "<span class=\"file\">%s</span>\n", entries[i].file);
+        char name[128] = "";
+        if (strncmp(entries[i].sig, "fn ", 3) == 0) sscanf(entries[i].sig + 3, "%127[^( ]", name);
+        else if (strncmp(entries[i].sig, "struct ", 7) == 0) sscanf(entries[i].sig + 7, "%127[^ {]", name);
+        fprintf(out, "<h3>%s</h3>\n", name[0] ? name : entries[i].sig);
+        if (entries[i].doc[0]) fprintf(out, "<div class=\"doc\">%s</div>\n", entries[i].doc);
+        fprintf(out, "<pre>%s</pre>\n</div>\n", entries[i].sig);
+    }
+    fprintf(out, "</div>\n");
+    
+    fprintf(out, "<script>\n"
+        "function toggleTheme(){var h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'':'dark'}\n"
+        "function filterDocs(){var q=document.getElementById('search').value.toLowerCase();document.querySelectorAll('.entry').forEach(function(e){e.style.display=e.dataset.name.toLowerCase().includes(q)?'':'none'});document.querySelectorAll('.sidebar a').forEach(function(a){a.style.display=a.textContent.toLowerCase().includes(q)?'':'none'})}\n"
+        "</script>\n</body></html>\n");
+    
+    fclose(out);
+    free(entries);
+    printf("Generated docs/index.html (%d files, %d entries)\n", file_count, entry_count);
+    return 0;
+}
+
 int cmd_doc(const char* file, int argc, char** argv) {
     if (!file) {
         fprintf(stderr, "Usage: wyn doc <file.wyn> [--html]\n");

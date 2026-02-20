@@ -1,16 +1,22 @@
 // Spawn 10K tasks — lightweight concurrency
 // Tests: task creation overhead, scheduler throughput
+// Pattern: fire-and-forget spawns + Task.recv for collection
 
-fn work(id: int) -> int {
-    return id * id
+fn work(ch: int, id: int) -> int {
+    Task.send(ch, id * id)
+    return 0
 }
 
 fn main() -> int {
+    var ch = Task.channel(4096)
+    for i in 0..10000 {
+        spawn work(ch, i)
+    }
     var total = 0
     for i in 0..10000 {
-        var result = spawn work(i)
-        total = total + await result
+        total = total + Task.recv(ch)
     }
+    Task.close(ch)
     println("10K tasks, sum = ${total}")
     return 0
 }

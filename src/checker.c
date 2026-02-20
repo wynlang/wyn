@@ -1089,7 +1089,7 @@ void init_checker() {
 
     // Register namespace identifiers so checker doesn't reject File.read() etc.
     // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", NULL};
+    const char* namespaces[] = {"File", "Path", "DateTime", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "Socket", "Ws", NULL};
     for (int i = 0; namespaces[i]; i++) {
         Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
         if (!find_symbol(global_scope, ns_tok)) {
@@ -1328,12 +1328,12 @@ void init_checker() {
         add_symbol(global_scope, tok, ft, false);
     }
     {
-        // Http.accept(server_fd) -> string "METHOD|PATH|BODY|CLIENT_FD"
+        // Http.accept(server_fd) -> int (client fd)
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = 1;
         ft->fn_type.param_types = malloc(sizeof(Type*));
         ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.return_type = builtin_string;
+        ft->fn_type.return_type = builtin_int;
         Token tok = {TOKEN_IDENT, "Http_accept", 11, 0};
         add_symbol(global_scope, tok, ft, false);
     }
@@ -1566,6 +1566,26 @@ void init_checker() {
         {"Process_exec_capture", 20, builtin_string},
         {"Process_exec_status", 19, builtin_int},
         {"Http_timeout", 12, builtin_int},
+        {"Http_listen", 11, builtin_int},
+        {"Http_accept", 11, builtin_int},
+        {"Http_method", 11, builtin_string},
+        {"Http_path", 9, builtin_string},
+        {"Http_body", 9, builtin_string},
+        {"Http_respond", 12, builtin_void},
+        {"Http_respond_json", 17, builtin_void},
+        {"Http_respond_with_header", 24, builtin_void},
+        {"Http_close_client", 17, builtin_void},
+        {"Http_route_match", 16, builtin_int},
+        {"Ws_connect", 10, builtin_int},
+        {"Ws_send", 7, builtin_int},
+        {"Ws_recv", 7, builtin_string},
+        {"Socket_connect", 14, builtin_int},
+        {"Socket_send", 11, builtin_int},
+        {"Socket_recv", 11, builtin_string},
+        {"Crypto_sha1", 11, builtin_string},
+        {"Crypto_sha1_base64", 18, builtin_string},
+        {"Crypto_hmac_sha256", 18, builtin_string},
+        {"Crypto_random_bytes", 19, builtin_string},
         {"Json_to_pretty_string", 21, builtin_string},
         {"Csv_parse", 9, builtin_int},
         {"Csv_row_count", 13, builtin_int},
@@ -1597,8 +1617,77 @@ void init_checker() {
         {"Regex_find_all", 14, builtin_string},
         {"Encoding_hex_decode", 19, builtin_string},
         {"Encoding_csv_parse", 18, builtin_string},
-        {"Crypto_hmac_sha256", 18, builtin_string},
-        {"Crypto_random_bytes", 19, builtin_string},
+        // Missing functions from audit
+        {"Env_get", 7, builtin_string},
+        {"Env_set", 7, builtin_int},
+        {"File_rename", 11, builtin_int},
+        {"Db_open", 7, builtin_int},
+        {"Db_close", 8, builtin_void},
+        {"Db_exec", 7, builtin_int},
+        {"Db_exec_p", 9, builtin_int},
+        {"Db_query", 8, builtin_string},
+        {"Db_query_one", 12, builtin_string},
+        {"Db_query_p", 10, builtin_string},
+        {"Db_error", 8, builtin_string},
+        {"Db_last_insert_id", 17, builtin_int},
+        {"Http_body", 9, builtin_string},
+        {"Http_header", 11, builtin_string},
+        {"Http_status", 11, builtin_int},
+        {"Http_ctx_fd", 11, builtin_int},
+        {"Http_set_timeout", 16, builtin_void},
+        {"Http_close_server", 17, builtin_void},
+        {"Http_free", 9, builtin_void},
+        {"Time_now_millis", 15, builtin_int},
+        {"Time_format", 11, builtin_string},
+        {"Time_sleep", 10, builtin_void},
+        {"Task_channel", 12, builtin_int},
+        {"Task_value", 10, builtin_int},
+        {"Task_get", 8, builtin_int},
+        {"Task_recv", 9, builtin_int},
+        {"Task_free_value", 15, builtin_void},
+        {"Math_abs", 8, builtin_int},
+        {"Socket_set_timeout", 18, builtin_int},
+        {"Socket_set_nonblocking", 22, builtin_int},
+        {"Socket_poll_read", 16, builtin_int},
+        {"Socket_read_line", 16, builtin_string},
+        {"Socket_close", 12, builtin_void},
+        {"Ws_close", 8, builtin_void},
+        {"System_gc", 9, builtin_void},
+        {"System_load_env", 15, builtin_void},
+        {"System_set_env", 14, builtin_int},
+        {"Data_save", 9, builtin_void},
+        {"Template_render", 15, builtin_string},
+        {"Template_render_string", 22, builtin_string},
+        {"String_char_from_int", 20, builtin_string},
+        {"String_from_chars", 17, builtin_string},
+        {"Fs_read_file", 12, builtin_string},
+        {"Queue_push", 10, builtin_void},
+        {"Queue_pop", 9, builtin_int},
+        {"Queue_peek", 10, builtin_int},
+        {"Queue_len", 9, builtin_int},
+        {"Queue_is_empty", 14, builtin_int},
+        {"Stack_push", 10, builtin_void},
+        {"Stack_pop", 9, builtin_int},
+        {"Stack_peek", 10, builtin_int},
+        {"Stack_len", 9, builtin_int},
+        {"Stack_is_empty", 14, builtin_int},
+        {"Terminal_color", 14, builtin_void},
+        {"Terminal_bg", 11, builtin_void},
+        {"Terminal_bold", 12, builtin_void},
+        {"Terminal_dim", 12, builtin_void},
+        {"Terminal_underline", 18, builtin_void},
+        {"Terminal_reset", 14, builtin_void},
+        {"Terminal_hide_cursor", 20, builtin_void},
+        {"Terminal_show_cursor", 20, builtin_void},
+        {"Terminal_box", 12, builtin_void},
+        {"Terminal_progress", 17, builtin_void},
+        {"Terminal_print_color", 20, builtin_void},
+        {"Test_init", 9, builtin_void},
+        {"Test_assert", 11, builtin_void},
+        {"Test_describe", 13, builtin_void},
+        {"Test_skip", 9, builtin_void},
+        {"Test_summary", 12, builtin_int},
+        {"Json_set", 8, builtin_void},
     };
     int new_fns_count = sizeof(new_fns) / sizeof(new_fns[0]);
     for (int i = 0; i < new_fns_count; i++) {
@@ -2042,7 +2131,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                        (left->kind == TYPE_BOOL && right->kind == TYPE_INT) ||
                                        (left->kind == TYPE_ENUM && right->kind == TYPE_INT) ||
                                        (left->kind == TYPE_INT && right->kind == TYPE_ENUM) ||
-                                       (left->kind == TYPE_ENUM && right->kind == TYPE_ENUM);
+                                       (left->kind == TYPE_ENUM && right->kind == TYPE_ENUM) ||
+                                       (left->kind == TYPE_INT && right->kind == TYPE_FLOAT) ||
+                                       (left->kind == TYPE_FLOAT && right->kind == TYPE_INT) ||
+                                       (left->kind == TYPE_FUNCTION) ||
+                                       (right->kind == TYPE_FUNCTION);
                 
                 if (!types_compatible) {
                     fprintf(stderr, "Error at line %d: Cannot compare different types\n", 

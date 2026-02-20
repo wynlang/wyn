@@ -41,10 +41,9 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
             if (stmt->for_stmt.body) scan_stmt_for_lambdas(stmt->for_stmt.body);
             break;
         case STMT_SPAWN:
-            // Collect spawn wrappers
+            // Collect spawn wrappers for fire-and-forget spawns
             if (stmt->spawn.call->type == EXPR_CALL && 
-                stmt->spawn.call->call.callee->type == EXPR_IDENT &&
-                stmt->spawn.call->call.arg_count == 0) {
+                stmt->spawn.call->call.callee->type == EXPR_IDENT) {
                 
                 Expr* callee = stmt->spawn.call->call.callee;
                 char func_name[256];
@@ -52,7 +51,6 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                 memcpy(func_name, callee->token.start, len);
                 func_name[len] = '\0';
                 
-                // Add to spawn wrappers (track by func_name + arg_count)
                 int arg_count = stmt->spawn.call->call.arg_count;
                 bool already_added = false;
                 for (int i = 0; i < spawn_wrapper_count; i++) {
@@ -302,6 +300,17 @@ static void scan_expr_for_lambdas(Expr* expr) {
             scan_expr_for_lambdas(expr->method_call.object);
             for (int i = 0; i < expr->method_call.arg_count; i++) {
                 scan_expr_for_lambdas(expr->method_call.args[i]);
+            }
+            // Detect x.push(spawn ...) — register x as spawn array
+            if (expr->method_call.method.length == 4 &&
+                memcmp(expr->method_call.method.start, "push", 4) == 0 &&
+                expr->method_call.arg_count == 1 &&
+                expr->method_call.args[0]->type == EXPR_SPAWN &&
+                expr->method_call.object->type == EXPR_IDENT) {
+                char vn[256];
+                int vl = expr->method_call.object->token.length < 255 ? expr->method_call.object->token.length : 255;
+                memcpy(vn, expr->method_call.object->token.start, vl); vn[vl] = '\0';
+                register_spawn_array(vn);
             }
             break;
         case EXPR_SPAWN:

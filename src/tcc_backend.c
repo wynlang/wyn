@@ -50,14 +50,14 @@ int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
         
         snprintf(cmd, sizeof(cmd),
             "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -w %s %s "
-            "%s %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s %s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
+            "%s %s/src/wyn_arena.c %s/src/stdlib_string.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s %s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
             tcc_bin, output_path, wyn_root, wyn_root, extra_flags, sqlite_inc,
-            c_path, wyn_root, wyn_root, rt_tcc, sqlite_file);
+            c_path, wyn_root, wyn_root, wyn_root, wyn_root, rt_tcc, sqlite_file);
     } else {
         // Fallback: compile runtime from source
         snprintf(cmd, sizeof(cmd),
             "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -w -D__TINYC__ "
-            "%s %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
+            "%s %s/src/wyn_arena.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
             "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c "
             "%s/src/test_runtime.c %s/src/spawn.c %s/src/spawn_fast.c "
             "%s/src/future.c %s/src/net.c %s/src/net_runtime.c "
@@ -71,7 +71,7 @@ int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
             "%s/src/net_advanced.c %s/src/hashmap_runtime.c "
             "-lpthread -lm 2>/tmp/wyn_tcc_err.txt",
             tcc_bin, output_path, wyn_root, wyn_root,
-            c_path, wyn_root, wyn_root,
+            c_path, wyn_root, wyn_root, wyn_root,
             wyn_root, wyn_root, wyn_root,
             wyn_root, wyn_root, wyn_root,
             wyn_root, wyn_root, wyn_root,

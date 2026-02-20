@@ -233,9 +233,15 @@ void codegen_stmt(Stmt* stmt) {
                         c_type = "long long";
                     }
                 } else if (stmt->var.init->type == EXPR_ARRAY || stmt->var.init->type == EXPR_LIST_COMP) {
-                    c_type = "WynArray";
+                    // Check if this array holds spawn futures (detected in pre-scan)
+                    char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                    if (is_spawn_array(_vn)) {
+                        c_type = "WynIntArray";
+                    } else {
+                        c_type = "WynArray";
+                        register_array_var(_vn);
+                    }
                     needs_arc_management = false;
-                    { char vn[256]; snprintf(vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start); register_array_var(vn); }
                 } else if (stmt->var.init->type == EXPR_MAP) {
                     // Map type - use the typedef
                     c_type = "WynMap";
@@ -785,7 +791,12 @@ void codegen_stmt(Stmt* stmt) {
                 codegen_expr(stmt->var.init);
                 emit("; /* ARC retain for %.*s */ })", stmt->var.name.length, stmt->var.name.start);
             } else {
+                // Set spawn array flag for WynIntArray emission
+                bool _was_int_array = codegen_emit_int_array;
+                { char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                  if (is_spawn_array(_vn)) codegen_emit_int_array = true; }
                 codegen_expr(stmt->var.init);
+                codegen_emit_int_array = _was_int_array;
             }
             emit(";\n");
             // Shadow define: redirect original name to suffixed version
@@ -832,25 +843,44 @@ void codegen_stmt(Stmt* stmt) {
             emit("continue;\n");
             break;
         case STMT_SPAWN: {
-            // Spawn: lightweight tasks (not OS threads)
-            // Wrapper functions are generated in pre-scan phase
+            // Fire-and-forget spawn: no Future, no return value
+            // Uses wyn_spawn_fast for maximum throughput
             if (stmt->spawn.call->type == EXPR_CALL && 
-                stmt->spawn.call->call.callee->type == EXPR_IDENT &&
-                stmt->spawn.call->call.arg_count == 0) {
+                stmt->spawn.call->call.callee->type == EXPR_IDENT) {
                 
-                // Extract function name
-                Expr* callee = stmt->spawn.call->call.callee;
+                Expr* call = stmt->spawn.call;
+                Expr* callee = call->call.callee;
                 char func_name[256];
                 int len = callee->token.length < 255 ? callee->token.length : 255;
                 memcpy(func_name, callee->token.start, len);
                 func_name[len] = '\0';
                 
-                // Generate spawn call
-                emit("wyn_spawn(__spawn_wrapper_");
-                emit(func_name);
-                emit(", NULL);\n");
+                int arg_count = call->call.arg_count;
+                
+                if (arg_count == 0) {
+                    emit("wyn_spawn_fast((TaskFunc)__spawn_wrapper_%s, NULL);\n", func_name);
+                } else if (arg_count == 1) {
+                    // Single arg: pass directly, no malloc
+                    emit("wyn_spawn_fast((TaskFunc)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
+                    codegen_expr(call->call.args[0]);
+                    emit("));\n");
+                } else {
+                    spawn_id_counter++;
+                    int sid = spawn_id_counter;
+                    emit("{ struct __spawn_args_%d { ", sid);
+                    for (int i = 0; i < arg_count; i++) {
+                        emit("long long a%d; ", i);
+                    }
+                    emit("} *__sa_%d = malloc(sizeof(struct __spawn_args_%d)); ", sid, sid);
+                    for (int i = 0; i < arg_count; i++) {
+                        emit("__sa_%d->a%d = ", sid, i);
+                        codegen_expr(call->call.args[i]);
+                        emit("; ");
+                    }
+                    emit("wyn_spawn_fast((TaskFunc)__spawn_wrapper_%s_%d, __sa_%d); }\n",
+                         func_name, arg_count, sid);
+                }
             } else {
-                // Fallback: just call the function
                 emit("/* spawn (fallback) */ ");
                 codegen_expr(stmt->spawn.call);
                 emit(";\n");
@@ -953,10 +983,17 @@ void codegen_stmt(Stmt* stmt) {
             
             // Function signature
             // Optimization: inline hint for small non-main functions
+            // BUT: don't inline functions used in spawn (wrapper calls them from worker threads)
             {
                 int _bsc = 0;
                 if (stmt->fn.body && stmt->fn.body->type == STMT_BLOCK) _bsc = stmt->fn.body->block.count;
-                if (!is_main_fn && _bsc > 0 && _bsc <= 5) emit("__attribute__((hot)) static inline ");
+                bool _is_spawned = false;
+                char _fn[256]; int _fl = stmt->fn.name.length < 255 ? stmt->fn.name.length : 255;
+                memcpy(_fn, stmt->fn.name.start, _fl); _fn[_fl] = '\0';
+                for (int _si = 0; _si < spawn_wrapper_count; _si++) {
+                    if (strcmp(spawn_wrappers[_si].func_name, _fn) == 0) { _is_spawned = true; break; }
+                }
+                if (!is_main_fn && !_is_spawned && _bsc > 0 && _bsc <= 5) emit("__attribute__((hot)) static inline ");
                 else if (!is_main_fn) emit("__attribute__((hot)) ");
             }
             

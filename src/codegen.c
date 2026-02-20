@@ -28,6 +28,12 @@ extern bool is_builtin_module(const char* name);  // Module system
 
 static FILE* out = NULL;
 
+// Escape analysis: skip wyn_strdup for temporaries that don't escape
+static bool codegen_skip_strdup = false;
+
+// Spawn array: emit WynIntArray instead of WynArray for current init
+static bool codegen_emit_int_array = false;
+
 // Module emission tracking (reset per compilation)
 static bool modules_emitted_this_compilation = false;
 
@@ -350,6 +356,21 @@ typedef struct {
 static SpawnWrapper spawn_wrappers[256];
 static int spawn_wrapper_count = 0;
 static int spawn_id_counter = 0;
+
+// Spawn array tracking — arrays that hold Future pointers use WynIntArray
+static char spawn_array_vars[64][256];
+static int spawn_array_count = 0;
+void register_spawn_array(const char* name) {
+    for (int i = 0; i < spawn_array_count; i++)
+        if (strcmp(spawn_array_vars[i], name) == 0) return;
+    if (spawn_array_count < 64)
+        strcpy(spawn_array_vars[spawn_array_count++], name);
+}
+int is_spawn_array(const char* name) {
+    for (int i = 0; i < spawn_array_count; i++)
+        if (strcmp(spawn_array_vars[i], name) == 0) return 1;
+    return 0;
+}
 
 // Forward declaration
 static void emit(const char* fmt, ...);

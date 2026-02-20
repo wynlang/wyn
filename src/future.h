@@ -19,7 +19,9 @@ Future* future_race(Future** futures, int count);
 Future* future_select(Future** futures, int count);
 
 // Spawn API
+typedef void (*TaskFunc)(void*);
 typedef void* (*TaskFuncWithReturn)(void*);
+void wyn_spawn_fast(TaskFunc func, void* arg);
 Future* wyn_spawn_async(TaskFuncWithReturn func, void* arg);
 
 #endif

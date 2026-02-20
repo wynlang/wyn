@@ -26,28 +26,32 @@ jobs:
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y gcc make libsqlite3-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y gcc make git
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
-        run: choco install make mingw -y
+        run: choco install make mingw git -y
         shell: pwsh
 
-      - name: Build
+      - name: Build TCC from source
+        if: runner.os != 'Windows'
+        run: ./scripts/build-tcc.sh
+        shell: bash
+
+      - name: Build TCC from source (Windows)
+        if: runner.os == 'Windows'
+        run: bash scripts/build-tcc.sh
+        shell: bash
+
+      - name: Build Wyn compiler
         run: make clean && make
         shell: bash
 
-      - name: Build runtime
-        if: runner.os != 'Windows'
+      - name: Build runtime library
         run: make runtime
         shell: bash
 
-      - name: Build runtime (Windows)
-        if: runner.os == 'Windows'
-        run: make runtime
-        shell: bash
-
-      - name: Test (Unix)
+      - name: Test
         if: runner.os != 'Windows'
         run: ./wyn run tests/run_tests.wyn
         shell: bash
@@ -60,19 +64,24 @@ jobs:
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          mkdir -p dist
-          cp wyn dist/${{ matrix.artifact }}
+          mkdir -p dist/vendor/tcc
+          cp wyn dist/
           cp -r runtime dist/runtime
-          cp src/wyn_runtime.h dist/
+          cp -r vendor/tcc/bin dist/vendor/tcc/bin
+          cp -r vendor/tcc/lib dist/vendor/tcc/lib
+          cp -r vendor/tcc/include dist/vendor/tcc/include
+          cp -r vendor/tcc/tcc_include dist/vendor/tcc/tcc_include
+          cp -r src dist/src
           tar czf ${{ matrix.artifact }}.tar.gz -C dist .
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          mkdir dist
-          copy wyn.exe dist\${{ matrix.artifact }}.exe
+          mkdir dist\vendor\tcc
+          copy wyn.exe dist\
           xcopy /E /I runtime dist\runtime
-          copy src\wyn_runtime.h dist\
+          xcopy /E /I vendor\tcc dist\vendor\tcc
+          xcopy /E /I src dist\src
           Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip
         shell: pwsh
 
