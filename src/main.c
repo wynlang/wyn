@@ -832,11 +832,13 @@ int main(int argc, char** argv) {
         const char* build_flag = "";
         int build_release = 0;
         int build_pgo = 0;
+        int build_llvm = 0;
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--shared") == 0) build_flag = " --shared";
             else if (strcmp(argv[i], "--python") == 0) build_flag = " --python";
             else if (strcmp(argv[i], "--release") == 0) build_release = 1;
             else if (strcmp(argv[i], "--pgo") == 0) build_pgo = 1;
+            else if (strcmp(argv[i], "--llvm") == 0) build_llvm = 1;
             else if (!dir) dir = argv[i];
         }
         if (!dir) dir = ".";
@@ -919,6 +921,17 @@ int main(int argc, char** argv) {
         char exe_path[1024]; strncpy(exe_path, argv[0], sizeof(exe_path)-1);
         char* ls = strrchr(exe_path, '/'); if (ls) { *ls = 0; snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path); }
         
+        // LLVM backend path
+        if (build_llvm) {
+            extern int llvm_compile(Program* prog, const char* output_path, const char* wyn_root);
+            unlink(out_c); // Don't need C file for LLVM
+            int result = llvm_compile(prog, bin_path, wyn_root);
+            free(source);
+            if (result == 0) printf("\033[32m✓\033[0m Built (LLVM): %s\n", bin_path);
+            else fprintf(stderr, "\033[31m✗\033[0m LLVM build failed\n");
+            return result;
+        }
+
         // Compile with TCC or system cc
         const char* cc = detect_cc();
         char tcc_bin[512]; snprintf(tcc_bin, sizeof(tcc_bin), "%s/vendor/tcc/bin/tcc", wyn_root);
