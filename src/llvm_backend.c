@@ -16,6 +16,43 @@ static LLVMContextRef ctx;
 static LLVMModuleRef mod;
 static LLVMBuilderRef builder;
 
+// Struct type registry
+#define MAX_STRUCTS 64
+static struct {
+    char name[64];
+    LLVMTypeRef type;
+    Token* fields;
+    int field_count;
+} structs[MAX_STRUCTS];
+static int struct_count = 0;
+
+static int find_struct(const char* name) {
+    for (int i = 0; i < struct_count; i++)
+        if (strcmp(structs[i].name, name) == 0) return i;
+    return -1;
+}
+static int find_field_index(int si, const char* field, int flen) {
+    for (int i = 0; i < structs[si].field_count; i++)
+        if (structs[si].fields[i].length == flen &&
+            memcmp(structs[si].fields[i].start, field, flen) == 0) return i;
+    return -1;
+}
+
+// Enum registry
+#define MAX_ENUMS 64
+static struct { char name[64]; Token* variants; int variant_count; } enums[MAX_ENUMS];
+static int enum_count = 0;
+
+static int find_enum_variant(const char* enum_name, const char* variant, int vlen) {
+    for (int i = 0; i < enum_count; i++) {
+        if (strcmp(enums[i].name, enum_name) != 0) continue;
+        for (int j = 0; j < enums[i].variant_count; j++)
+            if (enums[i].variants[j].length == vlen &&
+                memcmp(enums[i].variants[j].start, variant, vlen) == 0) return j;
+    }
+    return -1;
+}
+
 static LLVMTypeRef i64_type(void) { return LLVMInt64TypeInContext(ctx); }
 static LLVMTypeRef i1_type(void) { return LLVMInt1TypeInContext(ctx); }
 static LLVMTypeRef i8ptr_type(void) { return LLVMPointerTypeInContext(ctx, 0); }
@@ -286,9 +323,143 @@ static LLVMValueRef llvm_expr(Expr* e) {
         for (int i = 0; i < argc; i++) args[i] = to_i64(llvm_expr(e->call.args[i]));
         return LLVMBuildCall2(builder, LLVMGlobalGetValueType(fn), fn, args, argc, "call");
     }
+    case EXPR_SPAWN: {
+        // spawn func(arg) -> Future*
+        if (e->spawn.call && e->spawn.call->type == EXPR_CALL) {
+            Expr* call = e->spawn.call;
+            char fn_name[256];
+            if (call->call.callee->type == EXPR_IDENT)
+                snprintf(fn_name, sizeof(fn_name), "%.*s", (int)call->call.callee->token.length, call->call.callee->token.start);
+            else strcpy(fn_name, "__unknown");
+
+            LLVMValueRef target_fn = LLVMGetNamedFunction(mod, fn_name);
+            if (!target_fn) { fprintf(stderr, "LLVM: spawn: undefined fn '%s'\n", fn_name); return i64_const(0); }
+
+            // Create wrapper if needed
+            char wrap_name[300]; snprintf(wrap_name, sizeof(wrap_name), "__spawn_async_wrap_%s", fn_name);
+            LLVMValueRef wrapper = LLVMGetNamedFunction(mod, wrap_name);
+            if (!wrapper) {
+                LLVMTypeRef wp[] = {i8ptr_type()};
+                LLVMTypeRef wt = LLVMFunctionType(i8ptr_type(), wp, 1, 0);
+                wrapper = LLVMAddFunction(mod, wrap_name, wt);
+                LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(builder);
+                LLVMBasicBlockRef we = LLVMAppendBasicBlockInContext(ctx, wrapper, "entry");
+                LLVMPositionBuilderAtEnd(builder, we);
+                LLVMValueRef raw = LLVMGetParam(wrapper, 0);
+                LLVMValueRef int_arg = LLVMBuildPtrToInt(builder, raw, i64_type(), "arg");
+                LLVMValueRef cargs[] = {int_arg};
+                LLVMValueRef result = LLVMBuildCall2(builder, LLVMGlobalGetValueType(target_fn), target_fn, cargs, 1, "r");
+                LLVMValueRef ret = LLVMBuildIntToPtr(builder, result, i8ptr_type(), "ret");
+                LLVMBuildRet(builder, ret);
+                LLVMPositionBuilderAtEnd(builder, saved_bb);
+            }
+
+            LLVMValueRef spawn_fn = LLVMGetNamedFunction(mod, "wyn_spawn_async");
+            LLVMValueRef arg_val = (call->call.arg_count > 0)
+                ? LLVMBuildIntToPtr(builder, to_i64(llvm_expr(call->call.args[0])), i8ptr_type(), "sarg")
+                : LLVMConstNull(i8ptr_type());
+            LLVMValueRef sargs[] = {LLVMBuildBitCast(builder, wrapper, i8ptr_type(), "wfn"), arg_val};
+            return LLVMBuildCall2(builder, LLVMGlobalGetValueType(spawn_fn), spawn_fn, sargs, 2, "future");
+        }
+        return i64_const(0);
+    }
+    case EXPR_AWAIT: {
+        // await future -> result (as i64 via intptr_t)
+        LLVMValueRef future = llvm_expr(e->await.expr);
+        // Declare future_get if not already
+        LLVMValueRef fg = LLVMGetNamedFunction(mod, "future_get");
+        if (!fg) {
+            LLVMTypeRef fgp[] = {i8ptr_type()};
+            LLVMTypeRef fgt = LLVMFunctionType(i8ptr_type(), fgp, 1, 0);
+            fg = LLVMAddFunction(mod, "future_get", fgt);
+        }
+        LLVMValueRef fargs[] = {future};
+        LLVMValueRef result = LLVMBuildCall2(builder, LLVMGlobalGetValueType(fg), fg, fargs, 1, "await");
+        return LLVMBuildPtrToInt(builder, result, i64_type(), "val");
+    }
+    case EXPR_ARRAY: {
+        // Fixed-size array: allocate on stack, store elements
+        int count = e->array.count;
+        LLVMTypeRef arr_type = LLVMArrayType2(i64_type(), count);
+        LLVMValueRef alloca = LLVMBuildAlloca(builder, arr_type, "arr");
+        for (int i = 0; i < count; i++) {
+            LLVMValueRef idx[] = {LLVMConstInt(LLVMInt32TypeInContext(ctx), 0, 0),
+                                   LLVMConstInt(LLVMInt32TypeInContext(ctx), i, 0)};
+            LLVMValueRef gep = LLVMBuildGEP2(builder, arr_type, alloca, idx, 2, "elem");
+            LLVMBuildStore(builder, to_i64(llvm_expr(e->array.elements[i])), gep);
+        }
+        return alloca;
+    }
+    case EXPR_INDEX: {
+        LLVMValueRef arr = llvm_expr(e->index.array);
+        LLVMValueRef idx_val = to_i64(llvm_expr(e->index.index));
+        // GEP into the array
+        LLVMValueRef idx[] = {LLVMConstInt(LLVMInt32TypeInContext(ctx), 0, 0), idx_val};
+        // We don't know the array size, use a large type
+        LLVMTypeRef arr_type = LLVMArrayType2(i64_type(), 256);
+        LLVMValueRef gep = LLVMBuildGEP2(builder, arr_type, arr, idx, 2, "idx");
+        return LLVMBuildLoad2(builder, i64_type(), gep, "elem");
+    }
+    case EXPR_STRUCT_INIT: {
+        char sname[64]; snprintf(sname, sizeof(sname), "%.*s",
+            (int)e->struct_init.type_name.length, e->struct_init.type_name.start);
+        int si = find_struct(sname);
+        if (si < 0) { fprintf(stderr, "LLVM: unknown struct '%s'\n", sname); return i64_const(0); }
+        // Allocate struct on stack
+        LLVMValueRef alloca = LLVMBuildAlloca(builder, structs[si].type, "struct");
+        // Set fields
+        for (int i = 0; i < e->struct_init.field_count; i++) {
+            char fname[64]; snprintf(fname, sizeof(fname), "%.*s",
+                (int)e->struct_init.field_names[i].length, e->struct_init.field_names[i].start);
+            int fi = find_field_index(si, fname, strlen(fname));
+            if (fi < 0) continue;
+            LLVMValueRef val = to_i64(llvm_expr(e->struct_init.field_values[i]));
+            LLVMValueRef gep = LLVMBuildStructGEP2(builder, structs[si].type, alloca, fi, fname);
+            LLVMBuildStore(builder, val, gep);
+        }
+        return alloca;  // Return pointer to struct
+    }
+    case EXPR_FIELD_ACCESS: {
+        char fname[64]; snprintf(fname, sizeof(fname), "%.*s",
+            (int)e->field_access.field.length, e->field_access.field.start);
+
+        // Check if this is an enum access (e.g., Color.Green)
+        if (e->field_access.object->type == EXPR_IDENT) {
+            char ename[64]; snprintf(ename, sizeof(ename), "%.*s",
+                (int)e->field_access.object->token.length, e->field_access.object->token.start);
+            int vi = find_enum_variant(ename, fname, strlen(fname));
+            if (vi >= 0) return i64_const(vi);
+        }
+
+        // Struct field access
+        LLVMValueRef obj = llvm_expr(e->field_access.object);
+        // Try each struct type to find the field
+        for (int si = 0; si < struct_count; si++) {
+            int fi = find_field_index(si, fname, strlen(fname));
+            if (fi >= 0) {
+                LLVMValueRef gep = LLVMBuildStructGEP2(builder, structs[si].type, obj, fi, fname);
+                return LLVMBuildLoad2(builder, i64_type(), gep, fname);
+            }
+        }
+        fprintf(stderr, "LLVM: unknown field '%s'\n", fname);
+        return i64_const(0);
+    }
     case EXPR_METHOD_CALL: {
         char method[64]; snprintf(method, sizeof(method), "%.*s", (int)e->method_call.method.length, e->method_call.method.start);
         LLVMValueRef obj = llvm_expr(e->method_call.object);
+
+        // Try extension method: Type_method(self, args...)
+        // Check all struct types for a matching function
+        for (int si = 0; si < struct_count; si++) {
+            char ext_name[128]; snprintf(ext_name, sizeof(ext_name), "%s_%s", structs[si].name, method);
+            LLVMValueRef ext_fn = LLVMGetNamedFunction(mod, ext_name);
+            if (ext_fn) {
+                LLVMValueRef args[16]; args[0] = obj;
+                int argc = e->method_call.arg_count; if (argc > 14) argc = 14;
+                for (int i = 0; i < argc; i++) args[1 + i] = to_i64(llvm_expr(e->method_call.args[i]));
+                return LLVMBuildCall2(builder, LLVMGlobalGetValueType(ext_fn), ext_fn, args, 1 + argc, "mcall");
+            }
+        }
 
         // Map method names to C runtime functions: string_<method>(obj, args...)
         char cfn_name[128]; snprintf(cfn_name, sizeof(cfn_name), "string_%s", method);
@@ -471,6 +642,17 @@ static void llvm_stmt(Stmt* s) {
     }
     case STMT_FN:
         break; // handled at program level
+    case STMT_STRUCT:
+        break; // handled at program level
+    case STMT_ENUM:
+        break; // handled at program level
+    case STMT_CONST: {
+        char n[256]; snprintf(n, sizeof(n), "%.*s", (int)s->const_stmt.name.length, s->const_stmt.name.start);
+        LLVMValueRef val = llvm_expr(s->const_stmt.init);
+        if (!is_ptr_val(val)) val = to_i64(val);
+        set_var(n, val);
+        break;
+    }
     default:
         fprintf(stderr, "LLVM: unhandled stmt %d\n", s->type);
         break;
@@ -479,8 +661,14 @@ static void llvm_stmt(Stmt* s) {
 
 static void llvm_emit_function(Stmt* fn_stmt) {
     char name[256];
-    snprintf(name, sizeof(name), "%.*s", (int)fn_stmt->fn.name.length, fn_stmt->fn.name.start);
     int is_main = (fn_stmt->fn.name.length == 4 && memcmp(fn_stmt->fn.name.start, "main", 4) == 0);
+    if (fn_stmt->fn.is_extension) {
+        snprintf(name, sizeof(name), "%.*s_%.*s",
+            (int)fn_stmt->fn.receiver_type.length, fn_stmt->fn.receiver_type.start,
+            (int)fn_stmt->fn.name.length, fn_stmt->fn.name.start);
+    } else {
+        snprintf(name, sizeof(name), "%.*s", (int)fn_stmt->fn.name.length, fn_stmt->fn.name.start);
+    }
     const char* fn_name = is_main ? "wyn_main" : name;
 
     LLVMValueRef fn = LLVMGetNamedFunction(mod, fn_name);
@@ -494,7 +682,9 @@ static void llvm_emit_function(Stmt* fn_stmt) {
         char pn[256]; snprintf(pn, sizeof(pn), "%.*s", (int)fn_stmt->fn.params[i].length, fn_stmt->fn.params[i].start);
         LLVMValueRef p = LLVMGetParam(fn, i);
         LLVMSetValueName2(p, pn, strlen(pn));
-        create_var(pn, p, VAR_INT);  // All params are i64 for now
+        // First param of extension method is ptr (self)
+        int kind = (i == 0 && fn_stmt->fn.is_extension) ? VAR_PTR : VAR_INT;
+        create_var(pn, p, kind);
     }
 
     llvm_stmt(fn_stmt->fn.body);
@@ -520,15 +710,58 @@ int llvm_compile(Program* prog, const char* output_path, const char* wyn_root) {
     // Declare external runtime functions
     declare_runtime();
 
+    // Register enum types
+    for (int i = 0; i < prog->count; i++) {
+        if (prog->stmts[i]->type == STMT_ENUM) {
+            Stmt* s = prog->stmts[i];
+            snprintf(enums[enum_count].name, 64, "%.*s",
+                (int)s->enum_decl.name.length, s->enum_decl.name.start);
+            enums[enum_count].variants = s->enum_decl.variants;
+            enums[enum_count].variant_count = s->enum_decl.variant_count;
+            enum_count++;
+        }
+    }
+
+    // Register struct types
+    for (int i = 0; i < prog->count; i++) {
+        if (prog->stmts[i]->type == STMT_STRUCT) {
+            Stmt* s = prog->stmts[i];
+            char name[64]; snprintf(name, sizeof(name), "%.*s",
+                (int)s->struct_decl.name.length, s->struct_decl.name.start);
+            int fc = s->struct_decl.field_count;
+            LLVMTypeRef* ftypes = malloc(sizeof(LLVMTypeRef) * (fc ? fc : 1));
+            for (int j = 0; j < fc; j++) ftypes[j] = i64_type();
+            LLVMTypeRef st = LLVMStructCreateNamed(ctx, name);
+            LLVMStructSetBody(st, ftypes, fc, 0);
+            free(ftypes);
+            snprintf(structs[struct_count].name, 64, "%s", name);
+            structs[struct_count].type = st;
+            structs[struct_count].fields = s->struct_decl.fields;
+            structs[struct_count].field_count = fc;
+            struct_count++;
+        }
+    }
+
     // Forward declare all functions
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_FN) {
             Stmt* fn = prog->stmts[i];
-            char n[256]; snprintf(n, sizeof(n), "%.*s", (int)fn->fn.name.length, fn->fn.name.start);
+            char n[256];
             int is_main = (fn->fn.name.length == 4 && memcmp(fn->fn.name.start, "main", 4) == 0);
+            if (fn->fn.is_extension) {
+                snprintf(n, sizeof(n), "%.*s_%.*s",
+                    (int)fn->fn.receiver_type.length, fn->fn.receiver_type.start,
+                    (int)fn->fn.name.length, fn->fn.name.start);
+            } else {
+                snprintf(n, sizeof(n), "%.*s", (int)fn->fn.name.length, fn->fn.name.start);
+            }
             int pc = fn->fn.param_count;
             LLVMTypeRef* pt = malloc(sizeof(LLVMTypeRef) * (pc ? pc : 1));
-            for (int j = 0; j < pc; j++) pt[j] = i64_type();
+            for (int j = 0; j < pc; j++) {
+                // First param of extension method is ptr to struct (self)
+                if (j == 0 && fn->fn.is_extension) pt[j] = i8ptr_type();
+                else pt[j] = i64_type();
+            }
             LLVMTypeRef ft = LLVMFunctionType(i64_type(), pt, pc, 0);
             LLVMAddFunction(mod, is_main ? "wyn_main" : n, ft);
             free(pt);
