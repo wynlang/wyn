@@ -230,21 +230,24 @@ static void declare_runtime(void) {
     LLVMAddFunction(mod, "ResultString_unwrap", LLVMFunctionType(i8p, rs_r, 1, 0));
 
     // WynArray support
-    // WynValue = { i32 type, union { i64, double, ptr, ptr, ptr } } ≈ { i32, i64 }
-    LLVMTypeRef wyn_value_fields[] = {LLVMInt32TypeInContext(ctx), i64};
+    // WynValue = { i32 type, [4 x i8] padding, i64 data } = 16 bytes (matches C layout)
+    LLVMTypeRef wyn_value_fields[] = {LLVMInt32TypeInContext(ctx), LLVMArrayType2(LLVMInt8TypeInContext(ctx), 4), i64};
     LLVMTypeRef wyn_value_type = LLVMStructCreateNamed(ctx, "WynValue");
-    LLVMStructSetBody(wyn_value_type, wyn_value_fields, 2, 0);
+    LLVMStructSetBody(wyn_value_type, wyn_value_fields, 3, 0);
     // WynArray = { WynValue* data, i32 count, i32 capacity }
     LLVMTypeRef wyn_array_fields[] = {i8p, LLVMInt32TypeInContext(ctx), LLVMInt32TypeInContext(ctx)};
     LLVMTypeRef wyn_array_type = LLVMStructCreateNamed(ctx, "WynArray");
     LLVMStructSetBody(wyn_array_type, wyn_array_fields, 3, 0);
 
     LLVMTypeRef wa_args[] = {wyn_array_type};
-    LLVMAddFunction(mod, "array_len", LLVMFunctionType(i64, wa_args, 1, 0));
-    LLVMTypeRef wa_push_int[] = {i8p, i64};  // WynArray* restrict, i64
+    LLVMAddFunction(mod, "array_new", LLVMFunctionType(wyn_array_type, NULL, 0, 0));
+    LLVMAddFunction(mod, "array_len", LLVMFunctionType(LLVMInt32TypeInContext(ctx), wa_args, 1, 0));
+    LLVMTypeRef wa_ptr_args[] = {i8p};  // WynArray*
+    LLVMTypeRef wa_push_int[] = {i8p, i64};  // WynArray*, i64
     LLVMAddFunction(mod, "array_push_int", LLVMFunctionType(vd, wa_push_int, 2, 0));
     LLVMAddFunction(mod, "array_push_str", LLVMFunctionType(vd, (LLVMTypeRef[]){i8p, i8p}, 2, 0));
-    LLVMAddFunction(mod, "array_pop_int", LLVMFunctionType(i64, (LLVMTypeRef[]){i8p}, 1, 0));
+    LLVMAddFunction(mod, "array_push", LLVMFunctionType(vd, wa_push_int, 2, 0));
+    LLVMAddFunction(mod, "array_pop_int", LLVMFunctionType(i64, wa_ptr_args, 1, 0));
 
     // Namespaced API functions
     LLVMAddFunction(mod, "File_read", LLVMFunctionType(i8p, strdup_args, 1, 0));
@@ -535,24 +538,69 @@ static LLVMValueRef llvm_expr(Expr* e) {
         return LLVMBuildPtrToInt(builder, result, i64_type(), "val");
     }
     case EXPR_ARRAY: {
-        // Fixed-size array: allocate on stack, store elements
-        int count = e->array.count;
-        LLVMTypeRef arr_type = LLVMArrayType2(i64_type(), count);
-        LLVMValueRef alloca = LLVMBuildAlloca(builder, arr_type, "arr");
-        for (int i = 0; i < count; i++) {
-            LLVMValueRef idx[] = {LLVMConstInt(LLVMInt32TypeInContext(ctx), 0, 0),
-                                   LLVMConstInt(LLVMInt32TypeInContext(ctx), i, 0)};
-            LLVMValueRef gep = LLVMBuildGEP2(builder, arr_type, alloca, idx, 2, "elem");
-            LLVMBuildStore(builder, to_i64(llvm_expr(e->array.elements[i])), gep);
+        // Create WynArray via runtime: array_new() + array_push_int() for each element
+        LLVMTypeRef wa_type = LLVMGetTypeByName2(ctx, "WynArray");
+        LLVMValueRef new_fn = LLVMGetNamedFunction(mod, "array_new");
+        if (!new_fn || !wa_type) {
+            // Fallback: stack array
+            int count = e->array.count;
+            LLVMTypeRef arr_type = LLVMArrayType2(i64_type(), count);
+            LLVMValueRef alloca = LLVMBuildAlloca(builder, arr_type, "arr");
+            for (int i = 0; i < count; i++) {
+                LLVMValueRef idx[] = {LLVMConstInt(LLVMInt32TypeInContext(ctx), 0, 0),
+                                       LLVMConstInt(LLVMInt32TypeInContext(ctx), i, 0)};
+                LLVMValueRef gep = LLVMBuildGEP2(builder, arr_type, alloca, idx, 2, "elem");
+                LLVMBuildStore(builder, to_i64(llvm_expr(e->array.elements[i])), gep);
+            }
+            return alloca;
         }
-        return alloca;
+        // Create WynArray: zero-initialize {null, 0, 0}
+        LLVMValueRef arr_alloca = LLVMBuildAlloca(builder, wa_type, "arr_storage");
+        LLVMValueRef zero_arr = LLVMConstNull(wa_type);
+        LLVMBuildStore(builder, zero_arr, arr_alloca);
+        // Push each element
+        LLVMValueRef push_fn = LLVMGetNamedFunction(mod, "array_push_int");
+        for (int i = 0; i < e->array.count; i++) {
+            LLVMValueRef val = to_i64(llvm_expr(e->array.elements[i]));
+            LLVMValueRef args[] = {arr_alloca, val};
+            LLVMBuildCall2(builder, LLVMGlobalGetValueType(push_fn), push_fn, args, 2, "");
+        }
+        // Return the alloca (pointer to WynArray)
+        return arr_alloca;
     }
     case EXPR_INDEX: {
         LLVMValueRef arr = llvm_expr(e->index.array);
         LLVMValueRef idx_val = to_i64(llvm_expr(e->index.index));
-        // GEP into the array
+        if (is_ptr_val(arr)) {
+            // Check if this is a WynArray or a string
+            // If the variable was created from EXPR_ARRAY, it's a WynArray
+            // If it's a string (from EXPR_STRING, EXPR_STRING_INTERP, etc.), do char indexing
+            // Heuristic: check if the variable kind is VAR_STRUCT (WynArray alloca)
+            char vname[256] = "";
+            if (e->index.array->type == EXPR_IDENT)
+                snprintf(vname, sizeof(vname), "%.*s", (int)e->index.array->token.length, e->index.array->token.start);
+            int vkind = get_var_kind(vname);
+
+            if (vkind == VAR_STRUCT) {
+                // WynArray indexing
+                LLVMTypeRef wa_type = LLVMGetTypeByName2(ctx, "WynArray");
+                LLVMTypeRef wv_type = LLVMGetTypeByName2(ctx, "WynValue");
+                if (wa_type && wv_type) {
+                    LLVMValueRef data_gep = LLVMBuildStructGEP2(builder, wa_type, arr, 0, "data_ptr");
+                    LLVMValueRef data = LLVMBuildLoad2(builder, i8ptr_type(), data_gep, "data");
+                    LLVMValueRef elem_gep = LLVMBuildGEP2(builder, wv_type, data, &idx_val, 1, "elem");
+                    LLVMValueRef val_gep = LLVMBuildStructGEP2(builder, wv_type, elem_gep, 2, "val");
+                    return LLVMBuildLoad2(builder, i64_type(), val_gep, "elem_val");
+                }
+            }
+            // String indexing: s[i] -> char at index
+            // Use GEP on i8 array
+            LLVMValueRef char_gep = LLVMBuildGEP2(builder, LLVMInt8TypeInContext(ctx), arr, &idx_val, 1, "char");
+            LLVMValueRef ch = LLVMBuildLoad2(builder, LLVMInt8TypeInContext(ctx), char_gep, "ch");
+            return LLVMBuildZExt(builder, ch, i64_type(), "char_ext");
+        }
+        // Stack array fallback
         LLVMValueRef idx[] = {LLVMConstInt(LLVMInt32TypeInContext(ctx), 0, 0), idx_val};
-        // We don't know the array size, use a large type
         LLVMTypeRef arr_type = LLVMArrayType2(i64_type(), 256);
         LLVMValueRef gep = LLVMBuildGEP2(builder, arr_type, arr, idx, 2, "idx");
         return LLVMBuildLoad2(builder, i64_type(), gep, "elem");
@@ -604,6 +652,44 @@ static LLVMValueRef llvm_expr(Expr* e) {
     case EXPR_METHOD_CALL: {
         char method[64]; snprintf(method, sizeof(method), "%.*s", (int)e->method_call.method.length, e->method_call.method.start);
         LLVMValueRef obj = llvm_expr(e->method_call.object);
+
+        // Array methods: push, pop, len on WynArray pointers
+        if (strcmp(method, "push") == 0 && is_ptr_val(obj)) {
+            LLVMValueRef push_fn = LLVMGetNamedFunction(mod, "array_push_int");
+            if (push_fn && e->method_call.arg_count > 0) {
+                LLVMValueRef val = to_i64(llvm_expr(e->method_call.args[0]));
+                LLVMValueRef args[] = {obj, val};
+                LLVMBuildCall2(builder, LLVMGlobalGetValueType(push_fn), push_fn, args, 2, "");
+                return i64_const(0);
+            }
+        }
+        if (strcmp(method, "pop") == 0 && is_ptr_val(obj)) {
+            LLVMValueRef pop_fn = LLVMGetNamedFunction(mod, "array_pop_int");
+            if (pop_fn) {
+                LLVMValueRef args[] = {obj};
+                return LLVMBuildCall2(builder, LLVMGlobalGetValueType(pop_fn), pop_fn, args, 1, "pop");
+            }
+        }
+        if (strcmp(method, "len") == 0 && is_ptr_val(obj)) {
+            // Check if this is a WynArray (VAR_STRUCT) or a string (VAR_PTR)
+            char vname[256] = "";
+            if (e->method_call.object->type == EXPR_IDENT)
+                snprintf(vname, sizeof(vname), "%.*s", (int)e->method_call.object->token.length, e->method_call.object->token.start);
+            if (get_var_kind(vname) == VAR_STRUCT) {
+                // WynArray.len
+                LLVMTypeRef wa_type = LLVMGetTypeByName2(ctx, "WynArray");
+                LLVMValueRef loaded = LLVMBuildLoad2(builder, wa_type, obj, "wa");
+                LLVMValueRef len_fn = LLVMGetNamedFunction(mod, "array_len");
+                if (len_fn) {
+                    LLVMValueRef args[] = {loaded};
+                    return LLVMBuildCall2(builder, LLVMGlobalGetValueType(len_fn), len_fn, args, 1, "len");
+                }
+            }
+            // String.len -> strlen
+            LLVMValueRef strlen_fn = LLVMGetNamedFunction(mod, "strlen");
+            LLVMValueRef sargs[] = {obj};
+            return LLVMBuildCall2(builder, LLVMGlobalGetValueType(strlen_fn), strlen_fn, sargs, 1, "len");
+        }
 
         // Try namespaced API: File.read -> File_read, Http.get -> Http_get
         if (e->method_call.object->type == EXPR_IDENT) {
@@ -965,6 +1051,8 @@ static void llvm_emit_function(Stmt* fn_stmt) {
         else if (fn_stmt->fn.param_types && fn_stmt->fn.param_types[i] &&
                  fn_stmt->fn.param_types[i]->type == EXPR_FN_TYPE) kind = VAR_PTR;
         else if (fn_stmt->fn.param_types && fn_stmt->fn.param_types[i] &&
+                 fn_stmt->fn.param_types[i]->type == EXPR_ARRAY) kind = VAR_PTR;
+        else if (fn_stmt->fn.param_types && fn_stmt->fn.param_types[i] &&
                  fn_stmt->fn.param_types[i]->type == EXPR_IDENT) {
             char tname[64]; snprintf(tname, sizeof(tname), "%.*s",
                 (int)fn_stmt->fn.param_types[i]->token.length, fn_stmt->fn.param_types[i]->token.start);
@@ -1053,11 +1141,12 @@ int llvm_compile(Program* prog, const char* output_path, const char* wyn_root) {
                 else if (fn->fn.param_types && fn->fn.param_types[j] &&
                          fn->fn.param_types[j]->type == EXPR_FN_TYPE) pt[j] = i8ptr_type();
                 else if (fn->fn.param_types && fn->fn.param_types[j] &&
+                         fn->fn.param_types[j]->type == EXPR_ARRAY) pt[j] = i8ptr_type();  // [int] -> WynArray*
+                else if (fn->fn.param_types && fn->fn.param_types[j] &&
                          fn->fn.param_types[j]->type == EXPR_IDENT) {
-                    // Check if param type is a struct name
                     char tname[64]; snprintf(tname, sizeof(tname), "%.*s",
                         (int)fn->fn.param_types[j]->token.length, fn->fn.param_types[j]->token.start);
-                    pt[j] = (find_struct(tname) >= 0) ? i8ptr_type() : i64_type();
+                    pt[j] = (find_struct(tname) >= 0 || strcmp(tname, "string") == 0) ? i8ptr_type() : i64_type();
                 }
                 else pt[j] = i64_type();
             }
