@@ -261,7 +261,7 @@ static void declare_runtime(void) {
     LLVMAddFunction(mod, "System_exec", LLVMFunctionType(i8p, strdup_args, 1, 0));
     LLVMAddFunction(mod, "Math_abs", LLVMFunctionType(i64, ri_int, 1, 0));
     LLVMAddFunction(mod, "Math_sqrt", LLVMFunctionType(i64, ri_int, 1, 0));
-    LLVMAddFunction(mod, "to_int", LLVMFunctionType(i64, strdup_args, 1, 0));
+    LLVMAddFunction(mod, "str_to_int", LLVMFunctionType(i64, strdup_args, 1, 0));
 
     // hashmap functions
     LLVMAddFunction(mod, "hashmap_new", LLVMFunctionType(i8p, NULL, 0, 0));
@@ -397,6 +397,9 @@ static LLVMValueRef llvm_expr(Expr* e) {
                 return LLVMBuildCall2(builder, LLVMGlobalGetValueType(concat_fn), concat_fn, args, 2, "concat");
             }
         }
+        // Logical operators (before to_i64 conversion)
+        if (ol==2 && op[0]=='&' && op[1]=='&') return LLVMBuildAnd(builder, to_bool(l), to_bool(r), "and");
+        if (ol==2 && op[0]=='|' && op[1]=='|') return LLVMBuildOr(builder, to_bool(l), to_bool(r), "or");
         l = to_i64(l); r = to_i64(r);
         if (ol==1 && op[0]=='+') return LLVMBuildAdd(builder, l, r, "add");
         if (ol==1 && op[0]=='-') return LLVMBuildSub(builder, l, r, "sub");
@@ -746,7 +749,7 @@ static LLVMValueRef llvm_expr(Expr* e) {
                 return LLVMBuildCall2(builder, LLVMGlobalGetValueType(strlen_fn), strlen_fn, sargs, 1, "len");
             }
             if (strcmp(method, "to_int") == 0) {
-                LLVMValueRef fn = LLVMGetNamedFunction(mod, "to_int");
+                LLVMValueRef fn = LLVMGetNamedFunction(mod, "str_to_int");
                 if (fn) { LLVMValueRef a[] = {obj}; return LLVMBuildCall2(builder, LLVMGlobalGetValueType(fn), fn, a, 1, "toi"); }
             }
             if (strcmp(method, "push") == 0 || strcmp(method, "pop") == 0 ||
@@ -867,9 +870,13 @@ static void llvm_stmt(Stmt* s) {
     case STMT_VAR: {
         char n[256]; snprintf(n, sizeof(n), "%.*s", (int)s->var.name.length, s->var.name.start);
         LLVMValueRef val = llvm_expr(s->var.init);
-        // Don't convert pointers to i64 — preserve type
         if (!is_ptr_val(val)) val = to_i64(val);
-        set_var(n, val);
+        // Force VAR_STRUCT for array initializers (WynArray)
+        if (s->var.init && s->var.init->type == EXPR_ARRAY) {
+            create_var(n, val, VAR_STRUCT);
+        } else {
+            set_var(n, val);
+        }
         break;
     }
     case STMT_IF: {
@@ -895,6 +902,63 @@ static void llvm_stmt(Stmt* s) {
     }
     case STMT_FOR: {
         LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(builder));
+
+        if (s->for_stmt.array_expr) {
+            // for item in array — iterate over WynArray
+            char var_name[256];
+            snprintf(var_name, sizeof(var_name), "%.*s", (int)s->for_stmt.loop_var.length, s->for_stmt.loop_var.start);
+
+            LLVMValueRef arr_val = llvm_expr(s->for_stmt.array_expr);
+            // arr_val is a pointer to WynArray
+            LLVMTypeRef wa_type = LLVMGetTypeByName2(ctx, "WynArray");
+            LLVMTypeRef wv_type = LLVMGetTypeByName2(ctx, "WynValue");
+
+            // Load count from WynArray
+            LLVMValueRef count_gep = LLVMBuildStructGEP2(builder, wa_type, arr_val, 1, "count_ptr");
+            LLVMValueRef count = LLVMBuildLoad2(builder, LLVMInt32TypeInContext(ctx), count_gep, "count");
+            LLVMValueRef count64 = LLVMBuildSExt(builder, count, i64_type(), "count64");
+
+            // Create loop index
+            create_var("__iter_i", i64_const(0), VAR_INT);
+            // Create loop variable (will be updated each iteration)
+            create_var(var_name, i64_const(0), VAR_INT);
+
+            LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(ctx, fn, "forin.cond");
+            LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, fn, "forin.body");
+            LLVMBasicBlockRef inc_bb = LLVMAppendBasicBlockInContext(ctx, fn, "forin.inc");
+            LLVMBasicBlockRef end_bb = LLVMAppendBasicBlockInContext(ctx, fn, "forin.end");
+
+            LLVMBuildBr(builder, cond_bb);
+
+            LLVMPositionBuilderAtEnd(builder, cond_bb);
+            LLVMValueRef idx = lookup_var("__iter_i");
+            LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSLT, idx, count64, "forin.cmp");
+            LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
+
+            LLVMPositionBuilderAtEnd(builder, body_bb);
+            // Load current element from WynArray
+            LLVMValueRef cur_idx = lookup_var("__iter_i");
+            LLVMValueRef data_gep = LLVMBuildStructGEP2(builder, wa_type, arr_val, 0, "data_ptr");
+            LLVMValueRef data = LLVMBuildLoad2(builder, i8ptr_type(), data_gep, "data");
+            if (wv_type) {
+                LLVMValueRef elem_gep = LLVMBuildGEP2(builder, wv_type, data, &cur_idx, 1, "elem");
+                LLVMValueRef val_gep = LLVMBuildStructGEP2(builder, wv_type, elem_gep, 2, "val");
+                LLVMValueRef elem_val = LLVMBuildLoad2(builder, i64_type(), val_gep, "elem_val");
+                set_var(var_name, elem_val);
+            }
+
+            llvm_stmt(s->for_stmt.body);
+            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+                LLVMBuildBr(builder, inc_bb);
+
+            LLVMPositionBuilderAtEnd(builder, inc_bb);
+            LLVMValueRef next = LLVMBuildAdd(builder, lookup_var("__iter_i"), i64_const(1), "inc");
+            set_var("__iter_i", next);
+            LLVMBuildBr(builder, cond_bb);
+
+            LLVMPositionBuilderAtEnd(builder, end_bb);
+            break;
+        }
 
         if (s->for_stmt.init) {
             // C-style for loop: for (init; cond; inc) { body }
