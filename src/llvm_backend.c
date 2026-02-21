@@ -61,15 +61,14 @@ static LLVMValueRef i64_const(long long v) { return LLVMConstInt(i64_type(), v, 
 #define MAX_VARS 256
 #define VAR_INT 0
 #define VAR_PTR 1
-static struct { char name[64]; LLVMValueRef alloca; int kind; } vars[MAX_VARS];
+#define VAR_STRUCT 2
+static struct { char name[64]; LLVMValueRef alloca; int kind; LLVMTypeRef type; } vars[MAX_VARS];
 static int var_count = 0;
 
 static LLVMValueRef lookup_var(const char* name) {
     for (int i = var_count - 1; i >= 0; i--)
-        if (strcmp(vars[i].name, name) == 0) {
-            LLVMTypeRef lt = vars[i].kind == VAR_PTR ? i8ptr_type() : i64_type();
-            return LLVMBuildLoad2(builder, lt, vars[i].alloca, name);
-        }
+        if (strcmp(vars[i].name, name) == 0)
+            return LLVMBuildLoad2(builder, vars[i].type, vars[i].alloca, name);
     return NULL;
 }
 static LLVMValueRef get_var_alloca(const char* name) {
@@ -89,12 +88,13 @@ static void create_var(const char* name, LLVMValueRef val, int kind) {
     LLVMValueRef first = LLVMGetFirstInstruction(entry);
     if (first) LLVMPositionBuilderBefore(tmp, first);
     else LLVMPositionBuilderAtEnd(tmp, entry);
-    LLVMTypeRef lt = kind == VAR_PTR ? i8ptr_type() : i64_type();
+    LLVMTypeRef lt = LLVMTypeOf(val);  // Use actual value type
     LLVMValueRef a = LLVMBuildAlloca(tmp, lt, name);
     LLVMDisposeBuilder(tmp);
     snprintf(vars[var_count].name, 64, "%s", name);
     vars[var_count].alloca = a;
     vars[var_count].kind = kind;
+    vars[var_count].type = lt;
     var_count++;
     LLVMBuildStore(builder, val, a);
 }
@@ -104,8 +104,9 @@ static void set_var(const char* name, LLVMValueRef val) {
             LLVMBuildStore(builder, val, vars[i].alloca);
             return;
         }
-    // Determine kind from LLVM type
     int kind = (LLVMGetTypeKind(LLVMTypeOf(val)) == LLVMPointerTypeKind) ? VAR_PTR : VAR_INT;
+    // Check if it's a struct type
+    if (LLVMGetTypeKind(LLVMTypeOf(val)) == LLVMStructTypeKind) kind = VAR_STRUCT;
     create_var(name, val, kind);
 }
 
@@ -117,6 +118,8 @@ static long long parse_int_token(Token t) {
 
 static LLVMValueRef to_i64(LLVMValueRef v) {
     if (LLVMTypeOf(v) == i1_type()) return LLVMBuildZExt(builder, v, i64_type(), "ext");
+    if (LLVMGetTypeKind(LLVMTypeOf(v)) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(LLVMTypeOf(v)) < 64)
+        return LLVMBuildSExt(builder, v, i64_type(), "sext");
     if (LLVMGetTypeKind(LLVMTypeOf(v)) == LLVMPointerTypeKind)
         return LLVMBuildPtrToInt(builder, v, i64_type(), "ptoi");
     return v;
@@ -125,8 +128,10 @@ static int is_ptr_val(LLVMValueRef v) {
     return LLVMGetTypeKind(LLVMTypeOf(v)) == LLVMPointerTypeKind;
 }
 static LLVMValueRef to_bool(LLVMValueRef v) {
-    if (LLVMTypeOf(v) != i1_type())
-        return LLVMBuildICmp(builder, LLVMIntNE, v, LLVMConstInt(LLVMTypeOf(v), 0, 0), "tobool");
+    if (LLVMTypeOf(v) != i1_type()) {
+        LLVMValueRef zero = LLVMConstInt(LLVMTypeOf(v), 0, 0);
+        return LLVMBuildICmp(builder, LLVMIntNE, v, zero, "tobool");
+    }
     return v;
 }
 
@@ -181,6 +186,79 @@ static void declare_runtime(void) {
 
     // strlen(s) -> i64
     LLVMAddFunction(mod, "strlen", LLVMFunctionType(i64, strdup_args, 1, 0));
+
+    // Result/Option types and functions
+    LLVMTypeRef result_fields[] = {LLVMInt32TypeInContext(ctx), i64};  // tag + value/ptr
+    LLVMTypeRef result_type = LLVMStructCreateNamed(ctx, "ResultInt");
+    LLVMStructSetBody(result_type, result_fields, 2, 0);
+    LLVMTypeRef option_fields[] = {LLVMInt32TypeInContext(ctx), LLVMInt32TypeInContext(ctx)};
+    LLVMTypeRef option_type = LLVMStructCreateNamed(ctx, "OptionInt");
+    LLVMStructSetBody(option_type, option_fields, 2, 0);
+
+    LLVMTypeRef ri_int[] = {i64};
+    LLVMAddFunction(mod, "ResultInt_Ok", LLVMFunctionType(result_type, ri_int, 1, 0));
+    LLVMTypeRef ri_str[] = {i8p};
+    LLVMAddFunction(mod, "ResultInt_Err", LLVMFunctionType(result_type, ri_str, 1, 0));
+    LLVMTypeRef ri_r[] = {result_type};
+    LLVMAddFunction(mod, "ResultInt_is_ok", LLVMFunctionType(LLVMInt32TypeInContext(ctx), ri_r, 1, 0));
+    LLVMAddFunction(mod, "ResultInt_is_err", LLVMFunctionType(LLVMInt32TypeInContext(ctx), ri_r, 1, 0));
+    LLVMAddFunction(mod, "ResultInt_unwrap", LLVMFunctionType(i64, ri_r, 1, 0));
+    LLVMAddFunction(mod, "ResultInt_unwrap_err", LLVMFunctionType(i8p, ri_r, 1, 0));
+
+    LLVMTypeRef oi_int[] = {i64};
+    LLVMAddFunction(mod, "OptionInt_Some", LLVMFunctionType(option_type, oi_int, 1, 0));
+    LLVMAddFunction(mod, "OptionInt_None", LLVMFunctionType(option_type, NULL, 0, 0));
+    LLVMTypeRef oi_r[] = {option_type};
+    LLVMAddFunction(mod, "OptionInt_is_some", LLVMFunctionType(LLVMInt32TypeInContext(ctx), oi_r, 1, 0));
+    LLVMAddFunction(mod, "OptionInt_is_none", LLVMFunctionType(LLVMInt32TypeInContext(ctx), oi_r, 1, 0));
+    LLVMAddFunction(mod, "OptionInt_unwrap", LLVMFunctionType(i64, oi_r, 1, 0));
+    LLVMTypeRef oi_or[] = {option_type, i64};
+    LLVMAddFunction(mod, "OptionInt_unwrap_or", LLVMFunctionType(i64, oi_or, 2, 0));
+    LLVMTypeRef ri_or[] = {result_type, i64};
+    LLVMAddFunction(mod, "ResultInt_unwrap_or", LLVMFunctionType(i64, ri_or, 2, 0));
+
+    // ResultString variant
+    LLVMTypeRef result_str_type = LLVMStructCreateNamed(ctx, "ResultString");
+    LLVMTypeRef rs_fields[] = {LLVMInt32TypeInContext(ctx), i8p};
+    LLVMStructSetBody(result_str_type, rs_fields, 2, 0);
+    LLVMTypeRef rs_ok[] = {i8p};
+    LLVMAddFunction(mod, "ResultString_Ok", LLVMFunctionType(result_str_type, rs_ok, 1, 0));
+    LLVMAddFunction(mod, "ResultString_Err", LLVMFunctionType(result_str_type, rs_ok, 1, 0));
+    LLVMTypeRef rs_r[] = {result_str_type};
+    LLVMAddFunction(mod, "ResultString_is_ok", LLVMFunctionType(LLVMInt32TypeInContext(ctx), rs_r, 1, 0));
+    LLVMAddFunction(mod, "ResultString_is_err", LLVMFunctionType(LLVMInt32TypeInContext(ctx), rs_r, 1, 0));
+    LLVMAddFunction(mod, "ResultString_unwrap", LLVMFunctionType(i8p, rs_r, 1, 0));
+
+    // WynArray support
+    // WynValue = { i32 type, union { i64, double, ptr, ptr, ptr } } ≈ { i32, i64 }
+    LLVMTypeRef wyn_value_fields[] = {LLVMInt32TypeInContext(ctx), i64};
+    LLVMTypeRef wyn_value_type = LLVMStructCreateNamed(ctx, "WynValue");
+    LLVMStructSetBody(wyn_value_type, wyn_value_fields, 2, 0);
+    // WynArray = { WynValue* data, i32 count, i32 capacity }
+    LLVMTypeRef wyn_array_fields[] = {i8p, LLVMInt32TypeInContext(ctx), LLVMInt32TypeInContext(ctx)};
+    LLVMTypeRef wyn_array_type = LLVMStructCreateNamed(ctx, "WynArray");
+    LLVMStructSetBody(wyn_array_type, wyn_array_fields, 3, 0);
+
+    LLVMTypeRef wa_args[] = {wyn_array_type};
+    LLVMAddFunction(mod, "array_len", LLVMFunctionType(i64, wa_args, 1, 0));
+    LLVMTypeRef wa_push_int[] = {i8p, i64};  // WynArray* restrict, i64
+    LLVMAddFunction(mod, "array_push_int", LLVMFunctionType(vd, wa_push_int, 2, 0));
+    LLVMAddFunction(mod, "array_push_str", LLVMFunctionType(vd, (LLVMTypeRef[]){i8p, i8p}, 2, 0));
+    LLVMAddFunction(mod, "array_pop_int", LLVMFunctionType(i64, (LLVMTypeRef[]){i8p}, 1, 0));
+
+    // Namespaced API functions
+    LLVMAddFunction(mod, "File_read", LLVMFunctionType(i8p, strdup_args, 1, 0));
+    LLVMAddFunction(mod, "File_write", LLVMFunctionType(vd, (LLVMTypeRef[]){i8p, i8p}, 2, 0));
+    LLVMAddFunction(mod, "File_exists", LLVMFunctionType(LLVMInt32TypeInContext(ctx), strdup_args, 1, 0));
+    LLVMAddFunction(mod, "File_delete", LLVMFunctionType(vd, strdup_args, 1, 0));
+    LLVMAddFunction(mod, "Http_get", LLVMFunctionType(i8p, strdup_args, 1, 0));
+    LLVMAddFunction(mod, "Http_post", LLVMFunctionType(i8p, str2_args, 2, 0));
+    LLVMAddFunction(mod, "split_get", LLVMFunctionType(i8p, (LLVMTypeRef[]){i8p, i8p, i64}, 3, 0));
+    LLVMAddFunction(mod, "DateTime_now", LLVMFunctionType(i64, NULL, 0, 0));
+    LLVMAddFunction(mod, "System_exec", LLVMFunctionType(i8p, strdup_args, 1, 0));
+    LLVMAddFunction(mod, "Math_abs", LLVMFunctionType(i64, ri_int, 1, 0));
+    LLVMAddFunction(mod, "Math_sqrt", LLVMFunctionType(i64, ri_int, 1, 0));
+    LLVMAddFunction(mod, "to_int", LLVMFunctionType(i64, strdup_args, 1, 0));
 
     // hashmap functions
     LLVMAddFunction(mod, "hashmap_new", LLVMFunctionType(i8p, NULL, 0, 0));
@@ -290,8 +368,33 @@ static LLVMValueRef llvm_expr(Expr* e) {
     case EXPR_BINARY: {
         LLVMValueRef l = llvm_expr(e->binary.left);
         LLVMValueRef r = llvm_expr(e->binary.right);
-        l = to_i64(l); r = to_i64(r);
         const char* op = e->binary.op.start; int ol = e->binary.op.length;
+        // String concatenation: if either side is a pointer and op is +
+        if (ol==1 && op[0]=='+' && (is_ptr_val(l) || is_ptr_val(r))) {
+            LLVMValueRef concat_fn = LLVMGetNamedFunction(mod, "string_concat");
+            if (concat_fn) {
+                // Convert int to string if needed
+                if (!is_ptr_val(l)) {
+                    LLVMValueRef buf = LLVMBuildArrayAlloca(builder, LLVMInt8TypeInContext(ctx), LLVMConstInt(LLVMInt32TypeInContext(ctx), 32, 0), "b");
+                    LLVMValueRef fmt = LLVMBuildGlobalStringPtr(builder, "%lld", "f");
+                    LLVMValueRef sf = LLVMGetNamedFunction(mod, "snprintf");
+                    LLVMValueRef sa[] = {buf, i64_const(32), fmt, to_i64(l)};
+                    LLVMBuildCall2(builder, LLVMGlobalGetValueType(sf), sf, sa, 4, "");
+                    l = buf;
+                }
+                if (!is_ptr_val(r)) {
+                    LLVMValueRef buf = LLVMBuildArrayAlloca(builder, LLVMInt8TypeInContext(ctx), LLVMConstInt(LLVMInt32TypeInContext(ctx), 32, 0), "b");
+                    LLVMValueRef fmt = LLVMBuildGlobalStringPtr(builder, "%lld", "f");
+                    LLVMValueRef sf = LLVMGetNamedFunction(mod, "snprintf");
+                    LLVMValueRef sa[] = {buf, i64_const(32), fmt, to_i64(r)};
+                    LLVMBuildCall2(builder, LLVMGlobalGetValueType(sf), sf, sa, 4, "");
+                    r = buf;
+                }
+                LLVMValueRef args[] = {l, r};
+                return LLVMBuildCall2(builder, LLVMGlobalGetValueType(concat_fn), concat_fn, args, 2, "concat");
+            }
+        }
+        l = to_i64(l); r = to_i64(r);
         if (ol==1 && op[0]=='+') return LLVMBuildAdd(builder, l, r, "add");
         if (ol==1 && op[0]=='-') return LLVMBuildSub(builder, l, r, "sub");
         if (ol==1 && op[0]=='*') return LLVMBuildMul(builder, l, r, "mul");
@@ -502,6 +605,25 @@ static LLVMValueRef llvm_expr(Expr* e) {
         char method[64]; snprintf(method, sizeof(method), "%.*s", (int)e->method_call.method.length, e->method_call.method.start);
         LLVMValueRef obj = llvm_expr(e->method_call.object);
 
+        // Try namespaced API: File.read -> File_read, Http.get -> Http_get
+        if (e->method_call.object->type == EXPR_IDENT) {
+            char ns[64]; snprintf(ns, sizeof(ns), "%.*s",
+                (int)e->method_call.object->token.length, e->method_call.object->token.start);
+            char ns_fn[128]; snprintf(ns_fn, sizeof(ns_fn), "%s_%s", ns, method);
+            LLVMValueRef nfn = LLVMGetNamedFunction(mod, ns_fn);
+            if (nfn) {
+                int argc = e->method_call.arg_count; if (argc > 15) argc = 15;
+                LLVMValueRef args[16];
+                for (int i = 0; i < argc; i++) {
+                    args[i] = llvm_expr(e->method_call.args[i]);
+                    if (!is_ptr_val(args[i])) args[i] = to_i64(args[i]);
+                }
+                LLVMTypeRef fn_ret = LLVMGetReturnType(LLVMGlobalGetValueType(nfn));
+                const char* cn = (LLVMGetTypeKind(fn_ret) == LLVMVoidTypeKind) ? "" : "nscall";
+                return LLVMBuildCall2(builder, LLVMGlobalGetValueType(nfn), nfn, args, argc, cn);
+            }
+        }
+
         // Try extension method: Type_method(self, args...)
         // Check all struct types for a matching function
         for (int si = 0; si < struct_count; si++) {
@@ -537,6 +659,27 @@ static LLVMValueRef llvm_expr(Expr* e) {
                 LLVMValueRef sargs[] = {obj};
                 return LLVMBuildCall2(builder, LLVMGlobalGetValueType(strlen_fn), strlen_fn, sargs, 1, "len");
             }
+            if (strcmp(method, "to_int") == 0) {
+                LLVMValueRef fn = LLVMGetNamedFunction(mod, "to_int");
+                if (fn) { LLVMValueRef a[] = {obj}; return LLVMBuildCall2(builder, LLVMGlobalGetValueType(fn), fn, a, 1, "toi"); }
+            }
+            if (strcmp(method, "push") == 0 || strcmp(method, "pop") == 0 ||
+                strcmp(method, "split") == 0 || strcmp(method, "trim") == 0 ||
+                strcmp(method, "starts_with") == 0 || strcmp(method, "ends_with") == 0 ||
+                strcmp(method, "index_of") == 0 || strcmp(method, "concat") == 0 ||
+                strcmp(method, "substring") == 0 || strcmp(method, "slice") == 0) {
+                // Try string_<method> runtime function
+                char rt_name[128]; snprintf(rt_name, sizeof(rt_name), "string_%s", method);
+                LLVMValueRef rt_fn = LLVMGetNamedFunction(mod, rt_name);
+                if (rt_fn) {
+                    LLVMValueRef args[16]; args[0] = obj;
+                    int argc = e->method_call.arg_count; if (argc > 14) argc = 14;
+                    for (int i = 0; i < argc; i++) args[1+i] = llvm_expr(e->method_call.args[i]);
+                    LLVMTypeRef fn_ret = LLVMGetReturnType(LLVMGlobalGetValueType(rt_fn));
+                    const char* cn = (LLVMGetTypeKind(fn_ret) == LLVMVoidTypeKind) ? "" : "mcall";
+                    return LLVMBuildCall2(builder, LLVMGlobalGetValueType(rt_fn), rt_fn, args, 1+argc, cn);
+                }
+            }
             fprintf(stderr, "LLVM: unknown method '%s'\n", method);
             return i64_const(0);
         }
@@ -546,12 +689,59 @@ static LLVMValueRef llvm_expr(Expr* e) {
         for (int i = 0; i < argc; i++) args[1 + i] = llvm_expr(e->method_call.args[i]);
         return LLVMBuildCall2(builder, LLVMGlobalGetValueType(fn), fn, args, 1 + argc, "mcall");
     }
+    case EXPR_TERNARY: {
+        LLVMValueRef cond = to_bool(llvm_expr(e->ternary.condition));
+        LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(builder));
+        LLVMBasicBlockRef then_bb = LLVMAppendBasicBlockInContext(ctx, fn, "tern.then");
+        LLVMBasicBlockRef else_bb = LLVMAppendBasicBlockInContext(ctx, fn, "tern.else");
+        LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(ctx, fn, "tern.merge");
+        LLVMBuildCondBr(builder, cond, then_bb, else_bb);
+        LLVMPositionBuilderAtEnd(builder, then_bb);
+        LLVMValueRef then_val = to_i64(llvm_expr(e->ternary.then_expr));
+        LLVMBasicBlockRef then_end = LLVMGetInsertBlock(builder);
+        LLVMBuildBr(builder, merge_bb);
+        LLVMPositionBuilderAtEnd(builder, else_bb);
+        LLVMValueRef else_val = to_i64(llvm_expr(e->ternary.else_expr));
+        LLVMBasicBlockRef else_end = LLVMGetInsertBlock(builder);
+        LLVMBuildBr(builder, merge_bb);
+        LLVMPositionBuilderAtEnd(builder, merge_bb);
+        LLVMValueRef phi = LLVMBuildPhi(builder, i64_type(), "tern");
+        LLVMAddIncoming(phi, &then_val, &then_end, 1);
+        LLVMAddIncoming(phi, &else_val, &else_end, 1);
+        return phi;
+    }
+    case EXPR_SOME: {
+        // Some(value) -> OptionInt_Some(value)
+        LLVMValueRef val = to_i64(llvm_expr(e->option.value));
+        LLVMValueRef fn = LLVMGetNamedFunction(mod, "OptionInt_Some");
+        if (fn) { LLVMValueRef args[] = {val}; return LLVMBuildCall2(builder, LLVMGlobalGetValueType(fn), fn, args, 1, "some"); }
+        return val;
+    }
+    case EXPR_NONE: {
+        LLVMValueRef fn = LLVMGetNamedFunction(mod, "OptionInt_None");
+        if (fn) return LLVMBuildCall2(builder, LLVMGlobalGetValueType(fn), fn, NULL, 0, "none");
+        return i64_const(0);
+    }
+    case EXPR_OK: {
+        LLVMValueRef val = to_i64(llvm_expr(e->option.value));
+        LLVMValueRef fn = LLVMGetNamedFunction(mod, "ResultInt_Ok");
+        if (fn) { LLVMValueRef args[] = {val}; return LLVMBuildCall2(builder, LLVMGlobalGetValueType(fn), fn, args, 1, "ok"); }
+        return val;
+    }
+    case EXPR_ERR: {
+        LLVMValueRef val = llvm_expr(e->option.value);
+        LLVMValueRef fn = LLVMGetNamedFunction(mod, "ResultInt_Err");
+        if (fn) { LLVMValueRef args[] = {val}; return LLVMBuildCall2(builder, LLVMGlobalGetValueType(fn), fn, args, 1, "err"); }
+        return val;
+    }
     case EXPR_UNARY: {
         LLVMValueRef operand = llvm_expr(e->unary.operand);
         if (e->unary.op.length == 1 && e->unary.op.start[0] == '-')
             return LLVMBuildNeg(builder, to_i64(operand), "neg");
-        if (e->unary.op.length == 1 && e->unary.op.start[0] == '!')
-            return LLVMBuildICmp(builder, LLVMIntEQ, to_i64(operand), i64_const(0), "not");
+        if (e->unary.op.length == 1 && e->unary.op.start[0] == '!') {
+            LLVMValueRef zero = LLVMConstInt(LLVMTypeOf(operand), 0, 0);
+            return LLVMBuildICmp(builder, LLVMIntEQ, operand, zero, "not");
+        }
         return operand;
     }
     case EXPR_ASSIGN: {
@@ -877,6 +1067,21 @@ int llvm_compile(Program* prog, const char* output_path, const char* wyn_root) {
                 char rname[64]; snprintf(rname, sizeof(rname), "%.*s",
                     (int)fn->fn.return_type->token.length, fn->fn.return_type->token.start);
                 if (find_struct(rname) >= 0 || strcmp(rname, "string") == 0) ret_type = i8ptr_type();
+                else if (strcmp(rname, "ResultInt") == 0) ret_type = LLVMGetTypeByName2(ctx, "ResultInt");
+                else if (strcmp(rname, "OptionInt") == 0) ret_type = LLVMGetTypeByName2(ctx, "OptionInt");
+            } else if (fn->fn.return_type && fn->fn.return_type->type == EXPR_CALL) {
+                // Generic return type: Result<int, string> -> ResultInt, Option<int> -> OptionInt
+                if (fn->fn.return_type->call.callee && fn->fn.return_type->call.callee->type == EXPR_IDENT) {
+                    char rname[64]; snprintf(rname, sizeof(rname), "%.*s",
+                        (int)fn->fn.return_type->call.callee->token.length, fn->fn.return_type->call.callee->token.start);
+                    if (strcmp(rname, "Result") == 0) {
+                        LLVMTypeRef t = LLVMGetTypeByName2(ctx, "ResultInt");
+                        if (t) ret_type = t;
+                    } else if (strcmp(rname, "Option") == 0) {
+                        LLVMTypeRef t = LLVMGetTypeByName2(ctx, "OptionInt");
+                        if (t) ret_type = t;
+                    }
+                }
             }
             LLVMTypeRef ft = LLVMFunctionType(ret_type, pt, pc, 0);
             LLVMAddFunction(mod, is_main ? "wyn_main" : n, ft);
@@ -930,17 +1135,15 @@ int llvm_compile(Program* prog, const char* output_path, const char* wyn_root) {
         LLVMDisposeMessage(error); goto fail;
     }
 
-    // Link with wyn_wrapper + runtime
+    // Link with runtime library
     char link[2048];
     char rt_lib[512]; snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
-    // Check if runtime library exists
     if (access(rt_lib, R_OK) == 0) {
         snprintf(link, sizeof(link),
-            "cc -o %s %s %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
-            "-I %s/src %s -lpthread -lm",
-            output_path, obj, wyn_root, wyn_root, wyn_root, rt_lib);
+            "cc -O2 -w -o %s %s %s -I %s/src -lpthread -lm",
+            output_path, obj, rt_lib, wyn_root);
     } else {
-        // Compile from source
+        // Fallback: compile from source
         snprintf(link, sizeof(link),
             "cc -O2 -w -o %s %s %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/wyn_arena.c "
             "%s/src/stdlib_string.c %s/src/spawn_fast.c %s/src/future.c "
