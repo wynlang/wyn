@@ -290,10 +290,21 @@ static void declare_runtime(void) {
     LLVMAddFunction(mod, "string_index_of", LLVMFunctionType(i64, str2_args, 2, 0));
 }
 
-// Helper: emit a global string constant
+// Allocate buffer in function entry block (prevents stack growth in loops)
+static LLVMValueRef entry_buf(int size, const char* name) {
+    LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(builder));
+    LLVMBuilderRef tb = LLVMCreateBuilderInContext(ctx);
+    LLVMValueRef fi = LLVMGetFirstInstruction(LLVMGetEntryBasicBlock(fn));
+    if (fi) LLVMPositionBuilderBefore(tb, fi);
+    else LLVMPositionBuilderAtEnd(tb, LLVMGetEntryBasicBlock(fn));
+    LLVMValueRef a = LLVMBuildArrayAlloca(tb, LLVMInt8TypeInContext(ctx),
+        LLVMConstInt(LLVMInt32TypeInContext(ctx), size, 0), name);
+    LLVMDisposeBuilder(tb);
+    return a;
+}
+
 static LLVMValueRef emit_string(const char* str, int len) {
-    LLVMValueRef gs = LLVMBuildGlobalStringPtr(builder, str, "str");
-    return gs;
+    return LLVMBuildGlobalStringPtr(builder, str, "str");
 }
 
 // Forward declarations
@@ -308,12 +319,21 @@ static LLVMValueRef llvm_expr(Expr* e) {
     case EXPR_BOOL:
         return i64_const(e->token.length == 4 && memcmp(e->token.start, "true", 4) == 0 ? 1 : 0);
     case EXPR_STRING: {
-        // Strip quotes from token
         int start = 1, end = e->token.length - 1;
         if (e->token.length >= 6 && e->token.start[0] == '"' && e->token.start[1] == '"') { start = 3; end = e->token.length - 3; }
-        int len = end - start; if (len < 0) len = 0; if (len > 4094) len = 4094;
-        char buf[4096]; memcpy(buf, e->token.start + start, len); buf[len] = 0;
-        return emit_string(buf, len);
+        char buf[4096]; int j = 0;
+        for (int i = start; i < end && j < 4094; i++) {
+            if (e->token.start[i] == '\\' && i + 1 < end) {
+                switch (e->token.start[++i]) {
+                    case 'n': buf[j++] = '\n'; break; case 't': buf[j++] = '\t'; break;
+                    case 'r': buf[j++] = '\r'; break; case '\\': buf[j++] = '\\'; break;
+                    case '"': buf[j++] = '"'; break; case '0': buf[j++] = '\0'; break;
+                    default: buf[j++] = '\\'; buf[j++] = e->token.start[i]; break;
+                }
+            } else buf[j++] = e->token.start[i];
+        }
+        buf[j] = 0;
+        return emit_string(buf, j);
     }
     case EXPR_STRING_INTERP: {
         // Build format string and args for snprintf
@@ -338,8 +358,7 @@ static LLVMValueRef llvm_expr(Expr* e) {
         fmt[fpos] = 0;
 
         // snprintf into stack buffer, then wyn_strdup
-        LLVMValueRef buf_alloca = LLVMBuildArrayAlloca(builder, LLVMInt8TypeInContext(ctx),
-            LLVMConstInt(LLVMInt32TypeInContext(ctx), 512, 0), "buf");
+        LLVMValueRef buf_alloca = entry_buf(512, "interp_buf");
         LLVMValueRef fmt_str = LLVMBuildGlobalStringPtr(builder, fmt, "fmt");
 
         // Build snprintf call: snprintf(buf, 512, fmt, args...)
@@ -378,7 +397,7 @@ static LLVMValueRef llvm_expr(Expr* e) {
             if (concat_fn) {
                 // Convert int to string if needed
                 if (!is_ptr_val(l)) {
-                    LLVMValueRef buf = LLVMBuildArrayAlloca(builder, LLVMInt8TypeInContext(ctx), LLVMConstInt(LLVMInt32TypeInContext(ctx), 32, 0), "b");
+                    LLVMValueRef buf = entry_buf(32, "itoa_buf");
                     LLVMValueRef fmt = LLVMBuildGlobalStringPtr(builder, "%lld", "f");
                     LLVMValueRef sf = LLVMGetNamedFunction(mod, "snprintf");
                     LLVMValueRef sa[] = {buf, i64_const(32), fmt, to_i64(l)};
@@ -386,7 +405,7 @@ static LLVMValueRef llvm_expr(Expr* e) {
                     l = buf;
                 }
                 if (!is_ptr_val(r)) {
-                    LLVMValueRef buf = LLVMBuildArrayAlloca(builder, LLVMInt8TypeInContext(ctx), LLVMConstInt(LLVMInt32TypeInContext(ctx), 32, 0), "b");
+                    LLVMValueRef buf = entry_buf(32, "itoa_buf");
                     LLVMValueRef fmt = LLVMBuildGlobalStringPtr(builder, "%lld", "f");
                     LLVMValueRef sf = LLVMGetNamedFunction(mod, "snprintf");
                     LLVMValueRef sa[] = {buf, i64_const(32), fmt, to_i64(r)};
@@ -733,8 +752,7 @@ static LLVMValueRef llvm_expr(Expr* e) {
             // Try to_string, len, etc.
             if (strcmp(method, "to_string") == 0) {
                 // int -> string via snprintf
-                LLVMValueRef buf = LLVMBuildArrayAlloca(builder, LLVMInt8TypeInContext(ctx),
-                    LLVMConstInt(LLVMInt32TypeInContext(ctx), 32, 0), "buf");
+                LLVMValueRef buf = entry_buf(32, "tostr_buf");
                 LLVMValueRef fmt = LLVMBuildGlobalStringPtr(builder, "%lld", "fmt");
                 LLVMValueRef snprintf_fn = LLVMGetNamedFunction(mod, "snprintf");
                 LLVMValueRef sargs[] = {buf, i64_const(32), fmt, to_i64(obj)};
