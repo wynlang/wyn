@@ -12,6 +12,11 @@ static int module_path_count = 0;
 // Circular import detection
 static char* loading_stack[32];
 static int loading_stack_count = 0;
+static bool circular_import_detected = false;
+
+bool has_circular_import(void) {
+    return circular_import_detected;
+}
 
 void add_module_path(const char* path) {
     if (module_path_count < 16) {
@@ -41,19 +46,20 @@ static void pop_loading_stack() {
 }
 
 static void print_circular_import_error(const char* module_name) {
-    fprintf(stderr, "Error: Circular import detected: ");
+    fprintf(stderr, "\033[31mError:\033[0m Circular import detected: ");
     for (int i = 0; i < loading_stack_count; i++) {
-        fprintf(stderr, "%s -> ", loading_stack[i]);
+        fprintf(stderr, "%s → ", loading_stack[i]);
     }
     fprintf(stderr, "%s\n", module_name);
+    fprintf(stderr, "  Break the cycle by removing one of the imports or extracting shared code into a third module.\n");
 }
 
 // Check if module is built-in (has C implementation)
 bool is_builtin_module(const char* module_name) {
     const char* builtins[] = {
-        "math", "Math", "File", "System", "Path", "DateTime", 
-        "Json", "Http", "Regex", "Random", "HashMap", "HashSet", "Terminal",
-        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "String", "Data", NULL
+        "math", "Math", "File", "System", "Path", "DateTime", "Time",
+        "Json", "Http", "Regex", "Random", "HashMap", "HashSet", "Terminal", "Color",
+        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "String", "Data", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Web", "Smtp", "App", NULL
     };
     for (int i = 0; builtins[i] != NULL; i++) {
         if (strcmp(module_name, builtins[i]) == 0) {
@@ -313,6 +319,7 @@ Program* load_module(const char* module_name) {
     // Check for circular import
     if (is_in_loading_stack(resolved_name)) {
         print_circular_import_error(resolved_name);
+        circular_import_detected = true;
         free(resolved_name);
         return NULL;
     }

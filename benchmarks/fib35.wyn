@@ -1,0 +1,13 @@
+// Fibonacci(35) — recursive, no memoization
+// Tests: function call overhead, recursion, integer arithmetic
+
+fn fib(n: int) -> int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() -> int {
+    var result = fib(35)
+    println("fib(35) = ${result}")
+    return 0
+}

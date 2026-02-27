@@ -133,6 +133,19 @@ fn emit_stmt(stmt_types: [int], stmt_names: [string], stmt_ret_types: [int],
         return indent + val + ";\n"
     }
 
+    // IF — stmt_expr_idxs[idx] = condition expr, stmt_has_init[idx] = then body count
+    // For now: simple if without else
+    if t == 4 {
+        var cond = emit_expr(expr_types, expr_ints, expr_strings, expr_ops, expr_lefts, expr_rights, stmt_expr_idxs[idx])
+        return indent + "if (" + cond + ") {\n" + indent + "    /* if body */\n" + indent + "}\n"
+    }
+
+    // WHILE — stmt_expr_idxs[idx] = condition expr
+    if t == 5 {
+        var cond = emit_expr(expr_types, expr_ints, expr_strings, expr_ops, expr_lefts, expr_rights, stmt_expr_idxs[idx])
+        return indent + "while (" + cond + ") {\n" + indent + "    /* while body */\n" + indent + "}\n"
+    }
+
     return indent + "/* unknown stmt */\n"
 }
 

@@ -1,0 +1,46 @@
+// Test: nested spawn — spawning from inside a coroutine
+fn inner(x: int) -> int {
+    return x * 10
+}
+
+fn outer(x: int) -> int {
+    var f = spawn inner(x)
+    var r = await f
+    return r + 1
+}
+
+fn chain(depth: int) -> int {
+    if depth <= 0 { return 0 }
+    var f = spawn chain(depth - 1)
+    return await f + 1
+}
+
+fn main() -> int {
+    Test.init("Nested Spawn")
+
+    // Test 1: spawn from inside a spawn
+    var f1 = spawn outer(5)
+    var r1 = await f1
+    Test.assert_eq_int(r1, 51, "outer(5) = inner(5)*10 + 1 = 51")
+
+    // Test 2: multiple nested spawns
+    var f2 = spawn outer(3)
+    var f3 = spawn outer(7)
+    var r2 = await f2
+    var r3 = await f3
+    Test.assert_eq_int(r2, 31, "outer(3) = 31")
+    Test.assert_eq_int(r3, 71, "outer(7) = 71")
+
+    // Test 3: spawn chain depth 50
+    var f4 = spawn chain(50)
+    var r4 = await f4
+    Test.assert_eq_int(r4, 50, "chain(50) = 50")
+
+    // Test 4: spawn chain depth 100
+    var f5 = spawn chain(100)
+    var r5 = await f5
+    Test.assert_eq_int(r5, 100, "chain(100) = 100")
+
+    Test.summary()
+    return 0
+}

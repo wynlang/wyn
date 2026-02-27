@@ -1,0 +1,23 @@
+// Test: Circular import detection (20.1)
+// Verifies circular imports produce an error, not a hang.
+
+fn main() {
+    // Create test directory and circular files
+    System_exec("mkdir -p /tmp/wyn_circ_test")
+    System_exec("echo 'import b\nfn from_a() -> int { return 1 }' > /tmp/wyn_circ_test/a.wyn")
+    System_exec("echo 'import a\nfn from_b() -> int { return 2 }' > /tmp/wyn_circ_test/b.wyn")
+    System_exec("echo 'import a\nimport b\nfn main() { println(\"hi\") }' > /tmp/wyn_circ_test/main.wyn")
+
+    // Run wyn check — should detect cycle
+    var output = System_exec("./wyn check /tmp/wyn_circ_test/main.wyn 2>&1")
+
+    if output.contains("Circular import") {
+        println("PASS: circular import detected")
+    } else {
+        println("FAIL: not detected")
+        println("output: ${output}")
+    }
+
+    // Clean up
+    System_exec("rm -rf /tmp/wyn_circ_test")
+}

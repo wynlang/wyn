@@ -17,7 +17,7 @@ fn main() -> int {
     return helo
 }
 EOF
-    output=$(./wyn-llvm /tmp/test_undefined.wyn 2>&1)
+    output=$(./wyn run /tmp/test_undefined.wyn 2>&1)
     if echo "$output" | grep -q "Undefined variable" && echo "$output" | grep -q "line 3"; then
         echo "✓ Test 1: Undefined variable error"
         return 0
@@ -38,7 +38,7 @@ fn main() -> int {
     return takes_int("string")
 }
 EOF
-    output=$(./wyn-llvm /tmp/test_type.wyn 2>&1)
+    output=$(./wyn run /tmp/test_type.wyn 2>&1)
     if echo "$output" | grep -qi "type\|mismatch\|expected.*int"; then
         echo "✓ Test 2: Type mismatch error"
         return 0
@@ -59,7 +59,7 @@ fn main() -> int {
     return add(1)
 }
 EOF
-    output=$(./wyn-llvm /tmp/test_args.wyn 2>&1)
+    output=$(./wyn run /tmp/test_args.wyn 2>&1)
     if echo "$output" | grep -qi "argument"; then
         echo "✓ Test 3: Wrong argument count"
         return 0
@@ -76,7 +76,7 @@ fn main() -> int {
     return undefined_function()
 }
 EOF
-    output=$(./wyn-llvm /tmp/test_func.wyn 2>&1)
+    output=$(./wyn run /tmp/test_func.wyn 2>&1)
     if echo "$output" | grep -qi "undefined.*function"; then
         echo "✓ Test 4: Undefined function"
         return 0
@@ -93,7 +93,7 @@ fn main() -> int
     return 5
 }
 EOF
-    output=$(./wyn-llvm /tmp/test_parse.wyn 2>&1)
+    output=$(./wyn run /tmp/test_parse.wyn 2>&1)
     if echo "$output" | grep -qi "error\|expected"; then
         echo "✓ Test 5: Parse error"
         return 0

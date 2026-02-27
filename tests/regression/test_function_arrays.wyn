@@ -1,0 +1,24 @@
+// Test: Function pointers in arrays
+fn double(x: int) -> int { return x * 2 }
+fn triple(x: int) -> int { return x * 3 }
+fn upper(s: string) -> string { return s.upper() }
+fn lower(s: string) -> string { return s.lower() }
+
+fn main() -> int {
+    // Int functions
+    var int_fns = [double, triple]
+    if int_fns[0](5) != 10 { println("FAIL: double"); return 1 }
+    if int_fns[1](5) != 15 { println("FAIL: triple"); return 1 }
+    
+    // String functions
+    var str_fns = [upper, lower]
+    if str_fns[0]("hello") != "HELLO" { println("FAIL: upper"); return 1 }
+    if str_fns[1]("HELLO") != "hello" { println("FAIL: lower"); return 1 }
+    
+    // Dynamic index
+    var idx = 1
+    if int_fns[idx](10) != 30 { println("FAIL: dynamic"); return 1 }
+    
+    println("PASS: function arrays work")
+    return 0
+}

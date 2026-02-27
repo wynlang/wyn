@@ -1,0 +1,64 @@
+// HN14: contains/starts_with/ends_with return bool, not int
+var s = "hello world"
+var c = s.contains("world")
+println(c.to_string())
+// Expected: true
+
+var sw = s.starts_with("hello")
+println(sw.to_string())
+// Expected: true
+
+var ew = s.ends_with("nope")
+println(ew.to_string())
+// Expected: false
+
+// Direct chaining should also work
+println(s.contains("xyz").to_string())
+// Expected: false
+
+// HN16: method chaining on pipe result
+fn double(x: int) -> int { return x * 2 }
+var piped = (5 |> double).to_string()
+println(piped)
+// Expected: 10
+
+// Pipe with multiple stages
+fn add1(x: int) -> int { return x + 1 }
+var multi = (3 |> add1 |> double).to_string()
+println(multi)
+// Expected: 8
+
+// HN52: struct reassignment from method
+struct Counter {
+    val: int
+
+    fn next(self) -> Counter {
+        return Counter{val: self.val + 1}
+    }
+
+    fn to_string(self) -> string {
+        return self.val.to_string()
+    }
+}
+
+var c2 = Counter{val: 0}
+c2 = c2.next()
+c2 = c2.next()
+c2 = c2.next()
+println(c2.to_string())
+// Expected: 3
+
+// Match guards (bonus fix from this session)
+fn classify(n: int) -> string {
+    return match n {
+        0 => "zero"
+        _ if n < 0 => "negative"
+        _ if n > 100 => "big"
+        _ => "other"
+    }
+}
+println(classify(-5))
+println(classify(0))
+println(classify(42))
+println(classify(200))
+// Expected: negative, zero, other, big

@@ -3,6 +3,7 @@
 #define _DEFAULT_SOURCE
 #endif
 #include "spawn.h"
+#include "coroutine.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
@@ -256,48 +257,65 @@ WynTask* wyn_task_new(int capacity) {
 }
 
 void wyn_task_send(WynTask* task, void* value) {
+    // If inside a coroutine, use non-blocking try-send with yield
+    if (wyn_coro_current()) {
+        for (;;) {
+            pthread_mutex_lock(&task->mutex);
+            if (task->closed) { pthread_mutex_unlock(&task->mutex); return; }
+            if (task->size < task->capacity) {
+                task->buffer[task->write_pos] = value;
+                task->write_pos = (task->write_pos + 1) % task->capacity;
+                task->size++;
+                pthread_cond_signal(&task->not_empty);
+                pthread_mutex_unlock(&task->mutex);
+                return;
+            }
+            pthread_mutex_unlock(&task->mutex);
+            wyn_coro_yield();
+        }
+    }
+    // Main thread / OS thread: blocking wait
     pthread_mutex_lock(&task->mutex);
-    
-    // Wait if full
     while (task->size == task->capacity && !task->closed) {
         pthread_cond_wait(&task->not_full, &task->mutex);
     }
-    
-    if (task->closed) {
-        pthread_mutex_unlock(&task->mutex);
-        return;
-    }
-    
-    // Add to buffer
+    if (task->closed) { pthread_mutex_unlock(&task->mutex); return; }
     task->buffer[task->write_pos] = value;
     task->write_pos = (task->write_pos + 1) % task->capacity;
     task->size++;
-    
     pthread_cond_signal(&task->not_empty);
     pthread_mutex_unlock(&task->mutex);
 }
 
 void* wyn_task_recv(WynTask* task) {
+    // If inside a coroutine, use non-blocking try-recv with yield
+    if (wyn_coro_current()) {
+        for (;;) {
+            pthread_mutex_lock(&task->mutex);
+            if (task->size > 0) {
+                void* value = task->buffer[task->read_pos];
+                task->read_pos = (task->read_pos + 1) % task->capacity;
+                task->size--;
+                pthread_cond_signal(&task->not_full);
+                pthread_mutex_unlock(&task->mutex);
+                return value;
+            }
+            if (task->closed) { pthread_mutex_unlock(&task->mutex); return NULL; }
+            pthread_mutex_unlock(&task->mutex);
+            wyn_coro_yield();
+        }
+    }
+    // Main thread / OS thread: blocking wait
     pthread_mutex_lock(&task->mutex);
-    
-    // Wait if empty
     while (task->size == 0 && !task->closed) {
         pthread_cond_wait(&task->not_empty, &task->mutex);
     }
-    
-    if (task->size == 0 && task->closed) {
-        pthread_mutex_unlock(&task->mutex);
-        return NULL;
-    }
-    
-    // Get from buffer
+    if (task->size == 0 && task->closed) { pthread_mutex_unlock(&task->mutex); return NULL; }
     void* value = task->buffer[task->read_pos];
     task->read_pos = (task->read_pos + 1) % task->capacity;
     task->size--;
-    
     pthread_cond_signal(&task->not_full);
     pthread_mutex_unlock(&task->mutex);
-    
     return value;
 }
 

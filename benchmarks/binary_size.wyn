@@ -1,0 +1,6 @@
+// Binary size — hello world
+// Tests: minimal binary footprint
+
+fn main() {
+    println("hello")
+}

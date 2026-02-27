@@ -2360,9 +2360,12 @@ Stmt* struct_decl() {
             method->param_count = 0;
             method->params = malloc(sizeof(Token) * 16);
             method->param_types = malloc(sizeof(Expr*) * 16);
+            method->param_mutable = malloc(sizeof(bool) * 16);
+            method->param_defaults = malloc(sizeof(Expr*) * 16);
             
             if (!check(TOKEN_RPAREN)) {
                 do {
+                    method->param_mutable[method->param_count] = false;
                     method->params[method->param_count] = parser.current;
                     if (check(TOKEN_SELF)) { advance(); } else { expect(TOKEN_IDENT, "Expected parameter name"); }
                     if (method->params[method->param_count].length == 4 &&
@@ -2372,6 +2375,12 @@ Stmt* struct_decl() {
                     } else {
                         expect(TOKEN_COLON, "Expected ':' after parameter");
                         method->param_types[method->param_count] = parse_type();
+                    }
+                    // Parse default parameter value
+                    if (match(TOKEN_EQ)) {
+                        method->param_defaults[method->param_count] = expression();
+                    } else {
+                        method->param_defaults[method->param_count] = NULL;
                     }
                     method->param_count++;
                 } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
@@ -2778,13 +2787,25 @@ Stmt* enum_decl() {
             
             if (!check(TOKEN_RPAREN)) {
                 do {
-                    // Simple type parsing - just grab the identifier
+                    // Type parsing — skip optional "name:" prefix
                     if (check(TOKEN_IDENT)) {
-                        Expr* type_expr = alloc_expr();
-                        type_expr->type = EXPR_IDENT;
-                        type_expr->token = parser.current;
-                        types[type_count++] = type_expr;
+                        Token first = parser.current;
                         advance();
+                        if (match(TOKEN_COLON)) {
+                            // "name: type" format — skip name, parse type
+                            if (!check(TOKEN_IDENT)) { fprintf(stderr, "Error: Expected type after ':'\n"); break; }
+                            Expr* type_expr = alloc_expr();
+                            type_expr->type = EXPR_IDENT;
+                            type_expr->token = parser.current;
+                            types[type_count++] = type_expr;
+                            advance();
+                        } else {
+                            // Just a type name
+                            Expr* type_expr = alloc_expr();
+                            type_expr->type = EXPR_IDENT;
+                            type_expr->token = first;
+                            types[type_count++] = type_expr;
+                        }
                     } else {
                         fprintf(stderr, "Error: Expected type name in variant\n");
                         break;
@@ -2802,19 +2823,16 @@ Stmt* enum_decl() {
         
         stmt->enum_decl.variant_count++;
         
-        // After each variant, we expect either ',' or '}'
+        // After each variant, we expect either ',' or '}' or next variant (newline-separated)
         if (match(TOKEN_COMMA)) {
-            // Allow trailing comma - check if we're at the end
-            if (check(TOKEN_RBRACE)) {
-                break;
-            }
-            // Continue to next variant
+            if (check(TOKEN_RBRACE)) break;
             continue;
         } else if (check(TOKEN_RBRACE)) {
-            // End of enum
             break;
+        } else if (check(TOKEN_IDENT) || check(TOKEN_NONE) || check(TOKEN_SOME) || check(TOKEN_OK) || check(TOKEN_ERR) || check(TOKEN_TRUE) || check(TOKEN_FALSE)) {
+            // Allow newline-separated variants (no comma needed)
+            continue;
         } else {
-            // Unexpected token
             fprintf(stderr, "Error: Expected ',' or '}' after enum variant, got type=%d\n", parser.current.type);
             break;
         }
@@ -3130,9 +3148,16 @@ Program* parse_program() {
             prog->stmts[prog->count++] = impl_block();
         } else if (check(TOKEN_TRAIT)) {
             prog->stmts[prog->count++] = trait_decl();
-        } else if (check(TOKEN_TEST)) {
-            // T1.6.2: Testing Framework Agent addition
-            prog->stmts[prog->count++] = parse_test_statement();
+        } else if (check(TOKEN_IDENT) && parser.current.length == 4 && memcmp(parser.current.start, "test", 4) == 0) {
+            // T1.6.2: Testing Framework — check if next char after 'test' suggests a test block
+            // test "name" { ... } or test name { ... } — NOT test() or test = ...
+            const char* after = parser.current.start + 4;
+            while (*after == ' ' || *after == '\t') after++;
+            if (*after == '"' || (*after >= 'a' && *after <= 'z') || (*after >= 'A' && *after <= 'Z') || *after == '{') {
+                prog->stmts[prog->count++] = parse_test_statement();
+            } else {
+                prog->stmts[prog->count++] = statement();
+            }
         } else if (check(TOKEN_IDENT) && parser.current.length == 11 && memcmp(parser.current.start, "before_each", 11) == 0) {
             // before_each { } — parsed as test block with special name
             advance();
@@ -3180,7 +3205,16 @@ Program* parse_program() {
             // Global variable/constant declarations
             prog->stmts[prog->count++] = statement();
         } else {
-            prog->stmts[prog->count++] = statement();
+            // Script mode: allow arbitrary statements at top level
+            Stmt* stmt = statement();
+            if (stmt) {
+                prog->stmts[prog->count++] = stmt;
+            } else if (!parser.had_error) {
+                fprintf(stderr, "Error at line %d: Unexpected token '%.*s'\n",
+                    parser.current.line, parser.current.length, parser.current.start);
+                parser.had_error = true;
+                advance();
+            }
         }
     }
     
@@ -3619,13 +3653,29 @@ static Pattern* parse_pattern() {
             }
             
             if (match(TOKEN_LPAREN)) {
-                // Shape.Circle(r) — enum variant with data
+                // Shape.Circle(r) or Shape.Rect(w, h) — enum variant with data
                 pattern->type = PATTERN_OPTION;
                 pattern->option.is_some = true;
                 pattern->option.enum_name = potential_struct;
                 pattern->option.variant_name = variant_name;
+                pattern->option.inners = NULL;
+                pattern->option.inner_count = 0;
                 if (!check(TOKEN_RPAREN)) {
-                    pattern->option.inner = parse_pattern();
+                    // Parse first pattern
+                    Pattern* first = parse_pattern();
+                    if (match(TOKEN_COMMA)) {
+                        // Multiple bindings: Rect(w, h)
+                        pattern->option.inners = safe_malloc(sizeof(Pattern*) * 8);
+                        pattern->option.inners[0] = first;
+                        pattern->option.inner_count = 1;
+                        do {
+                            pattern->option.inners[pattern->option.inner_count++] = parse_pattern();
+                        } while (match(TOKEN_COMMA));
+                        pattern->option.inner = first; // backward compat
+                    } else {
+                        // Single binding: Circle(r)
+                        pattern->option.inner = first;
+                    }
                 } else {
                     pattern->option.inner = NULL;
                 }
@@ -3641,14 +3691,27 @@ static Pattern* parse_pattern() {
             return pattern;
         }
         
-        // Check for enum variant with data: Some(x) or Option_Some(x)
+        // Check for enum variant with data: Some(x) or Rect(w, h)
         if (match(TOKEN_LPAREN)) {
-            pattern->type = PATTERN_OPTION;  // Reuse PATTERN_OPTION for all enum variants
-            pattern->option.is_some = true;  // Has data
+            pattern->type = PATTERN_OPTION;
+            pattern->option.is_some = true;
             pattern->option.variant_name = potential_struct;
+            pattern->option.inners = NULL;
+            pattern->option.inner_count = 0;
             
             if (!check(TOKEN_RPAREN)) {
-                pattern->option.inner = parse_pattern();
+                Pattern* first = parse_pattern();
+                if (match(TOKEN_COMMA)) {
+                    pattern->option.inners = safe_malloc(sizeof(Pattern*) * 8);
+                    pattern->option.inners[0] = first;
+                    pattern->option.inner_count = 1;
+                    do {
+                        pattern->option.inners[pattern->option.inner_count++] = parse_pattern();
+                    } while (match(TOKEN_COMMA));
+                    pattern->option.inner = first;
+                } else {
+                    pattern->option.inner = first;
+                }
             } else {
                 pattern->option.inner = NULL;
             }

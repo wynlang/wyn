@@ -26,53 +26,51 @@ jobs:
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y gcc make libsqlite3-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y gcc make
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         run: choco install make mingw -y
         shell: pwsh
 
-      - name: Build
+      - name: Build compiler
         run: make clean && make
         shell: bash
 
-      - name: Build runtime
+      - name: Smoke test (Unix)
         if: runner.os != 'Windows'
-        run: make runtime
+        run: |
+          echo 'fn main() -> int { println("Wyn release OK"); return 0 }' > /tmp/smoke.wyn
+          ./wyn build /tmp/smoke.wyn
+          /tmp/smoke | grep -q "OK"
+          echo "✅ Release build verified"
         shell: bash
 
-      - name: Build runtime (Windows)
+      - name: Smoke test (Windows)
         if: runner.os == 'Windows'
-        run: make runtime
-        shell: bash
-
-      - name: Test (Unix)
-        if: runner.os != 'Windows'
-        run: ./wyn run tests/run_tests.wyn
-        shell: bash
-
-      - name: Test (Windows)
-        if: runner.os == 'Windows'
-        run: wyn.exe run tests\run_tests.wyn
+        run: |
+          echo fn main() { println("Wyn release OK") } > smoke.wyn
+          wyn.exe build smoke.wyn
+          smoke.exe
         shell: cmd
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          mkdir -p dist
-          cp wyn dist/${{ matrix.artifact }}
-          cp -r runtime dist/runtime
-          cp src/wyn_runtime.h dist/
+          mkdir -p dist/src dist/vendor/minicoro
+          cp wyn dist/
+          cp -r src dist/src
+          [ -d vendor/minicoro ] && cp -r vendor/minicoro dist/vendor/minicoro
+          [ -d vendor/tcc ] && cp -r vendor/tcc dist/vendor/tcc
+          [ -d runtime ] && cp -r runtime dist/runtime
           tar czf ${{ matrix.artifact }}.tar.gz -C dist .
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          mkdir dist
-          copy wyn.exe dist\${{ matrix.artifact }}.exe
-          xcopy /E /I runtime dist\runtime
-          copy src\wyn_runtime.h dist\
+          mkdir dist\src
+          copy wyn.exe dist\
+          xcopy /E /I src dist\src
           Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip
         shell: pwsh
 

@@ -118,6 +118,90 @@ static int install_local(const char* name, const char* source_path) {
     return 1;
 }
 
+// Get git commit hash for a cloned repo
+static void get_git_hash(const char* repo_path, char* hash, size_t hash_size) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "git -C '%s' rev-parse HEAD 2>/dev/null", repo_path);
+    FILE* fp = popen(cmd, "r");
+    hash[0] = '\0';
+    if (fp) {
+        if (fgets(hash, hash_size, fp)) {
+            char* nl = strchr(hash, '\n');
+            if (nl) *nl = '\0';
+        }
+        pclose(fp);
+    }
+}
+
+// Write wyn.lock file
+static void write_lockfile(const char* name, const char* url, const char* hash) {
+    // Read existing lock entries
+    FILE* f = fopen("wyn.lock", "r");
+    char entries[64][3][256];
+    int count = 0;
+    int replaced = 0;
+    
+    if (f) {
+        char line[1024];
+        while (fgets(line, sizeof(line), f) && count < 64) {
+            char* nl = strchr(line, '\n'); if (nl) *nl = '\0';
+            if (line[0] == '#' || line[0] == '\0') continue;
+            // Format: name url hash
+            char n[256], u[256], h[256];
+            if (sscanf(line, "%255s %255s %255s", n, u, h) == 3) {
+                if (strcmp(n, name) == 0) {
+                    strncpy(entries[count][0], name, 255);
+                    strncpy(entries[count][1], url, 255);
+                    strncpy(entries[count][2], hash, 255);
+                    replaced = 1;
+                } else {
+                    strncpy(entries[count][0], n, 255);
+                    strncpy(entries[count][1], u, 255);
+                    strncpy(entries[count][2], h, 255);
+                }
+                count++;
+            }
+        }
+        fclose(f);
+    }
+    
+    if (!replaced && count < 64) {
+        strncpy(entries[count][0], name, 255);
+        strncpy(entries[count][1], url, 255);
+        strncpy(entries[count][2], hash, 255);
+        count++;
+    }
+    
+    f = fopen("wyn.lock", "w");
+    if (!f) return;
+    fprintf(f, "# wyn.lock — pinned package versions (do not edit)\n");
+    for (int i = 0; i < count; i++) {
+        fprintf(f, "%s %s %s\n", entries[i][0], entries[i][1], entries[i][2]);
+    }
+    fclose(f);
+}
+
+// Read locked hash for a package
+static int read_locked_hash(const char* name, char* hash, size_t hash_size) {
+    FILE* f = fopen("wyn.lock", "r");
+    if (!f) return 0;
+    char line[1024];
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '#') continue;
+        char n[256], u[256], h[256];
+        if (sscanf(line, "%255s %255s %255s", n, u, h) == 3) {
+            if (strcmp(n, name) == 0) {
+                strncpy(hash, h, hash_size - 1);
+                hash[hash_size - 1] = '\0';
+                fclose(f);
+                return 1;
+            }
+        }
+    }
+    fclose(f);
+    return 0;
+}
+
 // Install from git URL
 static int install_git(const char* name, const char* url) {
     char pkg_dir[512];
@@ -150,6 +234,20 @@ static int install_git(const char* name, const char* url) {
     int result = system(cmd);
     
     if (result == 0) {
+        // Check for locked version and checkout if present
+        char locked_hash[64];
+        if (read_locked_hash(name, locked_hash, sizeof(locked_hash))) {
+            // Fetch full history to checkout specific commit
+            char fetch[1024];
+            snprintf(fetch, sizeof(fetch), "git -C '%s' fetch --unshallow 2>/dev/null; git -C '%s' checkout %s 2>/dev/null", dest, dest, locked_hash);
+            system(fetch);
+        }
+        
+        // Record commit hash in lockfile
+        char hash[64];
+        get_git_hash(dest, hash, sizeof(hash));
+        if (hash[0]) write_lockfile(name, full_url, hash);
+        
         // Validate: must contain .wyn files OR .c/.h files (C library package)
         char check[1024];
         snprintf(check, sizeof(check), "find '%s' \\( -name '*.wyn' -o -name '*.🐉' -o -name '*.c' -o -name '*.h' \\) -maxdepth 3 | head -1", dest);

@@ -322,6 +322,7 @@ static void handle_completion(const char* id, const char* msg) {
             "{\"label\":\"Regex\",\"kind\":9,\"detail\":\"module: match, replace, find, find_all, split\"},"
             "{\"label\":\"Encoding\",\"kind\":9,\"detail\":\"module: base64_encode, base64_decode, hex_encode...\"},"
             "{\"label\":\"Crypto\",\"kind\":9,\"detail\":\"module: sha256, md5, hmac_sha256, random_bytes\"},"
+            "{\"label\":\"Random\",\"kind\":9,\"detail\":\"module: int, float, bool, string, hex, uuid, seed_auto\"},"
             "{\"label\":\"Url\",\"kind\":9,\"detail\":\"module: encode, decode\"},"
             "{\"label\":\"Test\",\"kind\":9,\"detail\":\"module: init, assert, assert_eq_int, summary...\"},"
             "{\"label\":\"Task\",\"kind\":9,\"detail\":\"module: value, get, set, add, channel, send, recv\"},"

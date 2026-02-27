@@ -1,0 +1,19 @@
+// Test: passing [string] arrays to functions
+fn join_items(items: [string], sep: string) -> string {
+    var result = ""
+    for i in 0..items.len() {
+        if i > 0 { result = result + sep }
+        result = result + items[i]
+    }
+    return result
+}
+
+var words = ["hello", "world", "wyn"]
+var joined = join_items(words, ", ")
+
+if joined != "hello, world, wyn" {
+    println("FAIL: got '${joined}'")
+    System_exit(1)
+}
+
+println("PASS: string array argument passing works")

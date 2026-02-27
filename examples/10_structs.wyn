@@ -1,24 +1,19 @@
-// Structs - Defining and using structures
+// Structs - Defining and using structures with methods
 struct Point {
     x: int,
     y: int
-}
 
-fn distance_from_origin(p: Point) -> int {
-    return p.x * p.x + p.y * p.y;
+    fn distance_sq(self) -> int {
+        return self.x * self.x + self.y * self.y
+    }
 }
 
 fn main() -> int {
-    var p1 = Point { x: 3, y: 4 };
-    var p2 = Point { x: 5, y: 12 };
+    var p1 = Point { x: 3, y: 4 }
+    var p2 = Point { x: 5, y: 12 }
     
-    var dist1 = distance_from_origin(p1);
-    var dist2 = distance_from_origin(p2);
+    println("Distance² from origin: " + p1.distance_sq().to_string())
+    println("Distance² from origin: " + p2.distance_sq().to_string())
     
-    print("Distance 1: ");
-    print(dist1);
-    print("Distance 2: ");
-    print(dist2);
-    
-    return 0;
+    return 0
 }

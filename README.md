@@ -2,7 +2,7 @@
 
 **1 language for everything — CLI, web, desktop, mobile, games.**
 
-47 tests. 27 packages. 5 platforms. Zero dependencies.
+48 tests. 28 packages. 5 platforms. Zero dependencies.
 
 ## Install
 
@@ -84,7 +84,7 @@ fn process() {
     // file auto-closed on return
 }
 
-// Result/Option with ? operator
+// Result/Option types
 fn divide(a: int, b: int) -> ResultInt {
     if b == 0 { return Err("division by zero") }
     return Ok(a / b)
@@ -155,15 +155,15 @@ Tools:
 
 Flags:
   --fast                           Skip optimizations (fastest compile)
-  --release                        Full optimizations (-O2)
+  --release                        Full optimizations (-O3)
   --debug                          Keep .c and .out artifacts
 ```
 
 ## Performance
 
-- Hello world binary: 222KB, runs in 12ms
-- Compilation: 1.4s with precompiled runtime
-- Spawn: 2μs per task (matches Go goroutines)
+- Hello world binary: 33KB (release), runs in <1ms
+- Compilation: ~300ms with bundled TCC, ~220ms with system cc --release
+- Spawn: ~3μs per coroutine (pooled 16KB stacks, work-stealing scheduler, kqueue/epoll I/O)
 - Memory: 180 bytes/task
 - 64-bit integers throughout
 
@@ -197,8 +197,8 @@ wyn cross android app.wyn   # Android arm64 (needs NDK)
 wyn/
 ├── src/            # Compiler source (C)
 ├── runtime/        # Precompiled runtime library
-├── tests/          # Test suite (268+ assertions)
-├── docs/           # User documentation
+├── tests/          # Test suite (48 tests, 268+ assertions)
+├── examples/       # Example programs
 ├── Makefile        # Build system
 ├── README.md       # This file
 └── CHANGELOG.md    # Version history
@@ -206,11 +206,8 @@ wyn/
 
 ## Documentation
 
-- [Language Tutorial](docs/tutorial.md)
+- [wynlang.com](https://wynlang.com) — docs, playground, packages
 - [Official Packages](https://github.com/wynlang/awesome-wyn)
-- [Best Practices](docs/best-practices.md)
-- [Spawn Performance](docs/spawn-performance.md)
-- [Examples](docs/examples.md)
 
 ## License
 

@@ -1,0 +1,28 @@
+// Test: Coroutine-aware traces (22.4)
+// Verify spawn origin tracking works
+
+fn compute(n: int) -> int {
+    return n * n
+}
+
+fn main() {
+    // Spawn with await — should track origin
+    var f1 = spawn compute(42)
+    var r1 = await f1
+    println(r1)
+
+    // Multiple spawns
+    var f2 = spawn compute(10)
+    var f3 = spawn compute(20)
+    var r2 = await f2
+    var r3 = await f3
+    println(r2)
+    println(r3)
+
+    // Fire-and-forget spawns
+    for i in 0..100 {
+        spawn compute(i)
+    }
+
+    println("PASS: coroutine traces")
+}

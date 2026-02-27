@@ -41,10 +41,9 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
             if (stmt->for_stmt.body) scan_stmt_for_lambdas(stmt->for_stmt.body);
             break;
         case STMT_SPAWN:
-            // Collect spawn wrappers
+            // Collect spawn wrappers for fire-and-forget spawns
             if (stmt->spawn.call->type == EXPR_CALL && 
-                stmt->spawn.call->call.callee->type == EXPR_IDENT &&
-                stmt->spawn.call->call.arg_count == 0) {
+                stmt->spawn.call->call.callee->type == EXPR_IDENT) {
                 
                 Expr* callee = stmt->spawn.call->call.callee;
                 char func_name[256];
@@ -52,7 +51,6 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                 memcpy(func_name, callee->token.start, len);
                 func_name[len] = '\0';
                 
-                // Add to spawn wrappers (track by func_name + arg_count)
                 int arg_count = stmt->spawn.call->call.arg_count;
                 bool already_added = false;
                 for (int i = 0; i < spawn_wrapper_count; i++) {
@@ -65,6 +63,7 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                 if (!already_added && spawn_wrapper_count < 256) {
                     strcpy(spawn_wrappers[spawn_wrapper_count].func_name, func_name);
                     spawn_wrappers[spawn_wrapper_count].arg_count = arg_count;
+                    spawn_wrappers[spawn_wrapper_count].returns_void = 1;
                     spawn_wrapper_count++;
                 }
             }
@@ -233,7 +232,7 @@ static void scan_expr_for_lambdas(Expr* expr) {
             char* func_code = malloc(8192);
             int pos = 0;
             
-            if (in_return_lambda && capture_count > 0) {
+            if (capture_count > 0 && in_return_lambda) {
                 // Generate closure-style: env struct + function taking void* env
                 pos += snprintf(func_code + pos, 8192 - pos, 
                     "typedef struct { ");
@@ -260,18 +259,25 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
                 pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
             } else {
-                // Original style: captured vars as extra params
-                pos += snprintf(func_code + pos, 8192 - pos, "long long __lambda_%d(", lambda_id);
-                for (int i = 0; i < capture_count; i++) {
-                    if (i > 0) pos += snprintf(func_code + pos, 8192 - pos, ", ");
-                    pos += snprintf(func_code + pos, 8192 - pos, "long long %s", captured_vars[i]);
+                // Non-return lambda with captures: use static globals
+                if (capture_count > 0) {
+                    for (int i = 0; i < capture_count; i++) {
+                        pos += snprintf(func_code + pos, 8192 - pos, "static long long __cap_%d_%s;\n", lambda_id, captured_vars[i]);
+                    }
                 }
+                pos += snprintf(func_code + pos, 8192 - pos, "long long __lambda_%d(", lambda_id);
                 for (int i = 0; i < expr->lambda.param_count; i++) {
-                    if (i > 0 || capture_count > 0) pos += snprintf(func_code + pos, 8192 - pos, ", ");
+                    if (i > 0) pos += snprintf(func_code + pos, 8192 - pos, ", ");
                     pos += snprintf(func_code + pos, 8192 - pos, "long long %.*s", 
                                    expr->lambda.params[i].length, expr->lambda.params[i].start);
                 }
-                pos += snprintf(func_code + pos, 8192 - pos, ") {\n    return ");
+                pos += snprintf(func_code + pos, 8192 - pos, ") {\n");
+                if (capture_count > 0) {
+                    for (int i = 0; i < capture_count; i++) {
+                        pos += snprintf(func_code + pos, 8192 - pos, "    long long %s = __cap_%d_%s;\n", captured_vars[i], lambda_id, captured_vars[i]);
+                    }
+                }
+                pos += snprintf(func_code + pos, 8192 - pos, "    return ");
                 pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
                 pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
             }
@@ -303,6 +309,17 @@ static void scan_expr_for_lambdas(Expr* expr) {
             for (int i = 0; i < expr->method_call.arg_count; i++) {
                 scan_expr_for_lambdas(expr->method_call.args[i]);
             }
+            // Detect x.push(spawn ...) — register x as spawn array
+            if (expr->method_call.method.length == 4 &&
+                memcmp(expr->method_call.method.start, "push", 4) == 0 &&
+                expr->method_call.arg_count == 1 &&
+                expr->method_call.args[0]->type == EXPR_SPAWN &&
+                expr->method_call.object->type == EXPR_IDENT) {
+                char vn[256];
+                int vl = expr->method_call.object->token.length < 255 ? expr->method_call.object->token.length : 255;
+                memcpy(vn, expr->method_call.object->token.start, vl); vn[vl] = '\0';
+                register_spawn_array(vn);
+            }
             break;
         case EXPR_SPAWN:
             // Collect spawn wrapper for this spawn expression
@@ -321,12 +338,14 @@ static void scan_expr_for_lambdas(Expr* expr) {
                     if (strcmp(spawn_wrappers[i].func_name, func_name) == 0 &&
                         spawn_wrappers[i].arg_count == arg_count) {
                         already_added = true;
+                        spawn_wrappers[i].returns_void = 0; // EXPR_SPAWN needs return value
                         break;
                     }
                 }
                 if (!already_added && spawn_wrapper_count < 256) {
                     strcpy(spawn_wrappers[spawn_wrapper_count].func_name, func_name);
                     spawn_wrappers[spawn_wrapper_count].arg_count = arg_count;
+                    spawn_wrappers[spawn_wrapper_count].returns_void = 0;
                     spawn_wrapper_count++;
                 }
             }

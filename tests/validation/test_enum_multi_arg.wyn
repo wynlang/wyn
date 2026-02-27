@@ -1,0 +1,28 @@
+// Test: multi-arg enum destructuring (HN13)
+enum Shape {
+    Circle(int)
+    Rect(int, int)
+}
+
+fn area(s: Shape) -> int {
+    return match s {
+        Shape.Circle(r) => r * r
+        Shape.Rect(w, h) => w * h
+    }
+}
+
+fn main() -> int {
+    var c = Shape.Circle(5)
+    var r = Shape.Rect(3, 4)
+
+    var c_val = area(c)
+    var r_val = area(r)
+
+    if c_val != 25 { println("FAIL circle: " + c_val.to_string()); return 1 }
+    if r_val != 12 { println("FAIL rect: " + r_val.to_string()); return 2 }
+
+    println("circle(5) area = " + c_val.to_string())
+    println("rect(3,4) area = " + r_val.to_string())
+    println("Multi-arg enum destructuring PASS")
+    return 0
+}

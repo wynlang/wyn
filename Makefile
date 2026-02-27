@@ -32,43 +32,6 @@ endif
 CFLAGS=-Wall -Wextra -std=c11 -g $(PLATFORM_CFLAGS)
 OPTFLAGS=-O2
 
-# LLVM Integration for Phase 2 (optional)
-LLVM_CONFIG ?= llvm-config
-LLVM_VERSION := $(shell $(LLVM_CONFIG) --version 2>/dev/null || echo "not-found")
-
-ifeq ($(LLVM_VERSION),not-found)
-$(warning LLVM not found. LLVM features will be disabled. Install LLVM 15+ for full functionality)
-LLVM_AVAILABLE := 0
-else
-# Verify LLVM version is 15+
-LLVM_MAJOR := $(shell echo $(LLVM_VERSION) | cut -d. -f1)
-LLVM_VERSION_CHECK := $(shell [ $(LLVM_MAJOR) -ge 15 ] && echo "ok" || echo "fail")
-ifeq ($(LLVM_VERSION_CHECK),fail)
-$(warning LLVM version $(LLVM_VERSION) found, but 15+ required. LLVM features disabled)
-LLVM_AVAILABLE := 0
-else
-LLVM_AVAILABLE := 1
-endif
-endif
-
-ifeq ($(LLVM_AVAILABLE),1)
-LLVM_CFLAGS := $(shell $(LLVM_CONFIG) --cflags)
-LLVM_LDFLAGS := $(shell $(LLVM_CONFIG) --ldflags)
-LLVM_LIBS := $(shell $(LLVM_CONFIG) --libs core executionengine mcjit native)
-
-# Platform-specific adjustments
-ifeq ($(OS),Windows_NT)
-    LLVM_LIBS += -lole32 -luuid
-endif
-
-CFLAGS_LLVM = $(CFLAGS) $(LLVM_CFLAGS) -DWITH_LLVM=1
-LDFLAGS_LLVM = $(LLVM_LDFLAGS) $(LLVM_LIBS) -Lruntime -lwyn_runtime
-else
-# LLVM not available - use basic flags
-CFLAGS_LLVM = $(CFLAGS)
-LDFLAGS_LLVM = 
-endif
-
 all: wyn$(EXE_EXT)
 
 # Platform information
@@ -80,9 +43,11 @@ platform-info:
 	@echo "Platform libs: $(PLATFORM_LIBS)"
 	@echo "Platform flags: $(PLATFORM_CFLAGS)"
 
-# Original C-based compiler (Phase 1)
-wyn$(EXE_EXT): src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c src/closures.c src/scope.c src/toml.c src/file_watch.c src/package.c src/lsp.c src/spawn.c src/registry.c src/semver.c src/tcc_backend.c
-	$(CC) $(CFLAGS) -I src -I vendor/tcc/include -o $@ $^ vendor/tcc/lib/libtcc.a $(PLATFORM_LIBS)
+# C-based compiler
+CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c src/closures.c src/scope.c src/toml.c src/file_watch.c src/package.c src/lsp.c src/spawn.c src/registry.c src/semver.c src/tcc_backend.c src/wyn_arena.c src/coroutine.c
+
+wyn$(EXE_EXT): $(CORE_SRCS)
+	$(CC) $(CFLAGS) -I src -I vendor/tcc/include -I vendor/minicoro -o $@ $^ vendor/tcc/lib/libtcc.a $(PLATFORM_LIBS)
 
 # Platform-specific targets
 wyn-windows: PLATFORM_CFLAGS += -DWYN_PLATFORM_WINDOWS
@@ -105,10 +70,6 @@ wyn-macos: CC = clang
 wyn-macos: EXE_EXT =
 wyn-macos: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
-
-# LLVM-based compiler (Phase 2) with Context Management, Target Configuration, Type Mapping, Runtime Functions, Expression Codegen, Statement Codegen, Function Codegen, and Array/String Operations
-wyn-llvm: src/main.c src/lexer.c src/parser.c src/checker.c src/llvm_codegen.c src/llvm_context.c src/target_config.c src/type_mapping.c src/runtime_functions.c src/llvm_expression_codegen.c src/llvm_statement_codegen.c src/llvm_function_codegen.c src/llvm_array_string_codegen.c src/llvm_runtime.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/cmd_other.c src/optimize.c src/types.c src/patterns.c src/generics.c src/type_inference.c src/platform.c src/wyn_interface.c src/traits.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/result.c src/modules.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_math.c src/hashmap.c src/hashset.c src/json.c src/cmd_compile.c src/cmd_test.c src/toml.c src/file_watch.c src/package.c src/lsp.c src/spawn.c src/registry.c src/semver.c src/closures.c src/scope.c src/optional.c src/file_io_simple.c src/stdlib_enhanced.c src/stdlib_process.c src/stdlib_fs.c runtime/libwyn_runtime.a
-	$(CC) $(CFLAGS_LLVM) -I src -o $@ $^ $(LDFLAGS_LLVM) -lpthread
 
 # Phase 2 Integration Testing
 test_phase2_integration: tests/phase2_integration_simple
@@ -301,17 +262,6 @@ tests/test_weak_codegen: tests/test_weak_codegen.c src/arc_runtime.c src/arc_ope
 
 
 # LLVM Context Management Tests (T2.1.2)
-test_llvm_context: tests/test_llvm_context
-	@echo "=== Running LLVM Context Management Tests ==="
-	@timeout 10s ./tests/test_llvm_context || echo "LLVM tests skipped (timeout or not available)"
-
-tests/test_llvm_context: tests/test_llvm_context.c src/llvm_context.c src/safe_memory.c src/error.c
-	@if command -v $(LLVM_CONFIG) >/dev/null 2>&1; then \
-		$(CC) $(CFLAGS_LLVM) -I src -DWYN_TESTING -o $@ $^ $(LDFLAGS_LLVM) -lpthread; \
-	else \
-		$(CC) $(CFLAGS) -I src -o $@ tests/test_llvm_context.c src/safe_memory.c src/error.c; \
-	fi
-
 test_lexer: tests/test_lexer
 	@echo "=== Running Lexer Tests ==="
 	@./tests/test_lexer
@@ -435,6 +385,21 @@ tests/test_stdlib_advanced: tests/test_stdlib_advanced.c src/stdlib_advanced.c
 tests/test_documentation_system: tests/test_documentation_system.c
 	$(CC) $(CFLAGS) -I src -o $@ $^
 
+# Coroutine unit tests
+test_coroutine: tests/test_coroutine
+	@echo "=== Running Coroutine Tests ==="
+	@./tests/test_coroutine
+
+tests/test_coroutine: tests/test_coroutine.c src/coroutine.c
+	$(CC) $(CFLAGS) -I src -I vendor/minicoro -o $@ $^ -lpthread
+
+test_coroutine_advanced: tests/test_coroutine_advanced
+	@echo "=== Running Advanced Coroutine Tests ==="
+	@./tests/test_coroutine_advanced
+
+tests/test_coroutine_advanced: tests/test_coroutine_advanced.c src/coroutine.c src/spawn_fast.c src/future.c src/io_loop.c src/spawn.c
+	$(CC) $(CFLAGS) -I src -I vendor/minicoro -o $@ $^ -lpthread
+
 
 
 tests/test_container_support: tests/test_container_support.c
@@ -478,13 +443,13 @@ tools/formatter.wyn.out: tools/formatter.wyn wyn
 runtime: wyn$(EXE_EXT)
 	@echo "Building runtime library..."
 	@mkdir -p runtime/obj
-	@for f in src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c; do $(CC) -std=c11 -O2 -w -I src -c $$f -o runtime/obj/$$(basename $$f .c).o 2>/dev/null; done
+	@for f in src/wyn_arena.c src/coroutine.c src/io_loop.c src/runtime_exports.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c; do $(CC) -std=c11 -O2 -w -I src -I vendor/minicoro -c $$f -o runtime/obj/$$(basename $$f .c).o 2>/dev/null; done
 	@# Old runtime extraction removed fi
 	@ar rcs runtime/libwyn_rt.a runtime/obj/*.o
 	@echo "Built runtime/libwyn_rt.a"
 
 clean:
-	rm -f wyn wyn.exe wyn-windows.exe wyn-linux wyn-macos wyn-llvm tests/test_lexer tests/test_parser tests/test_checker tests/test_codegen tests/test_operators tests/test_default_parameters tests/test_function_overloading tests/test_generic_functions tests/test_parameter_validation tests/test_function_integration tests/test_syntax_design tests/test_system_integration tests/phase2_integration tests/test_llvm_context tests/phase2_integration_simple tests/test_wasm_support tests/test_self_compilation tests/test_documentation_system tests/test_container_support tests/test_lexer_rewrite tools/formatter.wyn.out
+	rm -f wyn wyn.exe wyn-windows.exe wyn-linux wyn-macos tests/test_lexer tests/test_parser tests/test_checker tests/test_codegen tests/test_operators tests/test_default_parameters tests/test_function_overloading tests/test_generic_functions tests/test_parameter_validation tests/test_function_integration tests/test_syntax_design tests/test_system_integration tests/phase2_integration tests/phase2_integration_simple tests/test_wasm_support tests/test_self_compilation tests/test_documentation_system tests/test_container_support tests/test_lexer_rewrite tests/test_coroutine tools/formatter.wyn.out
 	rm -rf temp
 
 .PHONY: all test test_lexer test_parser test_checker test_codegen test_operators clean test_phase2_integration phase2-monitor phase2-gates phase2-status container-build container-test container-deploy container-all fmt-tool platform-info wyn-windows wyn-linux wyn-macos

@@ -1,0 +1,74 @@
+// Edge case tests for v1.8 new features
+
+// === Default params edge cases ===
+fn no_args() -> int { return 42 }
+fn all_defaults(a: int = 1, b: int = 2, c: int = 3, d: int = 4, e: int = 5) -> int {
+    return a + b + c + d + e
+}
+fn string_default(s: string = "") -> string {
+    return "got: ${s}"
+}
+fn zero_default(n: int = 0) -> int { return n }
+
+// === String interp edge cases ===
+fn interp_empty() -> string { return "${""}" }
+fn interp_nested_call(x: int) -> string { return "val=${x * x + 1}" }
+
+// === ? operator edge cases ===
+fn always_ok() -> ResultInt { return ResultInt_Ok(99) }
+fn always_err() -> ResultInt { return ResultInt_Err("nope") }
+fn chain_three() -> ResultInt {
+    var a = always_ok()?
+    var b = always_ok()?
+    var c = always_ok()?
+    return ResultInt_Ok(a + b + c)
+}
+fn early_exit() -> ResultInt {
+    var a = always_ok()?
+    var b = always_err()?
+    // Should never reach here
+    return ResultInt_Ok(a + b)
+}
+
+fn main() -> int {
+    // Default params
+    if no_args() != 42 { println("FAIL: no_args"); return 1 }
+    if all_defaults() != 15 { println("FAIL: all_defaults()"); return 2 }
+    if all_defaults(10) != 24 { println("FAIL: all_defaults(10)"); return 3 }
+    if all_defaults(10, 20) != 42 { println("FAIL: all_defaults(10,20)"); return 4 }
+    if all_defaults(10, 20, 30) != 69 { println("FAIL: all_defaults(10,20,30)"); return 5 }
+    if all_defaults(10, 20, 30, 40) != 105 { println("FAIL: all_defaults(10,20,30,40)"); return 6 }
+    if all_defaults(10, 20, 30, 40, 50) != 150 { println("FAIL: all_defaults full"); return 7 }
+    if string_default() != "got: " { println("FAIL: empty string default"); return 8 }
+    if string_default("hi") != "got: hi" { println("FAIL: string_default(hi)"); return 9 }
+    if zero_default() != 0 { println("FAIL: zero_default"); return 10 }
+
+    // String interp
+    if interp_nested_call(5) != "val=26" { println("FAIL: nested interp"); return 11 }
+
+    // ? operator
+    var r1 = chain_three()
+    if !ResultInt_is_ok(r1) { println("FAIL: chain_three"); return 12 }
+
+    var r2 = early_exit()
+    if !ResultInt_is_err(r2) { println("FAIL: early_exit should err"); return 13 }
+
+    // Spawn edge cases
+    var f1 = spawn no_args()
+    var v1 = await f1
+    if v1 != 42 { println("FAIL: spawn no_args"); return 14 }
+
+    var f2 = spawn all_defaults()
+    var v2 = await f2
+    if v2 != 15 { println("FAIL: spawn all_defaults"); return 15 }
+
+    // Many sequential spawn+await
+    for i in 0..100 {
+        var f = spawn zero_default()
+        var v = await f
+        if v != 0 { println("FAIL: loop spawn"); return 16 }
+    }
+
+    println("PASS: all edge cases (16 checks)")
+    return 0
+}

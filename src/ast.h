@@ -165,7 +165,9 @@ typedef struct {
 } RangePattern;
 
 typedef struct {
-    Pattern* inner;       // Pattern inside Some() or None
+    Pattern* inner;       // Pattern inside Some() or None (single arg)
+    Pattern** inners;     // Multiple inner patterns for multi-arg variants
+    int inner_count;      // Number of inner patterns (0 = use single inner)
     bool is_some;         // true for Some(pattern), false for None
     Token variant_name;   // Variant name (Some, None, Ok, Err, etc.)
     Token enum_name;      // Enum type name (Result, Option, etc.)

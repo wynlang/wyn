@@ -1031,6 +1031,16 @@ void wyn_collect_generic_instantiations_from_expr(void* expr_ptr) {
         case EXPR_UNARY:
             wyn_collect_generic_instantiations_from_expr(expr->unary.operand);
             break;
+        case EXPR_METHOD_CALL:
+            // Recursively process the object expression (e.g., max(3,7) in max(3,7).to_string())
+            if (expr->method_call.object) {
+                wyn_collect_generic_instantiations_from_expr(expr->method_call.object);
+            }
+            // Recursively process method arguments
+            for (int i = 0; i < expr->method_call.arg_count; i++) {
+                wyn_collect_generic_instantiations_from_expr(expr->method_call.args[i]);
+            }
+            break;
         case EXPR_MATCH:
             // Collect from match value expression
             if (expr->match.value) {
