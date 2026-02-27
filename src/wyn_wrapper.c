@@ -17,7 +17,10 @@ extern const char* wyn_spawn_origin_file(void);
 extern int wyn_spawn_origin_line(void);
 extern long wyn_spawn_origin_id(void);
 
-static char wyn_sigstack_buf[SIGSTKSZ];
+#ifndef SIGSTKSZ
+#define SIGSTKSZ 8192
+#endif
+static char wyn_sigstack_buf[8192];
 
 static void wyn_crash_handler(int sig) {
     const char* spawn_file = wyn_spawn_origin_file();
@@ -62,7 +65,7 @@ int main(int argc, char** argv) {
     // Alternate signal stack so handler works even on stack overflow
     stack_t ss;
     ss.ss_sp = wyn_sigstack_buf;
-    ss.ss_size = SIGSTKSZ;
+    ss.ss_size = sizeof(wyn_sigstack_buf);
     ss.ss_flags = 0;
     sigaltstack(&ss, NULL);
 
