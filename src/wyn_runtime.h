@@ -2181,6 +2181,7 @@ char* Http_accept(int server_fd) {
     socklen_t client_len = sizeof(client_addr);
     int client_fd;
     // If inside a coroutine, use non-blocking accept with I/O loop
+#ifndef _WIN32
     if (wyn_coro_current()) {
         int flags = fcntl(server_fd, F_GETFL, 0);
         fcntl(server_fd, F_SETFL, flags | O_NONBLOCK);
@@ -2200,7 +2201,9 @@ char* Http_accept(int server_fd) {
             return "";
         }
         fcntl(server_fd, F_SETFL, flags);
-    } else {
+    } else
+#endif
+    {
         client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
         if (client_fd < 0) return "";
     }
