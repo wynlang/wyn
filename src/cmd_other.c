@@ -931,6 +931,10 @@ int cmd_init(const char* name, int argc, char** argv) {
 }
 
 int cmd_watch(const char* file, int argc, char** argv) {
+#ifdef _WIN32
+    fprintf(stderr, "wyn watch is not yet supported on Windows.\n");
+    return 1;
+#else
     if (!file) {
         fprintf(stderr, "Usage: wyn watch <file.wyn> [--run]\n");
         return 1;
@@ -1052,6 +1056,7 @@ int cmd_watch(const char* file, int argc, char** argv) {
     #undef WATCH_BUILD_AND_RUN
     
     return 0;
+#endif
 }
 
 int cmd_version(int argc, char** argv) {

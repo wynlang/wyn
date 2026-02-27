@@ -7,6 +7,7 @@
 #define popen_fn popen
 #define pclose_fn pclose
 #else
+#include <windows.h>
 #define popen_fn _popen
 #define pclose_fn _pclose
 #define unlink _unlink

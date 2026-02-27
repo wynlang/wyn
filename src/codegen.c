@@ -719,7 +719,7 @@ const char* get_enum_variant_c_type(const char* enum_name, const char* variant_n
 
 const char* find_enum_for_variant(const char* variant_name) {
     // Search "EnumName.VariantName" keys for matching variant
-    int vlen = strlen(variant_name);
+    
     for (int i = 0; i < enum_variant_type_count; i++) {
         char* dot = strchr(enum_variant_types[i].key, '.');
         if (dot && strcmp(dot + 1, variant_name) == 0) {

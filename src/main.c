@@ -915,7 +915,11 @@ int main(int argc, char** argv) {
                 char mkdir_cmd[600]; snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p %s/.wyn", getenv("HOME"));
                 system(mkdir_cmd);
                 FILE* af = fopen(auth_path, "w");
-                if (af) { fprintf(af, "%s", resp); fclose(af); chmod(auth_path, 0600); }
+                if (af) { fprintf(af, "%s", resp); fclose(af);
+#ifndef _WIN32
+                    chmod(auth_path, 0600);
+#endif
+                }
                 printf("\033[32m✓\033[0m Logged in as %s\n", username);
                 return 0;
             } else {
@@ -1811,16 +1815,24 @@ int main(int argc, char** argv) {
                 "clang -std=c11 -O2 -w -arch arm64 -isysroot %s "
                 "-miphoneos-version-min=15.0 "
                 "-I %s/src -I %s/vendor/minicoro -o %s.ios %s.c "
-                "%s/src/wyn_wrapper.c %s/src/wyn_interface.c "
+                "%s/src/wyn_arena.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
                 "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c "
+                "%s/src/string_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c "
                 "%s/src/test_runtime.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/io_loop.c %s/src/coroutine.c %s/src/future.c "
-                "%s/src/net.c %s/src/net_advanced.c "
+                "%s/src/net.c %s/src/net_advanced.c %s/src/net_runtime.c "
+                "%s/src/optional.c %s/src/result.c %s/src/arc_runtime.c "
+                "%s/src/safe_memory.c %s/src/error.c %s/src/concurrency.c %s/src/async_runtime.c "
+                "%s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c "
                 "-lpthread -lm",
                 sdk_path, wyn_root, wyn_root, file, file,
-                wyn_root, wyn_root,
+                wyn_root, wyn_root, wyn_root,
+                wyn_root, wyn_root, wyn_root,
                 wyn_root, wyn_root, wyn_root,
                 wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
-                wyn_root, wyn_root);
+                wyn_root, wyn_root, wyn_root,
+                wyn_root, wyn_root, wyn_root,
+                wyn_root, wyn_root, wyn_root, wyn_root,
+                wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
             printf("Cross-compiling for iOS (arm64)...\n");
             printf("SDK: %s\n", sdk_path);
         } else if (strcmp(target, "android") == 0) {
@@ -2841,7 +2853,7 @@ int create_new_project_with_template(const char* name, const char* template, con
             "}\n\n"
             "fn main() {\n"
             "    var port = 8080\n"
-            "    println(\"\%s running on http://localhost:\${port}\")\n"
+            "    println(\"%s running on http://localhost:${port}\")\n"
             "    println(\"\")\n"
             "    println(\"  GET  /              — home page\")\n"
             "    println(\"  GET  /api/items     — list items (JSON)\")\n"
@@ -2896,7 +2908,7 @@ int create_new_project_with_template(const char* name, const char* template, con
             "}\n\n"
             "fn main() {\n"
             "    var port = 8080\n"
-            "    println(\"\%s running on http://localhost:\${port}\")\n"
+            "    println(\"%s running on http://localhost:${port}\")\n"
             "    println(\"\")\n"
             "    println(\"  GET    /health          — health check\")\n"
             "    println(\"  GET    /ready           — readiness check\")\n"
