@@ -26,36 +26,30 @@ jobs:
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update && sudo apt-get install -y gcc make git
-          git clone --depth 1 https://repo.or.cz/tinycc.git /tmp/tcc-src
-          cd /tmp/tcc-src
-          ./configure --prefix=$GITHUB_WORKSPACE/vendor/tcc
-          make -j$(nproc)
-          make install
+        run: sudo apt-get update && sudo apt-get install -y gcc make
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
-        run: choco install make mingw git -y
+        run: choco install make mingw -y
         shell: pwsh
 
-      - name: Build Wyn compiler
+      - name: Build compiler
         run: make clean && make
         shell: bash
 
-      - name: Test (Unix)
+      - name: Smoke test (Unix)
         if: runner.os != 'Windows'
         run: |
-          echo 'fn main() -> int { println("Wyn release build OK"); return 0 }' > /tmp/smoke.wyn
+          echo 'fn main() -> int { println("Wyn release OK"); return 0 }' > /tmp/smoke.wyn
           ./wyn build /tmp/smoke.wyn
           /tmp/smoke | grep -q "OK"
           echo "✅ Release build verified"
         shell: bash
 
-      - name: Test (Windows)
+      - name: Smoke test (Windows)
         if: runner.os == 'Windows'
         run: |
-          echo fn main() { println("Wyn release build OK") } > smoke.wyn
+          echo fn main() { println("Wyn release OK") } > smoke.wyn
           wyn.exe build smoke.wyn
           smoke.exe
         shell: cmd
@@ -63,13 +57,12 @@ jobs:
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          mkdir -p dist/vendor/tcc dist/src dist/runtime
+          mkdir -p dist/src dist/vendor/minicoro
           cp wyn dist/
           cp -r src dist/src
+          [ -d vendor/minicoro ] && cp -r vendor/minicoro dist/vendor/minicoro
+          [ -d vendor/tcc ] && cp -r vendor/tcc dist/vendor/tcc
           [ -d runtime ] && cp -r runtime dist/runtime
-          [ -d vendor/tcc/bin ] && cp -r vendor/tcc/bin dist/vendor/tcc/bin
-          [ -d vendor/tcc/lib ] && cp -r vendor/tcc/lib dist/vendor/tcc/lib
-          [ -d vendor/tcc/include ] && cp -r vendor/tcc/include dist/vendor/tcc/include
           tar czf ${{ matrix.artifact }}.tar.gz -C dist .
 
       - name: Package (Windows)
