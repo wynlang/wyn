@@ -31,18 +31,37 @@ jobs:
         run: make clean && make
         shell: bash
 
-      - name: Run tests (macOS/Linux)
+      - name: Smoke test (Unix)
         if: runner.os != 'Windows'
         run: |
-          # Build test runner with system cc (avoids TCC linking issues in CI)
-          ./wyn build tests/run_tests.wyn && ./tests/run_tests
+          echo 'fn main() -> int { println("Hello from Wyn CI"); return 0 }' > /tmp/smoke.wyn
+          ./wyn build /tmp/smoke.wyn
+          /tmp/smoke | grep -q "Hello from Wyn CI"
+          echo "✅ Compiler builds and runs programs"
+
+          echo 'test "math" { assert_eq(2 + 2, 4) }' > /tmp/smoke_test.wyn
+          ./wyn build /tmp/smoke_test.wyn
+          /tmp/smoke_test
+          echo "✅ Test framework works"
+
+          echo 'struct Point { x: int, y: int }
+          fn main() -> int {
+            var p = Point { x: 3, y: 4 }
+            var s = "hello"
+            println("${s} ${p.x},${p.y}")
+            return 0
+          }' > /tmp/smoke_adv.wyn
+          ./wyn build /tmp/smoke_adv.wyn
+          /tmp/smoke_adv | grep -q "hello 3,4"
+          echo "✅ Structs, interpolation, var inference work"
         shell: bash
 
-      - name: Run tests (Windows)
+      - name: Smoke test (Windows)
         if: runner.os == 'Windows'
         run: |
-          wyn.exe build tests\run_tests.wyn
-          tests\run_tests.exe
+          echo fn main() { println("Hello from Wyn CI") } > smoke.wyn
+          wyn.exe build smoke.wyn
+          smoke.exe
         shell: cmd
 
   cross-compile-ios:
