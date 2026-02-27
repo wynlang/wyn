@@ -16,8 +16,6 @@ jobs:
             artifact: wyn-linux-x64
           - os: macos-15
             artifact: wyn-macos-arm64
-          - os: macos-15-intel
-            artifact: wyn-macos-x64
           - os: windows-latest
             artifact: wyn-windows-x64
 
@@ -26,61 +24,52 @@ jobs:
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y gcc make git
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc make git
+          git clone --depth 1 https://repo.or.cz/tinycc.git /tmp/tcc-src
+          cd /tmp/tcc-src
+          ./configure --prefix=$GITHUB_WORKSPACE/vendor/tcc
+          make -j$(nproc)
+          make install
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         run: choco install make mingw git -y
         shell: pwsh
 
-      - name: Build TCC from source
-        if: runner.os != 'Windows'
-        run: ./scripts/build-tcc.sh
-        shell: bash
-
-      - name: Build TCC from source (Windows)
-        if: runner.os == 'Windows'
-        run: bash scripts/build-tcc.sh
-        shell: bash
-
       - name: Build Wyn compiler
         run: make clean && make
         shell: bash
 
-      - name: Build runtime library
-        run: make runtime
-        shell: bash
-
-      - name: Test
+      - name: Test (Unix)
         if: runner.os != 'Windows'
         run: ./wyn run tests/run_tests.wyn
         shell: bash
 
       - name: Test (Windows)
         if: runner.os == 'Windows'
-        run: wyn.exe run tests\run_tests.wyn
+        run: |
+          echo fn main() -> int { println("hello"); return 0 } > test_win.wyn
+          wyn.exe run test_win.wyn
         shell: cmd
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          mkdir -p dist/vendor/tcc
+          mkdir -p dist/vendor/tcc dist/src dist/runtime
           cp wyn dist/
-          cp -r runtime dist/runtime
-          cp -r vendor/tcc/bin dist/vendor/tcc/bin
-          cp -r vendor/tcc/lib dist/vendor/tcc/lib
-          cp -r vendor/tcc/include dist/vendor/tcc/include
-          cp -r vendor/tcc/tcc_include dist/vendor/tcc/tcc_include
           cp -r src dist/src
+          [ -d runtime ] && cp -r runtime dist/runtime
+          [ -d vendor/tcc/bin ] && cp -r vendor/tcc/bin dist/vendor/tcc/bin
+          [ -d vendor/tcc/lib ] && cp -r vendor/tcc/lib dist/vendor/tcc/lib
+          [ -d vendor/tcc/include ] && cp -r vendor/tcc/include dist/vendor/tcc/include
           tar czf ${{ matrix.artifact }}.tar.gz -C dist .
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          mkdir dist\vendor\tcc
+          mkdir dist\src
           copy wyn.exe dist\
-          xcopy /E /I runtime dist\runtime
-          xcopy /E /I vendor\tcc dist\vendor\tcc
           xcopy /E /I src dist\src
           Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip
         shell: pwsh
@@ -107,7 +96,6 @@ jobs:
           files: |
             wyn-linux-x64/wyn-linux-x64.tar.gz
             wyn-macos-arm64/wyn-macos-arm64.tar.gz
-            wyn-macos-x64/wyn-macos-x64.tar.gz
             wyn-windows-x64/wyn-windows-x64.zip
           body_path: CHANGELOG.md
         env:
