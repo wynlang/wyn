@@ -46,14 +46,14 @@ jobs:
       - name: Test (Unix)
         if: runner.os != 'Windows'
         run: |
-          WYN_DEBUG=1 ./wyn run tests/run_tests.wyn
+          ./wyn build tests/run_tests.wyn && ./tests/run_tests
         shell: bash
 
       - name: Test (Windows)
         if: runner.os == 'Windows'
         run: |
-          echo fn main() { println("hello") } > test_win.wyn
-          wyn.exe run test_win.wyn
+          wyn.exe build tests\run_tests.wyn
+          tests\run_tests.exe
         shell: cmd
 
       - name: Package (Unix)

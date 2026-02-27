@@ -20,15 +20,7 @@ jobs:
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update && sudo apt-get install -y gcc make libsqlite3-dev libssl-dev
-          # Build TCC from source into vendor/tcc
-          git clone --depth 1 https://repo.or.cz/tinycc.git /tmp/tcc-src
-          cd /tmp/tcc-src
-          ./configure --prefix=$GITHUB_WORKSPACE/vendor/tcc
-          make -j$(nproc)
-          make install
-          echo "✅ TCC built for $(uname -m)"
+        run: sudo apt-get update && sudo apt-get install -y gcc make
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -39,17 +31,18 @@ jobs:
         run: make clean && make
         shell: bash
 
-      - name: Run test suite (macOS/Linux)
+      - name: Run tests (macOS/Linux)
         if: runner.os != 'Windows'
         run: |
-          WYN_DEBUG=1 ./wyn run tests/run_tests.wyn
+          # Build test runner with system cc (avoids TCC linking issues in CI)
+          ./wyn build tests/run_tests.wyn && ./tests/run_tests
         shell: bash
 
-      - name: Run test suite (Windows)
+      - name: Run tests (Windows)
         if: runner.os == 'Windows'
         run: |
-          echo fn main() { println("hello") } > test_win.wyn
-          wyn.exe run test_win.wyn
+          wyn.exe build tests\run_tests.wyn
+          tests\run_tests.exe
         shell: cmd
 
   cross-compile-ios:
