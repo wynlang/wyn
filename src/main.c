@@ -1346,19 +1346,31 @@ int main(int argc, char** argv) {
 #else
             const char* plibs = "-lpthread -lm";
 #endif
-            snprintf(cmd, sizeof(cmd),
+            // Check if precompiled runtime exists
+            FILE* _rt_check = fopen(rt_lib, "r");
+            if (_rt_check) {
+                fclose(_rt_check);
+                snprintf(cmd, sizeof(cmd),
 #ifdef _WIN32
-                "%s -std=c11 -O3 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>NUL",
+                    "%s -std=c11 -O3 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>NUL",
 #elif defined(__APPLE__)
-                "%s -std=c11 -O3 -w -Wno-int-conversion -I %s/src -Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
+                    "%s -std=c11 -O3 -w -Wno-int-conversion -I %s/src -Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
 #else
-                "%s -std=c11 -O3 -w -I %s/src -Wl,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
+                    "%s -std=c11 -O3 -w -I %s/src -Wl,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
 #endif
-                cc, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
+                    cc, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
 #ifdef __APPLE__
-                , app_link
+                    , app_link
 #endif
-                );
+                    );
+            } else {
+                // No precompiled runtime — compile from source files
+                int _p = 0;
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -I %s/src -I %s/vendor/minicoro -o %s %s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, entry);
+                const char* _srcs[] = {"wyn_arena","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","net","net_runtime","net_advanced","test_runtime",NULL};
+                for (int _si = 0; _srcs[_si]; _si++) _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s/src/%s.c ", wyn_root, _srcs[_si]);
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -lpthread -lm 2>&1", sqlite_src);
+            }
             result = system(cmd);
         }
         

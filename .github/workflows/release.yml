@@ -16,7 +16,7 @@ jobs:
             artifact: wyn-linux-x64
           - os: macos-15
             artifact: wyn-macos-arm64
-          - os: macos-13
+          - os: macos-15-intel
             artifact: wyn-macos-x64
           - os: windows-latest
             artifact: wyn-windows-x64
