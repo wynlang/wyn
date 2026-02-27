@@ -52,7 +52,7 @@ jobs:
       - name: Test (Windows)
         if: runner.os == 'Windows'
         run: |
-          echo fn main() -> int { println("hello"); return 0 } > test_win.wyn
+          echo fn main() { println("hello") } > test_win.wyn
           wyn.exe run test_win.wyn
         shell: cmd
 
