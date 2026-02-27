@@ -1,0 +1,18 @@
+// Regression test: simple enum match with bare variant names
+enum Color { Red, Green, Blue }
+
+fn color_name(c: Color) -> string {
+    match c {
+        Red => return "red"
+        Green => return "green"
+        Blue => return "blue"
+    }
+    return "unknown"
+}
+
+test "simple enum match" {
+    assert_eq(color_name(Color.Red), "red")
+    assert_eq(color_name(Color.Green), "green")
+    assert_eq(color_name(Color.Blue), "blue")
+    println("PASS: simple enum match")
+}

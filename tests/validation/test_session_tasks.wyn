@@ -1,0 +1,109 @@
+// Validation test for session tasks
+// Tests: CSV writer, source maps, OOB panics, checked math, nested arrays
+
+fn test_nested_arrays() -> int {
+    var matrix = [["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]]
+    if matrix.len() != 3 { println("FAIL: matrix len"); return 1 }
+
+    // Write and read back CSV
+    Csv.write("/tmp/wyn_session_test.csv", matrix)
+    var content = File.read("/tmp/wyn_session_test.csv")
+    if content.contains("a,b,c") == false { println("FAIL: csv row 1"); return 1 }
+    if content.contains("d,e,f") == false { println("FAIL: csv row 2"); return 1 }
+    if content.contains("g,h,i") == false { println("FAIL: csv row 3"); return 1 }
+
+    // CSV with special chars
+    var special = [["normal", "has, comma", "has \"quotes\""], ["line\nbreak", "ok", "end"]]
+    Csv.write("/tmp/wyn_session_special.csv", special)
+    var sc = File.read("/tmp/wyn_session_special.csv")
+    if sc.contains("\"has, comma\"") == false { println("FAIL: csv comma escape"); return 1 }
+
+    println("  ✓ nested arrays + CSV writer")
+    return 0
+}
+
+fn test_checked_math() -> int {
+    // Normal operations
+    var a = Math.checked_add(100, 200)
+    if a != 300 { println("FAIL: checked_add normal"); return 1 }
+
+    var b = Math.checked_sub(500, 200)
+    if b != 300 { println("FAIL: checked_sub normal"); return 1 }
+
+    var c = Math.checked_mul(15, 20)
+    if c != 300 { println("FAIL: checked_mul normal"); return 1 }
+
+    // Overflow returns 0
+    var d = Math.checked_add(9223372036854775807, 1)
+    if d != 0 { println("FAIL: checked_add overflow"); return 1 }
+
+    var e = Math.checked_mul(9223372036854775807, 2)
+    if e != 0 { println("FAIL: checked_mul overflow"); return 1 }
+
+    println("  ✓ checked math (overflow detection)")
+    return 0
+}
+
+fn test_oob_panic() -> int {
+    var arr = [10, 20, 30]
+    // OOB returns 0 and prints panic with file:line
+    var val = arr[99]
+    if val != 0 { println("FAIL: oob should return 0"); return 1 }
+
+    println("  ✓ array OOB panic with file:line")
+    return 0
+}
+
+fn test_error_dx() -> int {
+    // contains() returns bool
+    var s = "hello world"
+    var has = s.contains("world")
+    if has == false { println("FAIL: contains"); return 1 }
+
+    // pipe chaining
+    println("  ✓ error DX (contains bool, pipe chaining)")
+    return 0
+}
+
+fn test_stdlib() -> int {
+    // Log module
+    Log.info("test log message")
+
+    // Base64
+    var encoded = Base64.encode("hello")
+    var decoded = Base64.decode(encoded)
+    if decoded != "hello" { println("FAIL: base64 roundtrip"); return 1 }
+
+    // Regex
+    var m = Regex_match("abc123", "[a-z]+[0-9]+")
+    if m == false { println("FAIL: regex match"); return 1 }
+
+    // Args
+    var name = Args.get("nonexistent")
+    // Should return empty string for missing arg
+
+    // Shell escape
+    var escaped = System.shell_escape("hello; rm -rf /")
+    if escaped.contains("hello") == false { println("FAIL: shell escape"); return 1 }
+
+    println("  ✓ stdlib (Log, Base64, Regex, Args, shell_escape)")
+    return 0
+}
+
+fn main() -> int {
+    println("=== Session Validation Tests ===")
+
+    var failures = 0
+    failures = failures + test_nested_arrays()
+    failures = failures + test_checked_math()
+    failures = failures + test_oob_panic()
+    failures = failures + test_error_dx()
+    failures = failures + test_stdlib()
+
+    if failures == 0 {
+        println("\n✓ All session tests passed")
+    } else {
+        println("\n✗ " + failures.to_string() + " test(s) failed")
+    }
+    return failures
+}

@@ -180,8 +180,8 @@ int hashmap_get_bool(WynHashMap* map, const char* key) {
     return 0;
 }
 
-int hashmap_has(WynHashMap* map, const char* key) {
-    if (!map || !key) return 0;  // Add null checks
+bool hashmap_has(WynHashMap* map, const char* key) {
+    if (!map || !key) return false;
     
     unsigned int idx = hash(key);
     Entry* entry = map->buckets[idx];
@@ -298,4 +298,13 @@ void hashmap_clear(WynHashMap* map) {
         }
         map->buckets[i] = NULL;
     }
+}
+
+// Aliases for HashMap.set/get codegen
+#include <stdbool.h>
+void hashmap_set(WynHashMap* map, const char* key, const char* value) {
+    hashmap_insert_string(map, key, value);
+}
+char* HashMap_get_str(WynHashMap* map, const char* key) {
+    return hashmap_get_string(map, key);
 }

@@ -1,0 +1,51 @@
+// Test: HashMaps stored in arrays
+var maps = []
+
+// Create and push HashMaps
+var m1 = HashMap.new()
+m1.set("name", "Alice")
+m1.set("age", "30")
+maps.push(m1)
+
+var m2 = HashMap.new()
+m2.set("name", "Bob")
+m2.set("age", "25")
+maps.push(m2)
+
+if maps.len() != 2 {
+    println("FAIL: len should be 2")
+    System_exit(1)
+}
+
+// Retrieve and use
+var first = maps[0]
+if first.get("name") != "Alice" {
+    println("FAIL: first name should be Alice, got " + first.get("name"))
+    System_exit(1)
+}
+
+var second = maps[1]
+if second.get("name") != "Bob" {
+    println("FAIL: second name should be Bob")
+    System_exit(1)
+}
+
+// Modify through reference
+first.set("name", "Alicia")
+var check = maps[0]
+if check.get("name") != "Alicia" {
+    println("FAIL: modified name should be Alicia")
+    System_exit(1)
+}
+
+// Array literal with HashMaps
+var m3 = HashMap.new()
+m3.set("k", "v")
+var arr2 = [m3]
+var got = arr2[0]
+if got.get("k") != "v" {
+    println("FAIL: literal array get")
+    System_exit(1)
+}
+
+println("PASS: HashMaps in arrays work")

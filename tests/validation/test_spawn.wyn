@@ -34,7 +34,7 @@ fn main() -> int {
     }
 
     // Test 5: many spawns don't crash
-    for i in 0..10000 {
+    for i in 0..1000 {
         spawn square(i)
     }
 

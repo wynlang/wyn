@@ -29,14 +29,14 @@ uint64_t wyn_crypto_hash64(const char* data, size_t len) {
 // MD5-like simple hash (not cryptographically secure, for demonstration)
 void wyn_crypto_md5(const char* data, size_t len, char* output) {
     uint32_t h = wyn_crypto_hash32(data, len);
-    sprintf(output, "%08x%08x%08x%08x", h, h ^ 0x12345678, h ^ 0x87654321, h ^ 0xABCDEF00);
+    snprintf(output, 33, "%08x%08x%08x%08x", h, h ^ 0x12345678, h ^ 0x87654321, h ^ 0xABCDEF00);
 }
 
 // SHA256-like simple hash (not cryptographically secure, for demonstration)
 void wyn_crypto_sha256(const char* data, size_t len, char* output) {
     uint64_t h1 = wyn_crypto_hash64(data, len);
     uint64_t h2 = wyn_crypto_hash64(data, len) ^ 0x123456789ABCDEF0ULL;
-    sprintf(output, "%016llx%016llx%016llx%016llx", 
+    snprintf(output, 65, "%016llx%016llx%016llx%016llx", 
             (unsigned long long)h1, 
             (unsigned long long)h2,
             (unsigned long long)(h1 ^ h2),
@@ -133,7 +133,7 @@ char* wyn_crypto_random_hex(size_t len) {
     
     char* hex = malloc(len + 1);
     for (size_t i = 0; i < len / 2; i++) {
-        sprintf(hex + i * 2, "%02x", (unsigned char)bytes[i]);
+        snprintf(hex + i * 2, 3, "%02x", (unsigned char)bytes[i]);
     }
     hex[len] = '\0';
     free(bytes);
@@ -195,7 +195,7 @@ char* Crypto_sha1(const char* data) {
     unsigned char digest[20];
     wyn_crypto_sha1((const unsigned char*)data, strlen(data), digest);
     static char hex[41];
-    for (int i = 0; i < 20; i++) sprintf(hex + i*2, "%02x", digest[i]);
+    for (int i = 0; i < 20; i++) snprintf(hex + i*2, 3, "%02x", digest[i]);
     hex[40] = '\0';
     return hex;
 }

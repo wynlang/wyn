@@ -1,0 +1,43 @@
+// Test: HashMap with string values, keys(), values()
+var m = HashMap.new()
+m.set("name", "wyn")
+m.set("version", "1.8")
+
+if m.get("name") != "wyn" {
+    println("FAIL: get name")
+    System_exit(1)
+}
+
+if m.has("name") != true {
+    println("FAIL: has name")
+    System_exit(1)
+}
+
+if m.len() != 2 {
+    println("FAIL: len")
+    System_exit(1)
+}
+
+var ks = m.keys()
+if ks.len() != 2 {
+    println("FAIL: keys len should be 2, got ${ks.len()}")
+    System_exit(1)
+}
+
+var vs = m.values()
+if vs.len() != 2 {
+    println("FAIL: values len should be 2, got ${vs.len()}")
+    System_exit(1)
+}
+
+// Verify keys are strings, not ints
+var found = 0
+for k in ks {
+    if k == "name" || k == "version" { found = found + 1 }
+}
+if found != 2 {
+    println("FAIL: keys should be name,version")
+    System_exit(1)
+}
+
+println("PASS: HashMap string keys/values work")

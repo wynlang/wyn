@@ -75,7 +75,9 @@ typedef struct Future Future;
 typedef void (*TaskFunc)(void*);
 typedef void* (*TaskFuncWithReturn)(void*);
 void wyn_spawn_fast(TaskFunc func, void* arg);
+void wyn_spawn_fast_traced(TaskFunc func, void* arg, const char* file, int line);
 Future* wyn_spawn_async(TaskFuncWithReturn func, void* arg);
+Future* wyn_spawn_async_traced(TaskFuncWithReturn func, void* arg, const char* file, int line);
 Future* future_new(void);
 void future_set(Future* f, void* result);
 void* future_get(Future* f);
@@ -222,7 +224,7 @@ bool range_has_next(WynRange* r);
 int range_next(WynRange* r);
 int string_length(const char* str);
 char* string_substring(const char* str, int start, int end);
-static inline int string_contains(const char* str, const char* substr) { return strstr(str, substr) != NULL; }
+static inline bool string_contains(const char* str, const char* substr) { return strstr(str, substr) != NULL; }
 char* string_concat(const char* a, const char* b);
 static inline char* string_upper(const char* str) {
     size_t len = strlen(str);
@@ -582,6 +584,13 @@ int random_int(int min, int max);
 int random_range(int min, int max);
 double random_float();
 void seed_random(int seed);
+int random_bool();
+char* random_string(int len);
+char* random_hex(int len);
+char* random_uuid();
+int random_choice_int(long long* arr, int len);
+char* random_choice_str(char** arr, int len);
+void random_seed_auto();
 long long time_now();
 char* time_format(int timestamp, const char* fmt);
 void assert_eq(int a, int b);
@@ -652,6 +661,9 @@ long long Task_channel(long long capacity);
 void Task_send(long long handle, long long value);
 long long Task_recv(long long handle);
 void Task_close(long long handle);
+long long Task_try_recv(long long handle, long long* out_value);
+long long Task_select_2(long long ch1, long long ch2);
+long long Task_select_3(long long ch1, long long ch2, long long ch3);
 // Db declared in module declarations block above
 long long Db_last_insert_id(long long handle);
 char* Db_error(long long handle);

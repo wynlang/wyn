@@ -247,7 +247,19 @@ int is_known_array_var(const char* name) {
 static char* sb_var_names[64];
 static int sb_var_count = 0;
 static void register_sb_var(const char* name) {
-    if (sb_var_count < 64) { sb_var_names[sb_var_count++] = strdup(name);  }
+    if (sb_var_count < 64) { sb_var_names[sb_var_count++] = strdup(name); }
+}
+
+static char* float_var_names[256];
+static int float_var_count = 0;
+void register_float_var(const char* name) {
+    if (float_var_count < 256) float_var_names[float_var_count++] = strdup(name);
+}
+int is_known_float_var(const char* name) {
+    for (int i = 0; i < float_var_count; i++) {
+        if (strcmp(float_var_names[i], name) == 0) return 1;
+    }
+    return 0;
 }
 int is_known_sb_var(const char* name) {
     for (int i = 0; i < sb_var_count; i++) {
@@ -333,6 +345,54 @@ static int lambda_ref_counter = 0;
 static bool in_return_lambda = false;
 static Program* current_program = NULL;
 
+// Look up a struct method's return type string ("float", "string", "int", etc.)
+const char* lookup_struct_method_return_type(const char* struct_name, const char* method_name) {
+    if (!current_program) return NULL;
+    for (int i = 0; i < current_program->count; i++) {
+        // Check struct methods
+        if (current_program->stmts[i]->type == STMT_STRUCT) {
+            StructStmt* s = &current_program->stmts[i]->struct_decl;
+            if (s->name.length == (int)strlen(struct_name) &&
+                memcmp(s->name.start, struct_name, s->name.length) == 0) {
+                for (int j = 0; j < s->method_count; j++) {
+                    FnStmt* m = s->methods[j];
+                    if (m->name.length == (int)strlen(method_name) &&
+                        memcmp(m->name.start, method_name, m->name.length) == 0) {
+                        if (m->return_type && m->return_type->type == EXPR_IDENT) {
+                            static char buf[64];
+                            int len = m->return_type->token.length < 63 ? m->return_type->token.length : 63;
+                            memcpy(buf, m->return_type->token.start, len);
+                            buf[len] = 0;
+                            return buf;
+                        }
+                    }
+                }
+            }
+        }
+        // Check impl blocks
+        if (current_program->stmts[i]->type == STMT_IMPL) {
+            Token impl_name = current_program->stmts[i]->impl.type_name;
+            if (impl_name.length == (int)strlen(struct_name) &&
+                memcmp(impl_name.start, struct_name, impl_name.length) == 0) {
+                for (int j = 0; j < current_program->stmts[i]->impl.method_count; j++) {
+                    FnStmt* ms = current_program->stmts[i]->impl.methods[j];
+                    if (ms->name.length == (int)strlen(method_name) &&
+                        memcmp(ms->name.start, method_name, ms->name.length) == 0) {
+                        if (ms->return_type && ms->return_type->type == EXPR_IDENT) {
+                            static char buf2[64];
+                            int len = ms->return_type->token.length < 63 ? ms->return_type->token.length : 63;
+                            memcpy(buf2, ms->return_type->token.start, len);
+                            buf2[len] = 0;
+                            return buf2;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
 // Track lambda variable names and their captures for call site injection
 typedef struct {
     char var_name[64];
@@ -351,6 +411,7 @@ typedef struct {
     char func_name[256];
     int arg_count;
     int spawn_id;
+    int returns_void;  // 1 if function returns void
 } SpawnWrapper;
 
 static SpawnWrapper spawn_wrappers[256];
@@ -535,6 +596,17 @@ static void emit_type_from_expr(Expr* type_expr) {
     }
 }
 
+static const char* c_type_from_expr(Expr* type_expr) {
+    if (type_expr && type_expr->type == EXPR_IDENT) {
+        Token t = type_expr->token;
+        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return "int";
+        if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return "const char*";
+        if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return "int";
+        if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return "double";
+    }
+    return "long long";
+}
+
 
 // Expression code generation
 #include "codegen_expr.c"
@@ -550,7 +622,8 @@ void codegen_c_header() {
     if (use_slim_runtime) {
         emit("#include \"wyn_runtime_slim.h\"\n\n");
     } else {
-        emit("#include \"wyn_runtime.h\"\n\n");
+        emit("#include \"wyn_runtime.h\"\n");
+        emit("#ifdef __TINYC__\n#define __auto_type long long\n#endif\n\n");
     }
 }
 
@@ -591,9 +664,88 @@ int is_enum_type(const char* name) {
     return 0;
 }
 
+// Data enum tracking (enums with variant data)
+static char* data_enum_names[64];
+static int data_enum_count = 0;
+void register_data_enum_type(const char* name) {
+    if (data_enum_count < 64) data_enum_names[data_enum_count++] = strdup(name);
+}
+int is_data_enum_type(const char* name) {
+    for (int i = 0; i < data_enum_count; i++) {
+        if (strcmp(data_enum_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
 // Track variables that hold data-carrying enum types
 static struct { char var_name[64]; char enum_name[64]; } enum_var_map[128];
 static int enum_var_count = 0;
+
+// Track variables that hold struct types
+static struct { char var_name[64]; char struct_name[64]; } struct_var_map[128];
+static int struct_var_count = 0;
+void register_struct_var(const char* var, const char* struct_type) {
+    if (struct_var_count < 128) {
+        strncpy(struct_var_map[struct_var_count].var_name, var, 63);
+        strncpy(struct_var_map[struct_var_count].struct_name, struct_type, 63);
+        struct_var_count++;
+    }
+}
+const char* get_struct_var_type(const char* var) {
+    for (int i = struct_var_count - 1; i >= 0; i--) {
+        if (strcmp(struct_var_map[i].var_name, var) == 0) return struct_var_map[i].struct_name;
+    }
+    return NULL;
+}
+
+// Track enum variant data types: "EnumName.VariantName" -> C type
+static struct { char key[128]; char c_type[64]; } enum_variant_types[256];
+static int enum_variant_type_count = 0;
+void register_enum_variant_type(const char* enum_name, const char* variant_name, const char* c_type) {
+    if (enum_variant_type_count < 256) {
+        snprintf(enum_variant_types[enum_variant_type_count].key, 128, "%s.%s", enum_name, variant_name);
+        strncpy(enum_variant_types[enum_variant_type_count].c_type, c_type, 63);
+        enum_variant_type_count++;
+    }
+}
+const char* get_enum_variant_c_type(const char* enum_name, const char* variant_name) {
+    char key[128];
+    snprintf(key, 128, "%s.%s", enum_name, variant_name);
+    for (int i = 0; i < enum_variant_type_count; i++) {
+        if (strcmp(enum_variant_types[i].key, key) == 0) return enum_variant_types[i].c_type;
+    }
+    return "long long"; // default
+}
+
+const char* find_enum_for_variant(const char* variant_name) {
+    // Search "EnumName.VariantName" keys for matching variant
+    int vlen = strlen(variant_name);
+    for (int i = 0; i < enum_variant_type_count; i++) {
+        char* dot = strchr(enum_variant_types[i].key, '.');
+        if (dot && strcmp(dot + 1, variant_name) == 0) {
+            static char _found_enum[128];
+            int elen = dot - enum_variant_types[i].key;
+            memcpy(_found_enum, enum_variant_types[i].key, elen);
+            _found_enum[elen] = '\0';
+            return _found_enum;
+        }
+    }
+    // Also check data_enum_names with enum_type_names
+    // Try prefixing with each known data enum
+    for (int i = 0; i < data_enum_count; i++) {
+        char tag_name[128];
+        snprintf(tag_name, 128, "%s_%s_TAG", data_enum_names[i], variant_name);
+        // We can't easily check if this tag exists, but return the first data enum
+        // that has this variant registered
+        char key[128];
+        snprintf(key, 128, "%s.%s", data_enum_names[i], variant_name);
+        for (int j = 0; j < enum_variant_type_count; j++) {
+            if (strcmp(enum_variant_types[j].key, key) == 0) return data_enum_names[i];
+        }
+    }
+    return NULL;
+}
+
 void register_enum_var(const char* var, const char* enum_type) {
     if (enum_var_count < 128) {
         strncpy(enum_var_map[enum_var_count].var_name, var, 63);

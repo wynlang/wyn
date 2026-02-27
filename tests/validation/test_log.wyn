@@ -1,0 +1,14 @@
+// Test Log module
+
+fn main() -> int {
+    println("=== Testing Log module ===")
+    
+    // Test all log levels
+    Log.info("server started")
+    Log.warn("high memory usage")
+    Log.error("connection failed")
+    Log.debug("processing request")
+    
+    println("✓ Log tests passed")
+    return 0
+}

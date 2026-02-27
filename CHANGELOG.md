@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.8.0 — 2026-02-27
+
+### Compiler Fixes
+- **Float + int auto-promotion** — `3.14 + 1` now works, codegen emits `(double)` cast
+- **Nested quotes in string interpolation** — `"${map.get("key")}"` works correctly
+- **Anonymous closure capture** — lambdas passed as arguments now capture enclosing variables
+- **Enum return types** — functions returning enums work in both `wyn run` and `wyn build`
+- **Enum match without prefix** — `Circle(r) =>` resolves to `Shape_Circle` automatically
+- **Impl method struct returns** — `var c = a.add(b)` infers correct struct type
+- **Spawn with array/struct parameters** — spawn wrapper uses correct C types
+- **Array sort fix** — was corrupting values due to 32-bit/64-bit mismatch
+- **TCC kqueue stubs** — `wyn run` no longer fails on macOS for programs using concurrency
+- **TCC `__auto_type` compat** — `#define __auto_type long long` for TCC compatibility
+- **Parse error line numbers** — `Error at line N: Unexpected token 'X'` instead of bare "Failed to parse"
+- **Build error visibility** — `wyn build` failures now show compiler output
+- **Time module recognition** — `Time.sleep()` no longer produces checker warnings
+
+### Tooling
+- **`wyn fmt`** — code formatter with indentation, spacing normalization, `--check` mode
+- **`wyn new`** — generates proper `test` blocks with `assert`/`assert_eq`
+- **`wyn build` on macOS** — works for all programs, produces optimized binaries
+
+### Documentation
+- Added **Enums** language doc with verified examples
+- Added **Modules** language doc with import/export patterns
+- Added **Quick Start** guide with 7 real-world patterns
+- All 57 doc page examples verified working
+
+### Showcase
+- **wyn-api** — 93-line REST API server, 71KB binary, concurrent request handling
+- **wyn-grep** — 101-line file search tool, 51KB binary, recursive directory walking, no shell dependencies
+- **WynJS** — 217 tests passing, 2700 lines
+
+### Stats
+- 58/58 compiler tests
+- 40/40 sample apps compile and run
+- 32 official packages
+- 57 doc pages, 42 book chapters
+
 ## v1.7.0 — 2026-02-19
 
 ### Language Features

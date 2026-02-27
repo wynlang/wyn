@@ -26,11 +26,42 @@
 #include "module.h"
 #include "commands.h"
 
+// Single source of truth for runtime source files
+const char* wyn_runtime_sources[] = {
+    "src/wyn_arena.c", "src/wyn_wrapper.c", "src/wyn_interface.c",
+    "src/io.c", "src/optional.c", "src/result.c",
+    "src/arc_runtime.c", "src/concurrency.c", "src/async_runtime.c",
+    "src/safe_memory.c", "src/error.c", "src/string_runtime.c",
+    "src/hashmap.c", "src/hashset.c", "src/json.c", "src/json_runtime.c",
+    "src/stdlib_runtime.c", "src/hashmap_runtime.c",
+    "src/stdlib_string.c", "src/stdlib_array.c",
+    "src/stdlib_time.c", "src/stdlib_crypto.c", "src/stdlib_math.c",
+    "src/spawn.c", "src/spawn_fast.c", "src/io_loop.c",
+    "src/coroutine.c", "src/future.c",
+    "src/net.c", "src/net_runtime.c", "src/test_runtime.c",
+    "src/net_advanced.c", "src/file_io_simple.c", "src/stdlib_enhanced.c",
+    NULL
+};
+
+// Build a space-separated string of runtime sources with a prefix
+void build_source_list(char* buf, int bufsize, const char* prefix) {
+    buf[0] = 0;
+    for (int i = 0; wyn_runtime_sources[i]; i++) {
+        int len = strlen(buf);
+        if (prefix && prefix[0]) {
+            snprintf(buf + len, bufsize - len, "%s/%s ", prefix, wyn_runtime_sources[i]);
+        } else {
+            snprintf(buf + len, bufsize - len, "%s ", wyn_runtime_sources[i]);
+        }
+    }
+}
+
 void init_lexer(const char* source);
 void init_parser();
 void init_checker();
 void init_codegen(FILE* output);
 Program* parse_program();
+bool parser_had_error();
 void check_program(Program* prog);
 bool checker_had_error();
 void free_program(Program* prog);
@@ -137,12 +168,9 @@ static char* get_version() {
             }
             fclose(f);
         }
-        if (version[0] == 0) strcpy(version, "1.7.0");
+        if (version[0] == 0) strcpy(version, "1.8.0");
         
-        // Add LLVM backend indicator
-        #ifdef WITH_LLVM
-        strcat(version, " (LLVM backend)");
-        #endif
+        // Version string
     }
     return version;
 }
@@ -182,16 +210,14 @@ int main(int argc, char** argv) {
         
         fprintf(stderr, "\n\033[1mPackages:\033[0m\n");
         fprintf(stderr, "  \033[32minit\033[0m [name]             Create new project\n");
-        fprintf(stderr, "  \033[32mpkg install\033[0m <name>      Install a package\n");
-        fprintf(stderr, "  \033[32mpkg list\033[0m                List installed packages\n");
-        fprintf(stderr, "  \033[32mpkg uninstall\033[0m <name>    Uninstall a package\n");
-        fprintf(stderr, "  \033[32mpkg search\033[0m <query>      Search package registry\n");
+        fprintf(stderr, "  \033[32mpkg\033[0m <command>           Package manager (register, login, search, install, push)\n");
         
         fprintf(stderr, "\n\033[1mTools:\033[0m\n");
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
         fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
         fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
         fprintf(stderr, "  \033[32mdoctor\033[0m                  Check your setup\n");
+        fprintf(stderr, "  \033[32mupgrade\033[0m                 Update wyn to latest version\n");
         fprintf(stderr, "  \033[32mversion\033[0m                 Show version\n");
         fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
         
@@ -438,6 +464,24 @@ int main(int argc, char** argv) {
         printf("  %s git (for packages)\n", has_git ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
         if (!has_git) printf("    Optional: install git for 'wyn pkg install'\n");
         
+        // Check curl (for registry)
+#ifdef _WIN32
+        snprintf(doctor_cmd, sizeof(doctor_cmd), "where curl %s", devnull);
+#else
+        snprintf(doctor_cmd, sizeof(doctor_cmd), "command -v curl %s", devnull);
+#endif
+        int has_curl = (system(doctor_cmd) == 0);
+        printf("  %s curl (for package registry)\n", has_curl ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
+        if (!has_curl) printf("    Optional: install curl for 'wyn pkg search/install/push'\n");
+
+        // Check registry connectivity
+        if (has_curl) {
+            snprintf(doctor_cmd, sizeof(doctor_cmd), "curl -sS --max-time 5 https://pkg.wynlang.com/api/packages %s", devnull);
+            int has_registry = (system(doctor_cmd) == 0);
+            printf("  %s pkg.wynlang.com (registry)\n", has_registry ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
+            if (!has_registry) printf("    Cannot reach package registry — check your internet connection\n");
+        }
+        
         printf("\n");
         if (issues == 0) printf("\033[32m✓ All good! No external dependencies needed.\033[0m\n");
         else printf("\033[31m%d issue(s) found.\033[0m Fix them and run wyn doctor again.\n", issues);
@@ -503,7 +547,7 @@ int main(int argc, char** argv) {
 #endif
     }
     
-    if (strcmp(command, "upgrade") == 0) {
+    if (strcmp(command, "upgrade") == 0 || strcmp(command, "update") == 0) {
         printf("\033[1mChecking for updates...\033[0m\n");
 #ifdef __APPLE__
 #ifdef __aarch64__
@@ -516,19 +560,56 @@ int main(int argc, char** argv) {
 #else
         const char* platform = "linux-x64";
 #endif
-        char cmd[1024];
+
+#ifdef _WIN32
+        // Windows: use PowerShell
+        char cmd[2048];
+        snprintf(cmd, sizeof(cmd),
+            "powershell -Command \""
+            "$latest = (Invoke-RestMethod https://api.github.com/repos/wynlang/wyn/releases/latest).tag_name -replace 'v','';"
+            "if (-not $latest) { Write-Host '✗ Could not check for updates' -ForegroundColor Red; exit 1 }"
+            "$current = '%s';"
+            "if ($latest -eq $current) { Write-Host '✓ Already on latest (v'$current')' -ForegroundColor Green; exit 0 }"
+            "Write-Host 'Upgrading v'$current' → v'$latest'...';"
+            "Invoke-WebRequest -Uri https://github.com/wynlang/wyn/releases/download/v$latest/wyn-%s.exe -OutFile $env:TEMP\\wyn_new.exe;"
+            "Copy-Item $env:TEMP\\wyn_new.exe (Get-Command wyn).Source -Force;"
+            "Write-Host '✓ Upgraded to v'$latest -ForegroundColor Green\"",
+            get_version(), platform);
+        return system(cmd) == 0 ? 0 : 1;
+#else
+        // Find where the current binary is installed
+        char self_path[1024] = "";
+#ifdef __APPLE__
+        uint32_t sz = sizeof(self_path);
+        _NSGetExecutablePath(self_path, &sz);
+#else
+        ssize_t len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
+        if (len > 0) self_path[len] = '\0';
+#endif
+        // Resolve to absolute path
+        char abs_path[1024];
+        if (realpath(self_path, abs_path)) strncpy(self_path, abs_path, sizeof(self_path));
+
+        // Check if we need sudo (can't write to the binary's directory)
+        char* last_slash = strrchr(self_path, '/');
+        char dir[1024] = "/usr/local/bin";
+        if (last_slash) { size_t dlen = last_slash - self_path; memcpy(dir, self_path, dlen); dir[dlen] = '\0'; }
+        int need_sudo = (access(dir, W_OK) != 0);
+
+        char cmd[2048];
         snprintf(cmd, sizeof(cmd),
             "latest=$(curl -sL https://api.github.com/repos/wynlang/wyn/releases/latest | grep tag_name | head -1 | sed 's/.*\"v//' | sed 's/\".*//');"
-            "if [ -z \"$latest\" ]; then echo '\033[31m✗\033[0m Could not check for updates'; exit 1; fi;"
+            "if [ -z \"$latest\" ]; then echo '\\033[31m✗\\033[0m Could not check for updates'; exit 1; fi;"
             "current='%s';"
-            "if [ \"$latest\" = \"$current\" ]; then echo '\033[32m✓\033[0m Already on latest version (v'$current')'; exit 0; fi;"
+            "if [ \"$latest\" = \"$current\" ]; then echo '\\033[32m✓\\033[0m Already on latest (v'$current')'; exit 0; fi;"
             "echo 'Upgrading v'$current' → v'$latest'...';"
             "curl -sL https://github.com/wynlang/wyn/releases/download/v$latest/wyn-%s -o /tmp/wyn_new && "
             "chmod +x /tmp/wyn_new && "
-            "sudo mv /tmp/wyn_new /usr/local/bin/wyn && "
-            "echo '\033[32m✓\033[0m Upgraded to v'$latest",
-            get_version(), platform);
+            "%smv /tmp/wyn_new %s && "
+            "echo '\\033[32m✓\\033[0m Upgraded to v'$latest",
+            get_version(), platform, need_sudo ? "sudo " : "", self_path[0] ? self_path : "/usr/local/bin/wyn");
         return system(cmd) == 0 ? 0 : 1;
+#endif
     }
     
     if (strcmp(command, "uninstall") == 0) {
@@ -573,15 +654,14 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mclean\033[0m                   Remove build artifacts\n");
         fprintf(stderr, "\n\033[1mPackages:\033[0m\n");
         fprintf(stderr, "  \033[32minit\033[0m [name]             Create new project\n");
-        fprintf(stderr, "  \033[32mpkg install\033[0m <name>      Install a package\n");
-        fprintf(stderr, "  \033[32mpkg list\033[0m                List installed packages\n");
-        fprintf(stderr, "  \033[32mpkg uninstall\033[0m <name>    Uninstall a package\n");
-        fprintf(stderr, "  \033[32mpkg search\033[0m <query>      Search package registry\n");
+        fprintf(stderr, "  \033[32mpkg\033[0m <command>           Package manager (register, login, search, install, push)\n");
+        
         fprintf(stderr, "\n\033[1mTools:\033[0m\n");
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
         fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
         fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
         fprintf(stderr, "  \033[32mdoctor\033[0m                  Check your setup\n");
+        fprintf(stderr, "  \033[32mupgrade\033[0m                 Update wyn to latest version\n");
         fprintf(stderr, "  \033[32mversion\033[0m                 Show version\n");
         fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
         fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
@@ -696,150 +776,432 @@ int main(int argc, char** argv) {
     
     if (strcmp(command, "pkg") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn pkg <list|install|uninstall|search>\n");
+            fprintf(stderr, "Usage: wyn pkg <command>\n\n");
+            fprintf(stderr, "Commands:\n");
+            fprintf(stderr, "  register              Create an account on pkg.wynlang.com\n");
+            fprintf(stderr, "  login                 Log in and save API key\n");
+            fprintf(stderr, "  whoami                Show current logged-in user\n");
+            fprintf(stderr, "  search <query>        Search the package registry\n");
+            fprintf(stderr, "  info <name>           Show package details\n");
+            fprintf(stderr, "  install <name>        Install a package (latest)\n");
+            fprintf(stderr, "  install <name>@<ver>  Install a specific version\n");
+            fprintf(stderr, "  uninstall <name>      Remove an installed package\n");
+            fprintf(stderr, "  list                  List installed packages\n");
+            fprintf(stderr, "  push                  Publish current project to registry\n");
             return 1;
         }
         extern int package_install(const char*);
         extern int package_list();
-        
-        if (strcmp(argv[2], "list") == 0) {
-            return package_list();
-        } else if (strcmp(argv[2], "install") == 0) {
-            if (argc >= 4) {
-                return package_install(argv[3]);
-            }
-            return package_install(".");
-        } else if (strcmp(argv[2], "uninstall") == 0) {
-            if (argc < 4) {
-                fprintf(stderr, "Usage: wyn pkg uninstall <package-name>\n");
-                return 1;
-            }
-            char pkg_dir[1024];
-            snprintf(pkg_dir, sizeof(pkg_dir), "%s/.wyn/packages/%s", getenv("HOME"), argv[3]);
-            struct stat st;
-            if (stat(pkg_dir, &st) != 0) {
-                fprintf(stderr, "\033[31m✗\033[0m Package '%s' is not installed.\n", argv[3]);
-                return 1;
-            }
-            char cmd[1100];
-            snprintf(cmd, sizeof(cmd), "rm -rf '%s'", pkg_dir);
-            system(cmd);
-            printf("\033[32m✓\033[0m Uninstalled %s\n", argv[3]);
-            return 0;
-        } else if (strcmp(argv[2], "search") == 0) {
-            if (argc < 4) {
-                fprintf(stderr, "Usage: wyn pkg search <query>\n");
-                return 1;
-            }
-            printf("\033[1mSearching for '%s'...\033[0m\n\n", argv[3]);
-            
-            // Official packages
-            static const char* pkgs[][2] = {
-                {"sqlite", "SQLite embedded database"},
-                {"redis", "Redis client (pure Wyn, RESP protocol)"},
-                {"pg", "PostgreSQL driver (wraps libpq)"},
-                {"mysql", "MySQL/MariaDB driver"},
-                {"http-client", "HTTP client with JSON, auth, headers"},
-                {"https", "HTTPS/TLS server and client (wraps mbedTLS)"},
-                {"jwt", "JSON Web Token encode/decode"},
-                {"dotenv", "Load .env files"},
-                {"log", "Structured logging with levels"},
-                {"args", "CLI argument parser"},
-                {"color", "Named terminal colors"},
-                {"table", "Formatted terminal tables"},
-                {"cache", "In-memory key-value cache"},
-                {"retry", "Retry with exponential backoff"},
-                {"validate", "Email, URL, IP validation"},
-                {"yaml", "YAML parser"},
-                {"xml", "XML parser"},
-                {"markdown", "Markdown to HTML"},
-                {"base64", "Base64 encode/decode"},
-                {"tar", "Read tar archives"},
-                {"zip", "Read/write ZIP archives"},
-                {"cron", "Schedule recurring tasks"},
-                {"test-http", "HTTP test helpers"},
-                {"gui", "Desktop GUI (wraps SDL2)"},
-                {"raylib", "2D/3D graphics and games"},
-                {"image", "Load PNG/JPG/BMP (wraps stb_image)"},
-                {"audio", "Audio playback (wraps miniaudio)"},
-                {NULL, NULL}
-            };
-            int found = 0;
-            for (int pi = 0; pkgs[pi][0]; pi++) {
-                if (strcasestr(pkgs[pi][0], argv[3]) || strcasestr(pkgs[pi][1], argv[3])) {
-                    printf("  \033[36m%s\033[0m — %s\n", pkgs[pi][0], pkgs[pi][1]);
-                    printf("    wyn pkg install github.com/wynlang/%s\n\n", pkgs[pi][0]);
-                    found++;
-                }
-            }
-            if (!found) printf("  No packages found matching '%s'\n\n  Browse: https://github.com/wynlang/awesome-wyn\n", argv[3]);
-            return 0;
-        } else if (strcmp(argv[2], "login") == 0) {
-            // Register with github.com/topics/wyn-package and save API key
-            char username[256];
+        extern int registry_search(const char*);
+        extern int registry_info(const char*);
+        extern int registry_install(const char*);
+        extern int registry_publish(int dry_run);
+
+        // Helper: auth file path
+        char auth_path[512];
+        snprintf(auth_path, sizeof(auth_path), "%s/.wyn/auth", getenv("HOME") ? getenv("HOME") : "/tmp");
+
+        // Helper: temp file path (PID-scoped to avoid races)
+        char tmp_json[256];
+        snprintf(tmp_json, sizeof(tmp_json), "/tmp/wyn-pkg-%d.json", getpid());
+
+        // Helper: read API key from ~/.wyn/auth
+        #define READ_API_KEY(key_buf) do { \
+            FILE* _af = fopen(auth_path, "r"); \
+            if (!_af) { fprintf(stderr, "\033[31m✗\033[0m Not logged in. Run: wyn pkg register\n"); return 1; } \
+            char _auth[2048] = {0}; fread(_auth, 1, sizeof(_auth)-1, _af); fclose(_af); \
+            char* _kp = strstr(_auth, "\"api_key\":\""); \
+            if (!_kp) _kp = strstr(_auth, "\"api_key\": \""); \
+            if (_kp) { _kp = strchr(_kp + 9, '"'); if (_kp) { _kp++; char* _ke = strchr(_kp, '"'); \
+                if (_ke) { size_t _kl = _ke - _kp; if (_kl >= sizeof(key_buf)) _kl = sizeof(key_buf)-1; \
+                    memcpy(key_buf, _kp, _kl); key_buf[_kl] = '\0'; } } } \
+            if (!key_buf[0]) { fprintf(stderr, "\033[31m✗\033[0m Invalid auth. Run: wyn pkg register\n"); return 1; } \
+        } while(0)
+
+        // ── wyn pkg register ──
+        if (strcmp(argv[2], "register") == 0) {
+            char username[128], password[128], password2[128];
             printf("Username: "); fflush(stdout);
             if (!fgets(username, sizeof(username), stdin)) return 1;
             username[strcspn(username, "\n")] = 0;
+            printf("Password: "); fflush(stdout);
+            system("stty -echo 2>/dev/null");
+            if (!fgets(password, sizeof(password), stdin)) { system("stty echo 2>/dev/null"); return 1; }
+            password[strcspn(password, "\n")] = 0;
+            system("stty echo 2>/dev/null");
+            printf("\nConfirm password: "); fflush(stdout);
+            system("stty -echo 2>/dev/null");
+            if (!fgets(password2, sizeof(password2), stdin)) { system("stty echo 2>/dev/null"); return 1; }
+            password2[strcspn(password2, "\n")] = 0;
+            system("stty echo 2>/dev/null");
+            printf("\n");
+
+            if (strcmp(password, password2) != 0) {
+                fprintf(stderr, "\033[31m✗\033[0m Passwords do not match\n");
+                return 1;
+            }
+            if (strlen(password) < 8) {
+                fprintf(stderr, "\033[31m✗\033[0m Password must be at least 8 characters\n");
+                return 1;
+            }
+
+            // Write JSON to temp file to avoid shell injection
+            FILE* jf = fopen(tmp_json, "w");
+            if (!jf) { fprintf(stderr, "\033[31m✗\033[0m Cannot create temp file\n"); return 1; }
+            fprintf(jf, "{\"username\":\"%s\",\"password\":", username);
+            // JSON-escape the password
+            fputc('"', jf);
+            for (int i = 0; password[i]; i++) {
+                if (password[i] == '"' || password[i] == '\\') fputc('\\', jf);
+                fputc(password[i], jf);
+            }
+            fprintf(jf, "\"}");
+            fclose(jf);
+
             char cmd[1024];
-            snprintf(cmd, sizeof(cmd), "curl -s -X POST https://github.com/topics/wyn-package/api/register -d '%s'", username);
-            printf("Registering with github.com/topics/wyn-package...\n");
+            snprintf(cmd, sizeof(cmd), "curl -sS -X POST https://pkg.wynlang.com/api/register "
+                "-H 'Content-Type: application/json' -d @%s 2>/dev/null", tmp_json);
             FILE* fp = popen(cmd, "r");
-            char buf[1024] = {0};
-            if (fp) { fread(buf, 1, sizeof(buf)-1, fp); pclose(fp); }
-            // Save key to ~/.wyn/auth
-            char auth_dir[512]; snprintf(auth_dir, sizeof(auth_dir), "%s/.wyn", getenv("HOME"));
-            char mkdir_cmd[600]; snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p %s", auth_dir);
-            system(mkdir_cmd);
-            char auth_path[512]; snprintf(auth_path, sizeof(auth_path), "%s/auth", auth_dir);
-            FILE* af = fopen(auth_path, "w");
-            if (af) { fprintf(af, "%s", buf); fclose(af); }
-            printf("\033[32m✓\033[0m Logged in. Key saved to ~/.wyn/auth\n");
-            return 0;
-        } else if (strcmp(argv[2], "publish") == 0) {
-            // Read wyn.toml, tar project, upload to registry
-            FILE* toml = fopen("wyn.toml", "r");
-            if (!toml) { fprintf(stderr, "\033[31m✗\033[0m No wyn.toml found\n"); return 1; }
-            char tb[4096]; int tl = fread(tb, 1, sizeof(tb)-1, toml); tb[tl] = 0; fclose(toml);
-            char name[128]="", version[32]="0.1.0";
-            char* np = strstr(tb, "name = \""); if (np) sscanf(np, "name = \"%127[^\"]\"", name);
-            char* vp = strstr(tb, "version = \""); if (vp) sscanf(vp, "version = \"%31[^\"]\"", version);
-            if (!name[0]) { fprintf(stderr, "\033[31m✗\033[0m No name in wyn.toml\n"); return 1; }
-            printf("\033[1mPublishing\033[0m %s v%s...\n", name, version);
-            // Read API key
-            char auth_path[512]; snprintf(auth_path, sizeof(auth_path), "%s/.wyn/auth", getenv("HOME"));
+            char resp[2048] = {0};
+            if (fp) { fread(resp, 1, sizeof(resp)-1, fp); pclose(fp); }
+            unlink(tmp_json);
+
+            if (strstr(resp, "\"registered\"")) {
+                printf("\033[32m✓\033[0m Account created for '%s'\n", username);
+                printf("\nRun \033[1mwyn pkg login\033[0m to log in and start publishing.\n");
+                return 0;
+            } else {
+                char* ep = strstr(resp, "\"error\":\"");
+                if (ep) { ep += 9; char* ee = strchr(ep, '"'); if (ee) *ee = 0; fprintf(stderr, "\033[31m✗\033[0m %s\n", ep); }
+                else fprintf(stderr, "\033[31m✗\033[0m Registration failed\n");
+                return 1;
+            }
+        }
+
+        // ── wyn pkg login ──
+        if (strcmp(argv[2], "login") == 0) {
+            char username[128], password[128];
+            printf("Username: "); fflush(stdout);
+            if (!fgets(username, sizeof(username), stdin)) return 1;
+            username[strcspn(username, "\n")] = 0;
+            printf("Password: "); fflush(stdout);
+            system("stty -echo 2>/dev/null");
+            if (!fgets(password, sizeof(password), stdin)) { system("stty echo 2>/dev/null"); return 1; }
+            password[strcspn(password, "\n")] = 0;
+            system("stty echo 2>/dev/null");
+            printf("\n");
+
+            // Write JSON to temp file to avoid shell injection
+            FILE* jf = fopen(tmp_json, "w");
+            if (!jf) { fprintf(stderr, "\033[31m✗\033[0m Cannot create temp file\n"); return 1; }
+            fprintf(jf, "{\"username\":\"%s\",\"password\":", username);
+            fputc('"', jf);
+            for (int i = 0; password[i]; i++) {
+                if (password[i] == '"' || password[i] == '\\') fputc('\\', jf);
+                fputc(password[i], jf);
+            }
+            fprintf(jf, "\"}");
+            fclose(jf);
+
+            char cmd[1024];
+            snprintf(cmd, sizeof(cmd), "curl -sS -X POST https://pkg.wynlang.com/api/login "
+                "-H 'Content-Type: application/json' -d @%s 2>/dev/null", tmp_json);
+            FILE* fp = popen(cmd, "r");
+            char resp[2048] = {0};
+            if (fp) { fread(resp, 1, sizeof(resp)-1, fp); pclose(fp); }
+            unlink(tmp_json);
+
+            if (strstr(resp, "\"api_key\"")) {
+                char mkdir_cmd[600]; snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p %s/.wyn", getenv("HOME"));
+                system(mkdir_cmd);
+                FILE* af = fopen(auth_path, "w");
+                if (af) { fprintf(af, "%s", resp); fclose(af); chmod(auth_path, 0600); }
+                printf("\033[32m✓\033[0m Logged in as %s\n", username);
+                return 0;
+            } else {
+                fprintf(stderr, "\033[31m✗\033[0m Invalid credentials\n");
+                return 1;
+            }
+        }
+
+        // ── wyn pkg whoami ──
+        if (strcmp(argv[2], "whoami") == 0) {
             FILE* af = fopen(auth_path, "r");
-            if (!af) { fprintf(stderr, "\033[31m✗\033[0m Not logged in. Run: wyn pkg login\n"); return 1; }
-            char auth[1024] = {0}; fread(auth, 1, sizeof(auth)-1, af); fclose(af);
-            // Extract key from JSON
-            char api_key[256] = "";
-            char* kp = strstr(auth, "\"key\""); if (kp) sscanf(kp, "\"key\": \"%255[^\"]\"", api_key);
-            if (!api_key[0]) { fprintf(stderr, "\033[31m✗\033[0m Invalid auth. Run: wyn pkg login\n"); return 1; }
-            printf("  \033[32m✓\033[0m Published %s v%s\n", name, version);
-            return 0;
-        } else {
-            fprintf(stderr, "Unknown pkg command: %s\n", argv[2]);
+            if (!af) { printf("Not logged in. Run: wyn pkg register\n"); return 1; }
+            char auth[2048] = {0}; fread(auth, 1, sizeof(auth)-1, af); fclose(af);
+            char* up = strstr(auth, "\"username\":\"");
+            if (!up) up = strstr(auth, "\"username\": \"");
+            if (up) {
+                up = strchr(up + 11, '"'); if (up) { up++;
+                    char* ue = strchr(up, '"');
+                    if (ue) { *ue = 0; printf("%s\n", up); return 0; }
+                }
+            }
+            printf("Not logged in\n");
             return 1;
         }
+
+        // ── wyn pkg search ──
+        if (strcmp(argv[2], "search") == 0) {
+            if (argc < 4) { fprintf(stderr, "Usage: wyn pkg search <query>\n"); return 1; }
+            printf("\033[1mSearching for '%s'...\033[0m\n\n", argv[3]);
+            return registry_search(argv[3]);
+        }
+
+        // ── wyn pkg info ──
+        if (strcmp(argv[2], "info") == 0) {
+            if (argc < 4) { fprintf(stderr, "Usage: wyn pkg info <name>\n"); return 1; }
+            return registry_info(argv[3]);
+        }
+
+        // ── wyn pkg install ──
+        if (strcmp(argv[2], "install") == 0) {
+            if (argc < 4) { return package_install("."); }
+            // Try git URL first, then registry
+            if (strstr(argv[3], "github.com") || strstr(argv[3], "/")) {
+                return package_install(argv[3]);
+            }
+            return registry_install(argv[3]);
+        }
+
+        // ── wyn pkg uninstall ──
+        if (strcmp(argv[2], "uninstall") == 0) {
+            if (argc < 4) { fprintf(stderr, "Usage: wyn pkg uninstall <name>\n"); return 1; }
+            // Validate name to prevent path traversal
+            const char* pname = argv[3];
+            for (int i = 0; pname[i]; i++) {
+                if (pname[i] == '/' || pname[i] == '\\' || pname[i] == '.') {
+                    fprintf(stderr, "\033[31m✗\033[0m Invalid package name\n");
+                    return 1;
+                }
+            }
+            char pkg_dir[1024];
+            snprintf(pkg_dir, sizeof(pkg_dir), "packages/%s", pname);
+            struct stat st;
+            if (stat(pkg_dir, &st) != 0) {
+                fprintf(stderr, "\033[31m✗\033[0m Package '%s' is not installed\n", pname);
+                return 1;
+            }
+            char cmd[1100]; snprintf(cmd, sizeof(cmd), "rm -rf 'packages/%s'", pname);
+            system(cmd);
+            printf("\033[32m✓\033[0m Uninstalled %s\n", pname);
+            return 0;
+        }
+
+        // ── wyn pkg list ──
+        if (strcmp(argv[2], "list") == 0) {
+            return package_list();
+        }
+
+        // ── wyn pkg push ──
+        if (strcmp(argv[2], "push") == 0) {
+            // Check login first
+            FILE* af_check = fopen(auth_path, "r");
+            if (!af_check) {
+                fprintf(stderr, "\033[31m✗\033[0m You must be logged in to push packages.\n");
+                fprintf(stderr, "\n  Run \033[1mwyn pkg login\033[0m first.\n");
+                fprintf(stderr, "  Don't have an account? Run \033[1mwyn pkg register\033[0m\n");
+                return 1;
+            }
+            fclose(af_check);
+
+            FILE* toml = fopen("wyn.toml", "r");
+            if (!toml) { fprintf(stderr, "\033[31m✗\033[0m No wyn.toml found in current directory\n"); return 1; }
+            char tb[4096]; int tl = fread(tb, 1, sizeof(tb)-1, toml); tb[tl] = 0; fclose(toml);
+
+            char name[128]="", version[32]="", desc[256]="";
+            char* np = strstr(tb, "name = \""); if (np) sscanf(np, "name = \"%127[^\"]\"", name);
+            char* vp = strstr(tb, "version = \""); if (vp) sscanf(vp, "version = \"%31[^\"]\"", version);
+            char* dp = strstr(tb, "description = \""); if (dp) sscanf(dp, "description = \"%255[^\"]\"", desc);
+            if (!name[0]) { fprintf(stderr, "\033[31m✗\033[0m No 'name' field in wyn.toml\n"); return 1; }
+            if (!version[0]) { fprintf(stderr, "\033[31m✗\033[0m No 'version' field in wyn.toml\n"); return 1; }
+            if (!desc[0]) { fprintf(stderr, "\033[31m✗\033[0m No 'description' field in wyn.toml (required for publishing)\n"); return 1; }
+
+            char api_key[256] = "";
+            READ_API_KEY(api_key);
+
+            printf("Pushing %s v%s...\n", name, version);
+
+            // Create tarball excluding junk
+            char tmp_tar[256];
+            snprintf(tmp_tar, sizeof(tmp_tar), "/tmp/wyn-pkg-%d.tar.gz", getpid());
+            {
+                char tar_cmd[512];
+                snprintf(tar_cmd, sizeof(tar_cmd),
+                    "tar czf %s "
+                    "--exclude='.git' --exclude='build' --exclude='.wyn' "
+                    "--exclude='node_modules' --exclude='.DS_Store' "
+                    "--exclude='*.o' --exclude='*.out' "
+                    "-C . . 2>/dev/null", tmp_tar);
+                system(tar_cmd);
+            }
+
+            // Check size
+            struct stat tar_st;
+            if (stat(tmp_tar, &tar_st) != 0 || tar_st.st_size == 0) {
+                fprintf(stderr, "\033[31m✗\033[0m Failed to create package tarball\n");
+                return 1;
+            }
+            if (tar_st.st_size > 10 * 1024 * 1024) {
+                fprintf(stderr, "\033[31m✗\033[0m Package too large (%lldMB, max 10MB)\n", (long long)(tar_st.st_size / 1024 / 1024));
+                unlink(tmp_tar);
+                return 1;
+            }
+
+            // Build JSON payload via temp file
+            FILE* jf = fopen(tmp_json, "w");
+            if (!jf) { unlink(tmp_tar); fprintf(stderr, "\033[31m✗\033[0m Cannot create temp file\n"); return 1; }
+            // Read base64
+            char b64_cmd[512];
+#ifdef _WIN32
+            snprintf(b64_cmd, sizeof(b64_cmd), "certutil -encode %s /tmp/wyn-b64-%d.txt >nul 2>&1 && type /tmp/wyn-b64-%d.txt", tmp_tar, getpid(), getpid());
+#else
+            snprintf(b64_cmd, sizeof(b64_cmd), "base64 < %s", tmp_tar);
+#endif
+            FILE* b64p = popen(b64_cmd, "r");
+            char* b64 = malloc(tar_st.st_size * 2);
+            size_t b64_len = 0;
+            if (b64p && b64) {
+                b64_len = fread(b64, 1, tar_st.st_size * 2 - 1, b64p);
+                pclose(b64p);
+                size_t j = 0;
+                for (size_t i = 0; i < b64_len; i++) {
+                    if (b64[i] != '\n' && b64[i] != '\r') b64[j++] = b64[i];
+                }
+                b64[j] = '\0'; b64_len = j;
+            } else {
+                if (b64p) pclose(b64p);
+                if (b64) free(b64);
+                fclose(jf); unlink(tmp_tar); unlink(tmp_json);
+                fprintf(stderr, "\033[31m✗\033[0m Failed to encode package\n");
+                return 1;
+            }
+            unlink(tmp_tar);
+
+            // Write JSON with proper escaping for all fields
+            fprintf(jf, "{\"api_key\":\"");
+            for (int i = 0; api_key[i]; i++) { if (api_key[i]=='"'||api_key[i]=='\\') fputc('\\',jf); fputc(api_key[i],jf); }
+            fprintf(jf, "\",\"name\":\"");
+            for (int i = 0; name[i]; i++) { if (name[i]=='"'||name[i]=='\\') fputc('\\',jf); fputc(name[i],jf); }
+            fprintf(jf, "\",\"version\":\"");
+            for (int i = 0; version[i]; i++) { if (version[i]=='"'||version[i]=='\\') fputc('\\',jf); fputc(version[i],jf); }
+            fprintf(jf, "\",\"description\":\"");
+            for (int i = 0; desc[i]; i++) {
+                if (desc[i] == '"' || desc[i] == '\\') fputc('\\', jf);
+                else if (desc[i] == '\n') { fputc('\\', jf); fputc('n', jf); continue; }
+                fputc(desc[i], jf);
+            }
+            fprintf(jf, "\",\"tarball\":\"");
+            fwrite(b64, 1, b64_len, jf);
+            free(b64);
+            fprintf(jf, "\"}");
+            fclose(jf);
+
+            char pub_cmd[1024];
+            snprintf(pub_cmd, sizeof(pub_cmd), "curl -sS -X POST https://pkg.wynlang.com/api/publish "
+                "-H 'Content-Type: application/json' -d @%s 2>/dev/null", tmp_json);
+            FILE* fp = popen(pub_cmd, "r");
+            char resp[2048] = {0};
+            if (fp) { fread(resp, 1, sizeof(resp)-1, fp); pclose(fp); }
+            unlink(tmp_json);
+
+            if (strstr(resp, "\"published\"")) {
+                printf("\033[32m✓\033[0m Published %s v%s to pkg.wynlang.com\n", name, version);
+                return 0;
+            } else {
+                char* ep = strstr(resp, "\"error\":\"");
+                if (ep) {
+                    ep += 9; char* ee = strchr(ep, '"'); if (ee) *ee = 0;
+                    fprintf(stderr, "\033[31m✗\033[0m %s\n", ep);
+                } else {
+                    fprintf(stderr, "\033[31m✗\033[0m Push failed — could not reach pkg.wynlang.com\n");
+                }
+                return 1;
+            }
+        }
+
+        fprintf(stderr, "Unknown command: wyn pkg %s\n", argv[2]);
+        return 1;
     }
     
     if (strcmp(command, "build") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: wyn build <file|dir> [--shared|--python]\n");
-            return 1;
+            // Try wyn.toml, then src/main.wyn
+            struct stat _bs;
+            if (stat("wyn.toml", &_bs) == 0) {
+                FILE* _tf = fopen("wyn.toml", "r");
+                char _tb[4096]; int _tl = fread(_tb, 1, sizeof(_tb)-1, _tf); _tb[_tl] = 0; fclose(_tf);
+                char* _ep = strstr(_tb, "entry = \"");
+                if (_ep) { char _e[256]; if (sscanf(_ep, "entry = \"%255[^\"]\"", _e) == 1 && stat(_e, &_bs) == 0) { argc = 3; argv[2] = strdup(_e); } }
+            }
+            if (argc < 3 && stat("src/main.wyn", &_bs) == 0) { argc = 3; argv[2] = "src/main.wyn"; }
+            if (argc < 3) {
+                fprintf(stderr, "Usage: wyn build <file|dir> [--shared|--python]\n");
+                return 1;
+            }
         }
         // Detect flags
         char* dir = NULL;
         const char* build_flag = "";
         int build_release = 0;
         int build_pgo = 0;
-        int build_llvm = 0;
+        const char* output_name = NULL;
+        const char* build_target = NULL;
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--shared") == 0) build_flag = " --shared";
             else if (strcmp(argv[i], "--python") == 0) build_flag = " --python";
             else if (strcmp(argv[i], "--release") == 0) build_release = 1;
             else if (strcmp(argv[i], "--pgo") == 0) build_pgo = 1;
-            else if (strcmp(argv[i], "--llvm") == 0) build_llvm = 1;
+            else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) { output_name = argv[++i]; }
+            else if (strcmp(argv[i], "--target") == 0 && i + 1 < argc) { build_target = argv[++i]; }
             else if (!dir) dir = argv[i];
+        }
+        
+        // If --target is specified, delegate to cross-compile
+        if (build_target) {
+            // Rewrite as: wyn cross <target> <file> [flags]
+            // First resolve the entry file the same way build does
+            if (!dir) dir = ".";
+            char entry_resolve[512];
+            struct stat st_resolve;
+            if (stat(dir, &st_resolve) == 0 && S_ISREG(st_resolve.st_mode)) {
+                snprintf(entry_resolve, sizeof(entry_resolve), "%s", dir);
+            } else {
+                char toml_path[512]; snprintf(toml_path, sizeof(toml_path), "%s/wyn.toml", dir);
+                FILE* toml = fopen(toml_path, "r");
+                int found = 0;
+                if (toml) {
+                    char tb[4096]; int tl = fread(tb, 1, sizeof(tb)-1, toml); tb[tl] = 0; fclose(toml);
+                    char* ep = strstr(tb, "entry = \"");
+                    if (ep) { char e[256]; if (sscanf(ep, "entry = \"%255[^\"]\"", e) == 1) { snprintf(entry_resolve, sizeof(entry_resolve), "%s/%s", dir, e); found = 1; } }
+                }
+                if (!found) {
+                    snprintf(entry_resolve, sizeof(entry_resolve), "%s/main.wyn", dir);
+                    if (stat(entry_resolve, &st_resolve) != 0) {
+                        snprintf(entry_resolve, sizeof(entry_resolve), "%s/src/main.wyn", dir);
+                    }
+                }
+            }
+            // Normalize target aliases
+            const char* target = build_target;
+            if (strcmp(target, "linux-x64") == 0 || strcmp(target, "linux-amd64") == 0) target = "linux";
+            else if (strcmp(target, "linux-arm64") == 0 || strcmp(target, "linux-aarch64") == 0) target = "linux-arm64";
+            else if (strcmp(target, "macos-x64") == 0) target = "macos-x64";
+            else if (strcmp(target, "macos-arm64") == 0) target = "macos-arm64";
+            else if (strcmp(target, "windows-x64") == 0 || strcmp(target, "win64") == 0) target = "windows";
+            
+            // Build new argv for cross command
+            char* cross_argv[8];
+            cross_argv[0] = argv[0];
+            cross_argv[1] = "cross";
+            cross_argv[2] = (char*)target;
+            cross_argv[3] = entry_resolve;
+            // Re-enter main with cross command by falling through
+            printf("\033[1mCross-compiling\033[0m %s → %s\n", entry_resolve, target);
+            // Execute cross-compile inline
+            char cross_cmd[1024];
+            snprintf(cross_cmd, sizeof(cross_cmd), "%s cross %s %s", argv[0], target, entry_resolve);
+            return system(cross_cmd) == 0 ? 0 : 1;
         }
         if (!dir) dir = ".";
         
@@ -889,7 +1251,9 @@ int main(int argc, char** argv) {
         // Load imports
         extern void preload_imports(const char* source);
         extern void check_all_modules(void);
+        extern bool has_circular_import(void);
         preload_imports(source);
+        if (has_circular_import()) { fprintf(stderr, "Compilation failed due to circular imports\n"); free(source); return 1; }
         check_all_modules();
         
         Program* prog = parse_program();
@@ -904,33 +1268,26 @@ int main(int argc, char** argv) {
         FILE* out_f = fopen(out_c, "w");
         init_codegen(out_f);
         { extern void codegen_set_slim_runtime(bool);
-          bool _slim = false;
-          for (int _i = 2; _i < argc; _i++) if (strcmp(argv[_i], "--release") == 0) _slim = true;
-          codegen_set_slim_runtime(_slim); }
+          extern void codegen_set_source_file(const char*);
+          codegen_set_slim_runtime(false);
+          codegen_set_source_file(entry); }
         codegen_c_header();
         codegen_program(prog);
         fclose(out_f);
         
         // Determine output binary name
         char bin_path[512];
-        snprintf(bin_path, sizeof(bin_path), "%s", entry);
-        char* dot = strrchr(bin_path, '.'); if (dot) *dot = 0;
+        if (output_name) {
+            snprintf(bin_path, sizeof(bin_path), "%s", output_name);
+        } else {
+            snprintf(bin_path, sizeof(bin_path), "%s", entry);
+            char* dot = strrchr(bin_path, '.'); if (dot) *dot = 0;
+        }
         
         // Determine wyn_root
         char wyn_root[1024] = ".";
         char exe_path[1024]; strncpy(exe_path, argv[0], sizeof(exe_path)-1);
         char* ls = strrchr(exe_path, '/'); if (ls) { *ls = 0; snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path); }
-        
-        // LLVM backend path
-        if (build_llvm) {
-            extern int llvm_compile(Program* prog, const char* output_path, const char* wyn_root);
-            unlink(out_c); // Don't need C file for LLVM
-            int result = llvm_compile(prog, bin_path, wyn_root);
-            free(source);
-            if (result == 0) printf("\033[32m✓\033[0m Built (LLVM): %s\n", bin_path);
-            else fprintf(stderr, "\033[31m✗\033[0m LLVM build failed\n");
-            return result;
-        }
 
         // Compile with TCC or system cc
         const char* cc = detect_cc();
@@ -949,16 +1306,36 @@ int main(int argc, char** argv) {
         }
         
         char cmd[4096];
-        int result;
+        int result = -1;
         char rt_lib[512]; snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
-        if (build_flag[0] == 0 && !build_release && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0) {
-            snprintf(cmd, sizeof(cmd),
-                "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -w %s "
-                "%s.c %s/src/wyn_arena.c %s/src/stdlib_string.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s%s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
-                tcc_bin, bin_path, wyn_root, wyn_root, sqlite_flags,
-                entry, wyn_root, wyn_root, wyn_root, wyn_root, rt_tcc, sqlite_src);
+
+        // Detect App module for webview linking
+        const char* app_link = "";
+#ifdef __APPLE__
+        if (strstr(source, "App.")) {
+            static char _app_link_buf[1024];
+            snprintf(_app_link_buf, sizeof(_app_link_buf), " %s/src/wyn_webview.o -framework WebKit -framework Cocoa", wyn_root);
+            app_link = _app_link_buf;
+        }
+#endif
+
+        if (build_flag[0] == 0 && !build_release && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
+            int _p = 0;
+            _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s ", tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, wyn_root, sqlite_flags);
+            _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s.c ", entry);
+            const char* _srcs[] = {"wyn_arena","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
+            for (int _si = 0; _srcs[_si]; _si++) _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s/src/%s.c ", wyn_root, _srcs[_si]);
+            _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s%s -lpthread -lm 2>/tmp/wyn_tcc_err.txt", rt_tcc, sqlite_src);
             result = system(cmd);
-        } else {
+            // Check for zero-byte binary (TCC silently fails sometimes)
+            if (result == 0) {
+                struct stat st;
+                if (stat(bin_path, &st) == 0 && st.st_size == 0) {
+                    result = 1; // Force fallback to system cc
+                }
+            }
+        }
+        if (result != 0) {
 #ifdef __APPLE__
             const char* plibs = "-lpthread -lm";
             (void)plibs;
@@ -968,10 +1345,16 @@ int main(int argc, char** argv) {
             snprintf(cmd, sizeof(cmd),
 #ifdef _WIN32
                 "%s -std=c11 -O3 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>NUL",
+#elif defined(__APPLE__)
+                "%s -std=c11 -O3 -w -Wno-int-conversion -I %s/src -Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
 #else
-                "%s -std=c11 -O3 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
+                "%s -std=c11 -O3 -w -I %s/src -Wl,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
 #endif
-                cc, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src);
+                cc, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
+#ifdef __APPLE__
+                , app_link
+#endif
+                );
             result = system(cmd);
         }
         
@@ -1033,6 +1416,16 @@ int main(int argc, char** argv) {
             printf("\033[32m✓\033[0m Built: %s\n", bin_path);
         } else {
             fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
+            // Show compiler errors if available
+            FILE* ef = fopen("/tmp/wyn_cc_err.txt", "r");
+            if (!ef) ef = fopen("/tmp/wyn_tcc_err.txt", "r");
+            if (ef) {
+                char ebuf[2048];
+                size_t n = fread(ebuf, 1, sizeof(ebuf)-1, ef);
+                ebuf[n] = '\0';
+                fclose(ef);
+                if (n > 0) fprintf(stderr, "  Compiler output:\n%s\n", ebuf);
+            }
         }
         return result == 0 ? 0 : 1;
     }
@@ -1094,20 +1487,7 @@ int main(int argc, char** argv) {
     if (strcmp(command, "build-runtime") == 0) {
         // Precompile runtime library for fast compilation
         printf("Building runtime library...\n");
-        char cmd[4096];
-        snprintf(cmd, sizeof(cmd),
-            "cd %s && mkdir -p runtime/obj && "
-            "for f in src/wyn_arena.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c "
-            "src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c "
-            "src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c "
-            "src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c "
-            "src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c "
-            "src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c "
-            "src/file_io_simple.c src/stdlib_enhanced.c; do "
-            "gcc -std=c11 -O2 -w -I src -c $f -o runtime/obj/$(basename $f .c).o; done && "
-            "ar rcs runtime/libwyn_rt.a runtime/obj/*.o",
-            argv[0] && strchr(argv[0], '/') ? "" : ".");
-        // Use wyn_root
+        char cmd[8192];
         char wyn_root[1024] = ".";
         char* root_env = getenv("WYN_ROOT");
         if (root_env) strncpy(wyn_root, root_env, sizeof(wyn_root)-1);
@@ -1117,19 +1497,16 @@ int main(int argc, char** argv) {
             char* last_slash = strrchr(exe_path, '/');
             if (last_slash) { *last_slash = 0; strncpy(wyn_root, exe_path, sizeof(wyn_root)-1); }
         }
+        // Build for-loop command from unified source list
+        char for_list[4096];
+        build_source_list(for_list, sizeof(for_list), "");
         snprintf(cmd, sizeof(cmd),
             "mkdir -p %s/runtime/obj && cd %s && "
-            "for f in src/wyn_arena.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c "
-            "src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c "
-            "src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c "
-            "src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c "
-            "src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c "
-            "src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c "
-            "src/file_io_simple.c src/stdlib_enhanced.c; do "
-            "gcc -std=c11 -O2 -w -I src -c $f -o runtime/obj/$(basename $f .c).o 2>/dev/null; done && "
+            "for f in %s; do "
+            "gcc -std=c11 -O2 -w -I src -I vendor/minicoro -c $f -o runtime/obj/$(basename $f .c).o 2>/dev/null; done && "
             "ar rcs runtime/libwyn_rt.a runtime/obj/*.o && "
             "echo 'Built runtime/libwyn_rt.a'",
-            wyn_root, wyn_root);
+            wyn_root, wyn_root, for_list);
         int rt_result = system(cmd);
         if (rt_result == 0) {
             // Also build precompiled header for faster compilation
@@ -1342,12 +1719,29 @@ int main(int argc, char** argv) {
     if (strcmp(command, "cross") == 0) {
         if (argc < 4) {
             fprintf(stderr, "Usage: wyn cross <target> <file.wyn>\n");
-            fprintf(stderr, "Targets: linux, macos, windows, ios, android\n");
+            fprintf(stderr, "Targets: linux, linux-x64, linux-arm64, macos, macos-x64, macos-arm64,\n");
+            fprintf(stderr, "         windows, windows-x64, ios, android\n");
             return 1;
         }
         
         char* target = argv[2];
         char* file = argv[3];
+        
+        // Normalize target aliases
+        char* arch = "x86_64";
+        if (strcmp(target, "linux-x64") == 0 || strcmp(target, "linux-amd64") == 0) { target = "linux"; arch = "x86_64"; }
+        else if (strcmp(target, "linux-arm64") == 0 || strcmp(target, "linux-aarch64") == 0) { target = "linux"; arch = "aarch64"; }
+        else if (strcmp(target, "macos-x64") == 0) { target = "macos"; arch = "x86_64"; }
+        else if (strcmp(target, "macos-arm64") == 0) { target = "macos"; arch = "arm64"; }
+        else if (strcmp(target, "windows-x64") == 0 || strcmp(target, "win64") == 0) { target = "windows"; arch = "x86_64"; }
+        else if (strcmp(target, "linux") == 0) { arch = "x86_64"; }  // default linux to x64
+        else if (strcmp(target, "macos") == 0) {
+#ifdef __aarch64__
+            arch = "arm64";
+#else
+            arch = "x86_64";
+#endif
+        }
         
         // Find wyn root for includes
         char wyn_root[1024] = ".";
@@ -1370,7 +1764,7 @@ int main(int argc, char** argv) {
         
         Program* prog = parse_program();
         if (!prog) {
-            fprintf(stderr, "Error: Failed to parse program\n");
+            if (!parser_had_error()) { fprintf(stderr, "Error: Failed to parse program\n"); fprintf(stderr, "  Hint: Check for stray code outside functions or unmatched braces\n"); }
             free(source);
             return 1;
         }
@@ -1394,12 +1788,11 @@ int main(int argc, char** argv) {
         // Cross-compile based on target
         char compile_cmd[4096];
         if (strcmp(target, "linux") == 0) {
-            // On macOS, just compile normally (user can transfer binary)
-            snprintf(compile_cmd, 512, "gcc -std=c11 -O2 -w -I %s/src -o %s.linux %s.c %s/runtime/libwyn_rt.a -lpthread -lm", wyn_root, file, file, wyn_root);
-            printf("Compiling for Linux (native binary)...\n");
+            snprintf(compile_cmd, sizeof(compile_cmd), "gcc -std=c11 -O2 -w -I %s/src -o %s.linux %s.c %s/runtime/libwyn_rt.a -lpthread -lm", wyn_root, file, file, wyn_root);
+            printf("Compiling for Linux (%s)...\n", arch);
         } else if (strcmp(target, "macos") == 0) {
-            snprintf(compile_cmd, 512, "gcc -std=c11 -O2 -w -I %s/src -o %s.macos %s.c %s/runtime/libwyn_rt.a -lpthread -lm", wyn_root, file, file, wyn_root);
-            printf("Compiling for macOS...\n");
+            snprintf(compile_cmd, sizeof(compile_cmd), "clang -std=c11 -O2 -w -arch %s -I %s/src -o %s.macos %s.c %s/runtime/libwyn_rt.a -lpthread -lm", arch, wyn_root, file, file, wyn_root);
+            printf("Compiling for macOS (%s)...\n", arch);
         } else if (strcmp(target, "windows") == 0) {
             snprintf(compile_cmd, 512, "x86_64-w64-mingw32-gcc -std=c11 -O2 -w -static -I %s/src -o %s.exe %s.c -lm", wyn_root, file, file);
             printf("Cross-compiling for Windows...\n");
@@ -1417,16 +1810,16 @@ int main(int argc, char** argv) {
             snprintf(compile_cmd, sizeof(compile_cmd),
                 "clang -std=c11 -O2 -w -arch arm64 -isysroot %s "
                 "-miphoneos-version-min=15.0 "
-                "-I %s/src -o %s.ios %s.c "
+                "-I %s/src -I %s/vendor/minicoro -o %s.ios %s.c "
                 "%s/src/wyn_wrapper.c %s/src/wyn_interface.c "
                 "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c "
-                "%s/src/test_runtime.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c "
+                "%s/src/test_runtime.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/io_loop.c %s/src/coroutine.c %s/src/future.c "
                 "%s/src/net.c %s/src/net_advanced.c "
                 "-lpthread -lm",
-                sdk_path, wyn_root, file, file,
+                sdk_path, wyn_root, wyn_root, file, file,
                 wyn_root, wyn_root,
                 wyn_root, wyn_root, wyn_root,
-                wyn_root, wyn_root, wyn_root, wyn_root,
+                wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
                 wyn_root, wyn_root);
             printf("Cross-compiling for iOS (arm64)...\n");
             printf("SDK: %s\n", sdk_path);
@@ -1499,7 +1892,9 @@ int main(int argc, char** argv) {
         char* source = read_file(file);
         if (!source) { fprintf(stderr, "Error: Cannot read %s\n", file); return 1; }
         extern void preload_imports(const char* source);
+        extern bool has_circular_import(void);
         preload_imports(source);
+        if (has_circular_import()) { fprintf(stderr, "Compilation failed due to circular imports\n"); free(source); return 1; }
         init_lexer(source);
         init_parser();
         set_parser_filename(file);
@@ -1573,124 +1968,6 @@ int main(int argc, char** argv) {
         return cmd_lsp(argc, argv);
     }
     
-    if (strcmp(command, "llvm") == 0) {
-#ifdef WITH_LLVM
-        if (argc < 3) {
-            fprintf(stderr, "Usage: wyn llvm <file.wyn>\n");
-            return 1;
-        }
-        
-        { extern void set_source_directory(const char*); set_source_directory(file); }
-        char* file = argv[2];
-        char* source = read_file(file);
-        
-        init_lexer(source);
-        init_parser();
-        init_checker();
-        check_all_modules();  // Type check loaded modules
-        
-        Program* prog = parse_program();
-        if (!prog) {
-            fprintf(stderr, "Error: Failed to parse program\n");
-            free(source);
-            return 1;
-        }
-        
-        // Type check
-        { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
-        
-        if (checker_had_error()) {
-            fprintf(stderr, "Compilation failed due to errors\n"); wynter_encourage();
-            free(source);
-            return 1;
-        }
-        
-        // Generate code using LLVM backend
-        char base_name[256];
-        strncpy(base_name, file, sizeof(base_name) - 1);
-        char* dot = strrchr(base_name, '.');
-        if (dot) *dot = '\0';
-        
-        char ll_path[300];
-        char obj_path[300];
-        char out_path[300];
-        snprintf(ll_path, sizeof(ll_path), "%s.ll", base_name);
-        snprintf(obj_path, sizeof(obj_path), "%s.o", base_name);
-        snprintf(out_path, sizeof(out_path), "%s.out", base_name);
-        
-        // Initialize LLVM codegen (no C file output)
-        init_codegen(NULL);
-        codegen_program(prog);
-        
-        // Write LLVM IR to file
-        extern bool llvm_write_ir_to_file(const char* filename);
-        if (!llvm_write_ir_to_file(ll_path)) {
-            fprintf(stderr, "Error: Failed to write LLVM IR\n");
-            free(source);
-            return 1;
-        }
-        printf("Generated LLVM IR: %s\n", ll_path);
-        
-        // Compile LLVM IR to object file
-        extern bool llvm_compile_to_object(const char* ir_file, const char* obj_file);
-        if (!llvm_compile_to_object(ll_path, obj_path)) {
-            fprintf(stderr, "Error: Failed to compile LLVM IR to object file\n");
-            free(source);
-            return 1;
-        }
-        printf("Compiled to object: %s\n", obj_path);
-        
-        // Get WYN_ROOT
-        char wyn_root[1024] = ".";
-        char* root_env = getenv("WYN_ROOT");
-        if (root_env) {
-            snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
-        } else {
-            // Auto-detect: try multiple locations
-            const char* test_paths[] = {
-                "./src/wyn_wrapper.c",
-                "../src/wyn_wrapper.c",
-                "./wyn/src/wyn_wrapper.c",
-                NULL
-            };
-            
-            for (int i = 0; test_paths[i] != NULL; i++) {
-                FILE* test = fopen(test_paths[i], "r");
-                if (test) {
-                    fclose(test);
-                    if (i == 0) {
-                        strcpy(wyn_root, ".");
-                    } else if (i == 1) {
-                        strcpy(wyn_root, "..");
-                    } else if (i == 2) {
-                        strcpy(wyn_root, "./wyn");
-                    }
-                    break;
-                }
-            }
-        }
-        
-        // Link to binary
-        extern bool llvm_link_binary(const char* obj_file, const char* output, const char* wyn_root);
-        if (!llvm_link_binary(obj_path, out_path, wyn_root)) {
-            fprintf(stderr, "Error: Failed to link binary\n");
-            free(source);
-            return 1;
-        }
-        printf("Linked binary: %s\n", out_path);
-        printf("Compiled successfully\n");
-        
-        cleanup_codegen();
-        free_program(prog);
-        free(source);
-        return 0;
-#else
-        fprintf(stderr, "Error: LLVM backend not available in this build\n");
-        fprintf(stderr, "Rebuild with LLVM support: make wyn-llvm\n");
-        return 1;
-#endif
-    }
-    
     if (strcmp(command, "run") == 0) {
         if (argc < 3) {
             // Try to find main.wyn or read wyn.toml
@@ -1710,8 +1987,12 @@ int main(int argc, char** argv) {
         
         // Check for --debug flag, -e eval, and find file arg
         int keep_artifacts = 0;
+        int mem_stats = 0;
+        int user_args_start = -1;  // index in argv where user args begin (after --)
         for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--") == 0) { user_args_start = i + 1; break; }
             if (strcmp(argv[i], "--debug") == 0) keep_artifacts = 1;
+            else if (strcmp(argv[i], "--mem-stats") == 0) mem_stats = 1;
             else if (strcmp(argv[i], "--fast") == 0 || strcmp(argv[i], "--release") == 0 || strcmp(argv[i], "--shared") == 0 || strcmp(argv[i], "--python") == 0) {}
             else if (strcmp(argv[i], "-e") == 0 && i + 1 < argc) { eval_code = argv[++i]; }
             else if (!file) file = argv[i];
@@ -1770,7 +2051,9 @@ int main(int argc, char** argv) {
         
         // Pre-load all imports before parsing
         extern void preload_imports(const char* source);
+        extern bool has_circular_import(void);
         preload_imports(source);
+        if (has_circular_import()) { fprintf(stderr, "Compilation failed due to circular imports\n"); free(source); return 1; }
         
         init_lexer(source);
         init_parser();
@@ -1780,7 +2063,7 @@ int main(int argc, char** argv) {
         
         Program* prog = parse_program();
         if (!prog) {
-            fprintf(stderr, "Error: Failed to parse program\n");
+            if (!parser_had_error()) { fprintf(stderr, "Error: Failed to parse program\n"); fprintf(stderr, "  Hint: Check for stray code outside functions or unmatched braces\n"); }
             free(source);
             return 1;
         }
@@ -1801,9 +2084,11 @@ int main(int argc, char** argv) {
         clock_gettime(CLOCK_MONOTONIC, &_ts_start);
         init_codegen(out);
         { extern void codegen_set_slim_runtime(bool);
+          extern void codegen_set_source_file(const char*);
           bool _slim = false;
           for (int _i = 2; _i < argc; _i++) if (strcmp(argv[_i], "--release") == 0) _slim = true;
-          codegen_set_slim_runtime(_slim); }
+          codegen_set_slim_runtime(_slim);
+          codegen_set_source_file(file); }
         codegen_c_header();
         codegen_program(prog);
         fclose(out);
@@ -1852,6 +2137,20 @@ int main(int argc, char** argv) {
             }
         }
         const char* gui_flags = strstr(source, "Gui.") ? " -DWYN_USE_GUI $(pkg-config --cflags --libs sdl2 2>/dev/null || echo '-lSDL2') " : "";
+        const char* app_flags = "";
+        if (strstr(source, "App.")) {
+#ifdef __APPLE__
+            static char _app_flags_buf[1024];
+            snprintf(_app_flags_buf, sizeof(_app_flags_buf), " %s/src/wyn_webview.o -framework WebKit -framework Cocoa", wyn_root);
+            app_flags = _app_flags_buf;
+#elif defined(__linux__)
+            app_flags = " $(pkg-config --cflags --libs gtk+-3.0 webkit2gtk-4.0 2>/dev/null)";
+#elif defined(_WIN32)
+            static char _app_flags_buf[1024];
+            snprintf(_app_flags_buf, sizeof(_app_flags_buf), " %s/src/wyn_webview_win.c", wyn_root);
+            app_flags = _app_flags_buf;
+#endif
+        }
         
         // Check for --fast flag (use -O0 for fastest compile)
         const char* opt_level = "-O1";
@@ -1888,10 +2187,16 @@ int main(int argc, char** argv) {
                     double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
                     fprintf(stderr, "\033[2mCompiled in %.0fms (tcc)\033[0m\n", _ms);
                     
-                    // Run the compiled binary
-                    char run_cmd[512];
-                    if (file[0] == '/') snprintf(run_cmd, 512, "%s.out", file);
-                    else snprintf(run_cmd, 512, "./%s.out", file);
+                    // Run the compiled binary with user args
+                    char run_cmd[4096];
+                    int rc = 0;
+                    if (file[0] == '/') rc = snprintf(run_cmd, sizeof(run_cmd), "%s.out", file);
+                    else rc = snprintf(run_cmd, sizeof(run_cmd), "./%s.out", file);
+                    if (user_args_start > 0) {
+                        for (int i = user_args_start; i < argc && rc < (int)sizeof(run_cmd) - 2; i++) {
+                            rc += snprintf(run_cmd + rc, sizeof(run_cmd) - rc, " %s", argv[i]);
+                        }
+                    }
                     int result = system(run_cmd);
                     free(source);
                     if (!keep_artifacts) {
@@ -1920,18 +2225,20 @@ int main(int argc, char** argv) {
                      "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a %s 2>wyn_cc_err.txt",
                      cc, opt_level, wyn_root, file, file, wyn_root, wyn_root, platform_libs);
         } else {
-            // Fallback: compile from source
+            // Fallback: compile from source using unified source list
+            char src_list[4096];
+            build_source_list(src_list, sizeof(src_list), wyn_root);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/src/wyn_arena.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
-                     cc, opt_level, wyn_root, file, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s.out %s.c %s %s 2>wyn_cc_err.txt",
+                     cc, opt_level, wyn_root, wyn_root, file, file, src_list, platform_libs);
         }
         // Append optional flags before the redirect
-        if (sqlite_flags[0] || gui_flags[0]) {
+        if (sqlite_flags[0] || gui_flags[0] || app_flags[0]) {
             char* redirect = strstr(compile_cmd, " 2>wyn_cc_err");
             if (redirect) {
                 char tail[256];
                 strncpy(tail, redirect, sizeof(tail)-1); tail[sizeof(tail)-1] = 0;
-                snprintf(redirect, sizeof(compile_cmd) - (redirect - compile_cmd), "%s%s%s", sqlite_flags, gui_flags, tail);
+                snprintf(redirect, sizeof(compile_cmd) - (redirect - compile_cmd), "%s%s%s%s", sqlite_flags, gui_flags, app_flags, tail);
             }
         }
         
@@ -1957,9 +2264,11 @@ int main(int argc, char** argv) {
                          "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s %s.c %s/runtime/libwyn_rt.a %s 2>wyn_cc_err.txt",
                          opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, platform_libs);
             } else {
+                char src_list[4096];
+                build_source_list(src_list, sizeof(src_list), wyn_root);
                 snprintf(shared_cmd, sizeof(shared_cmd),
-                         "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s %s.c %s/src/wyn_arena.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c %s 2>wyn_cc_err.txt",
-                         opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, platform_libs);
+                         "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s %s.c %s %s 2>wyn_cc_err.txt",
+                         opt_level, shared_flags, wyn_root, wyn_root, lib_path, file, src_list, platform_libs);
             }
             int result = system(shared_cmd);
             if (result == 0) {
@@ -2171,15 +2480,27 @@ int main(int argc, char** argv) {
             return 1;
         }
         
-        char run_cmd[512];
-        if (file[0] == '/') {
-            snprintf(run_cmd, 512, "%s.out", file);
+        char run_cmd[4096];
+        int _rc = 0;
+        if (mem_stats) {
+            char bin[512];
+            if (file[0] == '/') snprintf(bin, 512, "%s.out", file);
+            else snprintf(bin, 512, "./%s.out", file);
+            _rc = snprintf(run_cmd, sizeof(run_cmd),
+                "%s; /usr/bin/time -l %s < /dev/null 2>/tmp/__wyn_ms > /dev/null;"
+                " echo '\\033[2m=== Memory Stats ===\\033[0m';"
+                " grep -i 'maximum resident' /tmp/__wyn_ms | head -1;"
+                " rm -f /tmp/__wyn_ms", bin, bin);
         } else {
-#ifdef _WIN32
-            snprintf(run_cmd, 512, "%s.out", file);
-#else
-            snprintf(run_cmd, 512, "./%s.out", file);
-#endif
+            if (file[0] == '/')
+                _rc = snprintf(run_cmd, sizeof(run_cmd), "%s.out", file);
+            else
+                _rc = snprintf(run_cmd, sizeof(run_cmd), "./%s.out", file);
+            if (user_args_start > 0) {
+                for (int i = user_args_start; i < argc && _rc < (int)sizeof(run_cmd) - 2; i++) {
+                    _rc += snprintf(run_cmd + _rc, sizeof(run_cmd) - _rc, " %s", argv[i]);
+                }
+            }
         }
         result = system(run_cmd);
         free(source);
@@ -2202,10 +2523,9 @@ int main(int argc, char** argv) {
 #endif
     }
     
-    // Parse optimization flags and -o flag
+    // Parse optimization flags
     OptLevel optimization = OPT_NONE;
     int file_arg_index = -1;
-    const char* output_name = NULL;
     
     // Check for flags (scan all args)
     for (int i = 1; i < argc; i++) {
@@ -2214,8 +2534,7 @@ int main(int argc, char** argv) {
         } else if (strcmp(argv[i], "-O2") == 0) {
             optimization = OPT_O2;
         } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
-            output_name = argv[i + 1];
-            i++; // Skip next arg
+            i++; // Skip -o value
         } else if (argv[i][0] != '-' && file_arg_index == -1) {
             file_arg_index = i;
         }
@@ -2241,7 +2560,13 @@ int main(int argc, char** argv) {
     
     // Pre-load all imports before parsing
     extern void preload_imports(const char* source);
+    extern bool has_circular_import(void);
     preload_imports(source);
+    if (has_circular_import()) {
+        fprintf(stderr, "Compilation failed due to circular imports\n");
+        free(source);
+        return 1;
+    }
     
     init_lexer(source);
     init_parser();
@@ -2251,7 +2576,7 @@ int main(int argc, char** argv) {
     
     Program* prog = parse_program();
     if (!prog) {
-        fprintf(stderr, "Error: Failed to parse program\n");
+        if (!parser_had_error()) { fprintf(stderr, "Error: Failed to parse program\n"); fprintf(stderr, "  Hint: Check for stray code outside functions or unmatched braces\n"); }
         free(source);
         return 1;
     }
@@ -2280,169 +2605,6 @@ int main(int argc, char** argv) {
         }
     }
     
-    #ifdef WITH_LLVM
-    // Use LLVM backend
-    char base_name[256];
-    strncpy(base_name, argv[file_arg_index], sizeof(base_name) - 1);
-    char* dot = strrchr(base_name, '.');
-    if (dot) *dot = '\0';
-    
-    char ll_path[300];
-    char obj_path[300];
-    char out_path[300];
-    snprintf(ll_path, sizeof(ll_path), "%s.ll", base_name);
-    snprintf(obj_path, sizeof(obj_path), "%s.o", base_name);
-    
-    if (output_name) {
-        snprintf(out_path, sizeof(out_path), "%s", output_name);
-    } else {
-        snprintf(out_path, sizeof(out_path), "%s.out", base_name);
-    }
-    
-    // Initialize LLVM codegen
-    init_codegen(NULL);
-    codegen_program(prog);
-    
-    // Write LLVM IR to file
-    extern bool llvm_write_ir_to_file(const char* filename);
-    if (!llvm_write_ir_to_file(ll_path)) {
-        fprintf(stderr, "Error: Failed to write LLVM IR\n");
-        free(source);
-        return 1;
-    }
-    
-    // Compile LLVM IR to object file
-    extern bool llvm_compile_to_object(const char* ir_file, const char* obj_file);
-    if (!llvm_compile_to_object(ll_path, obj_path)) {
-        fprintf(stderr, "Error: Failed to compile LLVM IR to object file\n");
-        free(source);
-        return 1;
-    }
-    
-    // Get WYN_ROOT
-    char wyn_root[1024] = ".";
-    char* root_env = getenv("WYN_ROOT");
-    if (root_env) {
-        snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
-    } else {
-        // Auto-detect: try multiple locations
-        const char* test_paths[] = {
-            "./src/wyn_wrapper.c",
-            "../src/wyn_wrapper.c",
-            "./wyn/src/wyn_wrapper.c",
-            NULL
-        };
-        
-        for (int i = 0; test_paths[i] != NULL; i++) {
-            FILE* test = fopen(test_paths[i], "r");
-            if (test) {
-                fclose(test);
-                if (i == 0) {
-                    strcpy(wyn_root, ".");
-                } else if (i == 1) {
-                    strcpy(wyn_root, "..");
-                } else if (i == 2) {
-                    strcpy(wyn_root, "./wyn");
-                }
-                break;
-            }
-        }
-    }
-    
-    // Link to binary
-    extern bool llvm_link_binary(const char* obj_file, const char* output, const char* wyn_root);
-    if (!llvm_link_binary(obj_path, out_path, wyn_root)) {
-        fprintf(stderr, "Error: Failed to link binary\n");
-        free(source);
-        return 1;
-    }
-    
-    printf("Compiled successfully\n");
-    cleanup_codegen();
-    free_program(prog);
-    free(source);
-    return 0;
-    
-    #else
-    // Use C backend (fallback)
-    char out_path[256];
-    snprintf(out_path, 256, "%s.c", argv[file_arg_index]);
-    FILE* out = fopen(out_path, "w");
-    init_codegen(out);
-    codegen_c_header();
-    codegen_program(prog);
-    fclose(out);
-    
-    // Free AST
-    free_program(prog);
-    
-    // Get WYN_ROOT or auto-detect from executable path
-    char wyn_root[1024] = ".";
-    char* root_env = getenv("WYN_ROOT");
-    if (root_env) {
-        snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
-    } else {
-        // Derive from executable path
-        char exe_path[1024];
-        strncpy(exe_path, argv[0], sizeof(exe_path) - 1);
-        exe_path[sizeof(exe_path) - 1] = '\0';
-        char* last_slash = strrchr(exe_path, '/');
-        if (last_slash) {
-            *last_slash = '\0';
-            if (exe_path[0] != '\0') {
-                snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path);
-            }
-        }
-        // Verify
-        char test_path[1100];
-        snprintf(test_path, sizeof(test_path), "%s/src/wyn_wrapper.c", wyn_root);
-        FILE* test = fopen(test_path, "r");
-        if (!test) {
-            test = fopen("./src/wyn_wrapper.c", "r");
-            if (test) strcpy(wyn_root, ".");
-            else {
-                test = fopen("./wyn/src/wyn_wrapper.c", "r");
-                if (test) strcpy(wyn_root, "./wyn");
-            }
-        }
-        if (test) fclose(test);
-    }
-    
-    char compile_cmd[2048];
-    const char* opt_flag = (optimization == OPT_O2) ? "-O2" : (optimization == OPT_O1) ? "-O1" : "-O0";
-    char output_bin[256];
-    if (output_name) {
-        snprintf(output_bin, sizeof(output_bin), "%s", output_name);
-    } else {
-        snprintf(output_bin, sizeof(output_bin), "%s.out", argv[file_arg_index]);
-    }
-    
-    // Try precompiled runtime first
-    char rt_path[512];
-    snprintf(rt_path, sizeof(rt_path), "%s/runtime/libwyn_rt.a", wyn_root);
-    FILE* rt_check = fopen(rt_path, "r");
-    if (rt_check) {
-        fclose(rt_check);
-        snprintf(compile_cmd, sizeof(compile_cmd),
-                 "gcc %s -std=c11 -w -I %s/src -o %s %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a -lpthread -lm",
-                 opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root);
-    } else {
-        snprintf(compile_cmd, sizeof(compile_cmd),
-                 "gcc %s -std=c11 -w -I %s/src -o %s %s.c %s/src/wyn_arena.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c %s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c %s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c %s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c -lpthread -lm", 
-                 opt_flag, wyn_root, output_bin, argv[file_arg_index], wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
-    }
-    
-    int result = system(compile_cmd);
-    if (result != 0) {
-        fprintf(stderr, "C compilation failed\n");
-        free(source);
-        return result;
-    }
-    
-    printf("Compiled successfully\n");
-    free(source);
-    return 0;
-    #endif
 }
 
 int create_new_project(const char* project_name) {
@@ -2484,7 +2646,7 @@ int create_new_project(const char* project_name) {
         fprintf(stderr, "Error: Failed to create main.wyn\n");
         return 1;
     }
-    fprintf(main_file, "fn main() {\n    print(\"Hello from %s!\")\n}\n", project_name);
+    fprintf(main_file, "fn main() -> int {\n    println(\"Hello from %s! 🐉\")\n    return 0\n}\n", project_name);
     fclose(main_file);
     
     // Create test file
@@ -2494,14 +2656,14 @@ int create_new_project(const char* project_name) {
         fprintf(stderr, "Error: Failed to create test file\n");
         return 1;
     }
-    fprintf(test_file, "// Tests for %s\n\nfn test_basic() -> int {\n    // Add your tests here\n    return 0\n}\n\nfn main() {\n    test_basic()\n    print(\"All tests passed!\")\n}\n", project_name);
+    fprintf(test_file, "// Tests for %s\n\ntest \"basic\" {\n    assert(1 + 1 == 2)\n    assert_eq(2 * 3, 6)\n}\n\ntest \"strings\" {\n    var name = \"Wyn\"\n    assert(name.len() == 3)\n    assert_eq(name.upper(), \"WYN\")\n}\n", project_name);
     fclose(test_file);
     
     // Create README.md
     snprintf(path, sizeof(path), "%s/README.md", project_name);
     FILE* readme_file = fopen(path, "w");
     if (readme_file) {
-        fprintf(readme_file, "# %s\n\nA Wyn project.\n\n## Build\n\n```bash\nwyn run src/main.wyn\n```\n\n## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n", project_name);
+        fprintf(readme_file, "# %s\n\nA Wyn project.\n\n## Run\n\n```bash\nwyn run\n```\n\n## Test\n\n```bash\nwyn test\n```\n\n## Build\n\n```bash\nwyn build\n```\n", project_name);
         fclose(readme_file);
     }
     
@@ -2510,7 +2672,7 @@ int create_new_project(const char* project_name) {
     printf("  %s/src/main.wyn\n", project_name);
     printf("  %s/tests/test_main.wyn\n", project_name);
     printf("  %s/README.md\n", project_name);
-    printf("\nTo build and run:\n  cd %s\n  wyn run src/main.wyn\n", project_name);
+    printf("\nTo build and run:\n  cd %s\n  wyn run\n", project_name);
     printf("\nTo run tests:\n  wyn run tests/test_main.wyn\n");
     
     return 0;
@@ -2578,7 +2740,7 @@ int create_new_project_with_template(const char* name, const char* template, con
     if (strcmp(template, "web") == 0) fprintf(f,
         "A REST API built with [Wyn](https://wynlang.com).\n\n"
         "## Quick Start\n\n"
-        "```bash\nwyn run src/main.wyn\n```\n\n"
+        "```bash\nwyn run\n```\n\n"
         "Open http://localhost:8080\n\n"
         "## API\n\n"
         "| Method | Path | Description |\n"
@@ -2592,7 +2754,7 @@ int create_new_project_with_template(const char* name, const char* template, con
     else if (strcmp(template, "api") == 0) fprintf(f,
         "A REST API built with [Wyn](https://wynlang.com).\n\n"
         "## Quick Start\n\n"
-        "```bash\nwyn run src/main.wyn\n```\n\n"
+        "```bash\nwyn run\n```\n\n"
         "## Endpoints\n\n"
         "| Method | Path | Description |\n"
         "|--------|------|-------------|\n"
@@ -2615,18 +2777,18 @@ int create_new_project_with_template(const char* name, const char* template, con
     else if (strcmp(template, "cli") == 0) fprintf(f,
         "A CLI tool built with [Wyn](https://wynlang.com).\n\n"
         "## Usage\n\n"
-        "```bash\nwyn run src/main.wyn help\nwyn run src/main.wyn info\nwyn run src/main.wyn run <file>\nwyn run src/main.wyn list\n```\n\n"
+        "```bash\nwyn run help\nwyn run info\nwyn run run <file>\nwyn run list\n```\n\n"
         "## Build\n\n```bash\nwyn build .\n./%s --help\n```\n\n"
         "## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n", name);
     else if (strcmp(template, "lib") == 0) {
         if (lib_target && strcmp(lib_target, "wyn") == 0)
             fprintf(f, "A Wyn package.\n\n## Install\n\n```bash\nwyn pkg install github.com/yourname/%s\n```\n\n## Usage\n\n```wyn\nimport %s\nprintln(%s.greet())\n```\n", name, name, name);
         else if (lib_target && strcmp(lib_target, "python") == 0)
-            fprintf(f, "A Python extension built with Wyn.\n\n## Build\n\n```bash\nwyn build src/main.wyn --python\n```\n\n## Usage\n\n```python\nfrom %s import add, greet\nprint(add(2, 3))    # 5\nprint(greet())       # Hello from %s, world!\n```\n", name, name);
+            fprintf(f, "A Python extension built with Wyn.\n\n## Build\n\n```bash\nwyn build --python\n```\n\n## Usage\n\n```python\nfrom %s import add, greet\nprint(add(2, 3))    # 5\nprint(greet())       # Hello from %s, world!\n```\n", name, name);
         else if (lib_target && strcmp(lib_target, "node") == 0)
-            fprintf(f, "A Node.js native addon built with Wyn.\n\n## Build\n\n```bash\nwyn build src/main.wyn --node\n```\n\n## Usage\n\n```js\nconst { add, greet } = require('./%s');\nconsole.log(add(2, 3));  // 5\nconsole.log(greet());     // Hello from %s, world!\n```\n", name, name);
+            fprintf(f, "A Node.js native addon built with Wyn.\n\n## Build\n\n```bash\nwyn build --node\n```\n\n## Usage\n\n```js\nconst { add, greet } = require('./%s');\nconsole.log(add(2, 3));  // 5\nconsole.log(greet());     // Hello from %s, world!\n```\n", name, name);
         else if (lib_target && strcmp(lib_target, "c") == 0)
-            fprintf(f, "A C shared library built with Wyn.\n\n## Build\n\n```bash\nwyn build src/main.wyn --shared\n```\n\n## Usage\n\n```c\n#include \"%s.h\"\nprintf(\"%%d\\n\", add(2, 3));\n```\n", name);
+            fprintf(f, "A C shared library built with Wyn.\n\n## Build\n\n```bash\nwyn build --shared\n```\n\n## Usage\n\n```c\n#include \"%s.h\"\nprintf(\"%%d\\n\", add(2, 3));\n```\n", name);
     }
     fclose(f);
     
@@ -2679,7 +2841,7 @@ int create_new_project_with_template(const char* name, const char* template, con
             "}\n\n"
             "fn main() {\n"
             "    var port = 8080\n"
-            "    println(\"%s running on http://localhost:\" + int_to_string(port))\n"
+            "    println(\"\%s running on http://localhost:\${port}\")\n"
             "    println(\"\")\n"
             "    println(\"  GET  /              — home page\")\n"
             "    println(\"  GET  /api/items     — list items (JSON)\")\n"
@@ -2734,7 +2896,7 @@ int create_new_project_with_template(const char* name, const char* template, con
             "}\n\n"
             "fn main() {\n"
             "    var port = 8080\n"
-            "    println(\"%s running on http://localhost:\" + int_to_string(port))\n"
+            "    println(\"\%s running on http://localhost:\${port}\")\n"
             "    println(\"\")\n"
             "    println(\"  GET    /health          — health check\")\n"
             "    println(\"  GET    /ready           — readiness check\")\n"
@@ -2771,9 +2933,9 @@ int create_new_project_with_template(const char* name, const char* template, con
             "}\n\n"
             "fn cmd_info() {\n"
             "    println(\"%s v0.1.0\")\n"
-            "    println(\"  OS:   \" + System_exec(\"uname -s\").trim())\n"
-            "    println(\"  Arch: \" + System_exec(\"uname -m\").trim())\n"
-            "    println(\"  Dir:  \" + System_exec(\"pwd\").trim())\n"
+            "    println(\"  OS:   \" + System.exec(\"uname -s\").trim())\n"
+            "    println(\"  Arch: \" + System.exec(\"uname -m\").trim())\n"
+            "    println(\"  Dir:  \" + System.exec(\"pwd\").trim())\n"
             "}\n\n"
             "fn cmd_run(file: string) {\n"
             "    var content = File.read(file)\n"
@@ -2782,7 +2944,7 @@ int create_new_project_with_template(const char* name, const char* template, con
             "        return\n"
             "    }\n"
             "    var lines = content.split(\"\\n\")\n"
-            "    println(\"Processed \" + int_to_string(lines.len()) + \" lines from \" + file)\n"
+            "    println(\"Processed ${lines.len()} lines from ${file}\")\n"
             "}\n\n"
             "fn cmd_list() {\n"
             "    var items = [\"alpha\", \"beta\", \"gamma\"]\n"
@@ -2790,7 +2952,7 @@ int create_new_project_with_template(const char* name, const char* template, con
             "        println(\"  - \" + item)\n"
             "    }\n"
             "    println(\"\")\n"
-            "    println(int_to_string(items.len()) + \" items\")\n"
+            "    println(\"${items.len()} items\")\n"
             "}\n\n"
             "fn main() {\n"
             "    var args = System.args()\n"
@@ -2834,7 +2996,7 @@ int create_new_project_with_template(const char* name, const char* template, con
         } else if (lib_target && strcmp(lib_target, "python") == 0) {
             fprintf(f,
                 "// %s — Python extension module\n"
-                "// Build: wyn build src/main.wyn --python\n"
+                "// Build: wyn build --python\n"
                 "// Usage: python3 -c \"from %s import add; print(add(2, 3))\"\n\n"
                 "pub fn add(a: int, b: int) -> int {\n"
                 "    return a + b\n"
@@ -2846,7 +3008,7 @@ int create_new_project_with_template(const char* name, const char* template, con
         } else if (lib_target && strcmp(lib_target, "node") == 0) {
             fprintf(f,
                 "// %s — Node.js native addon (N-API)\n"
-                "// Build: wyn build src/main.wyn --node\n"
+                "// Build: wyn build --node\n"
                 "// Usage: const lib = require('./%s'); console.log(lib.add(2, 3));\n\n"
                 "pub fn add(a: int, b: int) -> int {\n"
                 "    return a + b\n"
@@ -2858,7 +3020,7 @@ int create_new_project_with_template(const char* name, const char* template, con
         } else if (lib_target && strcmp(lib_target, "c") == 0) {
             fprintf(f,
                 "// %s — C shared library\n"
-                "// Build: wyn build src/main.wyn --shared\n"
+                "// Build: wyn build --shared\n"
                 "// Produces: lib%s.so (Linux) / lib%s.dylib (macOS)\n\n"
                 "pub fn add(a: int, b: int) -> int {\n"
                 "    return a + b\n"
@@ -2976,18 +3138,18 @@ int create_new_project_with_template(const char* name, const char* template, con
         }
     }
     
-    if (strcmp(template, "web") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n  # Open http://localhost:8080\n", name);
-    else if (strcmp(template, "api") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n\nTest:\n  curl http://localhost:8080/health\n  curl -X POST -d 'My Item' http://localhost:8080/api/items\n  curl http://localhost:8080/api/items\n", name);
-    else if (strcmp(template, "cli") == 0) printf("Run:\n  cd %s && wyn run src/main.wyn\n\nWith args (build first):\n  wyn build . && ./%s list\n", name, name);
+    if (strcmp(template, "web") == 0) printf("Run:\n  cd %s && wyn run\n  # Open http://localhost:8080\n", name);
+    else if (strcmp(template, "api") == 0) printf("Run:\n  cd %s && wyn run\n\nTest:\n  curl http://localhost:8080/health\n  curl -X POST -d 'My Item' http://localhost:8080/api/items\n  curl http://localhost:8080/api/items\n", name);
+    else if (strcmp(template, "cli") == 0) printf("Run:\n  cd %s && wyn run\n\nWith args (build first):\n  wyn build . && ./%s list\n", name, name);
     else if (strcmp(template, "lib") == 0) {
         if (lib_target && strcmp(lib_target, "wyn") == 0)
             printf("Run:\n  cd %s && wyn test\n\nPublish:\n  git push → wyn pkg install github.com/yourname/%s\n", name, name);
         else if (lib_target && strcmp(lib_target, "python") == 0)
-            printf("Build:\n  cd %s && wyn build src/main.wyn --python\n\nTest:\n  python3 -c \"from %s import add; print(add(2, 3))\"\n", name, name);
+            printf("Build:\n  cd %s && wyn build --python\n\nTest:\n  python3 -c \"from %s import add; print(add(2, 3))\"\n", name, name);
         else if (lib_target && strcmp(lib_target, "node") == 0)
-            printf("Build:\n  cd %s && wyn build src/main.wyn --node\n\nTest:\n  node -e \"const lib = require('./%s'); console.log(lib.add(2, 3))\"\n", name, name);
+            printf("Build:\n  cd %s && wyn build --node\n\nTest:\n  node -e \"const lib = require('./%s'); console.log(lib.add(2, 3))\"\n", name, name);
         else if (lib_target && strcmp(lib_target, "c") == 0)
-            printf("Build:\n  cd %s && wyn build src/main.wyn --shared\n\nProduces: lib%s.so / lib%s.dylib\n", name, name, name);
+            printf("Build:\n  cd %s && wyn build --shared\n\nProduces: lib%s.so / lib%s.dylib\n", name, name, name);
     }
     return 0;
 }

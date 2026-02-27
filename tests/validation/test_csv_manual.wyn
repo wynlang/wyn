@@ -1,0 +1,55 @@
+// Test CSV writer - simplified version
+
+fn main() -> int {
+    println("=== Testing CSV writer (manual) ===")
+    
+    // Manually write CSV content
+    var csv_content = "Name,Age,City\nJohn,25,New York\nJane,30,San Francisco\nBob,35,Chicago"
+    File.write("/tmp/test_manual.csv", csv_content)
+    
+    // Read it back and parse
+    var content = File.read("/tmp/test_manual.csv")
+    var doc = Csv.parse(content)
+    var row_count = Csv.row_count(doc)
+    
+    if row_count != 4 {
+        println("ERROR: Expected 4 rows, got ${row_count}")
+        return 1
+    }
+    
+    // Check header
+    var name_header = Csv.header(doc, 0)
+    if name_header != "Name" {
+        println("ERROR: Expected 'Name' header, got " + name_header)
+        return 1
+    }
+    
+    // Check data
+    var john_age = Csv.get(doc, 1, 1)
+    if john_age != "25" {
+        println("ERROR: Expected '25', got " + john_age)
+        return 1
+    }
+    
+    // Test CSV with special characters
+    var special_csv = "Field1,Field2,Field3\nSimple,\"With, comma\",Normal\nQuote,\"With \"\"quotes\"\"\",End\nMulti,\"Line\nbreak\",Test"
+    File.write("/tmp/test_special.csv", special_csv)
+    
+    var special_content = File.read("/tmp/test_special.csv")
+    var special_doc = Csv.parse(special_content)
+    
+    var field_with_comma = Csv.get(special_doc, 1, 1)
+    if field_with_comma != "With, comma" {
+        println("ERROR: Comma escaping failed, got: " + field_with_comma)
+        return 1
+    }
+    
+    var field_with_quotes = Csv.get(special_doc, 2, 1)
+    if field_with_quotes != "With \"quotes\"" {
+        println("ERROR: Quote escaping failed, got: " + field_with_quotes)
+        return 1
+    }
+    
+    println("✓ CSV tests passed (manual)")
+    return 0
+}

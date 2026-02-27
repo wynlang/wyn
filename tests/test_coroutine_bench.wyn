@@ -1,0 +1,97 @@
+// Coroutine benchmark — honest comparison data
+// Run: wyn run --mem-stats tests/test_coroutine_bench.wyn
+
+fn empty_work() -> int { return 1 }
+
+fn light_work(id: int) -> int {
+    return id * 2 + 1
+}
+
+fn recurse(n: int) -> int {
+    if n <= 0 { return 0 }
+    return recurse(n - 1) + 1
+}
+
+fn heavy_recurse(n: int) -> int {
+    var a = n + 1
+    var b = n + 2
+    var c = n + 3
+    var d = n + 4
+    var e = n + 5
+    var f = n + 6
+    var g = n + 7
+    var h = n + 8
+    if n <= 0 { return a + b + c + d + e + f + g + h }
+    return heavy_recurse(n - 1) + a
+}
+
+fn main() -> int {
+    println("=== Coroutine Benchmark ===")
+    println("")
+
+    // 1. Spawn+await throughput
+    println("[1] Spawn+await throughput (sequential)")
+    var start = DateTime.millis()
+    for i in 0..10000 {
+        var f = spawn light_work(i)
+        await f
+    }
+    var elapsed = DateTime.millis() - start
+    println("  10,000 spawn+await: " + elapsed.to_string() + "ms")
+    println("  Per op: " + (elapsed * 1000 / 10000).to_string() + "us")
+    println("")
+
+    // 2. Concurrent spawn capacity
+    println("[2] Concurrent spawn capacity")
+    var counts = [1000, 10000, 50000, 100000]
+    for ci in 0..4 {
+        var n = counts[ci]
+        var s2 = DateTime.millis()
+        var futures = []
+        for i in 0..n {
+            futures.push(spawn empty_work())
+        }
+        for i in 0..n {
+            await futures[i]
+        }
+        var e2 = DateTime.millis() - s2
+        println("  " + n.to_string() + " concurrent: " + e2.to_string() + "ms")
+    }
+    println("")
+
+    // 3. Recursion depth (proves stack grows on demand)
+    println("[3] Max recursion depth in spawn")
+    var depths = [1000, 10000, 100000, 500000]
+    for di in 0..4 {
+        var d = depths[di]
+        var f = spawn recurse(d)
+        var r = await f
+        if r == d {
+            println("  depth " + d.to_string() + ": ✓")
+        } else {
+            println("  depth " + d.to_string() + ": ✗ (got " + r.to_string() + ")")
+        }
+    }
+    println("")
+
+    // 4. Heavy recursion (8 locals per frame)
+    println("[4] Heavy recursion (8 locals per frame)")
+    var heavy_depths = [1000, 10000, 50000]
+    for hi in 0..3 {
+        var d = heavy_depths[hi]
+        var f = spawn heavy_recurse(d)
+        var r = await f
+        println("  depth " + d.to_string() + ": result=" + r.to_string())
+    }
+    println("")
+
+    // 5. Memory efficiency
+    println("[5] Memory efficiency")
+    println("  Run with --mem-stats to see RSS")
+    println("  100K coroutines with 8MB virtual stacks = 800TB virtual")
+    println("  Physical RSS should be ~8-10MB (OS only commits used pages)")
+    println("")
+
+    println("=== Benchmark complete ===")
+    return 0
+}

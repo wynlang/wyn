@@ -1,0 +1,38 @@
+// Test: Default function parameters (11.4)
+
+fn greet(name: string = "world") -> string {
+    return "Hello, ${name}!"
+}
+
+fn add(a: int, b: int = 10) -> int {
+    return a + b
+}
+
+fn multi_defaults(x: int = 1, y: int = 2, z: int = 3) -> int {
+    return x + y + z
+}
+
+fn make_tag(tag: string = "div", cls: string = "default") -> string {
+    return "<${tag} class=\"${cls}\">"
+}
+
+fn main() {
+    // Basic string default
+    println(greet())
+    println(greet("Wyn"))
+
+    // Numeric default
+    println(add(5))
+    println(add(5, 20))
+
+    // All defaults
+    println(multi_defaults())
+    println(multi_defaults(10))
+    println(multi_defaults(10, 20))
+    println(multi_defaults(10, 20, 30))
+
+    // Multiple string defaults
+    println(make_tag())
+    println(make_tag("span"))
+    println(make_tag("span", "highlight"))
+}

@@ -9,6 +9,8 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include "wyn_arena.h"
+#include "coroutine.h"
+#include "io_loop.h"
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -340,6 +342,22 @@ int Socket_connect(const char* host, int port) {
 
 // Send raw bytes, returns bytes sent or -1
 int Socket_send(int sock, const char* data, int len) {
+    if (wyn_coro_current()) {
+        int flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+        for (;;) {
+            int n = (int)send(sock, data, len, 0);
+            if (n >= 0) { fcntl(sock, F_SETFL, flags); return n; }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                void* task = wyn_current_task();
+                if (task) { wyn_io_wait_writable(sock, task); wyn_io_park(); }
+                wyn_coro_yield();
+                continue;
+            }
+            fcntl(sock, F_SETFL, flags);
+            return -1;
+        }
+    }
     return (int)send(sock, data, len, 0);
 }
 
@@ -347,6 +365,24 @@ int Socket_send(int sock, const char* data, int len) {
 char* Socket_recv(int sock, int max_len) {
     if (max_len <= 0) max_len = 4096;
     char* buf = malloc(max_len + 1);
+    if (wyn_coro_current()) {
+        int flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+        for (;;) {
+            int n = (int)recv(sock, buf, max_len, 0);
+            if (n > 0) { buf[n] = '\0'; fcntl(sock, F_SETFL, flags); char* r = wyn_strdup(buf); free(buf); return r; }
+            if (n == 0) { fcntl(sock, F_SETFL, flags); free(buf); return ""; }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                void* task = wyn_current_task();
+                if (task) { wyn_io_wait_readable(sock, task); wyn_io_park(); }
+                wyn_coro_yield();
+                continue;
+            }
+            fcntl(sock, F_SETFL, flags);
+            free(buf);
+            return "";
+        }
+    }
     int n = (int)recv(sock, buf, max_len, 0);
     if (n <= 0) { free(buf); return ""; }
     buf[n] = '\0';
@@ -424,7 +460,7 @@ char* Url_encode(const char* str) {
             (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
             encoded[j++] = c;
         } else {
-            sprintf(encoded + j, "%%%02X", (unsigned char)c);
+            snprintf(encoded + j, 4, "%%%02X", (unsigned char)c);
             j += 3;
         }
     }

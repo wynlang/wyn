@@ -150,7 +150,14 @@ void codegen_expr(Expr* expr) {
                 
                 // Special handling for HashMap:: module - map to hashmap_ prefix
                 if (strcmp(temp_ident, "HashMap") == 0) {
-                    snprintf(temp_ident, sizeof(temp_ident), "hashmap_%s", function_part);
+                    if (strcmp(function_part, "get") == 0)
+                        snprintf(temp_ident, sizeof(temp_ident), "hashmap_get_string");
+                    else if (strcmp(function_part, "set") == 0)
+                        snprintf(temp_ident, sizeof(temp_ident), "hashmap_set");
+                    else if (strcmp(function_part, "has") == 0)
+                        snprintf(temp_ident, sizeof(temp_ident), "hashmap_has");
+                    else
+                        snprintf(temp_ident, sizeof(temp_ident), "hashmap_%s", function_part);
                     strcpy(ident + offset, temp_ident);
                     emit("%s", ident);
                     free(ident);
@@ -213,13 +220,23 @@ void codegen_expr(Expr* expr) {
                 char function_part[256];
                 strcpy(function_part, dot + 1);  // Save function name
                 *dot = '\0';  // Split at dot
+                
+                // Special handling for Random. module - map to random_ prefix
+                if (strcmp(temp_ident, "Random") == 0) {
+                    snprintf(temp_ident, sizeof(temp_ident), "random_%s", function_part);
+                    strcpy(ident + offset, temp_ident);
+                    emit("%s", ident);
+                    free(ident);
+                    break;
+                }
+                
                 const char* resolved = resolve_module_alias(temp_ident);
                 // Rebuild identifier with resolved module name
                 snprintf(temp_ident, sizeof(temp_ident), "%s.%s", resolved, function_part);
             }
             
             // Check if this is a C keyword that needs prefix
-            const char* c_keywords[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+            const char* c_keywords[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
             bool is_c_keyword = false;
             (void)is_c_keyword;
             for (int i = 0; c_keywords[i] != NULL; i++) {
@@ -306,6 +323,16 @@ void codegen_expr(Expr* expr) {
                                      (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_STRING);
                 bool right_is_string = (expr->binary.right->type == EXPR_STRING) ||
                                       (expr->binary.right->expr_type && expr->binary.right->expr_type->kind == TYPE_STRING);
+                
+                // .to_string() always returns string
+                if (!left_is_string && expr->binary.left->type == EXPR_METHOD_CALL &&
+                    expr->binary.left->method_call.method.length == 9 &&
+                    memcmp(expr->binary.left->method_call.method.start, "to_string", 9) == 0)
+                    left_is_string = true;
+                if (!right_is_string && expr->binary.right->type == EXPR_METHOD_CALL &&
+                    expr->binary.right->method_call.method.length == 9 &&
+                    memcmp(expr->binary.right->method_call.method.start, "to_string", 9) == 0)
+                    right_is_string = true;
                 
                 bool left_is_int = (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_INT);
                 bool right_is_int = (expr->binary.right->expr_type && expr->binary.right->expr_type->kind == TYPE_INT);
@@ -409,19 +436,29 @@ void codegen_expr(Expr* expr) {
             } else {
                 // Check for division or modulo - add runtime check
                 if (expr->binary.op.type == TOKEN_SLASH || expr->binary.op.type == TOKEN_PERCENT) {
-                    // Generate: wyn_safe_div(left, right) or wyn_safe_mod(left, right)
-                    if (expr->binary.op.type == TOKEN_SLASH) {
-                        emit("wyn_safe_div(");
+                    // Check for float/int mixed division
+                    bool lf = (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_FLOAT) || expr->binary.left->type == EXPR_FLOAT;
+                    bool rf = (expr->binary.right->expr_type && expr->binary.right->expr_type->kind == TYPE_FLOAT) || expr->binary.right->type == EXPR_FLOAT;
+                    if (lf || rf) {
+                        emit("(");
+                        if (!lf) emit("(double)");
+                        codegen_expr(expr->binary.left);
+                        emit(expr->binary.op.type == TOKEN_SLASH ? " / " : " %% ");
+                        if (!rf) emit("(double)");
+                        codegen_expr(expr->binary.right);
+                        emit(")");
                     } else {
-                        emit("wyn_safe_mod(");
+                        if (expr->binary.op.type == TOKEN_SLASH) emit("wyn_safe_div(");
+                        else emit("wyn_safe_mod(");
+                        codegen_expr(expr->binary.left);
+                        emit(", ");
+                        codegen_expr(expr->binary.right);
+                        emit(")");
                     }
-                    codegen_expr(expr->binary.left);
-                    emit(", ");
-                    codegen_expr(expr->binary.right);
-                    emit(")");
                 } else {
-                    // Strength reduction: x * 2 → x << 1, x / 2 → x >> 1, x % 2 → x & 1
-                    if (expr->binary.right->type == EXPR_INT) {
+                    // Strength reduction: x * 2 → x << 1 (only for int * int)
+                    bool sr_left_float = (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_FLOAT) || expr->binary.left->type == EXPR_FLOAT;
+                    if (!sr_left_float && expr->binary.right->type == EXPR_INT) {
                         long long rv = strtoll(expr->binary.right->token.start, NULL, 0);
                         if (expr->binary.op.type == TOKEN_STAR && rv == 2) {
                             emit("("); codegen_expr(expr->binary.left); emit(" << 1)"); break;
@@ -443,15 +480,34 @@ void codegen_expr(Expr* expr) {
                         }
                     }
                     emit("(");
-                    codegen_expr(expr->binary.left);
-                    if (expr->binary.op.type == TOKEN_AND || expr->binary.op.type == TOKEN_AMPAMP) {
-                        emit(" && ");
-                    } else if (expr->binary.op.type == TOKEN_OR || expr->binary.op.type == TOKEN_PIPEPIPE) {
-                        emit(" || ");
+                    // Auto-promote int to float in mixed arithmetic
+                    bool left_is_float = (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_FLOAT) ||
+                                        expr->binary.left->type == EXPR_FLOAT;
+                    bool right_is_float = (expr->binary.right->expr_type && expr->binary.right->expr_type->kind == TYPE_FLOAT) ||
+                                         expr->binary.right->type == EXPR_FLOAT;
+                    bool left_is_int = (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_INT) ||
+                                      expr->binary.left->type == EXPR_INT;
+                    bool right_is_int = (expr->binary.right->expr_type && expr->binary.right->expr_type->kind == TYPE_INT) ||
+                                       expr->binary.right->type == EXPR_INT;
+                    if (left_is_float && right_is_int) {
+                        codegen_expr(expr->binary.left);
+                        if (expr->binary.op.type == TOKEN_AND || expr->binary.op.type == TOKEN_AMPAMP) emit(" && ");
+                        else if (expr->binary.op.type == TOKEN_OR || expr->binary.op.type == TOKEN_PIPEPIPE) emit(" || ");
+                        else emit(" %.*s ", expr->binary.op.length, expr->binary.op.start);
+                        emit("(double)"); codegen_expr(expr->binary.right);
+                    } else if (left_is_int && right_is_float) {
+                        emit("(double)"); codegen_expr(expr->binary.left);
+                        if (expr->binary.op.type == TOKEN_AND || expr->binary.op.type == TOKEN_AMPAMP) emit(" && ");
+                        else if (expr->binary.op.type == TOKEN_OR || expr->binary.op.type == TOKEN_PIPEPIPE) emit(" || ");
+                        else emit(" %.*s ", expr->binary.op.length, expr->binary.op.start);
+                        codegen_expr(expr->binary.right);
                     } else {
-                        emit(" %.*s ", expr->binary.op.length, expr->binary.op.start);
+                        codegen_expr(expr->binary.left);
+                        if (expr->binary.op.type == TOKEN_AND || expr->binary.op.type == TOKEN_AMPAMP) emit(" && ");
+                        else if (expr->binary.op.type == TOKEN_OR || expr->binary.op.type == TOKEN_PIPEPIPE) emit(" || ");
+                        else emit(" %.*s ", expr->binary.op.length, expr->binary.op.start);
+                        codegen_expr(expr->binary.right);
                     }
-                    codegen_expr(expr->binary.right);
                     emit(")");
                 }
             }
@@ -1218,7 +1274,16 @@ void codegen_expr(Expr* expr) {
                     } else if (strcmp(module_name, "Regex") == 0) {
                         emit("regex_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "HashMap") == 0) {
-                        emit("hashmap_%.*s(", method.length, method.start);
+                        // Map common methods to correct C functions
+                        if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
+                            emit("hashmap_get_string(");
+                        } else if (method.length == 3 && memcmp(method.start, "set", 3) == 0) {
+                            emit("hashmap_set(");
+                        } else if (method.length == 3 && memcmp(method.start, "has", 3) == 0) {
+                            emit("hashmap_has(");
+                        } else {
+                            emit("hashmap_%.*s(", method.length, method.start);
+                        }
                     } else if (strcmp(module_name, "HashSet") == 0) {
                         emit("hashset_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "Task") == 0) {
@@ -1261,6 +1326,14 @@ void codegen_expr(Expr* expr) {
                         } else {
                             emit("String_%.*s(", method.length, method.start);
                         }
+                    } else if (strcmp(module_name, "Random") == 0) {
+                        emit("random_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Web") == 0) {
+                        emit("Web_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Smtp") == 0) {
+                        emit("Smtp_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "App") == 0) {
+                        emit("App_%.*s(", method.length, method.start);
                     } else {
                         // Use resolved module name if available (e.g., "lib/utils" -> "lib_utils")
                         if (resolved_mod_name[0]) {
@@ -1390,7 +1463,7 @@ void codegen_expr(Expr* expr) {
                 if (method.length == 4 && memcmp(method.start, "sort", 4) == 0 && expr->method_call.arg_count == 0) {
                     emit("({ WynArray __sa = ");
                     codegen_expr(expr->method_call.object);
-                    emit("; arr_sort((int*)__sa.data, __sa.count); __sa; })");
+                    emit("; array_sort(&__sa); __sa; })");
                     break;
                 }
                 // arr.sort_by(cmp_fn) -> wyn_array_sort_by(&arr, cmp_fn)
@@ -1547,6 +1620,22 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
+            // When .to_string() is called on an expression whose type can't be
+            // statically resolved, use _Generic so C dispatches correctly
+            if (method.length == 9 && memcmp(method.start, "to_string", 9) == 0 &&
+                expr->method_call.arg_count == 0 &&
+                (expr->method_call.object->type == EXPR_METHOD_CALL ||
+                 expr->method_call.object->type == EXPR_FIELD_ACCESS ||
+                 expr->method_call.object->type == EXPR_PIPELINE ||
+                 expr->method_call.object->type == EXPR_AWAIT ||
+                 expr->method_call.object->type == EXPR_CALL ||
+                 expr->method_call.object->type == EXPR_IDENT)) {
+                emit("to_string(");
+                codegen_expr(expr->method_call.object);
+                emit(")");
+                break;
+            }
+            
             const char* receiver_type = get_receiver_type_string(object_type);
             
             // Check if variable is a known array (from list comp or array literal)
@@ -1557,6 +1646,8 @@ void codegen_expr(Expr* expr) {
                 if (is_known_array_var(vn)) receiver_type = "array";
                 extern int is_known_sb_var(const char*);
                 if (is_known_sb_var(vn)) receiver_type = "stringbuilder";
+                extern int is_known_float_var(const char*);
+                if (is_known_float_var(vn)) receiver_type = "float";
             }
             
             // Fallback: if no type info, try to infer from expression
@@ -1749,7 +1840,14 @@ void codegen_expr(Expr* expr) {
                 
                 MethodDispatch dispatch;
                 if (dispatch_method(receiver_type, method_name, expr->method_call.arg_count, &dispatch)) {
-                    emit("%s(", dispatch.c_function);
+                    // When to_string is dispatched as int_to_string but the object is a method call,
+                    // use _Generic to_string macro so the C compiler picks the right variant
+                    const char* fn_name = dispatch.c_function;
+                    if (strcmp(fn_name, "int_to_string") == 0 &&
+                        expr->method_call.object->type == EXPR_METHOD_CALL) {
+                        fn_name = "to_string";
+                    }
+                    emit("%s(", fn_name);
                     if (dispatch.pass_by_ref) {
                         emit("&(");
                         codegen_expr(expr->method_call.object);
@@ -1958,8 +2056,28 @@ void codegen_expr(Expr* expr) {
                         emit("%.*s", type_name.length, type_name.start);
                     }
                     emit("); ");
+                } else if (elem->type == EXPR_ARRAY) {
+                    // Nested array: push as array value
+                    static int nested_arr_counter = 10000;
+                    int nested_id = nested_arr_counter++;
+                    emit("{ WynArray __nested_%d = ", nested_id);
+                    codegen_expr(elem);
+                    emit("; array_push_array(&__arr_%d, &__nested_%d); } ", arr_id, nested_id);
+                } else if (elem->expr_type && elem->expr_type->kind == TYPE_ARRAY) {
+                    // Variable holding an array
+                    emit("{ WynArray __tmp_%d = ", arr_id * 100 + i);
+                    codegen_expr(elem);
+                    emit("; array_push_array(&__arr_%d, &__tmp_%d); } ", arr_id, arr_id * 100 + i);
                 } else {
-                    emit("array_push_int(&__arr_%d, ", arr_id);
+                    // Check element type to use correct push function
+                    Type* etype = elem->expr_type;
+                    if (etype && etype->kind == TYPE_STRING) {
+                        emit("array_push_str(&__arr_%d, ", arr_id);
+                    } else if (etype && etype->kind == TYPE_FLOAT) {
+                        emit("array_push_int(&__arr_%d, (long long)", arr_id);
+                    } else {
+                        emit("array_push_int(&__arr_%d, ", arr_id);
+                    }
                     codegen_expr(elem);
                     emit("); ");
                 }
@@ -2163,7 +2281,36 @@ void codegen_expr(Expr* expr) {
                         }
                     }
                     
-                    if (is_struct_array) {
+                    // Map array: cast result to WynHashMap*
+                    if (elem_type && elem_type->kind == TYPE_MAP) {
+                        emit("(WynHashMap*)array_get_int(");
+                        codegen_expr(expr->index.array);
+                        emit(", ");
+                        codegen_expr(expr->index.index);
+                        emit(")");
+                    } else if (elem_type && elem_type->kind == TYPE_FUNCTION) {
+                        // Function pointer array: cast result to function pointer
+                        // Determine return type
+                        const char* ret = "long long";
+                        if (elem_type->fn_type.return_type) {
+                            if (elem_type->fn_type.return_type->kind == TYPE_STRING) ret = "const char*";
+                            else if (elem_type->fn_type.return_type->kind == TYPE_FLOAT) ret = "double";
+                            else if (elem_type->fn_type.return_type->kind == TYPE_BOOL) ret = "bool";
+                        }
+                        emit("((%s (*)(", ret);
+                        for (int pi = 0; pi < elem_type->fn_type.param_count; pi++) {
+                            if (pi > 0) emit(", ");
+                            Type* pt = elem_type->fn_type.param_types[pi];
+                            if (pt && pt->kind == TYPE_STRING) emit("const char*");
+                            else if (pt && pt->kind == TYPE_FLOAT) emit("double");
+                            else emit("long long");
+                        }
+                        emit("))array_get_int(");
+                        codegen_expr(expr->index.array);
+                        emit(", ");
+                        codegen_expr(expr->index.index);
+                        emit("))");
+                    } else if (is_struct_array) {
                         emit("array_get_struct(");
                         codegen_expr(expr->index.array);
                         emit(", ");
@@ -2322,9 +2469,23 @@ void codegen_expr(Expr* expr) {
                 field_name.length > 0 && field_name.start[0] >= 'A' && field_name.start[0] <= 'Z') {
                 
                 // Generate the enum constant name (EnumName_MEMBER)
+                // For data enums, zero-arg variants are constructor functions needing ()
+                extern int is_data_enum_type(const char*);
+                char _obj_name[128];
+                snprintf(_obj_name, 128, "%.*s", obj_name.length, obj_name.start);
                 emit("%.*s_%.*s",
                      obj_name.length, obj_name.start,
                      field_name.length, field_name.start);
+                if (is_data_enum_type(_obj_name)) {
+                    // Check if this variant has no data (zero-arg constructor)
+                    extern const char* get_enum_variant_c_type(const char*, const char*);
+                    char _field[128];
+                    snprintf(_field, 128, "%.*s", field_name.length, field_name.start);
+                    const char* vtype = get_enum_variant_c_type(_obj_name, _field);
+                    if (strcmp(vtype, "void") == 0) {
+                        emit("()");
+                    }
+                }
                 return;
             }
             
@@ -2374,13 +2535,64 @@ void codegen_expr(Expr* expr) {
                 if (_et) { type_name = _et; type_name_len = strlen(_et); is_data_enum = 1; }
             }
             
+            // Also check match arms — if any arm uses Shape.Variant pattern, detect data enum
+            if (!is_data_enum) {
+                for (int _a = 0; _a < expr->match.arm_count; _a++) {
+                    Pattern* _p = expr->match.arms[_a].pattern;
+                    if (_p && _p->type == PATTERN_OPTION) {
+                        if (_p->option.enum_name.length > 0) {
+                            char _en[128]; snprintf(_en, 128, "%.*s", _p->option.enum_name.length, _p->option.enum_name.start);
+                            extern int is_data_enum_type(const char*);
+                            if (is_data_enum_type(_en)) {
+                                type_name = _p->option.enum_name.start;
+                                type_name_len = _p->option.enum_name.length;
+                                is_data_enum = 1;
+                                break;
+                            }
+                        } else {
+                            // No prefix — look up variant name in all enums
+                            char _vn[128]; snprintf(_vn, 128, "%.*s", _p->option.variant_name.length, _p->option.variant_name.start);
+                            extern const char* find_enum_for_variant(const char*);
+                            const char* _found = find_enum_for_variant(_vn);
+                            if (_found) {
+                                type_name = _found;
+                                type_name_len = strlen(_found);
+                                extern int is_data_enum_type(const char*);
+                                if (is_data_enum_type(_found)) is_data_enum = 1;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
             if (!is_data_enum) {
                 if (match_type && match_type->kind == TYPE_ENUM && match_type->name.length > 0) {
                     type_name = match_type->name.start;
                     type_name_len = match_type->name.length;
+                    // Check if this enum has data variants
+                    char _en2[128]; snprintf(_en2, 128, "%.*s", type_name_len, type_name);
+                    extern int is_data_enum_type(const char*);
+                    if (is_data_enum_type(_en2)) { is_data_enum = 1; }
                 } else if (match_type && match_type->kind == TYPE_STRING) {
                     type_name = "const char*";
                     type_name_len = 12;
+                }
+            }
+            // Check bare identifiers against known enum variants
+            if (!is_data_enum && !(match_type && match_type->kind == TYPE_ENUM)) {
+                extern const char* find_enum_for_variant(const char*);
+                for (int _a = 0; _a < expr->match.arm_count; _a++) {
+                    Pattern* _p = expr->match.arms[_a].pattern;
+                    if (_p && _p->type == PATTERN_IDENT) {
+                        char _vn[128]; snprintf(_vn, 128, "%.*s", _p->ident.name.length, _p->ident.name.start);
+                        const char* found = find_enum_for_variant(_vn);
+                        if (found) {
+                            type_name = found;
+                            type_name_len = strlen(found);
+                            break;
+                        }
+                    }
                 }
             }
             
@@ -2390,19 +2602,24 @@ void codegen_expr(Expr* expr) {
             emit("; ");
             
             // Determine result type from first arm's expression
-            const char* result_type = "int";
-            if (is_data_enum) result_type = "double"; // data enums often carry floats
+            const char* result_type = "long long";
             if (expr->match.arm_count > 0 && expr->match.arms[0].result) {
-                Expr* first_result = expr->match.arms[0].result;
-                if (first_result->type == EXPR_STRING) {
-                    result_type = "const char*";
-                } else if (first_result->expr_type) {
-                    if (first_result->expr_type->kind == TYPE_STRING) {
-                        result_type = "const char*";
-                    } else if (first_result->expr_type->kind == TYPE_FLOAT) {
-                        result_type = "double";
-                    } else if (first_result->expr_type->kind == TYPE_BOOL) {
-                        result_type = "bool";
+                // Check all arms to determine result type
+                for (int _a = 0; _a < expr->match.arm_count; _a++) {
+                    Expr* arm_result = expr->match.arms[_a].result;
+                    if (!arm_result) continue;
+                    if (arm_result->type == EXPR_STRING) {
+                        result_type = "const char*"; break;
+                    } else if (arm_result->type == EXPR_FLOAT) {
+                        result_type = "double"; break;
+                    } else if (arm_result->expr_type) {
+                        if (arm_result->expr_type->kind == TYPE_STRING) {
+                            result_type = "const char*"; break;
+                        } else if (arm_result->expr_type->kind == TYPE_FLOAT) {
+                            result_type = "double"; break;
+                        } else if (arm_result->expr_type->kind == TYPE_BOOL) {
+                            result_type = "bool"; break;
+                        }
                     }
                 }
             }
@@ -2414,12 +2631,24 @@ void codegen_expr(Expr* expr) {
             for (int i = 0; i < expr->match.arm_count; i++) {
                 Pattern* pat = expr->match.arms[i].pattern;
                 
+                // Unwrap guard pattern: `_ if cond =>` becomes wildcard + guard
+                Expr* guard_expr = NULL;
+                if (pat->type == PATTERN_GUARD) {
+                    guard_expr = pat->guard.guard;
+                    pat = pat->guard.pattern;
+                }
+                
                 if (i > 0) emit("else ");
                 
                 // Check pattern type
                 if (pat->type == PATTERN_WILDCARD) {
-                    // Wildcard always matches
-                    emit("{ ");
+                    if (guard_expr) {
+                        emit("if (");
+                        codegen_expr(guard_expr);
+                        emit(") { ");
+                    } else {
+                        emit("{ ");
+                    }
                 } else if (pat->type == PATTERN_LITERAL) {
                     // Check if matching against a string
                     bool is_string_match = (match_type && match_type->kind == TYPE_STRING) ||
@@ -2436,22 +2665,53 @@ void codegen_expr(Expr* expr) {
                              pat->literal.value.start);
                     }
                 } else if (pat->type == PATTERN_IDENT) {
-                    // Check if this looks like an enum variant (contains underscore)
+                    // Check if this looks like an enum variant
                     bool is_enum_variant = false;
+                    // Check for underscore (prefixed variant like Color_Red)
                     for (int j = 0; j < pat->ident.name.length; j++) {
                         if (pat->ident.name.start[j] == '_') {
                             is_enum_variant = true;
                             break;
                         }
                     }
+                    // Also check if this is a bare variant name matching the enum type
+                    if (!is_enum_variant && type_name_len > 0) {
+                        extern const char* find_enum_for_variant(const char* variant);
+                        char _vn[128];
+                        snprintf(_vn, 128, "%.*s", pat->ident.name.length, pat->ident.name.start);
+                        const char* found = find_enum_for_variant(_vn);
+                        if (found) is_enum_variant = true;
+                    }
                     
                     if (is_enum_variant) {
                         if (is_data_enum) {
-                            emit("if (__match_val_%d.tag == %.*s_TAG) { ",
-                                 match_id, pat->ident.name.length, pat->ident.name.start);
+                            // Check if it already has the enum prefix
+                            bool has_prefix = false;
+                            for (int j = 0; j < pat->ident.name.length; j++) {
+                                if (pat->ident.name.start[j] == '_') { has_prefix = true; break; }
+                            }
+                            if (has_prefix) {
+                                emit("if (__match_val_%d.tag == %.*s_TAG) { ",
+                                     match_id, pat->ident.name.length, pat->ident.name.start);
+                            } else {
+                                emit("if (__match_val_%d.tag == %.*s_%.*s_TAG) { ",
+                                     match_id, type_name_len, type_name,
+                                     pat->ident.name.length, pat->ident.name.start);
+                            }
                         } else {
-                            emit("if (__match_val_%d == %.*s) { ",
-                                 match_id, pat->ident.name.length, pat->ident.name.start);
+                            // Check if it already has the enum prefix
+                            bool has_prefix = false;
+                            for (int j = 0; j < pat->ident.name.length; j++) {
+                                if (pat->ident.name.start[j] == '_') { has_prefix = true; break; }
+                            }
+                            if (has_prefix) {
+                                emit("if (__match_val_%d == %.*s) { ",
+                                     match_id, pat->ident.name.length, pat->ident.name.start);
+                            } else {
+                                emit("if (__match_val_%d == %.*s_%.*s) { ",
+                                     match_id, type_name_len, type_name,
+                                     pat->ident.name.length, pat->ident.name.start);
+                            }
                         }
                     } else {
                         // Variable binding - always matches, bind variable
@@ -2494,14 +2754,48 @@ void codegen_expr(Expr* expr) {
                                  pat->option.inner->ident.name.length, pat->option.inner->ident.name.start);
                         }
                     } else if (is_data_enum && pat->option.enum_name.length > 0) {
-                        // Data enum: compare .tag == EnumName_Variant_TAG
+                        // Data enum with explicit prefix: Shape.Circle(r)
                         emit("if (__match_val_%d.tag == %.*s_%.*s_TAG) { ",
                              match_id,
                              pat->option.enum_name.length, pat->option.enum_name.start,
                              pat->option.variant_name.length, pat->option.variant_name.start);
-                        // Bind inner variable to .data.Variant_value
+                        // Bind inner variables
+                        if (pat->option.inner_count > 1) {
+                            for (int pi = 0; pi < pat->option.inner_count; pi++) {
+                                if (pat->option.inners[pi] && pat->option.inners[pi]->type == PATTERN_IDENT) {
+                                    emit("double %.*s = __match_val_%d.data.%.*s_value.f%d; ",
+                                         pat->option.inners[pi]->ident.name.length, pat->option.inners[pi]->ident.name.start,
+                                         match_id,
+                                         pat->option.variant_name.length, pat->option.variant_name.start, pi);
+                                }
+                            }
+                        } else if (pat->option.inner && pat->option.inner->type == PATTERN_IDENT) {
+                            extern const char* get_enum_variant_c_type(const char*, const char*);
+                            char _en[128], _vn[128];
+                            snprintf(_en, 128, "%.*s", pat->option.enum_name.length, pat->option.enum_name.start);
+                            snprintf(_vn, 128, "%.*s", pat->option.variant_name.length, pat->option.variant_name.start);
+                            const char* vtype = get_enum_variant_c_type(_en, _vn);
+                            emit("%s %.*s = __match_val_%d.data.%.*s_value; ",
+                                 vtype,
+                                 pat->option.inner->ident.name.length, pat->option.inner->ident.name.start,
+                                 match_id,
+                                 pat->option.variant_name.length, pat->option.variant_name.start);
+                        }
+                    } else if (is_data_enum && pat->option.enum_name.length == 0) {
+                        // Data enum without prefix: Circle(r) — use type_name as prefix
+                        emit("if (__match_val_%d.tag == %.*s_%.*s_TAG) { ",
+                             match_id,
+                             type_name_len, type_name,
+                             pat->option.variant_name.length, pat->option.variant_name.start);
                         if (pat->option.inner && pat->option.inner->type == PATTERN_IDENT) {
-                            emit("double %.*s = __match_val_%d.data.%.*s_value; ",
+                            extern const char* get_enum_variant_c_type(const char*, const char*);
+                            char _en[128], _vn[128];
+                            snprintf(_en, 128, "%.*s", type_name_len, type_name);
+                            snprintf(_vn, 128, "%.*s", pat->option.variant_name.length, pat->option.variant_name.start);
+                            const char* vtype = get_enum_variant_c_type(_en, _vn);
+                            if (!vtype) vtype = "double";
+                            emit("%s %.*s = __match_val_%d.data.%.*s_value; ",
+                                 vtype,
                                  pat->option.inner->ident.name.length, pat->option.inner->ident.name.start,
                                  match_id,
                                  pat->option.variant_name.length, pat->option.variant_name.start);
@@ -2677,7 +2971,7 @@ void codegen_expr(Expr* expr) {
                 for (int i = expr->pipeline.stage_count - 1; i >= 1; i--) {
                     if (expr->pipeline.stages[i]->type == EXPR_IDENT) {
                         char _pn[128]; snprintf(_pn, sizeof(_pn), "%.*s", expr->pipeline.stages[i]->token.length, expr->pipeline.stages[i]->token.start);
-                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
                         const char* _pfx = "";
                         for (int k = 0; _ckw[k]; k++) { if (strcmp(_pn, _ckw[k]) == 0) { _pfx = "_"; break; } }
                         emit("%s%s(", _pfx, _pn);
@@ -2822,12 +3116,12 @@ void codegen_expr(Expr* expr) {
                 int arg_count = call->call.arg_count;
                 
                 if (arg_count == 0) {
-                    emit("wyn_spawn_async((TaskFuncWithReturn)__spawn_wrapper_%s, NULL)", func_name);
+                    emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s, NULL, __FILE__, __LINE__)", func_name);
                 } else if (arg_count == 1) {
                     // Single arg: pass directly as void* — no malloc
-                    emit("wyn_spawn_async((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
+                    emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
                     codegen_expr(call->call.args[0]);
-                    emit("))");
+                    emit("), __FILE__, __LINE__)");
                 } else {
                     // Create args struct and pass to wrapper
                     spawn_id_counter++;
@@ -2842,7 +3136,7 @@ void codegen_expr(Expr* expr) {
                         codegen_expr(call->call.args[i]);
                         emit("; ");
                     }
-                    emit("wyn_spawn_async((TaskFuncWithReturn)__spawn_wrapper_%s_%d, __sa_%d); })", 
+                    emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_%d, __sa_%d, __FILE__, __LINE__); })", 
                          func_name, arg_count, sid);
                 }
             } else {
@@ -2870,7 +3164,25 @@ void codegen_expr(Expr* expr) {
                 }
             }
             if (!is_closure_lambda) {
-                emit("__lambda_%d", lid);
+                // Check if this lambda has captures (non-return style with static globals)
+                bool has_captures = false;
+                for (int i = 0; i < lambda_count; i++) {
+                    if (lambda_functions[i].id == lid && lambda_functions[i].capture_count > 0 && !lambda_functions[i].is_closure) {
+                        has_captures = true;
+                        // Set static globals before using the function pointer
+                        emit("({ ");
+                        for (int j = 0; j < lambda_functions[i].capture_count; j++) {
+                            emit("__cap_%d_%s = %s; ", lid, 
+                                lambda_functions[i].captured_vars[j],
+                                lambda_functions[i].captured_vars[j]);
+                        }
+                        emit("__lambda_%d; })", lid);
+                        break;
+                    }
+                }
+                if (!has_captures) {
+                    emit("__lambda_%d", lid);
+                }
             }
             break;
         }

@@ -196,7 +196,9 @@ static WynTokenType keyword_type(const char* start, int length) {
         case 't':
             if (length == 4 && memcmp(start, "true", 4) == 0) return TOKEN_TRUE;
             if (length == 4 && memcmp(start, "type", 4) == 0) return TOKEN_TYPEDEF;
-            if (length == 4 && memcmp(start, "test", 4) == 0) return TOKEN_TEST;
+            // 'test' is context-sensitive — only a keyword at top level
+            // Allow it as identifier for function names, variables, etc.
+            if (length == 4 && memcmp(start, "test", 4) == 0) return TOKEN_IDENT;
             if (length == 3 && memcmp(start, "try", 3) == 0) return TOKEN_TRY;
             if (length == 5 && memcmp(start, "throw", 5) == 0) return TOKEN_THROW;
             if (length == 5 && memcmp(start, "trait", 5) == 0) return TOKEN_TRAIT;
@@ -237,11 +239,51 @@ static Token string() {
         return make_token(TOKEN_STRING);
     }
     
-    // Regular string
+    // Regular string - handle ${} interpolation with nested quotes
     while (peek() != '"' && !is_at_end()) {
         if (peek() == '\\') {
             advance();
             if (!is_at_end()) advance();
+        } else if (peek() == '$' && peek_next() == '{') {
+            // Skip over ${...} including nested strings and braces
+            advance(); advance(); // skip ${
+            int depth = 1;
+            while (depth > 0 && !is_at_end()) {
+                if (peek() == '{') { depth++; advance(); }
+                else if (peek() == '}') { depth--; if (depth > 0) advance(); else advance(); }
+                else if (peek() == '"') {
+                    advance(); // skip opening quote
+                    // Handle nested string with its own ${} interpolation
+                    while (peek() != '"' && !is_at_end()) {
+                        if (peek() == '\\') { advance(); if (!is_at_end()) advance(); }
+                        else if (peek() == '$' && peek_next() == '{') {
+                            advance(); advance(); // skip ${
+                            int inner = 1;
+                            while (inner > 0 && !is_at_end()) {
+                                if (peek() == '{') { inner++; advance(); }
+                                else if (peek() == '}') { inner--; if (inner > 0) advance(); else advance(); }
+                                else if (peek() == '"') {
+                                    advance();
+                                    while (peek() != '"' && !is_at_end()) {
+                                        if (peek() == '\\') { advance(); if (!is_at_end()) advance(); }
+                                        else advance();
+                                    }
+                                    if (!is_at_end()) advance();
+                                }
+                                else advance();
+                            }
+                        }
+                        else advance();
+                    }
+                    if (!is_at_end()) advance(); // skip closing quote
+                }
+                else if (peek() == '\'') {
+                    advance();
+                    while (peek() != '\'' && !is_at_end()) advance();
+                    if (!is_at_end()) advance();
+                }
+                else { if (peek() == '\n') lexer.line++; advance(); }
+            }
         } else {
             if (peek() == '\n') lexer.line++;
             advance();

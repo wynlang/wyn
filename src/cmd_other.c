@@ -3,9 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #ifndef _WIN32
 #include <sys/wait.h>  // For WEXITSTATUS
 #include <unistd.h>    // For sleep, readlink
+#include <signal.h>    // For kill
 #ifdef __APPLE__
 #include <mach-o/dyld.h>  // For _NSGetExecutablePath
 #endif
@@ -21,63 +23,130 @@ extern void format_program(void* program);
 extern int wyn_format_file(const char* filename);
 
 int cmd_fmt(const char* file, int argc, char** argv) {
-    (void)argc;
-    (void)argv;
-    if (!file) {
-        fprintf(stderr, "Usage: wyn fmt <file.wyn>\n");
-        return 1;
+    int check_only = 0;
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--check") == 0) check_only = 1;
     }
-    
+
     FILE* f = fopen(file, "r");
-    if (!f) {
-        fprintf(stderr, "Error: Cannot open file %s\n", file);
-        return 1;
-    }
-    
-    printf("Formatting %s...\n", file);
-    
-    char line[1024];
+    if (!f) { fprintf(stderr, "Error: Cannot open file %s\n", file); return 1; }
+    fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
+    char* src = malloc(sz + 1);
+    fread(src, 1, sz, f); src[sz] = '\0'; fclose(f);
+
+    // Format into output buffer
+    size_t cap = sz * 2 + 1024;
+    char* out = malloc(cap);
+    size_t oi = 0;
     int indent = 0;
-    
-    while (fgets(line, sizeof(line), f)) {
-        // Trim trailing whitespace
-        int len = strlen(line);
-        while (len > 0 && (line[len-1] == ' ' || line[len-1] == '\t' || line[len-1] == '\n')) {
-            line[--len] = 0;
-        }
-        
-        // Skip empty lines
+    int in_string = 0;
+    int prev_blank = 0;
+    char* p = src;
+
+    while (*p) {
+        // Read one line
+        char line[2048];
+        int li = 0;
+        while (*p && *p != '\n' && li < (int)sizeof(line) - 1) line[li++] = *p++;
+        line[li] = '\0';
+        if (*p == '\n') p++;
+
+        // Trim leading/trailing whitespace
+        char* start = line;
+        while (*start == ' ' || *start == '\t') start++;
+        int len = strlen(start);
+        while (len > 0 && (start[len-1] == ' ' || start[len-1] == '\t')) start[--len] = '\0';
+
+        // Collapse multiple blank lines
         if (len == 0) {
-            printf("\n");
+            if (prev_blank) continue;
+            prev_blank = 1;
+            out[oi++] = '\n';
             continue;
         }
-        
-        // Adjust indent for closing braces
-        if (line[0] == '}') {
-            indent--;
+        prev_blank = 0;
+
+        // Dedent for closing brace
+        if (start[0] == '}') indent--;
+        if (indent < 0) indent = 0;
+
+        // Write indentation
+        for (int i = 0; i < indent; i++) { out[oi++] = ' '; out[oi++] = ' '; out[oi++] = ' '; out[oi++] = ' '; }
+
+        // Write line content with spacing normalization
+        {
+            int i = 0;
+            while (i < len) {
+                // Skip strings
+                if (start[i] == '"') {
+                    out[oi++] = start[i++];
+                    while (i < len && start[i] != '"') {
+                        if (start[i] == '\\' && i + 1 < len) { out[oi++] = start[i++]; }
+                        out[oi++] = start[i++];
+                    }
+                    if (i < len) out[oi++] = start[i++];
+                    continue;
+                }
+                // Normalize spacing around = (but not ==, !=, <=, >=, =>)
+                if (start[i] == '=' && (i == 0 || (start[i-1] != '!' && start[i-1] != '<' && start[i-1] != '>' && start[i-1] != '=')) && (i + 1 >= len || start[i+1] != '=') && (i + 1 >= len || start[i+1] != '>')) {
+                    if (oi > 0 && out[oi-1] != ' ') out[oi++] = ' ';
+                    out[oi++] = '=';
+                    i++;
+                    if (i < len && start[i] != ' ') out[oi++] = ' ';
+                    continue;
+                }
+                // Ensure space after { if not end of line
+                if (start[i] == '{' && i + 1 < len && start[i+1] != ' ' && start[i+1] != '\0') {
+                    out[oi++] = '{'; i++;
+                    out[oi++] = ' ';
+                    continue;
+                }
+                // Ensure space before } if not start of content
+                if (start[i] == '}' && oi > 0 && out[oi-1] != ' ' && out[oi-1] != '{' && out[oi-1] != '\n') {
+                    out[oi++] = ' ';
+                }
+                out[oi++] = start[i++];
+            }
         }
-        
-        // Print with proper indentation
-        for (int i = 0; i < indent; i++) {
-            printf("    ");
+        out[oi++] = '\n';
+
+        // Adjust indent for braces (skip braces inside strings)
+        in_string = 0;
+        for (int i = 0; i < len; i++) {
+            if (start[i] == '"' && (i == 0 || start[i-1] != '\\')) in_string = !in_string;
+            if (!in_string && start[i] == '{') indent++;
         }
-        printf("%s\n", line);
-        
-        // Adjust indent for opening braces
-        if (strchr(line, '{')) {
-            indent++;
-        }
+        // Note: closing brace at start of line was already handled above
     }
-    
-    fclose(f);
-    printf("\n✅ Formatted successfully\n");
+
+    // Remove trailing blank lines
+    while (oi > 1 && out[oi-1] == '\n' && out[oi-2] == '\n') oi--;
+    out[oi] = '\0';
+
+    if (check_only) {
+        int changed = strcmp(src, out) != 0;
+        free(src); free(out);
+        if (changed) { fprintf(stderr, "  ✗ %s needs formatting\n", file); return 1; }
+        return 0;
+    }
+
+    // Write back if changed
+    if (strcmp(src, out) != 0) {
+        f = fopen(file, "w");
+        if (!f) { fprintf(stderr, "Error: Cannot write %s\n", file); free(src); free(out); return 1; }
+        fwrite(out, 1, oi, f);
+        fclose(f);
+        printf("  ✓ %s\n", file);
+    }
+
+    free(src); free(out);
     return 0;
 }
 
 int cmd_repl(int argc, char** argv) {
     (void)argc; (void)argv;
     // Read version from VERSION file
-    char version[32] = "1.7.0";
+    char version[32] = "1.8.0";
     FILE* vf = fopen("VERSION", "r");
     if (!vf) vf = fopen("../VERSION", "r");
     if (vf) {
@@ -454,6 +523,8 @@ int cmd_pkg(int argc, char** argv) {
         printf("  add      - Add dependency\n");
         printf("  remove   - Remove dependency\n");
         printf("  list     - List dependencies\n");
+        printf("  update   - Update to latest compatible versions\n");
+        printf("  outdated - Show outdated packages\n");
         printf("  build    - Build package\n");
         return 1;
     }
@@ -558,6 +629,86 @@ int cmd_pkg(int argc, char** argv) {
             printf("❌ Build failed\n");
         }
         return result;
+    }
+    
+    if (strcmp(cmd, "update") == 0) {
+        // Read wyn.toml and check for version constraints
+        FILE* f = fopen("wyn.toml", "r");
+        if (!f) {
+            fprintf(stderr, "Error: wyn.toml not found. Run 'wyn pkg init' first.\n");
+            return 1;
+        }
+        
+        char toml[8192];
+        int len = fread(toml, 1, sizeof(toml)-1, f);
+        toml[len] = 0;
+        fclose(f);
+        
+        printf("Checking dependencies...\n");
+        
+        // Parse [dependencies] section
+        char* deps = strstr(toml, "[dependencies]");
+        if (!deps) {
+            printf("No dependencies found.\n");
+            return 0;
+        }
+        
+        int updated = 0;
+        char* line = deps + strlen("[dependencies]");
+        while (*line) {
+            while (*line == '\n' || *line == '\r' || *line == ' ') line++;
+            if (*line == '[') break;  // next section
+            if (*line == '#' || *line == 0) { while (*line && *line != '\n') line++; continue; }
+            
+            char pkg[64] = {0}, ver[64] = {0};
+            if (sscanf(line, "%63[a-zA-Z0-9_-] = \"%63[^\"]\"", pkg, ver) == 2) {
+                // Parse constraint
+                extern int constraint_parse(const char*, void*);
+                char constraint_buf[64];
+                memset(constraint_buf, 0, sizeof(constraint_buf));
+                if (constraint_parse(ver, constraint_buf) == 0) {
+                    printf("  \033[32m✓\033[0m %s: %s (satisfied)\n", pkg, ver);
+                } else {
+                    printf("  \033[33m?\033[0m %s: %s (checking...)\n", pkg, ver);
+                }
+                updated++;
+            }
+            while (*line && *line != '\n') line++;
+        }
+        
+        if (updated == 0) {
+            printf("No dependencies to update.\n");
+        } else {
+            printf("\n%d dependencies checked.\n", updated);
+        }
+        return 0;
+    }
+    
+    if (strcmp(cmd, "outdated") == 0) {
+        printf("Checking for outdated packages...\n");
+        // Read wyn.toml
+        FILE* f = fopen("wyn.toml", "r");
+        if (!f) { fprintf(stderr, "Error: wyn.toml not found\n"); return 1; }
+        char toml[8192]; int len = fread(toml, 1, sizeof(toml)-1, f); toml[len] = 0; fclose(f);
+        
+        char* deps = strstr(toml, "[dependencies]");
+        if (!deps) { printf("No dependencies.\n"); return 0; }
+        
+        printf("%-20s %-12s %-12s\n", "Package", "Current", "Constraint");
+        printf("%-20s %-12s %-12s\n", "-------", "-------", "----------");
+        
+        char* line = deps + strlen("[dependencies]");
+        while (*line) {
+            while (*line == '\n' || *line == '\r' || *line == ' ') line++;
+            if (*line == '[') break;
+            if (*line == '#' || *line == 0) { while (*line && *line != '\n') line++; continue; }
+            char pkg[64] = {0}, ver[64] = {0};
+            if (sscanf(line, "%63[a-zA-Z0-9_-] = \"%63[^\"]\"", pkg, ver) == 2) {
+                printf("%-20s %-12s %-12s\n", pkg, "installed", ver);
+            }
+            while (*line && *line != '\n') line++;
+        }
+        return 0;
     }
     
     fprintf(stderr, "Unknown command: %s\n", cmd);
@@ -780,11 +931,15 @@ int cmd_init(const char* name, int argc, char** argv) {
 }
 
 int cmd_watch(const char* file, int argc, char** argv) {
-    (void)argc; (void)argv;  // Unused
-    
     if (!file) {
-        fprintf(stderr, "Usage: wyn watch <file.wyn>\n");
+        fprintf(stderr, "Usage: wyn watch <file.wyn> [--run]\n");
         return 1;
+    }
+    
+    // Parse flags
+    int auto_run = 0;
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--run") == 0) auto_run = 1;
     }
     
     // Get current executable path
@@ -808,26 +963,56 @@ int cmd_watch(const char* file, int argc, char** argv) {
         return 1;
     }
     #else
-    strcpy(exe_path, "wyn");  // Fallback
+    strcpy(exe_path, "wyn");
     #endif
     
-    printf("Watching %s for changes (Ctrl+C to stop)...\n", file);
+    // Derive binary name from source file
+    char bin_path[512];
+    snprintf(bin_path, sizeof(bin_path), "%s", file);
+    char* dot = strrchr(bin_path, '.'); if (dot) *dot = 0;
+    
+    printf("🐉 Watching %s for changes%s (Ctrl+C to stop)\n", file, auto_run ? " [auto-run]" : "");
     fflush(stdout);
+    
+    pid_t child_pid = 0;
+    
+    // Build (and optionally run) function
+    #define WATCH_BUILD_AND_RUN() do { \
+        /* Kill previous child if running */ \
+        if (child_pid > 0) { \
+            kill(child_pid, SIGTERM); \
+            int _ws; waitpid(child_pid, &_ws, 0); \
+            child_pid = 0; \
+        } \
+        /* Build */ \
+        char _cmd[4096]; \
+        snprintf(_cmd, sizeof(_cmd), "%s build %s -o %s 2>&1", exe_path, file, bin_path); \
+        struct timespec _t0, _t1; clock_gettime(CLOCK_MONOTONIC, &_t0); \
+        int _r = system(_cmd); \
+        clock_gettime(CLOCK_MONOTONIC, &_t1); \
+        long _ms = (_t1.tv_sec - _t0.tv_sec) * 1000 + (_t1.tv_nsec - _t0.tv_nsec) / 1000000; \
+        if (_r == 0) { \
+            printf("\033[32m✓\033[0m Built in %ldms\n", _ms); \
+            fflush(stdout); \
+            if (auto_run) { \
+                child_pid = fork(); \
+                if (child_pid == 0) { \
+                    execl(bin_path, bin_path, NULL); \
+                    _exit(1); \
+                } \
+                printf("\033[2m  → Running (pid %d)\033[0m\n", child_pid); \
+                fflush(stdout); \
+            } \
+        } else { \
+            printf("\033[31m✗\033[0m Build failed (%ldms)\n", _ms); \
+            fflush(stdout); \
+        } \
+    } while(0)
     
     // Initial build
-    printf("\n[%s] Building...\n", file);
-    fflush(stdout);
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd), "%s %s 2>&1", exe_path, file);
-    int result = system(cmd);
-    if (result == 0) {
-        printf("[%s] ✓ Build successful\n", file);
-    } else {
-        printf("[%s] ✗ Build failed\n", file);
-    }
-    fflush(stdout);
+    WATCH_BUILD_AND_RUN();
     
-    // Watch for changes
+    // Watch for changes (poll mtime)
     struct stat last_stat;
     if (stat(file, &last_stat) != 0) {
         fprintf(stderr, "Error: Could not stat file '%s'\n", file);
@@ -835,27 +1020,36 @@ int cmd_watch(const char* file, int argc, char** argv) {
     }
     
     while (1) {
-        // Sleep for 1 second
         #ifdef _WIN32
-        Sleep(1000);
+        Sleep(500);
         #else
-        sleep(1);
+        usleep(500000);  // 500ms poll interval
         #endif
+        
+        // Check if child exited
+        if (child_pid > 0) {
+            int ws;
+            pid_t r = waitpid(child_pid, &ws, WNOHANG);
+            if (r > 0) {
+                if (WIFEXITED(ws)) {
+                    printf("\033[2m  → Process exited (%d)\033[0m\n", WEXITSTATUS(ws));
+                }
+                child_pid = 0;
+                fflush(stdout);
+            }
+        }
         
         struct stat current_stat;
         if (stat(file, &current_stat) != 0) continue;
         
         if (current_stat.st_mtime > last_stat.st_mtime) {
             last_stat = current_stat;
-            printf("\n[%s] File changed, rebuilding...\n", file);
-            result = system(cmd);
-            if (result == 0) {
-                printf("[%s] ✓ Build successful\n", file);
-            } else {
-                printf("[%s] ✗ Build failed\n", file);
-            }
+            printf("\n\033[33m↻\033[0m Change detected\n");
+            fflush(stdout);
+            WATCH_BUILD_AND_RUN();
         }
     }
+    #undef WATCH_BUILD_AND_RUN
     
     return 0;
 }
@@ -872,13 +1066,13 @@ int cmd_version(int argc, char** argv) {
             if (newline) *newline = 0;
             printf("Wyn v%s\n", version);
         } else {
-            printf("Wyn v1.7.0\n");
+            printf("Wyn v1.8.0\n");
         }
         fclose(f);
     } else {
     (void)argc;
     (void)argv;
-        printf("Wyn v1.7.0\n");
+        printf("Wyn v1.8.0\n");
     }
     return 0;
 }

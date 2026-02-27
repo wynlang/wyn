@@ -1,0 +1,17 @@
+// Test: Anonymous function closures capture variables
+fn apply(arr: [int], f: fn(int) -> int) -> [int] {
+    var result: [int] = []
+    for x in arr { result.push(f(x)) }
+    return result
+}
+
+fn main() -> int {
+    var factor = 3
+    var tripled = apply([1, 2, 3], fn(x: int) -> int { return x * factor })
+    if tripled[0] != 3 { println("FAIL: expected 3, got ${tripled[0]}"); return 1 }
+    if tripled[1] != 6 { println("FAIL: expected 6, got ${tripled[1]}"); return 1 }
+    if tripled[2] != 9 { println("FAIL: expected 9, got ${tripled[2]}"); return 1 }
+    
+    println("PASS: anonymous function closures work")
+    return 0
+}

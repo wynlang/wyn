@@ -1,34 +1,27 @@
-// Wyn Test Runner — dogfooding Wyn to test Wyn
+// Wyn Test Runner — concurrent via spawn/await
+// Dogfooding: tests Wyn's own concurrency to run tests in parallel
 
 fn run_test(path: string) -> int {
-    var cmd = "./wyn run " + path + " 2>&1"
+    // Capture both output and exit code
+    var cmd = "./wyn run " + path + " 2>&1; echo EXIT:$?"
     var output = System_exec(cmd)
-    // If ./wyn failed (Windows), try wyn.exe
-    if output.len() == 0 {
-        cmd = "wyn.exe run " + path + " 2>&1"
-        output = System_exec(cmd)
-    }
-
-    if output.contains("compilation failed") {
+    // Check exit code
+    if !output.contains("EXIT:0") {
         return 0
     }
-    if output.contains("Failed to parse") {
-        return 0
-    }
-    if output.contains("Segmentation fault") {
-        return 0
-    }
-    if output.contains("error:") {
-        return 0
-    }
+    // Also check for runtime errors that don't set exit code
+    if output.contains("compilation failed") { return 0 }
+    if output.contains("Failed to parse") { return 0 }
+    if output.contains("Segmentation fault") { return 0 }
+    if output.contains("Undefined function") { return 0 }
+    if output.contains("Undefined variable") { return 0 }
     return 1
 }
 
 fn main() -> int {
-    println("=== Wyn Test Runner ===")
+    var start = DateTime_millis()
+    println("=== Wyn Test Runner (concurrent) ===")
 
-    var pass = 0
-    var fail = 0
     var tests = [
         "tests/validation/test_struct_methods.wyn",
         "tests/validation/test_option_type.wyn",
@@ -77,29 +70,55 @@ fn main() -> int {
         "tests/stdlib/test_epic31_self_hosted.wyn",
         "tests/stdlib/test_deferred_features.wyn",
         "tests/multifile/test_import.wyn",
-        "tests/validation/test_spawn.wyn"
+        "tests/validation/test_spawn.wyn",
+        "tests/validation/test_base64.wyn",
+        "tests/validation/test_log.wyn",
+        "tests/validation/test_csv_manual.wyn",
+        "tests/validation/test_default_params.wyn",
+        "tests/validation/test_coroutine_traces.wyn",
+        "tests/validation/test_string_interp.wyn",
+        "tests/validation/test_try_operator.wyn",
+        "tests/validation/test_semver.wyn",
+        "tests/validation/test_v18_edge_cases.wyn",
+        "tests/validation/test_edge_pass1.wyn",
+        "tests/validation/test_edge_pass2.wyn",
+        "tests/validation/test_edge_pass3.wyn",
+        "tests/validation/test_circular_import.wyn",
+        "tests/regression/test_global_forward_ref.wyn",
+        "tests/regression/test_hashmap_string.wyn",
+        "tests/regression/test_string_array_args.wyn",
+        "tests/regression/test_hashmap_in_array.wyn"
     ]
 
-    for i in 0..48 {
-        var path = tests[i]
-        var result = run_test(path)
+    var count = 58
+
+    // Spawn all tests concurrently
+    var futures = []
+    for i in 0..count {
+        futures.push(spawn run_test(tests[i]))
+    }
+
+    // Await all results
+    var pass = 0
+    var fail = 0
+    for i in 0..count {
+        var result = await futures[i]
         if result == 1 {
             pass = pass + 1
         } else {
             fail = fail + 1
-            println("  FAIL: " + path)
+            println("  FAIL: " + tests[i])
         }
     }
 
+    var elapsed = DateTime_millis() - start
     println("")
-    println("Results: " + pass.to_string() + " pass, " + fail.to_string() + " fail")
+    println("Results: " + pass.to_string() + " pass, " + fail.to_string() + " fail (" + elapsed.to_string() + "ms)")
 
-    // Clean up artifacts (Unix only — silently fails on Windows)
+    // Clean up
     System_exec("find tests -name '*.wyn.c' -delete 2>/dev/null || true")
     System_exec("find tests -name '*.wyn.out' -delete 2>/dev/null || true")
 
-    if fail > 0 {
-        return 1
-    }
+    if fail > 0 { return 1 }
     return 0
 }

@@ -105,7 +105,7 @@ char* wyn_array_join(int* arr, int len, const char* separator) {
     
     for (int i = 0; i < len; i++) {
         char num_str[12];
-        sprintf(num_str, "%d", arr[i]);
+        snprintf(num_str, sizeof(num_str), "%d", arr[i]);
         strcat(result, num_str);
         if (i < len - 1) {
             strcat(result, separator);

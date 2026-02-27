@@ -1,0 +1,31 @@
+// Test: global variables accessible from functions in script mode
+var counter = 0
+var items = ["a", "b", "c"]
+
+fn increment() {
+    counter = counter + 1
+}
+
+fn count_items() -> int {
+    var n = 0
+    for item in items {
+        n = n + 1
+    }
+    return n
+}
+
+increment()
+increment()
+increment()
+
+if counter != 3 {
+    println("FAIL: counter should be 3, got ${counter}")
+    System_exit(1)
+}
+
+if count_items() != 3 {
+    println("FAIL: count_items should be 3")
+    System_exit(1)
+}
+
+println("PASS: global forward references work")

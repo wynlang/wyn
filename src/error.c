@@ -226,7 +226,7 @@ void type_error_undefined_variable(const char* var_name, int line, int column) {
 }
 
 // Helper function to calculate Levenshtein distance for typo detection
-static int levenshtein_distance(const char* s1, const char* s2) {
+int levenshtein_distance(const char* s1, const char* s2) {
     int len1 = strlen(s1);
     int len2 = strlen(s2);
     

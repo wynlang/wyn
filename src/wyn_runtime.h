@@ -98,6 +98,8 @@
 #include "spawn.h"
 #include "gui.h"
 #include "future.h"
+#include "coroutine.h"
+#include "io_loop.h"
 #include "optional.h"
 #include "result.h"
 #include "hashmap.h"
@@ -120,6 +122,8 @@ int wyn_closure_call_int(WynClosure c, int arg) { return ((int(*)(void*,int))c.f
 
 int wyn_get_argc(void);
 const char* wyn_get_argv(int index);
+static inline int System_argc(void) { return wyn_get_argc(); }
+static inline const char* System_arg(int index) { return wyn_get_argv(index); }
 char* wyn_read_file(const char* path);
 int wyn_write_file(const char* path, const char* content);
 bool wyn_file_exists(const char* path);
@@ -233,21 +237,70 @@ void json_set_string(WynJson* json, const char* key, const char* value);
 void json_set_int(WynJson* json, const char* key, int value);
 char* json_stringify(WynJson* json);
 
-// Regex module - POSIX regex
+// Regex module - portable regex
 #ifdef _WIN32
-int regex_match(const char* str, const char* pattern) { (void)str; (void)pattern; return 0; }
-char* regex_replace(const char* str, const char* pattern, const char* replacement) { (void)pattern; (void)replacement; return wyn_strdup(str); }
-int Regex_match(const char* s, const char* p) { return 0; }
-char* Regex_replace(const char* s, const char* p, const char* r) { (void)p; (void)r; return wyn_strdup(s); }
-int Regex_find(const char* s, const char* p) { (void)s; (void)p; return -1; }
-char* regex_find_all(const char* str, const char* pattern) { (void)str; (void)pattern; return wyn_strdup(""); }
-char* regex_split(const char* str, const char* pattern) { (void)pattern; return wyn_strdup(str); }
+#include "wyn_regex.h"
+bool regex_match(const char* str, const char* pattern) { return wre_match_full(str, pattern); }
+char* regex_replace(const char* str, const char* pattern, const char* replacement) {
+    struct wre_nfa nfa;
+    if (!wre_compile(&nfa, pattern)) return wyn_strdup(str);
+    char* result = (char*)malloc(strlen(str) * 2 + strlen(replacement) * 10 + 1);
+    int ri = 0;
+    int pos = 0;
+    int slen = (int)strlen(str);
+    while (pos <= slen) {
+        int ms, me;
+        wre_find(str + pos, pattern, &ms, &me);
+        if (ms < 0 || me <= ms) { memcpy(result + ri, str + pos, slen - pos); ri += slen - pos; break; }
+        memcpy(result + ri, str + pos, ms); ri += ms;
+        int rlen = (int)strlen(replacement);
+        memcpy(result + ri, replacement, rlen); ri += rlen;
+        pos += ms + (me - ms);
+        if (me == ms) { if (str[pos]) result[ri++] = str[pos++]; else break; } // prevent infinite loop on zero-width match
+    }
+    result[ri] = '\0';
+    return result;
+}
+bool Regex_match(const char* s, const char* p) { return regex_match(s, p); }
+char* Regex_replace(const char* s, const char* p, const char* r) { return regex_replace(s, p, r); }
+int Regex_find(const char* s, const char* p) { int ms, me; wre_find(s, p, &ms, &me); return ms; }
+char* regex_find_all(const char* str, const char* pattern) {
+    struct wre_nfa nfa;
+    if (!wre_compile(&nfa, pattern)) return wyn_strdup("");
+    char* result = (char*)malloc(65536); result[0] = 0;
+    int pos = 0, slen = (int)strlen(str);
+    while (pos <= slen) {
+        int ms, me;
+        wre_find(str + pos, pattern, &ms, &me);
+        if (ms < 0 || me <= ms) break;
+        strncat(result, str + pos + ms, me - ms);
+        strcat(result, "\n");
+        pos += ms + (me - ms);
+    }
+    return result;
+}
+char* regex_split(const char* str, const char* pattern) {
+    struct wre_nfa nfa;
+    if (!wre_compile(&nfa, pattern)) return wyn_strdup(str);
+    char* result = (char*)malloc(strlen(str) + 256); result[0] = 0;
+    int pos = 0, slen = (int)strlen(str);
+    while (pos <= slen) {
+        int ms, me;
+        wre_find(str + pos, pattern, &ms, &me);
+        if (ms < 0 || me <= ms) { strcat(result, str + pos); break; }
+        strncat(result, str + pos, ms);
+        strcat(result, "\n");
+        pos += ms + (me - ms);
+        if (me == ms) pos++;
+    }
+    return result;
+}
 #else
 #include <regex.h>
-int regex_match(const char* str, const char* pattern) {
+bool regex_match(const char* str, const char* pattern) {
     regex_t re;
-    if (regcomp(&re, pattern, REG_EXTENDED | REG_NOSUB) != 0) return 0;
-    int result = regexec(&re, str, 0, NULL, 0) == 0 ? 1 : 0;
+    if (regcomp(&re, pattern, REG_EXTENDED | REG_NOSUB) != 0) return false;
+    bool result = regexec(&re, str, 0, NULL, 0) == 0;
     regfree(&re);
     return result;
 }
@@ -284,7 +337,7 @@ char* regex_replace(const char* str, const char* pattern, const char* replacemen
 // Time module wrappers
 long Time_now();
 long long Time_now_millis();
-void Time_sleep(int seconds);
+void Time_sleep(long long ms);
 
 // Crypto module wrappers
 unsigned int Crypto_hash32(const char* data);
@@ -444,20 +497,32 @@ void array_push_array(WynArray* restrict arr, WynArray* nested) {
         arr->capacity = new_cap;
     }
     arr->data[arr->count].type = WYN_TYPE_ARRAY;
-    arr->data[arr->count].data.array_val = nested;
+    // Heap-allocate a copy so the nested array outlives the stack frame
+    WynArray* copy = malloc(sizeof(WynArray));
+    *copy = *nested;
+    arr->data[arr->count].data.array_val = copy;
     arr->count++;
 }
-long long array_get_int(WynArray arr, int index) {
+static inline void wyn_oob_panic(int index, int count, const char* file, int line) {
+    if (file && line > 0)
+        fprintf(stderr, "panic at %s:%d: array index out of bounds: index %d, length %d\n", file, line, index, count);
+    else
+        fprintf(stderr, "panic: array index out of bounds: index %d, length %d\n", index, count);
+    if (getenv("WYN_STRICT")) exit(1);
+}
+#define array_get_int(arr, idx) array_get_int_impl(arr, idx, __FILE__, __LINE__)
+static inline long long array_get_int_impl(WynArray arr, int index, const char* file, int line) {
     if (index < 0 || index >= arr.count) {
-        fprintf(stderr, "Warning: Array index out of bounds: %d (array size: %d)\n", index, arr.count);
+        wyn_oob_panic(index, arr.count, file, line);
         return 0;
     }
     if (arr.data[index].type == WYN_TYPE_INT) return arr.data[index].data.int_val;
     return 0;
 }
-const char* array_get_str(WynArray arr, int index) {
+#define array_get_str(arr, idx) array_get_str_impl(arr, idx, __FILE__, __LINE__)
+static inline const char* array_get_str_impl(WynArray arr, int index, const char* file, int line) {
     if (index < 0 || index >= arr.count) {
-        fprintf(stderr, "Warning: Array index out of bounds: %d (array size: %d)\n", index, arr.count);
+        wyn_oob_panic(index, arr.count, file, line);
         return "";
     }
     if (arr.data[index].type == WYN_TYPE_STRING) return arr.data[index].data.string_val;
@@ -762,7 +827,7 @@ char* string_substring(const char* str, int start, int end) {
     result[len] = '\0';
     return result;
 }
-int string_contains(const char* str, const char* substr) {
+bool string_contains(const char* str, const char* substr) {
     return strstr(str, substr) != NULL;
 }
 char* string_concat(const char* a, const char* b) {
@@ -872,14 +937,14 @@ char* string_reverse(const char* str) {
     return result;
 }
 int string_len(const char* str) { return strlen(str); }
-int string_is_empty(const char* str) { return str[0] == '\0'; }
-int string_starts_with(const char* str, const char* prefix) {
+bool string_is_empty(const char* str) { return str[0] == '\0'; }
+bool string_starts_with(const char* str, const char* prefix) {
     return strncmp(str, prefix, strlen(prefix)) == 0;
 }
-int string_ends_with(const char* str, const char* suffix) {
+bool string_ends_with(const char* str, const char* suffix) {
     int str_len = strlen(str);
     int suffix_len = strlen(suffix);
-    if (suffix_len > str_len) return 0;
+    if (suffix_len > str_len) return false;
     return strcmp(str + str_len - suffix_len, suffix) == 0;
 }
 int string_index_of(const char* str, const char* substr) {
@@ -1716,8 +1781,8 @@ const char* Fs_read_file(const char* path) {
 }
 char* str_repeat(const char* s, int count) { int len = strlen(s); char* r = malloc(len * count + 1); r[0] = 0; for(int i = 0; i < count; i++) strcat(r, s); return r; }
 char* str_reverse(const char* s) { int len = strlen(s); char* r = malloc(len + 1); for(int i = 0; i < len; i++) r[i] = s[len-1-i]; r[len] = 0; return r; }
-char* int_to_string(long long x) { char* r = wyn_str_alloc(32); sprintf(r, "%lld", x); return r; }
-char* float_to_string(double x) { char* r = malloc(32); sprintf(r, "%g", x); return r; }
+char* int_to_string(long long x) { char* r = wyn_str_alloc(32); snprintf(r, 32, "%lld", x); return r; }
+char* float_to_string(double x) { char* r = malloc(32); snprintf(r, 32, "%g", x); if (!strchr(r, '.') && !strchr(r, 'e') && !strchr(r, 'E') && !strchr(r, 'n') && !strchr(r, 'i')) strcat(r, ".0"); return r; }
 char* bool_to_string(bool x) { char* r = malloc(8); strcpy(r, x ? "true" : "false"); return r; }
 int bool_to_int(bool x) { return x ? 1 : 0; }
 bool bool_not(bool x) { return !x; }
@@ -1818,7 +1883,7 @@ int lcm(int a, int b) { return a * b / gcd(a, b); }
 char* file_read(const char* path) {
     last_error[0] = 0;
     FILE* f = fopen(path, "r");
-    if(!f) { snprintf(last_error, 256, "Cannot open file: %s", path); return NULL; }
+    if(!f) { snprintf(last_error, 256, "Cannot open file: %s", path); return ""; }
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -1944,14 +2009,15 @@ char* file_get_cwd();
 
 // File namespace aliases: File.read(path) -> File_read(path)
 char* File_read(const char* p) { return file_read(p); }
+char* File_read_lines(const char* p) { return file_read(p); }
 int File_write(const char* p, const char* d) { return file_write(p, d); }
-int File_exists(const char* p) { return file_exists(p); }
+bool File_exists(const char* p) { return file_exists(p) ? true : false; }
 int File_delete(const char* p) { return file_delete(p); }
 int File_copy(const char* s, const char* d) { return file_copy(s, d); }
 int File_move(const char* s, const char* d) { return file_move(s, d); }
 long long File_size(const char* p) { return file_size(p); }
-int File_is_dir(const char* p) { return file_is_dir(p); }
-int File_is_file(const char* p) { return file_is_file(p); }
+bool File_is_dir(const char* p) { return file_is_dir(p) ? true : false; }
+bool File_is_file(const char* p) { return file_is_file(p) ? true : false; }
 int File_mkdir(const char* p) { return file_mkdir(p); }
 char* File_list_dir(const char* p) {
     DIR* dir = opendir(p);
@@ -2109,10 +2175,35 @@ int Http_serve(int port) {
 }
 
 char* Http_accept(int server_fd) {
+    // Reset arena per request to prevent memory leak in long-running servers
+    wyn_arena_reset();
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
-    int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
-    if (client_fd < 0) return "";
+    int client_fd;
+    // If inside a coroutine, use non-blocking accept with I/O loop
+    if (wyn_coro_current()) {
+        int flags = fcntl(server_fd, F_GETFL, 0);
+        fcntl(server_fd, F_SETFL, flags | O_NONBLOCK);
+        for (;;) {
+            client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
+            if (client_fd >= 0) break;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                void* task = wyn_current_task();
+                if (task) {
+                    wyn_io_wait_readable(server_fd, task);
+                    wyn_io_park();
+                }
+                wyn_coro_yield();
+                continue;
+            }
+            fcntl(server_fd, F_SETFL, flags);
+            return "";
+        }
+        fcntl(server_fd, F_SETFL, flags);
+    } else {
+        client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
+        if (client_fd < 0) return "";
+    }
     char buf[8192] = {0};
     int n = recv(client_fd, buf, sizeof(buf) - 1, 0);
     if (n <= 0) { close(client_fd); return ""; }
@@ -2213,11 +2304,22 @@ void Json_set_bool(WynJson* j, const char* k, int v) { json_set_int(j, k, v ? 1 
 
 // Terminal module: POSIX terminal control
 #ifdef _WIN32
-// Windows terminal stubs
+// Windows terminal implementation
+#include <windows.h>
+static DWORD _win_orig_mode = 0;
 int Terminal_cols() { CONSOLE_SCREEN_BUFFER_INFO csbi; if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) return csbi.srWindow.Right - csbi.srWindow.Left + 1; return 80; }
 int Terminal_rows() { CONSOLE_SCREEN_BUFFER_INFO csbi; if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) return csbi.srWindow.Bottom - csbi.srWindow.Top + 1; return 24; }
-void Terminal_raw_mode() {}
-void Terminal_restore() {}
+void Terminal_raw_mode() {
+    HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+    GetConsoleMode(h, &_win_orig_mode);
+    SetConsoleMode(h, ENABLE_VIRTUAL_TERMINAL_INPUT);
+    HANDLE ho = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD om; GetConsoleMode(ho, &om);
+    SetConsoleMode(ho, om | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+}
+void Terminal_restore() {
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), _win_orig_mode);
+}
 int Terminal_read_key() { return _getch(); }
 void Terminal_clear() { system("cls"); }
 void Terminal_move(int row, int col) { COORD c = {(SHORT)(col-1), (SHORT)(row-1)}; SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), c); }
@@ -2298,6 +2400,25 @@ void Terminal_hide_cursor() { printf("\033[?25l"); }
 void Terminal_show_cursor() { printf("\033[?25h"); }
 // Colored print helpers
 void Terminal_print_color(const char* s, int fg) { printf("\033[%dm%s\033[0m", fg, s); }
+
+// Color module — string-returning color functions
+// Usage: Color.red("error"), Color.bold("title"), Color.green("ok")
+static char* _color_wrap(const char* s, const char* code) {
+    // \033[CODEm + s + \033[0m + null
+    char* buf = malloc(strlen(s) + strlen(code) + 10);
+    sprintf(buf, "\033[%sm%s\033[0m", code, s);
+    return buf;
+}
+char* Color_red(const char* s) { return _color_wrap(s, "31"); }
+char* Color_green(const char* s) { return _color_wrap(s, "32"); }
+char* Color_yellow(const char* s) { return _color_wrap(s, "33"); }
+char* Color_blue(const char* s) { return _color_wrap(s, "34"); }
+char* Color_magenta(const char* s) { return _color_wrap(s, "35"); }
+char* Color_cyan(const char* s) { return _color_wrap(s, "36"); }
+char* Color_gray(const char* s) { return _color_wrap(s, "90"); }
+char* Color_bold(const char* s) { return _color_wrap(s, "1"); }
+char* Color_dim(const char* s) { return _color_wrap(s, "2"); }
+char* Color_underline(const char* s) { return _color_wrap(s, "4"); }
 // Box drawing
 void Terminal_box(int row, int col, int w, int h) {
     Terminal_move(row, col); printf("┌"); for(int i=0;i<w-2;i++) printf("─"); printf("┐");
@@ -2325,7 +2446,7 @@ char* regex_split(const char* str, const char* pattern);
 
 // Regex namespace aliases
 #ifndef _WIN32
-int Regex_match(const char* s, const char* p) { return regex_match(s, p); }
+bool Regex_match(const char* s, const char* p) { return regex_match(s, p); }
 char* Regex_replace(const char* s, const char* p, const char* r) { return regex_replace(s, p, r); }
 int Regex_find(const char* s, const char* p) { regex_t re; if (regcomp(&re, p, REG_EXTENDED) != 0) return -1; regmatch_t m; int r2 = regexec(&re, s, 1, &m, 0) == 0 ? m.rm_so : -1; regfree(&re); return r2; }
 char* Regex_find_all(const char* s, const char* p) { return regex_find_all(s, p); }
@@ -2411,6 +2532,25 @@ int file_remove_dir_all(const char* path) {
     return !r && rmdir(path) == 0;
 }
 
+// Shell-escape a string for safe use in popen/system
+char* System_shell_escape(const char* s) {
+    if (!s) return "''";
+    size_t len = strlen(s);
+    char* out = malloc(len * 4 + 3); // worst case: every char escaped + quotes
+    size_t j = 0;
+    out[j++] = '\'';
+    for (size_t i = 0; i < len; i++) {
+        if (s[i] == '\'') {
+            out[j++] = '\''; out[j++] = '\\'; out[j++] = '\''; out[j++] = '\'';
+        } else {
+            out[j++] = s[i];
+        }
+    }
+    out[j++] = '\'';
+    out[j] = '\0';
+    return out;
+}
+
 char* System_exec(const char* cmd) {
 #ifdef WYN_MOBILE
     return "";
@@ -2473,6 +2613,60 @@ char* Env_get(const char* name) {
     char* value = getenv(name);
     return value ? value : "";
 }
+
+/* ── Args: simple argument parser ── */
+
+// Args.get(name) — returns value of --name=value or --name value, or ""
+char* Args_get(const char* name) {
+    int argc = wyn_get_argc();
+    char flag_eq[256]; snprintf(flag_eq, sizeof(flag_eq), "--%s=", name);
+    char flag[256]; snprintf(flag, sizeof(flag), "--%s", name);
+    int eq_len = strlen(flag_eq);
+    for (int i = 1; i < argc; i++) {
+        const char* arg = wyn_get_argv(i);
+        if (strncmp(arg, flag_eq, eq_len) == 0)
+            return (char*)(arg + eq_len);
+        if (strcmp(arg, flag) == 0 && i + 1 < argc) {
+            const char* next = wyn_get_argv(i + 1);
+            if (next[0] != '-') return (char*)next;
+        }
+    }
+    return "";
+}
+
+// Args.has(name) — returns true if --name or -n present
+bool Args_has(const char* name) {
+    int argc = wyn_get_argc();
+    char flag_long[256]; snprintf(flag_long, sizeof(flag_long), "--%s", name);
+    char flag_short[4] = {'-', name[0], '\0', '\0'};
+    for (int i = 1; i < argc; i++) {
+        const char* arg = wyn_get_argv(i);
+        if (strcmp(arg, flag_long) == 0) return true;
+        if (strlen(name) == 1 && strcmp(arg, flag_short) == 0) return true;
+        char flag_eq[256]; snprintf(flag_eq, sizeof(flag_eq), "--%s=", name);
+        if (strncmp(arg, flag_eq, strlen(flag_eq)) == 0) return true;
+    }
+    return false;
+}
+
+// Args.positional() — returns array of non-flag arguments
+WynArray Args_positional() {
+    int argc = wyn_get_argc();
+    WynArray arr; arr.data = malloc(argc * sizeof(WynValue)); arr.count = 0; arr.capacity = argc;
+    for (int i = 1; i < argc; i++) {
+        const char* arg = wyn_get_argv(i);
+        if (arg[0] == '-') {
+            if (strncmp(arg, "--", 2) == 0 && !strchr(arg, '=') &&
+                i + 1 < argc) { const char* next = wyn_get_argv(i+1); if (next[0] != '-') i++; }
+            continue;
+        }
+        arr.data[arr.count].type = WYN_TYPE_STRING;
+        arr.data[arr.count].data.string_val = (char*)arg;
+        arr.count++;
+    }
+    return arr;
+}
+
 int Env_set(const char* name, const char* value) {
     if (!name || !value) return 0;
 #ifdef _WIN32
@@ -2512,6 +2706,35 @@ float Math_round(float x) { return roundf(x); }
 long long Math_abs(long long x) { return x < 0 ? -x : x; }
 float Math_max(float a, float b) { return a > b ? a : b; }
 float Math_min(float a, float b) { return a < b ? a : b; }
+
+// Checked arithmetic — returns 0 and prints error on overflow, exits if WYN_STRICT
+long long Math_checked_add(long long a, long long b) {
+    if ((b > 0 && a > LLONG_MAX - b) || (b < 0 && a < LLONG_MIN - b)) {
+        fprintf(stderr, "panic: integer overflow in checked_add(%lld, %lld)\n", a, b);
+        if (getenv("WYN_STRICT")) exit(1);
+        return 0;
+    }
+    return a + b;
+}
+long long Math_checked_sub(long long a, long long b) {
+    if ((b < 0 && a > LLONG_MAX + b) || (b > 0 && a < LLONG_MIN + b)) {
+        fprintf(stderr, "panic: integer overflow in checked_sub(%lld, %lld)\n", a, b);
+        if (getenv("WYN_STRICT")) exit(1);
+        return 0;
+    }
+    return a - b;
+}
+long long Math_checked_mul(long long a, long long b) {
+    if (a != 0 && b != 0) {
+        if ((a > 0) == (b > 0) ? (a > LLONG_MAX / b) : (a < LLONG_MIN / b)) {
+            fprintf(stderr, "panic: integer overflow in checked_mul(%lld, %lld)\n", a, b);
+            if (getenv("WYN_STRICT")) exit(1);
+            return 0;
+        }
+    }
+    return a * b;
+}
+
 float Math_random() {
     static int initialized = 0;
     if (!initialized) { srand(time(NULL)); initialized = 1; }
@@ -2536,6 +2759,15 @@ char* DateTime_format(int timestamp, const char* fmt) {
     return buffer;
 }
 void DateTime_sleep(int seconds) { sleep(seconds); }
+
+// Time.sleep(ms) — sleep for milliseconds
+void Time_sleep(long long ms) {
+#ifdef _WIN32
+    Sleep((DWORD)ms);
+#else
+    usleep((useconds_t)(ms * 1000));
+#endif
+}
 
 typedef struct { WynArray arr; } Queue;
 
@@ -2732,6 +2964,40 @@ int random_int(int min, int max) { return min + rand() % (max - min + 1); }
 int random_range(int min, int max) { return min + rand() % (max - min + 1); }
 double random_float() { return (double)rand() / RAND_MAX; }
 void seed_random(int seed) { srand(seed); }
+int random_bool() { return rand() % 2; }
+char* random_string(int len) {
+    static const char chars[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    char* s = malloc(len + 1);
+    for (int i = 0; i < len; i++) s[i] = chars[rand() % 62];
+    s[len] = '\0';
+    return s;
+}
+char* random_hex(int len) {
+    static const char hex[] = "0123456789abcdef";
+    char* s = malloc(len + 1);
+    for (int i = 0; i < len; i++) s[i] = hex[rand() % 16];
+    s[len] = '\0';
+    return s;
+}
+char* random_uuid() {
+    char* u = malloc(37);
+    snprintf(u, 37, "%08x-%04x-4%03x-%04x-%012llx",
+        rand(), rand() & 0xffff, rand() & 0xfff,
+        (rand() & 0x3fff) | 0x8000, ((long long)rand() << 16) | rand());
+    return u;
+}
+int random_choice_int(long long* arr, int len) { return (int)arr[rand() % len]; }
+char* random_choice_str(char** arr, int len) { return arr[rand() % len]; }
+void random_seed_auto() {
+#ifdef _WIN32
+    srand((unsigned)time(NULL) ^ (unsigned)GetCurrentProcessId());
+#else
+    unsigned int seed;
+    FILE* f = fopen("/dev/urandom", "rb");
+    if (f) { fread(&seed, sizeof(seed), 1, f); fclose(f); srand(seed); }
+    else { srand((unsigned)time(NULL) ^ (unsigned)getpid()); }
+#endif
+}
 long long time_now() { return (long long)time(NULL); }
 char* time_format(int timestamp, const char* fmt) {
     time_t t = (time_t)timestamp;
@@ -2789,7 +3055,7 @@ int is_numeric(const char* s) { if (!s || !*s) return 0; int i = 0; if (s[0] == 
 int str_count(const char* s, const char* substr) { if (!s || !substr || !*substr) return 0; int count = 0; const char* p = s; while ((p = strstr(p, substr)) != NULL) { count++; p += strlen(substr); } return count; }
 int str_contains_substr(const char* s, const char* substr) { return strstr(s, substr) != NULL; }
 char* str_join(char** arr, int len, const char* sep) { int total = 0; for(int i = 0; i < len; i++) total += strlen(arr[i]); total += (len - 1) * strlen(sep) + 1; char* r = malloc(total); r[0] = 0; for(int i = 0; i < len; i++) { if(i > 0) strcat(r, sep); strcat(r, arr[i]); } return r; }
-char* int_to_str(int n) { char* r = malloc(12); sprintf(r, "%d", n); return r; }
+char* int_to_str(int n) { char* r = malloc(12); snprintf(r, 12, "%d", n); return r; }
 long long str_to_int(const char* s) { return atoll(s); }
 double str_to_float(const char* s) { return atof(s); }
 void swap(int* a, int* b) { int t = *a; *a = *b; *b = t; }
@@ -2815,6 +3081,12 @@ int ResultInt_is_err(ResultInt r) { return r.tag == 1; }
 int ResultInt_unwrap(ResultInt r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultInt_unwrap_err(ResultInt r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 long long ResultInt_unwrap_or(ResultInt r, long long def) { return r.tag == 0 ? r.data.ok_value : def; }
+char* ResultInt_to_string(ResultInt r) {
+    char* buf = malloc(256);
+    if (r.tag == 0) snprintf(buf, 256, "Ok(%d)", r.data.ok_value);
+    else snprintf(buf, 256, "Err(%s)", r.data.err_value);
+    return buf;
+}
 
 ResultString ResultString_Ok(const char* value) { ResultString r; r.tag = 0; r.data.ok_value = value; return r; }
 ResultString ResultString_Err(const char* msg) { ResultString r; r.tag = 1; r.data.err_value = msg; return r; }
@@ -2922,6 +3194,57 @@ long long Task_recv(long long handle) {
 void Task_close(long long handle) {
     if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return;
     wyn_task_close(task_registry[handle]);
+}
+
+// Non-blocking try_recv: returns 1 if got a value, 0 if empty/closed
+long long Task_try_recv(long long handle, long long* out_value) {
+    if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return 0;
+    WynTask* task = task_registry[handle];
+    pthread_mutex_lock(&task->mutex);
+    if (task->size > 0) {
+        void* value = task->buffer[task->read_pos];
+        task->read_pos = (task->read_pos + 1) % task->capacity;
+        task->size--;
+        pthread_cond_signal(&task->not_full);
+        pthread_mutex_unlock(&task->mutex);
+        *out_value = (long long)(intptr_t)value;
+        return 1;
+    }
+    pthread_mutex_unlock(&task->mutex);
+    return 0;
+}
+
+// Select: wait until one of the channels has data, return its index (0-based).
+// channels is a Wyn array of channel handles. Yields coroutine if none ready.
+long long Task_select_2(long long ch1, long long ch2) {
+    // Fast path: check both
+    for (;;) {
+        if (ch1 > 0 && ch1 < MAX_TASKS && task_registry[ch1] && task_registry[ch1]->size > 0) return 0;
+        if (ch2 > 0 && ch2 < MAX_TASKS && task_registry[ch2] && task_registry[ch2]->size > 0) return 1;
+        // Check if both closed
+        int closed = 0;
+        if (ch1 > 0 && ch1 < MAX_TASKS && task_registry[ch1] && task_registry[ch1]->closed) closed++;
+        if (ch2 > 0 && ch2 < MAX_TASKS && task_registry[ch2] && task_registry[ch2]->closed) closed++;
+        if (closed >= 2) return -1;
+        // Yield and retry
+        if (wyn_coro_current()) wyn_coro_yield();
+        else sched_yield();
+    }
+}
+
+long long Task_select_3(long long ch1, long long ch2, long long ch3) {
+    for (;;) {
+        if (ch1 > 0 && ch1 < MAX_TASKS && task_registry[ch1] && task_registry[ch1]->size > 0) return 0;
+        if (ch2 > 0 && ch2 < MAX_TASKS && task_registry[ch2] && task_registry[ch2]->size > 0) return 1;
+        if (ch3 > 0 && ch3 < MAX_TASKS && task_registry[ch3] && task_registry[ch3]->size > 0) return 2;
+        int closed = 0;
+        if (ch1 > 0 && ch1 < MAX_TASKS && task_registry[ch1] && task_registry[ch1]->closed) closed++;
+        if (ch2 > 0 && ch2 < MAX_TASKS && task_registry[ch2] && task_registry[ch2]->closed) closed++;
+        if (ch3 > 0 && ch3 < MAX_TASKS && task_registry[ch3] && task_registry[ch3]->closed) closed++;
+        if (closed >= 3) return -1;
+        if (wyn_coro_current()) wyn_coro_yield();
+        else sched_yield();
+    }
 }
 
 // === SQLite Database Module ===
@@ -3047,14 +3370,14 @@ void Db_close(long long handle) {
 }
 
 #else
-// SQLite not available — stub functions
-long long Db_open(const char* path) { fprintf(stderr, "Error: SQLite not available. Install libsqlite3-dev.\n"); return -1; }
-int Db_exec(long long h, const char* sql) { return -1; }
-char* Db_query(long long h, const char* sql) { return ""; }
-char* Db_query_one(long long h, const char* sql) { return ""; }
-long long Db_last_insert_id(long long h) { return 0; }
-char* Db_error(long long h) { return "sqlite not available"; }
-void Db_close(long long h) {}
+// SQLite not available — error on first use
+long long Db_open(const char* path) { (void)path; fprintf(stderr, "\033[31mError:\033[0m Db module requires SQLite.\n  macOS:  brew install sqlite3\n  Linux:  apt install libsqlite3-dev\n"); return -1; }
+int Db_exec(long long h, const char* sql) { (void)h;(void)sql; return -1; }
+char* Db_query(long long h, const char* sql) { (void)h;(void)sql; return ""; }
+char* Db_query_one(long long h, const char* sql) { (void)h;(void)sql; return ""; }
+long long Db_last_insert_id(long long h) { (void)h; return 0; }
+char* Db_error(long long h) { (void)h; return "sqlite not available"; }
+void Db_close(long long h) { (void)h; }
 #endif // WYN_USE_SQLITE
 
 // === StringBuilder — O(1) amortized append ===
@@ -3318,6 +3641,10 @@ char* Encoding_hex_encode(const char* data) {
     return out;
 }
 
+// === Base64 module (aliases to Encoding) ===
+char* Base64_encode(const char* data) { return Encoding_base64_encode(data); }
+char* Base64_decode(const char* data) { return Encoding_base64_decode(data); }
+
 // === Crypto (SHA-256) ===
 char* Crypto_sha256(const char* data) {
     // Use openssl command (POSIX)
@@ -3401,6 +3728,45 @@ char* Uuid_generate() {
         bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7],
         bytes[8],bytes[9],bytes[10],bytes[11],bytes[12],bytes[13],bytes[14],bytes[15]);
     return uuid;
+}
+char* Uuid_v4() { return Uuid_generate(); }
+
+// Bcrypt — password hashing with iterated HMAC-SHA256 + random salt
+char* Crypto_hmac_sha256(const char* key, const char* data); // forward decl
+char* Bcrypt_hash(const char* password) {
+    char salt[33];
+    { // random salt
+        unsigned char b[16]; FILE* f = fopen("/dev/urandom", "rb");
+        if (f) { fread(b, 1, 16, f); fclose(f); } else { srand(time(NULL)); for (int i=0;i<16;i++) b[i]=rand()&0xFF; }
+        for (int i=0;i<16;i++) snprintf(salt+i*2, 3, "%02x", b[i]); salt[32]='\0';
+    }
+    char* cur = strdup(password);
+    for (int r = 0; r < 10; r++) {
+        char* h = Crypto_hmac_sha256(salt, cur);
+        free(cur); cur = h;
+    }
+    char* result = malloc(256);
+    snprintf(result, 256, "$wyn$10$%s$%s", salt, cur);
+    free(cur);
+    return result;
+}
+bool Bcrypt_verify(const char* password, const char* hash) {
+    if (strncmp(hash, "$wyn$", 5) != 0) return false;
+    const char* p = hash + 5;
+    int rounds = 0;
+    while (*p >= '0' && *p <= '9') { rounds = rounds*10 + (*p-'0'); p++; }
+    if (*p != '$') return false; p++;
+    char salt[64] = {0}; int si = 0;
+    while (*p && *p != '$' && si < 63) salt[si++] = *p++;
+    if (*p != '$') return false; p++;
+    char* cur = strdup(password);
+    for (int r = 0; r < rounds; r++) {
+        char* h = Crypto_hmac_sha256(salt, cur);
+        free(cur); cur = h;
+    }
+    bool match = (strcmp(cur, p) == 0);
+    free(cur);
+    return match;
 }
 
 // === Array extensions ===
@@ -3568,10 +3934,19 @@ char* Db_escape(const char* str) {
 // === Log Module ===
 static int log_level = 0; // 0=debug, 1=info, 2=warn, 3=error
 void Log_set_level(long long level) { log_level = (int)level; }
-void Log_debug(const char* msg) { if (log_level <= 0) fprintf(stderr, "\x1b[90m[DEBUG %ld] %s\x1b[0m\n", (long)time(NULL), msg); }
-void Log_info(const char* msg)  { if (log_level <= 1) fprintf(stderr, "\x1b[32m[INFO  %ld] %s\x1b[0m\n", (long)time(NULL), msg); }
-void Log_warn(const char* msg)  { if (log_level <= 2) fprintf(stderr, "\x1b[33m[WARN  %ld] %s\x1b[0m\n", (long)time(NULL), msg); }
-void Log_error(const char* msg) { if (log_level <= 3) fprintf(stderr, "\x1b[31m[ERROR %ld] %s\x1b[0m\n", (long)time(NULL), msg); }
+
+static void log_with_timestamp(const char* level, const char* color, const char* msg) {
+    time_t now = time(NULL);
+    struct tm* t = localtime(&now);
+    char timestamp[32];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S", t);
+    fprintf(stderr, "%s[%s] %s %s\x1b[0m\n", color, level, timestamp, msg);
+}
+
+void Log_debug(const char* msg) { if (log_level <= 0) log_with_timestamp("DEBUG", "\x1b[90m", msg); }
+void Log_info(const char* msg)  { if (log_level <= 1) log_with_timestamp("INFO", "\x1b[32m", msg); }
+void Log_warn(const char* msg)  { if (log_level <= 2) log_with_timestamp("WARN", "\x1b[33m", msg); }
+void Log_error(const char* msg) { if (log_level <= 3) log_with_timestamp("ERROR", "\x1b[31m", msg); }
 
 // === Process Module ===
 char* Process_exec_capture(const char* cmd) {
@@ -3982,9 +4357,102 @@ long long Csv_header_count(long long handle) {
     return d ? d->header_count : 0;
 }
 
+static void csv_write_field(FILE* f, const char* field) {
+    int needs_quote = 0;
+    for (const char* p = field; *p; p++) {
+        if (*p == ',' || *p == '"' || *p == '\n' || *p == '\r') {
+            needs_quote = 1;
+            break;
+        }
+    }
+    if (needs_quote) {
+        fputc('"', f);
+        for (const char* p = field; *p; p++) {
+            if (*p == '"') fputc('"', f);
+            fputc(*p, f);
+        }
+        fputc('"', f);
+    } else {
+        fputs(field, f);
+    }
+}
+
+void Csv_write(const char* path, WynArray rows) {
+    FILE* f = fopen(path, "w");
+    if (!f) return;
+    for (int i = 0; i < rows.count; i++) {
+        WynArray* row = rows.data[i].data.array_val;
+        for (int j = 0; j < row->count; j++) {
+            if (j > 0) fputc(',', f);
+            csv_write_field(f, row->data[j].data.string_val);
+        }
+        fputc('\n', f);
+    }
+    fclose(f);
+}
+
 // System.gc() — reset arena allocator, freeing all temporary strings
 // Call at the end of each request loop iteration in servers
 void System_gc() { wyn_arena_reset(); }
+
+// TOML parser — simple key=value with [section] support
+typedef struct { char key[256]; char value[1024]; } TomlEntry;
+typedef struct { TomlEntry* entries; int count; int cap; } TomlDoc;
+
+long long Toml_parse(const char* text) {
+    TomlDoc* doc = malloc(sizeof(TomlDoc));
+    doc->cap = 64; doc->count = 0;
+    doc->entries = malloc(sizeof(TomlEntry) * doc->cap);
+    char section[128] = "";
+    const char* p = text;
+    while (*p) {
+        // Read line
+        char line[1024]; int li = 0;
+        while (*p && *p != '\n' && li < 1022) line[li++] = *p++;
+        line[li] = '\0'; if (*p == '\n') p++;
+        // Trim
+        char* s = line; while (*s == ' ' || *s == '\t') s++;
+        int len = strlen(s);
+        while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t' || s[len-1] == '\r')) s[--len] = '\0';
+        if (!*s || *s == '#') continue;
+        // Section
+        if (*s == '[') {
+            char* end = strchr(s, ']');
+            if (end) { *end = '\0'; snprintf(section, sizeof(section), "%s", s + 1); }
+            continue;
+        }
+        // Key = value
+        char* eq = strchr(s, '=');
+        if (!eq) continue;
+        *eq = '\0'; char* key = s; char* val = eq + 1;
+        // Trim key/val
+        while (*key == ' ') key++; int kl = strlen(key);
+        while (kl > 0 && key[kl-1] == ' ') key[--kl] = '\0';
+        while (*val == ' ') val++; int vl = strlen(val);
+        while (vl > 0 && val[vl-1] == ' ') val[--vl] = '\0';
+        // Strip quotes
+        if (vl >= 2 && val[0] == '"' && val[vl-1] == '"') { val[vl-1] = '\0'; val++; }
+        // Store as section.key or just key
+        if (doc->count >= doc->cap) { doc->cap *= 2; doc->entries = realloc(doc->entries, sizeof(TomlEntry) * doc->cap); }
+        if (section[0]) snprintf(doc->entries[doc->count].key, 256, "%s.%s", section, key);
+        else snprintf(doc->entries[doc->count].key, 256, "%s", key);
+        snprintf(doc->entries[doc->count].value, 1024, "%s", val);
+        doc->count++;
+    }
+    return (long long)(uintptr_t)doc;
+}
+char* Toml_get(long long handle, const char* key) {
+    TomlDoc* doc = (TomlDoc*)(uintptr_t)handle;
+    if (!doc) return "";
+    for (int i = 0; i < doc->count; i++)
+        if (strcmp(doc->entries[i].key, key) == 0) return doc->entries[i].value;
+    return "";
+}
+long long Toml_parse_file(const char* path) {
+    char* content = file_read(path);
+    if (!content || !content[0]) return 0;
+    return Toml_parse(content);
+}
 
 // Data.save/load implementation (after hashmap functions are available)
 void Data_save(const char* path, WynHashMap* map) {
@@ -4253,3 +4721,68 @@ extern int wyn_test_fail_count;
 void wyn_assert(int condition);
 void wyn_assert_eq_int(long long actual, long long expected);
 void wyn_assert_eq_str(const char* actual, const char* expected);
+
+// === Web framework ===
+#define WEB_MAX_ROUTES 128
+static struct { char method[8]; char pattern[256]; int handler_id; } _web_routes[WEB_MAX_ROUTES];
+static int _web_route_count = 0;
+static char _web_template_dir[512] = "templates";
+
+int Web_route(const char* method, const char* pattern, int handler_id) {
+    if (_web_route_count >= WEB_MAX_ROUTES) return -1;
+    snprintf(_web_routes[_web_route_count].method, 8, "%s", method);
+    snprintf(_web_routes[_web_route_count].pattern, 256, "%s", pattern);
+    _web_routes[_web_route_count].handler_id = handler_id;
+    return _web_route_count++;
+}
+int Web_get(const char* p, int h) { return Web_route("GET", p, h); }
+int Web_post(const char* p, int h) { return Web_route("POST", p, h); }
+int Web_put(const char* p, int h) { return Web_route("PUT", p, h); }
+int Web_delete(const char* p, int h) { return Web_route("DELETE", p, h); }
+int Web_route_count(void) { return _web_route_count; }
+
+int Web_match(const char* method, const char* path) {
+    for (int i = 0; i < _web_route_count; i++) {
+        int pm = strcmp(_web_routes[i].method, method) == 0 || strcmp(_web_routes[i].method, "*") == 0;
+        if (!pm) continue;
+        if (strcmp(_web_routes[i].pattern, path) == 0) return _web_routes[i].handler_id;
+        int plen = strlen(_web_routes[i].pattern);
+        if (plen > 1 && _web_routes[i].pattern[plen-1] == '*' &&
+            strncmp(_web_routes[i].pattern, path, plen - 1) == 0)
+            return _web_routes[i].handler_id;
+    }
+    return -1;
+}
+
+void Web_templates(const char* dir) { snprintf(_web_template_dir, 512, "%s", dir); }
+
+char* Web_render(const char* name, const char* vars) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s", _web_template_dir, name);
+    FILE* f = fopen(path, "r");
+    if (!f) { char* e = malloc(256); snprintf(e, 256, "Template not found: %s", name); return e; }
+    fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
+    char* tmpl = malloc(sz + 1); fread(tmpl, 1, sz, f); tmpl[sz] = '\0'; fclose(f);
+    char* out = malloc(sz * 4 + 4096); int oi = 0;
+    for (int i = 0; tmpl[i]; i++) {
+        if (tmpl[i] == '{' && tmpl[i+1] == '{') {
+            i += 2; char key[128]; int ki = 0;
+            while (tmpl[i] && !(tmpl[i] == '}' && tmpl[i+1] == '}') && ki < 127) key[ki++] = tmpl[i++];
+            key[ki] = '\0'; if (tmpl[i] == '}') i++;
+            const char* v = vars; int found = 0;
+            while (*v) {
+                const char* eq = strchr(v, '='); const char* nl = strchr(v, '\n');
+                if (!nl) nl = v + strlen(v);
+                if (eq && eq < nl && (eq - v) == ki && strncmp(v, key, ki) == 0) {
+                    int vl = nl - eq - 1; memcpy(out + oi, eq + 1, vl); oi += vl; found = 1; break;
+                }
+                v = *nl ? nl + 1 : nl;
+            }
+            if (!found) { out[oi++]='{'; out[oi++]='{'; memcpy(out+oi,key,ki); oi+=ki; out[oi++]='}'; out[oi++]='}'; }
+        } else { out[oi++] = tmpl[i]; }
+    }
+    out[oi] = '\0'; free(tmpl); return out;
+}
+
+// === App (webview) module ===
+#include "wyn_webview.h"

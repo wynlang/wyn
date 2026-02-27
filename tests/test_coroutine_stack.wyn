@@ -1,0 +1,142 @@
+// Coroutine stack stress tests — find where spawns break
+// Tests increasing stack pressure to establish limits
+
+fn shallow_work(id: int) -> int {
+    var x = id * 2
+    return x + 1
+}
+
+fn medium_locals(id: int) -> int {
+    var a = id + 1
+    var b = id + 2
+    var c = id + 3
+    var d = id + 4
+    var e = id + 5
+    var f = id + 6
+    var g = id + 7
+    var h = id + 8
+    return a + b + c + d + e + f + g + h
+}
+
+fn recurse_n(n: int) -> int {
+    if n <= 0 { return 0 }
+    return recurse_n(n - 1) + 1
+}
+
+fn recurse_with_locals(n: int) -> int {
+    var a = n + 1
+    var b = n + 2
+    var c = n + 3
+    var d = n + 4
+    if n <= 0 { return a + b + c + d }
+    return recurse_with_locals(n - 1) + a
+}
+
+fn string_work(id: int) -> int {
+    var s = "hello"
+    var t = s + " world"
+    var u = t + " from " + id.to_string()
+    return u.len()
+}
+
+fn array_work(id: int) -> int {
+    var arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    var sum = 0
+    for i in 0..10 {
+        sum = sum + arr[i]
+    }
+    return sum + id
+}
+
+fn main() -> int {
+    println("=== Coroutine Stack Stress Tests ===")
+    println("")
+
+    // Test 1: Many shallow spawns
+    println("[1] 10,000 shallow spawns...")
+    var r1 = [0]
+    for i in 0..10000 {
+        var f = spawn shallow_work(i)
+        r1[0] = await f
+    }
+    println("  ✓ 10K shallow spawns (result: " + r1[0].to_string() + ")")
+
+    // Test 2: Spawn with medium locals
+    println("[2] 1,000 spawns with 8 local vars...")
+    var r2 = [0]
+    for i in 0..1000 {
+        var f = spawn medium_locals(i)
+        r2[0] = await f
+    }
+    println("  ✓ 1K medium locals (result: " + r2[0].to_string() + ")")
+
+    // Test 3: Spawn with string operations
+    println("[3] 1,000 spawns with string ops...")
+    var r3 = [0]
+    for i in 0..1000 {
+        var f = spawn string_work(i)
+        r3[0] = await f
+    }
+    println("  ✓ 1K string work (result: " + r3[0].to_string() + ")")
+
+    // Test 4: Spawn with array operations
+    println("[4] 1,000 spawns with array ops...")
+    var r4 = [0]
+    for i in 0..1000 {
+        var f = spawn array_work(i)
+        r4[0] = await f
+    }
+    println("  ✓ 1K array work (result: " + r4[0].to_string() + ")")
+
+    // Test 5: Recursion depth tests — find the limit
+    println("[5] Recursion depth in spawn...")
+    var depths = [10, 50, 100, 500, 1000, 2000, 3000]
+    for i in 0..7 {
+        var d = depths[i]
+        var f = spawn recurse_n(d)
+        var result = await f
+        if result == d {
+            println("  ✓ depth " + d.to_string() + " OK")
+        } else {
+            println("  ✗ depth " + d.to_string() + " FAILED (got " + result.to_string() + ")")
+        }
+    }
+
+    // Test 6: Recursion with locals — heavier stack frames
+    println("[6] Recursion with 4 locals per frame...")
+    var heavy_depths = [10, 50, 100, 500, 1000]
+    for i in 0..5 {
+        var d = heavy_depths[i]
+        var f = spawn recurse_with_locals(d)
+        var result = await f
+        println("  depth " + d.to_string() + ": result=" + result.to_string())
+    }
+
+    // Test 7: Concurrent spawns (all at once)
+    println("[7] 1,000 concurrent spawns...")
+    var futures = []
+    for i in 0..1000 {
+        futures.push(spawn shallow_work(i))
+    }
+    var total = 0
+    for i in 0..1000 {
+        total = total + await futures[i]
+    }
+    println("  ✓ 1K concurrent (total: " + total.to_string() + ")")
+
+    // Test 8: 10K concurrent spawns
+    println("[8] 10,000 concurrent spawns...")
+    var futures2 = []
+    for i in 0..10000 {
+        futures2.push(spawn shallow_work(i))
+    }
+    var total2 = 0
+    for i in 0..10000 {
+        total2 = total2 + await futures2[i]
+    }
+    println("  ✓ 10K concurrent (total: " + total2.to_string() + ")")
+
+    println("")
+    println("=== All coroutine tests passed ===")
+    return 0
+}
