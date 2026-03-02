@@ -950,6 +950,20 @@ void wyn_collect_generic_instantiations_from_stmt(void* stmt_ptr) {
                 wyn_collect_generic_instantiations_from_stmt(stmt->fn.body);
             }
             break;
+        case STMT_FOR:
+            if (stmt->for_stmt.body) {
+                wyn_collect_generic_instantiations_from_stmt(stmt->for_stmt.body);
+            }
+            break;
+        case STMT_WHILE:
+            if (stmt->while_stmt.condition) wyn_collect_generic_instantiations_from_expr(stmt->while_stmt.condition);
+            if (stmt->while_stmt.body) wyn_collect_generic_instantiations_from_stmt(stmt->while_stmt.body);
+            break;
+        case STMT_IF:
+            if (stmt->if_stmt.condition) wyn_collect_generic_instantiations_from_expr(stmt->if_stmt.condition);
+            if (stmt->if_stmt.then_branch) wyn_collect_generic_instantiations_from_stmt(stmt->if_stmt.then_branch);
+            if (stmt->if_stmt.else_branch) wyn_collect_generic_instantiations_from_stmt(stmt->if_stmt.else_branch);
+            break;
         case STMT_MATCH:
             // Collect from match value expression
             if (stmt->match_stmt.value) {
@@ -1027,6 +1041,9 @@ void wyn_collect_generic_instantiations_from_expr(void* expr_ptr) {
         case EXPR_BINARY:
             wyn_collect_generic_instantiations_from_expr(expr->binary.left);
             wyn_collect_generic_instantiations_from_expr(expr->binary.right);
+            break;
+        case EXPR_ASSIGN:
+            if (expr->assign.value) wyn_collect_generic_instantiations_from_expr(expr->assign.value);
             break;
         case EXPR_UNARY:
             wyn_collect_generic_instantiations_from_expr(expr->unary.operand);
