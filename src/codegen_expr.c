@@ -3013,7 +3013,7 @@ void codegen_expr(Expr* expr) {
                     const char* part = expr->string_interp.parts[i];
                     const char* part_start_ptr = part;
                     while (*part) {
-                        if (*part == '%') emit("%%"); // Escape % for sprintf
+                        if (*part == '%') { fprintf(stderr, "ESCAPING PERCENT\n"); emit("%%%%"); } // Escape % for sprintf
                         else if (*part == '\n') emit("\\n");
                         else if (*part == '"' && (part == part_start_ptr || *(part-1) != '\\')) emit("\\\"");
                         else emit("%c", *part);
