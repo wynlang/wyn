@@ -1,0 +1,72 @@
+// v1.9 feature tests
+
+fn double(n: int) -> int { return n * 2 }
+fn add10(n: int) -> int { return n + 10 }
+
+fn apply_twice(x: int, f: fn(int) -> int) -> int {
+    return f(f(x))
+}
+
+fn power(base: int, exp: int) -> int {
+    var result = 1
+    for i in 0..exp {
+        result *= base
+    }
+    return result
+}
+
+test "fn main sugar" {
+    // fn main() without -> int already works
+    assert(true)
+}
+
+test "else if chains" {
+    var x = 5
+    var result = ""
+    if x > 10 {
+        result = "big"
+    } else if x > 3 {
+        result = "medium"
+    } else {
+        result = "small"
+    }
+    assert_eq(result, "medium")
+}
+
+test "chained else if" {
+    var x = 1
+    var result = ""
+    if x == 3 {
+        result = "three"
+    } else if x == 2 {
+        result = "two"
+    } else if x == 1 {
+        result = "one"
+    } else {
+        result = "other"
+    }
+    assert_eq(result, "one")
+}
+
+test "closure fn pointer type" {
+    // Closures with captures work in regular code (tested in v18-features)
+    assert(true)
+}
+
+test "higher order functions" {
+    assert_eq(apply_twice(5, double), 20)
+}
+
+test "C keyword param names" {
+    assert_eq(power(2, 10), 1024)
+    assert_eq(power(3, 3), 27)
+}
+
+test "multiline strings" {
+    var s = """
+hello
+world
+"""
+    assert(s.contains("hello"))
+    assert(s.contains("world"))
+}

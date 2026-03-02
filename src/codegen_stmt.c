@@ -549,8 +549,17 @@ void codegen_stmt(Stmt* stmt) {
                     c_type = "WynResult*";
                     needs_arc_management = true;
                 } else if (stmt->var.init->type == EXPR_LAMBDA) {
-                    // Lambda/closure type - function pointer
-                    c_type = "long long (*)(long long, long long)";  // Simplified: assume long long params and return
+                    // Lambda/closure type - function pointer matching actual params
+                    int nparams = stmt->var.init->lambda.param_count;
+                    static char _fn_ptr_buf[256];
+                    int _fp = 0;
+                    _fp += snprintf(_fn_ptr_buf + _fp, sizeof(_fn_ptr_buf) - _fp, "long long (*)(");
+                    for (int _pi = 0; _pi < nparams; _pi++) {
+                        if (_pi > 0) _fp += snprintf(_fn_ptr_buf + _fp, sizeof(_fn_ptr_buf) - _fp, ", ");
+                        _fp += snprintf(_fn_ptr_buf + _fp, sizeof(_fn_ptr_buf) - _fp, "long long");
+                    }
+                    _fp += snprintf(_fn_ptr_buf + _fp, sizeof(_fn_ptr_buf) - _fp, ")");
+                    c_type = _fn_ptr_buf;
                     needs_arc_management = false;
                 } else if (stmt->var.init->type == EXPR_HASHMAP_LITERAL) {
                     // v1.2.3: HashMap literal
@@ -885,10 +894,9 @@ void codegen_stmt(Stmt* stmt) {
                 int total_params = stmt->var.init->lambda.param_count;
                 int lambda_idx = -1;
                 for (int i = 0; i < lambda_count; i++) {
-                    // Match by checking if this is the right lambda (use counter)
                     static int lambda_var_counter = 0;
                     if (i == lambda_var_counter) {
-                        total_params += lambda_functions[i].capture_count;
+                        // Captures use static globals, not extra params
                         lambda_idx = i;
                         lambda_var_counter++;
                         break;
@@ -1279,10 +1287,13 @@ void codegen_stmt(Stmt* stmt) {
                 
                 // Emit with pointer for mut params
                 bool is_mut_p = stmt->fn.param_mutable && stmt->fn.param_mutable[i];
+                char _pn[256]; snprintf(_pn, sizeof(_pn), "%.*s", stmt->fn.params[i].length, stmt->fn.params[i].start);
+                static const char* _pkw2[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
+                bool _ipk = false; for (int _k = 0; _pkw2[_k]; _k++) { if (strcmp(_pn, _pkw2[_k]) == 0) { _ipk = true; break; } }
                 if (is_mut_p) {
-                    emit("%s *%.*s", param_type, stmt->fn.params[i].length, stmt->fn.params[i].start);
+                    emit("%s *%s%.*s", param_type, _ipk ? "_" : "", stmt->fn.params[i].length, stmt->fn.params[i].start);
                 } else {
-                    emit("%s %.*s", param_type, stmt->fn.params[i].length, stmt->fn.params[i].start);
+                    emit("%s %s%.*s", param_type, _ipk ? "_" : "", stmt->fn.params[i].length, stmt->fn.params[i].start);
                 }
             }
             emit(") {\n");

@@ -599,10 +599,14 @@ void codegen_program(Program* prog) {
                 
                 // Emit with pointer for mut params
                 bool is_mut_param = fn->param_mutable && fn->param_mutable[j];
+                // Check if param name is a C keyword
+                char _pname[256]; snprintf(_pname, sizeof(_pname), "%.*s", fn->params[j].length, fn->params[j].start);
+                static const char* _pkw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
+                bool _is_pkw = false; for (int _k = 0; _pkw[_k]; _k++) { if (strcmp(_pname, _pkw[_k]) == 0) { _is_pkw = true; break; } }
                 if (is_mut_param) {
-                    emit("%s *%.*s", param_type, fn->params[j].length, fn->params[j].start);
+                    emit("%s *%s%.*s", param_type, _is_pkw ? "_" : "", fn->params[j].length, fn->params[j].start);
                 } else {
-                    emit("%s %.*s", param_type, fn->params[j].length, fn->params[j].start);
+                    emit("%s %s%.*s", param_type, _is_pkw ? "_" : "", fn->params[j].length, fn->params[j].start);
                 }
             }
             emit(");\n");

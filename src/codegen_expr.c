@@ -1064,16 +1064,11 @@ void codegen_expr(Expr* expr) {
                     }
                 }
                 
-                // Emit captured variables first
-                if (is_lambda_call && lambda_var_idx >= 0) {
-                    for (int i = 0; i < lambda_var_info[lambda_var_idx].capture_count; i++) {
-                        if (i > 0) emit(", ");
-                        emit("%s", lambda_var_info[lambda_var_idx].captured_vars[i]);
-                    }
-                }
+                // Captured variables use static globals, not extra call args
+                // (set via ({ __cap_N_var = var; __lambda_N; }) at assignment)
                 
                 for (int i = 0; i < expr->call.arg_count; i++) {
-                    if (i > 0 || (is_lambda_call && lambda_var_idx >= 0 && lambda_var_info[lambda_var_idx].capture_count > 0)) {
+                    if (i > 0 || (is_lambda_call && lambda_var_idx >= 0 && 0)) {
                         emit(", ");
                     }
                     
@@ -1118,7 +1113,7 @@ void codegen_expr(Expr* expr) {
                         for (int di = expr->call.arg_count; di < total_params; di++) {
                             Expr* def = get_fn_default(_cfn, di);
                             if (def) {
-                                if (di > 0 || (is_lambda_call && lambda_var_idx >= 0 && lambda_var_info[lambda_var_idx].capture_count > 0))
+                                if (di > 0 || (is_lambda_call && lambda_var_idx >= 0 && 0))
                                     emit(", ");
                                 codegen_expr(def);
                             }
