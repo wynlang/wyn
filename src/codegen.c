@@ -788,3 +788,28 @@ int get_fn_param_count(const char* name) {
     }
     return -1;
 }
+
+// User function name registry — for collision avoidance
+static char user_fn_names[512][128];
+static int user_fn_count = 0;
+
+void register_user_fn(const char* name) {
+    if (user_fn_count < 512) {
+        strncpy(user_fn_names[user_fn_count], name, 127);
+        user_fn_names[user_fn_count][127] = '\0';
+        user_fn_count++;
+    }
+}
+
+int is_user_fn(const char* name) {
+    for (int i = 0; i < user_fn_count; i++) {
+        if (strcmp(user_fn_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+// Emit a user function name with u_ prefix
+void emit_user_fn_name(const char* name, int len) {
+    extern void wyn_emit(const char* fmt, ...);
+    wyn_emit("u_%.*s", len, name);
+}
