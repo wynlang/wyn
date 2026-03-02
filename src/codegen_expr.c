@@ -2917,12 +2917,18 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_TRY: {
-            // ? operator: unwrap Result or return early on error
-            // var val = risky_call()?
-            // Expands to: ({ ResultInt _r = risky_call(); if (_r.tag == 1) return _r; _r.data.ok_value; })
-            emit("({ ResultInt __try_r = ");
+            // ? operator: unwrap Result or propagate error
+            // In Result-returning function: return the error
+            // In non-Result function: print error and exit
+            static int _try_id = 0; _try_id++;
+            emit("({ ResultInt __try_%d = ", _try_id);
             codegen_expr(expr->try_expr.value);
-            emit("; if (__try_r.tag == 1) return __try_r; __try_r.data.ok_value; })");
+            extern const char* current_fn_return_kind;
+            if (current_fn_return_kind && strncmp(current_fn_return_kind, "Result", 6) == 0) {
+                emit("; if (__try_%d.tag == 1) return __try_%d; __try_%d.data.ok_value; })", _try_id, _try_id, _try_id);
+            } else {
+                emit("; if (__try_%d.tag == 1) { fprintf(stderr, \"Error: %%s\\n\", __try_%d.data.err_value); exit(1); } __try_%d.data.ok_value; })", _try_id, _try_id, _try_id);
+            }
             break;
         }
         case EXPR_TERNARY:
