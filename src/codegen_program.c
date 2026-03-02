@@ -622,7 +622,12 @@ void codegen_program(Program* prog) {
                 
                 // Determine return type
                 const char* return_type = "long long";
-                if (method->return_type && method->return_type->type == EXPR_IDENT) {
+                if (method->return_type && method->return_type->type == EXPR_CALL &&
+                    method->return_type->call.callee->type == EXPR_IDENT) {
+                    Token rt = method->return_type->call.callee->token;
+                    if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) return_type = "ResultInt";
+                    else if (rt.length == 6 && memcmp(rt.start, "Option", 6) == 0) return_type = "OptionInt";
+                } else if (method->return_type && method->return_type->type == EXPR_IDENT) {
                     Token ret_type = method->return_type->token;
                     if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
                         return_type = "long long";

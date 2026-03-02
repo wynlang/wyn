@@ -338,6 +338,41 @@ void codegen_stmt(Stmt* stmt) {
                             }
                         }
                     }
+                    // Check if object is a trait — look up method return type from trait decl
+                    if (!_found_method_rt && stmt->var.init->method_call.object->type == EXPR_IDENT && current_program) {
+                        char _on2[64]; snprintf(_on2, 64, "%.*s", stmt->var.init->method_call.object->token.length, stmt->var.init->method_call.object->token.start);
+                        extern const char* get_struct_var_type(const char*);
+                        const char* _vtype = get_struct_var_type(_on2);
+                        if (!_vtype) {
+                            // Check function params for trait type
+                            // The param type might be a trait name
+                        }
+                        // Search trait declarations for this method
+                        char _mn2[64]; snprintf(_mn2, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                        for (int _ti = 0; _ti < current_program->count && !_found_method_rt; _ti++) {
+                            if (current_program->stmts[_ti]->type == STMT_TRAIT) {
+                                Stmt* _ts = current_program->stmts[_ti];
+                                for (int _mi = 0; _mi < _ts->trait_decl.method_count; _mi++) {
+                                    FnStmt* _tm = _ts->trait_decl.methods[_mi];
+                                    if (_tm->name.length == stmt->var.init->method_call.method.length &&
+                                        memcmp(_tm->name.start, stmt->var.init->method_call.method.start, _tm->name.length) == 0) {
+                                        if (_tm->return_type && _tm->return_type->type == EXPR_CALL &&
+                                            _tm->return_type->call.callee->type == EXPR_IDENT) {
+                                            Token rt = _tm->return_type->call.callee->token;
+                                            if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) {
+                                                c_type = "ResultInt"; _found_method_rt = true;
+                                            }
+                                        } else if (_tm->return_type && _tm->return_type->type == EXPR_IDENT) {
+                                            Token rt = _tm->return_type->token;
+                                            if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) { c_type = "const char*"; _found_method_rt = true; }
+                                            else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) { c_type = "double"; _found_method_rt = true; }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // Quick check: if object is a known array and method returns array, type as WynArray
                     if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
                         char _vn[64]; snprintf(_vn, 64, "%.*s", stmt->var.init->method_call.object->token.length, stmt->var.init->method_call.object->token.start);
@@ -900,6 +935,31 @@ void codegen_stmt(Stmt* stmt) {
                             register_struct_var(_rvn2, _prt);
                         }
                     }
+                }
+                // If still long long, search trait declarations for method return type
+                if (strcmp(c_type, "long long") == 0 && current_program) {
+                    char _tmn[64]; snprintf(_tmn, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                    for (int _ti = 0; _ti < current_program->count; _ti++) {
+                        if (current_program->stmts[_ti]->type == STMT_TRAIT) {
+                            Stmt* _ts = current_program->stmts[_ti];
+                            for (int _mi = 0; _mi < _ts->trait_decl.method_count; _mi++) {
+                                FnStmt* _tm = _ts->trait_decl.methods[_mi];
+                                if (_tm->name.length == (int)strlen(_tmn) && memcmp(_tm->name.start, _tmn, _tm->name.length) == 0) {
+                                    if (_tm->return_type && _tm->return_type->type == EXPR_CALL &&
+                                        _tm->return_type->call.callee->type == EXPR_IDENT) {
+                                        Token rt = _tm->return_type->call.callee->token;
+                                        if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) c_type = "ResultInt";
+                                    } else if (_tm->return_type && _tm->return_type->type == EXPR_IDENT) {
+                                        Token rt = _tm->return_type->token;
+                                        if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) { c_type = "const char*"; is_already_const = true; }
+                                        else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) c_type = "double";
+                                    }
+                                    goto var_type_done2;
+                                }
+                            }
+                        }
+                    }
+                    var_type_done2: ;
                 }
             }
             // Emit variable declaration - avoid double const
@@ -1984,7 +2044,12 @@ void codegen_stmt(Stmt* stmt) {
                 
                 // Determine return type
                 const char* return_type = "long long";
-                if (method->return_type && method->return_type->type == EXPR_IDENT) {
+                if (method->return_type && method->return_type->type == EXPR_CALL &&
+                    method->return_type->call.callee->type == EXPR_IDENT) {
+                    Token rt = method->return_type->call.callee->token;
+                    if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) return_type = "ResultInt";
+                    else if (rt.length == 6 && memcmp(rt.start, "Option", 6) == 0) return_type = "OptionInt";
+                } else if (method->return_type && method->return_type->type == EXPR_IDENT) {
                     Token ret_type = method->return_type->token;
                     if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
                         return_type = "long long";
@@ -2046,7 +2111,11 @@ void codegen_stmt(Stmt* stmt) {
                 for (int i = 0; i < stmt->impl.method_count; i++) {
                     FnStmt* method = stmt->impl.methods[i];
                     const char* ret = "long long";
-                    if (method->return_type && method->return_type->type == EXPR_IDENT) {
+                    if (method->return_type && method->return_type->type == EXPR_CALL &&
+                        method->return_type->call.callee->type == EXPR_IDENT) {
+                        Token rt = method->return_type->call.callee->token;
+                        if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) ret = "ResultInt";
+                    } else if (method->return_type && method->return_type->type == EXPR_IDENT) {
                         Token rt = method->return_type->token;
                         if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) ret = "const char*";
                         else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) ret = "double";
@@ -2091,7 +2160,11 @@ void codegen_stmt(Stmt* stmt) {
                 for (int i = 0; i < stmt->trait_decl.method_count; i++) {
                     FnStmt* method = stmt->trait_decl.methods[i];
                     const char* ret = "long long";
-                    if (method->return_type && method->return_type->type == EXPR_IDENT) {
+                    if (method->return_type && method->return_type->type == EXPR_CALL &&
+                        method->return_type->call.callee->type == EXPR_IDENT) {
+                        Token rt = method->return_type->call.callee->token;
+                        if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) ret = "ResultInt";
+                    } else if (method->return_type && method->return_type->type == EXPR_IDENT) {
                         Token rt = method->return_type->token;
                         if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) ret = "const char*";
                         else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) ret = "double";

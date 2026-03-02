@@ -157,3 +157,19 @@ test "trait multi-method" {
     // Verified: trait Shape { fn area(self) -> int; fn name(self) -> string }
     assert(true)
 }
+
+test "string equality basic" {
+    var a = "hello"
+    assert(a == "hello")
+}
+
+test "string inequality" {
+    var a = "hello"
+    assert(a != "world")
+}
+
+test "string equality from function" {
+    var s = "abc"
+    var t = s.upper()
+    assert(t == "ABC")
+}

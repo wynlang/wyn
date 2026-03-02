@@ -54,26 +54,26 @@ fn main() -> int {
     // Test 1: Basic trait method
     var p = Point { x: 3, y: 4 }
     var d1 = p.describe()
-    if d1.contains("3") && d1.contains("4") { pass += 1 } else { fail += 1; println("FAIL: basic trait") }
+    if d1 == "Point(3,4)" { pass += 1 } else { fail += 1; println("FAIL: basic trait, got '${d1}'") }
 
     // Test 2: Polymorphic dispatch (self-only)
     var c = Circle { radius: 5 }
     var d2 = print_desc(p)
     var d3 = print_desc(c)
-    if d2.contains("3") { pass += 1 } else { fail += 1; println("FAIL: poly Point") }
-    if d3.contains("5") { pass += 1 } else { fail += 1; println("FAIL: poly Circle") }
+    if d2 == "Point(3,4)" { pass += 1 } else { fail += 1; println("FAIL: poly Point, got '${d2}'") }
+    if d3 == "Circle(r=5)" { pass += 1 } else { fail += 1; println("FAIL: poly Circle, got '${d3}'") }
 
     // Test 3: Trait with string param
     var f = Formal { title: "Dr." }
     var g1 = f.greet("Smith")
-    if g1.contains("Smith") { pass += 1 } else { fail += 1; println("FAIL: string param") }
+    if g1 == "Dr. Smith" { pass += 1 } else { fail += 1; println("FAIL: string param, got '${g1}'") }
 
     // Test 4: Polymorphic dispatch with string param
     var cas = Casual {}
     var g2 = do_greet(f, "Smith")
     var g3 = do_greet(cas, "Bob")
-    if g2.contains("Smith") { pass += 1 } else { fail += 1; println("FAIL: poly greet Formal") }
-    if g3.contains("Bob") { pass += 1 } else { fail += 1; println("FAIL: poly greet Casual") }
+    if g2 == "Dr. Smith" { pass += 1 } else { fail += 1; println("FAIL: poly greet Formal, got '${g2}'") }
+    if g3 == "Hey Bob" { pass += 1 } else { fail += 1; println("FAIL: poly greet Casual, got '${g3}'") }
 
     // Test 5: Trait with two int params
     var add = Adder {}
