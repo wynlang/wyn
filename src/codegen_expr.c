@@ -3212,15 +3212,21 @@ void codegen_expr(Expr* expr) {
         }
         case EXPR_TUPLE: {
             // Generate tuple as a struct literal
-            emit("(struct { ");
-            for (int i = 0; i < expr->tuple.count; i++) {
-                const char* et = "long long";
-                if (expr->tuple.elements[i]->type == EXPR_STRING) et = "const char*";
-                else if (expr->tuple.elements[i]->type == EXPR_FLOAT) et = "double";
-                else if (expr->tuple.elements[i]->type == EXPR_BOOL) et = "bool";
-                emit("%s item%d; ", et, i);
+            // If inside a function returning a tuple, use the typedef
+            extern const char* current_fn_return_kind;
+            if (current_fn_return_kind && strncmp(current_fn_return_kind, "_wyn_tup_", 9) == 0) {
+                emit("(%s){ ", current_fn_return_kind);
+            } else {
+                emit("(struct { ");
+                for (int i = 0; i < expr->tuple.count; i++) {
+                    const char* et = "long long";
+                    if (expr->tuple.elements[i]->type == EXPR_STRING) et = "const char*";
+                    else if (expr->tuple.elements[i]->type == EXPR_FLOAT) et = "double";
+                    else if (expr->tuple.elements[i]->type == EXPR_BOOL) et = "bool";
+                    emit("%s item%d; ", et, i);
+                }
+                emit("}){ ");
             }
-            emit("}){ ");
             for (int i = 0; i < expr->tuple.count; i++) {
                 if (i > 0) emit(", ");
                 codegen_expr(expr->tuple.elements[i]);

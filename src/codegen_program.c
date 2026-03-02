@@ -423,6 +423,24 @@ void codegen_program(Program* prog) {
                 } else if (fn->return_type->type == EXPR_ARRAY) {
                     // Array type like [int] or [string]
                     return_type = "WynArray";
+                } else if (fn->return_type->type == EXPR_TUPLE) {
+                    // Tuple return type: (int, string) -> generate typedef
+                    static char _trt[256];
+                    snprintf(_trt, sizeof(_trt), "_wyn_tup_%.*s", fn->name.length, fn->name.start);
+                    // Emit typedef before the function
+                    emit("typedef struct { ");
+                    for (int _ti = 0; _ti < fn->return_type->tuple.count; _ti++) {
+                        const char* et = "long long";
+                        if (fn->return_type->tuple.elements[_ti]->type == EXPR_IDENT) {
+                            Token tt = fn->return_type->tuple.elements[_ti]->token;
+                            if (tt.length == 6 && memcmp(tt.start, "string", 6) == 0) et = "const char*";
+                            else if (tt.length == 5 && memcmp(tt.start, "float", 5) == 0) et = "double";
+                            else if (tt.length == 4 && memcmp(tt.start, "bool", 4) == 0) et = "bool";
+                        }
+                        emit("%s item%d; ", et, _ti);
+                    }
+                    emit("} %s;\n", _trt);
+                    return_type = _trt;
                 } else if (fn->return_type->type == EXPR_IDENT) {
                     Token type_name = fn->return_type->token;
                     if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {

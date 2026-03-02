@@ -3507,6 +3507,26 @@ static Stmt* parse_match_statement() {
 static Expr* parse_type() {
     Expr* base_type;
     
+    // Handle tuple types: (T1, T2, ...)
+    if (match(TOKEN_LPAREN)) {
+        Expr* first = parse_type();
+        if (match(TOKEN_COMMA)) {
+            // It's a tuple type
+            base_type = alloc_expr();
+            base_type->type = EXPR_TUPLE;
+            base_type->tuple.elements = malloc(sizeof(Expr*) * 8);
+            base_type->tuple.count = 1;
+            base_type->tuple.elements[0] = first;
+            do {
+                base_type->tuple.elements[base_type->tuple.count++] = parse_type();
+            } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
+            expect(TOKEN_RPAREN, "Expected ')' after tuple type");
+            return base_type;
+        }
+        expect(TOKEN_RPAREN, "Expected ')' after grouped type");
+        return first; // Just a grouped type (T)
+    }
+    
     // Handle function types: fn(T1, T2) -> R
     if (match(TOKEN_FN)) {
         expect(TOKEN_LPAREN, "Expected '(' after 'fn'");

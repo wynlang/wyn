@@ -1224,6 +1224,12 @@ void codegen_stmt(Stmt* stmt) {
                 } else if (stmt->fn.return_type->type == EXPR_ARRAY) {
                     // Array type like [int] or [string]
                     return_type = "WynArray";
+                } else if (stmt->fn.return_type->type == EXPR_TUPLE) {
+                    // Tuple return type — typedef already emitted by forward declaration
+                    // Use the same name: _wyn_tup_<fn_name>
+                    static char _trt2[256];
+                    snprintf(_trt2, sizeof(_trt2), "_wyn_tup_%.*s", stmt->fn.name.length, stmt->fn.name.start);
+                    return_type = _trt2;
                 } else if (stmt->fn.return_type->type == EXPR_IDENT) {
                     Token type_name = stmt->fn.return_type->token;
                     if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
@@ -1445,6 +1451,10 @@ void codegen_stmt(Stmt* stmt) {
                     current_fn_return_kind = "OptionInt";
                 else if (rt.length == 12 && memcmp(rt.start, "OptionString", 12) == 0)
                     current_fn_return_kind = "OptionString";
+            } else if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_TUPLE) {
+                static char _tup_rk[128];
+                snprintf(_tup_rk, sizeof(_tup_rk), "_wyn_tup_%.*s", stmt->fn.name.length, stmt->fn.name.start);
+                current_fn_return_kind = _tup_rk;
             }
 
             // Function body
