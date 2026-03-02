@@ -648,12 +648,14 @@ void codegen_program(Program* prog) {
                     if (k > 0) emit(", ");
                     
                     // Determine parameter type
-                    const char* param_type = "int";
+                    const char* param_type = "long long";
                     char custom_type_buf[256] = {0};
                     if (method->param_types[k] && method->param_types[k]->type == EXPR_IDENT) {
                         Token type_name = method->param_types[k]->token;
                         if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-                            param_type = "int";
+                            param_type = "long long";
+                        } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+                            param_type = "const char*";
                         } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
                             param_type = "double";
                         } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {

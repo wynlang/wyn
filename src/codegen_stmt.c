@@ -1676,11 +1676,11 @@ void codegen_stmt(Stmt* stmt) {
                     if (method->param_types[j] && method->param_types[j]->type == EXPR_IDENT) {
                         Token ptype = method->param_types[j]->token;
                         if (ptype.length == 3 && memcmp(ptype.start, "int", 3) == 0) {
-                            emit("int");
+                            emit("long long");
                         } else if (ptype.length == 5 && memcmp(ptype.start, "float", 5) == 0) {
                             emit("double");
                         } else if (ptype.length == 6 && memcmp(ptype.start, "string", 6) == 0) {
-                            emit("char*");
+                            emit("const char*");
                         } else {
                             emit("%.*s", ptype.length, ptype.start);
                         }
@@ -2020,6 +2020,8 @@ void codegen_stmt(Stmt* stmt) {
                             param_type = "double";
                         } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
                             param_type = "bool";
+                        } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+                            param_type = "const char*";
                         } else {
                             // Custom struct type
                             snprintf(custom_type_buf, sizeof(custom_type_buf), "%.*s",
