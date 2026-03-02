@@ -709,7 +709,15 @@ void codegen_stmt(Stmt* stmt) {
                                 Stmt* fs = current_program->stmts[fi];
                                 if (fs->type == STMT_FN && fs->fn.name.length == fn_name.length &&
                                     memcmp(fs->fn.name.start, fn_name.start, fn_name.length) == 0 &&
-                                    fs->fn.return_type && fs->fn.return_type->type == EXPR_IDENT) {
+                                    fs->fn.return_type) {
+                                    if (fs->fn.return_type->type == EXPR_CALL &&
+                                        fs->fn.return_type->call.callee->type == EXPR_IDENT) {
+                                        Token rt = fs->fn.return_type->call.callee->token;
+                                        if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) {
+                                            c_type = "ResultInt";
+                                            break;
+                                        }
+                                    } else if (fs->fn.return_type->type == EXPR_IDENT) {
                                     Token rt = fs->fn.return_type->token;
                                     if (rt.length == 9 && memcmp(rt.start, "ResultInt", 9) == 0) {
                                         c_type = "ResultInt";
@@ -728,6 +736,7 @@ void codegen_stmt(Stmt* stmt) {
                                         }
                                     }
                                     break;
+                                }
                                 }
                             }
                         }

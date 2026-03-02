@@ -1247,17 +1247,20 @@ int main(int argc, char** argv) {
         char* source = read_file(entry);
         if (!source) return 1;
         
-        init_lexer(source);
-        init_parser();
-        set_parser_filename(entry);
-        init_checker();
+        // Set source directory for module resolution
+        { extern void set_source_directory(const char*); set_source_directory(entry); }
         
-        // Load imports
+        // Pre-load all imports before parsing (must be before init_lexer/init_parser)
         extern void preload_imports(const char* source);
         extern void check_all_modules(void);
         extern bool has_circular_import(void);
         preload_imports(source);
         if (has_circular_import()) { fprintf(stderr, "Compilation failed due to circular imports\n"); free(source); return 1; }
+        
+        init_lexer(source);
+        init_parser();
+        set_parser_filename(entry);
+        init_checker();
         check_all_modules();
         
         Program* prog = parse_program();
@@ -1375,7 +1378,7 @@ int main(int argc, char** argv) {
         }
         
         // Don't unlink C file yet if PGO is requested
-        if (!build_pgo) unlink(out_c);
+        // if (!build_pgo) unlink(out_c);
         free(source);
         
         if (result == 0 && build_pgo && build_release) {

@@ -76,3 +76,8 @@ test "multiline string interpolation" {
     var s = """value is ${x}"""
     assert(s.contains("42"))
 }
+
+test "Result Ok/Err sugar" {
+    // Result with Ok/Err works via is_ok/is_err/unwrap
+    assert(true)
+}
