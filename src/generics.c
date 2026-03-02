@@ -363,11 +363,11 @@ void wyn_register_generic_function(void* fn_ptr) {
     generic_fn->type_param_count = fn->type_param_count;
     generic_fn->original_fn = fn;
     generic_fn->next = g_generic_functions;
+    g_generic_functions = generic_fn;
     
     // T3.1.3: Initialize constraints (placeholder for now)
     generic_fn->constraints = wyn_parse_where_constraints(fn->type_params, fn->type_param_count);
     
-    g_generic_functions = generic_fn;
     g_generic_function_count++;
 }
 
@@ -1050,6 +1050,13 @@ void wyn_collect_generic_instantiations_from_expr(void* expr_ptr) {
             for (int i = 0; i < expr->match.arm_count; i++) {
                 if (expr->match.arms[i].result) {
                     wyn_collect_generic_instantiations_from_expr(expr->match.arms[i].result);
+                }
+            }
+            break;
+        case EXPR_STRING_INTERP:
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                if (expr->string_interp.expressions[i]) {
+                    wyn_collect_generic_instantiations_from_expr(expr->string_interp.expressions[i]);
                 }
             }
             break;
