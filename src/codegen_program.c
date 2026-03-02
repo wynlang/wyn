@@ -349,31 +349,6 @@ void codegen_program(Program* prog) {
         }
     }
     
-    // Register all user function names and emit #define aliases for collision avoidance
-    {
-        extern void register_user_fn(const char*);
-        emit("\n// User function namespace aliases\n");
-        for (int i = 0; i < prog->count; i++) {
-            FnStmt* fn = NULL;
-            if (prog->stmts[i]->type == STMT_FN) fn = &prog->stmts[i]->fn;
-            else if (prog->stmts[i]->type == STMT_EXPORT && prog->stmts[i]->export.stmt && prog->stmts[i]->export.stmt->type == STMT_FN) fn = &prog->stmts[i]->export.stmt->fn;
-            if (fn && fn->type_param_count == 0) {
-                char _n[128]; snprintf(_n, 128, "%.*s", fn->name.length, fn->name.start);
-                if (strcmp(_n, "main") != 0) {
-                    // Skip C keywords and types — they're already handled by the keyword prefix
-                    static const char* _skip[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt","true","false","bool","NULL",NULL};
-                    int _is_skip = 0;
-                    for (int _k = 0; _skip[_k]; _k++) { if (strcmp(_n, _skip[_k]) == 0) { _is_skip = 1; break; } }
-                    if (!_is_skip) {
-                        register_user_fn(_n);
-                        emit("#define %s u_%s\n", _n, _n);
-                    }
-                }
-            }
-        }
-        emit("\n");
-    }
-    
     // Generate forward declarations for all functions
     for (int i = 0; i < prog->count; i++) {
         FnStmt* fn = NULL;

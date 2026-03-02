@@ -1600,13 +1600,13 @@ void http_set_header(const char* key, const char* val) {
     }
 }
 
-void http_clear_headers() {
+void wyn_http_clear_headers() {
     for(int i = 0; i < http_header_count; i++) free(http_headers[i]);
     http_header_count = 0;
 }
 
-int http_status() { return http_last_status; }
-char* http_error() { return http_last_error[0] ? http_last_error : NULL; }
+int wyn_http_status() { return http_last_status; }
+char* wyn_http_error() { return http_last_error[0] ? http_last_error : NULL; }
 char* last_error_get() { return last_error[0] ? last_error : NULL; }
 
 char* url_encode(const char* str) {
