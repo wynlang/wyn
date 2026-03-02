@@ -3211,10 +3211,14 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_TUPLE: {
-            // Generate tuple as a struct literal (no compound statement)
+            // Generate tuple as a struct literal
             emit("(struct { ");
             for (int i = 0; i < expr->tuple.count; i++) {
-                emit("int item%d; ", i);
+                const char* et = "long long";
+                if (expr->tuple.elements[i]->type == EXPR_STRING) et = "const char*";
+                else if (expr->tuple.elements[i]->type == EXPR_FLOAT) et = "double";
+                else if (expr->tuple.elements[i]->type == EXPR_BOOL) et = "bool";
+                emit("%s item%d; ", et, i);
             }
             emit("}){ ");
             for (int i = 0; i < expr->tuple.count; i++) {

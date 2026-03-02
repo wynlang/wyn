@@ -684,8 +684,8 @@ void codegen_stmt(Stmt* stmt) {
                         }
                     }
                 } else if (stmt->var.init->type == EXPR_TUPLE) {
-                    // Tuple type - use __auto_type (GCC/Clang extension)
-                    c_type = "long long";
+                    // Tuple type - use __auto_type to match anonymous struct
+                    c_type = "__auto_type";
                 } else if (stmt->var.init->type == EXPR_CALL) {
                     // Detect module constructor calls first: Module.new()
                     bool detected = false;
