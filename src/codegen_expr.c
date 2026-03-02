@@ -394,7 +394,7 @@ void codegen_expr(Expr* expr) {
                 bool right_is_string = (expr->binary.right->type == EXPR_STRING) ||
                                       (expr->binary.right->expr_type && expr->binary.right->expr_type->kind == TYPE_STRING);
                 
-                if (left_is_string && right_is_string) {
+                if (left_is_string || right_is_string) {
                     // Use strcmp for string comparison
                     emit("(strcmp(");
                     codegen_expr(expr->binary.left);
@@ -3013,7 +3013,7 @@ void codegen_expr(Expr* expr) {
                     const char* part = expr->string_interp.parts[i];
                     const char* part_start_ptr = part;
                     while (*part) {
-                        if (*part == '%') { fprintf(stderr, "ESCAPING PERCENT\n"); emit("%%%%"); } // Escape % for sprintf
+                        if (*part == '%') emit("%%%%"); // Escape % for sprintf
                         else if (*part == '\n') emit("\\n");
                         else if (*part == '"' && (part == part_start_ptr || *(part-1) != '\\')) emit("\\\"");
                         else emit("%c", *part);

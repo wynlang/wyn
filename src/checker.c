@@ -2208,6 +2208,9 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                        (left->kind == TYPE_ENUM && right->kind == TYPE_ENUM) ||
                                        (left->kind == TYPE_INT && right->kind == TYPE_FLOAT) ||
                                        (left->kind == TYPE_FLOAT && right->kind == TYPE_INT) ||
+                                       (left->kind == TYPE_STRING && right->kind == TYPE_STRING) ||
+                                       (left->kind == TYPE_STRING) ||
+                                       (right->kind == TYPE_STRING) ||
                                        (left->kind == TYPE_FUNCTION) ||
                                        (right->kind == TYPE_FUNCTION);
                 
