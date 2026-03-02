@@ -1036,7 +1036,6 @@ void codegen_match_statement(Stmt* stmt) {
         emit("    }\n");
     } else {
         // Generate if-else chain for complex patterns
-        emit("{\n");
         
         // Determine the type of the match value and get enum name
         bool is_enum_match = false;
@@ -1088,6 +1087,53 @@ void codegen_match_statement(Stmt* stmt) {
             }
         }
         
+        // Check if this is a Result match (Ok/Err patterns)
+        bool is_result_match = false;
+        for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+            MatchCase* mc = &stmt->match_stmt.cases[i];
+            if (mc->pattern->type == PATTERN_OPTION && mc->pattern->option.variant_name.length > 0) {
+                if ((mc->pattern->option.variant_name.length == 2 && memcmp(mc->pattern->option.variant_name.start, "Ok", 2) == 0) ||
+                    (mc->pattern->option.variant_name.length == 3 && memcmp(mc->pattern->option.variant_name.start, "Err", 3) == 0)) {
+                    is_result_match = true;
+                    break;
+                }
+            }
+        }
+        
+        if (is_result_match) {
+            static int _rmid = 0; _rmid++;
+            emit("    ResultInt __match_val_%d = ", _rmid);
+            codegen_expr(stmt->match_stmt.value);
+            emit(";\n");
+            for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+                MatchCase* mc = &stmt->match_stmt.cases[i];
+                if (i > 0) emit(" else ");
+                if (mc->pattern->type == PATTERN_OPTION) {
+                    bool is_ok = (mc->pattern->option.variant_name.length == 2 && memcmp(mc->pattern->option.variant_name.start, "Ok", 2) == 0);
+                    emit("if (__match_val_%d.tag == %d) {\n", _rmid, is_ok ? 0 : 1);
+                    if (mc->pattern->option.inner) {
+                        if (is_ok) {
+                            emit("        long long %.*s = __match_val_%d.data.ok_value;\n",
+                                mc->pattern->option.inner->ident.name.length,
+                                mc->pattern->option.inner->ident.name.start, _rmid);
+                        } else {
+                            emit("        const char* %.*s = __match_val_%d.data.err_value;\n",
+                                mc->pattern->option.inner->ident.name.length,
+                                mc->pattern->option.inner->ident.name.start, _rmid);
+                        }
+                    }
+                    emit("        ");
+                    if (mc->body) codegen_stmt(mc->body);
+                    emit("    }");
+                } else if (mc->pattern->type == PATTERN_WILDCARD) {
+                    emit("{\n        ");
+                    if (mc->body) codegen_stmt(mc->body);
+                    emit("    }");
+                }
+            }
+            emit("\n");
+        } else {
+        emit("{\n");
         if (is_enum_match) {
             // For enum matches, store the whole enum value
             emit("    __auto_type __match_val = ");
@@ -1278,5 +1324,6 @@ void codegen_match_statement(Stmt* stmt) {
         }
         
         emit("}\n");
+    }
     }
 }

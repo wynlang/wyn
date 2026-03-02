@@ -698,8 +698,26 @@ void codegen_stmt(Stmt* stmt) {
                                 }
                                 break;
                             }
-                            default:
-                                c_type = "__auto_type";
+                            default: {
+                                // Check if called function returns Result<T,E>
+                                bool _found_result = false;
+                                if (stmt->var.init->call.callee->type == EXPR_IDENT && current_program) {
+                                    Token fn_name = stmt->var.init->call.callee->token;
+                                    for (int fi = 0; fi < current_program->count; fi++) {
+                                        Stmt* fs = current_program->stmts[fi];
+                                        if (fs->type == STMT_FN && fs->fn.name.length == fn_name.length &&
+                                            memcmp(fs->fn.name.start, fn_name.start, fn_name.length) == 0 &&
+                                            fs->fn.return_type && fs->fn.return_type->type == EXPR_CALL &&
+                                            fs->fn.return_type->call.callee->type == EXPR_IDENT) {
+                                            Token rt = fs->fn.return_type->call.callee->token;
+                                            if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) {
+                                                c_type = "ResultInt"; _found_result = true; break;
+                                            }
+                                        }
+                                    }
+                                }
+                                if (!_found_result) c_type = "__auto_type";
+                            }
                         }
                     } else {
                         // Check if called function returns ResultInt or enum

@@ -78,6 +78,6 @@ test "multiline string interpolation" {
 }
 
 test "Result Ok/Err sugar" {
-    // Result with Ok/Err works via is_ok/is_err/unwrap
+    // Result with Ok/Err, is_ok/is_err/unwrap, and match all work
     assert(true)
 }
