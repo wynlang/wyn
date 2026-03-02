@@ -2049,10 +2049,24 @@ void codegen_stmt(Stmt* stmt) {
                         if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) ret = "const char*";
                         else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) ret = "double";
                     }
-                    emit("%s %.*s_%.*s_%.*s_wrap(void* __d) { return %.*s_%.*s(*(%.*s*)__d); }\n",
+                    emit("%s %.*s_%.*s_%.*s_wrap(void* __d",
                          ret, tname.length, tname.start, method->name.length, method->name.start,
-                         itype.length, itype.start, itype.length, itype.start,
+                         itype.length, itype.start);
+                    // Extra params (skip self at index 0)
+                    for (int j = 1; j < method->param_count; j++) {
+                        const char* pt = "long long";
+                        if (method->param_types[j] && method->param_types[j]->type == EXPR_IDENT) {
+                            Token ptt = method->param_types[j]->token;
+                            if (ptt.length == 6 && memcmp(ptt.start, "string", 6) == 0) pt = "const char*";
+                            else if (ptt.length == 5 && memcmp(ptt.start, "float", 5) == 0) pt = "double";
+                        }
+                        emit(", %s __a%d", pt, j);
+                    }
+                    emit(") { return %.*s_%.*s(*(%.*s*)__d",
+                         itype.length, itype.start,
                          method->name.length, method->name.start, itype.length, itype.start);
+                    for (int j = 1; j < method->param_count; j++) emit(", __a%d", j);
+                    emit("); }\n");
                 }
                 emit("%.*s_vtable %.*s_%.*s_vt = { ", tname.length, tname.start,
                      tname.length, tname.start, itype.length, itype.start);
@@ -2080,8 +2094,19 @@ void codegen_stmt(Stmt* stmt) {
                         if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) ret = "const char*";
                         else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) ret = "double";
                     }
-                    emit("typedef %s (*%.*s_%.*s_fn)(void*);\n", ret,
+                    emit("typedef %s (*%.*s_%.*s_fn)(void*", ret,
                          tname.length, tname.start, method->name.length, method->name.start);
+                    // Extra params (skip self at index 0)
+                    for (int j = 1; j < method->param_count; j++) {
+                        const char* pt = "long long";
+                        if (method->param_types[j] && method->param_types[j]->type == EXPR_IDENT) {
+                            Token ptt = method->param_types[j]->token;
+                            if (ptt.length == 6 && memcmp(ptt.start, "string", 6) == 0) pt = "const char*";
+                            else if (ptt.length == 5 && memcmp(ptt.start, "float", 5) == 0) pt = "double";
+                        }
+                        emit(", %s", pt);
+                    }
+                    emit(");\n");
                 }
                 
                 // 2. Vtable struct
