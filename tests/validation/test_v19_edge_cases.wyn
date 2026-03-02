@@ -115,3 +115,24 @@ test "Result type works" {
     // Validated: match r { Ok(v) => ..., Err(e) => ... }
     assert(true)
 }
+
+test "string match statement" {
+    var s = "hello"
+    var r = ""
+    match s {
+        "hello" => { r = "greeting" },
+        "bye" => { r = "farewell" },
+        _ => { r = "unknown" }
+    }
+    assert_eq(r, "greeting")
+}
+
+test "string match wildcard" {
+    var s = "xyz"
+    var r = ""
+    match s {
+        "a" => { r = "a" },
+        _ => { r = "wild" }
+    }
+    assert_eq(r, "wild")
+}

@@ -1100,7 +1100,37 @@ void codegen_match_statement(Stmt* stmt) {
             }
         }
         
-        if (is_result_match) {
+        // Check if this is a string match
+        bool is_string_match = false;
+        for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+            MatchCase* mc = &stmt->match_stmt.cases[i];
+            if (mc->pattern->type == PATTERN_LITERAL && mc->pattern->literal.value.type == TOKEN_STRING) {
+                is_string_match = true; break;
+            }
+        }
+        
+        if (is_string_match) {
+            static int _smid = 0; _smid++;
+            emit("    const char* __match_str_%d = ", _smid);
+            codegen_expr(stmt->match_stmt.value);
+            emit(";\n");
+            for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+                MatchCase* mc = &stmt->match_stmt.cases[i];
+                if (i > 0) emit(" else ");
+                if (mc->pattern->type == PATTERN_LITERAL && mc->pattern->literal.value.type == TOKEN_STRING) {
+                    emit("if (strcmp(__match_str_%d, %.*s) == 0) {\n", _smid,
+                        mc->pattern->literal.value.length, mc->pattern->literal.value.start);
+                } else if (mc->pattern->type == PATTERN_WILDCARD) {
+                    emit("{\n");
+                } else {
+                    emit("if (1) {\n"); // fallback
+                }
+                emit("        ");
+                if (mc->body) codegen_stmt(mc->body);
+                emit("    }");
+            }
+            emit("\n");
+        } else if (is_result_match) {
             static int _rmid = 0; _rmid++;
             emit("    ResultInt __match_val_%d = ", _rmid);
             codegen_expr(stmt->match_stmt.value);
