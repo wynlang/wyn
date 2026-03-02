@@ -748,6 +748,9 @@ void codegen_stmt(Stmt* stmt) {
                                             if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) {
                                                 c_type = "ResultInt"; _found_result = true; break;
                                             }
+                                            if (rt.length == 6 && memcmp(rt.start, "Option", 6) == 0) {
+                                                c_type = "OptionInt"; _found_result = true; break;
+                                            }
                                         }
                                     }
                                 }
@@ -949,6 +952,7 @@ void codegen_stmt(Stmt* stmt) {
                                         _tm->return_type->call.callee->type == EXPR_IDENT) {
                                         Token rt = _tm->return_type->call.callee->token;
                                         if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) c_type = "ResultInt";
+                                        else if (rt.length == 6 && memcmp(rt.start, "Option", 6) == 0) c_type = "OptionInt";
                                     } else if (_tm->return_type && _tm->return_type->type == EXPR_IDENT) {
                                         Token rt = _tm->return_type->token;
                                         if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) { c_type = "const char*"; is_already_const = true; }

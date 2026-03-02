@@ -1125,6 +1125,20 @@ void codegen_match_statement(Stmt* stmt) {
             }
         }
         
+        // Check if this is an Option match (Some/None patterns)
+        bool is_option_match = false;
+        for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+            MatchCase* mc = &stmt->match_stmt.cases[i];
+            if (mc->pattern->type == PATTERN_OPTION) {
+                if (mc->pattern->option.is_some || 
+                    (mc->pattern->option.variant_name.length == 4 && memcmp(mc->pattern->option.variant_name.start, "Some", 4) == 0) ||
+                    (mc->pattern->option.variant_name.length == 4 && memcmp(mc->pattern->option.variant_name.start, "None", 4) == 0)) {
+                    // Check it's not Ok/Err (which is Result, not Option)
+                    if (!is_result_match) { is_option_match = true; break; }
+                }
+            }
+        }
+        
         // Check if this is a string match
         bool is_string_match = false;
         for (int i = 0; i < stmt->match_stmt.case_count; i++) {
@@ -1153,6 +1167,36 @@ void codegen_match_statement(Stmt* stmt) {
                 emit("        ");
                 if (mc->body) codegen_stmt(mc->body);
                 emit("    }");
+            }
+            emit("\n");
+        } else if (is_option_match) {
+            static int _omid = 0; _omid++;
+            emit("    OptionInt __match_opt_%d = ", _omid);
+            codegen_expr(stmt->match_stmt.value);
+            emit(";\n");
+            for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+                MatchCase* mc = &stmt->match_stmt.cases[i];
+                if (i > 0) emit(" else ");
+                if (mc->pattern->type == PATTERN_OPTION && mc->pattern->option.is_some) {
+                    emit("if (__match_opt_%d.tag == 1) {\n", _omid);
+                    if (mc->pattern->option.inner) {
+                        emit("        long long %.*s = __match_opt_%d.value;\n",
+                            mc->pattern->option.inner->ident.name.length,
+                            mc->pattern->option.inner->ident.name.start, _omid);
+                    }
+                    emit("        ");
+                    if (mc->body) codegen_stmt(mc->body);
+                    emit("    }");
+                } else if (mc->pattern->type == PATTERN_OPTION && !mc->pattern->option.is_some) {
+                    emit("if (__match_opt_%d.tag == 0) {\n", _omid);
+                    emit("        ");
+                    if (mc->body) codegen_stmt(mc->body);
+                    emit("    }");
+                } else if (mc->pattern->type == PATTERN_WILDCARD) {
+                    emit("{\n        ");
+                    if (mc->body) codegen_stmt(mc->body);
+                    emit("    }");
+                }
             }
             emit("\n");
         } else if (is_result_match) {

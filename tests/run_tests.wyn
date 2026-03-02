@@ -37,6 +37,7 @@ fn main() -> int {
         "tests/validation/test_v19_edge_cases.wyn",
         "tests/validation/test_result_comprehensive.wyn",
         "tests/validation/test_traits_comprehensive.wyn",
+        "tests/validation/test_patterns_comprehensive.wyn",
         "tests/validation/test_hashmap_simple.wyn",
         "tests/validation/test_enum_simple.wyn",
         "tests/validation/test_var_in_nested_scopes.wyn",
@@ -94,7 +95,7 @@ fn main() -> int {
         "tests/regression/test_hashmap_in_array.wyn"
     ]
 
-    var count = 62
+    var count = 63
 
     // Spawn all tests concurrently
     var futures = []
