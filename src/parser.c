@@ -193,8 +193,10 @@ static Expr* primary() {
     if (match(TOKEN_STRING)) {
         // Check for string interpolation
         Token str_token = parser.previous;
-        const char* str = str_token.start + 1; // Skip opening quote
-        int len = str_token.length - 2; // Skip quotes
+        bool is_triple = (str_token.length >= 6 && str_token.start[0] == '"' && str_token.start[1] == '"' && str_token.start[2] == '"');
+        int quote_len = is_triple ? 3 : 1;
+        const char* str = str_token.start + quote_len;
+        int len = str_token.length - quote_len * 2;
         
         // Simple check for ${} pattern
         bool has_interp = false;

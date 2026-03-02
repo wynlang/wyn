@@ -70,3 +70,9 @@ world
     assert(s.contains("hello"))
     assert(s.contains("world"))
 }
+
+test "multiline string interpolation" {
+    var x = 42
+    var s = """value is ${x}"""
+    assert(s.contains("42"))
+}
