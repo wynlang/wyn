@@ -723,15 +723,6 @@ int main(int argc, char** argv) {
         return cmd_watch(argv[2], argc - 3, argv + 3);
     }
     
-    if (strcmp(command, "install") == 0) {
-        extern int package_install(const char*);
-        if (argc < 3) {
-            return package_install(".");
-        } else {
-            return package_install(argv[2]);
-        }
-    }
-    
     if (strcmp(command, "lsp") == 0) {
         // wyn lsp - start LSP server
         extern int lsp_server_start();
@@ -2008,31 +1999,6 @@ int main(int argc, char** argv) {
             return system(fmt_cmd) == 0 ? 0 : 1;
         }
         return cmd_fmt(argv[2], argc, argv);
-    }
-    
-    if (strcmp(command, "repl") == 0) {
-        extern int cmd_repl(int argc, char** argv);
-        return cmd_repl(argc, argv);
-    }
-    
-    
-    if (strcmp(command, "pkg") == 0) {
-        extern int cmd_pkg(int argc, char** argv);
-        return cmd_pkg(argc, argv);
-    }
-    
-    if (strcmp(command, "debug") == 0) {
-        extern int cmd_debug(const char* program, int argc, char** argv);
-        if (argc < 3) {
-            fprintf(stderr, "Usage: wyn debug <program>\n");
-            return 1;
-        }
-        return cmd_debug(argv[2], argc, argv);
-    }
-    
-    if (strcmp(command, "lsp") == 0) {
-        extern int cmd_lsp(int argc, char** argv);
-        return cmd_lsp(argc, argv);
     }
     
     if (strcmp(command, "run") == 0) {
