@@ -1807,14 +1807,54 @@ int main(int argc, char** argv) {
         // Cross-compile based on target
         char compile_cmd[4096];
         if (strcmp(target, "linux") == 0) {
-            snprintf(compile_cmd, sizeof(compile_cmd), "gcc -std=c11 -O2 -w -I %s/src -o %s.linux %s.c %s/runtime/libwyn_rt.a -lpthread -lm", wyn_root, file, file, wyn_root);
-            printf("Compiling for Linux (%s)...\n", arch);
+            // Try cross-compilers in order: specific gcc, zig cc, native gcc (only works on Linux)
+            const char* cc = NULL;
+            if (strcmp(arch, "aarch64") == 0) {
+                if (system("which aarch64-linux-gnu-gcc >/dev/null 2>&1") == 0) cc = "aarch64-linux-gnu-gcc";
+            } else {
+                if (system("which x86_64-linux-gnu-gcc >/dev/null 2>&1") == 0) cc = "x86_64-linux-gnu-gcc";
+            }
+            if (!cc && system("which zig >/dev/null 2>&1") == 0) {
+                // Use zig as cross-compiler
+                snprintf(compile_cmd, sizeof(compile_cmd),
+                    "zig cc -target %s-linux-gnu -std=c11 -O2 -w -I %s/src -I %s/vendor/minicoro "
+                    "-o %s.linux %s.c %s/runtime/libwyn_rt.a -lpthread -lm",
+                    arch, wyn_root, wyn_root, file, file, wyn_root);
+                printf("Cross-compiling for Linux (%s) via zig cc...\n", arch);
+            } else if (cc) {
+                snprintf(compile_cmd, sizeof(compile_cmd),
+                    "%s -std=c11 -O2 -w -I %s/src -I %s/vendor/minicoro "
+                    "-o %s.linux %s.c %s/runtime/libwyn_rt.a -lpthread -lm",
+                    cc, wyn_root, wyn_root, file, file, wyn_root);
+                printf("Cross-compiling for Linux (%s) via %s...\n", arch, cc);
+            } else {
+#ifdef __linux__
+                // On Linux, native gcc works
+                snprintf(compile_cmd, sizeof(compile_cmd),
+                    "gcc -std=c11 -O2 -w -I %s/src -I %s/vendor/minicoro "
+                    "-o %s.linux %s.c %s/runtime/libwyn_rt.a -lpthread -lm",
+                    wyn_root, wyn_root, file, file, wyn_root);
+                printf("Compiling for Linux (%s)...\n", arch);
+#else
+                fprintf(stderr, "Error: No Linux cross-compiler found.\n");
+                fprintf(stderr, "Install one of:\n");
+                fprintf(stderr, "  brew install x86_64-elf-gcc   (or aarch64-elf-gcc)\n");
+                fprintf(stderr, "  brew install zig\n");
+                return 1;
+#endif
+            }
         } else if (strcmp(target, "macos") == 0) {
             snprintf(compile_cmd, sizeof(compile_cmd), "clang -std=c11 -O2 -w -arch %s -I %s/src -o %s.macos %s.c %s/runtime/libwyn_rt.a -lpthread -lm", arch, wyn_root, file, file, wyn_root);
             printf("Compiling for macOS (%s)...\n", arch);
         } else if (strcmp(target, "windows") == 0) {
-            snprintf(compile_cmd, 512, "x86_64-w64-mingw32-gcc -std=c11 -O2 -w -static -I %s/src -o %s.exe %s.c -lm", wyn_root, file, file);
-            printf("Cross-compiling for Windows...\n");
+            // Windows cross-compilation requires a pre-built Windows runtime.
+            // The runtime .c files have POSIX dependencies that need #ifdef guards.
+            // For now, compile with runtime sources that are Windows-compatible.
+            // TODO: Build libwyn_rt_windows.a on Windows CI and embed it.
+            fprintf(stderr, "Windows cross-compilation is not yet fully supported.\n");
+            fprintf(stderr, "The runtime needs Windows-specific builds.\n");
+            fprintf(stderr, "Workaround: build on Windows directly with 'wyn build'.\n");
+            return 1;
         } else if (strcmp(target, "ios") == 0) {
             // iOS cross-compilation via Xcode SDK
             char sdk_path[512] = {0};
