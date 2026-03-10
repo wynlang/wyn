@@ -1,0 +1,45 @@
+// TDD: Concurrency scaling — validates spawn at scale
+
+fn counter(id: int) -> int {
+    return id + 1
+}
+
+fn main() -> int {
+    Test.init("Concurrency Scaling")
+
+    // Test 1: 5K concurrent spawns
+    var futures = []
+    for i in 0..5000 {
+        futures.push(spawn counter(i))
+    }
+    var sum = 0
+    for i in 0..5000 {
+        sum = sum + await futures[i]
+    }
+    Test.assert_eq_int(sum, 12502500, "5K concurrent spawns")
+
+    // Test 2: 20K total via 4 batches of 5K
+    var total = 0
+    for batch in 0..4 {
+        var bf = []
+        var base = batch * 5000
+        for i in 0..5000 {
+            bf.push(spawn counter(base + i))
+        }
+        for i in 0..5000 {
+            total = total + await bf[i]
+        }
+    }
+    Test.assert_eq_int(total, 200010000, "20K spawns (4 batches of 5K)")
+
+    // Test 3: Sequential spawn+await (no concurrent limit)
+    var seq_sum = 0
+    for i in 0..10000 {
+        var f = spawn counter(i)
+        seq_sum = seq_sum + await f
+    }
+    Test.assert_eq_int(seq_sum, 50005000, "10K sequential spawn+await")
+
+    Test.summary()
+    return 0
+}

@@ -4,15 +4,18 @@
 #include <stdatomic.h>
 #include <string.h>
 
-// Override minicoro defaults before including
-#define MCO_USE_VMEM_ALLOCATOR      // Use mmap — only commits physical pages as stack grows
-#define MCO_MIN_STACK_SIZE 4096     // 4KB minimum
-#define MCO_DEFAULT_STACK_SIZE 8388608 // 8MB virtual (matches Go's default goroutine max)
+// Use vmem (mmap) allocator — OS only commits physical pages as stack grows.
+// Default 8MB virtual per coroutine. Actual RSS is ~4-8KB per trivial task.
+// Scales to ~20K concurrent coroutines on typical systems.
+// Set WYN_CORO_STACK=8192 for higher concurrency with smaller stacks.
+#define MCO_USE_VMEM_ALLOCATOR
+#define MCO_MIN_STACK_SIZE 4096
+#define MCO_DEFAULT_STACK_SIZE 8388608
 #define MINICORO_IMPL
 #include "../vendor/minicoro/minicoro.h"
 #include "coroutine.h"
 
-#define WYN_CORO_STACK_SIZE 8388608 // 8MB virtual — OS only commits pages on use
+#define WYN_CORO_STACK_SIZE 8388608
 
 static size_t wyn_coro_stack_size(void) {
     static size_t sz = 0;
@@ -22,48 +25,18 @@ static size_t wyn_coro_stack_size(void) {
     return sz;
 }
 
-// Forward declaration
 static void coro_trampoline(mco_coro* co);
-
-// === Coroutine block pool ===
-// With vmem allocator, we let minicoro handle allocation via mmap.
-// The pool just recycles mco_coro structs (not stacks — those are mmap'd).
-
-static _Atomic size_t coro_block_size = 0;
-
-static size_t coro_pool_get_size(void) __attribute__((unused));
-static size_t coro_pool_get_size(void) {
-    size_t sz = atomic_load_explicit(&coro_block_size, memory_order_acquire);
-    if (sz > 0) return sz;
-    mco_desc desc = mco_desc_init(coro_trampoline, wyn_coro_stack_size());
-    sz = desc.coro_size;
-    atomic_store_explicit(&coro_block_size, sz, memory_order_release);
-    return sz;
-}
-
-// With vmem, don't pool — let mmap/munmap handle it for proper page management
-static void* coro_pool_acquire(void) __attribute__((unused));
-static void* coro_pool_acquire(void) {
-    return NULL; // Force minicoro to allocate via mmap
-}
-
-// Unused with vmem — kept for API compatibility
-static void coro_pool_release(void* block) __attribute__((unused));
-static void coro_pool_release(void* block) {
-    (void)block;
-}
 
 static _Atomic long wyn_coro_live_count = 0;
 
-// WynCoroutine wraps mco_coro + user function/arg
 struct WynCoroutine {
     mco_coro* co;
     void (*fn)(void*);
     void* arg;
 };
 
-// === WynCoroutine struct pool (avoid malloc/free per spawn) ===
-#define WC_POOL_SIZE 4096
+// === WynCoroutine struct pool ===
+#define WC_POOL_SIZE (64 * 1024)
 static WynCoroutine wc_pool[WC_POOL_SIZE];
 static _Atomic int wc_pool_head = 0;
 static WynCoroutine* wc_free_stack[WC_POOL_SIZE];
@@ -95,7 +68,6 @@ static void wc_dealloc(WynCoroutine* wc) {
     free(wc);
 }
 
-// Trampoline: minicoro calls this, we call the user's fn(arg)
 static void coro_trampoline(mco_coro* co) {
     WynCoroutine* wc = (WynCoroutine*)mco_get_user_data(co);
     wc->fn(wc->arg);
@@ -125,10 +97,9 @@ bool wyn_coro_resume(WynCoroutine* wc) {
     mco_result res = mco_resume(wc->co);
     if (res != MCO_SUCCESS) {
         if (res == MCO_STACK_OVERFLOW) {
-            fprintf(stderr, "\033[31mError:\033[0m coroutine stack overflow (64KB limit)\n");
-            fprintf(stderr, "  Set WYN_CORO_STACK=262144 for larger stacks.\n");
+            fprintf(stderr, "\033[31mError:\033[0m coroutine stack overflow (%zuKB limit)\n", wyn_coro_stack_size() / 1024);
+            fprintf(stderr, "  Set WYN_CORO_STACK=262144 for larger stacks (256KB).\n");
         }
-        // Any error (overflow, not suspended, etc.) — treat as dead
         return false;
     }
     return mco_status(wc->co) != MCO_DEAD;
@@ -146,9 +117,7 @@ bool wyn_coro_done(WynCoroutine* wc) {
 
 void wyn_coro_destroy(WynCoroutine* wc) {
     if (!wc) return;
-    if (wc->co) {
-        mco_destroy(wc->co);
-    }
+    if (wc->co) mco_destroy(wc->co);
     atomic_fetch_sub(&wyn_coro_live_count, 1);
     wc_dealloc(wc);
 }

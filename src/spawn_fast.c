@@ -31,6 +31,7 @@ typedef struct Task {
     const char* spawn_file;  // Source file that created this spawn
     int spawn_line;          // Line number of the spawn call
     long spawn_id;           // Unique spawn ID for debugging
+    _Atomic int running;     // 1 = currently being executed by a processor
 } Task;
 
 // === Lock-free task pool with recycling ===
@@ -214,10 +215,19 @@ long wyn_spawn_origin_id(void) {
 static inline void execute_task(Task* task) {
     WynCoroutine* coro = atomic_load_explicit(&task->coro, memory_order_acquire);
     if (!coro) return;  // already completed (race guard)
+    // Prevent double-resume: only one processor can run this task at a time
+    int expected = 0;
+    if (!atomic_compare_exchange_strong_explicit(&task->running, &expected, 1,
+            memory_order_acq_rel, memory_order_relaxed)) {
+        // Another processor is already running this task — re-enqueue for later
+        enqueue_task(task);
+        return;
+    }
     current_task = task;
     io_parked = 0;
     bool alive = wyn_coro_resume(coro);
     current_task = NULL;
+    atomic_store_explicit(&task->running, 0, memory_order_release);
     if (alive) {
         if (io_parked) {
             // Coroutine is waiting on I/O — don't re-enqueue.
@@ -381,7 +391,7 @@ static void enqueue_task(Task* task) {
 typedef struct { TaskFunc func; void* arg; } SpawnArgs;
 
 // SpawnArgs pool — avoid malloc per spawn
-#define SA_POOL_SIZE 4096
+#define SA_POOL_SIZE (64 * 1024)
 static SpawnArgs sa_pool[SA_POOL_SIZE];
 static _Atomic int sa_pool_head = 0;
 static SpawnArgs* sa_free_arr[SA_POOL_SIZE];
@@ -468,6 +478,7 @@ void wyn_spawn_fast_traced(TaskFunc func, void* arg, const char* file, int line)
     t->future = NULL;
     t->spawn_file = file;
     t->spawn_line = line;
+    atomic_store_explicit(&t->running, 0, memory_order_relaxed);
     
     long spawned = atomic_fetch_add(&total_spawned, 1);
     t->spawn_id = spawned + 1;
@@ -523,6 +534,7 @@ Future* wyn_spawn_async_traced(TaskFuncWithReturn func, void* arg, const char* f
     t->future = future;
     t->spawn_file = file;
     t->spawn_line = line;
+    atomic_store_explicit(&t->running, 0, memory_order_relaxed);
     
     long spawned = atomic_fetch_add(&total_spawned, 1);
     t->spawn_id = spawned + 1;
