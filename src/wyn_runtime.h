@@ -127,24 +127,6 @@ static inline const char* System_arg(int index) { return wyn_get_argv(index); }
 char* wyn_read_file(const char* path);
 int wyn_write_file(const char* path, const char* content);
 bool wyn_file_exists(const char* path);
-int wyn_store_argv(int index);
-int wyn_get_filename_valid(void);
-int wyn_store_file_content(const char* path);
-int wyn_get_content_valid(void);
-int wyn_c_init_lexer(const char* source);
-void wyn_c_init_parser();
-int64_t wyn_c_parse_program();
-int wyn_c_get_error_count();
-char* wyn_c_get_error_message(int index);
-char* wyn_c_ast_to_string(int64_t ast_ptr);
-void wyn_c_free_ast(int64_t ast_ptr);
-void wyn_c_init_checker();
-void wyn_c_check_program(int ast_ptr);
-bool wyn_c_checker_had_error();
-bool wyn_c_generate_code(int ast_ptr, const char* c_filename);
-char* wyn_c_create_c_filename(const char* filename);
-bool wyn_c_compile_to_binary(const char* c_filename, const char* wyn_filename);
-bool wyn_c_remove_file(const char* filename);
 
 const char* wyn_string_concat_safe(const char* left, const char* right) {
     if (!left) left = "";
