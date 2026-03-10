@@ -54,9 +54,14 @@ int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
         
         snprintf(cmd, sizeof(cmd),
             "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s %s "
-            "%s %s/src/wyn_arena.c %s/src/stdlib_string.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/coroutine.c %s/src/spawn_fast.c %s/src/io_loop.c %s/src/future.c %s %s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
+            "%s ",
             tcc_bin, output_path, wyn_root, wyn_root, wyn_root, wyn_root, extra_flags, sqlite_inc,
-            c_path, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, rt_tcc, sqlite_file);
+            c_path);
+        // Append all runtime source files (same list as main.c wyn build TCC path)
+        int p = strlen(cmd);
+        const char* srcs[] = {"wyn_arena","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","wyn_wrapper","wyn_interface","coroutine","spawn_fast","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
+        for (int si = 0; srcs[si]; si++) p += snprintf(cmd + p, sizeof(cmd) - p, "%s/src/%s.c ", wyn_root, srcs[si]);
+        snprintf(cmd + p, sizeof(cmd) - p, "%s %s -lpthread -lm 2>/tmp/wyn_tcc_err.txt", rt_tcc, sqlite_file);
     } else {
         // Fallback: compile runtime from source using unified source list
         extern const char* wyn_runtime_sources[];
