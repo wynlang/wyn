@@ -1131,6 +1131,16 @@ void codegen_stmt(Stmt* stmt) {
                 codegen_emit_int_array = _was_int_array;
             }
             emit(";\n");
+            // RC: retain when copying a string variable
+            if ((strcmp(c_type, "const char*") == 0 || strcmp(c_type, "char*") == 0) &&
+                stmt->var.init && stmt->var.init->type == EXPR_IDENT) {
+                char _ivn[256]; int _ivl = stmt->var.init->token.length < 255 ? stmt->var.init->token.length : 255;
+                memcpy(_ivn, stmt->var.init->token.start, _ivl); _ivn[_ivl] = '\0';
+                extern int is_string_var(const char*);
+                if (is_string_var(_ivn)) {
+                    emit("wyn_rc_retain(%.*s);\n", stmt->var.name.length, stmt->var.name.start);
+                }
+            }
             // Shadow define: redirect original name to suffixed version
             {
                 char _svn[128]; snprintf(_svn, sizeof(_svn), "%.*s", stmt->var.name.length, stmt->var.name.start);
