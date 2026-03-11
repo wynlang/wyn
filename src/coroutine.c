@@ -3,11 +3,9 @@
 #include <stdio.h>
 #include <stdatomic.h>
 #include <string.h>
+#include <pthread.h>
+#include <sys/mman.h>
 
-// Use vmem (mmap) allocator — OS only commits physical pages as stack grows.
-// Default 8MB virtual per coroutine. Actual RSS is ~4-8KB per trivial task.
-// Scales to ~20K concurrent coroutines on typical systems.
-// Set WYN_CORO_STACK=8192 for higher concurrency with smaller stacks.
 #define MCO_USE_VMEM_ALLOCATOR
 #define MCO_MIN_STACK_SIZE 4096
 #define MCO_DEFAULT_STACK_SIZE 8388608
@@ -26,7 +24,6 @@ static size_t wyn_coro_stack_size(void) {
 }
 
 static void coro_trampoline(mco_coro* co);
-
 static _Atomic long wyn_coro_live_count = 0;
 
 struct WynCoroutine {
@@ -68,6 +65,47 @@ static void wc_dealloc(WynCoroutine* wc) {
     free(wc);
 }
 
+// === Coroutine memory pool ===
+// Recycles mmap'd blocks via MAP_FIXED remap (fresh zeroed pages).
+// Avoids munmap+mmap round-trip while keeping virtual address reserved.
+#define CORO_POOL_MAX 4096
+static void* coro_pool_slots[CORO_POOL_MAX];
+static int coro_pool_count = 0;
+static size_t coro_pool_block_size = 0;
+static pthread_mutex_t coro_pool_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+static void* coro_pool_alloc(size_t size, void* ud) {
+    (void)ud;
+    if (size == coro_pool_block_size) {
+        pthread_mutex_lock(&coro_pool_mtx);
+        if (coro_pool_count > 0) {
+            void* ptr = coro_pool_slots[--coro_pool_count];
+            pthread_mutex_unlock(&coro_pool_mtx);
+            // Remap to get fresh zeroed pages at the same virtual address.
+            void* fresh = mmap(ptr, size, PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+            return (fresh != MAP_FAILED) ? fresh : NULL;
+        }
+        pthread_mutex_unlock(&coro_pool_mtx);
+    }
+    void* ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return ptr != MAP_FAILED ? ptr : NULL;
+}
+
+static void coro_pool_dealloc(void* ptr, size_t size, void* ud) {
+    (void)ud;
+    if (size == coro_pool_block_size) {
+        pthread_mutex_lock(&coro_pool_mtx);
+        if (coro_pool_count < CORO_POOL_MAX) {
+            coro_pool_slots[coro_pool_count++] = ptr;
+            pthread_mutex_unlock(&coro_pool_mtx);
+            return;
+        }
+        pthread_mutex_unlock(&coro_pool_mtx);
+    }
+    munmap(ptr, size);
+}
+
 static void coro_trampoline(mco_coro* co) {
     WynCoroutine* wc = (WynCoroutine*)mco_get_user_data(co);
     wc->fn(wc->arg);
@@ -81,6 +119,9 @@ WynCoroutine* wyn_coro_create(void (*fn)(void*), void* arg) {
 
     mco_desc desc = mco_desc_init(coro_trampoline, wyn_coro_stack_size());
     desc.user_data = wc;
+    desc.alloc_cb = coro_pool_alloc;
+    desc.dealloc_cb = coro_pool_dealloc;
+    if (!coro_pool_block_size) coro_pool_block_size = desc.coro_size;
 
     mco_coro* co = NULL;
     if (mco_create(&co, &desc) != MCO_SUCCESS) {
