@@ -2130,27 +2130,27 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 snprintf(var_name, sizeof(var_name), "%.*s", expr->token.length, expr->token.start);
                 
                 extern int levenshtein_distance(const char*, const char*);
-                const char* best = NULL;
+                char best_name[256] = "";
                 int best_dist = 999;
                 for (int i = 0; i < scope->count; i++) {
                     char sym_name[256];
                     snprintf(sym_name, sizeof(sym_name), "%.*s",
                              scope->symbols[i].name.length, scope->symbols[i].name.start);
                     int d = levenshtein_distance(var_name, sym_name);
-                    if (d < best_dist && d <= 2) { best_dist = d; best = scope->symbols[i].name.start; }
+                    if (d < best_dist && d <= 2) { best_dist = d; strncpy(best_name, sym_name, 255); }
                 }
                 // Also check global scope
-                if (!best && global_scope) {
+                if (!best_name[0] && global_scope) {
                     for (int i = 0; i < global_scope->count; i++) {
                         char sym_name[256];
                         snprintf(sym_name, sizeof(sym_name), "%.*s",
                                  global_scope->symbols[i].name.length, global_scope->symbols[i].name.start);
                         int d = levenshtein_distance(var_name, sym_name);
-                        if (d < best_dist && d <= 2) { best_dist = d; best = global_scope->symbols[i].name.start; }
+                        if (d < best_dist && d <= 2) { best_dist = d; strncpy(best_name, sym_name, 255); }
                     }
                 }
-                if (best) {
-                    fprintf(stderr, "  \033[33mDid you mean:\033[0m %.*s?\n", (int)strlen(best), best);
+                if (best_name[0]) {
+                    fprintf(stderr, "  \033[33mDid you mean:\033[0m %s?\n", best_name);
                 }
                 
                 type_error_undefined_variable(var_name, expr->token.line, 0);
