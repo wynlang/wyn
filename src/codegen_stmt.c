@@ -1160,6 +1160,28 @@ void codegen_stmt(Stmt* stmt) {
                     codegen_expr(get_defer(_d)); emit(";\n");
                 }
             }
+            // RC: release local string variables before return
+            {
+                extern void emit_string_releases(const char*);
+                extern int get_string_var_count(void);
+                if (get_string_var_count() > 0) {
+                    // If returning a string variable, don't release it
+                    const char* except = NULL;
+                    if (stmt->ret.value && stmt->ret.value->type == EXPR_IDENT) {
+                        char _rv[256]; int _rl = stmt->ret.value->token.length < 255 ? stmt->ret.value->token.length : 255;
+                        memcpy(_rv, stmt->ret.value->token.start, _rl); _rv[_rl] = '\0';
+                        extern int is_string_var(const char*);
+                        if (is_string_var(_rv)) except = stmt->ret.value->token.start;
+                    }
+                    // Use a temp buf for except since token isn't null-terminated
+                    char _except_buf[256] = "";
+                    if (except) {
+                        int _el = stmt->ret.value->token.length < 255 ? stmt->ret.value->token.length : 255;
+                        memcpy(_except_buf, except, _el); _except_buf[_el] = '\0';
+                    }
+                    emit_string_releases(_except_buf[0] ? _except_buf : NULL);
+                }
+            }
             if (in_async_function) {
                 emit("*temp = ");
                 codegen_expr(stmt->ret.value);
@@ -1244,10 +1266,12 @@ void codegen_stmt(Stmt* stmt) {
             break;
         }
         case STMT_BLOCK:
+            { extern int string_var_scope_depth; string_var_scope_depth++; }
             for (int i = 0; i < stmt->block.count; i++) {
                 emit("    ");
                 codegen_stmt(stmt->block.stmts[i]);
             }
+            { extern int string_var_scope_depth; string_var_scope_depth--; }
             break;
         case STMT_UNSAFE:
             // Unsafe blocks are just regular blocks in C
@@ -1475,6 +1499,7 @@ void codegen_stmt(Stmt* stmt) {
             // Register parameters for mut tracking
             clear_parameters();
             clear_local_variables();
+            { extern void reset_string_vars(void); reset_string_vars(); }
             for (int i = 0; i < stmt->fn.param_count; i++) {
                 char pname[256];
                 snprintf(pname, 256, "%.*s", stmt->fn.params[i].length, stmt->fn.params[i].start);

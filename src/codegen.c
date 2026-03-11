@@ -27,6 +27,7 @@ Type* make_type(TypeKind kind); // Forward declaration for type creation
 extern bool is_builtin_module(const char* name);  // Module system
 
 static FILE* out = NULL;
+FILE* codegen_get_output(void) { return out; }
 
 // Escape analysis: skip wyn_strdup for temporaries that don't escape
 static bool codegen_skip_strdup = false;
@@ -247,7 +248,9 @@ int is_known_array_var(const char* name) {
 // String variable tracking for RC release on reassignment
 static char* string_var_names[256];
 static int string_var_count = 0;
+static int string_var_scope_depth = 0;
 void register_string_var(const char* name) {
+    if (string_var_scope_depth > 0) return; // Only track top-level function vars
     for (int i = 0; i < string_var_count; i++)
         if (strcmp(string_var_names[i], name) == 0) return;
     if (string_var_count < 256) string_var_names[string_var_count++] = strdup(name);
@@ -257,7 +260,17 @@ int is_string_var(const char* name) {
         if (strcmp(string_var_names[i], name) == 0) return 1;
     return 0;
 }
-void reset_string_vars(void) { string_var_count = 0; }
+void reset_string_vars(void) { string_var_count = 0; string_var_scope_depth = -1; }
+void emit_string_releases(const char* except_var) {
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (!out) return;
+    for (int i = 0; i < string_var_count; i++) {
+        if (except_var && strcmp(string_var_names[i], except_var) == 0) continue;
+        fprintf(out, "wyn_rc_release(%s); ", string_var_names[i]);
+    }
+}
+int get_string_var_count(void) { return string_var_count; }
 
 static char* sb_var_names[64];
 static int sb_var_count = 0;
