@@ -355,6 +355,11 @@ static void scan_expr_for_lambdas(Expr* expr) {
                     extern const char* get_function_return_type(const char*);
                     const char* _rt = get_function_return_type(func_name);
                     spawn_wrappers[spawn_wrapper_count].returns_string = (_rt && strcmp(_rt, "string") == 0) ? 1 : 0;
+                    spawn_wrappers[spawn_wrapper_count].return_type[0] = '\0';
+                    if (_rt && strcmp(_rt, "int") != 0 && strcmp(_rt, "string") != 0 &&
+                        strcmp(_rt, "float") != 0 && strcmp(_rt, "bool") != 0) {
+                        strncpy(spawn_wrappers[spawn_wrapper_count].return_type, _rt, 63);
+                    }
                     spawn_wrapper_count++;
                 }
             }

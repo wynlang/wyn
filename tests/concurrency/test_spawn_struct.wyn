@@ -1,0 +1,32 @@
+// TDD: spawn functions that return structs
+
+struct Point { x: int, y: int }
+
+fn make_point(x: int, y: int) -> Point {
+    return Point { x: x, y: y }
+}
+
+fn add_points(a: Point, b: Point) -> Point {
+    return Point { x: a.x + b.x, y: a.y + b.y }
+}
+
+fn main() -> int {
+    Test.init("Spawn Struct Return")
+
+    // Test 1: basic struct return from spawn
+    var f = spawn make_point(3, 4)
+    var p = await f
+    Test.assert_eq_int(p.x, 3, "point.x = 3")
+    Test.assert_eq_int(p.y, 4, "point.y = 4")
+
+    // Test 2: multiple struct spawns
+    var f1 = spawn make_point(10, 20)
+    var f2 = spawn make_point(30, 40)
+    var p1 = await f1
+    var p2 = await f2
+    Test.assert_eq_int(p1.x + p2.x, 40, "p1.x + p2.x = 40")
+    Test.assert_eq_int(p1.y + p2.y, 60, "p1.y + p2.y = 60")
+
+    Test.summary()
+    return 0
+}

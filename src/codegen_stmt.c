@@ -557,6 +557,11 @@ void codegen_stmt(Stmt* stmt) {
                             memcpy(_vn2, stmt->var.name.start, _vl2); _vn2[_vl2] = '\0';
                             extern void register_string_future(const char*);
                             register_string_future(_vn2);
+                        } else if (_srt && strcmp(_srt, "int") != 0 && strcmp(_srt, "float") != 0 && strcmp(_srt, "bool") != 0) {
+                            char _vn2[256]; int _vl2 = stmt->var.name.length < 255 ? stmt->var.name.length : 255;
+                            memcpy(_vn2, stmt->var.name.start, _vl2); _vn2[_vl2] = '\0';
+                            extern void register_struct_future(const char*, const char*);
+                            register_struct_future(_vn2, _srt);
                         }
                     }
                 } else if (stmt->var.init->type == EXPR_AWAIT) {
@@ -580,6 +585,33 @@ void codegen_stmt(Stmt* stmt) {
                         if (_art && strcmp(_art, "string") == 0) _is_str_await = true;
                     }
                     if (_is_str_await) c_type = "const char*";
+                    // Check for struct future
+                    if (!_is_str_await) {
+                        const char* _struct_type = NULL;
+                        if (await_inner && await_inner->type == EXPR_IDENT) {
+                            char _avn2[256]; int _avl2 = await_inner->token.length < 255 ? await_inner->token.length : 255;
+                            memcpy(_avn2, await_inner->token.start, _avl2); _avn2[_avl2] = '\0';
+                            extern const char* get_struct_future_type(const char*);
+                            _struct_type = get_struct_future_type(_avn2);
+                        }
+                        if (!_struct_type && await_inner && await_inner->type == EXPR_SPAWN && await_inner->spawn.call &&
+                            await_inner->spawn.call->type == EXPR_CALL &&
+                            await_inner->spawn.call->call.callee->type == EXPR_IDENT) {
+                            char _afn2[256]; int _afl2 = await_inner->spawn.call->call.callee->token.length;
+                            if (_afl2 > 255) _afl2 = 255;
+                            memcpy(_afn2, await_inner->spawn.call->call.callee->token.start, _afl2); _afn2[_afl2] = '\0';
+                            extern const char* get_function_return_type(const char*);
+                            const char* _art2 = get_function_return_type(_afn2);
+                            if (_art2 && strcmp(_art2, "int") != 0 && strcmp(_art2, "string") != 0 &&
+                                strcmp(_art2, "float") != 0 && strcmp(_art2, "bool") != 0)
+                                _struct_type = _art2;
+                        }
+                        if (_struct_type) {
+                            static char _st_buf[128];
+                            snprintf(_st_buf, 128, "%s", _struct_type);
+                            c_type = _st_buf;
+                        }
+                    }
                 } else if (stmt->var.init->type == EXPR_STRUCT_INIT) {
                     // Use the struct type name (monomorphic if available)
                     static char struct_type[128];

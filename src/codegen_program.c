@@ -843,14 +843,27 @@ void codegen_program(Program* prog) {
                     }
                     emit(");\n    free(args);\n    return NULL;\n");
                 } else {
-                    emit("    long long __r = (long long)%s(", spawn_wrappers[i].func_name);
-                    for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
-                    for (int di = ac; di < total_params; di++) {
-                        emit(", ");
-                        Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
-                        if (def) { codegen_expr(def); } else { emit("0"); }
+                    if (spawn_wrappers[i].return_type[0]) {
+                        // Struct return: heap-allocate and return pointer
+                        emit("    %s* __r = malloc(sizeof(%s));\n", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type);
+                        emit("    *__r = %s(", spawn_wrappers[i].func_name);
+                        for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
+                        for (int di = ac; di < total_params; di++) {
+                            emit(", ");
+                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                            if (def) { codegen_expr(def); } else { emit("0"); }
+                        }
+                        emit(");\n    free(args);\n    return __r;\n");
+                    } else {
+                        emit("    long long __r = (long long)%s(", spawn_wrappers[i].func_name);
+                        for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
+                        for (int di = ac; di < total_params; di++) {
+                            emit(", ");
+                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                            if (def) { codegen_expr(def); } else { emit("0"); }
+                        }
+                        emit(");\n    free(args);\n    return (void*)(intptr_t)__r;\n");
                     }
-                    emit(");\n    free(args);\n    return (void*)(intptr_t)__r;\n");
                 }
                 emit("}\n\n");
             }

@@ -426,8 +426,9 @@ typedef struct {
     char func_name[256];
     int arg_count;
     int spawn_id;
-    int returns_void;  // 1 if function returns void
+    int returns_void;   // 1 if function returns void
     int returns_string; // 1 if function returns string
+    char return_type[64]; // struct name if returns struct, empty otherwise
 } SpawnWrapper;
 
 static SpawnWrapper spawn_wrappers[256];
@@ -462,6 +463,25 @@ int is_string_future(const char* name) {
     for (int i = 0; i < string_future_count; i++)
         if (strcmp(string_future_vars[i], name) == 0) return 1;
     return 0;
+}
+
+// Struct future tracking — variables that hold futures from struct-returning spawns
+static char struct_future_vars[64][256];
+static char struct_future_types[64][64];
+static int struct_future_count = 0;
+void register_struct_future(const char* name, const char* type_name) {
+    for (int i = 0; i < struct_future_count; i++)
+        if (strcmp(struct_future_vars[i], name) == 0) { strncpy(struct_future_types[i], type_name, 63); return; }
+    if (struct_future_count < 64) {
+        strcpy(struct_future_vars[struct_future_count], name);
+        strncpy(struct_future_types[struct_future_count], type_name, 63);
+        struct_future_count++;
+    }
+}
+const char* get_struct_future_type(const char* name) {
+    for (int i = 0; i < struct_future_count; i++)
+        if (strcmp(struct_future_vars[i], name) == 0) return struct_future_types[i];
+    return NULL;
 }
 
 // Forward declaration

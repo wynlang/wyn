@@ -310,13 +310,41 @@ void codegen_expr(Expr* expr) {
                 extern int is_string_future(const char*);
                 if (is_string_future(vn)) is_string_return = true;
             }
-            if (is_string_return) {
+            // Check for struct return
+            const char* struct_return_type = NULL;
+            if (!is_string_return) {
+                if (inner && inner->type == EXPR_SPAWN && inner->spawn.call &&
+                    inner->spawn.call->type == EXPR_CALL &&
+                    inner->spawn.call->call.callee->type == EXPR_IDENT) {
+                    char fn2[256]; int fl2 = inner->spawn.call->call.callee->token.length;
+                    if (fl2 > 255) fl2 = 255;
+                    memcpy(fn2, inner->spawn.call->call.callee->token.start, fl2); fn2[fl2] = '\0';
+                    extern const char* get_function_return_type(const char*);
+                    const char* rt2 = get_function_return_type(fn2);
+                    if (rt2 && strcmp(rt2, "int") != 0 && strcmp(rt2, "string") != 0 &&
+                        strcmp(rt2, "float") != 0 && strcmp(rt2, "bool") != 0)
+                        struct_return_type = rt2;
+                }
+                if (!struct_return_type && inner && inner->type == EXPR_IDENT) {
+                    char vn2[256]; int vl2 = inner->token.length < 255 ? inner->token.length : 255;
+                    memcpy(vn2, inner->token.start, vl2); vn2[vl2] = '\0';
+                    extern const char* get_struct_future_type(const char*);
+                    struct_return_type = get_struct_future_type(vn2);
+                }
+            }
+            if (struct_return_type) {
+                emit("(*(%s*)future_get((Future*)(intptr_t)", struct_return_type);
+                codegen_expr(inner);
+                emit("))");
+            } else if (is_string_return) {
                 emit("(const char*)(intptr_t)future_get((Future*)(intptr_t)");
+                codegen_expr(inner);
+                emit(")");
             } else {
                 emit("(long long)(intptr_t)future_get((Future*)(intptr_t)");
+                codegen_expr(inner);
+                emit(")");
             }
-            codegen_expr(inner);
-            emit(")");
             break;
         }
         case EXPR_BINARY:
