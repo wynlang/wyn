@@ -29,6 +29,11 @@ extern bool is_builtin_module(const char* name);  // Module system
 static FILE* out = NULL;
 FILE* codegen_get_output(void) { return out; }
 
+// Current block context for liveness analysis
+static Stmt** current_block_stmts = NULL;
+static int current_block_count = 0;
+static int current_stmt_idx = 0;
+
 // Escape analysis: skip wyn_strdup for temporaries that don't escape
 static bool codegen_skip_strdup = false;
 
@@ -260,6 +265,15 @@ int is_string_var(const char* name) {
         if (strcmp(string_var_names[i], name) == 0) return 1;
     return 0;
 }
+void unregister_string_var(const char* name) {
+    for (int i = 0; i < string_var_count; i++) {
+        if (strcmp(string_var_names[i], name) == 0) {
+            free(string_var_names[i]);
+            string_var_names[i] = string_var_names[--string_var_count];
+            return;
+        }
+    }
+}
 void reset_string_vars(void) { string_var_count = 0; string_var_scope_depth = -1; }
 void emit_string_releases(const char* except_var) {
     extern FILE* codegen_get_output(void);
@@ -271,6 +285,71 @@ void emit_string_releases(const char* except_var) {
     }
 }
 int get_string_var_count(void) { return string_var_count; }
+
+// Liveness: check if a variable name appears in an expression
+static int expr_references_var(Expr* e, const char* name) {
+    if (!e) return 0;
+    switch (e->type) {
+        case EXPR_IDENT: {
+            int nl = strlen(name);
+            return (e->token.length == nl && memcmp(e->token.start, name, nl) == 0);
+        }
+        case EXPR_BINARY: return expr_references_var(e->binary.left, name) || expr_references_var(e->binary.right, name);
+        case EXPR_UNARY: return expr_references_var(e->unary.operand, name);
+        case EXPR_CALL:
+            if (expr_references_var(e->call.callee, name)) return 1;
+            for (int i = 0; i < e->call.arg_count; i++)
+                if (expr_references_var(e->call.args[i], name)) return 1;
+            return 0;
+        case EXPR_METHOD_CALL:
+            if (expr_references_var(e->method_call.object, name)) return 1;
+            for (int i = 0; i < e->method_call.arg_count; i++)
+                if (expr_references_var(e->method_call.args[i], name)) return 1;
+            return 0;
+        case EXPR_ASSIGN: return expr_references_var(e->assign.value, name);
+        case EXPR_AWAIT: return expr_references_var(e->await.expr, name);
+        case EXPR_SPAWN: return expr_references_var(e->spawn.call, name);
+        case EXPR_INDEX:
+            return expr_references_var(e->index.array, name) || expr_references_var(e->index.index, name);
+        default: return 0;
+    }
+}
+
+// Check if variable is referenced in remaining statements of a block
+static int stmt_references_var(Stmt* s, const char* name);
+static int block_references_var_from(Stmt** stmts, int count, int from_idx, const char* name) {
+    for (int i = from_idx; i < count; i++)
+        if (stmt_references_var(stmts[i], name)) return 1;
+    return 0;
+}
+
+static int stmt_references_var(Stmt* s, const char* name) {
+    if (!s) return 0;
+    switch (s->type) {
+        case STMT_EXPR: return expr_references_var(s->expr, name);
+        case STMT_VAR: return expr_references_var(s->var.init, name);
+        case STMT_RETURN: return expr_references_var(s->ret.value, name);
+        case STMT_IF:
+            if (expr_references_var(s->if_stmt.condition, name)) return 1;
+            if (stmt_references_var(s->if_stmt.then_branch, name)) return 1;
+            if (stmt_references_var(s->if_stmt.else_branch, name)) return 1;
+            return 0;
+        case STMT_WHILE:
+            if (expr_references_var(s->while_stmt.condition, name)) return 1;
+            return stmt_references_var(s->while_stmt.body, name);
+        case STMT_FOR:
+            if (expr_references_var(s->for_stmt.condition, name)) return 1;
+            return stmt_references_var(s->for_stmt.body, name);
+        case STMT_BLOCK:
+            return block_references_var_from(s->block.stmts, s->block.count, 0, name);
+        default: return 0;
+    }
+}
+
+// Check if var is used after stmt at index `after_idx` in a block
+int var_is_live_after(Stmt** stmts, int count, int after_idx, const char* name) {
+    return block_references_var_from(stmts, count, after_idx + 1, name);
+}
 
 static char* sb_var_names[64];
 static int sb_var_count = 0;

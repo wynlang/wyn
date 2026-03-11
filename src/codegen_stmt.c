@@ -1131,14 +1131,24 @@ void codegen_stmt(Stmt* stmt) {
                 codegen_emit_int_array = _was_int_array;
             }
             emit(";\n");
-            // RC: retain when copying a string variable
+            // RC: retain when copying a string variable (unless source is last-use → move)
             if ((strcmp(c_type, "const char*") == 0 || strcmp(c_type, "char*") == 0) &&
                 stmt->var.init && stmt->var.init->type == EXPR_IDENT) {
                 char _ivn[256]; int _ivl = stmt->var.init->token.length < 255 ? stmt->var.init->token.length : 255;
                 memcpy(_ivn, stmt->var.init->token.start, _ivl); _ivn[_ivl] = '\0';
                 extern int is_string_var(const char*);
                 if (is_string_var(_ivn)) {
-                    emit("wyn_rc_retain(%.*s);\n", stmt->var.name.length, stmt->var.name.start);
+                    // Check if source var is used after this statement
+                    extern int var_is_live_after(Stmt**, int, int, const char*);
+                    extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
+                    if (current_block_stmts && !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _ivn)) {
+                        // Move: source is dead after this — skip retain, unregister source from release list
+                        extern void unregister_string_var(const char*);
+                        unregister_string_var(_ivn);
+                    } else {
+                        // Copy: source is still live — retain
+                        emit("wyn_rc_retain(%.*s);\n", stmt->var.name.length, stmt->var.name.start);
+                    }
                 }
             }
             // Shadow define: redirect original name to suffixed version
@@ -1277,9 +1287,17 @@ void codegen_stmt(Stmt* stmt) {
         }
         case STMT_BLOCK:
             { extern int string_var_scope_depth; string_var_scope_depth++; }
-            for (int i = 0; i < stmt->block.count; i++) {
-                emit("    ");
-                codegen_stmt(stmt->block.stmts[i]);
+            {
+                // Save and set block context for liveness analysis
+                extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
+                Stmt** _saved_stmts = current_block_stmts; int _saved_count = current_block_count; int _saved_idx = current_stmt_idx;
+                current_block_stmts = stmt->block.stmts; current_block_count = stmt->block.count;
+                for (int i = 0; i < stmt->block.count; i++) {
+                    current_stmt_idx = i;
+                    emit("    ");
+                    codegen_stmt(stmt->block.stmts[i]);
+                }
+                current_block_stmts = _saved_stmts; current_block_count = _saved_count; current_stmt_idx = _saved_idx;
             }
             { extern int string_var_scope_depth; string_var_scope_depth--; }
             break;
