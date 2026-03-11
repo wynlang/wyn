@@ -3232,6 +3232,46 @@ long long Task_select_3(long long ch1, long long ch2, long long ch3) {
     }
 }
 
+// await_all: await every future in an array, return array of results
+WynArray wyn_await_all(WynArray futures) {
+    WynArray results = array_new();
+    for (int i = 0; i < futures.count; i++) {
+        long long fh = futures.data[i].data.int_val;
+        long long result = (long long)(intptr_t)future_get((Future*)(intptr_t)fh);
+        array_push_int(&results, result);
+    }
+    return results;
+}
+WynArray wyn_await_all_int(WynIntArray futures) {
+    WynArray results = array_new();
+    for (int i = 0; i < futures.count; i++) {
+        long long fh = futures.data[i];
+        long long result = (long long)(intptr_t)future_get((Future*)(intptr_t)fh);
+        array_push_int(&results, result);
+    }
+    return results;
+}
+
+// await_any: return the result of the first completed future
+long long wyn_await_any(WynArray futures) {
+    Future* fptrs[64];
+    int n = futures.count;
+    if (n > 64) n = 64;
+    for (int i = 0; i < n; i++) {
+        fptrs[i] = (Future*)(intptr_t)futures.data[i].data.int_val;
+    }
+    return (long long)(intptr_t)future_get(future_race(fptrs, n));
+}
+long long wyn_await_any_int(WynIntArray futures) {
+    Future* fptrs[64];
+    int n = futures.count;
+    if (n > 64) n = 64;
+    for (int i = 0; i < n; i++) {
+        fptrs[i] = (Future*)(intptr_t)futures.data[i];
+    }
+    return (long long)(intptr_t)future_get(future_race(fptrs, n));
+}
+
 // === SQLite Database Module ===
 // Only compiled when WYN_USE_SQLITE is defined (set by codegen when Db. is used)
 #ifdef WYN_USE_SQLITE

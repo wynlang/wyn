@@ -540,6 +540,24 @@ void codegen_expr(Expr* expr) {
                     emit(")");
                     break;
                 }
+                // await_all(futures_array) → collect all results into a WynArray
+                if (fn.length == 9 && memcmp(fn.start, "await_all", 9) == 0 && expr->call.arg_count == 1) {
+                    emit("_Generic((");
+                    codegen_expr(expr->call.args[0]);
+                    emit("), WynIntArray: wyn_await_all_int, WynArray: wyn_await_all)(");
+                    codegen_expr(expr->call.args[0]);
+                    emit(")");
+                    break;
+                }
+                // await_any(futures_array) → return first completed result
+                if (fn.length == 9 && memcmp(fn.start, "await_any", 9) == 0 && expr->call.arg_count == 1) {
+                    emit("_Generic((");
+                    codegen_expr(expr->call.args[0]);
+                    emit("), WynIntArray: wyn_await_any_int, WynArray: wyn_await_any)(");
+                    codegen_expr(expr->call.args[0]);
+                    emit(")");
+                    break;
+                }
             }
             // Check if callee is a closure variable (WynClosure)
             // Heuristic: if callee is an identifier that starts with lowercase

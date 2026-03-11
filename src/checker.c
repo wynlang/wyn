@@ -541,6 +541,7 @@ void init_checker() {
         "time_now", "time_format",
         "range", "array_new", "array_push", "array_push_str", "array_pop", "array_length_dyn", "len",
         "assert_eq", "assert_true", "assert_false", "panic", "todo",
+        "await_all", "await_any",
         "exit_program", "sleep_ms", "getenv_var", "setenv_var",
         "Error", "TypeError", "ValueError", "DivisionByZeroError", "print_error",
         "http_get", "http_post", "http_put", "http_delete", "http_set_header", "http_clear_headers", "http_status", "http_error",
