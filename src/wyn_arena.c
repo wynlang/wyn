@@ -1,14 +1,26 @@
 #include "wyn_arena.h"
+#include "wyn_rc.h"
 
-// Thread-local arena — each thread gets its own arena, no contention
-#ifdef __TINYC__
-// TCC doesn't support __thread — use global (safe for single-threaded TCC builds)
+// String allocation now uses reference counting.
+// wyn_rc_release is safe on any pointer (no-op for non-RC pointers).
+
+char* wyn_str_alloc(size_t len) {
+    char* s = (char*)wyn_rc_alloc(len + 1);
+    if (s) s[len] = '\0';
+    return s;
+}
+
+char* wyn_strdup(const char* s) {
+    if (!s) return "";
+    size_t len = strlen(s);
+    char* r = wyn_str_alloc(len);
+    memcpy(r, s, len + 1);
+    return r;
+}
+
+// Arena kept for non-string allocations and backward compat
 static WynArenaBlock* _wyn_arena_head = NULL;
 static WynArenaBlock* _wyn_arena_current = NULL;
-#else
-static __thread WynArenaBlock* _wyn_arena_head = NULL;
-static __thread WynArenaBlock* _wyn_arena_current = NULL;
-#endif
 
 static WynArenaBlock* wyn_arena_new_block(size_t min_size) {
     size_t cap = min_size < 65536 ? 65536 : min_size;
@@ -43,16 +55,4 @@ void wyn_arena_reset(void) {
         b = b->next;
     }
     _wyn_arena_current = _wyn_arena_head;
-}
-
-char* wyn_str_alloc(size_t len) {
-    return (char*)wyn_arena_alloc(len + 1);
-}
-
-char* wyn_strdup(const char* s) {
-    if (!s) return "";
-    size_t len = strlen(s);
-    char* r = wyn_str_alloc(len);
-    memcpy(r, s, len + 1);
-    return r;
 }

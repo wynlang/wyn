@@ -44,7 +44,7 @@ platform-info:
 	@echo "Platform flags: $(PLATFORM_CFLAGS)"
 
 # C-based compiler
-CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c src/closures.c src/scope.c src/toml.c src/file_watch.c src/package.c src/lsp.c src/spawn.c src/registry.c src/semver.c src/tcc_backend.c src/wyn_arena.c src/coroutine.c
+CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c src/closures.c src/scope.c src/toml.c src/file_watch.c src/package.c src/lsp.c src/spawn.c src/registry.c src/semver.c src/tcc_backend.c src/wyn_arena.c src/wyn_rc.c src/coroutine.c
 
 wyn$(EXE_EXT): $(CORE_SRCS)
 	$(CC) $(CFLAGS) -I src -I vendor/tcc/include -I vendor/minicoro -o $@ $^ vendor/tcc/lib/libtcc.a $(PLATFORM_LIBS)
@@ -443,14 +443,14 @@ tools/formatter.wyn.out: tools/formatter.wyn wyn
 runtime: wyn$(EXE_EXT)
 	@echo "Building runtime library..."
 	@mkdir -p runtime/obj
-	@for f in src/wyn_arena.c src/coroutine.c src/io_loop.c src/runtime_exports.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c; do $(CC) -std=c11 -O2 -w -I src -I vendor/minicoro -c $$f -o runtime/obj/$$(basename $$f .c).o 2>/dev/null; done
+	@for f in src/wyn_arena.c src/wyn_rc.c src/coroutine.c src/io_loop.c src/runtime_exports.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c; do $(CC) -std=c11 -O2 -w -I src -I vendor/minicoro -c $$f -o runtime/obj/$$(basename $$f .c).o 2>/dev/null; done
 	@# Old runtime extraction removed fi
 	@ar rcs runtime/libwyn_rt.a runtime/obj/*.o
 	@echo "Built runtime/libwyn_rt.a"
 
 # TCC runtime — excludes spawn.c, coroutine.c (can't compile macOS headers with TCC)
 TCC_BIN = vendor/tcc/bin/tcc
-TCC_RT_SRCS = src/wyn_arena.c src/io_loop.c src/runtime_exports.c src/wyn_wrapper.c src/wyn_interface.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c
+TCC_RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/io_loop.c src/runtime_exports.c src/wyn_wrapper.c src/wyn_interface.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c
 runtime-tcc:
 	@echo "Building TCC runtime library..."
 	@mkdir -p /tmp/tcc_rt_obj

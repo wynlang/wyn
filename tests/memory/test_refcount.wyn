@@ -1,0 +1,34 @@
+// TDD: Reference counting for strings
+
+fn make_greeting(name: string) -> string {
+    return "hello " + name
+}
+
+fn main() -> int {
+    Test.init("Reference Counting")
+
+    // Test 1: basic string creation and use
+    var s = "world"
+    var greeting = make_greeting(s)
+    Test.assert_eq_str(greeting, "hello world", "string concat works")
+
+    // Test 2: string reassignment
+    var x = "first"
+    x = "second"
+    Test.assert_eq_str(x, "second", "reassignment works")
+
+    // Test 3: string in loop (would leak without RC)
+    for i in 0..100 {
+        var temp = "iter " + i.to_string()
+    }
+    Test.assert(true, "loop strings don't crash")
+
+    // Test 4: string passed to function
+    var name = "alice"
+    var g = make_greeting(name)
+    Test.assert_eq_str(g, "hello alice", "string param works")
+    Test.assert_eq_str(name, "alice", "original string preserved")
+
+    Test.summary()
+    return 0
+}

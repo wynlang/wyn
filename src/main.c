@@ -28,7 +28,7 @@
 
 // Single source of truth for runtime source files
 const char* wyn_runtime_sources[] = {
-    "src/wyn_arena.c", "src/wyn_wrapper.c", "src/wyn_interface.c",
+    "src/wyn_arena.c", "src/wyn_rc.c", "src/wyn_wrapper.c", "src/wyn_interface.c",
     "src/io.c", "src/optional.c", "src/result.c",
     "src/arc_runtime.c", "src/concurrency.c", "src/async_runtime.c",
     "src/safe_memory.c", "src/error.c", "src/string_runtime.c",
@@ -1321,7 +1321,7 @@ int main(int argc, char** argv) {
             int _p = 0;
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s ", tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, wyn_root, sqlite_flags);
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s.c ", entry);
-            const char* _srcs[] = {"wyn_arena","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
+            const char* _srcs[] = {"wyn_arena","wyn_rc","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
             for (int _si = 0; _srcs[_si]; _si++) _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s/src/%s.c ", wyn_root, _srcs[_si]);
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s%s -lpthread -lm 2>/dev/null", rt_tcc, sqlite_src);
             result = system(cmd);
@@ -1361,7 +1361,7 @@ int main(int argc, char** argv) {
                 // No precompiled runtime — compile from source files
                 int _p = 0;
                 _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, entry);
-                const char* _srcs[] = {"wyn_arena","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","net","net_runtime","net_advanced","test_runtime",NULL};
+                const char* _srcs[] = {"wyn_arena","wyn_rc","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","net","net_runtime","net_advanced","test_runtime",NULL};
                 for (int _si = 0; _srcs[_si]; _si++) _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s/src/%s.c ", wyn_root, _srcs[_si]);
                 _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -lpthread -lm 2>&1", sqlite_src);
             }
