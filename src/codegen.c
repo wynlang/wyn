@@ -781,6 +781,14 @@ static struct { char name[128]; Expr** defaults; int param_count; char return_ty
 static int fn_defaults_count = 0;
 
 void register_fn_defaults(const char* name, Expr** defaults, int param_count) {
+    // Update existing entry if present
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, name) == 0) {
+            fn_defaults[i].defaults = defaults;
+            fn_defaults[i].param_count = param_count;
+            return;
+        }
+    }
     if (fn_defaults_count < 256) {
         strncpy(fn_defaults[fn_defaults_count].name, name, 127);
         fn_defaults[fn_defaults_count].defaults = defaults;
