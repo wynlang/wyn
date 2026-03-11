@@ -59,7 +59,7 @@ bool is_builtin_module(const char* module_name) {
     const char* builtins[] = {
         "math", "Math", "File", "System", "Path", "DateTime", "Time",
         "Json", "Http", "Regex", "Random", "HashMap", "HashSet", "Terminal", "Color",
-        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "String", "Data", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Web", "Smtp", "App", NULL
+        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "String", "Data", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Web", "Smtp", "App", "Shared", NULL
     };
     for (int i = 0; builtins[i] != NULL; i++) {
         if (strcmp(module_name, builtins[i]) == 0) {

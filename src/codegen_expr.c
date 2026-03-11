@@ -1347,6 +1347,8 @@ void codegen_expr(Expr* expr) {
                         emit("Smtp_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "App") == 0) {
                         emit("App_%.*s(", method.length, method.start);
+                    } else if (strcmp(module_name, "Shared") == 0) {
+                        emit("Shared_%.*s(", method.length, method.start);
                     } else {
                         // Use resolved module name if available (e.g., "lib/utils" -> "lib_utils")
                         if (resolved_mod_name[0]) {

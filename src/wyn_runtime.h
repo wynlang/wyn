@@ -3272,6 +3272,33 @@ long long wyn_await_any_int(WynIntArray futures) {
     return (long long)(intptr_t)future_get(future_race(fptrs, n));
 }
 
+// === Shared Atomic Values ===
+// Lock-free shared integers for concurrent access.
+// Handle is an index into a global slab of atomics.
+#include <stdatomic.h>
+#define WYN_SHARED_MAX 4096
+static _Atomic long long wyn_shared_slab[WYN_SHARED_MAX];
+static _Atomic int wyn_shared_count = 0;
+
+long long Shared_new(long long initial) {
+    int idx = atomic_fetch_add(&wyn_shared_count, 1);
+    if (idx >= WYN_SHARED_MAX) return -1;
+    atomic_store(&wyn_shared_slab[idx], initial);
+    return (long long)idx;
+}
+long long Shared_get(long long handle) {
+    return atomic_load(&wyn_shared_slab[(int)handle]);
+}
+void Shared_set(long long handle, long long value) {
+    atomic_store(&wyn_shared_slab[(int)handle], value);
+}
+long long Shared_add(long long handle, long long delta) {
+    return atomic_fetch_add(&wyn_shared_slab[(int)handle], delta);
+}
+long long Shared_sub(long long handle, long long delta) {
+    return atomic_fetch_sub(&wyn_shared_slab[(int)handle], delta);
+}
+
 // === SQLite Database Module ===
 // Only compiled when WYN_USE_SQLITE is defined (set by codegen when Db. is used)
 #ifdef WYN_USE_SQLITE
