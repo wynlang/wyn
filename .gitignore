@@ -43,3 +43,16 @@ runtime/obj/
 wyn_cc_err.txt
 runtime/libwyn_runtime.a
 wyn_runtime.h.gch
+
+# Test binaries (compiled from .wyn)
+tests/concurrency/test_*
+!tests/concurrency/test_*.wyn
+tests/memory/test_*
+!tests/memory/test_*.wyn
+tests/validation/test_*
+!tests/validation/test_*.wyn
+tests/stdlib/test_*
+!tests/stdlib/test_*.wyn
+tests/test_*
+!tests/test_*.wyn
+!tests/test_*.c
