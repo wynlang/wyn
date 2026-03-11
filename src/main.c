@@ -1798,6 +1798,19 @@ int main(int argc, char** argv) {
         // Cross-compile based on target
         char compile_cmd[4096];
         if (strcmp(target, "linux") == 0) {
+            // Determine the right runtime library
+            char rt_lib[1024];
+            char target_rt[1024];
+            snprintf(target_rt, sizeof(target_rt), "%s/runtime/libwyn_rt_linux-%s.a", wyn_root,
+                     strcmp(arch, "aarch64") == 0 ? "arm64" : "x64");
+            struct stat rt_st;
+            if (stat(target_rt, &rt_st) == 0) {
+                snprintf(rt_lib, sizeof(rt_lib), "%s", target_rt);
+            } else {
+                // Fall back to host runtime (works when building on same arch)
+                snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
+            }
+            
             // Try cross-compilers in order: specific gcc, zig cc, native gcc (only works on Linux)
             const char* cc = NULL;
             if (strcmp(arch, "aarch64") == 0) {
@@ -1806,25 +1819,23 @@ int main(int argc, char** argv) {
                 if (system("which x86_64-linux-gnu-gcc >/dev/null 2>&1") == 0) cc = "x86_64-linux-gnu-gcc";
             }
             if (!cc && system("which zig >/dev/null 2>&1") == 0) {
-                // Use zig as cross-compiler
                 snprintf(compile_cmd, sizeof(compile_cmd),
                     "zig cc -target %s-linux-gnu -std=c11 -O2 -w -I %s/src -I %s/vendor/minicoro "
-                    "-o %s.linux %s.c %s/runtime/libwyn_rt.a -lpthread -lm",
-                    arch, wyn_root, wyn_root, file, file, wyn_root);
+                    "-o %s.linux %s.c %s -lpthread -lm",
+                    arch, wyn_root, wyn_root, file, file, rt_lib);
                 printf("Cross-compiling for Linux (%s) via zig cc...\n", arch);
             } else if (cc) {
                 snprintf(compile_cmd, sizeof(compile_cmd),
                     "%s -std=c11 -O2 -w -I %s/src -I %s/vendor/minicoro "
-                    "-o %s.linux %s.c %s/runtime/libwyn_rt.a -lpthread -lm",
-                    cc, wyn_root, wyn_root, file, file, wyn_root);
+                    "-o %s.linux %s.c %s -lpthread -lm",
+                    cc, wyn_root, wyn_root, file, file, rt_lib);
                 printf("Cross-compiling for Linux (%s) via %s...\n", arch, cc);
             } else {
 #ifdef __linux__
-                // On Linux, native gcc works
                 snprintf(compile_cmd, sizeof(compile_cmd),
                     "gcc -std=c11 -O2 -w -I %s/src -I %s/vendor/minicoro "
-                    "-o %s.linux %s.c %s/runtime/libwyn_rt.a -lpthread -lm",
-                    wyn_root, wyn_root, file, file, wyn_root);
+                    "-o %s.linux %s.c %s -lpthread -lm",
+                    wyn_root, wyn_root, file, file, rt_lib);
                 printf("Compiling for Linux (%s)...\n", arch);
 #else
                 fprintf(stderr, "Error: No Linux cross-compiler found.\n");

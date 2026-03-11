@@ -91,3 +91,46 @@ jobs:
         run: |
           echo 'fn main() -> int { return 0 }' > /tmp/android.wyn
           ./wyn cross android /tmp/android.wyn && echo "✅ Android cross-compilation works" || echo "⚠️ Android NDK not available — skipped"
+
+  build-runtime-libs:
+    name: Build runtime (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-latest
+            cc: gcc
+            arch_flags: ""
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            cc: gcc
+            arch_flags: ""
+          - target: macos-arm64
+            runner: macos-15
+            cc: clang
+            arch_flags: ""
+          - target: macos-x64
+            runner: macos-15-intel
+            cc: clang
+            arch_flags: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gcc make
+
+      - name: Build runtime library
+        run: |
+          make runtime
+          cp runtime/libwyn_rt.a runtime/libwyn_rt_${{ matrix.target }}.a
+          echo "✅ Built libwyn_rt_${{ matrix.target }}.a"
+          nm runtime/libwyn_rt_${{ matrix.target }}.a | grep " T " | wc -l | xargs echo "Symbols:"
+
+      - name: Upload runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libwyn_rt_${{ matrix.target }}
+          path: runtime/libwyn_rt_${{ matrix.target }}.a

@@ -57,12 +57,14 @@ jobs:
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          mkdir -p dist/src dist/vendor/minicoro
+          mkdir -p dist/src dist/vendor/minicoro dist/runtime
           cp wyn dist/
           cp -r src dist/src
           [ -d vendor/minicoro ] && cp -r vendor/minicoro dist/vendor/minicoro
           [ -d vendor/tcc ] && cp -r vendor/tcc dist/vendor/tcc
-          [ -d runtime ] && cp -r runtime dist/runtime
+          # Build and include runtime library for this platform
+          make runtime
+          cp runtime/libwyn_rt.a dist/runtime/
           tar czf ${{ matrix.artifact }}.tar.gz -C dist .
 
       - name: Package (Windows)
