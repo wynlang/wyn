@@ -448,6 +448,17 @@ runtime: wyn$(EXE_EXT)
 	@ar rcs runtime/libwyn_rt.a runtime/obj/*.o
 	@echo "Built runtime/libwyn_rt.a"
 
+# TCC runtime — excludes spawn.c, coroutine.c (can't compile macOS headers with TCC)
+TCC_BIN = vendor/tcc/bin/tcc
+TCC_RT_SRCS = src/wyn_arena.c src/io_loop.c src/runtime_exports.c src/wyn_wrapper.c src/wyn_interface.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c
+runtime-tcc:
+	@echo "Building TCC runtime library..."
+	@mkdir -p /tmp/tcc_rt_obj
+	@for f in $(TCC_RT_SRCS); do $(TCC_BIN) -c -I src -I vendor/minicoro -I vendor/tcc/tcc_include -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 $$f -o /tmp/tcc_rt_obj/$$(basename $$f .c).o 2>/dev/null; done
+	@ar rcs vendor/tcc/lib/libwyn_rt_tcc.a /tmp/tcc_rt_obj/*.o
+	@rm -rf /tmp/tcc_rt_obj
+	@echo "Built vendor/tcc/lib/libwyn_rt_tcc.a"
+
 clean:
 	rm -f wyn wyn.exe wyn-windows.exe wyn-linux wyn-macos tests/test_lexer tests/test_parser tests/test_checker tests/test_codegen tests/test_operators tests/test_default_parameters tests/test_function_overloading tests/test_generic_functions tests/test_parameter_validation tests/test_function_integration tests/test_syntax_design tests/test_system_integration tests/phase2_integration tests/phase2_integration_simple tests/test_wasm_support tests/test_self_compilation tests/test_documentation_system tests/test_container_support tests/test_lexer_rewrite tests/test_coroutine tools/formatter.wyn.out
 	rm -rf temp
