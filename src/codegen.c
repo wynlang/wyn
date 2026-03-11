@@ -412,6 +412,7 @@ typedef struct {
     int arg_count;
     int spawn_id;
     int returns_void;  // 1 if function returns void
+    int returns_string; // 1 if function returns string
 } SpawnWrapper;
 
 static SpawnWrapper spawn_wrappers[256];
@@ -430,6 +431,21 @@ void register_spawn_array(const char* name) {
 int is_spawn_array(const char* name) {
     for (int i = 0; i < spawn_array_count; i++)
         if (strcmp(spawn_array_vars[i], name) == 0) return 1;
+    return 0;
+}
+
+// String future tracking — variables that hold futures from string-returning spawns
+static char string_future_vars[64][256];
+static int string_future_count = 0;
+void register_string_future(const char* name) {
+    for (int i = 0; i < string_future_count; i++)
+        if (strcmp(string_future_vars[i], name) == 0) return;
+    if (string_future_count < 64)
+        strcpy(string_future_vars[string_future_count++], name);
+}
+int is_string_future(const char* name) {
+    for (int i = 0; i < string_future_count; i++)
+        if (strcmp(string_future_vars[i], name) == 0) return 1;
     return 0;
 }
 
@@ -761,7 +777,7 @@ const char* get_enum_var_type(const char* var) {
 }
 
 // Function default parameter registry
-static struct { char name[128]; Expr** defaults; int param_count; } fn_defaults[256];
+static struct { char name[128]; Expr** defaults; int param_count; char return_type[32]; } fn_defaults[256];
 static int fn_defaults_count = 0;
 
 void register_fn_defaults(const char* name, Expr** defaults, int param_count) {
@@ -769,8 +785,34 @@ void register_fn_defaults(const char* name, Expr** defaults, int param_count) {
         strncpy(fn_defaults[fn_defaults_count].name, name, 127);
         fn_defaults[fn_defaults_count].defaults = defaults;
         fn_defaults[fn_defaults_count].param_count = param_count;
+        fn_defaults[fn_defaults_count].return_type[0] = '\0';
         fn_defaults_count++;
     }
+}
+
+void register_fn_return_type(const char* name, const char* ret_type) {
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, name) == 0) {
+            strncpy(fn_defaults[i].return_type, ret_type, 31);
+            return;
+        }
+    }
+    // Function not yet registered — add it
+    if (fn_defaults_count < 256) {
+        strncpy(fn_defaults[fn_defaults_count].name, name, 127);
+        fn_defaults[fn_defaults_count].defaults = NULL;
+        fn_defaults[fn_defaults_count].param_count = 0;
+        strncpy(fn_defaults[fn_defaults_count].return_type, ret_type, 31);
+        fn_defaults_count++;
+    }
+}
+
+const char* get_function_return_type(const char* name) {
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, name) == 0 && fn_defaults[i].return_type[0])
+            return fn_defaults[i].return_type;
+    }
+    return NULL;
 }
 
 Expr* get_fn_default(const char* name, int param_index) {

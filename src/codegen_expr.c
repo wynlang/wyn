@@ -287,12 +287,38 @@ void codegen_expr(Expr* expr) {
             }
             codegen_expr(expr->unary.operand);
             break;
-        case EXPR_AWAIT:
-            // Await: get result from future — value stored directly via intptr_t
-            emit("(long long)(intptr_t)future_get((Future*)(intptr_t)");
-            codegen_expr(expr->await.expr);
+        case EXPR_AWAIT: {
+            // Await: get result from future
+            // Check if the result should be a string
+            bool is_string_return = false;
+            Expr* inner = expr->await.expr;
+            if (inner && inner->type == EXPR_SPAWN && inner->spawn.call &&
+                inner->spawn.call->type == EXPR_CALL &&
+                inner->spawn.call->call.callee->type == EXPR_IDENT) {
+                char fn_name[256];
+                int fnl = inner->spawn.call->call.callee->token.length;
+                if (fnl > 255) fnl = 255;
+                memcpy(fn_name, inner->spawn.call->call.callee->token.start, fnl);
+                fn_name[fnl] = '\0';
+                extern const char* get_function_return_type(const char* name);
+                const char* rt = get_function_return_type(fn_name);
+                if (rt && strcmp(rt, "string") == 0) is_string_return = true;
+            }
+            if (!is_string_return && inner && inner->type == EXPR_IDENT) {
+                char vn[256]; int vl = inner->token.length < 255 ? inner->token.length : 255;
+                memcpy(vn, inner->token.start, vl); vn[vl] = '\0';
+                extern int is_string_future(const char*);
+                if (is_string_future(vn)) is_string_return = true;
+            }
+            if (is_string_return) {
+                emit("(const char*)(intptr_t)future_get((Future*)(intptr_t)");
+            } else {
+                emit("(long long)(intptr_t)future_get((Future*)(intptr_t)");
+            }
+            codegen_expr(inner);
             emit(")");
             break;
+        }
         case EXPR_BINARY:
             // Constant folding: if both sides are int literals, compute at compile time
             if (expr->binary.left->type == EXPR_INT && expr->binary.right->type == EXPR_INT) {

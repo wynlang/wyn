@@ -543,6 +543,42 @@ void codegen_stmt(Stmt* stmt) {
                 } else if (stmt->var.init->type == EXPR_SPAWN) {
                     // Spawn returns a future
                     c_type = "Future*";
+                    // Track if this future holds a string result
+                    if (stmt->var.init->spawn.call && stmt->var.init->spawn.call->type == EXPR_CALL &&
+                        stmt->var.init->spawn.call->call.callee->type == EXPR_IDENT) {
+                        char _sfn[256]; int _sfl = stmt->var.init->spawn.call->call.callee->token.length;
+                        if (_sfl > 255) _sfl = 255;
+                        memcpy(_sfn, stmt->var.init->spawn.call->call.callee->token.start, _sfl); _sfn[_sfl] = '\0';
+                        extern const char* get_function_return_type(const char*);
+                        const char* _srt = get_function_return_type(_sfn);
+                        if (_srt && strcmp(_srt, "string") == 0) {
+                            char _vn2[256]; int _vl2 = stmt->var.name.length < 255 ? stmt->var.name.length : 255;
+                            memcpy(_vn2, stmt->var.name.start, _vl2); _vn2[_vl2] = '\0';
+                            extern void register_string_future(const char*);
+                            register_string_future(_vn2);
+                        }
+                    }
+                } else if (stmt->var.init->type == EXPR_AWAIT) {
+                    // Await: check if the future holds a string
+                    Expr* await_inner = stmt->var.init->await.expr;
+                    bool _is_str_await = false;
+                    if (await_inner && await_inner->type == EXPR_IDENT) {
+                        char _avn[256]; int _avl = await_inner->token.length < 255 ? await_inner->token.length : 255;
+                        memcpy(_avn, await_inner->token.start, _avl); _avn[_avl] = '\0';
+                        extern int is_string_future(const char*);
+                        if (is_string_future(_avn)) _is_str_await = true;
+                    }
+                    if (await_inner && await_inner->type == EXPR_SPAWN && await_inner->spawn.call &&
+                        await_inner->spawn.call->type == EXPR_CALL &&
+                        await_inner->spawn.call->call.callee->type == EXPR_IDENT) {
+                        char _afn[256]; int _afl = await_inner->spawn.call->call.callee->token.length;
+                        if (_afl > 255) _afl = 255;
+                        memcpy(_afn, await_inner->spawn.call->call.callee->token.start, _afl); _afn[_afl] = '\0';
+                        extern const char* get_function_return_type(const char*);
+                        const char* _art = get_function_return_type(_afn);
+                        if (_art && strcmp(_art, "string") == 0) _is_str_await = true;
+                    }
+                    if (_is_str_await) c_type = "const char*";
                 } else if (stmt->var.init->type == EXPR_STRUCT_INIT) {
                     // Use the struct type name (monomorphic if available)
                     static char struct_type[128];

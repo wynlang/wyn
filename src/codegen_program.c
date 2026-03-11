@@ -18,6 +18,21 @@ void codegen_program(Program* prog) {
     // Reset spawn wrapper collection
     spawn_wrapper_count = 0;
     
+    // PASS 0: Pre-scan to register function return types (needed by spawn wrapper generation)
+    extern void register_fn_return_type(const char*, const char*);
+    for (int i = 0; i < prog->count; i++) {
+        if (prog->stmts[i]->type == STMT_FN) {
+            Stmt* fn_stmt = prog->stmts[i];
+            if (fn_stmt->fn.return_type && fn_stmt->fn.return_type->type == EXPR_IDENT) {
+                char _fn[128]; int _fl = fn_stmt->fn.name.length < 127 ? fn_stmt->fn.name.length : 127;
+                memcpy(_fn, fn_stmt->fn.name.start, _fl); _fn[_fl] = '\0';
+                char _rt[32]; int _rl = fn_stmt->fn.return_type->token.length < 31 ? fn_stmt->fn.return_type->token.length : 31;
+                memcpy(_rt, fn_stmt->fn.return_type->token.start, _rl); _rt[_rl] = '\0';
+                register_fn_return_type(_fn, _rt);
+            }
+        }
+    }
+    
     // PASS 1: Pre-scan to collect all lambdas
     // We need to emit lambda functions before they're used
     // So we do a quick scan to find and generate them first
@@ -481,6 +496,15 @@ void codegen_program(Program* prog) {
                 char _fn[128]; snprintf(_fn, 128, "%.*s", fn->name.length, fn->name.start);
                 extern void register_fn_defaults(const char*, Expr**, int);
                 register_fn_defaults(_fn, fn->param_defaults, fn->param_count);
+            }
+            
+            // Register return type for spawn/await type dispatch
+            if (fn->return_type && fn->return_type->type == EXPR_IDENT) {
+                char _fn2[128]; snprintf(_fn2, 128, "%.*s", fn->name.length, fn->name.start);
+                char _rt[32]; int _rtl = fn->return_type->token.length < 31 ? fn->return_type->token.length : 31;
+                memcpy(_rt, fn->return_type->token.start, _rtl); _rt[_rtl] = '\0';
+                extern void register_fn_return_type(const char*, const char*);
+                register_fn_return_type(_fn2, _rt);
             }
             
             // Function forward declaration
