@@ -3201,13 +3201,32 @@ void codegen_expr(Expr* expr) {
                 
                 int arg_count = call->call.arg_count;
                 
+                // Check if this function can be inlined (no yield points)
+                int _can_inline = 0;
+                for (int _si = 0; _si < spawn_wrapper_count; _si++) {
+                    if (strcmp(spawn_wrappers[_si].func_name, func_name) == 0) {
+                        _can_inline = spawn_wrappers[_si].can_inline;
+                        break;
+                    }
+                }
+                const char* _spawn_fn = _can_inline ? "wyn_spawn_inline" : "wyn_spawn_async_traced";
+                
                 if (arg_count == 0) {
-                    emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s, NULL, __FILE__, __LINE__)", func_name);
+                    if (_can_inline)
+                        emit("wyn_spawn_inline((TaskFuncWithReturn)__spawn_wrapper_%s, NULL)", func_name);
+                    else
+                        emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s, NULL, __FILE__, __LINE__)", func_name);
                 } else if (arg_count == 1) {
-                    // Single arg: pass directly as void* — no malloc
-                    emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
+                    if (_can_inline) {
+                        emit("wyn_spawn_inline((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
+                    } else {
+                        emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
+                    }
                     codegen_expr(call->call.args[0]);
-                    emit("), __FILE__, __LINE__)");
+                    if (_can_inline)
+                        emit("))");
+                    else
+                        emit("), __FILE__, __LINE__)");
                 } else {
                     // Create args struct and pass to wrapper
                     spawn_id_counter++;
@@ -3222,8 +3241,10 @@ void codegen_expr(Expr* expr) {
                         codegen_expr(call->call.args[i]);
                         emit("; ");
                     }
-                    emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_%d, __sa_%d, __FILE__, __LINE__); })", 
-                         func_name, arg_count, sid);
+                    if (_can_inline)
+                        emit("wyn_spawn_inline((TaskFuncWithReturn)__spawn_wrapper_%s_%d, __sa_%d); })", func_name, arg_count, sid);
+                    else
+                        emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_%d, __sa_%d, __FILE__, __LINE__); })", func_name, arg_count, sid);
                 }
             } else {
                 emit("NULL /* spawn fallback */");

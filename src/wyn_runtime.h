@@ -6,6 +6,11 @@
 void wyn_rc_retain(const void* ptr);
 void wyn_rc_release(const void* ptr);
 
+// Inline spawn for non-yielding functions (spawn_fast.c)
+struct Future;
+typedef void* (*TaskFuncWithReturn)(void*);
+struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
+
 // TCC compatibility: __auto_type is a GCC/Clang extension
 #ifdef __TINYC__
 #define __auto_type long long

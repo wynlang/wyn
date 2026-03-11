@@ -351,6 +351,56 @@ int var_is_live_after(Stmt** stmts, int count, int after_idx, const char* name) 
     return block_references_var_from(stmts, count, after_idx + 1, name);
 }
 
+// Check if a function body contains yield points or external calls
+static int expr_has_yield(Expr* e) {
+    if (!e) return 0;
+    if (e->type == EXPR_AWAIT) return 1;
+    switch (e->type) {
+        case EXPR_BINARY: return expr_has_yield(e->binary.left) || expr_has_yield(e->binary.right);
+        case EXPR_UNARY: return expr_has_yield(e->unary.operand);
+        case EXPR_CALL:
+            // Any function call makes it non-inlineable (conservative)
+            return 1;
+        case EXPR_METHOD_CALL:
+            // Any method call makes it non-inlineable
+            return 1;
+        case EXPR_ASSIGN: return expr_has_yield(e->assign.value);
+        default: return 0;
+    }
+}
+static int stmt_has_yield(Stmt* s) {
+    if (!s) return 0;
+    switch (s->type) {
+        case STMT_EXPR: return expr_has_yield(s->expr);
+        case STMT_VAR: return expr_has_yield(s->var.init);
+        case STMT_RETURN: return expr_has_yield(s->ret.value);
+        case STMT_IF:
+            return expr_has_yield(s->if_stmt.condition) ||
+                   stmt_has_yield(s->if_stmt.then_branch) ||
+                   stmt_has_yield(s->if_stmt.else_branch);
+        case STMT_WHILE: return expr_has_yield(s->while_stmt.condition) || stmt_has_yield(s->while_stmt.body);
+        case STMT_FOR: return expr_has_yield(s->for_stmt.condition) || stmt_has_yield(s->for_stmt.body);
+        case STMT_BLOCK:
+            for (int i = 0; i < s->block.count; i++)
+                if (stmt_has_yield(s->block.stmts[i])) return 1;
+            return 0;
+        default: return 0;
+    }
+}
+int function_can_inline(const char* name) {
+    extern Program* current_program;
+    if (!current_program) return 0;
+    for (int i = 0; i < current_program->count; i++) {
+        if (current_program->stmts[i]->type == STMT_FN) {
+            FnStmt* fn = &current_program->stmts[i]->fn;
+            if ((int)strlen(name) == fn->name.length && memcmp(name, fn->name.start, fn->name.length) == 0) {
+                return !stmt_has_yield(fn->body);
+            }
+        }
+    }
+    return 0; // unknown function — don't inline
+}
+
 static char* sb_var_names[64];
 static int sb_var_count = 0;
 static void register_sb_var(const char* name) {
@@ -450,7 +500,7 @@ static int lambda_count = 0;
 static int lambda_id_counter = 0;
 static int lambda_ref_counter = 0;
 static bool in_return_lambda = false;
-static Program* current_program = NULL;
+Program* current_program = NULL;
 
 // Look up a struct method's return type string ("float", "string", "int", etc.)
 const char* lookup_struct_method_return_type(const char* struct_name, const char* method_name) {
@@ -518,9 +568,10 @@ typedef struct {
     char func_name[256];
     int arg_count;
     int spawn_id;
-    int returns_void;   // 1 if function returns void
-    int returns_string; // 1 if function returns string
-    char return_type[64]; // struct name if returns struct, empty otherwise
+    int returns_void;
+    int returns_string;
+    char return_type[64];
+    int can_inline;     // 1 if function has no yield points (no await/channel)
 } SpawnWrapper;
 
 static SpawnWrapper spawn_wrappers[256];

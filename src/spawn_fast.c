@@ -557,3 +557,13 @@ void wyn_spawn_wait(void) {
         sched_yield();
     }
 }
+
+// Inline spawn: run function directly without creating a coroutine.
+// Used for spawned functions that have no yield points (no await/channel ops).
+// Much cheaper: no mmap, no coroutine struct, no scheduler overhead.
+Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg) {
+    Future* future = future_new();
+    void* result = func(arg);
+    future_set(future, result);
+    return future;
+}

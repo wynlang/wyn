@@ -360,6 +360,8 @@ static void scan_expr_for_lambdas(Expr* expr) {
                         strcmp(_rt, "float") != 0 && strcmp(_rt, "bool") != 0) {
                         strncpy(spawn_wrappers[spawn_wrapper_count].return_type, _rt, 63);
                     }
+                    extern int function_can_inline(const char*);
+                    spawn_wrappers[spawn_wrapper_count].can_inline = function_can_inline(func_name);
                     spawn_wrapper_count++;
                 }
             }
