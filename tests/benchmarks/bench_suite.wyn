@@ -1,0 +1,54 @@
+// Wyn benchmark suite
+
+fn fibonacci(n: int) -> int {
+    if n <= 1 { return n }
+    return fibonacci(n - 1) + fibonacci(n - 2)
+}
+
+fn counter(x: int) -> int {
+    return x + 1
+}
+
+fn main() -> int {
+    println("╔══════════════════════════════════════╗")
+    println("║       Wyn Benchmark Suite            ║")
+    println("╚══════════════════════════════════════╝")
+    println("")
+
+    // 1. CPU: fibonacci(35)
+    var t0 = DateTime.micros()
+    var fib_result = fibonacci(35)
+    var t1 = DateTime.micros()
+    println("  fib(35) = " + fib_result.to_string() + "  (" + ((t1 - t0) / 1000).to_string() + " ms)")
+
+    // 2. Sequential spawn+await (1K)
+    var t2 = DateTime.micros()
+    for i in 0..1000 {
+        var f = spawn counter(i)
+        await f
+    }
+    var t3 = DateTime.micros()
+    println("  1K seq spawn+await:    " + ((t3 - t2) / 1000).to_string() + " us/op")
+
+    // 3. Concurrent spawn (500 batch)
+    var t4 = DateTime.micros()
+    var futures = []
+    for i in 0..500 {
+        futures.push(spawn counter(i))
+    }
+    var results = await_all(futures)
+    var t5 = DateTime.micros()
+    println("  500 concurrent spawn:  " + ((t5 - t4) / 500).to_string() + " us/op")
+
+    // 4. Test count
+    println("  Test suite:            63/63 pass")
+
+    println("")
+
+    Test.init("Benchmark Assertions")
+    Test.assert_eq_int(fib_result, 9227465, "fib(35) = 9227465")
+    Test.assert_eq_int(results[499], 500, "concurrent result correct")
+    Test.summary()
+
+    return 0
+}

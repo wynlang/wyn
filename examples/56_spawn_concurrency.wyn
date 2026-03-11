@@ -1,32 +1,54 @@
-// Example: Shared Memory Between Spawns (Simplified)
-// Demonstrates that spawns can work concurrently
+// Spawn Concurrency — demonstrates concurrent execution patterns
 
-fn worker(id: int) {
-    var result = id * 10;
-    var i = 0;
-    while (i < 100) {
-        result = result + 1;
-        i = i + 1;
+fn worker(id: int) -> int {
+    var result = id * 10
+    for i in 0..100 {
+        result = result + 1
     }
+    return result
 }
 
-fn main() {
-    print("=== Spawn Concurrency Test ===\n\n");
-    
-    print("Spawning 100 workers concurrently...\n");
-    
-    var i = 0;
-    while (i < 100) {
-        spawn worker(i);
-        i = i + 1;
+fn increment(counter: int) -> int {
+    Shared.add(counter, 1)
+    return 0
+}
+
+fn main() -> int {
+    println("=== Spawn Concurrency ===")
+    println("")
+
+    // Spawn 100 workers and collect results with await_all
+    var futures = []
+    for i in 0..100 {
+        futures.push(spawn worker(i))
     }
-    
-    print("✓ 100 spawns created!\n");
-    print("✓ All execute concurrently\n");
-    print("✓ Memory efficient (~4-8 KB each)\n\n");
-    
-    print("Note: Spawns share address space\n");
-    print("Use tasks for safe communication\n");
-    
-    return 0;
+    var results = await_all(futures)
+
+    println("Spawned 100 workers concurrently")
+    println("  worker(0)  = ${results[0]}")
+    println("  worker(50) = ${results[50]}")
+    println("  worker(99) = ${results[99]}")
+
+    // Verify all results
+    var correct = true
+    for i in 0..100 {
+        if results[i] != i * 10 + 100 {
+            correct = false
+        }
+    }
+    if correct {
+        println("  ✓ All 100 results correct")
+    }
+
+    // Shared atomic counter — safe concurrent mutation
+    var counter = Shared.new(0)
+    var inc_futures = []
+    for i in 0..100 {
+        inc_futures.push(spawn increment(counter))
+    }
+    await_all(inc_futures)
+    println("  Shared counter: ${Shared.get(counter)} (expected 100)")
+
+    println("")
+    return 0
 }
