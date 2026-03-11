@@ -379,7 +379,7 @@ void codegen_stmt(Stmt* stmt) {
                         extern int is_known_array_var(const char*);
                         if (is_known_array_var(_vn)) {
                             char _mn[64]; snprintf(_mn, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
-                            if (strcmp(_mn, "slice") == 0 || strcmp(_mn, "reverse") == 0 || strcmp(_mn, "filter") == 0 || strcmp(_mn, "map") == 0 || strcmp(_mn, "concat") == 0 || strcmp(_mn, "unique") == 0) {
+                            if (strcmp(_mn, "slice") == 0 || strcmp(_mn, "reverse") == 0 || strcmp(_mn, "filter") == 0 || strcmp(_mn, "map") == 0 || strcmp(_mn, "concat") == 0 || strcmp(_mn, "unique") == 0 || strcmp(_mn, "sort") == 0 || strcmp(_mn, "sort_by") == 0) {
                                 c_type = "WynArray";
                                 needs_arc_management = false;
                                 { char vn2[256]; snprintf(vn2, 256, "%.*s", stmt->var.name.length, stmt->var.name.start); register_array_var(vn2); }
