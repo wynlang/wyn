@@ -2,6 +2,10 @@
 #define WYN_RUNTIME_H
 #define _POSIX_C_SOURCE 200809L
 
+// Reference counting (wyn_rc.c)
+void wyn_rc_retain(const void* ptr);
+void wyn_rc_release(const void* ptr);
+
 // TCC compatibility: __auto_type is a GCC/Clang extension
 #ifdef __TINYC__
 #define __auto_type long long

@@ -244,6 +244,21 @@ int is_known_array_var(const char* name) {
     return 0;
 }
 
+// String variable tracking for RC release on reassignment
+static char* string_var_names[256];
+static int string_var_count = 0;
+void register_string_var(const char* name) {
+    for (int i = 0; i < string_var_count; i++)
+        if (strcmp(string_var_names[i], name) == 0) return;
+    if (string_var_count < 256) string_var_names[string_var_count++] = strdup(name);
+}
+int is_string_var(const char* name) {
+    for (int i = 0; i < string_var_count; i++)
+        if (strcmp(string_var_names[i], name) == 0) return 1;
+    return 0;
+}
+void reset_string_vars(void) { string_var_count = 0; }
+
 static char* sb_var_names[64];
 static int sb_var_count = 0;
 static void register_sb_var(const char* name) {

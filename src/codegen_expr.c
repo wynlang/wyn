@@ -2379,10 +2379,18 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_ASSIGN: {
-            // Check if we need to prefix the assignment target with module name
+            // RC: release old string value before reassignment
             char target_name[512];
             memcpy(target_name, expr->assign.name.start, expr->assign.name.length);
             target_name[expr->assign.name.length] = '\0';
+            {
+                extern int is_string_var(const char*);
+                if (is_string_var(target_name)) {
+                    emit("wyn_rc_release(%s); ", target_name);
+                }
+            }
+            
+            // Check if we need to prefix the assignment target with module name
             
             if (current_module_prefix && !strchr(target_name, ':') && !strchr(target_name, '.')) {
                 // Check if this is a parameter - never prefix parameters

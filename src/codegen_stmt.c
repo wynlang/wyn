@@ -16,6 +16,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     // Register function parameters for scope tracking
     clear_parameters();
     clear_local_variables();
+    { extern void reset_string_vars(void); reset_string_vars(); }
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
         char param_name[256];
         snprintf(param_name, 256, "%.*s", fn_stmt->fn.params[i].length, fn_stmt->fn.params[i].start);
@@ -1003,6 +1004,13 @@ void codegen_stmt(Stmt* stmt) {
                 }
             }
             // Emit variable declaration - avoid double const
+            // Register string variables for RC tracking
+            if (strcmp(c_type, "char*") == 0 || strcmp(c_type, "const char*") == 0) {
+                char _svn[256]; int _svl = stmt->var.name.length < 255 ? stmt->var.name.length : 255;
+                memcpy(_svn, stmt->var.name.start, _svl); _svn[_svl] = '\0';
+                extern void register_string_var(const char*);
+                register_string_var(_svn);
+            }
             // Special handling for function pointers (lambdas)
             if (stmt->var.init && stmt->var.init->type == EXPR_LAMBDA) {
                 // Function pointer syntax: int (*name)(params...)
