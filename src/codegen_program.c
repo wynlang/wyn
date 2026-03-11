@@ -748,6 +748,14 @@ void codegen_program(Program* prog) {
                             if (def) { codegen_expr(def); } else { emit("0"); }
                         }
                         emit(");\n    return NULL;\n");
+                    } else if (spawn_wrappers[i].return_type[0]) {
+                        emit("    (void)arg; %s* __r = malloc(sizeof(%s)); *__r = %s(", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                        for (int di = 0; di < total_params; di++) {
+                            if (di > 0) emit(", ");
+                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                            if (def) { codegen_expr(def); } else { emit("0"); }
+                        }
+                        emit(");\n    return __r;\n");
                     } else {
                         emit("    (void)arg; return (void*)(intptr_t)%s(", spawn_wrappers[i].func_name);
                         for (int di = 0; di < total_params; di++) {
@@ -760,6 +768,9 @@ void codegen_program(Program* prog) {
                 } else {
                     if (spawn_wrappers[i].returns_void) {
                         emit("    (void)arg; %s();\n    return NULL;\n", spawn_wrappers[i].func_name);
+                    } else if (spawn_wrappers[i].return_type[0]) {
+                        emit("    (void)arg; %s* __r = malloc(sizeof(%s)); *__r = %s();\n    return __r;\n",
+                             spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
                     } else {
                         emit("    (void)arg; return (void*)(intptr_t)%s();\n", spawn_wrappers[i].func_name);
                     }
@@ -782,6 +793,14 @@ void codegen_program(Program* prog) {
                             if (def) { codegen_expr(def); } else { emit("0"); }
                         }
                         emit(");\n    return NULL;\n");
+                    } else if (spawn_wrappers[i].return_type[0]) {
+                        emit("    %s* __r = malloc(sizeof(%s)); *__r = %s((long long)(intptr_t)arg", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                        for (int di = 1; di < total_params; di++) {
+                            emit(", ");
+                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                            if (def) { codegen_expr(def); } else { emit("0"); }
+                        }
+                        emit(");\n    return __r;\n");
                     } else {
                         emit("    return (void*)(intptr_t)%s((long long)(intptr_t)arg", spawn_wrappers[i].func_name);
                         for (int di = 1; di < total_params; di++) {
@@ -794,6 +813,9 @@ void codegen_program(Program* prog) {
                 } else {
                     if (spawn_wrappers[i].returns_void) {
                         emit("    %s((long long)(intptr_t)arg);\n    return NULL;\n", spawn_wrappers[i].func_name);
+                    } else if (spawn_wrappers[i].return_type[0]) {
+                        emit("    %s* __r = malloc(sizeof(%s)); *__r = %s((long long)(intptr_t)arg);\n    return __r;\n",
+                             spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
                     } else {
                         emit("    return (void*)(intptr_t)%s((long long)(intptr_t)arg);\n", spawn_wrappers[i].func_name);
                     }
