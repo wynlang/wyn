@@ -322,6 +322,12 @@ static void scan_expr_for_lambdas(Expr* expr) {
             }
             break;
         case EXPR_SPAWN:
+            // Also scan await expressions — they may contain spawn
+        case EXPR_AWAIT:
+            if (expr->type == EXPR_AWAIT) {
+                scan_expr_for_lambdas(expr->await.expr);
+                break;
+            }
             // Collect spawn wrapper for this spawn expression
             if (expr->spawn.call && expr->spawn.call->type == EXPR_CALL &&
                 expr->spawn.call->call.callee->type == EXPR_IDENT) {
