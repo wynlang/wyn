@@ -1150,14 +1150,22 @@ void codegen_stmt(Stmt* stmt) {
                 extern int is_string_var(const char*);
                 if (is_string_var(_ivn)) {
                     // Check if source var is used after this statement
+                    // Only apply move optimization for vars in the SAME scope
                     extern int var_is_live_after(Stmt**, int, int, const char*);
                     extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
-                    if (current_block_stmts && !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _ivn)) {
-                        // Move: source is dead after this — skip retain, unregister source from release list
+                    extern int string_var_scope_depth;
+                    extern int string_var_releasable_count; extern char* string_var_releasable[];
+                    // Check if source is a top-level (releasable) var — if so, don't move
+                    bool _source_is_outer = false;
+                    for (int _ri = 0; _ri < string_var_releasable_count; _ri++) {
+                        if (strcmp(string_var_releasable[_ri], _ivn) == 0) { _source_is_outer = true; break; }
+                    }
+                    if (!_source_is_outer && current_block_stmts && !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _ivn)) {
+                        // Move: source is dead after this in same scope
                         extern void unregister_string_var(const char*);
                         unregister_string_var(_ivn);
                     } else {
-                        // Copy: source is still live — retain
+                        // Copy: source is still live or from outer scope — retain
                         emit("wyn_rc_retain(%.*s);\n", stmt->var.name.length, stmt->var.name.start);
                     }
                 }
@@ -1299,6 +1307,10 @@ void codegen_stmt(Stmt* stmt) {
         case STMT_BLOCK:
             { extern int string_var_scope_depth; string_var_scope_depth++; }
             {
+                // Save string var count to detect vars declared in this block
+                extern int string_var_count; extern char* string_var_names[];
+                int _saved_str_count = string_var_count;
+                
                 // Save and set block context for liveness analysis
                 extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
                 Stmt** _saved_stmts = current_block_stmts; int _saved_count = current_block_count; int _saved_idx = current_stmt_idx;
@@ -1309,6 +1321,10 @@ void codegen_stmt(Stmt* stmt) {
                     codegen_stmt(stmt->block.stmts[i]);
                 }
                 current_block_stmts = _saved_stmts; current_block_count = _saved_count; current_stmt_idx = _saved_idx;
+                
+                // Note: block-scoped RC release deferred — requires handling
+                // continue/break/return paths. Function-level release handles
+                // top-level vars. Inner-scope vars leak for now.
             }
             { extern int string_var_scope_depth; string_var_scope_depth--; }
             break;
