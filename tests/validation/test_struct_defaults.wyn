@@ -1,0 +1,75 @@
+// Stress test: structs with methods, default params, const
+
+struct Vec2 { x: float, y: float }
+
+fn vec2_new(x: float = 0.0, y: float = 0.0) -> Vec2 {
+    return Vec2 { x: x, y: y }
+}
+
+fn vec2_add(a: Vec2, b: Vec2) -> Vec2 {
+    return Vec2 { x: a.x + b.x, y: a.y + b.y }
+}
+
+fn vec2_scale(v: Vec2, s: float) -> Vec2 {
+    return Vec2 { x: v.x * s, y: v.y * s }
+}
+
+fn vec2_dot(a: Vec2, b: Vec2) -> float {
+    return a.x * b.x + a.y * b.y
+}
+
+struct Counter { value: int, name: string }
+
+fn counter_new(name: string) -> Counter {
+    return Counter { value: 0, name: name }
+}
+
+fn counter_inc(c: Counter) -> Counter {
+    return Counter { value: c.value + 1, name: c.name }
+}
+
+fn main() -> int {
+    Test.init("Structs and Default Params")
+
+    // 1: struct creation
+    var v = Vec2 { x: 3.0, y: 4.0 }
+    Test.assert(v.x == 3.0, "vec2 x")
+    Test.assert(v.y == 4.0, "vec2 y")
+
+    // 2: struct function
+    var a = Vec2 { x: 1.0, y: 2.0 }
+    var b = Vec2 { x: 3.0, y: 4.0 }
+    var c = vec2_add(a, b)
+    Test.assert(c.x == 4.0, "vec2_add x")
+    Test.assert(c.y == 6.0, "vec2_add y")
+
+    // 3: default params
+    var origin = vec2_new()
+    Test.assert(origin.x == 0.0, "default x")
+    Test.assert(origin.y == 0.0, "default y")
+
+    var partial = vec2_new(5.0)
+    Test.assert(partial.x == 5.0, "partial x")
+    Test.assert(partial.y == 0.0, "partial default y")
+
+    // 4: dot product
+    var d = vec2_dot(Vec2 { x: 1.0, y: 0.0 }, Vec2 { x: 0.0, y: 1.0 })
+    Test.assert(d == 0.0, "perpendicular dot = 0")
+
+    // 5: struct with string field
+    var cnt = counter_new("clicks")
+    Test.assert_eq_int(cnt.value, 0, "counter init")
+    Test.assert_eq_str(cnt.name, "clicks", "counter name")
+
+    // 6: struct update pattern
+    var cnt2 = counter_inc(cnt)
+    Test.assert_eq_int(cnt2.value, 1, "counter inc")
+    Test.assert_eq_str(cnt2.name, "clicks", "counter name preserved")
+
+    // 7: const
+    const PI = 3
+    Test.assert_eq_int(PI, 3, "const value")
+
+    Test.summary()
+    return 0
+}

@@ -1050,7 +1050,9 @@ void codegen_stmt(Stmt* stmt) {
                 char _svn[256]; int _svl = stmt->var.name.length < 255 ? stmt->var.name.length : 255;
                 memcpy(_svn, stmt->var.name.start, _svl); _svn[_svl] = '\0';
                 extern void register_string_var(const char*);
+                extern void register_releasable_string_var(const char*);
                 register_string_var(_svn);
+                register_releasable_string_var(_svn);
             }
             // Special handling for function pointers (lambdas)
             if (stmt->var.init && stmt->var.init->type == EXPR_LAMBDA) {

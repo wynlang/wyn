@@ -255,10 +255,19 @@ static char* string_var_names[256];
 static int string_var_count = 0;
 static int string_var_scope_depth = 0;
 void register_string_var(const char* name) {
-    if (string_var_scope_depth > 0) return; // Only track top-level function vars
+    // Always register for type detection (used by + operator)
     for (int i = 0; i < string_var_count; i++)
         if (strcmp(string_var_names[i], name) == 0) return;
     if (string_var_count < 256) string_var_names[string_var_count++] = strdup(name);
+}
+// Only top-level string vars are released at scope exit
+static char* string_var_releasable[256];
+static int string_var_releasable_count = 0;
+void register_releasable_string_var(const char* name) {
+    if (string_var_scope_depth > 0) return;
+    for (int i = 0; i < string_var_releasable_count; i++)
+        if (strcmp(string_var_releasable[i], name) == 0) return;
+    if (string_var_releasable_count < 256) string_var_releasable[string_var_releasable_count++] = strdup(name);
 }
 int is_string_var(const char* name) {
     for (int i = 0; i < string_var_count; i++)
@@ -270,21 +279,28 @@ void unregister_string_var(const char* name) {
         if (strcmp(string_var_names[i], name) == 0) {
             free(string_var_names[i]);
             string_var_names[i] = string_var_names[--string_var_count];
+            break;
+        }
+    }
+    for (int i = 0; i < string_var_releasable_count; i++) {
+        if (strcmp(string_var_releasable[i], name) == 0) {
+            free(string_var_releasable[i]);
+            string_var_releasable[i] = string_var_releasable[--string_var_releasable_count];
             return;
         }
     }
 }
-void reset_string_vars(void) { string_var_count = 0; string_var_scope_depth = -1; }
+void reset_string_vars(void) { string_var_count = 0; string_var_releasable_count = 0; string_var_scope_depth = -1; }
 void emit_string_releases(const char* except_var) {
     extern FILE* codegen_get_output(void);
     FILE* out = codegen_get_output();
     if (!out) return;
-    for (int i = 0; i < string_var_count; i++) {
-        if (except_var && strcmp(string_var_names[i], except_var) == 0) continue;
-        fprintf(out, "wyn_rc_release(%s); ", string_var_names[i]);
+    for (int i = 0; i < string_var_releasable_count; i++) {
+        if (except_var && strcmp(string_var_releasable[i], except_var) == 0) continue;
+        fprintf(out, "wyn_rc_release(%s); ", string_var_releasable[i]);
     }
 }
-int get_string_var_count(void) { return string_var_count; }
+int get_string_var_count(void) { return string_var_releasable_count; }
 
 // Liveness: check if a variable name appears in an expression
 static int expr_references_var(Expr* e, const char* name) {
