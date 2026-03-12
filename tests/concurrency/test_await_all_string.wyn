@@ -1,0 +1,23 @@
+// TDD: await_all must work with string-returning spawns
+
+fn make_label(id: int) -> string {
+    return "label_" + id.to_string()
+}
+
+fn main() -> int {
+    Test.init("await_all string return")
+
+    // Spawn string-returning functions and collect with await_all
+    var futures = []
+    for i in 0..3 {
+        futures.push(spawn make_label(i))
+    }
+    var results = await_all(futures)
+
+    Test.assert_eq_str(results[0], "label_0", "result[0]")
+    Test.assert_eq_str(results[1], "label_1", "result[1]")
+    Test.assert_eq_str(results[2], "label_2", "result[2]")
+
+    Test.summary()
+    return 0
+}

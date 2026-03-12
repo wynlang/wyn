@@ -421,6 +421,21 @@ void codegen_expr(Expr* expr) {
                         if (is_string_var(_rn)) { right_is_string = true; right_is_int = false; }
                     }
                 }
+                // Check EXPR_INDEX on string arrays
+                if (!left_is_string && expr->binary.left->type == EXPR_INDEX &&
+                    expr->binary.left->index.array->type == EXPR_IDENT) {
+                    char _an[256]; int _al = expr->binary.left->index.array->token.length < 255 ? expr->binary.left->index.array->token.length : 255;
+                    memcpy(_an, expr->binary.left->index.array->token.start, _al); _an[_al] = '\0';
+                    extern int is_str_array_var(const char*);
+                    if (is_str_array_var(_an)) { left_is_string = true; left_is_int = false; }
+                }
+                if (!right_is_string && expr->binary.right->type == EXPR_INDEX &&
+                    expr->binary.right->index.array->type == EXPR_IDENT) {
+                    char _an[256]; int _al = expr->binary.right->index.array->token.length < 255 ? expr->binary.right->index.array->token.length : 255;
+                    memcpy(_an, expr->binary.right->index.array->token.start, _al); _an[_al] = '\0';
+                    extern int is_str_array_var(const char*);
+                    if (is_str_array_var(_an)) { right_is_string = true; right_is_int = false; }
+                }
                 
                 if (left_is_string || right_is_string) {
                     // Use ARC-managed string concatenation with automatic conversion
@@ -609,9 +624,20 @@ void codegen_expr(Expr* expr) {
                 }
                 // await_all(futures_array) → collect all results into a WynArray
                 if (fn.length == 9 && memcmp(fn.start, "await_all", 9) == 0 && expr->call.arg_count == 1) {
+                    // Check if the futures array holds string-returning spawns
+                    bool _is_str_arr = false;
+                    if (expr->call.args[0]->type == EXPR_IDENT) {
+                        char _aan[256]; int _aal = expr->call.args[0]->token.length < 255 ? expr->call.args[0]->token.length : 255;
+                        memcpy(_aan, expr->call.args[0]->token.start, _aal); _aan[_aal] = '\0';
+                        extern int is_string_spawn_array(const char*);
+                        _is_str_arr = is_string_spawn_array(_aan);
+                    }
                     emit("_Generic((");
                     codegen_expr(expr->call.args[0]);
-                    emit("), WynIntArray: wyn_await_all_int, WynArray: wyn_await_all)(");
+                    if (_is_str_arr)
+                        emit("), WynIntArray: wyn_await_all_int_str, WynArray: wyn_await_all_str)(");
+                    else
+                        emit("), WynIntArray: wyn_await_all_int, WynArray: wyn_await_all)(");
                     codegen_expr(expr->call.args[0]);
                     emit(")");
                     break;
@@ -2299,6 +2325,11 @@ void codegen_expr(Expr* expr) {
                 // For now, we track common patterns
                 if (expr->index.array->type == EXPR_IDENT) {
                     Token var_name = expr->index.array->token;
+                    // Check tracked string content arrays
+                    char _van[256]; int _val = var_name.length < 255 ? var_name.length : 255;
+                    memcpy(_van, var_name.start, _val); _van[_val] = '\0';
+                    extern int is_str_array_var(const char*);
+                    if (is_str_array_var(_van)) is_string_array = true;
                     // Common variable names for string arrays
                     if ((var_name.length == 4 && memcmp(var_name.start, "args", 4) == 0) ||
                         (var_name.length == 5 && memcmp(var_name.start, "files", 5) == 0) ||

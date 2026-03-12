@@ -3251,12 +3251,30 @@ WynArray wyn_await_all(WynArray futures) {
     }
     return results;
 }
+WynArray wyn_await_all_str(WynArray futures) {
+    WynArray results = array_new();
+    for (int i = 0; i < futures.count; i++) {
+        long long fh = futures.data[i].data.int_val;
+        const char* result = (const char*)(intptr_t)future_get((Future*)(intptr_t)fh);
+        array_push_str(&results, result ? result : "");
+    }
+    return results;
+}
 WynArray wyn_await_all_int(WynIntArray futures) {
     WynArray results = array_new();
     for (int i = 0; i < futures.count; i++) {
         long long fh = futures.data[i];
         long long result = (long long)(intptr_t)future_get((Future*)(intptr_t)fh);
         array_push_int(&results, result);
+    }
+    return results;
+}
+WynArray wyn_await_all_int_str(WynIntArray futures) {
+    WynArray results = array_new();
+    for (int i = 0; i < futures.count; i++) {
+        long long fh = futures.data[i];
+        const char* result = (const char*)(intptr_t)future_get((Future*)(intptr_t)fh);
+        array_push_str(&results, result ? result : "");
     }
     return results;
 }

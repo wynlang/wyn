@@ -256,6 +256,12 @@ void codegen_stmt(Stmt* stmt) {
                 } else if (stmt->var.init->type == EXPR_STRING_INTERP) {
                     c_type = "char*";
                     needs_arc_management = true;
+                } else if (stmt->var.init->type == EXPR_INDEX &&
+                           stmt->var.init->index.array->type == EXPR_IDENT) {
+                    char _ixn[256]; int _ixl = stmt->var.init->index.array->token.length < 255 ? stmt->var.init->index.array->token.length : 255;
+                    memcpy(_ixn, stmt->var.init->index.array->token.start, _ixl); _ixn[_ixl] = '\0';
+                    extern int is_str_array_var(const char*);
+                    if (is_str_array_var(_ixn)) { c_type = "const char*"; is_already_const = true; }
                 } else if (stmt->var.init->type == EXPR_FLOAT) {
                     c_type = "double";
                 } else if (stmt->var.init->type == EXPR_BOOL) {
@@ -1053,6 +1059,22 @@ void codegen_stmt(Stmt* stmt) {
                 extern void register_releasable_string_var(const char*);
                 register_string_var(_svn);
                 register_releasable_string_var(_svn);
+            }
+            // Detect await_all on string spawn arrays → register result as string array
+            if (stmt->var.init && stmt->var.init->type == EXPR_CALL &&
+                stmt->var.init->call.callee->type == EXPR_IDENT &&
+                stmt->var.init->call.callee->token.length == 9 &&
+                memcmp(stmt->var.init->call.callee->token.start, "await_all", 9) == 0 &&
+                stmt->var.init->call.arg_count == 1 && stmt->var.init->call.args[0]->type == EXPR_IDENT) {
+                char _aav[256]; int _aal = stmt->var.init->call.args[0]->token.length < 255 ? stmt->var.init->call.args[0]->token.length : 255;
+                memcpy(_aav, stmt->var.init->call.args[0]->token.start, _aal); _aav[_aal] = '\0';
+                extern int is_string_spawn_array(const char*);
+                if (is_string_spawn_array(_aav)) {
+                    char _rv[256]; int _rl = stmt->var.name.length < 255 ? stmt->var.name.length : 255;
+                    memcpy(_rv, stmt->var.name.start, _rl); _rv[_rl] = '\0';
+                    extern void register_str_array_var(const char*);
+                    register_str_array_var(_rv);
+                }
             }
             // Special handling for function pointers (lambdas)
             if (stmt->var.init && stmt->var.init->type == EXPR_LAMBDA) {

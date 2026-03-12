@@ -319,6 +319,18 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 int vl = expr->method_call.object->token.length < 255 ? expr->method_call.object->token.length : 255;
                 memcpy(vn, expr->method_call.object->token.start, vl); vn[vl] = '\0';
                 register_spawn_array(vn);
+                // Check if spawned function returns string
+                Expr* spawn_call = expr->method_call.args[0]->spawn.call;
+                if (spawn_call && spawn_call->type == EXPR_CALL && spawn_call->call.callee->type == EXPR_IDENT) {
+                    char sfn[256]; int sfl = spawn_call->call.callee->token.length < 255 ? spawn_call->call.callee->token.length : 255;
+                    memcpy(sfn, spawn_call->call.callee->token.start, sfl); sfn[sfl] = '\0';
+                    extern const char* get_function_return_type(const char*);
+                    const char* srt = get_function_return_type(sfn);
+                    if (srt && strcmp(srt, "string") == 0) {
+                        extern void register_string_spawn_array(const char*);
+                        register_string_spawn_array(vn);
+                    }
+                }
             }
             break;
         case EXPR_SPAWN:

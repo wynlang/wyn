@@ -250,6 +250,20 @@ int is_known_array_var(const char* name) {
     return 0;
 }
 
+// String content array tracking — arrays whose elements are strings
+static char* str_array_var_names[64];
+static int str_array_var_count = 0;
+void register_str_array_var(const char* name) {
+    for (int i = 0; i < str_array_var_count; i++)
+        if (strcmp(str_array_var_names[i], name) == 0) return;
+    if (str_array_var_count < 64) str_array_var_names[str_array_var_count++] = strdup(name);
+}
+int is_str_array_var(const char* name) {
+    for (int i = 0; i < str_array_var_count; i++)
+        if (strcmp(str_array_var_names[i], name) == 0) return 1;
+    return 0;
+}
+
 // String variable tracking for RC release on reassignment
 static char* string_var_names[256];
 static int string_var_count = 0;
@@ -650,6 +664,21 @@ void register_string_future(const char* name) {
         if (strcmp(string_future_vars[i], name) == 0) return;
     if (string_future_count < 64)
         strcpy(string_future_vars[string_future_count++], name);
+}
+
+// String spawn array tracking — arrays that hold futures from string-returning spawns
+static char string_spawn_array_vars[64][256];
+static int string_spawn_array_count = 0;
+void register_string_spawn_array(const char* name) {
+    for (int i = 0; i < string_spawn_array_count; i++)
+        if (strcmp(string_spawn_array_vars[i], name) == 0) return;
+    if (string_spawn_array_count < 64)
+        strcpy(string_spawn_array_vars[string_spawn_array_count++], name);
+}
+int is_string_spawn_array(const char* name) {
+    for (int i = 0; i < string_spawn_array_count; i++)
+        if (strcmp(string_spawn_array_vars[i], name) == 0) return 1;
+    return 0;
 }
 int is_string_future(const char* name) {
     for (int i = 0; i < string_future_count; i++)
