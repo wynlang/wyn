@@ -254,6 +254,39 @@ int is_known_array_var(const char* name) {
 static char* string_var_names[256];
 static int string_var_count = 0;
 static int string_var_scope_depth = 0;
+
+// Scope stack: tracks string_var_count at each scope entry for block-scoped release
+#define SCOPE_STACK_MAX 64
+static int scope_var_count_stack[SCOPE_STACK_MAX];
+static int scope_stack_top = 0;
+
+void push_string_scope(void) {
+    if (scope_stack_top < SCOPE_STACK_MAX)
+        scope_var_count_stack[scope_stack_top++] = string_var_count;
+}
+void pop_string_scope_and_release(void) {
+    if (scope_stack_top <= 0) return;
+    int saved = scope_var_count_stack[--scope_stack_top];
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (out) {
+        for (int i = saved; i < string_var_count; i++)
+            fprintf(out, "wyn_rc_release(%s); ", string_var_names[i]);
+    }
+    // Restore count — inner-scope vars are no longer tracked
+    string_var_count = saved;
+}
+// Emit releases for current block's vars (for continue/break)
+void emit_block_string_releases(void) {
+    if (scope_stack_top <= 0) return;
+    int saved = scope_var_count_stack[scope_stack_top - 1];
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (out) {
+        for (int i = saved; i < string_var_count; i++)
+            fprintf(out, "wyn_rc_release(%s); ", string_var_names[i]);
+    }
+}
 void register_string_var(const char* name) {
     // Always register for type detection (used by + operator)
     for (int i = 0; i < string_var_count; i++)

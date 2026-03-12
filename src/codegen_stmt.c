@@ -1232,12 +1232,14 @@ void codegen_stmt(Stmt* stmt) {
             }
             break;
         case STMT_BREAK:
+            { extern void emit_block_string_releases(void); emit_block_string_releases(); }
             emit("break;\n");
             break;
         case STMT_DEFER:
             { extern void push_defer(Expr*); push_defer(stmt->expr); }
             break;
         case STMT_CONTINUE:
+            { extern void emit_block_string_releases(void); emit_block_string_releases(); }
             emit("continue;\n");
             break;
         case STMT_SPAWN: {
@@ -1307,11 +1309,13 @@ void codegen_stmt(Stmt* stmt) {
         case STMT_BLOCK:
             { extern int string_var_scope_depth; string_var_scope_depth++; }
             {
-                // Save string var count to detect vars declared in this block
-                extern int string_var_count; extern char* string_var_names[];
-                int _saved_str_count = string_var_count;
+                extern int string_var_scope_depth;
+                bool _is_inner_block = (string_var_scope_depth > 0);
                 
-                // Save and set block context for liveness analysis
+                extern void push_string_scope(void);
+                extern void pop_string_scope_and_release(void);
+                if (_is_inner_block) push_string_scope();
+                
                 extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
                 Stmt** _saved_stmts = current_block_stmts; int _saved_count = current_block_count; int _saved_idx = current_stmt_idx;
                 current_block_stmts = stmt->block.stmts; current_block_count = stmt->block.count;
@@ -1322,9 +1326,7 @@ void codegen_stmt(Stmt* stmt) {
                 }
                 current_block_stmts = _saved_stmts; current_block_count = _saved_count; current_stmt_idx = _saved_idx;
                 
-                // Note: block-scoped RC release deferred — requires handling
-                // continue/break/return paths. Function-level release handles
-                // top-level vars. Inner-scope vars leak for now.
+                if (_is_inner_block) pop_string_scope_and_release();
             }
             { extern int string_var_scope_depth; string_var_scope_depth--; }
             break;

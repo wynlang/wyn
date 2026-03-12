@@ -1,0 +1,55 @@
+// TDD: strings in loops must be released (no leak)
+
+fn build(n: int) -> string {
+    return "item_" + n.to_string()
+}
+
+fn main() -> int {
+    Test.init("Block-scoped RC")
+
+    // 1: string var in for loop body — released each iteration
+    for i in 0..100 {
+        var s = build(i)
+        // s should be released at end of loop body
+    }
+    Test.assert(true, "for loop strings don't crash")
+
+    // 2: string var with continue
+    var last = ""
+    for i in 0..10 {
+        var s = build(i)
+        if i % 2 == 0 { continue }
+        last = s
+    }
+    Test.assert_eq_str(last, "item_9", "continue path works")
+
+    // 3: string var with break
+    var found = ""
+    for i in 0..100 {
+        var s = build(i)
+        if i == 42 {
+            found = s
+            break
+        }
+    }
+    Test.assert_eq_str(found, "item_42", "break path works")
+
+    // 4: string in if body
+    var result = ""
+    if 1 > 0 {
+        var temp = "yes " + "branch"
+        result = temp
+    }
+    Test.assert_eq_str(result, "yes branch", "if body string")
+
+    // 5: string in while body
+    var count = 0
+    while count < 5 {
+        var label = "iter_" + count.to_string()
+        count = count + 1
+    }
+    Test.assert_eq_int(count, 5, "while body string")
+
+    Test.summary()
+    return 0
+}
