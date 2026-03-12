@@ -728,13 +728,13 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
             out->c_function = "array_index_of"; return true;
         }
         if (strcmp(method_name, "reverse") == 0 && arg_count == 0) {
-            out->c_function = "array_reverse";
-            out->pass_by_ref = true;
+            out->c_function = "array_reverse_copy";
+            out->pass_by_ref = false;
             return true;
         }
         if (strcmp(method_name, "sort") == 0 && arg_count == 0) {
-            out->c_function = "array_sort";
-            out->pass_by_ref = true;
+            out->c_function = "array_sort_copy";
+            out->pass_by_ref = false;
             return true;
         }
         if (strcmp(method_name, "first") == 0 && arg_count == 0) {

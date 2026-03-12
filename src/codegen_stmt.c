@@ -325,6 +325,27 @@ void codegen_stmt(Stmt* stmt) {
                             }
                         }
                     }
+                    // Methods that return arrays → WynArray
+                    if (!_found_method_rt) {
+                        char _mn2[64]; snprintf(_mn2, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                        if (strcmp(_mn2, "sort") == 0 || strcmp(_mn2, "reverse") == 0 ||
+                            strcmp(_mn2, "filter") == 0 || strcmp(_mn2, "map") == 0 ||
+                            strcmp(_mn2, "unique") == 0 || strcmp(_mn2, "slice") == 0 ||
+                            strcmp(_mn2, "flat_map") == 0) {
+                            c_type = "WynArray";
+                            char _vn2[256]; snprintf(_vn2, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                            extern void register_array_var(const char*); register_array_var(_vn2);
+                            goto var_type_done;
+                        }
+                        // String-returning methods
+                        if (strcmp(_mn2, "upper") == 0 || strcmp(_mn2, "lower") == 0 ||
+                            strcmp(_mn2, "trim") == 0 || strcmp(_mn2, "replace") == 0 ||
+                            strcmp(_mn2, "repeat") == 0 || strcmp(_mn2, "substring") == 0 ||
+                            strcmp(_mn2, "join") == 0) {
+                            c_type = "const char*"; is_already_const = true;
+                            goto var_type_done;
+                        }
+                    }
                     // Check for module constructor: StringBuilder.new(), etc.
                     if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
                         char _on[64]; snprintf(_on, 64, "%.*s", stmt->var.init->method_call.object->token.length, stmt->var.init->method_call.object->token.start);

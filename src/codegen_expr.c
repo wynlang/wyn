@@ -1569,9 +1569,9 @@ void codegen_expr(Expr* expr) {
                 }
                 // arr.sort() -> arr_sort(arr.data, arr.count) (in-place)
                 if (method.length == 4 && memcmp(method.start, "sort", 4) == 0 && expr->method_call.arg_count == 0) {
-                    emit("({ WynArray __sa = ");
+                    emit("array_sort_copy(");
                     codegen_expr(expr->method_call.object);
-                    emit("; array_sort(&__sa); __sa; })");
+                    emit(")");
                     break;
                 }
                 // arr.sort_by(cmp_fn) -> wyn_array_sort_by(&arr, cmp_fn)
@@ -1756,6 +1756,42 @@ void codegen_expr(Expr* expr) {
                 if (is_known_sb_var(vn)) receiver_type = "stringbuilder";
                 extern int is_known_float_var(const char*);
                 if (is_known_float_var(vn)) receiver_type = "float";
+            }
+            
+            // Method chaining: if object is a method call that returns an array, treat as array
+            if (expr->method_call.object->type == EXPR_METHOD_CALL) {
+                Token inner = expr->method_call.object->method_call.method;
+                if ((inner.length == 4 && memcmp(inner.start, "sort", 4) == 0) ||
+                    (inner.length == 7 && memcmp(inner.start, "reverse", 7) == 0) ||
+                    (inner.length == 6 && memcmp(inner.start, "filter", 6) == 0) ||
+                    (inner.length == 3 && memcmp(inner.start, "map", 3) == 0) ||
+                    (inner.length == 6 && memcmp(inner.start, "unique", 6) == 0) ||
+                    (inner.length == 5 && memcmp(inner.start, "slice", 5) == 0) ||
+                    (inner.length == 7 && memcmp(inner.start, "flat_map", 7) == 0) ||
+                    (inner.length == 5 && memcmp(inner.start, "split", 5) == 0) ||
+                    (inner.length == 5 && memcmp(inner.start, "chars", 5) == 0) ||
+                    (inner.length == 5 && memcmp(inner.start, "words", 5) == 0) ||
+                    (inner.length == 5 && memcmp(inner.start, "lines", 5) == 0))
+                    receiver_type = "array";
+                // String-returning methods
+                if ((inner.length == 5 && memcmp(inner.start, "upper", 5) == 0) ||
+                    (inner.length == 5 && memcmp(inner.start, "lower", 5) == 0) ||
+                    (inner.length == 4 && memcmp(inner.start, "trim", 4) == 0) ||
+                    (inner.length == 7 && memcmp(inner.start, "replace", 7) == 0) ||
+                    (inner.length == 6 && memcmp(inner.start, "repeat", 6) == 0) ||
+                    (inner.length == 9 && memcmp(inner.start, "substring", 9) == 0) ||
+                    (inner.length == 4 && memcmp(inner.start, "join", 4) == 0) ||
+                    (inner.length == 9 && memcmp(inner.start, "to_string", 9) == 0))
+                    receiver_type = "string";
+            }
+            // Method chaining: function calls that return arrays
+            if (!receiver_type && expr->method_call.object->type == EXPR_CALL) {
+                // await_all returns array
+                if (expr->method_call.object->call.callee->type == EXPR_IDENT) {
+                    Token fn = expr->method_call.object->call.callee->token;
+                    if ((fn.length == 9 && memcmp(fn.start, "await_all", 9) == 0))
+                        receiver_type = "array";
+                }
             }
             
             // Fallback: if no type info, try to infer from expression

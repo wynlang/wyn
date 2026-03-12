@@ -3862,6 +3862,13 @@ WynArray array_reverse_copy(WynArray arr) {
     return result;
 }
 
+WynArray array_sort_copy(WynArray arr) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) array_push_int(&result, arr.data[i].data.int_val);
+    array_sort(&result);
+    return result;
+}
+
 char* array_join_str(WynArray arr, const char* sep) {
     char* result = malloc(65536); result[0] = 0;
     for (int i = 0; i < arr.count; i++) {
