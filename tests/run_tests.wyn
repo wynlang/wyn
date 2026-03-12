@@ -104,10 +104,16 @@ fn main() -> int {
         "tests/validation/test_enum_result_closure.wyn",
         "tests/validation/test_struct_defaults.wyn",
         "tests/validation/test_array_ops.wyn",
-        "tests/validation/test_comprehensive_stress.wyn"
+        "tests/validation/test_comprehensive_stress.wyn",
+        "tests/concurrency/test_await_all_string.wyn",
+        "tests/concurrency/test_await_all.wyn",
+        "tests/memory/test_block_rc.wyn",
+        "tests/validation/test_enum_exhaustive.wyn",
+        "tests/validation/test_stdlib_new.wyn",
+        "tests/validation/test_method_chaining.wyn"
     ]
 
-    var count = 76
+    var count = 82
 
     // Run tests in batches of 20 to avoid memory pressure
     var pass = 0
