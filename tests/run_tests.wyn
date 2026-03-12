@@ -92,28 +92,45 @@ fn main() -> int {
         "tests/regression/test_global_forward_ref.wyn",
         "tests/regression/test_hashmap_string.wyn",
         "tests/regression/test_string_array_args.wyn",
-        "tests/regression/test_hashmap_in_array.wyn"
+        "tests/regression/test_hashmap_in_array.wyn",
+        "tests/memory/test_rc_stress.wyn",
+        "tests/memory/test_string_edge.wyn",
+        "tests/memory/test_refcount.wyn",
+        "tests/concurrency/test_spawn_edge.wyn",
+        "tests/concurrency/test_spawn_string_rc.wyn",
+        "tests/concurrency/test_spawn_struct.wyn",
+        "tests/concurrency/test_realistic_parallel.wyn",
+        "tests/validation/test_type_edge.wyn",
+        "tests/validation/test_enum_result_closure.wyn",
+        "tests/validation/test_struct_defaults.wyn",
+        "tests/validation/test_array_ops.wyn",
+        "tests/validation/test_comprehensive_stress.wyn"
     ]
 
-    var count = 63
+    var count = 76
 
-    // Spawn all tests concurrently
-    var futures = []
-    for i in 0..count {
-        futures.push(spawn run_test(tests[i]))
-    }
-
-    // Await all results
+    // Run tests in batches of 20 to avoid memory pressure
     var pass = 0
     var fail = 0
-    for i in 0..count {
-        var result = await futures[i]
-        if result == 1 {
-            pass = pass + 1
-        } else {
-            fail = fail + 1
-            println("  FAIL: " + tests[i])
+    var batch_size = 20
+    var i = 0
+    while i < count {
+        var end = i + batch_size
+        if end > count { end = count }
+        var futures = []
+        for j in i..end {
+            futures.push(spawn run_test(tests[j]))
         }
+        for j in 0..(end - i) {
+            var result = await futures[j]
+            if result == 1 {
+                pass = pass + 1
+            } else {
+                fail = fail + 1
+                println("  FAIL: " + tests[i + j])
+            }
+        }
+        i = end
     }
 
     var elapsed = DateTime_millis() - start
