@@ -2407,15 +2407,22 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_ASSIGN: {
-            // RC: release old string value before reassignment
+            // RC: release old string value AFTER evaluating new value
+            // (old value might be referenced in the RHS expression)
             char target_name[512];
             memcpy(target_name, expr->assign.name.start, expr->assign.name.length);
             target_name[expr->assign.name.length] = '\0';
+            bool _rc_string_assign = false;
             {
                 extern int is_string_var(const char*);
-                if (is_string_var(target_name)) {
-                    emit("wyn_rc_release(%s); ", target_name);
-                }
+                if (is_string_var(target_name)) _rc_string_assign = true;
+            }
+            if (_rc_string_assign) {
+                // Emit: ({ const char* __rc_tmp = <rhs>; wyn_rc_release(old); old = __rc_tmp; })
+                emit("({ const char* __rc_tmp = ");
+                codegen_expr(expr->assign.value);
+                emit("; wyn_rc_release(%s); %s = __rc_tmp; })", target_name, target_name);
+                break;
             }
             
             // Check if we need to prefix the assignment target with module name
