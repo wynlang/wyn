@@ -689,6 +689,24 @@ int array_average(WynArray arr) {
     if (arr.count == 0) return 0;
     return array_sum(arr) / arr.count;
 }
+void array_each(WynArray arr, long long (*fn)(long long)) {
+    for (int i = 0; i < arr.count; i++) fn(arr.data[i].data.int_val);
+}
+int array_every(WynArray arr, long long (*fn)(long long)) {
+    for (int i = 0; i < arr.count; i++) if (!fn(arr.data[i].data.int_val)) return 0;
+    return 1;
+}
+WynArray array_flat_map(WynArray arr, long long (*fn)(long long)) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        WynArray sub = *(WynArray*)(intptr_t)fn(arr.data[i].data.int_val);
+        for (int j = 0; j < sub.count; j++) array_push_int(&result, sub.data[j].data.int_val);
+    }
+    return result;
+}
+void int_times(long long n, long long (*fn)(void)) {
+    for (long long i = 0; i < n; i++) fn();
+}
 void array_remove_value(WynArray* arr, int value) {
     int write_idx = 0;
     for (int i = 0; i < arr->count; i++) {

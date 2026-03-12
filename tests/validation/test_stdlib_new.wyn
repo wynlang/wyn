@@ -1,0 +1,63 @@
+// TDD: new stdlib methods
+
+fn main() -> int {
+    Test.init("Stdlib Methods")
+
+    // Array: first, last
+    var nums = [10, 20, 30]
+    Test.assert_eq_int(nums.first(), 10, "first()")
+    Test.assert_eq_int(nums.last(), 30, "last()")
+
+    // Array: min, max, sum
+    var vals = [3, 1, 4, 1, 5, 9]
+    Test.assert_eq_int(vals.min(), 1, "min()")
+    Test.assert_eq_int(vals.max(), 9, "max()")
+    Test.assert_eq_int(vals.sum(), 23, "sum()")
+
+    // Array: each (calls fn for each element)
+    var each_sum = Shared.new(0)
+    var items = [1, 2, 3]
+    items.each(fn(x: int) -> int { return Shared.add(each_sum, x) })
+    Test.assert_eq_int(Shared.get(each_sum), 6, "each()")
+
+    // Array: any, every
+    var check_arr = [1, 2, 3]
+    Test.assert_eq_int(check_arr.any(fn(x: int) -> bool { return x > 2 }), 1, "any() true")
+    Test.assert_eq_int(check_arr.every(fn(x: int) -> bool { return x > 0 }), 1, "every() true")
+    Test.assert_eq_int(check_arr.every(fn(x: int) -> bool { return x > 2 }), 0, "every() false")
+
+    // Array: flat_map — requires struct-returning lambdas (future feature)
+    // var src = [1, 2, 3]
+    // var flat = src.flat_map(fn(x: int) -> Array { return [x, x * 10] })
+    // Test.assert_eq_int(flat.len(), 6, "flat_map len")
+    // Test.assert_eq_int(flat[0], 1, "flat_map [0]")
+    // Test.assert_eq_int(flat[1], 10, "flat_map [1]")
+
+    // Int: clamp, times
+    Test.assert_eq_int(15.clamp(0, 10), 10, "clamp high")
+    Test.assert_eq_int((-5).clamp(0, 10), 0, "clamp low")
+    Test.assert_eq_int(5.clamp(0, 10), 5, "clamp mid")
+
+    // Int: times
+    var times_count = Shared.new(0)
+    3.times(fn() -> int { return Shared.add(times_count, 1) })
+    Test.assert_eq_int(Shared.get(times_count), 3, "times()")
+
+    // Float: ceil, floor, round
+    Test.assert_eq_int(Math.ceil(3.2), 4, "ceil")
+    Test.assert_eq_int(Math.floor(3.8), 3, "floor")
+    Test.assert_eq_int(Math.round(3.5), 4, "round")
+    Test.assert_eq_int(Math.round(3.4), 3, "round down")
+
+    // Math: pow, min, max
+    Test.assert_eq_int(Math.pow(2, 10), 1024, "pow")
+    Test.assert_eq_int(Math.min(3, 7), 3, "Math.min")
+    Test.assert_eq_int(Math.max(3, 7), 7, "Math.max")
+
+    // String: pad_left, pad_right
+    Test.assert_eq_str("42".pad_left(5, "0"), "00042", "pad_left")
+    Test.assert_eq_str("hi".pad_right(5, "."), "hi...", "pad_right")
+
+    Test.summary()
+    return 0
+}

@@ -74,6 +74,22 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
 }
 
 // Helper to generate lambda body expression to string
+static void collect_idents(Expr* expr, char idents[][64], int* count, int max) {
+    if (!expr || *count >= max) return;
+    if (expr->type == EXPR_IDENT) {
+        char name[64]; int len = expr->token.length < 63 ? expr->token.length : 63;
+        memcpy(name, expr->token.start, len); name[len] = '\0';
+        for (int i = 0; i < *count; i++) if (strcmp(idents[i], name) == 0) return;
+        strcpy(idents[*count], name); (*count)++;
+        return;
+    }
+    if (expr->type == EXPR_BINARY) { collect_idents(expr->binary.left, idents, count, max); collect_idents(expr->binary.right, idents, count, max); }
+    else if (expr->type == EXPR_UNARY) { collect_idents(expr->unary.operand, idents, count, max); }
+    else if (expr->type == EXPR_CALL) { for (int i = 0; i < expr->call.arg_count; i++) collect_idents(expr->call.args[i], idents, count, max); }
+    else if (expr->type == EXPR_METHOD_CALL) { collect_idents(expr->method_call.object, idents, count, max); for (int i = 0; i < expr->method_call.arg_count; i++) collect_idents(expr->method_call.args[i], idents, count, max); }
+    else if (expr->type == EXPR_IF_EXPR) { collect_idents(expr->if_expr.condition, idents, count, max); collect_idents(expr->if_expr.then_expr, idents, count, max); collect_idents(expr->if_expr.else_expr, idents, count, max); }
+    else if (expr->type == EXPR_INDEX) { collect_idents(expr->index.array, idents, count, max); collect_idents(expr->index.index, idents, count, max); }
+}
 static int lambda_expr_to_string(Expr* expr, char* buf, int max_len) {
     if (!expr) return 0;
     int pos = 0;
@@ -146,16 +162,58 @@ static int lambda_expr_to_string(Expr* expr, char* buf, int max_len) {
             else if (strcmp(method_name, "trim") == 0) c_func = "string_trim";
             else if (strcmp(method_name, "len") == 0) c_func = "string_len";
             else if (strcmp(method_name, "reverse") == 0) c_func = "string_reverse";
+            else if (strcmp(method_name, "to_string") == 0) c_func = "to_string";
             
             if (c_func) {
                 pos += snprintf(buf + pos, max_len - pos, "%s(", c_func);
                 pos += lambda_expr_to_string(expr->method_call.object, buf + pos, max_len - pos);
                 pos += snprintf(buf + pos, max_len - pos, ")");
             } else {
+                // Check for Module.method() pattern (e.g., Shared.add, Math.pow)
+                if (expr->method_call.object->type == EXPR_IDENT) {
+                    char obj_name[64]; snprintf(obj_name, 64, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                    pos += snprintf(buf + pos, max_len - pos, "%s_%s(", obj_name, method_name);
+                    for (int i = 0; i < expr->method_call.arg_count; i++) {
+                        if (i > 0) pos += snprintf(buf + pos, max_len - pos, ", ");
+                        pos += lambda_expr_to_string(expr->method_call.args[i], buf + pos, max_len - pos);
+                    }
+                    pos += snprintf(buf + pos, max_len - pos, ")");
+                } else {
+                    // Object.method(args) -> method(object, args)
+                    pos += snprintf(buf + pos, max_len - pos, "%s(", method_name);
+                    pos += lambda_expr_to_string(expr->method_call.object, buf + pos, max_len - pos);
+                    for (int i = 0; i < expr->method_call.arg_count; i++) {
+                        pos += snprintf(buf + pos, max_len - pos, ", ");
+                        pos += lambda_expr_to_string(expr->method_call.args[i], buf + pos, max_len - pos);
+                    }
+                    pos += snprintf(buf + pos, max_len - pos, ")");
+                }
+            }
+            break;
+        }
+        case EXPR_CALL: {
+            // fn(args) -> fn(args)
+            if (expr->call.callee->type == EXPR_IDENT) {
+                pos += snprintf(buf + pos, max_len - pos, "%.*s(", expr->call.callee->token.length, expr->call.callee->token.start);
+                for (int i = 0; i < expr->call.arg_count; i++) {
+                    if (i > 0) pos += snprintf(buf + pos, max_len - pos, ", ");
+                    pos += lambda_expr_to_string(expr->call.args[i], buf + pos, max_len - pos);
+                }
+                pos += snprintf(buf + pos, max_len - pos, ")");
+            } else {
                 pos += snprintf(buf + pos, max_len - pos, "0");
             }
             break;
         }
+        case EXPR_STRING:
+            pos += snprintf(buf + pos, max_len - pos, "\"%.*s\"", expr->token.length, expr->token.start);
+            break;
+        case EXPR_FLOAT:
+            pos += snprintf(buf + pos, max_len - pos, "%.*s", expr->token.length, expr->token.start);
+            break;
+        case EXPR_BOOL:
+            pos += snprintf(buf + pos, max_len - pos, "%.*s", expr->token.length, expr->token.start);
+            break;
         default:
             pos += snprintf(buf + pos, max_len - pos, "0");
             break;
@@ -172,59 +230,25 @@ static void scan_expr_for_lambdas(Expr* expr) {
             lambda_id_counter++;
             int lambda_id = lambda_id_counter;
             
-            // Detect captured variables (simple: check if body uses identifiers not in params)
+            // Detect captured variables — recursively collect all identifiers in body
             char captured_vars[16][64];
             int capture_count = 0;
-            
-            if (expr->lambda.body->type == EXPR_BINARY) {
-                Expr* bin = expr->lambda.body;
-                // Check left operand
-                if (bin->binary.left->type == EXPR_IDENT) {
+            {
+                char all_idents[32][64]; int ident_count = 0;
+                collect_idents(expr->lambda.body, all_idents, &ident_count, 32);
+                for (int ai = 0; ai < ident_count; ai++) {
                     int is_param = 0;
-                    for (int i = 0; i < expr->lambda.param_count; i++) {
-                        if (expr->lambda.params[i].length == bin->binary.left->token.length &&
-                            memcmp(expr->lambda.params[i].start, bin->binary.left->token.start, 
-                                   expr->lambda.params[i].length) == 0) {
-                            is_param = 1;
-                            break;
-                        }
+                    for (int pi = 0; pi < expr->lambda.param_count; pi++) {
+                        char pn[64]; int pl = expr->lambda.params[pi].length < 63 ? expr->lambda.params[pi].length : 63;
+                        memcpy(pn, expr->lambda.params[pi].start, pl); pn[pl] = '\0';
+                        if (strcmp(all_idents[ai], pn) == 0) { is_param = 1; break; }
                     }
-                    if (!is_param && capture_count < 16) {
-                        snprintf(captured_vars[capture_count], 64, "%.*s", 
-                                bin->binary.left->token.length, bin->binary.left->token.start);
-                        capture_count++;
-                    }
-                }
-                // Check right operand
-                if (bin->binary.right->type == EXPR_IDENT) {
-                    int is_param = 0;
-                    for (int i = 0; i < expr->lambda.param_count; i++) {
-                        if (expr->lambda.params[i].length == bin->binary.right->token.length &&
-                            memcmp(expr->lambda.params[i].start, bin->binary.right->token.start, 
-                                   expr->lambda.params[i].length) == 0) {
-                            is_param = 1;
-                            break;
-                        }
-                    }
-                    if (!is_param && capture_count < 16) {
-                        // Check if already captured
-                        int already = 0;
-                        for (int i = 0; i < capture_count; i++) {
-                            if (strcmp(captured_vars[i], "") != 0) {
-                                char temp[64];
-                                snprintf(temp, 64, "%.*s", bin->binary.right->token.length, 
-                                        bin->binary.right->token.start);
-                                if (strcmp(captured_vars[i], temp) == 0) {
-                                    already = 1;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!already) {
-                            snprintf(captured_vars[capture_count], 64, "%.*s", 
-                                    bin->binary.right->token.length, bin->binary.right->token.start);
-                            capture_count++;
-                        }
+                    // Skip known builtins/modules
+                    if (!is_param && strcmp(all_idents[ai], "true") != 0 && strcmp(all_idents[ai], "false") != 0 &&
+                        strcmp(all_idents[ai], "Shared") != 0 && strcmp(all_idents[ai], "Math") != 0 &&
+                        strcmp(all_idents[ai], "println") != 0 && strcmp(all_idents[ai], "print") != 0 &&
+                        capture_count < 16) {
+                        strcpy(captured_vars[capture_count++], all_idents[ai]);
                     }
                 }
             }

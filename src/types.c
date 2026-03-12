@@ -523,6 +523,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "clamp") == 0 && arg_count == 2) {
             out->c_function = "int_clamp"; return true;
         }
+        if (strcmp(method_name, "times") == 0 && arg_count == 1) {
+            out->c_function = "int_times"; return true;
+        }
         if (strcmp(method_name, "is_even") == 0 && arg_count == 0) {
             out->c_function = "int_is_even"; return true;
         }
@@ -777,6 +780,15 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "average") == 0 && arg_count == 0) {
             out->c_function = "array_average"; return true;
+        }
+        if (strcmp(method_name, "each") == 0 && arg_count == 1) {
+            out->c_function = "array_each"; return true;
+        }
+        if (strcmp(method_name, "every") == 0 && arg_count == 1) {
+            out->c_function = "array_every"; return true;
+        }
+        if (strcmp(method_name, "flat_map") == 0 && arg_count == 1) {
+            out->c_function = "array_flat_map"; return true;
         }
         if (strcmp(method_name, "remove") == 0 && arg_count == 1) {
             out->c_function = "array_remove_value";
