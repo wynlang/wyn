@@ -243,7 +243,16 @@ void codegen_stmt(Stmt* stmt) {
                 // Infer type from initializer if no explicit type
                 if (stmt->var.init->type == EXPR_STRING) {
                     c_type = "const char*";
-                    is_already_const = true;  // String literals already have const
+                    is_already_const = true;
+                } else if (stmt->var.init->type == EXPR_IDENT) {
+                    // Check if init is a known string variable
+                    char _idn[256]; int _idl = stmt->var.init->token.length < 255 ? stmt->var.init->token.length : 255;
+                    memcpy(_idn, stmt->var.init->token.start, _idl); _idn[_idl] = '\0';
+                    extern int is_string_var(const char*);
+                    if (is_string_var(_idn)) {
+                        c_type = "const char*";
+                        is_already_const = true;
+                    }
                 } else if (stmt->var.init->type == EXPR_STRING_INTERP) {
                     c_type = "char*";
                     needs_arc_management = true;

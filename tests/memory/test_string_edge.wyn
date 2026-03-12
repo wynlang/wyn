@@ -1,0 +1,78 @@
+// Stress test: string operations under RC
+
+fn reverse_string(s: string) -> string {
+    var result = ""
+    var len = s.len()
+    for i in 0..len {
+        result = s[len - 1 - i] + result
+    }
+    return result
+}
+
+fn repeat_string(s: string, n: int) -> string {
+    var result = ""
+    for i in 0..n {
+        result = result + s
+    }
+    return result
+}
+
+fn main() -> int {
+    Test.init("String Edge Cases")
+
+    // 1: empty string operations
+    var empty = ""
+    Test.assert_eq_int(empty.len(), 0, "empty len")
+    Test.assert_eq_str(empty.upper(), "", "empty upper")
+    Test.assert_eq_str(empty + "", "", "empty + empty")
+
+    // 2: single char
+    var ch = "x"
+    Test.assert_eq_int(ch.len(), 1, "char len")
+    Test.assert_eq_str(ch.upper(), "X", "char upper")
+
+    // 3: string building in loop
+    var built = ""
+    for i in 0..10 {
+        built = built + i.to_string()
+    }
+    Test.assert_eq_str(built, "0123456789", "loop build")
+
+    // 4: repeated concat
+    var rep = repeat_string("ab", 5)
+    Test.assert_eq_str(rep, "ababababab", "repeat 5x")
+    Test.assert_eq_int(rep.len(), 10, "repeat len")
+
+    // 5: string replace
+    var original = "hello world hello"
+    var replaced = original.replace("hello", "hi")
+    Test.assert_eq_str(replaced, "hi world hi", "replace all")
+
+    // 6: string split and rejoin
+    var csv = "a,b,c,d"
+    var parts = csv.split(",")
+    Test.assert_eq_int(parts.len(), 4, "split count")
+    Test.assert_eq_str(parts[0], "a", "split[0]")
+    Test.assert_eq_str(parts[3], "d", "split[3]")
+
+    // 7: trim
+    var padded = "  hello  "
+    Test.assert_eq_str(padded.trim(), "hello", "trim")
+
+    // 8: substring
+    var full = "hello world"
+    var sub = full.substring(0, 5)
+    Test.assert_eq_str(sub, "hello", "substring")
+
+    // 9: to_string for various types
+    Test.assert_eq_str(42.to_string(), "42", "int to_string")
+    Test.assert_eq_str(0.to_string(), "0", "zero to_string")
+    Test.assert_eq_str((-1).to_string(), "-1", "neg to_string")
+
+    // 10: string comparison
+    Test.assert("abc" < "abd", "string less than")
+    Test.assert("abc" == "abc", "string equal")
+
+    Test.summary()
+    return 0
+}

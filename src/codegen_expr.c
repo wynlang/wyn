@@ -401,11 +401,24 @@ void codegen_expr(Expr* expr) {
                         left_is_string = true;
                         left_is_int = false;
                     }
+                    // Also check codegen's string var tracking
+                    if (!left_is_string) {
+                        char _ln[256]; int _ll = expr->binary.left->token.length < 255 ? expr->binary.left->token.length : 255;
+                        memcpy(_ln, expr->binary.left->token.start, _ll); _ln[_ll] = '\0';
+                        extern int is_string_var(const char*);
+                        if (is_string_var(_ln)) { left_is_string = true; left_is_int = false; }
+                    }
                 }
                 if (!right_is_string && expr->binary.right->type == EXPR_IDENT) {
                     if (expr->binary.right->expr_type && expr->binary.right->expr_type->kind == TYPE_STRING) {
                         right_is_string = true;
                         right_is_int = false;
+                    }
+                    if (!right_is_string) {
+                        char _rn[256]; int _rl = expr->binary.right->token.length < 255 ? expr->binary.right->token.length : 255;
+                        memcpy(_rn, expr->binary.right->token.start, _rl); _rn[_rl] = '\0';
+                        extern int is_string_var(const char*);
+                        if (is_string_var(_rn)) { right_is_string = true; right_is_int = false; }
                     }
                 }
                 

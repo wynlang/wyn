@@ -1,0 +1,98 @@
+// Stress test: type inference and codegen edge cases
+
+struct Point { x: int, y: int }
+
+fn make_point() -> Point {
+    return Point { x: 1, y: 2 }
+}
+
+fn main() -> int {
+    Test.init("Type Inference Edge Cases")
+
+    // 1: array of strings
+    var names = ["alice", "bob", "charlie"]
+    Test.assert_eq_str(names[0], "alice", "string array[0]")
+    Test.assert_eq_int(names.len(), 3, "string array len")
+
+    // 2: array push and access
+    var nums = [10, 20, 30]
+    nums.push(40)
+    Test.assert_eq_int(nums[3], 40, "push then access")
+    Test.assert_eq_int(nums.len(), 4, "len after push")
+
+    // 3: string methods
+    var s = "Hello World"
+    Test.assert_eq_int(s.len(), 11, "string len")
+    Test.assert_eq_str(s.upper(), "HELLO WORLD", "upper")
+    Test.assert_eq_str(s.lower(), "hello world", "lower")
+    Test.assert(s.contains("World"), "contains")
+    Test.assert(s.starts_with("Hello"), "starts_with")
+    Test.assert(s.ends_with("World"), "ends_with")
+
+    // 4: string interpolation with expressions
+    var x = 42
+    var msg = "value is ${x} and double is ${x * 2}"
+    Test.assert(msg.contains("42"), "interp value")
+    Test.assert(msg.contains("84"), "interp expr")
+
+    // 5: HashMap
+    var m = HashMap.new()
+    m.set("key", "val")
+    Test.assert(m.has("key"), "map has")
+    Test.assert_eq_str(m.get("key"), "val", "map get")
+
+    // 6: struct field access
+    var p = make_point()
+    Test.assert_eq_int(p.x, 1, "struct field x")
+    Test.assert_eq_int(p.y, 2, "struct field y")
+
+    // 7: match expression
+    var color = 2
+    var name = "unknown"
+    match color {
+        1 => name = "red"
+        2 => name = "green"
+        3 => name = "blue"
+    }
+    Test.assert_eq_str(name, "green", "match assigns")
+
+    // 8: pipe operator
+    var piped = 5 |> fn(x: int) -> int { return x * 3 }
+    Test.assert_eq_int(piped, 15, "pipe with lambda")
+
+    // 9: for..in range
+    var sum = 0
+    for i in 0..10 {
+        sum = sum + i
+    }
+    Test.assert_eq_int(sum, 45, "for..in range sum")
+
+    // 10: for..in array
+    var arr = [1, 2, 3, 4, 5]
+    var arr_sum = 0
+    for v in arr {
+        arr_sum = arr_sum + v
+    }
+    Test.assert_eq_int(arr_sum, 15, "for..in array sum")
+
+    // 11: nested if/else
+    var result = 0
+    if x > 100 {
+        result = 1
+    } else if x > 40 {
+        result = 2
+    } else {
+        result = 3
+    }
+    Test.assert_eq_int(result, 2, "nested if/else")
+
+    // 12: while loop
+    var count = 0
+    while count < 10 {
+        count = count + 1
+    }
+    Test.assert_eq_int(count, 10, "while loop")
+
+    Test.summary()
+    return 0
+}

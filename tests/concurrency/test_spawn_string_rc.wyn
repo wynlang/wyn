@@ -1,0 +1,54 @@
+// Stress test: spawn + string return + RC interaction
+
+fn build_message(id: int) -> string {
+    var prefix = "msg_"
+    var result = prefix + id.to_string()
+    return result
+}
+
+fn concat_all(a: string, b: string) -> string {
+    return a + " " + b
+}
+
+fn main() -> int {
+    Test.init("Spawn + String + RC")
+
+    // 1: multiple string-returning spawns
+    var f1 = spawn build_message(1)
+    var f2 = spawn build_message(2)
+    var f3 = spawn build_message(3)
+    var m1 = await f1
+    var m2 = await f2
+    var m3 = await f3
+    Test.assert_eq_str(m1, "msg_1", "spawn string 1")
+    Test.assert_eq_str(m2, "msg_2", "spawn string 2")
+    Test.assert_eq_str(m3, "msg_3", "spawn string 3")
+
+    // 2: spawn string in loop
+    var last_msg = ""
+    for i in 0..20 {
+        var f = spawn build_message(i)
+        last_msg = await f
+    }
+    Test.assert_eq_str(last_msg, "msg_19", "loop spawn string")
+
+    // 3: spawn with string concat
+    var fa = spawn concat_all("hello", "world")
+    Test.assert_eq_str(await fa, "hello world", "spawn concat")
+
+    // 4: spawn string then copy
+    var fs = spawn build_message(42)
+    var original = await fs
+    var copy = original
+    original = "changed"
+    Test.assert_eq_str(copy, "msg_42", "copy of spawn result survives")
+
+    // 5: spawn string then pass to function
+    var fp = spawn build_message(99)
+    var msg = await fp
+    var combined = msg + " done"
+    Test.assert_eq_str(combined, "msg_99 done", "spawn result in concat")
+
+    Test.summary()
+    return 0
+}
