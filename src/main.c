@@ -1321,7 +1321,7 @@ int main(int argc, char** argv) {
             int _p = 0;
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s ", tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, wyn_root, sqlite_flags);
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s.c ", entry);
-            const char* _srcs[] = {"wyn_arena","wyn_rc","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
+            const char* _srcs[] = {"wyn_arena","wyn_rc","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
             for (int _si = 0; _srcs[_si]; _si++) _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s/src/%s.c ", wyn_root, _srcs[_si]);
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s%s -lpthread -lm 2>/dev/null", rt_tcc, sqlite_src);
             result = system(cmd);
@@ -1361,7 +1361,7 @@ int main(int argc, char** argv) {
                 // No precompiled runtime — compile from source files
                 int _p = 0;
                 _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, entry);
-                const char* _srcs[] = {"wyn_arena","wyn_rc","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","net","net_runtime","net_advanced","test_runtime",NULL};
+                const char* _srcs[] = {"wyn_arena","wyn_rc","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","net","net_runtime","net_advanced","test_runtime",NULL};
                 for (int _si = 0; _srcs[_si]; _si++) _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s/src/%s.c ", wyn_root, _srcs[_si]);
                 _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -lpthread -lm 2>&1", sqlite_src);
             }
@@ -1798,17 +1798,33 @@ int main(int argc, char** argv) {
         // Cross-compile based on target
         char compile_cmd[4096];
         if (strcmp(target, "linux") == 0) {
-            // Determine the right runtime library
-            char rt_lib[1024];
+            // Determine the right runtime library or compile sources inline
+            char rt_lib[4096];
             char target_rt[1024];
             snprintf(target_rt, sizeof(target_rt), "%s/runtime/libwyn_rt_linux-%s.a", wyn_root,
                      strcmp(arch, "aarch64") == 0 ? "arm64" : "x64");
             struct stat rt_st;
+            bool use_inline_rt = false;
             if (stat(target_rt, &rt_st) == 0) {
                 snprintf(rt_lib, sizeof(rt_lib), "%s", target_rt);
             } else {
-                // Fall back to host runtime (works when building on same arch)
-                snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
+                // Compile runtime sources inline for cross-compilation
+                use_inline_rt = true;
+                snprintf(rt_lib, sizeof(rt_lib),
+                    "%s/src/wyn_arena.c %s/src/wyn_rc.c %s/src/coroutine.c %s/src/io_loop.c "
+                    "%s/src/runtime_exports.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c "
+                    "%s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c "
+                    "%s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c "
+                    "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c "
+                    "%s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c "
+                    "%s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c "
+                    "%s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c "
+                    "%s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c",
+                    wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
+                    wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
+                    wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
+                    wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
+                    wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
             }
             
             // Try cross-compilers in order: specific gcc, zig cc, native gcc (only works on Linux)
@@ -1819,16 +1835,92 @@ int main(int argc, char** argv) {
                 if (system("which x86_64-linux-gnu-gcc >/dev/null 2>&1") == 0) cc = "x86_64-linux-gnu-gcc";
             }
             if (!cc && system("which zig >/dev/null 2>&1") == 0) {
-                snprintf(compile_cmd, sizeof(compile_cmd),
-                    "zig cc -target %s-linux-gnu -std=c11 -O2 -w -I %s/src -I %s/vendor/minicoro "
-                    "-o %s.linux %s.c %s -lpthread -lm",
-                    arch, wyn_root, wyn_root, file, file, rt_lib);
+                if (use_inline_rt) {
+                    // Build cross-compiled runtime .a, then link
+                    const char* rt_srcs[] = {
+                        "wyn_arena", "wyn_rc", "coroutine", "spawn_fast", "future",
+                        "spawn", "io_loop", "wyn_interface", "hashset", "hashmap", "io", "json",
+                        "optional", "result", "arc_runtime", "concurrency", "async_runtime",
+                        "safe_memory", "error", 
+                         "stdlib_string", "stdlib_array", "stdlib_time",
+                        "stdlib_crypto", "stdlib_math", "net", "test_runtime",
+                        "net_advanced", "file_io_simple", "stdlib_enhanced", NULL
+                    };
+                    system("mkdir -p /tmp/wyn_cross_rt");
+                    { char wcmd[1024]; snprintf(wcmd, sizeof(wcmd),
+                        "zig cc -target %s-linux-gnu -std=c11 -O2 -w -fcommon "
+                        "-D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700 "
+                        "-I %s/src -I %s/vendor/minicoro "
+                        "-c %s/src/wyn_wrapper.c -o /tmp/wyn_cross_rt/wyn_wrapper.o 2>/dev/null",
+                        arch, wyn_root, wyn_root, wyn_root); system(wcmd); }
+                    for (int ri = 0; rt_srcs[ri]; ri++) {
+                        char cmd[1024];
+                        snprintf(cmd, sizeof(cmd),
+                            "zig cc -target %s-linux-gnu -std=c11 -O2 -w -fcommon "
+                            "-D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700 "
+                            "-I %s/src -I %s/vendor/minicoro "
+                            "-c %s/src/%s.c -o /tmp/wyn_cross_rt/%s.o 2>/dev/null",
+                            arch, wyn_root, wyn_root, wyn_root, rt_srcs[ri], rt_srcs[ri]);
+                        system(cmd);
+                    }
+                    system("mv /tmp/wyn_cross_rt/wyn_wrapper.o /tmp/wyn_cross_rt_wrapper.o 2>/dev/null; "
+                           "zig ar rcs /tmp/wyn_cross_rt/libwyn_rt.a /tmp/wyn_cross_rt/*.o 2>/dev/null; "
+                           "mv /tmp/wyn_cross_rt_wrapper.o /tmp/wyn_cross_rt/wyn_wrapper.o 2>/dev/null");
+                    snprintf(compile_cmd, sizeof(compile_cmd),
+                        "zig cc -target %s-linux-gnu -std=c11 -O2 -w -fcommon "
+                        "-D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700 "
+                        "-I %s/src -I %s/vendor/minicoro "
+                        "-o %s.linux %s.c /tmp/wyn_cross_rt/wyn_wrapper.o -Wl,--whole-archive /tmp/wyn_cross_rt/libwyn_rt.a -Wl,--no-whole-archive -lpthread -lm",
+                        arch, wyn_root, wyn_root, file, file);
+                } else {
+                    snprintf(compile_cmd, sizeof(compile_cmd),
+                        "zig cc -target %s-linux-gnu -std=c11 -O2 -w -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700 "
+                        "-I %s/src -I %s/vendor/minicoro "
+                        "-o %s.linux %s.c %s -lpthread -lm",
+                        arch, wyn_root, wyn_root, file, file, rt_lib);
+                }
                 printf("Cross-compiling for Linux (%s) via zig cc...\n", arch);
             } else if (cc) {
-                snprintf(compile_cmd, sizeof(compile_cmd),
-                    "%s -std=c11 -O2 -w -I %s/src -I %s/vendor/minicoro "
-                    "-o %s.linux %s.c %s -lpthread -lm",
-                    cc, wyn_root, wyn_root, file, file, rt_lib);
+                if (use_inline_rt) {
+                    // Build cross-compiled runtime .a with gcc
+                    const char* rt_srcs2[] = {
+                        "wyn_arena", "wyn_rc", "coroutine", "spawn_fast", "future",
+                        "spawn", "io_loop", "wyn_interface", "hashset", "hashmap", "io", "json",
+                        "optional", "result", "arc_runtime", "concurrency", "async_runtime",
+                        "safe_memory", "error", 
+                         "stdlib_string", "stdlib_array", "stdlib_time",
+                        "stdlib_crypto", "stdlib_math", "net", "test_runtime",
+                        "net_advanced", "file_io_simple", "stdlib_enhanced", NULL
+                    };
+                    system("mkdir -p /tmp/wyn_cross_rt");
+                    { char wcmd[1024]; snprintf(wcmd, sizeof(wcmd),
+                        "%s -std=c11 -O2 -w -fcommon -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700 "
+                        "-I %s/src -I %s/vendor/minicoro "
+                        "-c %s/src/wyn_wrapper.c -o /tmp/wyn_cross_rt/wyn_wrapper.o 2>/dev/null",
+                        cc, wyn_root, wyn_root, wyn_root); system(wcmd); }
+                    for (int ri = 0; rt_srcs2[ri]; ri++) {
+                        char cmd[1024];
+                        snprintf(cmd, sizeof(cmd),
+                            "%s -std=c11 -O2 -w -fcommon -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700 "
+                            "-I %s/src -I %s/vendor/minicoro "
+                            "-c %s/src/%s.c -o /tmp/wyn_cross_rt/%s.o 2>/dev/null",
+                            cc, wyn_root, wyn_root, wyn_root, rt_srcs2[ri], rt_srcs2[ri]);
+                        system(cmd);
+                    }
+                    system("mv /tmp/wyn_cross_rt/wyn_wrapper.o /tmp/wyn_cross_rt_wrapper.o 2>/dev/null; "
+                           "ar rcs /tmp/wyn_cross_rt/libwyn_rt.a /tmp/wyn_cross_rt/*.o 2>/dev/null; "
+                           "mv /tmp/wyn_cross_rt_wrapper.o /tmp/wyn_cross_rt/wyn_wrapper.o 2>/dev/null");
+                    snprintf(compile_cmd, sizeof(compile_cmd),
+                        "%s -std=c11 -O2 -w -fcommon -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700 "
+                        "-I %s/src -I %s/vendor/minicoro "
+                        "-o %s.linux %s.c /tmp/wyn_cross_rt/wyn_wrapper.o -Wl,--whole-archive /tmp/wyn_cross_rt/libwyn_rt.a -Wl,--no-whole-archive -lpthread -lm",
+                        cc, wyn_root, wyn_root, file, file);
+                } else {
+                    snprintf(compile_cmd, sizeof(compile_cmd),
+                        "%s -std=c11 -O2 -w -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700 -I %s/src -I %s/vendor/minicoro "
+                        "-o %s.linux %s.c %s -lpthread -lm",
+                        cc, wyn_root, wyn_root, file, file, rt_lib);
+                }
                 printf("Cross-compiling for Linux (%s) via %s...\n", arch, cc);
             } else {
 #ifdef __linux__

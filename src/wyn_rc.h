@@ -2,6 +2,7 @@
 #define WYN_RC_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include <stdatomic.h>
 
 // Reference counting header — placed before heap-allocated objects.

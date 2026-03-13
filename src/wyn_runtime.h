@@ -1,6 +1,7 @@
 #ifndef WYN_RUNTIME_H
 #define WYN_RUNTIME_H
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE 1
 
 // Reference counting (wyn_rc.c)
 void wyn_rc_retain(const void* ptr);
@@ -422,8 +423,8 @@ double wyn_math_round(double x);
 extern char* global_filename;
 extern char* global_file_content;
 
-jmp_buf* current_exception_buf = NULL;
-const char** current_exception_msg = NULL;
+static jmp_buf* current_exception_buf = NULL;
+static const char** current_exception_msg = NULL;
 
 typedef struct { void** keys; void** values; int count; } WynMap;
 
@@ -2752,8 +2753,8 @@ float Math_random() {
     if (!initialized) { srand(time(NULL)); initialized = 1; }
     return (float)rand() / (float)RAND_MAX;
 }
-const float Math_PI = 3.14159265358979323846f;
-const float Math_E = 2.71828182845904523536f;
+static const float Math_PI = 3.14159265358979323846f;
+static const float Math_E = 2.71828182845904523536f;
 
 long long DateTime_now() { return (long long)time(NULL); }
 #ifdef _WIN32

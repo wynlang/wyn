@@ -1,4 +1,7 @@
 // Wrapper program to initialize arguments for Wyn-compiled programs
+#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE 1
+#define _XOPEN_SOURCE 700
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
