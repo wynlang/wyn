@@ -113,10 +113,12 @@ fn main() -> int {
         "tests/validation/test_method_chaining.wyn",
         "tests/validation/test_multiline_lambda.wyn",
         "tests/validation/test_named_args.wyn",
-        "tests/validation/test_tuples.wyn"
+        "tests/validation/test_tuples.wyn",
+        "tests/validation/test_generic_structs.wyn",
+        "tests/validation/test_traits.wyn"
     ]
 
-    var count = 86
+    var count = 89
 
     // Phase 1: Build all tests sequentially (avoids concurrent clang contention)
     var build_fail = 0
