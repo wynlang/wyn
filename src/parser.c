@@ -904,6 +904,14 @@ static Expr* primary() {
                 }
             }
             
+            // If no return statement, default to returning 0 (void lambda)
+            if (!lambda_expr->lambda.body) {
+                lambda_expr->lambda.body = alloc_expr();
+                lambda_expr->lambda.body->type = EXPR_INT;
+                lambda_expr->lambda.body->token.start = "0";
+                lambda_expr->lambda.body->token.length = 1;
+            }
+            
             expect(TOKEN_RBRACE, "Expected '}' after lambda block body");
         } else {
             fprintf(stderr, "Error at line %d: Expected '=>' or '{' after lambda signature\n", parser.current.line);
