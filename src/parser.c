@@ -862,19 +862,19 @@ static Expr* primary() {
                 // Block body: { var y = x * 2; return y + 1; }
                 advance(); // consume '{'
                 
-                // For now, skip all statements until we find a return or reach the end
-                // This is a simplified implementation for Task 7.1
+                lambda_expr->lambda.body_stmts = malloc(sizeof(Stmt*) * 32);
+                lambda_expr->lambda.body_stmt_count = 0;
+                
                 while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                     if (match(TOKEN_RETURN)) {
                         lambda_expr->lambda.body = expression();
                         match(TOKEN_SEMI);
                         break;
                     } else {
-                        // Skip other statements for now
-                        while (!check(TOKEN_SEMI) && !check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-                            advance();
+                        Stmt* s = statement();
+                        if (s && lambda_expr->lambda.body_stmt_count < 32) {
+                            lambda_expr->lambda.body_stmts[lambda_expr->lambda.body_stmt_count++] = s;
                         }
-                        if (check(TOKEN_SEMI)) advance();
                     }
                 }
                 
@@ -887,17 +887,20 @@ static Expr* primary() {
             // Block syntax: fn(x: int) -> int { return x * 2 }
             advance(); // consume '{'
             
+            // Parse multiline lambda body
+            lambda_expr->lambda.body_stmts = malloc(sizeof(Stmt*) * 32);
+            lambda_expr->lambda.body_stmt_count = 0;
+            
             while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                 if (match(TOKEN_RETURN)) {
                     lambda_expr->lambda.body = expression();
                     match(TOKEN_SEMI);
                     break;
                 } else {
-                    // Skip other statements for now
-                    while (!check(TOKEN_SEMI) && !check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-                        advance();
+                    Stmt* s = statement();
+                    if (s && lambda_expr->lambda.body_stmt_count < 32) {
+                        lambda_expr->lambda.body_stmts[lambda_expr->lambda.body_stmt_count++] = s;
                     }
-                    if (check(TOKEN_SEMI)) advance();
                 }
             }
             

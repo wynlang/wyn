@@ -221,6 +221,23 @@ static int lambda_expr_to_string(Expr* expr, char* buf, int max_len) {
     return pos;
 }
 
+static int lambda_stmt_to_string(Stmt* stmt, char* buf, int max_len) {
+    if (!stmt) return 0;
+    int pos = 0;
+    if (stmt->type == STMT_VAR) {
+        pos += snprintf(buf + pos, max_len - pos, "    long long %.*s = ",
+            stmt->var.name.length, stmt->var.name.start);
+        if (stmt->var.init) pos += lambda_expr_to_string(stmt->var.init, buf + pos, max_len - pos);
+        else pos += snprintf(buf + pos, max_len - pos, "0");
+        pos += snprintf(buf + pos, max_len - pos, ";\n");
+    } else if (stmt->type == STMT_EXPR) {
+        pos += snprintf(buf + pos, max_len - pos, "    ");
+        pos += lambda_expr_to_string(stmt->expr, buf + pos, max_len - pos);
+        pos += snprintf(buf + pos, max_len - pos, ";\n");
+    }
+    return pos;
+}
+
 static void scan_expr_for_lambdas(Expr* expr) {
     if (!expr) return;
     
@@ -236,6 +253,12 @@ static void scan_expr_for_lambdas(Expr* expr) {
             {
                 char all_idents[32][64]; int ident_count = 0;
                 collect_idents(expr->lambda.body, all_idents, &ident_count, 32);
+                // Also collect from body statements (multiline lambdas)
+                for (int si = 0; si < expr->lambda.body_stmt_count; si++) {
+                    Stmt* s = expr->lambda.body_stmts[si];
+                    if (s && s->type == STMT_VAR && s->var.init) collect_idents(s->var.init, all_idents, &ident_count, 32);
+                    if (s && s->type == STMT_EXPR) collect_idents(s->expr, all_idents, &ident_count, 32);
+                }
                 for (int ai = 0; ai < ident_count; ai++) {
                     int is_param = 0;
                     for (int pi = 0; pi < expr->lambda.param_count; pi++) {
@@ -243,10 +266,22 @@ static void scan_expr_for_lambdas(Expr* expr) {
                         memcpy(pn, expr->lambda.params[pi].start, pl); pn[pl] = '\0';
                         if (strcmp(all_idents[ai], pn) == 0) { is_param = 1; break; }
                     }
-                    // Skip known builtins/modules
-                    if (!is_param && strcmp(all_idents[ai], "true") != 0 && strcmp(all_idents[ai], "false") != 0 &&
+                    // Skip known builtins/modules and lambda-local vars
+                    int is_local = 0;
+                    for (int si = 0; si < expr->lambda.body_stmt_count; si++) {
+                        if (expr->lambda.body_stmts[si] && expr->lambda.body_stmts[si]->type == STMT_VAR) {
+                            char ln[64]; int ll = expr->lambda.body_stmts[si]->var.name.length < 63 ? expr->lambda.body_stmts[si]->var.name.length : 63;
+                            memcpy(ln, expr->lambda.body_stmts[si]->var.name.start, ll); ln[ll] = '\0';
+                            if (strcmp(all_idents[ai], ln) == 0) { is_local = 1; break; }
+                        }
+                    }
+                    if (!is_param && !is_local &&
+                        strcmp(all_idents[ai], "true") != 0 && strcmp(all_idents[ai], "false") != 0 &&
                         strcmp(all_idents[ai], "Shared") != 0 && strcmp(all_idents[ai], "Math") != 0 &&
                         strcmp(all_idents[ai], "println") != 0 && strcmp(all_idents[ai], "print") != 0 &&
+                        strcmp(all_idents[ai], "Test") != 0 && strcmp(all_idents[ai], "File") != 0 &&
+                        strcmp(all_idents[ai], "System") != 0 && strcmp(all_idents[ai], "Json") != 0 &&
+                        strcmp(all_idents[ai], "Http") != 0 && strcmp(all_idents[ai], "Time") != 0 &&
                         capture_count < 16) {
                         strcpy(captured_vars[capture_count++], all_idents[ai]);
                     }
@@ -279,6 +314,9 @@ static void scan_expr_for_lambdas(Expr* expr) {
                     pos += snprintf(func_code + pos, 8192 - pos, 
                         "    long long %s = __e->%s;\n", captured_vars[i], captured_vars[i]);
                 }
+                // Emit body statements (multiline lambda)
+                for (int si = 0; si < expr->lambda.body_stmt_count; si++)
+                    pos += lambda_stmt_to_string(expr->lambda.body_stmts[si], func_code + pos, 8192 - pos);
                 pos += snprintf(func_code + pos, 8192 - pos, "    return ");
                 pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
                 pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
@@ -301,6 +339,9 @@ static void scan_expr_for_lambdas(Expr* expr) {
                         pos += snprintf(func_code + pos, 8192 - pos, "    long long %s = __cap_%d_%s;\n", captured_vars[i], lambda_id, captured_vars[i]);
                     }
                 }
+                // Emit body statements (multiline lambda)
+                for (int si = 0; si < expr->lambda.body_stmt_count; si++)
+                    pos += lambda_stmt_to_string(expr->lambda.body_stmts[si], func_code + pos, 8192 - pos);
                 pos += snprintf(func_code + pos, 8192 - pos, "    return ");
                 pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
                 pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");

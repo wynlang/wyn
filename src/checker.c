@@ -3338,6 +3338,17 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 add_symbol(&lambda_scope, expr->lambda.params[i], builtin_int, false);
             }
             
+            // Check lambda body statements (multiline lambda)
+            for (int i = 0; i < expr->lambda.body_stmt_count; i++) {
+                Stmt* s = expr->lambda.body_stmts[i];
+                if (s && s->type == STMT_VAR) {
+                    Type* init_type = s->var.init ? check_expr(s->var.init, &lambda_scope) : builtin_int;
+                    add_symbol(&lambda_scope, s->var.name, init_type ? init_type : builtin_int, false);
+                } else if (s && s->type == STMT_EXPR) {
+                    check_expr(s->expr, &lambda_scope);
+                }
+            }
+            
             // Check lambda body in the new scope
             Type* body_type = check_expr(expr->lambda.body, &lambda_scope);
             if (!body_type) {
