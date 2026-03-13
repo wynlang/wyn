@@ -1,20 +1,20 @@
-// Wyn Test Runner — concurrent via spawn/await
-// Dogfooding: tests Wyn's own concurrency to run tests in parallel
+// Wyn Test Runner — build sequentially, run concurrently
+
+fn build_test(path: string) -> int {
+    var cmd = "./wyn build " + path + " 2>&1; echo EXIT:$?"
+    var output = System_exec(cmd)
+    if !output.contains("EXIT:0") { return 0 }
+    if output.contains("error:") { return 0 }
+    return 1
+}
 
 fn run_test(path: string) -> int {
-    // Capture both output and exit code
-    var cmd = "./wyn run " + path + " 2>&1; echo EXIT:$?"
+    // Run pre-built binary
+    var bin = path.replace(".wyn", "")
+    var cmd = "timeout 15 ./" + bin + " 2>&1; echo EXIT:$?"
     var output = System_exec(cmd)
-    // Check exit code
-    if !output.contains("EXIT:0") {
-        return 0
-    }
-    // Also check for runtime errors that don't set exit code
-    if output.contains("compilation failed") { return 0 }
-    if output.contains("Failed to parse") { return 0 }
+    if !output.contains("EXIT:0") { return 0 }
     if output.contains("Segmentation fault") { return 0 }
-    if output.contains("Undefined function") { return 0 }
-    if output.contains("Undefined variable") { return 0 }
     return 1
 }
 
@@ -118,10 +118,20 @@ fn main() -> int {
 
     var count = 86
 
-    // Run tests in batches of 20 to avoid memory pressure
+    // Phase 1: Build all tests sequentially (avoids concurrent clang contention)
+    var build_fail = 0
+    for j in 0..count {
+        var ok = build_test(tests[j])
+        if ok == 0 {
+            println("  BUILD FAIL: " + tests[j])
+            build_fail = build_fail + 1
+        }
+    }
+
+    // Phase 2: Run pre-built tests concurrently in batches
     var pass = 0
-    var fail = 0
-    var batch_size = 10
+    var fail = build_fail
+    var batch_size = 15
     var i = 0
     while i < count {
         var end = i + batch_size
