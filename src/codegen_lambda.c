@@ -3,12 +3,30 @@
 
 static void scan_expr_for_lambdas(Expr* expr);
 
+// Track array vars found during scan (for type-aware lambda captures)
+static char scan_array_vars[64][64];
+static int scan_array_var_count = 0;
+static int is_scan_array_var(const char* name) {
+    for (int i = 0; i < scan_array_var_count; i++)
+        if (strcmp(scan_array_vars[i], name) == 0) return 1;
+    return 0;
+}
+
 static void scan_stmt_for_lambdas(Stmt* stmt) {
     if (!stmt) return;
     
     switch (stmt->type) {
         case STMT_VAR:
-            if (stmt->var.init) scan_expr_for_lambdas(stmt->var.init);
+            if (stmt->var.init) {
+                scan_expr_for_lambdas(stmt->var.init);
+                // Track array vars for type-aware captures
+                if (stmt->var.init->type == EXPR_ARRAY && scan_array_var_count < 64) {
+                    int len = stmt->var.name.length < 63 ? stmt->var.name.length : 63;
+                    memcpy(scan_array_vars[scan_array_var_count], stmt->var.name.start, len);
+                    scan_array_vars[scan_array_var_count][len] = '\0';
+                    scan_array_var_count++;
+                }
+            }
             break;
         case STMT_CONST:
             if (stmt->const_stmt.init) scan_expr_for_lambdas(stmt->const_stmt.init);
@@ -358,7 +376,9 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 // Non-return lambda with captures: use static globals
                 if (capture_count > 0) {
                     for (int i = 0; i < capture_count; i++) {
-                        pos += snprintf(func_code + pos, 8192 - pos, "static long long __cap_%d_%s;\n", lambda_id, captured_vars[i]);
+                        extern int is_known_array_var(const char*);
+                        const char* cap_type = is_scan_array_var(captured_vars[i]) ? "WynArray" : "long long";
+                        pos += snprintf(func_code + pos, 8192 - pos, "static %s __cap_%d_%s;\n", cap_type, lambda_id, captured_vars[i]);
                     }
                 }
                 pos += snprintf(func_code + pos, 8192 - pos, "long long __lambda_%d(", lambda_id);
@@ -370,7 +390,9 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 pos += snprintf(func_code + pos, 8192 - pos, ") {\n");
                 if (capture_count > 0) {
                     for (int i = 0; i < capture_count; i++) {
-                        pos += snprintf(func_code + pos, 8192 - pos, "    long long %s = __cap_%d_%s;\n", captured_vars[i], lambda_id, captured_vars[i]);
+                        extern int is_known_array_var(const char*);
+                        const char* utype = is_scan_array_var(captured_vars[i]) ? "WynArray" : "long long";
+                        pos += snprintf(func_code + pos, 8192 - pos, "    %s %s = __cap_%d_%s;\n", utype, captured_vars[i], lambda_id, captured_vars[i]);
                     }
                 }
                 // Emit body statements (multiline lambda)
