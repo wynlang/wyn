@@ -173,12 +173,45 @@ static int lambda_expr_to_string(Expr* expr, char* buf, int max_len) {
                 // Check for Module.method() pattern (e.g., Shared.add, Math.pow)
                 if (expr->method_call.object->type == EXPR_IDENT) {
                     char obj_name[64]; snprintf(obj_name, 64, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
-                    pos += snprintf(buf + pos, max_len - pos, "%s_%s(", obj_name, method_name);
-                    for (int i = 0; i < expr->method_call.arg_count; i++) {
-                        if (i > 0) pos += snprintf(buf + pos, max_len - pos, ", ");
-                        pos += lambda_expr_to_string(expr->method_call.args[i], buf + pos, max_len - pos);
+                    // Known modules use Module_method() pattern
+                    bool is_module = (obj_name[0] >= 'A' && obj_name[0] <= 'Z');
+                    if (is_module) {
+                        pos += snprintf(buf + pos, max_len - pos, "%s_%s(", obj_name, method_name);
+                        for (int i = 0; i < expr->method_call.arg_count; i++) {
+                            if (i > 0) pos += snprintf(buf + pos, max_len - pos, ", ");
+                            pos += lambda_expr_to_string(expr->method_call.args[i], buf + pos, max_len - pos);
+                        }
+                        pos += snprintf(buf + pos, max_len - pos, ")");
+                    } else {
+                        // Variable method: arr.sum() -> array_sum(arr), s.len() -> string_len(s)
+                        const char* arr_func = NULL;
+                        if (strcmp(method_name, "sum") == 0) arr_func = "array_sum";
+                        else if (strcmp(method_name, "len") == 0) arr_func = "array_len";
+                        else if (strcmp(method_name, "min") == 0) arr_func = "array_min";
+                        else if (strcmp(method_name, "max") == 0) arr_func = "array_max";
+                        else if (strcmp(method_name, "first") == 0) arr_func = "array_first";
+                        else if (strcmp(method_name, "last") == 0) arr_func = "array_last";
+                        else if (strcmp(method_name, "contains") == 0) arr_func = "string_contains";
+                        else if (strcmp(method_name, "to_int") == 0) arr_func = "string_to_int";
+                        if (arr_func) {
+                            pos += snprintf(buf + pos, max_len - pos, "%s(", arr_func);
+                            pos += lambda_expr_to_string(expr->method_call.object, buf + pos, max_len - pos);
+                            for (int i = 0; i < expr->method_call.arg_count; i++) {
+                                pos += snprintf(buf + pos, max_len - pos, ", ");
+                                pos += lambda_expr_to_string(expr->method_call.args[i], buf + pos, max_len - pos);
+                            }
+                            pos += snprintf(buf + pos, max_len - pos, ")");
+                        } else {
+                            // Generic: obj.method(args) -> method(obj, args)
+                            pos += snprintf(buf + pos, max_len - pos, "%s(", method_name);
+                            pos += lambda_expr_to_string(expr->method_call.object, buf + pos, max_len - pos);
+                            for (int i = 0; i < expr->method_call.arg_count; i++) {
+                                pos += snprintf(buf + pos, max_len - pos, ", ");
+                                pos += lambda_expr_to_string(expr->method_call.args[i], buf + pos, max_len - pos);
+                            }
+                            pos += snprintf(buf + pos, max_len - pos, ")");
+                        }
                     }
-                    pos += snprintf(buf + pos, max_len - pos, ")");
                 } else {
                     // Object.method(args) -> method(object, args)
                     pos += snprintf(buf + pos, max_len - pos, "%s(", method_name);
