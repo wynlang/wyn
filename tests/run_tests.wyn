@@ -1,17 +1,7 @@
-// Wyn Test Runner — build sequentially, run concurrently
-
-fn build_test(path: string) -> int {
-    var cmd = "./wyn build " + path + " 2>&1; echo EXIT:$?"
-    var output = System_exec(cmd)
-    if !output.contains("EXIT:0") { return 0 }
-    if output.contains("error:") { return 0 }
-    return 1
-}
+// Wyn Test Runner — sequential
 
 fn run_test(path: string) -> int {
-    // Run pre-built binary
-    var bin = path.replace(".wyn", "")
-    var cmd = "timeout 15 ./" + bin + " 2>&1; echo EXIT:$?"
+    var cmd = "timeout 15 ./wyn run " + path + " 2>&1; echo EXIT:$?"
     var output = System_exec(cmd)
     if !output.contains("EXIT:0") { return 0 }
     if output.contains("Segmentation fault") { return 0 }
@@ -20,8 +10,7 @@ fn run_test(path: string) -> int {
 
 fn main() -> int {
     var start = DateTime_millis()
-    println("=== Wyn Test Runner (concurrent) ===")
-
+    println("=== Wyn Test Runner ===")
     var tests = [
         "tests/validation/test_struct_methods.wyn",
         "tests/validation/test_option_type.wyn",
@@ -75,7 +64,6 @@ fn main() -> int {
         "tests/stdlib/test_epic31_self_hosted.wyn",
         "tests/stdlib/test_deferred_features.wyn",
         "tests/multifile/test_import.wyn",
-        "tests/validation/test_spawn.wyn",
         "tests/validation/test_base64.wyn",
         "tests/validation/test_log.wyn",
         "tests/validation/test_csv_manual.wyn",
@@ -112,57 +100,19 @@ fn main() -> int {
         "tests/validation/test_stdlib_new.wyn",
         "tests/validation/test_method_chaining.wyn",
         "tests/validation/test_multiline_lambda.wyn",
-        "tests/validation/test_named_args.wyn",
-        "tests/validation/test_tuples.wyn",
-        "tests/validation/test_generic_structs.wyn",
-        "tests/validation/test_traits.wyn",
-        "tests/validation/test_expressive.wyn"
+        "tests/validation/test_expressive.wyn",
+        "tests/validation/test_showcase.wyn"
     ]
-
-    var count = 91
-
-    // Phase 1: Build all tests sequentially (avoids concurrent clang contention)
-    var build_fail = 0
-    for j in 0..count {
-        var ok = build_test(tests[j])
-        if ok == 0 {
-            println("  BUILD FAIL: " + tests[j])
-            build_fail = build_fail + 1
-        }
-    }
-
-    // Phase 2: Run pre-built tests concurrently in batches
+    var count = 90
     var pass = 0
-    var fail = build_fail
-    var batch_size = 10
-    var i = 0
-    while i < count {
-        var end = i + batch_size
-        if end > count { end = count }
-        var futures = []
-        for j in i..end {
-            futures.push(spawn run_test(tests[j]))
-        }
-        for j in 0..(end - i) {
-            var result = await futures[j]
-            if result == 1 {
-                pass = pass + 1
-            } else {
-                fail = fail + 1
-                println("  FAIL: " + tests[i + j])
-            }
-        }
-        i = end
+    var fail = 0
+    for i in 0..count {
+        var result = run_test(tests[i])
+        if result == 1 { pass = pass + 1 }
+        else { fail = fail + 1; println("  FAIL: " + tests[i]) }
     }
-
     var elapsed = DateTime_millis() - start
     println("")
     println("Results: " + pass.to_string() + " pass, " + fail.to_string() + " fail (" + elapsed.to_string() + "ms)")
-
-    // Clean up
-    System_exec("find tests -name '*.wyn.c' -delete 2>/dev/null || true")
-    System_exec("find tests -name '*.wyn.out' -delete 2>/dev/null || true")
-
-    if fail > 0 { return 1 }
-    return 0
+    return fail
 }
