@@ -1334,6 +1334,25 @@ void codegen_expr(Expr* expr) {
                 // Skip type parameters (T, K, V) — let generic dispatch handle them
                 if (type_name.length == 1 && type_name.start[0] >= 'A' && type_name.start[0] <= 'Z')
                     goto skip_struct_dispatch;
+            } else if (expr->method_call.object->type == EXPR_IDENT) {
+                // Fallback: check codegen's struct var registry
+                char _svn[64]; snprintf(_svn, 64, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                extern const char* get_struct_var_type(const char*);
+                const char* _svt = get_struct_var_type(_svn);
+                if (_svt) {
+                    Token method = expr->method_call.method;
+                    emit("%s_%.*s(", _svt, method.length, method.start);
+                    codegen_expr(expr->method_call.object);
+                    for (int i = 0; i < expr->method_call.arg_count; i++) {
+                        emit(", "); codegen_expr(expr->method_call.args[i]);
+                    }
+                    emit(")");
+                    break;
+                }
+            }
+            if (expr->method_call.object->expr_type && 
+                expr->method_call.object->expr_type->kind == TYPE_STRUCT) {
+                Token type_name = expr->method_call.object->expr_type->struct_type.name;
                 
                 // Check if this is a trait type — use vtable dispatch
                 if (is_trait_type(type_name.start, type_name.length)) {
@@ -1860,6 +1879,60 @@ void codegen_expr(Expr* expr) {
             // Tuple element access: result.0.to_string() — element is int
             if (!receiver_type && expr->method_call.object->type == EXPR_TUPLE_INDEX)
                 receiver_type = "int";
+            
+            // Struct method chaining: walk up chain to find root struct type
+            if (expr->method_call.object->type == EXPR_METHOD_CALL) {
+                // Walk up the chain to find the root struct
+                Expr* cur = expr->method_call.object;
+                const char* chain_struct = NULL;
+                while (cur && cur->type == EXPR_METHOD_CALL) {
+                    Expr* obj = cur->method_call.object;
+                    if (obj->type == EXPR_IDENT) {
+                        char _vn[64]; snprintf(_vn, 64, "%.*s", obj->token.length, obj->token.start);
+                        extern const char* get_struct_var_type(const char*);
+                        chain_struct = get_struct_var_type(_vn);
+                        if (!chain_struct && obj->expr_type && obj->expr_type->kind == TYPE_STRUCT) {
+                            static char _csn[64]; snprintf(_csn, 64, "%.*s", obj->expr_type->struct_type.name.length, obj->expr_type->struct_type.name.start);
+                            chain_struct = _csn;
+                        }
+                        break;
+                    }
+                    cur = obj;
+                }
+                // Walk forward through the chain resolving return types
+                if (chain_struct) {
+                    cur = expr->method_call.object;
+                    // Collect method names in the chain
+                    Token chain_methods[16]; int chain_len = 0;
+                    Expr* walk = expr->method_call.object;
+                    while (walk && walk->type == EXPR_METHOD_CALL && chain_len < 16) {
+                        chain_methods[chain_len++] = walk->method_call.method;
+                        walk = walk->method_call.object;
+                    }
+                    // Resolve from root to tip
+                    const char* cur_type = chain_struct;
+                    for (int ci = chain_len - 1; ci >= 0; ci--) {
+                        char _cm[64]; snprintf(_cm, 64, "%.*s", chain_methods[ci].length, chain_methods[ci].start);
+                        extern const char* lookup_struct_method_return_type(const char*, const char*);
+                        const char* ret = lookup_struct_method_return_type(cur_type, _cm);
+                        if (ret) cur_type = ret; else break;
+                    }
+                    extern int is_known_struct(const char*);
+                    if (is_known_struct(cur_type)) {
+                        Token method = expr->method_call.method;
+                        emit("%s_%.*s(", cur_type, method.length, method.start);
+                        codegen_expr(expr->method_call.object);
+                        for (int i = 0; i < expr->method_call.arg_count; i++) {
+                            emit(", "); codegen_expr(expr->method_call.args[i]);
+                        }
+                        emit(")");
+                        break;
+                    }
+                    // Primitive return type
+                    if (strcmp(cur_type, "int") == 0) receiver_type = "int";
+                    else if (strcmp(cur_type, "string") == 0) receiver_type = "string";
+                }
+            }
             
             // Fallback: if no type info, try to infer from expression
             if (!receiver_type && expr->method_call.object->type == EXPR_IDENT) {

@@ -346,6 +346,47 @@ void codegen_stmt(Stmt* stmt) {
                             goto var_type_done;
                         }
                     }
+                    // Struct method chain return type
+                    if (!_found_method_rt && stmt->var.init->type == EXPR_METHOD_CALL) {
+                        Expr* _obj = stmt->var.init->method_call.object;
+                        const char* _stype = NULL;
+                        // Direct struct var
+                        if (_obj->type == EXPR_IDENT) {
+                            char _vn3[64]; snprintf(_vn3, 64, "%.*s", _obj->token.length, _obj->token.start);
+                            extern const char* get_struct_var_type(const char*);
+                            _stype = get_struct_var_type(_vn3);
+                        }
+                        // Chained method on struct
+                        if (!_stype && _obj->type == EXPR_METHOD_CALL && _obj->method_call.object->type == EXPR_IDENT) {
+                            char _vn3[64]; snprintf(_vn3, 64, "%.*s", _obj->method_call.object->token.length, _obj->method_call.object->token.start);
+                            extern const char* get_struct_var_type(const char*);
+                            _stype = get_struct_var_type(_vn3);
+                            if (_stype) {
+                                char _mn3[64]; snprintf(_mn3, 64, "%.*s", _obj->method_call.method.length, _obj->method_call.method.start);
+                                extern const char* lookup_struct_method_return_type(const char*, const char*);
+                                const char* _ret = lookup_struct_method_return_type(_stype, _mn3);
+                                if (_ret) _stype = _ret;
+                            }
+                        }
+                        if (_stype) {
+                            char _mn3[64]; snprintf(_mn3, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                            extern const char* lookup_struct_method_return_type(const char*, const char*);
+                            const char* _ret = lookup_struct_method_return_type(_stype, _mn3);
+                            if (_ret) {
+                                extern int is_known_struct(const char*);
+                                if (is_known_struct(_ret)) {
+                                    c_type = _ret;
+                                    char _vn4[256]; snprintf(_vn4, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                                    extern void register_struct_var(const char*, const char*);
+                                    register_struct_var(_vn4, _ret);
+                                    goto var_type_done;
+                                }
+                                if (strcmp(_ret, "string") == 0) { c_type = "const char*"; is_already_const = true; goto var_type_done; }
+                                if (strcmp(_ret, "float") == 0) { c_type = "double"; goto var_type_done; }
+                                if (strcmp(_ret, "int") == 0) { c_type = "long long"; goto var_type_done; }
+                            }
+                        }
+                    }
                     // Check for module constructor: StringBuilder.new(), etc.
                     if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
                         char _on[64]; snprintf(_on, 64, "%.*s", stmt->var.init->method_call.object->token.length, stmt->var.init->method_call.object->token.start);

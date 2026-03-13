@@ -969,6 +969,16 @@ const char* get_struct_var_type(const char* var) {
     }
     return NULL;
 }
+int is_known_struct(const char* name) {
+    if (!current_program) return 0;
+    for (int i = 0; i < current_program->count; i++) {
+        if (current_program->stmts[i]->type == STMT_STRUCT) {
+            StructStmt* s = &current_program->stmts[i]->struct_decl;
+            if (s->name.length == (int)strlen(name) && memcmp(s->name.start, name, s->name.length) == 0) return 1;
+        }
+    }
+    return 0;
+}
 
 // Track enum variant data types: "EnumName.VariantName" -> C type
 static struct { char key[128]; char c_type[64]; } enum_variant_types[256];
