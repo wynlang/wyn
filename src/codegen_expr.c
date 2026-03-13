@@ -1831,6 +1831,10 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
+            // Tuple element access: result.0.to_string() — element is int
+            if (!receiver_type && expr->method_call.object->type == EXPR_TUPLE_INDEX)
+                receiver_type = "int";
+            
             // Fallback: if no type info, try to infer from expression
             if (!receiver_type && expr->method_call.object->type == EXPR_IDENT) {
                 char mname[64];
