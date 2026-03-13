@@ -345,6 +345,36 @@ int registry_install(const char *package_spec) {
     }
     
     printf("Installed %s@%s → %s/\n", package, version, pkg_dir);
+    
+    // Write lockfile entry
+    {
+        // Read existing lockfile
+        char entries[64][512]; int entry_count = 0;
+        FILE* lf = fopen("wyn.lock", "r");
+        if (lf) {
+            char line[512];
+            while (fgets(line, sizeof(line), lf) && entry_count < 64) {
+                if (line[0] == '#' || line[0] == '\n') { strcpy(entries[entry_count++], line); continue; }
+                // Skip existing entry for this package
+                if (strstr(line, package) && strstr(line, " ")) { continue; }
+                strcpy(entries[entry_count++], line);
+            }
+            fclose(lf);
+        } else {
+            strcpy(entries[entry_count++], "# wyn.lock — pinned package versions (do not edit)\n");
+            strcpy(entries[entry_count++], "\n");
+        }
+        // Add new entry
+        snprintf(entries[entry_count], 512, "%s %s registry\n", package, version);
+        entry_count++;
+        // Write back
+        lf = fopen("wyn.lock", "w");
+        if (lf) {
+            for (int i = 0; i < entry_count; i++) fputs(entries[i], lf);
+            fclose(lf);
+        }
+    }
+    
     return 0;
 }
 

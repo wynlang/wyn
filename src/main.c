@@ -778,6 +778,7 @@ int main(int argc, char** argv) {
             fprintf(stderr, "  install <name>@<ver>  Install a specific version\n");
             fprintf(stderr, "  uninstall <name>      Remove an installed package\n");
             fprintf(stderr, "  list                  List installed packages\n");
+            fprintf(stderr, "  restore               Install all packages from wyn.lock\n");
             fprintf(stderr, "  push                  Publish current project to registry\n");
             return 1;
         }
@@ -986,6 +987,27 @@ int main(int argc, char** argv) {
         // ── wyn pkg list ──
         if (strcmp(argv[2], "list") == 0) {
             return package_list();
+        }
+
+        // ── wyn pkg restore — install from wyn.lock ──
+        if (strcmp(argv[2], "restore") == 0) {
+            FILE* lf = fopen("wyn.lock", "r");
+            if (!lf) { fprintf(stderr, "No wyn.lock found\n"); return 1; }
+            char line[512]; int count = 0;
+            while (fgets(line, sizeof(line), lf)) {
+                if (line[0] == '#' || line[0] == '\n') continue;
+                char pkg[256], ver[64], src[64];
+                if (sscanf(line, "%255s %63s %63s", pkg, ver, src) >= 2) {
+                    char spec[320]; snprintf(spec, sizeof(spec), "%s@%s", pkg, ver);
+                    printf("Restoring %s...\n", spec);
+                    if (strcmp(src, "registry") == 0) registry_install(spec);
+                    else package_install(pkg);
+                    count++;
+                }
+            }
+            fclose(lf);
+            printf("\n✓ Restored %d packages from wyn.lock\n", count);
+            return 0;
         }
 
         // ── wyn pkg push ──
