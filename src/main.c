@@ -1963,14 +1963,46 @@ int main(int argc, char** argv) {
             snprintf(compile_cmd, sizeof(compile_cmd), "clang -std=c11 -O2 -w -arch %s -I %s/src -o %s.macos %s.c %s/runtime/libwyn_rt.a -lpthread -lm", arch, wyn_root, file, file, wyn_root);
             printf("Compiling for macOS (%s)...\n", arch);
         } else if (strcmp(target, "windows") == 0) {
-            // Windows cross-compilation requires a pre-built Windows runtime.
-            // The runtime .c files have POSIX dependencies that need #ifdef guards.
-            // For now, compile with runtime sources that are Windows-compatible.
-            // TODO: Build libwyn_rt_windows.a on Windows CI and embed it.
-            fprintf(stderr, "Windows cross-compilation is not yet fully supported.\n");
-            fprintf(stderr, "The runtime needs Windows-specific builds.\n");
-            fprintf(stderr, "Workaround: build on Windows directly with 'wyn build'.\n");
-            return 1;
+            if (system("which zig >/dev/null 2>&1") != 0) {
+                fprintf(stderr, "Error: Windows cross-compilation requires zig.\n");
+                fprintf(stderr, "Install: brew install zig\n");
+                return 1;
+            }
+            // Build cross-compiled runtime .a for Windows
+            const char* win_srcs[] = {
+                "wyn_arena", "wyn_rc", "win_stubs",
+                "wyn_interface", "hashset", "hashmap", "io", "json",
+                "optional", "result", "arc_runtime",
+                "safe_memory", "error", "stdlib_string", "stdlib_array", "stdlib_time",
+                "stdlib_crypto", "stdlib_math", "test_runtime",
+                "file_io_simple", "stdlib_enhanced", NULL
+            };
+            system("mkdir -p /tmp/wyn_cross_rt");
+            { char wcmd[1024]; snprintf(wcmd, sizeof(wcmd),
+                "zig cc -target x86_64-windows-gnu -std=c11 -O2 -w -D_WIN32 "
+                "-I %s/src -I %s/vendor/minicoro "
+                "-c %s/src/wyn_wrapper.c -o /tmp/wyn_cross_rt/wyn_wrapper.o 2>/dev/null",
+                wyn_root, wyn_root, wyn_root); system(wcmd); }
+            for (int ri = 0; win_srcs[ri]; ri++) {
+                char cmd[1024];
+                snprintf(cmd, sizeof(cmd),
+                    "zig cc -target x86_64-windows-gnu -std=c11 -O2 -w -fcommon -D_WIN32 "
+                    "-I %s/src -I %s/vendor/minicoro "
+                    "-c %s/src/%s.c -o /tmp/wyn_cross_rt/%s.o 2>/dev/null",
+                    wyn_root, wyn_root, wyn_root, win_srcs[ri], win_srcs[ri]);
+                system(cmd);
+            }
+            system("mv /tmp/wyn_cross_rt/wyn_wrapper.o /tmp/wyn_cross_rt_wrapper.o 2>/dev/null; "
+                   "zig ar rcs /tmp/wyn_cross_rt/libwyn_rt.a /tmp/wyn_cross_rt/*.o 2>/dev/null; "
+                   "mv /tmp/wyn_cross_rt_wrapper.o /tmp/wyn_cross_rt/wyn_wrapper.o 2>/dev/null");
+            snprintf(compile_cmd, sizeof(compile_cmd),
+                "zig cc -target x86_64-windows-gnu -std=c11 -O2 -w -fcommon -D_WIN32 "
+                "-I %s/src -I %s/vendor/minicoro "
+                "-o %s.exe %s.c /tmp/wyn_cross_rt/wyn_wrapper.o "
+                "-Wl,--whole-archive /tmp/wyn_cross_rt/libwyn_rt.a -Wl,--no-whole-archive "
+                "-lws2_32 -lm",
+                wyn_root, wyn_root, file, file);
+            printf("Cross-compiling for Windows (x86_64) via zig cc...\n");
         } else if (strcmp(target, "ios") == 0) {
             // iOS cross-compilation via Xcode SDK
             char sdk_path[512] = {0};
