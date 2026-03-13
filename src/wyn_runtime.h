@@ -41,7 +41,9 @@ struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
 #include <time.h>
 #include <ctype.h>
 #include <stdarg.h>
+#ifndef __wasi__
 #include <setjmp.h>
+#endif
 #include <sys/stat.h>
 #ifdef _WIN32
   #include <winsock2.h>
@@ -425,8 +427,10 @@ double wyn_math_round(double x);
 extern char* global_filename;
 extern char* global_file_content;
 
+#ifndef __wasi__
 static jmp_buf* current_exception_buf = NULL;
 static const char** current_exception_msg = NULL;
+#endif
 
 typedef struct { void** keys; void** values; int count; } WynMap;
 
