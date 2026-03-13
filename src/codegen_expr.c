@@ -455,6 +455,26 @@ void codegen_expr(Expr* expr) {
                             (_m.length == 8 && memcmp(_m.start, "pad_left", 8) == 0) ||
                             (_m.length == 9 && memcmp(_m.start, "pad_right", 9) == 0))
                             { *_is_str = true; *_is_int = false; }
+                        // Check struct method return type
+                        if (!*_is_str && _e->method_call.object->type == EXPR_IDENT) {
+                            char _on[64]; snprintf(_on, 64, "%.*s", _e->method_call.object->token.length, _e->method_call.object->token.start);
+                            extern const char* get_struct_var_type(const char*);
+                            const char* _st = get_struct_var_type(_on);
+                            if (_st) {
+                                char _mn[64]; snprintf(_mn, 64, "%.*s", _m.length, _m.start);
+                                extern const char* lookup_struct_method_return_type(const char*, const char*);
+                                const char* _rt = lookup_struct_method_return_type(_st, _mn);
+                                if (_rt && strcmp(_rt, "string") == 0) { *_is_str = true; *_is_int = false; }
+                            }
+                        }
+                        // Check function return type for fn().method() chains
+                        if (!*_is_str && _e->method_call.object->type == EXPR_CALL &&
+                            _e->method_call.object->call.callee->type == EXPR_IDENT) {
+                            char _fn[64]; snprintf(_fn, 64, "%.*s", _e->method_call.object->call.callee->token.length, _e->method_call.object->call.callee->token.start);
+                            extern const char* get_function_return_type(const char*);
+                            const char* _frt = get_function_return_type(_fn);
+                            if (_frt && strcmp(_frt, "string") == 0) { *_is_str = true; *_is_int = false; }
+                        }
                     }
                 }
                 
