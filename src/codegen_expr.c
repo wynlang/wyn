@@ -1897,6 +1897,17 @@ void codegen_expr(Expr* expr) {
                         }
                         break;
                     }
+                    if (obj->type == EXPR_CALL && obj->call.callee->type == EXPR_IDENT) {
+                        // Function call — look up return type
+                        char _fn[64]; snprintf(_fn, 64, "%.*s", obj->call.callee->token.length, obj->call.callee->token.start);
+                        extern const char* get_function_return_type(const char*);
+                        const char* _rt = get_function_return_type(_fn);
+                        if (_rt) {
+                            extern int is_known_struct(const char*);
+                            if (is_known_struct(_rt)) chain_struct = _rt;
+                        }
+                        break;
+                    }
                     cur = obj;
                 }
                 // Walk forward through the chain resolving return types

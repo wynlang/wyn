@@ -368,6 +368,24 @@ void codegen_stmt(Stmt* stmt) {
                                 if (_ret) _stype = _ret;
                             }
                         }
+                        // Function call root: from_table("x").where_clause(...)
+                        if (!_stype && _obj->type == EXPR_CALL && _obj->call.callee->type == EXPR_IDENT) {
+                            char _fn[64]; snprintf(_fn, 64, "%.*s", _obj->call.callee->token.length, _obj->call.callee->token.start);
+                            extern const char* get_function_return_type(const char*);
+                            const char* _frt = get_function_return_type(_fn);
+                            if (_frt) { extern int is_known_struct(const char*); if (is_known_struct(_frt)) _stype = _frt; }
+                        }
+                        if (!_stype && _obj->type == EXPR_METHOD_CALL) {
+                            // Walk deeper — function call at root of chain
+                            Expr* _walk = _obj;
+                            while (_walk && _walk->type == EXPR_METHOD_CALL) _walk = _walk->method_call.object;
+                            if (_walk && _walk->type == EXPR_CALL && _walk->call.callee->type == EXPR_IDENT) {
+                                char _fn[64]; snprintf(_fn, 64, "%.*s", _walk->call.callee->token.length, _walk->call.callee->token.start);
+                                extern const char* get_function_return_type(const char*);
+                                const char* _frt = get_function_return_type(_fn);
+                                if (_frt) { extern int is_known_struct(const char*); if (is_known_struct(_frt)) _stype = _frt; }
+                            }
+                        }
                         if (_stype) {
                             char _mn3[64]; snprintf(_mn3, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
                             extern const char* lookup_struct_method_return_type(const char*, const char*);
