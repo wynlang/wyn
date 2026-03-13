@@ -8,7 +8,7 @@ fn slow_add(a: int, b: int) -> int {
     return a + b
 }
 
-fn main() -> int {
+fn main() {
     Test.init("await_all / await_any")
 
     // Test 1: await_all with array of futures
@@ -37,5 +37,4 @@ fn main() -> int {
     Test.assert_eq_int(single_results[0], 84, "await_all single = 84")
 
     Test.summary()
-    return 0
 }

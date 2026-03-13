@@ -40,7 +40,7 @@ fn show(item: Describable) -> string {
     return item.describe()
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Traits and Bounds")
 
     var c = Circle { radius: 5 }
@@ -56,5 +56,4 @@ fn main() -> int {
     Test.assert_eq_str(show(r), "rect(3x4)", "dispatch rect")
 
     Test.summary()
-    return 0
 }

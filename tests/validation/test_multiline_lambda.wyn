@@ -1,6 +1,6 @@
 // TDD: multiline lambda bodies
 
-fn main() -> int {
+fn main() {
     Test.init("Multiline Lambdas")
 
     // Multiline map with intermediate vars
@@ -36,5 +36,4 @@ fn main() -> int {
     Test.assert_eq_int(total, 55, "reduce multiline")
 
     Test.summary()
-    return 0
 }

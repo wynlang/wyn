@@ -40,7 +40,7 @@ fn fib(n: int) -> int {
     return fib(n - 1) + fib(n - 2)
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Wyn v1.9 Showcase")
 
     // === Everything is an object ===
@@ -121,5 +121,4 @@ fn main() -> int {
     Test.assert_eq_int(nums.max(), 9, "max")
 
     Test.summary()
-    return 0
 }

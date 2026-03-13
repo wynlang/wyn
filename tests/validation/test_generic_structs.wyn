@@ -10,7 +10,7 @@ struct Box<T> {
     label: string
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Generic Structs")
 
     // Int pair
@@ -35,5 +35,4 @@ fn main() -> int {
     Test.assert_eq_str(b.label, "answer", "box.label")
 
     Test.summary()
-    return 0
 }

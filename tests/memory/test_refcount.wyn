@@ -4,7 +4,7 @@ fn make_greeting(name: string) -> string {
     return "hello " + name
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Reference Counting")
 
     // Test 1: basic string creation and use
@@ -30,5 +30,4 @@ fn main() -> int {
     Test.assert_eq_str(name, "alice", "original string preserved")
 
     Test.summary()
-    return 0
 }

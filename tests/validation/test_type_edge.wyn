@@ -6,7 +6,7 @@ fn make_point() -> Point {
     return Point { x: 1, y: 2 }
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Type Inference Edge Cases")
 
     // 1: array of strings
@@ -94,5 +94,4 @@ fn main() -> int {
     Test.assert_eq_int(count, 10, "while loop")
 
     Test.summary()
-    return 0
 }

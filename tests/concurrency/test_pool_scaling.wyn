@@ -5,7 +5,7 @@ fn counter(x: int) -> int {
     return x + 1
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Pool Allocator Scaling")
 
     // Test 1: 1K concurrent spawns
@@ -44,5 +44,4 @@ fn main() -> int {
     Test.assert_eq_int(total, 12502500, "5K sequential: correct sum")
 
     Test.summary()
-    return 0
 }

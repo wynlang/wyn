@@ -4,7 +4,7 @@ fn make_label(id: int) -> string {
     return "label_" + id.to_string()
 }
 
-fn main() -> int {
+fn main() {
     Test.init("await_all string return")
 
     // Spawn string-returning functions and collect with await_all
@@ -19,5 +19,4 @@ fn main() -> int {
     Test.assert_eq_str(results[2], "label_2", "result[2]")
 
     Test.summary()
-    return 0
 }

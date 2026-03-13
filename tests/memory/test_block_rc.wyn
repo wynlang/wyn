@@ -4,7 +4,7 @@ fn build(n: int) -> string {
     return "item_" + n.to_string()
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Block-scoped RC")
 
     // 1: string var in for loop body — released each iteration
@@ -51,5 +51,4 @@ fn main() -> int {
     Test.assert_eq_int(count, 5, "while body string")
 
     Test.summary()
-    return 0
 }

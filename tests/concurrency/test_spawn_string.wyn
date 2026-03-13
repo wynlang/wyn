@@ -8,7 +8,7 @@ fn upper_name(name: string) -> string {
     return name.upper()
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Spawn String Return")
 
     // Test 1: basic string return from spawn
@@ -26,5 +26,4 @@ fn main() -> int {
     Test.assert_eq_str(result3, "ALICE", "upper_name returns string")
 
     Test.summary()
-    return 0
 }

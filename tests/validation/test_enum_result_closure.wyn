@@ -20,7 +20,7 @@ fn apply(x: int, f: fn(int) -> int) -> int {
     return f(x)
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Enums, Result, Closures")
 
     // 1: enum creation and match
@@ -76,5 +76,4 @@ fn main() -> int {
     Test.assert_eq_int(result, 23, "nested match")
 
     Test.summary()
-    return 0
 }

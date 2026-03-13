@@ -18,7 +18,7 @@ fn pass_through(s: string) -> string {
     return s
 }
 
-fn main() -> int {
+fn main() {
     Test.init("RC Stress Test")
 
     // 1: repeated reassignment in loop
@@ -74,5 +74,4 @@ fn main() -> int {
     Test.assert_eq_str(c3, "shared base", "copy 3 survives")
 
     Test.summary()
-    return 0
 }

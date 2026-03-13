@@ -10,7 +10,7 @@ fn concat_all(a: string, b: string) -> string {
     return a + " " + b
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Spawn + String + RC")
 
     // 1: multiple string-returning spawns
@@ -50,5 +50,4 @@ fn main() -> int {
     Test.assert_eq_str(combined, "msg_99 done", "spawn result in concat")
 
     Test.summary()
-    return 0
 }

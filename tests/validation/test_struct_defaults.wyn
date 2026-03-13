@@ -28,7 +28,7 @@ fn counter_inc(c: Counter) -> Counter {
     return Counter { value: c.value + 1, name: c.name }
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Structs and Default Params")
 
     // 1: struct creation
@@ -71,5 +71,4 @@ fn main() -> int {
     Test.assert_eq_int(PI, 3, "const value")
 
     Test.summary()
-    return 0
 }

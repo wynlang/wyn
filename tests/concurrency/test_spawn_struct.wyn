@@ -10,7 +10,7 @@ fn add_points(a: Point, b: Point) -> Point {
     return Point { x: a.x + b.x, y: a.y + b.y }
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Spawn Struct Return")
 
     // Test 1: basic struct return from spawn
@@ -28,5 +28,4 @@ fn main() -> int {
     Test.assert_eq_int(p1.y + p2.y, 60, "p1.y + p2.y = 60")
 
     Test.summary()
-    return 0
 }

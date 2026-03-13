@@ -9,7 +9,7 @@ fn fib(n: int) -> int {
     return fib(n - 1) + fib(n - 2)
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Concurrency")
 
     // Test 1: Basic spawn+await
@@ -46,5 +46,4 @@ fn main() -> int {
     Test.assert_eq_int(seq_sum, 12502500, "5K sequential spawn+await")
 
     Test.summary()
-    return 0
 }

@@ -24,7 +24,7 @@ impl Describable for Point {
     }
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Expressive Wyn")
 
     // Method chaining
@@ -75,5 +75,4 @@ fn main() -> int {
     // Pipe operator
 
     Test.summary()
-    return 0
 }

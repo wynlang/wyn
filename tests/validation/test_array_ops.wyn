@@ -1,6 +1,6 @@
 // Stress test: arrays with various operations
 
-fn main() -> int {
+fn main() {
     Test.init("Array Operations")
 
     // 1: array creation and access
@@ -50,5 +50,4 @@ fn main() -> int {
     Test.assert_eq_int(matrix[1][1], 4, "matrix[1][1]")
 
     Test.summary()
-    return 0
 }

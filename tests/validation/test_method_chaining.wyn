@@ -1,6 +1,6 @@
 // TDD: method chaining — everything is an object
 
-fn main() -> int {
+fn main() {
     Test.init("Method Chaining")
 
     // Array chaining: sort + reverse
@@ -46,5 +46,4 @@ fn main() -> int {
     Test.assert_eq_str(true.to_string(), "true", "bool.to_string()")
 
     Test.summary()
-    return 0
 }

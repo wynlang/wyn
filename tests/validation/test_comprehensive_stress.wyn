@@ -16,7 +16,7 @@ fn apply(x: int, f: fn(int) -> int) -> int {
     return f(x)
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Comprehensive Stress")
 
     // RC: 10K reassignments
@@ -69,5 +69,4 @@ fn main() -> int {
     Test.assert_eq_str(chain, "HELLO WORLD", "method chain")
 
     Test.summary()
-    return 0
 }

@@ -8,7 +8,7 @@ fn greet(name: string, greeting: string = "Hello") -> string {
     return greeting + ", " + name + "!"
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Named Arguments")
 
     // Positional (existing behavior)
@@ -26,5 +26,4 @@ fn main() -> int {
     Test.assert_eq_str(greet(name: "Wyn", greeting: "Hey"), "Hey, Wyn!", "named greeting")
 
     Test.summary()
-    return 0
 }

@@ -14,10 +14,9 @@ fn fib(n: int) -> int {
 
 fn increment(counter: int) -> int {
     Shared.add(counter, 1)
-    return 0
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Spawn Edge Cases")
 
     // 1: spawn with 0 args
@@ -77,5 +76,4 @@ fn main() -> int {
     Test.assert_eq_int(sum, 4950, "100 sequential spawns")
 
     Test.summary()
-    return 0
 }

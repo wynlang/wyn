@@ -17,7 +17,7 @@ fn repeat_string(s: string, n: int) -> string {
     return result
 }
 
-fn main() -> int {
+fn main() {
     Test.init("String Edge Cases")
 
     // 1: empty string operations
@@ -74,5 +74,4 @@ fn main() -> int {
     Test.assert("abc" == "abc", "string equal")
 
     Test.summary()
-    return 0
 }

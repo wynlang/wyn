@@ -16,7 +16,7 @@ fn format_report(items: [string]) -> string {
     return report
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Realistic Parallel Processing")
 
     // 1: process items in parallel, collect results
@@ -64,5 +64,4 @@ fn main() -> int {
     Test.assert_eq_int(Shared.get(counter), 20, "all 20 processed")
 
     Test.summary()
-    return 0
 }

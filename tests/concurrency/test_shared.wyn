@@ -3,10 +3,9 @@
 fn increment(counter: int) -> int {
     // counter is a shared handle — .add returns old value
     Shared.add(counter, 1)
-    return 0
 }
 
-fn main() -> int {
+fn main() {
     Test.init("Shared Atomic Values")
 
     // Test 1: basic shared value
@@ -37,5 +36,4 @@ fn main() -> int {
     Test.assert_eq_int(Shared.get(counter), 1000, "1K concurrent increments = 1000")
 
     Test.summary()
-    return 0
 }
