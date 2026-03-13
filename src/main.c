@@ -1206,6 +1206,7 @@ int main(int argc, char** argv) {
             else if (strcmp(target, "macos-x64") == 0) target = "macos-x64";
             else if (strcmp(target, "macos-arm64") == 0) target = "macos-arm64";
             else if (strcmp(target, "windows-x64") == 0 || strcmp(target, "win64") == 0) target = "windows";
+            else if (strcmp(target, "wasm") == 0 || strcmp(target, "wasm32") == 0) target = "wasm";
             
             // Build new argv for cross command
             char* cross_argv[8];
@@ -2081,9 +2082,36 @@ int main(int argc, char** argv) {
                 ndk_path, wyn_root, file, file);
             printf("Cross-compiling for Android (arm64)...\n");
             printf("NDK: %s\n", ndk_path);
+        } else if (strcmp(target, "wasm") == 0 || strcmp(target, "wasm32") == 0) {
+            // WASM via Emscripten
+            char emcc_path[512] = {0};
+            // Try emsdk first, then PATH
+            FILE* fp = popen("bash -c 'source ~/emsdk/emsdk_env.sh 2>/dev/null && which emcc' 2>/dev/null", "r");
+            if (fp) { fgets(emcc_path, sizeof(emcc_path), fp); pclose(fp); }
+            char* nl = strchr(emcc_path, '\n'); if (nl) *nl = 0;
+            if (!emcc_path[0]) {
+                fprintf(stderr, "Error: Emscripten (emcc) not found.\n");
+                fprintf(stderr, "Install: git clone https://github.com/emscripten-core/emsdk.git ~/emsdk && ~/emsdk/emsdk install latest && ~/emsdk/emsdk activate latest\n");
+                return 1;
+            }
+            const char* wasm_srcs[] = {
+                "wyn_wrapper", "wyn_arena", "wyn_rc", "wyn_interface", "hashmap", "hashset",
+                "json", "optional", "result", "safe_memory", "error", "stdlib_string",
+                "stdlib_array", "stdlib_time", "stdlib_math", "test_runtime",
+                "file_io_simple", "stdlib_enhanced", "win_stubs", NULL
+            };
+            char src_args[4096] = {0}; int spos = 0;
+            for (int i = 0; wasm_srcs[i]; i++)
+                spos += snprintf(src_args + spos, sizeof(src_args) - spos, " %s/src/%s.c", wyn_root, wasm_srcs[i]);
+            snprintf(compile_cmd, sizeof(compile_cmd),
+                "bash -c 'source ~/emsdk/emsdk_env.sh 2>/dev/null && emcc -std=c11 -O2 -w "
+                "-D_DEFAULT_SOURCE -D__EMSCRIPTEN__ -I %s/src -I %s/vendor/minicoro "
+                "-sEXIT_RUNTIME=1 -o %s.js %s.c%s'",
+                wyn_root, wyn_root, file, file, src_args);
+            printf("Compiling to WebAssembly via emcc...\n");
         } else {
             fprintf(stderr, "Unknown target: %s\n", target);
-            fprintf(stderr, "Available: linux, macos, windows, ios, android\n");
+            fprintf(stderr, "Available: linux, macos, windows, ios, android, wasm\n");
             return 1;
         }
         

@@ -1,5 +1,5 @@
-// Windows stubs for POSIX-only concurrency functions
-#ifdef _WIN32
+// Stubs for platforms without POSIX concurrency (Windows, WASM)
+#if defined(_WIN32) || defined(__EMSCRIPTEN__) || defined(__wasi__)
 #include <stdlib.h>
 typedef struct { int dummy; } Future;
 void* wyn_task_new(void) { return NULL; }
