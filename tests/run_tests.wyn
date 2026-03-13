@@ -121,7 +121,7 @@ fn main() -> int {
     // Run tests in batches of 20 to avoid memory pressure
     var pass = 0
     var fail = 0
-    var batch_size = 15
+    var batch_size = 10
     var i = 0
     while i < count {
         var end = i + batch_size
