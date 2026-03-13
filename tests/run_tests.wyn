@@ -110,15 +110,18 @@ fn main() -> int {
         "tests/memory/test_block_rc.wyn",
         "tests/validation/test_enum_exhaustive.wyn",
         "tests/validation/test_stdlib_new.wyn",
-        "tests/validation/test_method_chaining.wyn"
+        "tests/validation/test_method_chaining.wyn",
+        "tests/validation/test_multiline_lambda.wyn",
+        "tests/validation/test_named_args.wyn",
+        "tests/validation/test_tuples.wyn"
     ]
 
-    var count = 82
+    var count = 86
 
     // Run tests in batches of 20 to avoid memory pressure
     var pass = 0
     var fail = 0
-    var batch_size = 20
+    var batch_size = 15
     var i = 0
     while i < count {
         var end = i + batch_size
