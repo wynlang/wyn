@@ -180,6 +180,28 @@ void codegen_stmt(Stmt* stmt) {
             } else {
                 codegen_expr(stmt->expr);
                 emit(";\n");
+                // Readback captured variables after lambda calls (capture by reference)
+                if (stmt->expr->type == EXPR_METHOD_CALL) {
+                    for (int ai = 0; ai < stmt->expr->method_call.arg_count; ai++) {
+                        if (stmt->expr->method_call.args[ai]->type == EXPR_LAMBDA) {
+                            // Find the lambda ID for this expression (sequential counter)
+                            // The lambda_ref_counter tracks which lambda was last referenced
+                            int target_lid = lambda_ref_counter;
+                            for (int li = 0; li < lambda_count; li++) {
+                                if (lambda_functions[li].id == target_lid && lambda_functions[li].capture_count > 0 && !lambda_functions[li].is_closure) {
+                                    for (int ci = 0; ci < lambda_functions[li].capture_count; ci++) {
+                                        emit("%s = __cap_%d_%s;\n",
+                                            lambda_functions[li].captured_vars[ci],
+                                            lambda_functions[li].id,
+                                            lambda_functions[li].captured_vars[ci]);
+                                    }
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
             }
             break;
         case STMT_VAR: {

@@ -108,6 +108,7 @@ static void collect_idents(Expr* expr, char idents[][64], int* count, int max) {
     else if (expr->type == EXPR_METHOD_CALL) { collect_idents(expr->method_call.object, idents, count, max); for (int i = 0; i < expr->method_call.arg_count; i++) collect_idents(expr->method_call.args[i], idents, count, max); }
     else if (expr->type == EXPR_IF_EXPR) { collect_idents(expr->if_expr.condition, idents, count, max); collect_idents(expr->if_expr.then_expr, idents, count, max); collect_idents(expr->if_expr.else_expr, idents, count, max); }
     else if (expr->type == EXPR_INDEX) { collect_idents(expr->index.array, idents, count, max); collect_idents(expr->index.index, idents, count, max); }
+    else if (expr->type == EXPR_ASSIGN) { collect_idents(expr->assign.value, idents, count, max); /* also capture the target */ char name[64]; int len = expr->assign.name.length < 63 ? expr->assign.name.length : 63; memcpy(name, expr->assign.name.start, len); name[len] = '\0'; for (int i = 0; i < *count; i++) if (strcmp(idents[i], name) == 0) return; if (*count < max) { strcpy(idents[*count], name); (*count)++; } }
 }
 static int lambda_expr_to_string(Expr* expr, char* buf, int max_len) {
     if (!expr) return 0;
@@ -263,6 +264,11 @@ static int lambda_expr_to_string(Expr* expr, char* buf, int max_len) {
         case EXPR_FLOAT:
             pos += snprintf(buf + pos, max_len - pos, "%.*s", expr->token.length, expr->token.start);
             break;
+        case EXPR_ASSIGN: {
+            pos += snprintf(buf + pos, max_len - pos, "%.*s = ", expr->assign.name.length, expr->assign.name.start);
+            pos += lambda_expr_to_string(expr->assign.value, buf + pos, max_len - pos);
+            break;
+        }
         case EXPR_BOOL:
             pos += snprintf(buf + pos, max_len - pos, "%.*s", expr->token.length, expr->token.start);
             break;
@@ -390,9 +396,8 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 pos += snprintf(func_code + pos, 8192 - pos, ") {\n");
                 if (capture_count > 0) {
                     for (int i = 0; i < capture_count; i++) {
-                        extern int is_known_array_var(const char*);
-                        const char* utype = is_scan_array_var(captured_vars[i]) ? "WynArray" : "long long";
-                        pos += snprintf(func_code + pos, 8192 - pos, "    %s %s = __cap_%d_%s;\n", utype, captured_vars[i], lambda_id, captured_vars[i]);
+                        // Use #define to alias variable to global (capture by reference)
+                        pos += snprintf(func_code + pos, 8192 - pos, "#define %s __cap_%d_%s\n", captured_vars[i], lambda_id, captured_vars[i]);
                     }
                 }
                 // Emit body statements (multiline lambda)
@@ -401,6 +406,9 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 pos += snprintf(func_code + pos, 8192 - pos, "    return ");
                 pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
                 pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
+                // Undef capture aliases
+                for (int i = 0; i < capture_count; i++)
+                    pos += snprintf(func_code + pos, 8192 - pos, "#undef %s\n", captured_vars[i]);
             }
             
             if (lambda_count < 256) {
