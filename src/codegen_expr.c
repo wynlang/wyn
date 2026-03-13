@@ -1310,6 +1310,10 @@ void codegen_expr(Expr* expr) {
                 expr->method_call.object->expr_type->kind == TYPE_STRUCT) {
                 Token type_name = expr->method_call.object->expr_type->struct_type.name;
                 
+                // Skip type parameters (T, K, V) — let generic dispatch handle them
+                if (type_name.length == 1 && type_name.start[0] >= 'A' && type_name.start[0] <= 'Z')
+                    goto skip_struct_dispatch;
+                
                 // Check if this is a trait type — use vtable dispatch
                 if (is_trait_type(type_name.start, type_name.length)) {
                     emit("(");
@@ -1335,6 +1339,7 @@ void codegen_expr(Expr* expr) {
                 emit(")");
                 break;
             }
+            skip_struct_dispatch:
             
             // Check if object is a parameter with trait type
             if (expr->method_call.object->type == EXPR_IDENT) {
@@ -2024,6 +2029,9 @@ void codegen_expr(Expr* expr) {
                 method_name[len] = '\0';
                 
                 MethodDispatch dispatch;
+                // Resolve type parameters (T, K, V) to concrete types
+                if (receiver_type && strlen(receiver_type) == 1 && receiver_type[0] >= 'A' && receiver_type[0] <= 'Z')
+                    receiver_type = "int";
                 if (dispatch_method(receiver_type, method_name, expr->method_call.arg_count, &dispatch)) {
                     // When to_string is dispatched as int_to_string but the object is a method call,
                     // use _Generic to_string macro so the C compiler picks the right variant

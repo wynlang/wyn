@@ -987,11 +987,14 @@ void codegen_stmt(Stmt* stmt) {
                                 c_type = "bool";
                                 break;
                             case TYPE_STRUCT: {
-                                // Use struct type name
+                                // Use struct type name (resolve type params to long long)
                                 static char struct_type_buf[128];
                                 Token type_name = stmt->var.init->expr_type->struct_type.name;
                                 snprintf(struct_type_buf, 128, "%.*s", type_name.length, type_name.start);
-                                c_type = struct_type_buf;
+                                if (type_name.length == 1 && type_name.start[0] >= 'A' && type_name.start[0] <= 'Z')
+                                    c_type = "long long";
+                                else
+                                    c_type = struct_type_buf;
                                 break;
                             }
                             case TYPE_ENUM: {
