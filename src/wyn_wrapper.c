@@ -4,8 +4,10 @@
 #define _XOPEN_SOURCE 700
 #include <stdio.h>
 #include <stdlib.h>
+#if !defined(__wasi__) && !defined(_WIN32)
 #include <signal.h>
 #include <unistd.h>
+#endif
 #include "wyn_interface.h"
 
 // External main function from the Wyn-compiled program
@@ -26,7 +28,7 @@ extern long wyn_spawn_origin_id(void);
 static char wyn_sigstack_buf[8192];
 
 static void wyn_crash_handler(int sig) {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__wasi__)
     const char* spawn_file = wyn_spawn_origin_file();
     int spawn_line = wyn_spawn_origin_line();
     long spawn_id = wyn_spawn_origin_id();
@@ -69,7 +71,13 @@ static void wyn_crash_handler(int sig) {
 #endif
 }
 
-#ifdef _WIN32
+#if defined(__wasi__)
+int main(int argc, char** argv) {
+    __wyn_argc = argc;
+    __wyn_argv = argv;
+    return wyn_main();
+}
+#elif defined(_WIN32)
 __attribute__((flatten))
 int main(int argc, char** argv) {
     signal(SIGSEGV, wyn_crash_handler);

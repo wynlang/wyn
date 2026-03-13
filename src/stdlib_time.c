@@ -33,6 +33,8 @@ long long wyn_time_now_millis() {
 void wyn_time_sleep(int milliseconds) {
 #ifdef _WIN32
     Sleep(milliseconds);
+#elif defined(__wasi__)
+    (void)milliseconds; // sleep not available in WASI
 #else
     usleep(milliseconds * 1000);
 #endif

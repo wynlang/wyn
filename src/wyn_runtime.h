@@ -92,11 +92,13 @@ struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
   #define WYN_SETSOCKOPT(s,l,o,v,n) setsockopt(s,l,o,(const char*)(v),n)
 #else
   #include <dirent.h>
+  #ifndef __wasi__
   #include <sys/socket.h>
   #include <sys/time.h>
   #include <netinet/in.h>
   #include <arpa/inet.h>
   #include <netdb.h>
+  #endif
   #include <unistd.h>
   #include <fcntl.h>
   #define WYN_SETSOCKOPT(s,l,o,v,n) setsockopt(s,l,o,v,n)
