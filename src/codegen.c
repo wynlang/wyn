@@ -1033,7 +1033,7 @@ const char* get_enum_var_type(const char* var) {
 }
 
 // Function default parameter registry
-static struct { char name[128]; Expr** defaults; int param_count; char return_type[32]; } fn_defaults[256];
+static struct { char name[128]; Expr** defaults; int param_count; char return_type[32]; char param_names[16][64]; } fn_defaults[256];
 static int fn_defaults_count = 0;
 
 void register_fn_defaults(const char* name, Expr** defaults, int param_count) {
@@ -1052,6 +1052,30 @@ void register_fn_defaults(const char* name, Expr** defaults, int param_count) {
         fn_defaults[fn_defaults_count].return_type[0] = '\0';
         fn_defaults_count++;
     }
+}
+
+void register_fn_param_names(const char* name, Token* params, int count) {
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, name) == 0) {
+            for (int j = 0; j < count && j < 16; j++) {
+                int len = params[j].length < 63 ? params[j].length : 63;
+                memcpy(fn_defaults[i].param_names[j], params[j].start, len);
+                fn_defaults[i].param_names[j][len] = '\0';
+            }
+            return;
+        }
+    }
+}
+
+int get_fn_param_index(const char* fn_name, const char* param_name) {
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, fn_name) == 0) {
+            for (int j = 0; j < fn_defaults[i].param_count; j++) {
+                if (strcmp(fn_defaults[i].param_names[j], param_name) == 0) return j;
+            }
+        }
+    }
+    return -1;
 }
 
 void register_fn_return_type(const char* name, const char* ret_type) {

@@ -80,6 +80,7 @@ typedef struct {
     Expr* callee;
     Expr** args;
     int arg_count;
+    Token* arg_names;  // Named arguments: arg_names[i].length > 0 means named
     void* selected_overload;  // T1.5.3: Selected function overload (void* to avoid circular dependency)
 } CallExpr;
 

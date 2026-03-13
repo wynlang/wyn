@@ -1178,6 +1178,39 @@ void codegen_expr(Expr* expr) {
                 // Captured variables use static globals, not extra call args
                 // (set via ({ __cap_N_var = var; __lambda_N; }) at assignment)
                 
+                // Named argument reordering — swap args/count before emission
+                Expr** _orig_args = expr->call.args;
+                int _orig_count = expr->call.arg_count;
+                if (expr->call.arg_names) {
+                    bool _has_named = false;
+                    for (int i = 0; i < expr->call.arg_count; i++)
+                        if (expr->call.arg_names[i].length > 0) { _has_named = true; break; }
+                    if (_has_named && expr->call.callee->type == EXPR_IDENT) {
+                        char _cfn2[128]; snprintf(_cfn2, 128, "%.*s", expr->call.callee->token.length, expr->call.callee->token.start);
+                        extern int get_fn_param_count(const char*);
+                        extern Expr* get_fn_default(const char*, int);
+                        extern int get_fn_param_index(const char*, const char*);
+                        int _total = get_fn_param_count(_cfn2);
+                        if (_total > 0) {
+                            Expr** _ra = calloc(_total, sizeof(Expr*));
+                            for (int i = 0; i < expr->call.arg_count; i++) {
+                                if (expr->call.arg_names[i].length > 0) {
+                                    char pn[64]; int pl = expr->call.arg_names[i].length < 63 ? expr->call.arg_names[i].length : 63;
+                                    memcpy(pn, expr->call.arg_names[i].start, pl); pn[pl] = '\0';
+                                    int idx = get_fn_param_index(_cfn2, pn);
+                                    if (idx >= 0 && idx < _total) _ra[idx] = expr->call.args[i];
+                                } else {
+                                    for (int j = 0; j < _total; j++) { if (!_ra[j]) { _ra[j] = expr->call.args[i]; break; } }
+                                }
+                            }
+                            for (int i = 0; i < _total; i++)
+                                if (!_ra[i]) _ra[i] = get_fn_default(_cfn2, i);
+                            expr->call.args = _ra;
+                            expr->call.arg_count = _total;
+                        }
+                    }
+                }
+                
                 for (int i = 0; i < expr->call.arg_count; i++) {
                     if (i > 0 || (is_lambda_call && lambda_var_idx >= 0 && 0)) {
                         emit(", ");
@@ -1214,8 +1247,12 @@ void codegen_expr(Expr* expr) {
                     codegen_expr(expr->call.args[i]);
                     arg_done: ;
                 }
-                // Fill in default arguments if fewer args provided
-                if (expr->call.callee->type == EXPR_IDENT) {
+                // Fill in default arguments if fewer args provided (skip if named args handled it)
+                if (expr->call.args != _orig_args) {
+                    // Named args already filled defaults — restore original
+                    expr->call.args = _orig_args;
+                    expr->call.arg_count = _orig_count;
+                } else if (expr->call.callee->type == EXPR_IDENT) {
                     char _cfn[128]; snprintf(_cfn, 128, "%.*s", expr->call.callee->token.length, expr->call.callee->token.start);
                     extern int get_fn_param_count(const char*);
                     extern Expr* get_fn_default(const char*, int);

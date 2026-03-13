@@ -964,11 +964,34 @@ static Expr* call() {
             if (!check(TOKEN_RPAREN)) {
                 int capacity = 8;
                 call_expr->call.args = malloc(sizeof(Expr*) * capacity);
+                call_expr->call.arg_names = calloc(capacity, sizeof(Token));
                 do {
                     if (call_expr->call.arg_count >= capacity) {
                         capacity *= 2;
                         call_expr->call.args = realloc(call_expr->call.args, sizeof(Expr*) * capacity);
+                        call_expr->call.arg_names = realloc(call_expr->call.arg_names, sizeof(Token) * capacity);
                     }
+                    // Check for named argument: ident: expr
+                    // Detect by checking if current is IDENT and next is COLON
+                    if (parser.current.type == TOKEN_IDENT) {
+                        Token saved_current = parser.current;
+                        Token saved_previous = parser.previous;
+                        extern void save_lexer_state(void);
+                        extern void restore_lexer_state(void);
+                        save_lexer_state();
+                        advance(); // consume potential name
+                        if (check(TOKEN_COLON)) {
+                            advance(); // consume ':'
+                            call_expr->call.arg_names[call_expr->call.arg_count] = saved_current;
+                            call_expr->call.args[call_expr->call.arg_count++] = expression();
+                            continue;
+                        }
+                        // Not a named arg — backtrack
+                        restore_lexer_state();
+                        parser.current = saved_current;
+                        parser.previous = saved_previous;
+                    }
+                    call_expr->call.arg_names[call_expr->call.arg_count] = (Token){0};
                     call_expr->call.args[call_expr->call.arg_count++] = expression();
                 } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
             }

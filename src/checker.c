@@ -2262,6 +2262,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return left;
         }
         case EXPR_CALL: {
+            // Check for named arguments
+            bool _has_named_args = false;
+            if (expr->call.arg_names) {
+                for (int i = 0; i < expr->call.arg_count; i++)
+                    if (expr->call.arg_names[i].length > 0) { _has_named_args = true; break; }
+            }
             // Check for enum constructor calls: EnumName.Variant(args)
             if (expr->call.callee->type == EXPR_FIELD_ACCESS &&
                 expr->call.callee->field_access.object->type == EXPR_IDENT) {
@@ -2668,7 +2674,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
                 
                 // Find best matching overload
-                Symbol* best_match = find_function_overload(scope, expr->call.callee->token, arg_types, expr->call.arg_count);
+                Symbol* best_match = NULL;
+                if (_has_named_args) {
+                    // Named args: just look up by name, skip type matching
+                    best_match = find_symbol(scope, expr->call.callee->token);
+                } else {
+                    best_match = find_function_overload(scope, expr->call.callee->token, arg_types, expr->call.arg_count);
+                }
                 
                 // Check if this is a module-qualified function call (e.g., math::add)
                 bool is_qualified = false;
@@ -2749,7 +2761,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 
                 if (best_match && best_match->type->kind == TYPE_FUNCTION) {
                     // T1.5.4: Validate the function call with detailed parameter checking
-                    ValidationResult validation = wyn_validate_function_call(best_match, expr->call.args, expr->call.arg_count, scope);
+                    // Skip validation for named arguments (codegen handles reordering)
+                    ValidationResult validation = VALIDATION_SUCCESS;
+                    if (!_has_named_args)
+                        validation = wyn_validate_function_call(best_match, expr->call.args, expr->call.arg_count, scope);
                     
                     if (validation != VALIDATION_SUCCESS) {
                         char func_name[256];
@@ -2813,7 +2828,8 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Type* callee_type = check_expr(expr->call.callee, scope);
             
             // T1.5.4: Enhanced parameter validation for function types
-            if (callee_type && callee_type->kind == TYPE_FUNCTION) {
+            // Skip strict validation when named arguments are used (codegen handles reordering)
+            if (!_has_named_args && callee_type && callee_type->kind == TYPE_FUNCTION) {
                 // For variadic functions, allow any number of arguments >= param_count
                 if (callee_type->fn_type.is_variadic) {
                     if (expr->call.arg_count < callee_type->fn_type.param_count) {

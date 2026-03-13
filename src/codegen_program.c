@@ -496,6 +496,8 @@ void codegen_program(Program* prog) {
                 char _fn[128]; snprintf(_fn, 128, "%.*s", fn->name.length, fn->name.start);
                 extern void register_fn_defaults(const char*, Expr**, int);
                 register_fn_defaults(_fn, fn->param_defaults, fn->param_count);
+                extern void register_fn_param_names(const char*, Token*, int);
+                register_fn_param_names(_fn, fn->params, fn->param_count);
             }
             
             // Register return type for spawn/await type dispatch
