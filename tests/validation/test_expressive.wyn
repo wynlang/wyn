@@ -1,0 +1,79 @@
+// TDD: expressive code — everything flows
+
+fn greet(name: string, style: string = "formal") -> string {
+    if style == "casual" { return "Hey " + name + "!" }
+    return "Hello, " + name + "."
+}
+
+fn divmod(a: int, b: int) -> (int, int) {
+    return (a / b, a % b)
+}
+
+struct Point {
+    x: int
+    y: int
+}
+
+trait Describable {
+    fn describe(self) -> string
+}
+
+impl Describable for Point {
+    fn describe(self) -> string {
+        return "(" + self.x.to_string() + "," + self.y.to_string() + ")"
+    }
+}
+
+fn main() -> int {
+    Test.init("Expressive Wyn")
+
+    // Method chaining
+    var nums = [5, 3, 8, 1, 9, 2, 7]
+    Test.assert_eq_int(nums.sort().reverse().first(), 9, "chain first")
+    Test.assert_eq_int(nums.sort().last(), 9, "chain last")
+    Test.assert_eq_int(nums.sort().sum(), 35, "chain sum")
+    Test.assert_eq_int(nums.filter(fn(x: int) -> bool { return x > 4 }).len(), 4, "chain filter len")
+
+    // String chaining
+    Test.assert_eq_str("hello world".upper().replace("WORLD", "WYN"), "HELLO WYN", "string chain")
+    Test.assert_eq_str("  padded  ".trim().upper(), "PADDED", "trim.upper")
+
+    // Join on chains
+    Test.assert_eq_str("banana,apple,cherry".split(",").sort().join(","), "apple,banana,cherry", "split.sort.join")
+    var sorted_str = "c,a,b".split(",").sort().join("-")
+    Test.assert_eq_str(sorted_str, "a-b-c", "var from chain join")
+
+    // Named arguments
+    Test.assert_eq_str(greet(name: "Wyn"), "Hello, Wyn.", "named arg")
+    Test.assert_eq_str(greet(style: "casual", name: "World"), "Hey World!", "named reorder")
+
+    // Tuples
+    var dm = divmod(17, 5)
+    Test.assert_eq_int(dm.0 * 5 + dm.1, 17, "tuple divmod")
+
+    // Void lambdas
+    var counter = Shared.new(0)
+    nums.each(fn(x: int) { Shared.add(counter, x) })
+    Test.assert_eq_int(Shared.get(counter), 35, "void each")
+
+    // Multiline lambdas
+    var processed = nums.map(fn(x: int) -> int {
+        var sq = x * x
+        return sq + 1
+    })
+    Test.assert_eq_int(processed[0], 26, "multiline map")
+
+    // Generic structs
+    var p = Point { x: 3, y: 4 }
+    Test.assert_eq_str(p.describe(), "(3,4)", "trait method")
+
+    // Stdlib richness
+    Test.assert_eq_int(42.clamp(0, 10), 10, "clamp")
+    Test.assert_eq_str("7".pad_left(3, "0"), "007", "pad_left")
+    Test.assert_eq_int((-5).abs(), 5, "abs")
+
+    // Pipe operator
+
+    Test.summary()
+    return 0
+}

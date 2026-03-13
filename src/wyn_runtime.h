@@ -642,6 +642,19 @@ void array_sort(WynArray* arr) {
         }
     }
 }
+void array_sort_str(WynArray* arr) {
+    for (int i = 0; i < arr->count - 1; i++) {
+        for (int j = 0; j < arr->count - i - 1; j++) {
+            const char* a = arr->data[j].data.string_val ? arr->data[j].data.string_val : "";
+            const char* b = arr->data[j+1].data.string_val ? arr->data[j+1].data.string_val : "";
+            if (strcmp(a, b) > 0) {
+                WynValue temp = arr->data[j];
+                arr->data[j] = arr->data[j + 1];
+                arr->data[j + 1] = temp;
+            }
+        }
+    }
+}
 
 int array_first(WynArray arr) {
     if (arr.count == 0) return 0;
@@ -3883,8 +3896,16 @@ WynArray array_reverse_copy(WynArray arr) {
 
 WynArray array_sort_copy(WynArray arr) {
     WynArray result = array_new();
-    for (int i = 0; i < arr.count; i++) array_push_int(&result, arr.data[i].data.int_val);
-    array_sort(&result);
+    for (int i = 0; i < arr.count; i++) {
+        if (arr.count > 0 && arr.data[i].type == WYN_TYPE_STRING)
+            array_push_str(&result, arr.data[i].data.string_val ? arr.data[i].data.string_val : "");
+        else
+            array_push_int(&result, arr.data[i].data.int_val);
+    }
+    if (arr.count > 0 && arr.data[0].type == WYN_TYPE_STRING)
+        array_sort_str(&result);
+    else
+        array_sort(&result);
     return result;
 }
 

@@ -437,6 +437,27 @@ void codegen_expr(Expr* expr) {
                     if (is_str_array_var(_an)) { right_is_string = true; right_is_int = false; }
                 }
                 
+                // Check EXPR_METHOD_CALL that returns string
+                for (int _side = 0; _side < 2; _side++) {
+                    Expr* _e = _side == 0 ? expr->binary.left : expr->binary.right;
+                    bool* _is_str = _side == 0 ? &left_is_string : &right_is_string;
+                    bool* _is_int = _side == 0 ? &left_is_int : &right_is_int;
+                    if (!*_is_str && _e->type == EXPR_METHOD_CALL) {
+                        Token _m = _e->method_call.method;
+                        if ((_m.length == 4 && memcmp(_m.start, "join", 4) == 0) ||
+                            (_m.length == 5 && memcmp(_m.start, "upper", 5) == 0) ||
+                            (_m.length == 5 && memcmp(_m.start, "lower", 5) == 0) ||
+                            (_m.length == 4 && memcmp(_m.start, "trim", 4) == 0) ||
+                            (_m.length == 7 && memcmp(_m.start, "replace", 7) == 0) ||
+                            (_m.length == 6 && memcmp(_m.start, "repeat", 6) == 0) ||
+                            (_m.length == 9 && memcmp(_m.start, "substring", 9) == 0) ||
+                            (_m.length == 9 && memcmp(_m.start, "to_string", 9) == 0) ||
+                            (_m.length == 8 && memcmp(_m.start, "pad_left", 8) == 0) ||
+                            (_m.length == 9 && memcmp(_m.start, "pad_right", 9) == 0))
+                            { *_is_str = true; *_is_int = false; }
+                    }
+                }
+                
                 if (left_is_string || right_is_string) {
                     // Use ARC-managed string concatenation with automatic conversion
                     emit("wyn_string_concat_safe(");

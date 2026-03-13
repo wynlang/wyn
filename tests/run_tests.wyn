@@ -115,10 +115,11 @@ fn main() -> int {
         "tests/validation/test_named_args.wyn",
         "tests/validation/test_tuples.wyn",
         "tests/validation/test_generic_structs.wyn",
-        "tests/validation/test_traits.wyn"
+        "tests/validation/test_traits.wyn",
+        "tests/validation/test_expressive.wyn"
     ]
 
-    var count = 89
+    var count = 91
 
     // Phase 1: Build all tests sequentially (avoids concurrent clang contention)
     var build_fail = 0
@@ -133,7 +134,7 @@ fn main() -> int {
     // Phase 2: Run pre-built tests concurrently in batches
     var pass = 0
     var fail = build_fail
-    var batch_size = 15
+    var batch_size = 10
     var i = 0
     while i < count {
         var end = i + batch_size
