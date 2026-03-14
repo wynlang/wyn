@@ -1700,13 +1700,21 @@ void codegen_expr(Expr* expr) {
                 }
                 // arr.find(val)
                 if (method.length == 4 && memcmp(method.start, "find", 4) == 0 && expr->method_call.arg_count == 1) {
-                    emit("arr_find(");
-                    codegen_expr(expr->method_call.object);
-                    emit(", ");
-                    codegen_expr(expr->method_call.object);
-                    emit(".count, ");
-                    codegen_expr(expr->method_call.args[0]);
-                    emit(")");
+                    if (expr->method_call.args[0]->type == EXPR_LAMBDA) {
+                        emit("array_find_fn(");
+                        codegen_expr(expr->method_call.object);
+                        emit(", ");
+                        codegen_expr(expr->method_call.args[0]);
+                        emit(")");
+                    } else {
+                        emit("arr_find(");
+                        codegen_expr(expr->method_call.object);
+                        emit(", ");
+                        codegen_expr(expr->method_call.object);
+                        emit(".count, ");
+                        codegen_expr(expr->method_call.args[0]);
+                        emit(")");
+                    }
                     break;
                 }
                 // arr.pop()

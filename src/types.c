@@ -787,6 +787,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "every") == 0 && arg_count == 1) {
             out->c_function = "array_every"; return true;
         }
+        if (strcmp(method_name, "find") == 0 && arg_count == 1) {
+            out->c_function = "array_find_fn"; return true;
+        }
         if (strcmp(method_name, "flat_map") == 0 && arg_count == 1) {
             out->c_function = "array_flat_map"; return true;
         }

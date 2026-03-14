@@ -712,6 +712,11 @@ int array_average(WynArray arr) {
 void array_each(WynArray arr, long long (*fn)(long long)) {
     for (int i = 0; i < arr.count; i++) fn(arr.data[i].data.int_val);
 }
+long long array_find_fn(WynArray arr, long long (*fn)(long long)) {
+    for (int i = 0; i < arr.count; i++)
+        if (fn(arr.data[i].data.int_val)) return arr.data[i].data.int_val;
+    return -1;
+}
 int array_every(WynArray arr, long long (*fn)(long long)) {
     for (int i = 0; i < arr.count; i++) if (!fn(arr.data[i].data.int_val)) return 0;
     return 1;
