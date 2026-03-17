@@ -4,8 +4,10 @@
 #define _XOPEN_SOURCE 700
 #include <stdio.h>
 #include <stdlib.h>
-#if !defined(__wasi__) && !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#if !defined(__wasi__) && !defined(__EMSCRIPTEN__)
 #include <signal.h>
+#endif
+#if !defined(__wasi__) && !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 #include <unistd.h>
 #endif
 #include "wyn_interface.h"

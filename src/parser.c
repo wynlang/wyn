@@ -232,10 +232,20 @@ static Expr* primary() {
                         expr->string_interp.count++;
                     }
                     
-                    // Find the closing }
+                    // Find the closing } (tracking brace depth and nested strings)
                     int expr_start = i + 2;
                     int expr_end = expr_start;
-                    while (expr_end < len && str[expr_end] != '}') {
+                    int _bd = 1;
+                    while (expr_end < len && _bd > 0) {
+                        if (str[expr_end] == '{') _bd++;
+                        else if (str[expr_end] == '}') { _bd--; if (_bd == 0) break; }
+                        else if (str[expr_end] == '"') {
+                            expr_end++;
+                            while (expr_end < len && str[expr_end] != '"') {
+                                if (str[expr_end] == '\\' && expr_end + 1 < len) expr_end++;
+                                expr_end++;
+                            }
+                        }
                         expr_end++;
                     }
                     
