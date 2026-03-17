@@ -389,7 +389,7 @@ typedef enum {
     STMT_MATCH, // T1.4.3: Control Flow Agent addition
     STMT_TRAIT, // T3.2.1: Trait definition statement
     STMT_MODULE, // T3.5.1: Module declaration statement
-    STMT_SPAWN, // Concurrency: spawn statement
+    STMT_SPAWN, STMT_YIELD, // Concurrency: spawn statement
 } StmtType;
 
 typedef struct Stmt Stmt;
@@ -585,7 +585,7 @@ struct Stmt {
         Expr* expr;
         VarStmt var;
         VarStmt const_stmt;  // Reuse VarStmt structure for constants
-        ReturnStmt ret;
+        ReturnStmt ret; struct { Expr* value; } yield_stmt;
         BlockStmt block;
         FnStmt fn;
         ExternStmt extern_fn;

@@ -213,6 +213,7 @@ static WynTokenType keyword_type(const char* start, int length) {
             break;
         case 'v': if (length == 3 && memcmp(start, "var", 3) == 0) return TOKEN_VAR; break;
         case 'w': if (length == 5 && memcmp(start, "while", 5) == 0) return TOKEN_WHILE; break;
+        case 'y': if (length == 5 && memcmp(start, "yield", 5) == 0) return TOKEN_YIELD; break;
     }
     return TOKEN_IDENT;
 }

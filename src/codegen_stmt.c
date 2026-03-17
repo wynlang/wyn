@@ -141,7 +141,7 @@ static int stmt_line(Stmt* s) {
         case STMT_VAR: return s->var.name.line;
         case STMT_EXPR: return s->expr ? s->expr->token.line : 0;
         case STMT_RETURN: return s->ret.value ? s->ret.value->token.line : 0;
-        case STMT_FN: return s->fn.name.line;
+        case STMT_YIELD: return s->yield_stmt.value ? s->yield_stmt.value->token.line : 0;        case STMT_FN: return s->fn.name.line;
         default: return 0;
     }
 }
@@ -353,7 +353,7 @@ void codegen_stmt(Stmt* stmt) {
                         if (strcmp(_mn2, "sort") == 0 || strcmp(_mn2, "reverse") == 0 ||
                             strcmp(_mn2, "filter") == 0 || strcmp(_mn2, "map") == 0 ||
                             strcmp(_mn2, "unique") == 0 || strcmp(_mn2, "slice") == 0 ||
-                            strcmp(_mn2, "flat_map") == 0) {
+                            strcmp(_mn2, "flat_map") == 0 || strcmp(_mn2, "collect") == 0) {
                             c_type = "WynArray";
                             char _vn2[256]; snprintf(_vn2, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
                             extern void register_array_var(const char*); register_array_var(_vn2);
@@ -1318,7 +1318,9 @@ void codegen_stmt(Stmt* stmt) {
             }
             break;
         }
-        case STMT_RETURN:
+        case STMT_YIELD:
+            emit("    wyn_yield("); if (stmt->yield_stmt.value) codegen_expr(stmt->yield_stmt.value); else emit("0"); emit(");\n");
+            break;        case STMT_RETURN:
             // Emit deferred calls before return (LIFO order)
             {
                 extern int get_defer_count(); extern Expr* get_defer(int);
@@ -1547,6 +1549,48 @@ void codegen_stmt(Stmt* stmt) {
                 }
             }
             
+            // L3: Generator detection
+            extern int fn_is_generator(Stmt*);
+            bool is_generator = fn_is_generator(stmt);
+            static int _gen_emitting = 0; // prevent re-entry
+            if (is_generator && !_gen_emitting) {
+                return_type = "WynIter*";
+                char gn[256]; snprintf(gn, sizeof(gn), "%.*s", stmt->fn.name.length, stmt->fn.name.start);
+                // Emit coroutine body function BEFORE the wrapper
+                _gen_emitting = 1;
+                emit("static void _gen_body_%s(void* _arg) {\n", gn);
+                if (stmt->fn.param_count > 0) {
+                    emit("    struct { ");
+                    for (int i = 0; i < stmt->fn.param_count; i++) {
+                        const char* pt = "long long";
+                        if (stmt->fn.param_types[i] && stmt->fn.param_types[i]->type == EXPR_IDENT) {
+                            Token t = stmt->fn.param_types[i]->token;
+                            if (t.length == 6 && memcmp(t.start, "string", 6) == 0) pt = "char*";
+                            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) pt = "double";
+                            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) pt = "bool";
+                        }
+                        emit("%s _p%d; ", pt, i);
+                    }
+                    emit("} *_a = _arg;\n");
+                    for (int i = 0; i < stmt->fn.param_count; i++) {
+                        const char* pt = "long long";
+                        if (stmt->fn.param_types[i] && stmt->fn.param_types[i]->type == EXPR_IDENT) {
+                            Token t = stmt->fn.param_types[i]->token;
+                            if (t.length == 6 && memcmp(t.start, "string", 6) == 0) pt = "char*";
+                            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) pt = "double";
+                            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) pt = "bool";
+                        }
+                        emit("    %s %.*s = _a->_p%d;\n", pt, stmt->fn.params[i].length, stmt->fn.params[i].start, i);
+                    }
+                    emit("    free(_arg);\n");
+                }
+                if (stmt->fn.body) codegen_stmt(stmt->fn.body);
+                emit("}\n\n");
+                _gen_emitting = 0;
+            } else if (is_generator) {
+                return_type = "WynIter*";
+            }
+            
             // Special handling for main function - rename to wyn_main
             bool is_main_function = (stmt->fn.name.length == 4 && 
                                    memcmp(stmt->fn.name.start, "main", 4) == 0);
@@ -1747,6 +1791,32 @@ void codegen_stmt(Stmt* stmt) {
             }
 
             // Function body
+            if (is_generator) {
+                // L3: Generator wrapper — allocate args, create iterator, return
+                char gn[256]; snprintf(gn, sizeof(gn), "%.*s", stmt->fn.name.length, stmt->fn.name.start);
+                if (stmt->fn.param_count > 0) {
+                    emit("    typedef struct { ");
+                    for (int i = 0; i < stmt->fn.param_count; i++) {
+                        const char* pt = "long long";
+                        if (stmt->fn.param_types[i] && stmt->fn.param_types[i]->type == EXPR_IDENT) {
+                            Token t = stmt->fn.param_types[i]->token;
+                            if (t.length == 6 && memcmp(t.start, "string", 6) == 0) pt = "char*";
+                            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) pt = "double";
+                            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) pt = "bool";
+                        }
+                        emit("%s _p%d; ", pt, i);
+                    }
+                    emit("} _gen_args_%s;\n", gn);
+                    emit("    _gen_args_%s* _a = malloc(sizeof(_gen_args_%s));\n", gn, gn);
+                    for (int i = 0; i < stmt->fn.param_count; i++)
+                        emit("    _a->_p%d = %.*s;\n", i, stmt->fn.params[i].length, stmt->fn.params[i].start);
+                    emit("    return wyn_iter_create(_gen_body_%s, _a);\n", gn);
+                } else {
+                    emit("    return wyn_iter_create(_gen_body_%s, NULL);\n", gn);
+                }
+                pop_scope(); current_fn_return_kind = prev_fn_return_kind;
+                emit("}\n\n"); break;
+            }
             // TCO: detect tail-recursive calls and convert to goto loop
             bool _is_tco = false;
             char _tco_fn_name[256] = {0};
@@ -2547,6 +2617,35 @@ void codegen_stmt(Stmt* stmt) {
         case STMT_FOR:
             // Check if this is a for-in loop (array iteration)
             if (stmt->for_stmt.array_expr) {
+                // L3: Iterator-based for-in (generator functions)
+                if (stmt->for_stmt.array_expr->type == EXPR_CALL &&
+                    stmt->for_stmt.array_expr->call.callee->type == EXPR_IDENT) {
+                    extern Program* current_program;
+                    extern int fn_is_generator(Stmt*);
+                    bool _is_gen_iter = false;
+                    if (current_program) {
+                        Token cn = stmt->for_stmt.array_expr->call.callee->token;
+                        for (int _fi = 0; _fi < current_program->count; _fi++) {
+                            Stmt* _s = current_program->stmts[_fi];
+                            Stmt* _fs = (_s->type == STMT_EXPORT && _s->export.stmt) ? _s->export.stmt : _s;
+                            if (fn_is_generator(_fs) && _fs->fn.name.length == cn.length &&
+                                memcmp(_fs->fn.name.start, cn.start, cn.length) == 0) {
+                                _is_gen_iter = true; break;
+                            }
+                        }
+                    }
+                    if (_is_gen_iter) {
+                        emit("{\n"); push_scope();
+                        emit("    WynIter* __iter = "); codegen_expr(stmt->for_stmt.array_expr); emit(";\n");
+                        emit("    while (wyn_iter_next(__iter)) {\n");
+                        emit("        long long %.*s = wyn_iter_value(__iter);\n", stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
+                        if (stmt->for_stmt.body) codegen_stmt(stmt->for_stmt.body);
+                        emit("    }\n");
+                        emit("    wyn_iter_destroy(__iter);\n");
+                        pop_scope(); emit("}\n");
+                        break;
+                    }
+                }
                 // Generate for-in loop: for item in array
                 emit("{\n");
                 push_scope();

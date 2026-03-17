@@ -486,6 +486,13 @@ void codegen_program(Program* prog) {
                 }
             }
             
+            // L3: Generator — override return type
+            extern int fn_is_generator(Stmt*);
+            Stmt* _orig = prog->stmts[i]->type == STMT_FN ? prog->stmts[i] : prog->stmts[i]->export.stmt;
+            if (fn_is_generator(_orig)) {
+                return_type = "WynIter*";
+            }
+            
             // Generate forward declaration
             // Special handling for main function - rename to wyn_main
             bool is_main_function = (fn->name.length == 4 && 

@@ -3973,6 +3973,7 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             break;
         }
         case STMT_EXPR:
+        case STMT_YIELD: if (stmt->yield_stmt.value) check_expr(stmt->yield_stmt.value, scope); break;
             check_expr(stmt->expr, scope);
             break;
         case STMT_RETURN:
@@ -5802,6 +5803,28 @@ void check_program(Program* prog) {
                     }
                 }
                 if (!has_return) {
+                    // Suppress for generators (use yield, not return)
+                    bool _has_yield = false;
+                    if (fn->body && fn->body->type == STMT_BLOCK) {
+                        for (int j = 0; j < fn->body->block.count && !_has_yield; j++) {
+                            Stmt* s = fn->body->block.stmts[j];
+                            if (!s) continue;
+                            if (s->type == STMT_YIELD) _has_yield = true;
+                            if (s->type == STMT_FOR && s->for_stmt.body) {
+                                Stmt* fb = s->for_stmt.body;
+                                if (fb->type == STMT_YIELD) _has_yield = true;
+                                if (fb->type == STMT_BLOCK) for (int k = 0; k < fb->block.count; k++)
+                                    if (fb->block.stmts[k] && fb->block.stmts[k]->type == STMT_YIELD) _has_yield = true;
+                            }
+                            if (s->type == STMT_WHILE && s->while_stmt.body) {
+                                Stmt* wb = s->while_stmt.body;
+                                if (wb->type == STMT_YIELD) _has_yield = true;
+                                if (wb->type == STMT_BLOCK) for (int k = 0; k < wb->block.count; k++)
+                                    if (wb->block.stmts[k] && wb->block.stmts[k]->type == STMT_YIELD) _has_yield = true;
+                            }
+                        }
+                    }
+                    if (!_has_yield)
                     fprintf(stderr, "\033[33mWarning:\033[0m function '%.*s' may not return a value (line %d)\n",
                         fn->name.length, fn->name.start, fn->name.line);
                 }

@@ -434,6 +434,7 @@ static int expr_has_yield(Expr* e) {
 static int stmt_has_yield(Stmt* s) {
     if (!s) return 0;
     switch (s->type) {
+        case STMT_YIELD: return 1;
         case STMT_EXPR: return expr_has_yield(s->expr);
         case STMT_VAR: return expr_has_yield(s->var.init);
         case STMT_RETURN: return expr_has_yield(s->ret.value);
@@ -449,6 +450,20 @@ static int stmt_has_yield(Stmt* s) {
             return 0;
         default: return 0;
     }
+}
+// L3: Check if a function statement contains yield (is a generator)
+static int _has_yield_stmt(Stmt* s) {
+    if (!s) return 0;
+    if (s->type == STMT_YIELD) return 1;
+    if (s->type == STMT_BLOCK) { for (int i = 0; i < s->block.count; i++) if (_has_yield_stmt(s->block.stmts[i])) return 1; }
+    if (s->type == STMT_FOR && _has_yield_stmt(s->for_stmt.body)) return 1;
+    if (s->type == STMT_WHILE && _has_yield_stmt(s->while_stmt.body)) return 1;
+    if (s->type == STMT_IF && (_has_yield_stmt(s->if_stmt.then_branch) || _has_yield_stmt(s->if_stmt.else_branch))) return 1;
+    return 0;
+}
+int fn_is_generator(Stmt* fn_stmt) {
+    if (!fn_stmt || fn_stmt->type != STMT_FN) return 0;
+    return _has_yield_stmt(fn_stmt->fn.body);
 }
 int function_can_inline(const char* name) {
     extern Program* current_program;

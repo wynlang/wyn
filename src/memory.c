@@ -231,6 +231,7 @@ void free_stmt(Stmt* stmt) {
             free_stmt(stmt->catch_stmt.body);
             break;
         case STMT_SPAWN:
+        case STMT_YIELD:
             free_expr(stmt->expr);
             break;
         case STMT_TEST:  // T1.6.2: Testing Framework Agent addition

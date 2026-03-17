@@ -1315,6 +1315,23 @@ void codegen_expr(Expr* expr) {
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
             
+            // L3: Iterator methods
+            if (method.length == 7 && memcmp(method.start, "collect", 7) == 0 && expr->method_call.arg_count == 0) {
+                emit("wyn_iter_collect("); codegen_expr(expr->method_call.object); emit(")"); break;
+            }
+            if (method.length == 4 && memcmp(method.start, "take", 4) == 0 && expr->method_call.arg_count == 1) {
+                emit("wyn_iter_take("); codegen_expr(expr->method_call.object); emit(", ");
+                codegen_expr(expr->method_call.args[0]); emit(")"); break;
+            }
+            if (method.length == 3 && memcmp(method.start, "map", 3) == 0 && expr->method_call.arg_count == 1) {
+                emit("wyn_iter_map("); codegen_expr(expr->method_call.object); emit(", ");
+                codegen_expr(expr->method_call.args[0]); emit(")"); break;
+            }
+            if (method.length == 6 && memcmp(method.start, "filter", 6) == 0 && expr->method_call.arg_count == 1) {
+                emit("wyn_iter_filter("); codegen_expr(expr->method_call.object); emit(", ");
+                codegen_expr(expr->method_call.args[0]); emit(")"); break;
+            }
+            
             // Spawn array: intercept .push() and [i] for WynIntArray
             if (expr->method_call.object->type == EXPR_IDENT &&
                 method.length == 4 && memcmp(method.start, "push", 4) == 0 &&

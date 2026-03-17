@@ -59,7 +59,7 @@ int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
             c_path);
         // Append all runtime source files (same list as main.c wyn build TCC path)
         int p = strlen(cmd);
-        const char* srcs[] = {"wyn_arena","wyn_rc","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","wyn_wrapper","wyn_interface","coroutine","spawn_fast","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
+        const char* srcs[] = {"wyn_arena","wyn_rc","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","wyn_wrapper","wyn_interface","coroutine","spawn","spawn_fast","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
         for (int si = 0; srcs[si]; si++) p += snprintf(cmd + p, sizeof(cmd) - p, "%s/src/%s.c ", wyn_root, srcs[si]);
         snprintf(cmd + p, sizeof(cmd) - p, "%s %s -lpthread -lm 2>/tmp/wyn_tcc_err.txt", rt_tcc, sqlite_file);
     } else {

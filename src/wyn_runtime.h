@@ -4922,4 +4922,7 @@ char* Web_render(const char* name, const char* vars) {
 }
 
 // === App (webview) module ===
+#ifndef __TINYC__
+#include "wyn_iter.h"
+#endif
 #include "wyn_webview.h"

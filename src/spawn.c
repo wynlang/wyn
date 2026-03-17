@@ -11,7 +11,9 @@
 #include <unistd.h>
 #include <sched.h>
 #ifdef __APPLE__
+#ifndef __TINYC__
 #include <sys/sysctl.h>
+#endif
 #endif
 #else
 #include <windows.h>

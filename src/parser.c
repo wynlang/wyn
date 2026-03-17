@@ -1532,6 +1532,14 @@ Stmt* statement() {
         return stmt;
     }
     
+    if (match(TOKEN_YIELD)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_YIELD;
+        stmt->yield_stmt.value = expression();
+        match(TOKEN_SEMI);
+        return stmt;
+    }
+    
     if (match(TOKEN_DEFER)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_DEFER;
