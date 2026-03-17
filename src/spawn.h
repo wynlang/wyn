@@ -55,7 +55,7 @@ void wyn_scheduler_enqueue(WynScheduler* sched, WynSpawnFunc func, void* arg);
 
 // Spawn functions (user-facing)
 void wyn_spawn(WynSpawnFunc func, void* arg);
-void wyn_yield();
+// wyn_yield defined in wyn_iter.h (static inline)
 
 // Task coordinator functions (communication)
 WynTask* wyn_task_new(int capacity);

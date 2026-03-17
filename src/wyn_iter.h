@@ -29,7 +29,7 @@ static void _wyn_iter_trampoline(void* arg) {
     it->has_value = 0;
 }
 
-inline void wyn_yield(long long value) {
+static inline void wyn_yield(long long value) {
     if (_wyn_yielding_iter) {
         _wyn_yielding_iter->current_value = value;
         _wyn_yielding_iter->has_value = 1;

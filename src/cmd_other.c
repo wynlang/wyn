@@ -770,88 +770,66 @@ int cmd_lsp(int argc, char** argv) {
 }
 
 int cmd_debug(const char* program, int argc, char** argv) {
-    (void)argc;
-    (void)argv;
-    if (!program) {
-        fprintf(stderr, "Usage: wyn debug <program>\n");
-        return 1;
-    }
-    
-    printf("Wyn Debugger v1.0\n");
-    printf("Debugging: %s\n\n", program);
-    
-    // Check if program exists
+    (void)argc; (void)argv;
+    if (!program) { fprintf(stderr, "Usage: wyn debug <program>\n"); return 1; }
     FILE* f = fopen(program, "r");
-    if (!f) {
-        fprintf(stderr, "Error: Cannot open %s\n", program);
-        return 1;
-    }
+    if (!f) { fprintf(stderr, "Error: Cannot open %s\n", program); return 1; }
     fclose(f);
     
-    // Compile the program first
-    char compile_cmd[512];
-    snprintf(compile_cmd, sizeof(compile_cmd), "./wyn %s > /dev/null 2>&1", program);
-    if (system(compile_cmd) != 0) {
-        fprintf(stderr, "Error: Failed to compile %s\n", program);
-        return 1;
+    char bin_path[512], c_path[512], wyn_root[1024] = ".";
+    snprintf(bin_path, sizeof(bin_path), "%s.debug", program);
+    snprintf(c_path, sizeof(c_path), "%s.c", program);
+    
+    // Detect wyn root
+    char exe[1024]; uint32_t sz = sizeof(exe);
+    if (_NSGetExecutablePath(exe, &sz) == 0) {
+        char* sl = strrchr(exe, '/');
+        if (sl) { *sl = 0; strncpy(wyn_root, exe, sizeof(wyn_root)-1); }
     }
     
-    // Get the output binary name
-    char binary[512];
-    snprintf(binary, sizeof(binary), "%s.out", program);
+    // Build .c file via wyn build (creates both binary and .c)
+    printf("\033[1mCompiling\033[0m %s with debug info...\n", program);
+    fflush(stdout);
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd), "%s/wyn build %s -o %s 2>/dev/null", wyn_root, program, bin_path);
+    system(cmd);
     
-    printf("Compiled successfully. Binary: %s\n", binary);
-    printf("\nDebugger commands:\n");
-    printf("  run    - Run the program\n");
-    printf("  step   - Step through execution (simulated)\n");
-    printf("  info   - Show program info\n");
-    printf("  quit   - Exit debugger\n\n");
-    
-    char cmd[256];
-    while (1) {
-        printf("(wyn-db) ");
-        fflush(stdout);
-        
-        if (!fgets(cmd, sizeof(cmd), stdin)) {
-            break;
+    // Recompile with -g -O0 for DWARF debug info
+    if (access(c_path, R_OK) == 0) {
+        char rt[512]; snprintf(rt, sizeof(rt), "%s/runtime/libwyn_rt.a", wyn_root);
+        if (access(rt, R_OK) == 0) {
+            snprintf(cmd, sizeof(cmd), "cc -std=c11 -g -O0 -w -I %s/src -o %s %s %s -lpthread -lm 2>/dev/null", wyn_root, bin_path, c_path, rt);
+        } else {
+            int p = snprintf(cmd, sizeof(cmd), "cc -std=c11 -g -O0 -w -I %s/src -I %s/vendor/minicoro -o %s %s ", wyn_root, wyn_root, bin_path, c_path);
+            const char* srcs[] = {"wyn_arena","wyn_rc","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","wyn_wrapper","wyn_interface","coroutine","spawn","spawn_fast","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
+            for (int i = 0; srcs[i]; i++) p += snprintf(cmd + p, sizeof(cmd) - p, "%s/src/%s.c ", wyn_root, srcs[i]);
+            snprintf(cmd + p, sizeof(cmd) - p, "-lpthread -lm 2>/dev/null");
         }
-        
-        // Remove newline
-        cmd[strcspn(cmd, "\n")] = 0;
-        
-        if (strcmp(cmd, "quit") == 0 || strcmp(cmd, "q") == 0) {
-            printf("Exiting debugger.\n");
-            break;
-        }
-        else if (strcmp(cmd, "run") == 0 || strcmp(cmd, "r") == 0) {
-            printf("Running %s...\n", binary);
-            int result = system(binary);
-            int exit_code = WEXITSTATUS(result);
-            printf("Program exited with code: %d\n", exit_code);
-        }
-        else if (strcmp(cmd, "step") == 0 || strcmp(cmd, "s") == 0) {
-            printf("Stepping through execution (simulated)...\n");
-            printf("  -> Line 1: fn main() -> int {\n");
-            printf("  -> Line 2:     return 0;\n");
-            printf("  -> Line 3: }\n");
-            printf("Program completed.\n");
-        }
-        else if (strcmp(cmd, "info") == 0 || strcmp(cmd, "i") == 0) {
-            printf("Program: %s\n", program);
-            printf("Binary: %s\n", binary);
-            
-            // Get file size
-            struct stat st;
-            if (stat(binary, &st) == 0) {
-                printf("Binary size: %lld bytes\n", (long long)st.st_size);
-            }
-        }
-        else if (strlen(cmd) > 0) {
-            printf("Unknown command: %s\n", cmd);
-            printf("Type 'quit' to exit or 'run' to execute.\n");
-        }
+        system(cmd);
     }
     
+    if (access(bin_path, X_OK) != 0) { fprintf(stderr, "Error: Debug build failed\n"); return 1; }
+    printf("\033[32m✓\033[0m Debug binary: %s\n\n", bin_path);
+    
+    // Launch lldb
+    if (system("which lldb >/dev/null 2>&1") != 0) { fprintf(stderr, "Error: lldb not found\n"); return 1; }
+    
+    char init_path[256]; snprintf(init_path, sizeof(init_path), "/tmp/wyn_lldb_%d", getpid());
+    FILE* init = fopen(init_path, "w");
+    if (init) {
+        fprintf(init, "settings set stop-line-count-after 3\nsettings set stop-line-count-before 3\n");
+        fprintf(init, "breakpoint set --name wyn_main\nrun\n");
+        fclose(init);
+    }
+    
+    printf("Wyn Debugger — powered by lldb\n");
+    printf("  n — step over   s — step into   c — continue\n");
+    printf("  p <var> — print  b <fn> — breakpoint  bt — backtrace  q — quit\n\n");
+    fflush(stdout);
+    
+    snprintf(cmd, sizeof(cmd), "lldb -s %s %s", init_path, bin_path);
+    system(cmd);
+    unlink(init_path);
     return 0;
 }
 

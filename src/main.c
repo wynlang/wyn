@@ -2194,6 +2194,12 @@ int main(int argc, char** argv) {
         return cmd_fmt(argv[2], argc, argv);
     }
     
+    if (strcmp(command, "debug") == 0) {
+        if (argc < 3) { fprintf(stderr, "Usage: wyn debug <program>\n"); return 1; }
+        extern int cmd_debug(const char*, int, char**);
+        return cmd_debug(argv[2], argc, argv);
+    }
+    
     if (strcmp(command, "run") == 0) {
         if (argc < 3) {
             // Try to find main.wyn or read wyn.toml
