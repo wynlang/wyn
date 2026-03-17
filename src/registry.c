@@ -346,16 +346,20 @@ int registry_install(const char *package_spec) {
     
     printf("Installed %s@%s → %s/\n", package, version, pkg_dir);
     
+    // Resolve actual version from installed package's wyn.toml
+    char actual_version[64]; strncpy(actual_version, version, sizeof(actual_version)-1);
+    { char tp[512]; snprintf(tp, sizeof(tp), "%s/wyn.toml", pkg_dir);
+      FILE* tf = fopen(tp, "r"); if (tf) { char tb[2048]; int tl = fread(tb,1,sizeof(tb)-1,tf); tb[tl]=0; fclose(tf);
+      char* vp = strstr(tb, "version = \""); if (vp) { vp+=11; int vi=0; while(vp[vi]&&vp[vi]!='"'&&vi<63){actual_version[vi]=vp[vi];vi++;} actual_version[vi]=0; } } }
+    
     // Write lockfile entry
     {
-        // Read existing lockfile
         char entries[64][512]; int entry_count = 0;
         FILE* lf = fopen("wyn.lock", "r");
         if (lf) {
             char line[512];
             while (fgets(line, sizeof(line), lf) && entry_count < 64) {
                 if (line[0] == '#' || line[0] == '\n') { strcpy(entries[entry_count++], line); continue; }
-                // Skip existing entry for this package
                 if (strstr(line, package) && strstr(line, " ")) { continue; }
                 strcpy(entries[entry_count++], line);
             }
@@ -364,16 +368,31 @@ int registry_install(const char *package_spec) {
             strcpy(entries[entry_count++], "# wyn.lock — pinned package versions (do not edit)\n");
             strcpy(entries[entry_count++], "\n");
         }
-        // Add new entry
-        snprintf(entries[entry_count], 512, "%s %s registry\n", package, version);
+        snprintf(entries[entry_count], 512, "%s %s registry\n", package, actual_version);
         entry_count++;
-        // Write back
         lf = fopen("wyn.lock", "w");
-        if (lf) {
-            for (int i = 0; i < entry_count; i++) fputs(entries[i], lf);
-            fclose(lf);
-        }
+        if (lf) { for (int i = 0; i < entry_count; i++) fputs(entries[i], lf); fclose(lf); }
     }
+    
+    // Install transitive dependencies
+    { char tp[512]; snprintf(tp, sizeof(tp), "%s/wyn.toml", pkg_dir);
+      FILE* tf = fopen(tp, "r"); if (tf) { char tb[4096]; int tl = fread(tb,1,sizeof(tb)-1,tf); tb[tl]=0; fclose(tf);
+      char* deps = strstr(tb, "[dependencies]"); if (deps) { deps += 14;
+        char dl[256]; int dli = 0;
+        for (char* p = deps; *p; p++) {
+            if (*p == '\n' || !*p) { dl[dli] = 0;
+                char dn[128]=""; char* eq = strchr(dl, '=');
+                if (eq && dli > 0 && dl[0] != '[' && dl[0] != '#') {
+                    int ni=0; for(char* c=dl;c<eq&&ni<127;c++) if(*c!=' '&&*c!='\t') dn[ni++]=*c; dn[ni]=0;
+                    if (dn[0] && strcmp(dn, package) != 0) {
+                        char dd[512]; snprintf(dd, sizeof(dd), "packages/%s", dn); struct stat ds;
+                        if (stat(dd, &ds) != 0) { printf("  Installing dependency: %s\n", dn); registry_install(dn); }
+                    }
+                }
+                dli = 0; if (!*p || (*p=='\n' && p[1]=='[')) break;
+            } else { if (dli < 255) dl[dli++] = *p; }
+        }
+      } } }
     
     return 0;
 }

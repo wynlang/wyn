@@ -289,6 +289,59 @@ static const char* METHOD_COMPLETIONS =
     "{\"label\":\"starts_with\",\"kind\":2,\"detail\":\"(prefix) -> bool\"},"
     "{\"label\":\"ends_with\",\"kind\":2,\"detail\":\"(suffix) -> bool\"}]";
 
+// ── Find references helpers ──────────────────────────────────
+
+static int is_word_char_lsp(char c) { return isalnum(c) || c == '_'; }
+typedef struct { int line; int col; int len; } WordMatch;
+
+static int find_all_refs(const char* content, const char* word, WordMatch* m, int max) {
+    int count = 0, wlen = strlen(word); if (!wlen) return 0;
+    int line = 0, col = 0; bool in_str = false, in_interp = false, in_cmt = false; int idepth = 0;
+    for (const char* p = content; *p; p++) {
+        if (!in_str && !in_cmt && *p == '/' && *(p+1) == '/') in_cmt = true;
+        if (in_cmt && *p == '\n') in_cmt = false;
+        if (!in_cmt) {
+            if (in_str && !in_interp && *p == '$' && *(p+1) == '{') { in_interp = true; idepth = 1; p++; col++; if (*p=='\n'){line++;col=0;}else col++; continue; }
+            if (in_interp) { if (*p=='{') idepth++; else if (*p=='}'){idepth--;if(!idepth){in_interp=false;if(*p=='\n'){line++;col=0;}else col++;continue;}} }
+            else if (*p == '"' && (p == content || *(p-1) != '\\')) in_str = !in_str;
+        }
+        if ((!in_str || in_interp) && !in_cmt && strncmp(p, word, wlen) == 0 &&
+            (p == content || !is_word_char_lsp(*(p-1))) && !is_word_char_lsp(*(p+wlen)) && count < max) {
+            m[count].line = line; m[count].col = col; m[count].len = wlen; count++;
+        }
+        if (*p == '\n') { line++; col = 0; } else col++;
+    }
+    return count;
+}
+
+static void find_scope(const char* c, int tgt, int* s, int* e) {
+    *s = -1; *e = -1; int line = 0, depth = 0, fss[64], fds[64], fsp = 0; bool ins = false;
+    for (const char* p = c; *p; p++) {
+        if (*p == '"' && (p == c || *(p-1) != '\\')) ins = !ins;
+        if (ins) { if (*p == '\n') line++; continue; }
+        if (*p == '/' && *(p+1) == '/') { while (*p && *p != '\n') p++; if (*p) line++; continue; }
+        if (*p == '{') { const char* ls = p; while (ls > c && *(ls-1) != '\n') ls--;
+            if (strstr(ls, "fn ") && strstr(ls, "fn ") < p && fsp < 64) { fss[fsp] = line; fds[fsp] = depth; fsp++; }
+            depth++; }
+        if (*p == '}') { depth--; if (fsp > 0 && fds[fsp-1] == depth) {
+            int fs = fss[fsp-1], fe = line; fsp--; if (tgt >= fs && tgt <= fe) { *s = fs; *e = fe; } } }
+        if (*p == '\n') line++;
+    }
+}
+
+static bool is_local_sym(const char* c, const char* w, int ss, int se) {
+    int line = 0; char vp[140]; snprintf(vp, sizeof(vp), "var %s", w); int vl = strlen(vp);
+    for (const char* p = c; *p; p++) {
+        if (line >= ss && line <= se) {
+            if (strncmp(p, vp, vl) == 0 && !is_word_char_lsp(*(p+vl))) return true;
+            char pp[140]; snprintf(pp, sizeof(pp), "%s:", w); int pl = strlen(pp);
+            if (strncmp(p, pp, pl) == 0) { const char* b = p-1; while (b > c && *b == ' ') b--; if (*b == '(' || *b == ',') return true; }
+        }
+        if (*p == '\n') line++;
+    }
+    return false;
+}
+
 // ── Main LSP loop ────────────────────────────────────────────
 
 int lsp_server_start(void) {
@@ -329,7 +382,9 @@ int lsp_server_start(void) {
                 "\"textDocumentSync\":{\"openClose\":true,\"change\":1},"
                 "\"hoverProvider\":true,"
                 "\"completionProvider\":{\"triggerCharacters\":[\".\",\":\"]},"
-                "\"definitionProvider\":true"
+                "\"definitionProvider\":true,"
+                "\"referencesProvider\":true,"
+                "\"renameProvider\":true"
                 "},\"serverInfo\":{\"name\":\"wyn-lsp\",\"version\":\"1.9.0\"}}");
         }
         else if (strcmp(method, "initialized") == 0) { /* noop */ }
@@ -475,6 +530,92 @@ int lsp_server_start(void) {
             } else {
                 lsp_respond(id, "null");
             }
+        }
+        else if (strcmp(method, "textDocument/references") == 0) {
+            char uri[512] = ""; json_get_string(msg, "uri", uri, sizeof(uri));
+            int line = json_get_int(msg, "line"), col = json_get_int(msg, "character");
+            LspDoc* d = doc_find(uri);
+            if (d && d->content) {
+                char word[128]; get_word_at(d->content, line, col, word, sizeof(word));
+                if (word[0]) {
+                    int ss = -1, se = -1; find_scope(d->content, line, &ss, &se);
+                    bool local = ss >= 0 && is_local_sym(d->content, word, ss, se);
+                    char result[65536]; int pos = 0, total = 0;
+                    pos += snprintf(result+pos, sizeof(result)-pos, "[");
+                    for (int di = 0; di < lsp_doc_count; di++) {
+                        if (!lsp_docs[di].content) continue;
+                        bool same = strcmp(lsp_docs[di].uri, uri) == 0;
+                        if (local && !same) continue;
+                        WordMatch wm[512]; int cnt = find_all_refs(lsp_docs[di].content, word, wm, 512);
+                        for (int i = 0; i < cnt; i++) {
+                            if (local && same && (wm[i].line < ss || wm[i].line > se)) continue;
+                            if (total) pos += snprintf(result+pos, sizeof(result)-pos, ",");
+                            pos += snprintf(result+pos, sizeof(result)-pos,
+                                "{\"uri\":\"%s\",\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}}}",
+                                lsp_docs[di].uri, wm[i].line, wm[i].col, wm[i].line, wm[i].col+wm[i].len); total++;
+                        }
+                    }
+                    pos += snprintf(result+pos, sizeof(result)-pos, "]");
+                    lsp_respond(id, result);
+                } else lsp_respond(id, "[]");
+            } else lsp_respond(id, "[]");
+        }
+        else if (strcmp(method, "textDocument/rename") == 0) {
+            char uri[512] = ""; json_get_string(msg, "uri", uri, sizeof(uri));
+            int line = json_get_int(msg, "line"), col = json_get_int(msg, "character");
+            char nn[256] = ""; json_get_string(msg, "newName", nn, sizeof(nn));
+            LspDoc* d = doc_find(uri);
+            if (d && d->content && nn[0]) {
+                char word[128]; get_word_at(d->content, line, col, word, sizeof(word));
+                if (word[0]) {
+                    int ss = -1, se = -1; find_scope(d->content, line, &ss, &se);
+                    bool local = ss >= 0 && is_local_sym(d->content, word, ss, se);
+                    char result[65536]; int pos = 0, dc = 0;
+                    pos += snprintf(result+pos, sizeof(result)-pos, "{\"changes\":{");
+                    for (int di = 0; di < lsp_doc_count; di++) {
+                        if (!lsp_docs[di].content) continue;
+                        bool same = strcmp(lsp_docs[di].uri, uri) == 0;
+                        if (local && !same) continue;
+                        WordMatch wm[512]; int cnt = find_all_refs(lsp_docs[di].content, word, wm, 512);
+                        int fc = 0;
+                        for (int i = 0; i < cnt; i++) { if (local && same && (wm[i].line < ss || wm[i].line > se)) continue; fc++; }
+                        if (!fc) continue;
+                        if (dc) pos += snprintf(result+pos, sizeof(result)-pos, ",");
+                        pos += snprintf(result+pos, sizeof(result)-pos, "\"%s\":[", lsp_docs[di].uri);
+                        int ec = 0;
+                        for (int i = 0; i < cnt; i++) {
+                            if (local && same && (wm[i].line < ss || wm[i].line > se)) continue;
+                            if (ec) pos += snprintf(result+pos, sizeof(result)-pos, ",");
+                            pos += snprintf(result+pos, sizeof(result)-pos,
+                                "{\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}},\"newText\":\"%s\"}",
+                                wm[i].line, wm[i].col, wm[i].line, wm[i].col+wm[i].len, nn); ec++;
+                        }
+                        pos += snprintf(result+pos, sizeof(result)-pos, "]"); dc++;
+                    }
+                    pos += snprintf(result+pos, sizeof(result)-pos, "}}");
+                    lsp_respond(id, result);
+                } else lsp_respond(id, "null");
+            } else lsp_respond(id, "null");
+        }
+        else if (strcmp(method, "textDocument/prepareRename") == 0) {
+            char uri[512] = ""; json_get_string(msg, "uri", uri, sizeof(uri));
+            int line = json_get_int(msg, "line"), col = json_get_int(msg, "character");
+            LspDoc* d = doc_find(uri);
+            if (d && d->content) {
+                char word[128]; get_word_at(d->content, line, col, word, sizeof(word));
+                static const char* kw[] = {"fn","var","const","struct","enum","impl","import","export","if","else","while","for","match","return","spawn","await","yield","true","false","pub","trait","type",NULL};
+                bool isk = false; for (int i = 0; kw[i]; i++) if (strcmp(word, kw[i]) == 0) { isk = true; break; }
+                if (word[0] && !isk) {
+                    const char* p = d->content; int cl = 0;
+                    while (p && *p && cl < line) { if (*p == '\n') cl++; p++; }
+                    for (int i = 0; i < col && *p && *p != '\n'; i++) p++;
+                    const char* s = p; while (s > d->content && is_word_char_lsp(*(s-1))) s--;
+                    const char* e = p; while (*e && is_word_char_lsp(*e)) e++;
+                    int sc = col - (int)(p - s), ec = sc + (int)(e - s);
+                    char r[256]; snprintf(r, sizeof(r), "{\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}}}", line, sc, line, ec);
+                    lsp_respond(id, r);
+                } else lsp_respond(id, "null");
+            } else lsp_respond(id, "null");
         }
         else {
             if (strcmp(id, "null") != 0) lsp_respond(id, "null");

@@ -1850,14 +1850,22 @@ int main(int argc, char** argv) {
                     wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
             }
             
-            // Try cross-compilers in order: specific gcc, zig cc, native gcc (only works on Linux)
+            // Try cross-compilers: zig preferred on macOS, gcc on Linux
             const char* cc = NULL;
-            if (strcmp(arch, "aarch64") == 0) {
-                if (system("which aarch64-linux-gnu-gcc >/dev/null 2>&1") == 0) cc = "aarch64-linux-gnu-gcc";
-            } else {
-                if (system("which x86_64-linux-gnu-gcc >/dev/null 2>&1") == 0) cc = "x86_64-linux-gnu-gcc";
+            bool use_zig = false;
+#ifndef __linux__
+            if (system("which zig >/dev/null 2>&1") == 0) { use_zig = true; }
+            else
+#endif
+            {
+                if (strcmp(arch, "aarch64") == 0) {
+                    if (system("which aarch64-linux-gnu-gcc >/dev/null 2>&1") == 0) cc = "aarch64-linux-gnu-gcc";
+                } else {
+                    if (system("which x86_64-linux-gnu-gcc >/dev/null 2>&1") == 0) cc = "x86_64-linux-gnu-gcc";
+                }
+                if (!cc && system("which zig >/dev/null 2>&1") == 0) { use_zig = true; }
             }
-            if (!cc && system("which zig >/dev/null 2>&1") == 0) {
+            if (use_zig) {
                 if (use_inline_rt) {
                     // Build cross-compiled runtime .a, then link
                     const char* rt_srcs[] = {
@@ -1869,7 +1877,7 @@ int main(int argc, char** argv) {
                         "stdlib_crypto", "stdlib_math", "net", "test_runtime",
                         "net_advanced", "file_io_simple", "stdlib_enhanced", NULL
                     };
-                    system("mkdir -p /tmp/wyn_cross_rt");
+                    system("rm -rf /tmp/wyn_cross_rt && mkdir -p /tmp/wyn_cross_rt");
                     { char wcmd[1024]; snprintf(wcmd, sizeof(wcmd),
                         "zig cc -target %s-linux-gnu -std=c11 -O2 -w -fcommon "
                         "-D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700 "
@@ -1915,7 +1923,7 @@ int main(int argc, char** argv) {
                         "stdlib_crypto", "stdlib_math", "net", "test_runtime",
                         "net_advanced", "file_io_simple", "stdlib_enhanced", NULL
                     };
-                    system("mkdir -p /tmp/wyn_cross_rt");
+                    system("rm -rf /tmp/wyn_cross_rt && mkdir -p /tmp/wyn_cross_rt");
                     { char wcmd[1024]; snprintf(wcmd, sizeof(wcmd),
                         "%s -std=c11 -O2 -w -fcommon -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700 "
                         "-I %s/src -I %s/vendor/minicoro "
@@ -1978,7 +1986,7 @@ int main(int argc, char** argv) {
                 "stdlib_crypto", "stdlib_math", "test_runtime",
                 "file_io_simple", "stdlib_enhanced", NULL
             };
-            system("mkdir -p /tmp/wyn_cross_rt");
+            system("rm -rf /tmp/wyn_cross_rt && mkdir -p /tmp/wyn_cross_rt");
             { char wcmd[1024]; snprintf(wcmd, sizeof(wcmd),
                 "zig cc -target x86_64-windows-gnu -std=c11 -O2 -w -D_WIN32 "
                 "-I %s/src -I %s/vendor/minicoro "
