@@ -1315,21 +1315,60 @@ void codegen_expr(Expr* expr) {
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
             
-            // L3: Iterator methods
-            if (method.length == 7 && memcmp(method.start, "collect", 7) == 0 && expr->method_call.arg_count == 0) {
-                emit("wyn_iter_collect("); codegen_expr(expr->method_call.object); emit(")"); break;
-            }
-            if (method.length == 4 && memcmp(method.start, "take", 4) == 0 && expr->method_call.arg_count == 1) {
-                emit("wyn_iter_take("); codegen_expr(expr->method_call.object); emit(", ");
-                codegen_expr(expr->method_call.args[0]); emit(")"); break;
-            }
-            if (method.length == 3 && memcmp(method.start, "map", 3) == 0 && expr->method_call.arg_count == 1) {
-                emit("wyn_iter_map("); codegen_expr(expr->method_call.object); emit(", ");
-                codegen_expr(expr->method_call.args[0]); emit(")"); break;
-            }
-            if (method.length == 6 && memcmp(method.start, "filter", 6) == 0 && expr->method_call.arg_count == 1) {
-                emit("wyn_iter_filter("); codegen_expr(expr->method_call.object); emit(", ");
-                codegen_expr(expr->method_call.args[0]); emit(")"); break;
+            // L3: Iterator methods — .collect() and .take() are iterator-only
+            // .map() and .filter() only use wyn_iter_* when chained on an iterator
+            {
+                Expr* _obj = expr->method_call.object;
+                // Detect if object is an iterator (generator call or chained .map/.filter/.take/.collect)
+                bool _is_iter_obj = false;
+                if (_obj->type == EXPR_METHOD_CALL) {
+                    Token _om = _obj->method_call.method;
+                    if ((_om.length == 3 && memcmp(_om.start, "map", 3) == 0) ||
+                        (_om.length == 6 && memcmp(_om.start, "filter", 6) == 0) ||
+                        (_om.length == 4 && memcmp(_om.start, "take", 4) == 0)) {
+                        // Only if the chain root is a generator
+                        Expr* _root = _obj;
+                        while (_root->type == EXPR_METHOD_CALL) _root = _root->method_call.object;
+                        if (_root->type == EXPR_CALL && _root->call.callee->type == EXPR_IDENT) {
+                            extern Program* current_program; extern int fn_is_generator(Stmt*);
+                            if (current_program) {
+                                Token cn = _root->call.callee->token;
+                                for (int _fi = 0; _fi < current_program->count; _fi++) {
+                                    Stmt* _s = current_program->stmts[_fi];
+                                    Stmt* _fs = (_s->type == STMT_EXPORT && _s->export.stmt) ? _s->export.stmt : _s;
+                                    if (fn_is_generator(_fs) && _fs->fn.name.length == cn.length &&
+                                        memcmp(_fs->fn.name.start, cn.start, cn.length) == 0) { _is_iter_obj = true; break; }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (_obj->type == EXPR_CALL && _obj->call.callee->type == EXPR_IDENT) {
+                    extern Program* current_program; extern int fn_is_generator(Stmt*);
+                    if (current_program) {
+                        Token cn = _obj->call.callee->token;
+                        for (int _fi = 0; _fi < current_program->count; _fi++) {
+                            Stmt* _s = current_program->stmts[_fi];
+                            Stmt* _fs = (_s->type == STMT_EXPORT && _s->export.stmt) ? _s->export.stmt : _s;
+                            if (fn_is_generator(_fs) && _fs->fn.name.length == cn.length &&
+                                memcmp(_fs->fn.name.start, cn.start, cn.length) == 0) { _is_iter_obj = true; break; }
+                        }
+                    }
+                }
+                if (_is_iter_obj) {
+                    if (method.length == 7 && memcmp(method.start, "collect", 7) == 0 && expr->method_call.arg_count == 0) {
+                        emit("wyn_iter_collect("); codegen_expr(_obj); emit(")"); break;
+                    }
+                    if (method.length == 4 && memcmp(method.start, "take", 4) == 0 && expr->method_call.arg_count == 1) {
+                        emit("wyn_iter_take("); codegen_expr(_obj); emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                    }
+                    if (method.length == 3 && memcmp(method.start, "map", 3) == 0 && expr->method_call.arg_count == 1) {
+                        emit("wyn_iter_map("); codegen_expr(_obj); emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                    }
+                    if (method.length == 6 && memcmp(method.start, "filter", 6) == 0 && expr->method_call.arg_count == 1) {
+                        emit("wyn_iter_filter("); codegen_expr(_obj); emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                    }
+                }
             }
             
             // Spawn array: intercept .push() and [i] for WynIntArray
