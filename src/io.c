@@ -386,7 +386,13 @@ WynIoError wyn_dir_read(WynDir* dir, WynDirEntry* entry) {
     }
     
     entry->name = strdup(ent->d_name);
+#ifdef DT_DIR
     entry->is_directory = (ent->d_type == DT_DIR);
+#else
+    entry->is_directory = 0;
+    { struct stat _st; char _fp[1024]; snprintf(_fp, sizeof(_fp), "%s/%s", dir->path, ent->d_name);
+      if (stat(_fp, &_st) == 0) entry->is_directory = S_ISDIR(_st.st_mode); }
+#endif
     
     // Get file size if it's a regular file
     if (!entry->is_directory) {

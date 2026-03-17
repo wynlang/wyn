@@ -12,10 +12,15 @@ typedef struct {
 } Lexer;
 
 static Lexer lexer;
-static Lexer saved_lexer;
+static Lexer lexer_stack[16];
+static int lexer_stack_depth = 0;
 
-void save_lexer_state() { saved_lexer = lexer; }
-void restore_lexer_state() { lexer = saved_lexer; }
+void save_lexer_state() {
+    if (lexer_stack_depth < 16) lexer_stack[lexer_stack_depth++] = lexer;
+}
+void restore_lexer_state() {
+    if (lexer_stack_depth > 0) lexer = lexer_stack[--lexer_stack_depth];
+}
 
 void init_lexer(const char* source) {
     lexer.start = source;
