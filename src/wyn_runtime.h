@@ -846,7 +846,7 @@ WynArray array_concat(WynArray arr1, WynArray arr2) {
 }
 
 typedef struct { int start; int end; int current; } WynRange;
-WynRange range(int start, int end) {
+WynRange wyn_range(int start, int end) {
     WynRange r = {start, end, start};
     return r;
 }
