@@ -168,7 +168,7 @@ static char* get_version() {
             }
             fclose(f);
         }
-        if (version[0] == 0) strcpy(version, "1.8.0");
+        if (version[0] == 0) strcpy(version, "1.9.0");
         
         // Version string
     }
