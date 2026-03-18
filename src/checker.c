@@ -4468,8 +4468,14 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             }
             break;
         case STMT_TYPE_ALIAS:
-            // Register type alias in global scope
-            add_symbol(global_scope, stmt->type_alias.name, builtin_int, false);
+            {
+                Type* alias_type = builtin_int;
+                Token tn = stmt->type_alias.target;
+                if (tn.length == 6 && memcmp(tn.start, "string", 6) == 0) alias_type = builtin_string;
+                else if (tn.length == 5 && memcmp(tn.start, "float", 5) == 0) alias_type = builtin_float;
+                else if (tn.length == 4 && memcmp(tn.start, "bool", 4) == 0) alias_type = builtin_bool;
+                add_symbol(global_scope, stmt->type_alias.name, alias_type, false);
+            }
             break;
         case STMT_IMPORT:
             // Register module namespace in scope

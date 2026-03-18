@@ -2399,14 +2399,17 @@ void codegen_stmt(Stmt* stmt) {
             }
             
             break;
-        case STMT_TYPE_ALIAS:
-            // typedef target_type alias_name;
-            emit("typedef %.*s %.*s;\n\n",
-                 stmt->type_alias.target.length,
-                 stmt->type_alias.target.start,
-                 stmt->type_alias.name.length,
-                 stmt->type_alias.name.start);
+        case STMT_TYPE_ALIAS: {
+            const char* ct = "long long";
+            Token t = stmt->type_alias.target;
+            if (t.length == 6 && memcmp(t.start, "string", 6) == 0) ct = "char*";
+            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) ct = "double";
+            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) ct = "bool";
+            else if (t.length == 3 && memcmp(t.start, "int", 3) == 0) ct = "long long";
+            else { static char _tb[128]; snprintf(_tb, sizeof(_tb), "%.*s", t.length, t.start); ct = _tb; }
+            emit("typedef %s %.*s;\n\n", ct, stmt->type_alias.name.length, stmt->type_alias.name.start);
             break;
+        }
         case STMT_IMPL:
             for (int i = 0; i < stmt->impl.method_count; i++) {
                 FnStmt* method = stmt->impl.methods[i];
