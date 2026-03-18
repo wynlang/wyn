@@ -233,61 +233,138 @@ static void get_word_at(const char* content, int line, int col, char* word, int 
 
 // ── Completions ──────────────────────────────────────────────
 
-static const char* KEYWORD_COMPLETIONS =
-    "[{\"label\":\"fn\",\"kind\":14},{\"label\":\"var\",\"kind\":14},"
-    "{\"label\":\"const\",\"kind\":14},{\"label\":\"struct\",\"kind\":14},"
-    "{\"label\":\"enum\",\"kind\":14},{\"label\":\"impl\",\"kind\":14},"
-    "{\"label\":\"import\",\"kind\":14},{\"label\":\"export\",\"kind\":14},"
-    "{\"label\":\"if\",\"kind\":14},{\"label\":\"else\",\"kind\":14},"
-    "{\"label\":\"while\",\"kind\":14},{\"label\":\"for\",\"kind\":14},"
-    "{\"label\":\"match\",\"kind\":14},{\"label\":\"return\",\"kind\":14},"
-    "{\"label\":\"spawn\",\"kind\":14},{\"label\":\"await\",\"kind\":14},"
-    "{\"label\":\"println\",\"kind\":3,\"detail\":\"fn(string)\"},"
-    "{\"label\":\"print\",\"kind\":3,\"detail\":\"fn(string)\"},"
-    "{\"label\":\"File\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"System\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"HashMap\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"Math\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"Http\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"Json\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"DateTime\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"Terminal\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"Random\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"Crypto\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"Path\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"Regex\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"Color\",\"kind\":9,\"detail\":\"module\"},"
-    "{\"label\":\"Ok\",\"kind\":12,\"detail\":\"Result constructor\"},"
-    "{\"label\":\"Err\",\"kind\":12,\"detail\":\"Result constructor\"},"
-    "{\"label\":\"Some\",\"kind\":12,\"detail\":\"Option constructor\"},"
-    "{\"label\":\"None\",\"kind\":12,\"detail\":\"Option constructor\"}]";
+// Scan document content for fn/struct/enum declarations and variables
+static int build_completions(char* buf, int max, bool dot_trigger) {
+    int pos = 0;
+    pos += snprintf(buf+pos, max-pos, "[");
 
-static const char* METHOD_COMPLETIONS =
-    "[{\"label\":\"len\",\"kind\":2,\"detail\":\"() -> int\"},"
-    "{\"label\":\"contains\",\"kind\":2,\"detail\":\"(val) -> bool\"},"
-    "{\"label\":\"push\",\"kind\":2,\"detail\":\"(val)\"},"
-    "{\"label\":\"pop\",\"kind\":2,\"detail\":\"() -> int\"},"
-    "{\"label\":\"map\",\"kind\":2,\"detail\":\"(fn) -> array\"},"
-    "{\"label\":\"filter\",\"kind\":2,\"detail\":\"(fn) -> array\"},"
-    "{\"label\":\"join\",\"kind\":2,\"detail\":\"(sep) -> string\"},"
-    "{\"label\":\"split\",\"kind\":2,\"detail\":\"(delim) -> array\"},"
-    "{\"label\":\"trim\",\"kind\":2,\"detail\":\"() -> string\"},"
-    "{\"label\":\"upper\",\"kind\":2,\"detail\":\"() -> string\"},"
-    "{\"label\":\"lower\",\"kind\":2,\"detail\":\"() -> string\"},"
-    "{\"label\":\"replace\",\"kind\":2,\"detail\":\"(old, new) -> string\"},"
-    "{\"label\":\"to_int\",\"kind\":2,\"detail\":\"() -> int\"},"
-    "{\"label\":\"to_string\",\"kind\":2,\"detail\":\"() -> string\"},"
-    "{\"label\":\"is_ok\",\"kind\":2,\"detail\":\"() -> bool\"},"
-    "{\"label\":\"is_err\",\"kind\":2,\"detail\":\"() -> bool\"},"
-    "{\"label\":\"unwrap\",\"kind\":2,\"detail\":\"() -> T\"},"
-    "{\"label\":\"unwrap_or\",\"kind\":2,\"detail\":\"(default) -> T\"},"
-    "{\"label\":\"get\",\"kind\":2,\"detail\":\"(key) -> string\"},"
-    "{\"label\":\"set\",\"kind\":2,\"detail\":\"(key, val)\"},"
-    "{\"label\":\"keys\",\"kind\":2,\"detail\":\"() -> array\"},"
-    "{\"label\":\"index_of\",\"kind\":2,\"detail\":\"(val) -> int\"},"
-    "{\"label\":\"substring\",\"kind\":2,\"detail\":\"(start, end) -> string\"},"
-    "{\"label\":\"starts_with\",\"kind\":2,\"detail\":\"(prefix) -> bool\"},"
-    "{\"label\":\"ends_with\",\"kind\":2,\"detail\":\"(suffix) -> bool\"}]";
+    if (dot_trigger) {
+        // Method completions: built-in + struct methods from all docs
+        const char* builtins[] = {
+            "len", "() -> int", "contains", "(val) -> bool", "push", "(val)", "pop", "() -> int",
+            "map", "(fn) -> array", "filter", "(fn) -> array", "join", "(sep) -> string",
+            "split", "(delim) -> array", "trim", "() -> string", "upper", "() -> string",
+            "lower", "() -> string", "replace", "(old, new) -> string", "to_int", "() -> int",
+            "to_string", "() -> string", "is_ok", "() -> bool", "is_err", "() -> bool",
+            "unwrap", "() -> T", "unwrap_or", "(default) -> T", "get", "(key) -> string",
+            "set", "(key, val)", "keys", "() -> array", "index_of", "(val) -> int",
+            "substring", "(start, end) -> string", "starts_with", "(prefix) -> bool",
+            "ends_with", "(suffix) -> bool", "collect", "() -> array", "take", "(n) -> iter",
+            NULL, NULL
+        };
+        for (int i = 0; builtins[i]; i += 2) {
+            if (pos > 1) pos += snprintf(buf+pos, max-pos, ",");
+            pos += snprintf(buf+pos, max-pos, "{\"label\":\"%s\",\"kind\":2,\"detail\":\"%s\"}", builtins[i], builtins[i+1]);
+        }
+        // Scan all docs for "fn StructName_method(" patterns (impl methods)
+        for (int di = 0; di < lsp_doc_count && pos < max - 256; di++) {
+            const char* c = lsp_docs[di].content; if (!c) continue;
+            const char* p = c;
+            while ((p = strstr(p, "\nfn ")) != NULL) {
+                p += 4;
+                // Extract function name
+                const char* ns = p;
+                while (*p && *p != '(' && *p != ' ' && *p != '\n') p++;
+                if (*p != '(') continue;
+                int nlen = (int)(p - ns); if (nlen <= 0 || nlen > 120) continue;
+                char name[128]; memcpy(name, ns, nlen); name[nlen] = '\0';
+                // Extract params up to )
+                const char* ps = p;
+                while (*p && *p != ')' && *p != '\n') p++;
+                if (*p == ')') p++;
+                int plen = (int)(p - ps); if (plen > 200) plen = 200;
+                char params[204]; memcpy(params, ps, plen); params[plen] = '\0';
+                // Extract return type
+                char detail[256];
+                const char* arrow = strstr(p, "->");
+                if (arrow && arrow < strchr(p, '\n')) {
+                    arrow += 2; while (*arrow == ' ') arrow++;
+                    const char* te = arrow; while (*te && *te != ' ' && *te != '{' && *te != '\n') te++;
+                    snprintf(detail, sizeof(detail), "%s -> %.*s", params, (int)(te-arrow), arrow);
+                } else {
+                    snprintf(detail, sizeof(detail), "%s", params);
+                }
+                if (pos > 1) pos += snprintf(buf+pos, max-pos, ",");
+                pos += snprintf(buf+pos, max-pos, "{\"label\":\"%s\",\"kind\":2,\"detail\":\"%s\"}", name, detail);
+            }
+        }
+    } else {
+        // Keyword completions
+        const char* kws[] = { "fn","var","const","struct","enum","impl","import","export",
+            "if","else","while","for","match","return","spawn","await","yield","type","trait", NULL };
+        for (int i = 0; kws[i]; i++) {
+            if (pos > 1) pos += snprintf(buf+pos, max-pos, ",");
+            pos += snprintf(buf+pos, max-pos, "{\"label\":\"%s\",\"kind\":14}", kws[i]);
+        }
+        // Built-in functions and modules
+        const char* builtins[][3] = {
+            {"println","3","fn(string)"}, {"print","3","fn(string)"},
+            {"File","9","module"}, {"System","9","module"}, {"HashMap","9","module"},
+            {"Math","9","module"}, {"Http","9","module"}, {"Json","9","module"},
+            {"DateTime","9","module"}, {"Terminal","9","module"}, {"Random","9","module"},
+            {"Crypto","9","module"}, {"Path","9","module"}, {"Regex","9","module"},
+            {"Color","9","module"}, {"Shared","9","module"},
+            {"Ok","12","Result constructor"}, {"Err","12","Result constructor"},
+            {"Some","12","Option constructor"}, {"None","12","Option constructor"},
+            {NULL,NULL,NULL}
+        };
+        for (int i = 0; builtins[i][0]; i++) {
+            if (pos > 1) pos += snprintf(buf+pos, max-pos, ",");
+            pos += snprintf(buf+pos, max-pos, "{\"label\":\"%s\",\"kind\":%s,\"detail\":\"%s\"}", builtins[i][0], builtins[i][1], builtins[i][2]);
+        }
+        // Scan all open documents for user-defined symbols
+        for (int di = 0; di < lsp_doc_count && pos < max - 256; di++) {
+            const char* c = lsp_docs[di].content; if (!c) continue;
+            const char* p = c;
+            while (*p && pos < max - 256) {
+                // fn name(
+                if ((p == c || *(p-1) == '\n') && strncmp(p, "fn ", 3) == 0) {
+                    const char* ns = p + 3;
+                    const char* ne = ns; while (*ne && *ne != '(' && *ne != ' ' && *ne != '\n') ne++;
+                    int nlen = (int)(ne - ns);
+                    if (nlen > 0 && nlen < 120 && *ne == '(') {
+                        char name[128]; memcpy(name, ns, nlen); name[nlen] = '\0';
+                        // Get signature
+                        const char* se = ne; while (*se && *se != ')' && *se != '\n') se++;
+                        if (*se == ')') se++;
+                        char sig[256] = ""; int slen = (int)(se - ne); if (slen > 200) slen = 200;
+                        memcpy(sig, ne, slen); sig[slen] = '\0';
+                        // Return type
+                        const char* arrow = strstr(se, "->");
+                        char detail[300];
+                        if (arrow && arrow < strchr(se, '\n')) {
+                            arrow += 2; while (*arrow == ' ') arrow++;
+                            const char* te = arrow; while (*te && *te != ' ' && *te != '{' && *te != '\n') te++;
+                            snprintf(detail, sizeof(detail), "%s -> %.*s", sig, (int)(te-arrow), arrow);
+                        } else {
+                            snprintf(detail, sizeof(detail), "%s", sig);
+                        }
+                        if (pos > 1) pos += snprintf(buf+pos, max-pos, ",");
+                        pos += snprintf(buf+pos, max-pos, "{\"label\":\"%s\",\"kind\":3,\"detail\":\"%s\"}", name, detail);
+                    }
+                }
+                // struct Name or enum Name
+                else if ((p == c || *(p-1) == '\n') && (strncmp(p, "struct ", 7) == 0 || strncmp(p, "enum ", 5) == 0)) {
+                    int skip = (p[0] == 's') ? 7 : 5;
+                    int kind = (p[0] == 's') ? 22 : 13; // Struct=22, Enum=13
+                    const char* ns = p + skip;
+                    const char* ne = ns; while (*ne && isalnum(*ne) || *ne == '_') ne++;
+                    int nlen = (int)(ne - ns);
+                    if (nlen > 0 && nlen < 120) {
+                        char name[128]; memcpy(name, ns, nlen); name[nlen] = '\0';
+                        if (pos > 1) pos += snprintf(buf+pos, max-pos, ",");
+                        pos += snprintf(buf+pos, max-pos, "{\"label\":\"%s\",\"kind\":%d}", name, kind);
+                    }
+                }
+                // Next line
+                while (*p && *p != '\n') p++;
+                if (*p == '\n') p++;
+            }
+        }
+    }
+    pos += snprintf(buf+pos, max-pos, "]");
+    return pos;
+}
 
 // ── Find references helpers ──────────────────────────────────
 
@@ -484,11 +561,10 @@ int lsp_server_start(void) {
         }
         else if (strcmp(method, "textDocument/completion") == 0) {
             char* trigger = strstr(msg, "\"triggerCharacter\":\"");
-            if (trigger && trigger[19] == '.') {
-                lsp_respond(id, METHOD_COMPLETIONS);
-            } else {
-                lsp_respond(id, KEYWORD_COMPLETIONS);
-            }
+            bool dot = trigger && trigger[20] == '.';
+            static char comp_buf[65536];
+            build_completions(comp_buf, sizeof(comp_buf), dot);
+            lsp_respond(id, comp_buf);
         }
         else if (strcmp(method, "textDocument/definition") == 0) {
             // Search document for function/struct definition
