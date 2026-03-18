@@ -348,7 +348,7 @@ static int build_completions(char* buf, int max, bool dot_trigger) {
                     int skip = (p[0] == 's') ? 7 : 5;
                     int kind = (p[0] == 's') ? 22 : 13; // Struct=22, Enum=13
                     const char* ns = p + skip;
-                    const char* ne = ns; while (*ne && isalnum(*ne) || *ne == '_') ne++;
+                    const char* ne = ns; while (*ne && (isalnum(*ne) || *ne == '_')) ne++;
                     int nlen = (int)(ne - ns);
                     if (nlen > 0 && nlen < 120) {
                         char name[128]; memcpy(name, ns, nlen); name[nlen] = '\0';

@@ -581,7 +581,7 @@ void init_checker() {
         "wyn_math_sqrt", "wyn_math_floor", "wyn_math_ceil", "wyn_math_round"
     };
     
-    for (int i = 0; i < 232; i++) {  // Updated count: 224 + 8 = 232
+    for (int i = 0; i < (int)(sizeof(stdlib_funcs)/sizeof(stdlib_funcs[0])); i++) {
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
     }
@@ -1043,7 +1043,7 @@ void init_checker() {
         {"Math_e", 6, 0, NULL, NULL, builtin_float},
         {"Math_random", 11, 0, NULL, NULL, builtin_float},
     };
-    for (int i = 0; i < 13; i++) {
+    for (int i = 0; i < (int)(sizeof(reg_math_fns)/sizeof(reg_math_fns[0])); i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = reg_math_fns[i].param_count;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
@@ -1070,7 +1070,7 @@ void init_checker() {
         {"str_concat", 10, 2, builtin_string, builtin_string, NULL, builtin_string},
         {"str_to_int", 10, 1, builtin_string, NULL, NULL, builtin_int},
     };
-    for (int i = 0; i < 13; i++) {
+    for (int i = 0; i < (int)(sizeof(str_fns)/sizeof(str_fns[0])); i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = str_fns[i].pc;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
@@ -1170,7 +1170,7 @@ void init_checker() {
         {"File_eof", 8, 1, builtin_int, NULL, builtin_int},
         {"File_close", 10, 1, builtin_int, NULL, builtin_void},
     };
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < (int)(sizeof(file_ns_fns)/sizeof(file_ns_fns[0])); i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = file_ns_fns[i].pc;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
@@ -1289,7 +1289,7 @@ void init_checker() {
         "Color_magenta", "Color_cyan", "Color_gray", "Color_bold",
         "Color_dim", "Color_underline"
     };
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < (int)(sizeof(color_fn_names)/sizeof(color_fn_names[0])); i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = 1;
         ft->fn_type.param_types = malloc(sizeof(Type*));
@@ -1552,7 +1552,7 @@ void init_checker() {
         {"Task_select_2", 13, builtin_int, 2, builtin_int},
         {"Task_select_3", 13, builtin_int, 3, builtin_int},
     };
-    for (int i = 0; i < 11; i++) {
+    for (int i = 0; i < (int)(sizeof(reg_task_fns)/sizeof(reg_task_fns[0])); i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = reg_task_fns[i].pc;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
@@ -1797,7 +1797,7 @@ void init_checker() {
         {"Gui_draw_sprite", 15, builtin_void, 3},
         {"Gui_draw_sprite_scaled", 22, builtin_void, 5},
     };
-    for (int i = 0; i < 36; i++) {
+    for (int i = 0; i < (int)(sizeof(reg_gui_fns)/sizeof(reg_gui_fns[0])); i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = reg_gui_fns[i].pc;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
@@ -1809,10 +1809,6 @@ void init_checker() {
         Token tok = {TOKEN_IDENT, reg_gui_fns[i].name, reg_gui_fns[i].nlen, 0};
         add_symbol(global_scope, tok, ft, false);
     }
-        ft->fn_type.param_types[1] = (reg_db_fns[i].pc > 1) ? builtin_string : NULL;
-        ft->fn_type.return_type = reg_db_fns[i].ret;
-        Token tok = {TOKEN_IDENT, reg_db_fns[i].name, reg_db_fns[i].nlen, 0};
-        add_symbol(global_scope, tok, ft, false);
     }
 }
 

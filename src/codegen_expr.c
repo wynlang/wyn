@@ -3534,7 +3534,6 @@ void codegen_expr(Expr* expr) {
                         break;
                     }
                 }
-                const char* _spawn_fn = _can_inline ? "wyn_spawn_inline" : "wyn_spawn_async_traced";
                 
                 if (arg_count == 0) {
                     if (_can_inline)
