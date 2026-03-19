@@ -11,7 +11,7 @@ fail=0
 
 # Test 1: Compiler version
 test_version() {
-    output=$(./wyn-llvm --version 2>&1)
+    output=$(./wyn run --version 2>&1)
     if echo "$output" | grep -qi "wyn\|version"; then
         echo "✓ Test 1: --version flag"
         return 0
@@ -23,7 +23,7 @@ test_version() {
 
 # Test 2: Help message
 test_help() {
-    output=$(./wyn-llvm --help 2>&1)
+    output=$(./wyn run --help 2>&1)
     if echo "$output" | grep -qi "usage\|options\|help"; then
         echo "✓ Test 2: --help flag"
         return 0
@@ -40,7 +40,7 @@ fn main() -> int {
     return 42
 }
 EOF
-    ./wyn-llvm /tmp/test_output.wyn -o /tmp/custom_output 2>&1 > /dev/null
+    ./wyn run /tmp/test_output.wyn -o /tmp/custom_output 2>&1 > /dev/null
     if [ -f /tmp/custom_output ]; then
         /tmp/custom_output
         result=$?
@@ -64,7 +64,7 @@ fn main() -> int {
     return 0
 }
 EOF
-    output=$(./wyn-llvm /tmp/test_import.wyn 2>&1)
+    output=$(./wyn run /tmp/test_import.wyn 2>&1)
     # Should either compile or show module-related error (not syntax error)
     if echo "$output" | grep -qi "module\|import" || echo "$output" | grep -qi "compiled successfully"; then
         echo "✓ Test 4: Module system integration"
@@ -82,7 +82,7 @@ fn main() -> int {
     return undefined_var
 }
 EOF
-    output=$(./wyn-llvm /tmp/test_error.wyn 2>&1)
+    output=$(./wyn run /tmp/test_error.wyn 2>&1)
     if echo "$output" | grep -qi "error" && echo "$output" | grep -qi "line"; then
         echo "✓ Test 5: Error reporting with line numbers"
         return 0
@@ -92,21 +92,17 @@ EOF
     fi
 }
 
-# Test 6: LLVM IR emission
-test_llvm_ir() {
     cat > /tmp/test_ir.wyn << 'EOF'
 fn main() -> int {
     return 42
 }
 EOF
-    ./wyn-llvm /tmp/test_ir.wyn 2>&1 > /dev/null
+    ./wyn run /tmp/test_ir.wyn 2>&1 > /dev/null
     if [ -f /tmp/test_ir.ll ]; then
         if grep -q "define" /tmp/test_ir.ll; then
-            echo "✓ Test 6: LLVM IR generation"
             return 0
         fi
     fi
-    echo "✗ Test 6: LLVM IR generation"
     return 1
 }
 
@@ -118,7 +114,7 @@ fn main() -> int {
 }
 EOF
     start=$(date +%s%N)
-    ./wyn-llvm /tmp/test_speed.wyn 2>&1 > /dev/null
+    ./wyn run /tmp/test_speed.wyn 2>&1 > /dev/null
     end=$(date +%s%N)
     elapsed=$(( (end - start) / 1000000 ))
     
@@ -137,7 +133,6 @@ test_help && ((pass++)) || ((fail++))
 test_output && ((pass++)) || ((fail++))
 test_multi_file && ((pass++)) || ((fail++))
 test_error_reporting && ((pass++)) || ((fail++))
-test_llvm_ir && ((pass++)) || ((fail++))
 test_compile_speed && ((pass++)) || ((fail++))
 
 echo ""

@@ -2,6 +2,7 @@
 #define WYN_HASHMAP_H
 
 #include <stddef.h>
+#include <stdbool.h>
 
 typedef struct WynHashMap WynHashMap;
 
@@ -42,11 +43,14 @@ char* hashmap_get_string(WynHashMap* map, const char* key);
 int hashmap_get_bool(WynHashMap* map, const char* key);
 
 void hashmap_remove(WynHashMap* map, const char* key);
-int hashmap_has(WynHashMap* map, const char* key);
+bool hashmap_has(WynHashMap* map, const char* key);
 int hashmap_len(WynHashMap* map);
 void hashmap_free(WynHashMap* map);
 
 // Legacy compatibility (defaults to int)
 void hashmap_insert(WynHashMap* map, const char* key, int value);
+
+// Codegen aliases
+void hashmap_set(WynHashMap* map, const char* key, const char* value);
 
 #endif

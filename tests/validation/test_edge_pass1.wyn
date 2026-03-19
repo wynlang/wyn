@@ -1,0 +1,62 @@
+// Edge case pass 1: default params + ? operator interactions
+
+// Edge 1: default param is an expression, not just a literal
+fn add_offset(x: int, offset: int = 1 + 1) -> int {
+    return x + offset
+}
+
+// Edge 2: default param with string concatenation
+fn tag(name: string = "div") -> string {
+    return "<${name}>"
+}
+
+// Edge 3: ? operator in function with default params
+fn safe_add(a: int, b: int = 0) -> ResultInt {
+    return ResultInt_Ok(a + b)
+}
+
+fn chain_with_defaults() -> ResultInt {
+    var x = safe_add(10)?
+    var y = safe_add(x, 5)?
+    return ResultInt_Ok(y)
+}
+
+// Edge 4: spawn function that has some defaults, some not
+fn mixed(required: int, optional: int = 100) -> int {
+    return required + optional
+}
+
+// Edge 5: calling with all args should NOT use defaults
+fn verify_no_default(a: int = 999) -> int {
+    return a
+}
+
+fn main() -> int {
+    // Edge 1: expression default
+    if add_offset(10) != 12 { println("FAIL: expr default"); return 1 }
+    if add_offset(10, 5) != 15 { println("FAIL: expr default override"); return 2 }
+
+    // Edge 2: string default
+    if tag() != "<div>" { println("FAIL: string default"); return 3 }
+    if tag("span") != "<span>" { println("FAIL: string default override"); return 4 }
+
+    // Edge 3: ? with defaults
+    var r = chain_with_defaults()
+    if !ResultInt_is_ok(r) { println("FAIL: ? with defaults"); return 5 }
+
+    // Edge 4: spawn with mixed params
+    var f1 = spawn mixed(50)
+    var v1 = await f1
+    if v1 != 150 { println("FAIL: spawn mixed default=${v1}"); return 6 }
+
+    var f2 = spawn mixed(50, 200)
+    var v2 = await f2
+    if v2 != 250 { println("FAIL: spawn mixed explicit=${v2}"); return 7 }
+
+    // Edge 5: explicit arg should not use default
+    if verify_no_default(42) != 42 { println("FAIL: explicit not default"); return 8 }
+    if verify_no_default() != 999 { println("FAIL: should use default"); return 9 }
+
+    println("PASS: edge case pass 1 (9 checks)")
+    return 0
+}

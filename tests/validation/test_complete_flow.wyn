@@ -1,0 +1,76 @@
+// Test: Complete flow — real-world patterns combining all sugar
+struct Task { id: int, name: string, done: int }
+
+fn process(id: int) -> int { return id * id }
+fn fetch_user(id: int) -> string { return "user_${id}" }
+
+fn main() {
+    // Build data with for + push
+    var tasks = []
+    for i in 0..5 {
+        tasks.push(i * 10)
+    }
+    Test.assert(tasks.len() == 5, "build array")
+
+    // Filter + map chain
+    var big = tasks.filter(|x| x >= 20).map(|x| x + 1)
+    Test.assert(big.len() == 3, "filter+map len")
+    Test.assert(big[0] == 21, "filter+map[0]")
+
+    // Accumulate with block lambda
+    var total = 0
+    tasks.each(|x| { total = total + x })
+    Test.assert(total == 100, "accumulate")
+
+    // Concurrent processing
+    var futures = []
+    for i in 1..6 { futures.push(spawn process(i)) }
+    var results = await_all(futures)
+    Test.assert(results[0] == 1, "spawn[0]")
+    Test.assert(results[4] == 25, "spawn[4]")
+
+    // String spawn
+    var sf = []
+    for i in 0..3 { sf.push(spawn fetch_user(i)) }
+    var users = await_all(sf)
+    Test.assert(users[0] == "user_0", "str spawn[0]")
+
+    // Tuple destructuring from function
+    var (q, r) = divmod(17, 5)
+    Test.assert(q == 3 && r == 2, "tuple fn")
+
+    // Tuple destructuring from literal
+    var (x, y) = (42, 99)
+    Test.assert(x == 42 && y == 99, "tuple lit")
+
+    // Array destructuring
+    var [first, ...rest] = [10, 20, 30, 40]
+    Test.assert(first == 10 && rest.len() == 3, "array spread")
+
+    // If-expression
+    var label = if total > 50 { "high" } else { "low" }
+    Test.assert(label == "high", "if-expr")
+
+    // Pipe
+    var piped = 5 |> triple |> triple
+    Test.assert(piped == 45, "pipe")
+
+    // String interpolation
+    Test.assert("sum=${total}" == "sum=100", "interp")
+
+    // Method chaining
+    Test.assert("  hello  ".trim().upper() == "HELLO", "str chain")
+    Test.assert([3,1,2].sort().join(",") == "1,2,3", "arr chain")
+
+    // Named args
+    Test.assert(greet(name: "W") == "Hello, W.", "named default")
+
+    println("PASS: complete flow")
+}
+
+fn divmod(a: int, b: int) -> (int, int) { return (a / b, a % b) }
+fn triple(x: int) -> int { return x * 3 }
+fn greet(name: string, style: string = "formal") -> string {
+    if style == "casual" { return "Hey ${name}!" }
+    return "Hello, ${name}."
+}

@@ -15,9 +15,7 @@ long long Time_now_millis() {
     return wyn_time_now_millis();
 }
 
-void Time_sleep(int seconds) {
-    wyn_time_sleep(seconds);
-}
+// Time_sleep is defined in wyn_runtime.h
 
 // Crypto wrappers
 extern unsigned int wyn_crypto_hash32(const char* data, size_t len);

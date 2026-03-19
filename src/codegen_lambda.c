@@ -3,12 +3,30 @@
 
 static void scan_expr_for_lambdas(Expr* expr);
 
+// Track array vars found during scan (for type-aware lambda captures)
+static char scan_array_vars[64][64];
+static int scan_array_var_count = 0;
+static int is_scan_array_var(const char* name) {
+    for (int i = 0; i < scan_array_var_count; i++)
+        if (strcmp(scan_array_vars[i], name) == 0) return 1;
+    return 0;
+}
+
 static void scan_stmt_for_lambdas(Stmt* stmt) {
     if (!stmt) return;
     
     switch (stmt->type) {
         case STMT_VAR:
-            if (stmt->var.init) scan_expr_for_lambdas(stmt->var.init);
+            if (stmt->var.init) {
+                scan_expr_for_lambdas(stmt->var.init);
+                // Track array vars for type-aware captures
+                if (stmt->var.init->type == EXPR_ARRAY && scan_array_var_count < 64) {
+                    int len = stmt->var.name.length < 63 ? stmt->var.name.length : 63;
+                    memcpy(scan_array_vars[scan_array_var_count], stmt->var.name.start, len);
+                    scan_array_vars[scan_array_var_count][len] = '\0';
+                    scan_array_var_count++;
+                }
+            }
             break;
         case STMT_CONST:
             if (stmt->const_stmt.init) scan_expr_for_lambdas(stmt->const_stmt.init);
@@ -38,13 +56,13 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
             scan_stmt_for_lambdas(stmt->while_stmt.body);
             break;
         case STMT_FOR:
+            if (stmt->for_stmt.array_expr) scan_expr_for_lambdas(stmt->for_stmt.array_expr);
             if (stmt->for_stmt.body) scan_stmt_for_lambdas(stmt->for_stmt.body);
             break;
         case STMT_SPAWN:
-            // Collect spawn wrappers
+            // Collect spawn wrappers for fire-and-forget spawns
             if (stmt->spawn.call->type == EXPR_CALL && 
-                stmt->spawn.call->call.callee->type == EXPR_IDENT &&
-                stmt->spawn.call->call.arg_count == 0) {
+                stmt->spawn.call->call.callee->type == EXPR_IDENT) {
                 
                 Expr* callee = stmt->spawn.call->call.callee;
                 char func_name[256];
@@ -52,7 +70,6 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                 memcpy(func_name, callee->token.start, len);
                 func_name[len] = '\0';
                 
-                // Add to spawn wrappers (track by func_name + arg_count)
                 int arg_count = stmt->spawn.call->call.arg_count;
                 bool already_added = false;
                 for (int i = 0; i < spawn_wrapper_count; i++) {
@@ -65,6 +82,7 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                 if (!already_added && spawn_wrapper_count < 256) {
                     strcpy(spawn_wrappers[spawn_wrapper_count].func_name, func_name);
                     spawn_wrappers[spawn_wrapper_count].arg_count = arg_count;
+                    spawn_wrappers[spawn_wrapper_count].returns_void = 1;
                     spawn_wrapper_count++;
                 }
             }
@@ -75,6 +93,23 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
 }
 
 // Helper to generate lambda body expression to string
+static void collect_idents(Expr* expr, char idents[][64], int* count, int max) {
+    if (!expr || *count >= max) return;
+    if (expr->type == EXPR_IDENT) {
+        char name[64]; int len = expr->token.length < 63 ? expr->token.length : 63;
+        memcpy(name, expr->token.start, len); name[len] = '\0';
+        for (int i = 0; i < *count; i++) if (strcmp(idents[i], name) == 0) return;
+        strcpy(idents[*count], name); (*count)++;
+        return;
+    }
+    if (expr->type == EXPR_BINARY) { collect_idents(expr->binary.left, idents, count, max); collect_idents(expr->binary.right, idents, count, max); }
+    else if (expr->type == EXPR_UNARY) { collect_idents(expr->unary.operand, idents, count, max); }
+    else if (expr->type == EXPR_CALL) { for (int i = 0; i < expr->call.arg_count; i++) collect_idents(expr->call.args[i], idents, count, max); }
+    else if (expr->type == EXPR_METHOD_CALL) { collect_idents(expr->method_call.object, idents, count, max); for (int i = 0; i < expr->method_call.arg_count; i++) collect_idents(expr->method_call.args[i], idents, count, max); }
+    else if (expr->type == EXPR_IF_EXPR) { collect_idents(expr->if_expr.condition, idents, count, max); collect_idents(expr->if_expr.then_expr, idents, count, max); collect_idents(expr->if_expr.else_expr, idents, count, max); }
+    else if (expr->type == EXPR_INDEX) { collect_idents(expr->index.array, idents, count, max); collect_idents(expr->index.index, idents, count, max); }
+    else if (expr->type == EXPR_ASSIGN) { collect_idents(expr->assign.value, idents, count, max); /* also capture the target */ char name[64]; int len = expr->assign.name.length < 63 ? expr->assign.name.length : 63; memcpy(name, expr->assign.name.start, len); name[len] = '\0'; for (int i = 0; i < *count; i++) if (strcmp(idents[i], name) == 0) return; if (*count < max) { strcpy(idents[*count], name); (*count)++; } }
+}
 static int lambda_expr_to_string(Expr* expr, char* buf, int max_len) {
     if (!expr) return 0;
     int pos = 0;
@@ -147,19 +182,116 @@ static int lambda_expr_to_string(Expr* expr, char* buf, int max_len) {
             else if (strcmp(method_name, "trim") == 0) c_func = "string_trim";
             else if (strcmp(method_name, "len") == 0) c_func = "string_len";
             else if (strcmp(method_name, "reverse") == 0) c_func = "string_reverse";
+            else if (strcmp(method_name, "to_string") == 0) c_func = "to_string";
             
             if (c_func) {
                 pos += snprintf(buf + pos, max_len - pos, "%s(", c_func);
                 pos += lambda_expr_to_string(expr->method_call.object, buf + pos, max_len - pos);
                 pos += snprintf(buf + pos, max_len - pos, ")");
             } else {
+                // Check for Module.method() pattern (e.g., Shared.add, Math.pow)
+                if (expr->method_call.object->type == EXPR_IDENT) {
+                    char obj_name[64]; snprintf(obj_name, 64, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                    // Known modules use Module_method() pattern
+                    bool is_module = (obj_name[0] >= 'A' && obj_name[0] <= 'Z');
+                    if (is_module) {
+                        pos += snprintf(buf + pos, max_len - pos, "%s_%s(", obj_name, method_name);
+                        for (int i = 0; i < expr->method_call.arg_count; i++) {
+                            if (i > 0) pos += snprintf(buf + pos, max_len - pos, ", ");
+                            pos += lambda_expr_to_string(expr->method_call.args[i], buf + pos, max_len - pos);
+                        }
+                        pos += snprintf(buf + pos, max_len - pos, ")");
+                    } else {
+                        // Variable method: arr.sum() -> array_sum(arr), s.len() -> string_len(s)
+                        const char* arr_func = NULL;
+                        if (strcmp(method_name, "sum") == 0) arr_func = "array_sum";
+                        else if (strcmp(method_name, "len") == 0) arr_func = "array_len";
+                        else if (strcmp(method_name, "min") == 0) arr_func = "array_min";
+                        else if (strcmp(method_name, "max") == 0) arr_func = "array_max";
+                        else if (strcmp(method_name, "first") == 0) arr_func = "array_first";
+                        else if (strcmp(method_name, "last") == 0) arr_func = "array_last";
+                        else if (strcmp(method_name, "contains") == 0) arr_func = "string_contains";
+                        else if (strcmp(method_name, "to_int") == 0) arr_func = "string_to_int";
+                        if (arr_func) {
+                            pos += snprintf(buf + pos, max_len - pos, "%s(", arr_func);
+                            pos += lambda_expr_to_string(expr->method_call.object, buf + pos, max_len - pos);
+                            for (int i = 0; i < expr->method_call.arg_count; i++) {
+                                pos += snprintf(buf + pos, max_len - pos, ", ");
+                                pos += lambda_expr_to_string(expr->method_call.args[i], buf + pos, max_len - pos);
+                            }
+                            pos += snprintf(buf + pos, max_len - pos, ")");
+                        } else {
+                            // Generic: obj.method(args) -> method(obj, args)
+                            pos += snprintf(buf + pos, max_len - pos, "%s(", method_name);
+                            pos += lambda_expr_to_string(expr->method_call.object, buf + pos, max_len - pos);
+                            for (int i = 0; i < expr->method_call.arg_count; i++) {
+                                pos += snprintf(buf + pos, max_len - pos, ", ");
+                                pos += lambda_expr_to_string(expr->method_call.args[i], buf + pos, max_len - pos);
+                            }
+                            pos += snprintf(buf + pos, max_len - pos, ")");
+                        }
+                    }
+                } else {
+                    // Object.method(args) -> method(object, args)
+                    pos += snprintf(buf + pos, max_len - pos, "%s(", method_name);
+                    pos += lambda_expr_to_string(expr->method_call.object, buf + pos, max_len - pos);
+                    for (int i = 0; i < expr->method_call.arg_count; i++) {
+                        pos += snprintf(buf + pos, max_len - pos, ", ");
+                        pos += lambda_expr_to_string(expr->method_call.args[i], buf + pos, max_len - pos);
+                    }
+                    pos += snprintf(buf + pos, max_len - pos, ")");
+                }
+            }
+            break;
+        }
+        case EXPR_CALL: {
+            // fn(args) -> fn(args)
+            if (expr->call.callee->type == EXPR_IDENT) {
+                pos += snprintf(buf + pos, max_len - pos, "%.*s(", expr->call.callee->token.length, expr->call.callee->token.start);
+                for (int i = 0; i < expr->call.arg_count; i++) {
+                    if (i > 0) pos += snprintf(buf + pos, max_len - pos, ", ");
+                    pos += lambda_expr_to_string(expr->call.args[i], buf + pos, max_len - pos);
+                }
+                pos += snprintf(buf + pos, max_len - pos, ")");
+            } else {
                 pos += snprintf(buf + pos, max_len - pos, "0");
             }
             break;
         }
+        case EXPR_STRING:
+            pos += snprintf(buf + pos, max_len - pos, "\"%.*s\"", expr->token.length, expr->token.start);
+            break;
+        case EXPR_FLOAT:
+            pos += snprintf(buf + pos, max_len - pos, "%.*s", expr->token.length, expr->token.start);
+            break;
+        case EXPR_ASSIGN: {
+            pos += snprintf(buf + pos, max_len - pos, "%.*s = ", expr->assign.name.length, expr->assign.name.start);
+            pos += lambda_expr_to_string(expr->assign.value, buf + pos, max_len - pos);
+            break;
+        }
+        case EXPR_BOOL:
+            pos += snprintf(buf + pos, max_len - pos, "%.*s", expr->token.length, expr->token.start);
+            break;
         default:
             pos += snprintf(buf + pos, max_len - pos, "0");
             break;
+    }
+    return pos;
+}
+
+static int lambda_stmt_to_string(Stmt* stmt, char* buf, int max_len) {
+    if (!stmt) return 0;
+    int pos = 0;
+    if (stmt->type == STMT_VAR) {
+        pos += snprintf(buf + pos, max_len - pos, "    long long %.*s = ",
+            stmt->var.name.length, stmt->var.name.start);
+        if (stmt->var.init) pos += lambda_expr_to_string(stmt->var.init, buf + pos, max_len - pos);
+        else pos += snprintf(buf + pos, max_len - pos, "0");
+        pos += snprintf(buf + pos, max_len - pos, ";\n");
+    } else if (stmt->type == STMT_EXPR) {
+        pos += snprintf(buf + pos, max_len - pos, "    ");
+        pos += lambda_expr_to_string(stmt->expr, buf + pos, max_len - pos);
+        pos += snprintf(buf + pos, max_len - pos, ";\n");
     }
     return pos;
 }
@@ -173,59 +305,43 @@ static void scan_expr_for_lambdas(Expr* expr) {
             lambda_id_counter++;
             int lambda_id = lambda_id_counter;
             
-            // Detect captured variables (simple: check if body uses identifiers not in params)
+            // Detect captured variables — recursively collect all identifiers in body
             char captured_vars[16][64];
             int capture_count = 0;
-            
-            if (expr->lambda.body->type == EXPR_BINARY) {
-                Expr* bin = expr->lambda.body;
-                // Check left operand
-                if (bin->binary.left->type == EXPR_IDENT) {
-                    int is_param = 0;
-                    for (int i = 0; i < expr->lambda.param_count; i++) {
-                        if (expr->lambda.params[i].length == bin->binary.left->token.length &&
-                            memcmp(expr->lambda.params[i].start, bin->binary.left->token.start, 
-                                   expr->lambda.params[i].length) == 0) {
-                            is_param = 1;
-                            break;
-                        }
-                    }
-                    if (!is_param && capture_count < 16) {
-                        snprintf(captured_vars[capture_count], 64, "%.*s", 
-                                bin->binary.left->token.length, bin->binary.left->token.start);
-                        capture_count++;
-                    }
+            {
+                char all_idents[32][64]; int ident_count = 0;
+                collect_idents(expr->lambda.body, all_idents, &ident_count, 32);
+                // Also collect from body statements (multiline lambdas)
+                for (int si = 0; si < expr->lambda.body_stmt_count; si++) {
+                    Stmt* s = expr->lambda.body_stmts[si];
+                    if (s && s->type == STMT_VAR && s->var.init) collect_idents(s->var.init, all_idents, &ident_count, 32);
+                    if (s && s->type == STMT_EXPR) collect_idents(s->expr, all_idents, &ident_count, 32);
                 }
-                // Check right operand
-                if (bin->binary.right->type == EXPR_IDENT) {
+                for (int ai = 0; ai < ident_count; ai++) {
                     int is_param = 0;
-                    for (int i = 0; i < expr->lambda.param_count; i++) {
-                        if (expr->lambda.params[i].length == bin->binary.right->token.length &&
-                            memcmp(expr->lambda.params[i].start, bin->binary.right->token.start, 
-                                   expr->lambda.params[i].length) == 0) {
-                            is_param = 1;
-                            break;
+                    for (int pi = 0; pi < expr->lambda.param_count; pi++) {
+                        char pn[64]; int pl = expr->lambda.params[pi].length < 63 ? expr->lambda.params[pi].length : 63;
+                        memcpy(pn, expr->lambda.params[pi].start, pl); pn[pl] = '\0';
+                        if (strcmp(all_idents[ai], pn) == 0) { is_param = 1; break; }
+                    }
+                    // Skip known builtins/modules and lambda-local vars
+                    int is_local = 0;
+                    for (int si = 0; si < expr->lambda.body_stmt_count; si++) {
+                        if (expr->lambda.body_stmts[si] && expr->lambda.body_stmts[si]->type == STMT_VAR) {
+                            char ln[64]; int ll = expr->lambda.body_stmts[si]->var.name.length < 63 ? expr->lambda.body_stmts[si]->var.name.length : 63;
+                            memcpy(ln, expr->lambda.body_stmts[si]->var.name.start, ll); ln[ll] = '\0';
+                            if (strcmp(all_idents[ai], ln) == 0) { is_local = 1; break; }
                         }
                     }
-                    if (!is_param && capture_count < 16) {
-                        // Check if already captured
-                        int already = 0;
-                        for (int i = 0; i < capture_count; i++) {
-                            if (strcmp(captured_vars[i], "") != 0) {
-                                char temp[64];
-                                snprintf(temp, 64, "%.*s", bin->binary.right->token.length, 
-                                        bin->binary.right->token.start);
-                                if (strcmp(captured_vars[i], temp) == 0) {
-                                    already = 1;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!already) {
-                            snprintf(captured_vars[capture_count], 64, "%.*s", 
-                                    bin->binary.right->token.length, bin->binary.right->token.start);
-                            capture_count++;
-                        }
+                    if (!is_param && !is_local &&
+                        strcmp(all_idents[ai], "true") != 0 && strcmp(all_idents[ai], "false") != 0 &&
+                        strcmp(all_idents[ai], "Shared") != 0 && strcmp(all_idents[ai], "Math") != 0 &&
+                        strcmp(all_idents[ai], "println") != 0 && strcmp(all_idents[ai], "print") != 0 &&
+                        strcmp(all_idents[ai], "Test") != 0 && strcmp(all_idents[ai], "File") != 0 &&
+                        strcmp(all_idents[ai], "System") != 0 && strcmp(all_idents[ai], "Json") != 0 &&
+                        strcmp(all_idents[ai], "Http") != 0 && strcmp(all_idents[ai], "Time") != 0 &&
+                        capture_count < 16) {
+                        strcpy(captured_vars[capture_count++], all_idents[ai]);
                     }
                 }
             }
@@ -233,7 +349,7 @@ static void scan_expr_for_lambdas(Expr* expr) {
             char* func_code = malloc(8192);
             int pos = 0;
             
-            if (in_return_lambda && capture_count > 0) {
+            if (capture_count > 0 && in_return_lambda) {
                 // Generate closure-style: env struct + function taking void* env
                 pos += snprintf(func_code + pos, 8192 - pos, 
                     "typedef struct { ");
@@ -256,24 +372,51 @@ static void scan_expr_for_lambdas(Expr* expr) {
                     pos += snprintf(func_code + pos, 8192 - pos, 
                         "    long long %s = __e->%s;\n", captured_vars[i], captured_vars[i]);
                 }
-                pos += snprintf(func_code + pos, 8192 - pos, "    return ");
-                pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
-                pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
-            } else {
-                // Original style: captured vars as extra params
-                pos += snprintf(func_code + pos, 8192 - pos, "long long __lambda_%d(", lambda_id);
-                for (int i = 0; i < capture_count; i++) {
-                    if (i > 0) pos += snprintf(func_code + pos, 8192 - pos, ", ");
-                    pos += snprintf(func_code + pos, 8192 - pos, "long long %s", captured_vars[i]);
+                // Emit body statements (multiline lambda)
+                for (int si = 0; si < expr->lambda.body_stmt_count; si++)
+                    pos += lambda_stmt_to_string(expr->lambda.body_stmts[si], func_code + pos, 8192 - pos);
+                if (expr->lambda.body) {
+                    pos += snprintf(func_code + pos, 8192 - pos, "    return ");
+                    pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
+                    pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
+                } else {
+                    pos += snprintf(func_code + pos, 8192 - pos, "    return 0;\n}\n");
                 }
+            } else {
+                // Non-return lambda with captures: use static globals
+                if (capture_count > 0) {
+                    for (int i = 0; i < capture_count; i++) {
+                        extern int is_known_array_var(const char*);
+                        const char* cap_type = is_scan_array_var(captured_vars[i]) ? "WynArray" : "long long";
+                        pos += snprintf(func_code + pos, 8192 - pos, "static %s __cap_%d_%s;\n", cap_type, lambda_id, captured_vars[i]);
+                    }
+                }
+                pos += snprintf(func_code + pos, 8192 - pos, "long long __lambda_%d(", lambda_id);
                 for (int i = 0; i < expr->lambda.param_count; i++) {
-                    if (i > 0 || capture_count > 0) pos += snprintf(func_code + pos, 8192 - pos, ", ");
+                    if (i > 0) pos += snprintf(func_code + pos, 8192 - pos, ", ");
                     pos += snprintf(func_code + pos, 8192 - pos, "long long %.*s", 
                                    expr->lambda.params[i].length, expr->lambda.params[i].start);
                 }
-                pos += snprintf(func_code + pos, 8192 - pos, ") {\n    return ");
-                pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
-                pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
+                pos += snprintf(func_code + pos, 8192 - pos, ") {\n");
+                if (capture_count > 0) {
+                    for (int i = 0; i < capture_count; i++) {
+                        // Use #define to alias variable to global (capture by reference)
+                        pos += snprintf(func_code + pos, 8192 - pos, "#define %s __cap_%d_%s\n", captured_vars[i], lambda_id, captured_vars[i]);
+                    }
+                }
+                // Emit body statements (multiline lambda)
+                for (int si = 0; si < expr->lambda.body_stmt_count; si++)
+                    pos += lambda_stmt_to_string(expr->lambda.body_stmts[si], func_code + pos, 8192 - pos);
+                if (expr->lambda.body) {
+                    pos += snprintf(func_code + pos, 8192 - pos, "    return ");
+                    pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
+                    pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
+                } else {
+                    pos += snprintf(func_code + pos, 8192 - pos, "    return 0;\n}\n");
+                }
+                // Undef capture aliases
+                for (int i = 0; i < capture_count; i++)
+                    pos += snprintf(func_code + pos, 8192 - pos, "#undef %s\n", captured_vars[i]);
             }
             
             if (lambda_count < 256) {
@@ -303,8 +446,37 @@ static void scan_expr_for_lambdas(Expr* expr) {
             for (int i = 0; i < expr->method_call.arg_count; i++) {
                 scan_expr_for_lambdas(expr->method_call.args[i]);
             }
+            // Detect x.push(spawn ...) — register x as spawn array
+            if (expr->method_call.method.length == 4 &&
+                memcmp(expr->method_call.method.start, "push", 4) == 0 &&
+                expr->method_call.arg_count == 1 &&
+                expr->method_call.args[0]->type == EXPR_SPAWN &&
+                expr->method_call.object->type == EXPR_IDENT) {
+                char vn[256];
+                int vl = expr->method_call.object->token.length < 255 ? expr->method_call.object->token.length : 255;
+                memcpy(vn, expr->method_call.object->token.start, vl); vn[vl] = '\0';
+                register_spawn_array(vn);
+                // Check if spawned function returns string
+                Expr* spawn_call = expr->method_call.args[0]->spawn.call;
+                if (spawn_call && spawn_call->type == EXPR_CALL && spawn_call->call.callee->type == EXPR_IDENT) {
+                    char sfn[256]; int sfl = spawn_call->call.callee->token.length < 255 ? spawn_call->call.callee->token.length : 255;
+                    memcpy(sfn, spawn_call->call.callee->token.start, sfl); sfn[sfl] = '\0';
+                    extern const char* get_function_return_type(const char*);
+                    const char* srt = get_function_return_type(sfn);
+                    if (srt && strcmp(srt, "string") == 0) {
+                        extern void register_string_spawn_array(const char*);
+                        register_string_spawn_array(vn);
+                    }
+                }
+            }
             break;
         case EXPR_SPAWN:
+            // Also scan await expressions — they may contain spawn
+        case EXPR_AWAIT:
+            if (expr->type == EXPR_AWAIT) {
+                scan_expr_for_lambdas(expr->await.expr);
+                break;
+            }
             // Collect spawn wrapper for this spawn expression
             if (expr->spawn.call && expr->spawn.call->type == EXPR_CALL &&
                 expr->spawn.call->call.callee->type == EXPR_IDENT) {
@@ -321,12 +493,24 @@ static void scan_expr_for_lambdas(Expr* expr) {
                     if (strcmp(spawn_wrappers[i].func_name, func_name) == 0 &&
                         spawn_wrappers[i].arg_count == arg_count) {
                         already_added = true;
+                        spawn_wrappers[i].returns_void = 0; // EXPR_SPAWN needs return value
                         break;
                     }
                 }
                 if (!already_added && spawn_wrapper_count < 256) {
                     strcpy(spawn_wrappers[spawn_wrapper_count].func_name, func_name);
                     spawn_wrappers[spawn_wrapper_count].arg_count = arg_count;
+                    spawn_wrappers[spawn_wrapper_count].returns_void = 0;
+                    extern const char* get_function_return_type(const char*);
+                    const char* _rt = get_function_return_type(func_name);
+                    spawn_wrappers[spawn_wrapper_count].returns_string = (_rt && strcmp(_rt, "string") == 0) ? 1 : 0;
+                    spawn_wrappers[spawn_wrapper_count].return_type[0] = '\0';
+                    if (_rt && strcmp(_rt, "int") != 0 && strcmp(_rt, "string") != 0 &&
+                        strcmp(_rt, "float") != 0 && strcmp(_rt, "bool") != 0) {
+                        strncpy(spawn_wrappers[spawn_wrapper_count].return_type, _rt, 63);
+                    }
+                    extern int function_can_inline(const char*);
+                    spawn_wrappers[spawn_wrapper_count].can_inline = function_can_inline(func_name);
                     spawn_wrapper_count++;
                 }
             }
@@ -334,6 +518,11 @@ static void scan_expr_for_lambdas(Expr* expr) {
         case EXPR_PIPELINE:
             for (int i = 0; i < expr->pipeline.stage_count; i++) {
                 scan_expr_for_lambdas(expr->pipeline.stages[i]);
+            }
+            break;
+        case EXPR_ARRAY:
+            for (int i = 0; i < expr->array.count; i++) {
+                scan_expr_for_lambdas(expr->array.elements[i]);
             }
             break;
         default:

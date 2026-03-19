@@ -1,0 +1,39 @@
+// TDD: multiline lambda bodies
+
+fn main() {
+    Test.init("Multiline Lambdas")
+
+    // Multiline map with intermediate vars
+    var nums = [1, 2, 3, 4, 5]
+    var result = nums.map(fn(x: int) -> int {
+        var doubled = x * 2
+        var added = doubled + 1
+        return added
+    })
+    Test.assert_eq_int(result[0], 3, "map multiline [0]")
+    Test.assert_eq_int(result[4], 11, "map multiline [4]")
+
+    // Multiline filter
+    var big = nums.filter(fn(x: int) -> bool {
+        var threshold = 3
+        return x > threshold
+    })
+    Test.assert_eq_int(big.len(), 2, "filter multiline len")
+
+    // Multiline each with Shared
+    var sum_id = Shared.new(0)
+    nums.each(fn(x: int) -> int {
+        var doubled = x * 2
+        return Shared.add(sum_id, doubled)
+    })
+    Test.assert_eq_int(Shared.get(sum_id), 30, "each multiline")
+
+    // Multiline reduce
+    var total = nums.reduce(fn(acc: int, x: int) -> int {
+        var contribution = x * x
+        return acc + contribution
+    }, 0)
+    Test.assert_eq_int(total, 55, "reduce multiline")
+
+    Test.summary()
+}

@@ -1,0 +1,31 @@
+// Test: Enum variants with data + match extraction
+enum Shape {
+    Circle(float)
+    Rect(int)
+    Empty
+}
+
+fn area(s: Shape) -> string {
+    return match s {
+        Shape.Circle(r) => "circle:" + r.to_string()
+        Shape.Rect(side) => "rect:" + side.to_string()
+        Shape.Empty => "empty"
+    }
+}
+
+fn main() -> int {
+    if area(Shape.Circle(3.14)) != "circle:3.14" {
+        println("FAIL: circle")
+        return 1
+    }
+    if area(Shape.Rect(5)) != "rect:5" {
+        println("FAIL: rect")
+        return 1
+    }
+    if area(Shape.Empty) != "empty" {
+        println("FAIL: empty")
+        return 1
+    }
+    println("PASS: enum variants with data work")
+    return 0
+}

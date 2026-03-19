@@ -1,0 +1,32 @@
+// Test: Pipe-style lambda with block body
+// This was broken before — |x| { stmt } didn't work
+fn main() {
+    var nums = [1, 2, 3, 4, 5]
+
+    // Block body with assignment (closure capture)
+    var sum = 0
+    nums.each(|n| { sum = sum + n })
+    Test.assert(sum == 15, "block lambda assignment")
+
+    // Block body with return
+    var doubled = nums.map(|x| { return x * 2 })
+    Test.assert(doubled[0] == 2, "block lambda return")
+    Test.assert(doubled[4] == 10, "block lambda return last")
+
+    // Block body with println
+    var count = 0
+    var items = [10, 20, 30]
+    items.each(|x| { count = count + 1 })
+    Test.assert(count == 3, "block lambda count")
+
+    // Expression body still works
+    var tripled = nums.map(|x| x * 3)
+    Test.assert(tripled[0] == 3, "expr lambda")
+
+    // fn-style block body (was already working)
+    var total = 0
+    nums.each(fn(n: int) { total += n })
+    Test.assert(total == 15, "fn block lambda")
+
+    println("PASS: pipe lambda blocks")
+}

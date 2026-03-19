@@ -1,23 +1,49 @@
-// TDD: Method calls on struct - calling another method from within a method
+// TDD: method chaining — everything is an object
 
-struct Rect { w: int, h: int }
+fn main() {
+    Test.init("Method Chaining")
 
-fn Rect.area(self) -> int {
-    return self.w * self.h
-}
+    // Array chaining: sort + reverse
+    var nums = [3, 1, 4, 1, 5, 9, 2, 6]
+    var desc = nums.sort().reverse()
+    Test.assert_eq_int(desc[0], 9, "sort().reverse() first")
+    Test.assert_eq_int(desc[1], 6, "sort().reverse() second")
 
-fn Rect.perimeter(self) -> int {
-    return 2 * (self.w + self.h)
-}
+    // Array chaining: filter + sort
+    var evens = [4, 2, 8, 6, 1, 3].filter(fn(x: int) -> bool { return x % 2 == 0 }).sort()
+    Test.assert_eq_int(evens[0], 2, "filter().sort() first")
+    Test.assert_eq_int(evens[3], 8, "filter().sort() last")
 
-fn Rect.describe(self) -> string {
-    return self.w.to_string() + "x" + self.h.to_string() + " area=" + self.area().to_string()
-}
+    // Array: sort + len
+    var count = [5, 3, 1].sort().len()
+    Test.assert_eq_int(count, 3, "sort().len()")
 
-fn main() -> int {
-    var r = Rect { w: 5, h: 3 }
-    println(r.area())
-    println(r.perimeter())
-    println(r.describe())
-    return 0
+    // Array: sort + reverse + len
+    var n = [1, 2, 3].sort().reverse().len()
+    Test.assert_eq_int(n, 3, "sort().reverse().len()")
+
+    // String chaining: upper + replace
+    var s = "hello world".upper().replace("WORLD", "WYN")
+    Test.assert_eq_str(s, "HELLO WYN", "upper().replace()")
+
+    // String chaining: lower + trim
+    var s2 = "  HELLO  ".trim().lower()
+    Test.assert_eq_str(s2, "hello", "trim().lower()")
+
+    // String: split + join
+    var s3 = "a,b,c".split(",").join("-")
+    Test.assert_eq_str(s3, "a-b-c", "split().join()")
+
+    // String: split + len
+    var n2 = "one two three".split(" ").len()
+    Test.assert_eq_int(n2, 3, "split().len()")
+
+    // Int methods
+    Test.assert_eq_str(42.to_string(), "42", "int.to_string()")
+    Test.assert_eq_int((-5).abs(), 5, "int.abs()")
+
+    // Pipe operator
+    Test.assert_eq_str(true.to_string(), "true", "bool.to_string()")
+
+    Test.summary()
 }

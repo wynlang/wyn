@@ -18,6 +18,21 @@ void codegen_program(Program* prog) {
     // Reset spawn wrapper collection
     spawn_wrapper_count = 0;
     
+    // PASS 0: Pre-scan to register function return types (needed by spawn wrapper generation)
+    extern void register_fn_return_type(const char*, const char*);
+    for (int i = 0; i < prog->count; i++) {
+        if (prog->stmts[i]->type == STMT_FN) {
+            Stmt* fn_stmt = prog->stmts[i];
+            if (fn_stmt->fn.return_type && fn_stmt->fn.return_type->type == EXPR_IDENT) {
+                char _fn[128]; int _fl = fn_stmt->fn.name.length < 127 ? fn_stmt->fn.name.length : 127;
+                memcpy(_fn, fn_stmt->fn.name.start, _fl); _fn[_fl] = '\0';
+                char _rt[32]; int _rl = fn_stmt->fn.return_type->token.length < 31 ? fn_stmt->fn.return_type->token.length : 31;
+                memcpy(_rt, fn_stmt->fn.return_type->token.start, _rl); _rt[_rl] = '\0';
+                register_fn_return_type(_fn, _rt);
+            }
+        }
+    }
+    
     // PASS 1: Pre-scan to collect all lambdas
     // We need to emit lambda functions before they're used
     // So we do a quick scan to find and generate them first
@@ -62,13 +77,58 @@ void codegen_program(Program* prog) {
         }
     }
     
+    // Pre-register module aliases from imports (needed for struct/enum typedef generation)
+    for (int i = 0; i < prog->count; i++) {
+        if (prog->stmts[i]->type == STMT_IMPORT && prog->stmts[i]->import.item_count > 0) {
+            char mod_name[256];
+            snprintf(mod_name, sizeof(mod_name), "%.*s", prog->stmts[i]->import.module.length, prog->stmts[i]->import.module.start);
+            const char* c_mod = module_to_c_ident(mod_name);
+            for (int j = 0; j < prog->stmts[i]->import.item_count; j++) {
+                char item[256], full[512];
+                snprintf(item, sizeof(item), "%.*s", prog->stmts[i]->import.items[j].length, prog->stmts[i]->import.items[j].start);
+                snprintf(full, sizeof(full), "%s_%s", c_mod, item);
+                register_module_alias(item, full);
+            }
+        }
+    }
+
     // Generate all structs, enums, and type aliases first
     for (int i = 0; i < prog->count; i++) {
-        if (prog->stmts[i]->type == STMT_STRUCT || prog->stmts[i]->type == STMT_ENUM || prog->stmts[i]->type == STMT_TYPE_ALIAS || prog->stmts[i]->type == STMT_TRAIT) {
-            if (prog->stmts[i]->type == STMT_TRAIT) {
-                register_trait_name(prog->stmts[i]->trait_decl.name.start, prog->stmts[i]->trait_decl.name.length);
+        Stmt* s = prog->stmts[i];
+        // Unwrap export
+        if (s->type == STMT_EXPORT && s->export.stmt) {
+            int inner = s->export.stmt->type;
+            if (inner == STMT_STRUCT || inner == STMT_ENUM || inner == STMT_TYPE_ALIAS) {
+                s = s->export.stmt;
             }
-            codegen_stmt(prog->stmts[i]);
+        }
+        if (s->type == STMT_STRUCT || s->type == STMT_ENUM || s->type == STMT_TYPE_ALIAS || s->type == STMT_TRAIT) {
+            if (s->type == STMT_TRAIT) {
+                register_trait_name(s->trait_decl.name.start, s->trait_decl.name.length);
+            }
+            codegen_stmt(s);
+            // For imported enums, emit module-prefixed typedef and constructor aliases
+            if (s->type == STMT_ENUM && prog->stmts[i]->type == STMT_EXPORT) {
+                char ename[128];
+                snprintf(ename, 128, "%.*s", s->enum_decl.name.length, s->enum_decl.name.start);
+                const char* resolved = resolve_module_alias(ename);
+                if (resolved != ename && strcmp(resolved, ename) != 0) {
+                    // resolved is "module_EnumName", ename is "EnumName"
+                    emit("typedef %s %s;\n", ename, resolved);
+                    for (int vi = 0; vi < s->enum_decl.variant_count; vi++) {
+                        emit("#define %.*s_%.*s %s_%.*s\n",
+                             (int)strlen(resolved), resolved,
+                             s->enum_decl.variants[vi].length, s->enum_decl.variants[vi].start,
+                             ename,
+                             s->enum_decl.variants[vi].length, s->enum_decl.variants[vi].start);
+                        emit("#define %.*s_%.*s_TAG %s_%.*s_TAG\n",
+                             (int)strlen(resolved), resolved,
+                             s->enum_decl.variants[vi].length, s->enum_decl.variants[vi].start,
+                             ename,
+                             s->enum_decl.variants[vi].length, s->enum_decl.variants[vi].start);
+                    }
+                }
+            }
         }
     }
     
@@ -81,26 +141,31 @@ void codegen_program(Program* prog) {
     }
     }
     
-    // Generate global variables (only if has main)
-    // Track arrays that need deferred initialization
+    // Generate global variables
+    // Emit declarations at file scope, initializations in wyn_main
     int deferred_init_count = 0;
-    int deferred_init_indices[64];
-    if (has_main) {
+    int deferred_init_indices[256];
+    {
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_VAR) {
             Stmt* var_stmt = prog->stmts[i];
             const char* c_type = "long long";
-            bool needs_deferred_init = false;
+            bool is_simple_init = false;  // Can be initialized at file scope
             if (var_stmt->var.init) {
                 if (var_stmt->var.init->type == EXPR_STRING) {
                     c_type = "const char*";
+                    is_simple_init = true;
                 } else if (var_stmt->var.init->type == EXPR_FLOAT) {
                     c_type = "double";
+                    is_simple_init = true;
                 } else if (var_stmt->var.init->type == EXPR_BOOL) {
                     c_type = "long long";
+                    is_simple_init = true;
+                } else if (var_stmt->var.init->type == EXPR_INT) {
+                    c_type = "long long";
+                    is_simple_init = true;
                 } else if (var_stmt->var.init->type == EXPR_ARRAY) {
                     c_type = "WynArray";
-                    needs_deferred_init = true;
                 } else if (var_stmt->var.init->type == EXPR_STRUCT_INIT) {
                     emit("\n");
                     Token sname = var_stmt->var.init->struct_init.type_name;
@@ -110,14 +175,29 @@ void codegen_program(Program* prog) {
                     emit(";\n");
                     continue;
                 } else if (var_stmt->var.init->type == EXPR_CALL) {
-                    c_type = "WynHashMap*";
-                    needs_deferred_init = true;
+                    if (var_stmt->var.init->expr_type) {
+                        if (var_stmt->var.init->expr_type->kind == TYPE_MAP) {
+                            c_type = "WynHashMap*";
+                        } else if (var_stmt->var.init->expr_type->kind == TYPE_ARRAY) {
+                            c_type = "WynArray";
+                        } else if (var_stmt->var.init->expr_type->kind == TYPE_STRING) {
+                            c_type = "const char*";
+                        }
+                    } else {
+                        c_type = "WynHashMap*";
+                    }
                 } else if (var_stmt->var.init->type == EXPR_HASHMAP_LITERAL) {
                     c_type = "WynHashMap*";
-                    needs_deferred_init = true;
                 } else if (var_stmt->var.init->type == EXPR_METHOD_CALL) {
-                    // HashMap.new(), etc. — needs runtime init
-                    needs_deferred_init = true;
+                    if (var_stmt->var.init->expr_type) {
+                        if (var_stmt->var.init->expr_type->kind == TYPE_ARRAY) {
+                            c_type = "WynArray";
+                        } else if (var_stmt->var.init->expr_type->kind == TYPE_MAP) {
+                            c_type = "WynHashMap*";
+                        } else if (var_stmt->var.init->expr_type->kind == TYPE_STRING) {
+                            c_type = "const char*";
+                        }
+                    }
                 }
                 if (var_stmt->var.type && var_stmt->var.type->type == EXPR_IDENT) {
                     Token tn = var_stmt->var.type->token;
@@ -126,20 +206,23 @@ void codegen_program(Program* prog) {
                 }
             }
             emit("\n");
-            if (needs_deferred_init) {
-                // Declare without init — will be initialized in __wyn_init_globals
-                emit("%s %.*s;\n", c_type, var_stmt->var.name.length, var_stmt->var.name.start);
-                if (deferred_init_count < 64) deferred_init_indices[deferred_init_count++] = i;
-            } else {
+            if (is_simple_init) {
+                // Simple literals can be initialized at file scope
                 emit("%s %.*s", c_type, var_stmt->var.name.length, var_stmt->var.name.start);
                 if (var_stmt->var.init) { emit(" = "); codegen_expr(var_stmt->var.init); }
                 else { emit(" = 0"); }
                 emit(";\n");
+            } else {
+                // Declare at file scope, initialize in wyn_main
+                emit("%s %.*s;\n", c_type, var_stmt->var.name.length, var_stmt->var.name.start);
+                if (deferred_init_count < 256) deferred_init_indices[deferred_init_count++] = i;
             }
         }
     }
-    // Emit deferred initializer function
-    if (deferred_init_count > 0) {
+    } // end global vars block
+    // For has_main mode, emit constructor for deferred inits
+    // (script mode handles this in wyn_main sequentially)
+    if (has_main && deferred_init_count > 0) {
         emit("\n__attribute__((constructor)) void __wyn_init_globals(void) {\n");
         for (int d = 0; d < deferred_init_count; d++) {
             Stmt* var_stmt = prog->stmts[deferred_init_indices[d]];
@@ -149,7 +232,6 @@ void codegen_program(Program* prog) {
         }
         emit("}\n");
     }
-    } // end if (has_main) for global vars
     
     // Generate forward declarations for struct methods
     for (int i = 0; i < prog->count; i++) {
@@ -253,6 +335,24 @@ void codegen_program(Program* prog) {
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_IMPORT) {
             codegen_stmt(prog->stmts[i]);
+            // Emit #define aliases for selectively imported functions
+            if (prog->stmts[i]->import.item_count > 0) {
+                for (int j = 0; j < prog->stmts[i]->import.item_count; j++) {
+                    char item_name[256];
+                    snprintf(item_name, sizeof(item_name), "%.*s",
+                            prog->stmts[i]->import.items[j].length,
+                            prog->stmts[i]->import.items[j].start);
+                    const char* resolved = resolve_module_alias(item_name);
+                    if (resolved != item_name && strcmp(resolved, item_name) != 0) {
+                        // Skip enum types — they use typedef, not #define
+                        extern int is_enum_type(const char*);
+                        extern int is_data_enum_type(const char*);
+                        if (!is_enum_type(item_name) && !is_data_enum_type(item_name)) {
+                            emit("#define %s %s\n", item_name, resolved);
+                        }
+                    }
+                }
+            }
         } else if (prog->stmts[i]->type == STMT_EXPORT) {
             // Generate export comment only (the function will be generated later)
             emit("// export ");
@@ -280,6 +380,16 @@ void codegen_program(Program* prog) {
             // Skip generic functions - they will be handled by monomorphization
             if (fn->type_param_count > 0) {
                 continue;
+            }
+            
+            // Skip imported functions (handled by module codegen + #define alias)
+            {
+                char fn_name_check[256];
+                snprintf(fn_name_check, sizeof(fn_name_check), "%.*s", fn->name.length, fn->name.start);
+                const char* resolved_check = resolve_module_alias(fn_name_check);
+                if (resolved_check != fn_name_check && strcmp(resolved_check, fn_name_check) != 0) {
+                    continue;
+                }
             }
             
             // Determine return type
@@ -328,6 +438,24 @@ void codegen_program(Program* prog) {
                 } else if (fn->return_type->type == EXPR_ARRAY) {
                     // Array type like [int] or [string]
                     return_type = "WynArray";
+                } else if (fn->return_type->type == EXPR_TUPLE) {
+                    // Tuple return type: (int, string) -> generate typedef
+                    static char _trt[256];
+                    snprintf(_trt, sizeof(_trt), "_wyn_tup_%.*s", fn->name.length, fn->name.start);
+                    // Emit typedef before the function
+                    emit("typedef struct { ");
+                    for (int _ti = 0; _ti < fn->return_type->tuple.count; _ti++) {
+                        const char* et = "long long";
+                        if (fn->return_type->tuple.elements[_ti]->type == EXPR_IDENT) {
+                            Token tt = fn->return_type->tuple.elements[_ti]->token;
+                            if (tt.length == 6 && memcmp(tt.start, "string", 6) == 0) et = "const char*";
+                            else if (tt.length == 5 && memcmp(tt.start, "float", 5) == 0) et = "double";
+                            else if (tt.length == 4 && memcmp(tt.start, "bool", 4) == 0) et = "bool";
+                        }
+                        emit("%s item%d; ", et, _ti);
+                    }
+                    emit("} %s;\n", _trt);
+                    return_type = _trt;
                 } else if (fn->return_type->type == EXPR_IDENT) {
                     Token type_name = fn->return_type->token;
                     if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
@@ -358,6 +486,13 @@ void codegen_program(Program* prog) {
                 }
             }
             
+            // L3: Generator — override return type
+            extern int fn_is_generator(Stmt*);
+            Stmt* _orig = prog->stmts[i]->type == STMT_FN ? prog->stmts[i] : prog->stmts[i]->export.stmt;
+            if (fn_is_generator(_orig)) {
+                return_type = "WynIter*";
+            }
+            
             // Generate forward declaration
             // Special handling for main function - rename to wyn_main
             bool is_main_function = (fn->name.length == 4 && 
@@ -368,9 +503,55 @@ void codegen_program(Program* prog) {
                 char _fn[128]; snprintf(_fn, 128, "%.*s", fn->name.length, fn->name.start);
                 extern void register_fn_defaults(const char*, Expr**, int);
                 register_fn_defaults(_fn, fn->param_defaults, fn->param_count);
+                extern void register_fn_param_names(const char*, Token*, int);
+                register_fn_param_names(_fn, fn->params, fn->param_count);
+            }
+            
+            // Register return type for spawn/await type dispatch
+            if (fn->return_type && fn->return_type->type == EXPR_IDENT) {
+                char _fn2[128]; snprintf(_fn2, 128, "%.*s", fn->name.length, fn->name.start);
+                char _rt[32]; int _rtl = fn->return_type->token.length < 31 ? fn->return_type->token.length : 31;
+                memcpy(_rt, fn->return_type->token.start, _rtl); _rt[_rtl] = '\0';
+                extern void register_fn_return_type(const char*, const char*);
+                register_fn_return_type(_fn2, _rt);
             }
             
             // Function forward declaration
+            // Optimization: inline hint for small non-main functions
+            // Don't inline spawned functions (called from worker threads)
+            int _body_stmt_count = 0;
+            if (fn->body && fn->body->type == STMT_BLOCK) _body_stmt_count = fn->body->block.count;
+            bool _is_spawned_fn = false;
+            { char _fnm[256]; int _fnl = fn->name.length < 255 ? fn->name.length : 255;
+              memcpy(_fnm, fn->name.start, _fnl); _fnm[_fnl] = '\0';
+              for (int _si = 0; _si < spawn_wrapper_count; _si++) {
+                  if (strcmp(spawn_wrappers[_si].func_name, _fnm) == 0) { _is_spawned_fn = true; break; }
+              }
+            }
+            bool _emit_inline = (!is_main_function && !_is_spawned_fn && _body_stmt_count > 0 && _body_stmt_count <= 5);
+            // Detect self-recursive functions for always_inline hint
+            bool _is_recursive = false;
+            if (!is_main_function && fn->body && fn->body->type == STMT_BLOCK) {
+                for (int _s = 0; _s < fn->body->block.count && !_is_recursive; _s++) {
+                    Stmt* _st = fn->body->block.stmts[_s];
+                    if (_st->type == STMT_RETURN && _st->ret.value &&
+                        _st->ret.value->type == EXPR_BINARY) {
+                        // Check if either side of binary expr calls self
+                        Expr* _l = _st->ret.value->binary.left;
+                        Expr* _r = _st->ret.value->binary.right;
+                        if ((_l && _l->type == EXPR_CALL && _l->call.callee->type == EXPR_IDENT &&
+                             _l->call.callee->token.length == fn->name.length &&
+                             memcmp(_l->call.callee->token.start, fn->name.start, fn->name.length) == 0) ||
+                            (_r && _r->type == EXPR_CALL && _r->call.callee->type == EXPR_IDENT &&
+                             _r->call.callee->token.length == fn->name.length &&
+                             memcmp(_r->call.callee->token.start, fn->name.start, fn->name.length) == 0))
+                            _is_recursive = true;
+                    }
+                }
+            }
+            if (_emit_inline || (_is_recursive && !_is_spawned_fn)) emit("__attribute__((hot)) static inline ");
+            else if (!is_main_function) emit("__attribute__((hot)) ");
+            
             if (is_main_function) {
                 emit("%s wyn_main(", return_type);
             } else if (fn->is_extension) {
@@ -380,7 +561,7 @@ void codegen_program(Program* prog) {
                      fn->name.length, fn->name.start);
             } else {
                 char _fn_name[256]; snprintf(_fn_name, sizeof(_fn_name), "%.*s", fn->name.length, fn->name.start);
-                const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
                 bool _is_ckw = false; for (int _k = 0; _ckw[_k]; _k++) { if (strcmp(_fn_name, _ckw[_k]) == 0) { _is_ckw = true; break; } }
                 emit("%s %s%.*s(", return_type, _is_ckw ? "_" : "", fn->name.length, fn->name.start);
             }
@@ -469,10 +650,14 @@ void codegen_program(Program* prog) {
                 
                 // Emit with pointer for mut params
                 bool is_mut_param = fn->param_mutable && fn->param_mutable[j];
+                // Check if param name is a C keyword
+                char _pname[256]; snprintf(_pname, sizeof(_pname), "%.*s", fn->params[j].length, fn->params[j].start);
+                static const char* _pkw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
+                bool _is_pkw = false; for (int _k = 0; _pkw[_k]; _k++) { if (strcmp(_pname, _pkw[_k]) == 0) { _is_pkw = true; break; } }
                 if (is_mut_param) {
-                    emit("%s *%.*s", param_type, fn->params[j].length, fn->params[j].start);
+                    emit("%s *%s%.*s", param_type, _is_pkw ? "_" : "", fn->params[j].length, fn->params[j].start);
                 } else {
-                    emit("%s %.*s", param_type, fn->params[j].length, fn->params[j].start);
+                    emit("%s %s%.*s", param_type, _is_pkw ? "_" : "", fn->params[j].length, fn->params[j].start);
                 }
             }
             emit(");\n");
@@ -488,7 +673,12 @@ void codegen_program(Program* prog) {
                 
                 // Determine return type
                 const char* return_type = "long long";
-                if (method->return_type && method->return_type->type == EXPR_IDENT) {
+                if (method->return_type && method->return_type->type == EXPR_CALL &&
+                    method->return_type->call.callee->type == EXPR_IDENT) {
+                    Token rt = method->return_type->call.callee->token;
+                    if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) return_type = "ResultInt";
+                    else if (rt.length == 6 && memcmp(rt.start, "Option", 6) == 0) return_type = "OptionInt";
+                } else if (method->return_type && method->return_type->type == EXPR_IDENT) {
                     Token ret_type = method->return_type->token;
                     if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
                         return_type = "long long";
@@ -498,6 +688,10 @@ void codegen_program(Program* prog) {
                         return_type = "bool";
                     } else if (ret_type.length == 6 && memcmp(ret_type.start, "string", 6) == 0) {
                         return_type = "const char*";
+                    } else {
+                        static char impl_fwd_ret[128];
+                        snprintf(impl_fwd_ret, 128, "%.*s", ret_type.length, ret_type.start);
+                        return_type = impl_fwd_ret;
                     }
                 }
                 
@@ -510,12 +704,14 @@ void codegen_program(Program* prog) {
                     if (k > 0) emit(", ");
                     
                     // Determine parameter type
-                    const char* param_type = "int";
+                    const char* param_type = "long long";
                     char custom_type_buf[256] = {0};
                     if (method->param_types[k] && method->param_types[k]->type == EXPR_IDENT) {
                         Token type_name = method->param_types[k]->token;
                         if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
-                            param_type = "int";
+                            param_type = "long long";
+                        } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
+                            param_type = "const char*";
                         } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
                             param_type = "double";
                         } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
@@ -541,38 +737,165 @@ void codegen_program(Program* prog) {
     
     // Emit spawn wrapper functions (after forward declarations)
     if (spawn_wrapper_count > 0) {
-        emit("// Forward declarations for spawned functions\n");
-        for (int i = 0; i < spawn_wrapper_count; i++) {
-            emit("long long %s(", spawn_wrappers[i].func_name);
-            for (int j = 0; j < spawn_wrappers[i].arg_count; j++) {
-                if (j > 0) emit(", ");
-                emit("long long");
-            }
-            emit(");\n");
-        }
         emit("\n// Spawn wrapper functions\n");
         for (int i = 0; i < spawn_wrapper_count; i++) {
             int ac = spawn_wrappers[i].arg_count;
             if (ac == 0) {
+                // Check if function has default parameters that need filling
+                extern int get_fn_param_count(const char*);
+                extern Expr* get_fn_default(const char*, int);
+                int total_params = get_fn_param_count(spawn_wrappers[i].func_name);
+                
                 emit("void* __spawn_wrapper_%s(void* arg) {\n", spawn_wrappers[i].func_name);
-                emit("    long long* result = malloc(sizeof(long long));\n");
-                emit("    *result = %s();\n", spawn_wrappers[i].func_name);
-                emit("    return result;\n");
+                if (total_params > 0) {
+                    // Function has params with defaults — fill them in
+                    if (spawn_wrappers[i].returns_void) {
+                        emit("    (void)arg; %s(", spawn_wrappers[i].func_name);
+                        for (int di = 0; di < total_params; di++) {
+                            if (di > 0) emit(", ");
+                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                            if (def) { codegen_expr(def); } else { emit("0"); }
+                        }
+                        emit(");\n    return NULL;\n");
+                    } else if (spawn_wrappers[i].return_type[0]) {
+                        emit("    (void)arg; %s* __r = malloc(sizeof(%s)); *__r = %s(", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                        for (int di = 0; di < total_params; di++) {
+                            if (di > 0) emit(", ");
+                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                            if (def) { codegen_expr(def); } else { emit("0"); }
+                        }
+                        emit(");\n    return __r;\n");
+                    } else {
+                        emit("    (void)arg; return (void*)(intptr_t)%s(", spawn_wrappers[i].func_name);
+                        for (int di = 0; di < total_params; di++) {
+                            if (di > 0) emit(", ");
+                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                            if (def) { codegen_expr(def); } else { emit("0"); }
+                        }
+                        emit(");\n");
+                    }
+                } else {
+                    if (spawn_wrappers[i].returns_void) {
+                        emit("    (void)arg; %s();\n    return NULL;\n", spawn_wrappers[i].func_name);
+                    } else if (spawn_wrappers[i].return_type[0]) {
+                        emit("    (void)arg; %s* __r = malloc(sizeof(%s)); *__r = %s();\n    return __r;\n",
+                             spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                    } else {
+                        emit("    (void)arg; return (void*)(intptr_t)%s();\n", spawn_wrappers[i].func_name);
+                    }
+                }
+                emit("}\n\n");
+            } else if (ac == 1) {
+                // Check if function has more params with defaults
+                extern int get_fn_param_count(const char*);
+                extern Expr* get_fn_default(const char*, int);
+                int total_params = get_fn_param_count(spawn_wrappers[i].func_name);
+                
+                emit("void* __spawn_wrapper_%s_1(void* arg) {\n", spawn_wrappers[i].func_name);
+                if (total_params > 1) {
+                    // Function has more params — fill in defaults after the explicit arg
+                    if (spawn_wrappers[i].returns_void) {
+                        emit("    %s((long long)(intptr_t)arg", spawn_wrappers[i].func_name);
+                        for (int di = 1; di < total_params; di++) {
+                            emit(", ");
+                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                            if (def) { codegen_expr(def); } else { emit("0"); }
+                        }
+                        emit(");\n    return NULL;\n");
+                    } else if (spawn_wrappers[i].return_type[0]) {
+                        emit("    %s* __r = malloc(sizeof(%s)); *__r = %s((long long)(intptr_t)arg", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                        for (int di = 1; di < total_params; di++) {
+                            emit(", ");
+                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                            if (def) { codegen_expr(def); } else { emit("0"); }
+                        }
+                        emit(");\n    return __r;\n");
+                    } else {
+                        emit("    return (void*)(intptr_t)%s((long long)(intptr_t)arg", spawn_wrappers[i].func_name);
+                        for (int di = 1; di < total_params; di++) {
+                            emit(", ");
+                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                            if (def) { codegen_expr(def); } else { emit("0"); }
+                        }
+                        emit(");\n");
+                    }
+                } else {
+                    if (spawn_wrappers[i].returns_void) {
+                        emit("    %s((long long)(intptr_t)arg);\n    return NULL;\n", spawn_wrappers[i].func_name);
+                    } else if (spawn_wrappers[i].return_type[0]) {
+                        emit("    %s* __r = malloc(sizeof(%s)); *__r = %s((long long)(intptr_t)arg);\n    return __r;\n",
+                             spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                    } else {
+                        emit("    return (void*)(intptr_t)%s((long long)(intptr_t)arg);\n", spawn_wrappers[i].func_name);
+                    }
+                }
                 emit("}\n\n");
             } else {
+                // Multi-arg wrapper — also fill in defaults for remaining params
+                extern int get_fn_param_count(const char*);
+                extern Expr* get_fn_default(const char*, int);
+                int total_params = get_fn_param_count(spawn_wrappers[i].func_name);
+                
                 emit("void* __spawn_wrapper_%s_%d(void* arg) {\n", spawn_wrappers[i].func_name, ac);
                 emit("    struct { ");
-                for (int j = 0; j < ac; j++) emit("long long a%d; ", j);
-                emit("} *args = arg;\n");
-                emit("    long long* result = malloc(sizeof(long long));\n");
-                emit("    *result = (long long)%s(", spawn_wrappers[i].func_name);
+                // Use correct types for each parameter
                 for (int j = 0; j < ac; j++) {
-                    if (j > 0) emit(", ");
-                    emit("args->a%d", j);
+                    const char* ptype = "long long";
+                    // Look up actual parameter type from function declaration
+                    if (current_program) {
+                        for (int fi = 0; fi < current_program->count; fi++) {
+                            Stmt* fs = current_program->stmts[fi];
+                            if (fs->type == STMT_FN && 
+                                strlen(spawn_wrappers[i].func_name) == (size_t)fs->fn.name.length &&
+                                memcmp(spawn_wrappers[i].func_name, fs->fn.name.start, fs->fn.name.length) == 0) {
+                                if (j < fs->fn.param_count && fs->fn.param_types[j]) {
+                                    if (fs->fn.param_types[j]->type == EXPR_ARRAY) ptype = "WynArray";
+                                    else if (fs->fn.param_types[j]->type == EXPR_IDENT) {
+                                        Token pt = fs->fn.param_types[j]->token;
+                                        if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) ptype = "const char*";
+                                        else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) ptype = "double";
+                                        else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) ptype = "bool";
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    emit("%s a%d; ", ptype, j);
                 }
-                emit(");\n");
-                emit("    free(args);\n");
-                emit("    return result;\n");
+                emit("} *args = arg;\n");
+                if (spawn_wrappers[i].returns_void) {
+                    emit("    %s(", spawn_wrappers[i].func_name);
+                    for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
+                    for (int di = ac; di < total_params; di++) {
+                        emit(", ");
+                        Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                        if (def) { codegen_expr(def); } else { emit("0"); }
+                    }
+                    emit(");\n    free(args);\n    return NULL;\n");
+                } else {
+                    if (spawn_wrappers[i].return_type[0]) {
+                        // Struct return: heap-allocate and return pointer
+                        emit("    %s* __r = malloc(sizeof(%s));\n", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type);
+                        emit("    *__r = %s(", spawn_wrappers[i].func_name);
+                        for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
+                        for (int di = ac; di < total_params; di++) {
+                            emit(", ");
+                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                            if (def) { codegen_expr(def); } else { emit("0"); }
+                        }
+                        emit(");\n    free(args);\n    return __r;\n");
+                    } else {
+                        emit("    long long __r = (long long)%s(", spawn_wrappers[i].func_name);
+                        for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
+                        for (int di = ac; di < total_params; di++) {
+                            emit(", ");
+                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                            if (def) { codegen_expr(def); } else { emit("0"); }
+                        }
+                        emit(");\n    free(args);\n    return (void*)(intptr_t)__r;\n");
+                    }
+                }
                 emit("}\n\n");
             }
         }
@@ -596,6 +919,18 @@ void codegen_program(Program* prog) {
             // Skip generic functions - they will be handled by monomorphization
             if (fn->type_param_count > 0) {
                 continue;
+            }
+            
+            // Skip functions that are imported from modules
+            // Emit a #define alias to the prefixed version
+            {
+                char fn_name[256];
+                snprintf(fn_name, sizeof(fn_name), "%.*s", fn->name.length, fn->name.start);
+                const char* resolved = resolve_module_alias(fn_name);
+                if (resolved != fn_name && strcmp(resolved, fn_name) != 0) {
+                    emit("#define %s %s\n", fn_name, resolved);
+                    continue;
+                }
             }
             
             if (prog->stmts[i]->type == STMT_EXPORT) {
@@ -706,7 +1041,25 @@ void codegen_program(Program* prog) {
         } else {
             // Multiple statements or non-expression statements
             for (int i = 0; i < prog->count; i++) {
-                if (prog->stmts[i]->type != STMT_FN && prog->stmts[i]->type != STMT_STRUCT && prog->stmts[i]->type != STMT_ENUM && prog->stmts[i]->type != STMT_TRAIT && prog->stmts[i]->type != STMT_IMPL && prog->stmts[i]->type != STMT_EXPORT) {
+                if (prog->stmts[i]->type == STMT_VAR) {
+                    // Global var is declared at file scope; emit init here in order
+                    Stmt* var_stmt = prog->stmts[i];
+                    if (var_stmt->var.init) {
+                        // Check if it was a simple init (already initialized at file scope)
+                        bool is_simple = false;
+                        if (var_stmt->var.init->type == EXPR_STRING ||
+                            var_stmt->var.init->type == EXPR_FLOAT ||
+                            var_stmt->var.init->type == EXPR_BOOL ||
+                            var_stmt->var.init->type == EXPR_INT) {
+                            is_simple = true;
+                        }
+                        if (!is_simple) {
+                            emit("    %.*s = ", var_stmt->var.name.length, var_stmt->var.name.start);
+                            codegen_expr(var_stmt->var.init);
+                            emit(";\n");
+                        }
+                    }
+                } else if (prog->stmts[i]->type != STMT_FN && prog->stmts[i]->type != STMT_STRUCT && prog->stmts[i]->type != STMT_ENUM && prog->stmts[i]->type != STMT_TRAIT && prog->stmts[i]->type != STMT_IMPL && prog->stmts[i]->type != STMT_EXPORT) {
                     emit("    ");
                     codegen_stmt(prog->stmts[i]);
                 }
@@ -776,7 +1129,6 @@ void codegen_match_statement(Stmt* stmt) {
         emit("    }\n");
     } else {
         // Generate if-else chain for complex patterns
-        emit("{\n");
         
         // Determine the type of the match value and get enum name
         bool is_enum_match = false;
@@ -789,7 +1141,11 @@ void codegen_match_statement(Stmt* stmt) {
             char _mv[128]; snprintf(_mv, 128, "%.*s", stmt->match_stmt.value->token.length, stmt->match_stmt.value->token.start);
             extern const char* get_enum_var_type(const char*);
             const char* _et = get_enum_var_type(_mv);
-            if (_et) { match_enum_name = _et; match_enum_name_len = strlen(_et); is_data_enum_match = true; is_enum_match = true; }
+            if (_et) {
+                match_enum_name = _et; match_enum_name_len = strlen(_et); is_enum_match = true;
+                extern int is_data_enum_type(const char*);
+                if (is_data_enum_type(_et)) is_data_enum_match = true;
+            }
         }
         
         if (!is_enum_match) {
@@ -806,7 +1162,145 @@ void codegen_match_statement(Stmt* stmt) {
                 }
             }
         }
+        // Check bare identifiers against known enum variants
+        if (!is_enum_match) {
+            extern const char* find_enum_for_variant(const char* variant);
+            for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+                MatchCase* match_case = &stmt->match_stmt.cases[i];
+                if (match_case->pattern->type == PATTERN_IDENT) {
+                    char _vn[128]; snprintf(_vn, 128, "%.*s", match_case->pattern->ident.name.length, match_case->pattern->ident.name.start);
+                    const char* found = find_enum_for_variant(_vn);
+                    if (found) {
+                        is_enum_match = true;
+                        match_enum_name = found;
+                        match_enum_name_len = strlen(found);
+                        break;
+                    }
+                }
+            }
+        }
         
+        // Check if this is a Result match (Ok/Err patterns)
+        bool is_result_match = false;
+        for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+            MatchCase* mc = &stmt->match_stmt.cases[i];
+            if (mc->pattern->type == PATTERN_OPTION && mc->pattern->option.variant_name.length > 0) {
+                if ((mc->pattern->option.variant_name.length == 2 && memcmp(mc->pattern->option.variant_name.start, "Ok", 2) == 0) ||
+                    (mc->pattern->option.variant_name.length == 3 && memcmp(mc->pattern->option.variant_name.start, "Err", 3) == 0)) {
+                    is_result_match = true;
+                    break;
+                }
+            }
+        }
+        
+        // Check if this is an Option match (Some/None patterns)
+        bool is_option_match = false;
+        for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+            MatchCase* mc = &stmt->match_stmt.cases[i];
+            if (mc->pattern->type == PATTERN_OPTION) {
+                if (mc->pattern->option.is_some || 
+                    (mc->pattern->option.variant_name.length == 4 && memcmp(mc->pattern->option.variant_name.start, "Some", 4) == 0) ||
+                    (mc->pattern->option.variant_name.length == 4 && memcmp(mc->pattern->option.variant_name.start, "None", 4) == 0)) {
+                    // Check it's not Ok/Err (which is Result, not Option)
+                    if (!is_result_match) { is_option_match = true; break; }
+                }
+            }
+        }
+        
+        // Check if this is a string match
+        bool is_string_match = false;
+        for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+            MatchCase* mc = &stmt->match_stmt.cases[i];
+            if (mc->pattern->type == PATTERN_LITERAL && mc->pattern->literal.value.type == TOKEN_STRING) {
+                is_string_match = true; break;
+            }
+        }
+        
+        if (is_string_match) {
+            static int _smid = 0; _smid++;
+            emit("    const char* __match_str_%d = ", _smid);
+            codegen_expr(stmt->match_stmt.value);
+            emit(";\n");
+            for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+                MatchCase* mc = &stmt->match_stmt.cases[i];
+                if (i > 0) emit(" else ");
+                if (mc->pattern->type == PATTERN_LITERAL && mc->pattern->literal.value.type == TOKEN_STRING) {
+                    emit("if (strcmp(__match_str_%d, %.*s) == 0) {\n", _smid,
+                        mc->pattern->literal.value.length, mc->pattern->literal.value.start);
+                } else if (mc->pattern->type == PATTERN_WILDCARD) {
+                    emit("{\n");
+                } else {
+                    emit("if (1) {\n"); // fallback
+                }
+                emit("        ");
+                if (mc->body) codegen_stmt(mc->body);
+                emit("    }");
+            }
+            emit("\n");
+        } else if (is_option_match) {
+            static int _omid = 0; _omid++;
+            emit("    OptionInt __match_opt_%d = ", _omid);
+            codegen_expr(stmt->match_stmt.value);
+            emit(";\n");
+            for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+                MatchCase* mc = &stmt->match_stmt.cases[i];
+                if (i > 0) emit(" else ");
+                if (mc->pattern->type == PATTERN_OPTION && mc->pattern->option.is_some) {
+                    emit("if (__match_opt_%d.tag == 1) {\n", _omid);
+                    if (mc->pattern->option.inner) {
+                        emit("        long long %.*s = __match_opt_%d.value;\n",
+                            mc->pattern->option.inner->ident.name.length,
+                            mc->pattern->option.inner->ident.name.start, _omid);
+                    }
+                    emit("        ");
+                    if (mc->body) codegen_stmt(mc->body);
+                    emit("    }");
+                } else if (mc->pattern->type == PATTERN_OPTION && !mc->pattern->option.is_some) {
+                    emit("if (__match_opt_%d.tag == 0) {\n", _omid);
+                    emit("        ");
+                    if (mc->body) codegen_stmt(mc->body);
+                    emit("    }");
+                } else if (mc->pattern->type == PATTERN_WILDCARD) {
+                    emit("{\n        ");
+                    if (mc->body) codegen_stmt(mc->body);
+                    emit("    }");
+                }
+            }
+            emit("\n");
+        } else if (is_result_match) {
+            static int _rmid = 0; _rmid++;
+            emit("    ResultInt __match_val_%d = ", _rmid);
+            codegen_expr(stmt->match_stmt.value);
+            emit(";\n");
+            for (int i = 0; i < stmt->match_stmt.case_count; i++) {
+                MatchCase* mc = &stmt->match_stmt.cases[i];
+                if (i > 0) emit(" else ");
+                if (mc->pattern->type == PATTERN_OPTION) {
+                    bool is_ok = (mc->pattern->option.variant_name.length == 2 && memcmp(mc->pattern->option.variant_name.start, "Ok", 2) == 0);
+                    emit("if (__match_val_%d.tag == %d) {\n", _rmid, is_ok ? 0 : 1);
+                    if (mc->pattern->option.inner) {
+                        if (is_ok) {
+                            emit("        long long %.*s = __match_val_%d.data.ok_value;\n",
+                                mc->pattern->option.inner->ident.name.length,
+                                mc->pattern->option.inner->ident.name.start, _rmid);
+                        } else {
+                            emit("        const char* %.*s = __match_val_%d.data.err_value;\n",
+                                mc->pattern->option.inner->ident.name.length,
+                                mc->pattern->option.inner->ident.name.start, _rmid);
+                        }
+                    }
+                    emit("        ");
+                    if (mc->body) codegen_stmt(mc->body);
+                    emit("    }");
+                } else if (mc->pattern->type == PATTERN_WILDCARD) {
+                    emit("{\n        ");
+                    if (mc->body) codegen_stmt(mc->body);
+                    emit("    }");
+                }
+            }
+            emit("\n");
+        } else {
+        emit("{\n");
         if (is_enum_match) {
             // For enum matches, store the whole enum value
             emit("    __auto_type __match_val = ");
@@ -997,5 +1491,6 @@ void codegen_match_statement(Stmt* stmt) {
         }
         
         emit("}\n");
+    }
     }
 }

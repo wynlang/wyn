@@ -10,6 +10,7 @@ void preload_imports(const char* source);
 char* resolve_module_path(const char* module_name);
 char* resolve_relative_module_name(const char* module_name);
 bool is_builtin_module(const char* module_name);
+bool has_circular_import(void);
 void set_source_directory(const char* source_file);
 void check_all_modules(void);
 

@@ -1,0 +1,124 @@
+// TDD: Wyn v1.9 comprehensive showcase — every feature working together
+
+struct User {
+    name: string
+    age: int
+    role: string
+}
+
+trait Displayable {
+    fn display(self) -> string
+}
+
+impl Displayable for User {
+    fn display(self) -> string {
+        return "${self.name} (${self.role}, age ${self.age})"
+    }
+}
+
+impl User {
+    fn is_admin(self) -> bool {
+        return self.role == "admin"
+    }
+}
+
+fn create_user(name: string, age: int, role: string = "member") -> User {
+    return User { name: name, age: age, role: role }
+}
+
+fn safe_div(a: int, b: int) -> Result<int> {
+    if b == 0 { return Err("division by zero") }
+    return Ok(a / b)
+}
+
+fn divmod(a: int, b: int) -> (int, int) {
+    return (a / b, a % b)
+}
+
+fn fib(n: int) -> int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    Test.init("Wyn v1.9 Showcase")
+
+    // === Everything is an object ===
+    Test.assert_eq_str(42.to_string(), "42", "int.to_string")
+    Test.assert_eq_int((-7).abs(), 7, "int.abs")
+    Test.assert_eq_int(15.clamp(0, 10), 10, "int.clamp")
+    Test.assert_eq_str(true.to_string(), "true", "bool.to_string")
+
+    // === Method chaining ===
+    var nums = [5, 3, 8, 1, 9, 2, 7]
+    Test.assert_eq_int(nums.sort().reverse().first(), 9, "sort.reverse.first")
+    Test.assert_eq_int(nums.sort().sum(), 35, "sort.sum")
+    Test.assert_eq_int(nums.filter(fn(x: int) -> bool { return x > 5 }).len(), 3, "filter.len")
+
+    // === String chaining ===
+    Test.assert_eq_str("hello world".upper().replace("WORLD", "WYN"), "HELLO WYN", "upper.replace")
+    Test.assert_eq_str("  spaced  ".trim().lower(), "spaced", "trim.lower")
+    Test.assert_eq_str("c,a,b".split(",").sort().join(","), "a,b,c", "split.sort.join")
+
+    // === Named arguments ===
+    var admin = create_user(name: "Alice", age: 30, role: "admin")
+    Test.assert_eq_str(admin.name, "Alice", "named arg name")
+    Test.assert_eq_int(admin.is_admin(), 1, "extension method")
+    var member = create_user(name: "Bob", age: 25)
+    Test.assert_eq_str(member.role, "member", "default param")
+
+    // === Tuples ===
+    var dm = divmod(17, 5)
+    Test.assert_eq_int(dm.0, 3, "tuple.0")
+    Test.assert_eq_int(dm.1, 2, "tuple.1")
+
+    // === Traits ===
+    Test.assert_eq_str(admin.display(), "Alice (admin, age 30)", "trait display")
+
+    // === Result type ===
+    match safe_div(10, 3) {
+        Ok(v) => Test.assert_eq_int(v, 3, "result ok")
+        Err(e) => Test.assert_eq_int(0, 1, "should not err")
+    }
+
+    // === Multiline lambdas ===
+    var processed = nums.map(fn(x: int) -> int {
+        var sq = x * x
+        return sq + 1
+    })
+    Test.assert_eq_int(processed[0], 26, "multiline lambda")
+
+    // === Void lambdas ===
+    var total = Shared.new(0)
+    nums.each(fn(x: int) { Shared.add(total, x) })
+    Test.assert_eq_int(Shared.get(total), 35, "void each")
+
+    // === Comprehensions ===
+    var squares = [x * x for x in 0..5]
+    Test.assert_eq_int(squares[3], 9, "comprehension")
+
+    // === String interpolation ===
+    var name = "Wyn"
+    Test.assert_eq_str("Hello ${name}!", "Hello Wyn!", "interpolation")
+
+    // === HashMap ===
+    var config = { "host": "localhost", "port": "8080" }
+    Test.assert_eq_str(config["host"], "localhost", "hashmap get")
+    Test.assert_eq_int(config.has("host"), 1, "hashmap has")
+
+    // === Concurrency ===
+    var futures = []
+    for i in 0..5 {
+        futures.push(spawn fib(10 + i))
+    }
+    var results = await_all(futures)
+    Test.assert_eq_int(results[0], 55, "spawn fib(10)")
+    Test.assert_eq_int(results[4], 377, "spawn fib(14)")
+
+    // === Stdlib richness ===
+    Test.assert_eq_str("42".pad_left(5, "0"), "00042", "pad_left")
+    Test.assert_eq_int(nums.min(), 1, "min")
+    Test.assert_eq_int(nums.max(), 9, "max")
+
+    Test.summary()
+}

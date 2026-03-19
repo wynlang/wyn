@@ -363,11 +363,11 @@ void wyn_register_generic_function(void* fn_ptr) {
     generic_fn->type_param_count = fn->type_param_count;
     generic_fn->original_fn = fn;
     generic_fn->next = g_generic_functions;
+    g_generic_functions = generic_fn;
     
     // T3.1.3: Initialize constraints (placeholder for now)
     generic_fn->constraints = wyn_parse_where_constraints(fn->type_params, fn->type_param_count);
     
-    g_generic_functions = generic_fn;
     g_generic_function_count++;
 }
 
@@ -950,6 +950,20 @@ void wyn_collect_generic_instantiations_from_stmt(void* stmt_ptr) {
                 wyn_collect_generic_instantiations_from_stmt(stmt->fn.body);
             }
             break;
+        case STMT_FOR:
+            if (stmt->for_stmt.body) {
+                wyn_collect_generic_instantiations_from_stmt(stmt->for_stmt.body);
+            }
+            break;
+        case STMT_WHILE:
+            if (stmt->while_stmt.condition) wyn_collect_generic_instantiations_from_expr(stmt->while_stmt.condition);
+            if (stmt->while_stmt.body) wyn_collect_generic_instantiations_from_stmt(stmt->while_stmt.body);
+            break;
+        case STMT_IF:
+            if (stmt->if_stmt.condition) wyn_collect_generic_instantiations_from_expr(stmt->if_stmt.condition);
+            if (stmt->if_stmt.then_branch) wyn_collect_generic_instantiations_from_stmt(stmt->if_stmt.then_branch);
+            if (stmt->if_stmt.else_branch) wyn_collect_generic_instantiations_from_stmt(stmt->if_stmt.else_branch);
+            break;
         case STMT_MATCH:
             // Collect from match value expression
             if (stmt->match_stmt.value) {
@@ -1028,8 +1042,21 @@ void wyn_collect_generic_instantiations_from_expr(void* expr_ptr) {
             wyn_collect_generic_instantiations_from_expr(expr->binary.left);
             wyn_collect_generic_instantiations_from_expr(expr->binary.right);
             break;
+        case EXPR_ASSIGN:
+            if (expr->assign.value) wyn_collect_generic_instantiations_from_expr(expr->assign.value);
+            break;
         case EXPR_UNARY:
             wyn_collect_generic_instantiations_from_expr(expr->unary.operand);
+            break;
+        case EXPR_METHOD_CALL:
+            // Recursively process the object expression (e.g., max(3,7) in max(3,7).to_string())
+            if (expr->method_call.object) {
+                wyn_collect_generic_instantiations_from_expr(expr->method_call.object);
+            }
+            // Recursively process method arguments
+            for (int i = 0; i < expr->method_call.arg_count; i++) {
+                wyn_collect_generic_instantiations_from_expr(expr->method_call.args[i]);
+            }
             break;
         case EXPR_MATCH:
             // Collect from match value expression
@@ -1040,6 +1067,13 @@ void wyn_collect_generic_instantiations_from_expr(void* expr_ptr) {
             for (int i = 0; i < expr->match.arm_count; i++) {
                 if (expr->match.arms[i].result) {
                     wyn_collect_generic_instantiations_from_expr(expr->match.arms[i].result);
+                }
+            }
+            break;
+        case EXPR_STRING_INTERP:
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                if (expr->string_interp.expressions[i]) {
+                    wyn_collect_generic_instantiations_from_expr(expr->string_interp.expressions[i]);
                 }
             }
             break;

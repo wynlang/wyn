@@ -38,6 +38,9 @@ typedef struct LambdaExpr {
     Token* params;
     int param_count;
     Expr* body;
+    // Multiline lambda: statements before the return expression
+    struct Stmt** body_stmts;
+    int body_stmt_count;
     // T3.4.1: Closure capture support
     Token* captured_vars;     // Variables captured from environment
     int captured_count;       // Number of captured variables

@@ -1,0 +1,89 @@
+// Edge case pass 2: spawn traces, ? chaining, interp edge cases
+
+// Edge 1: deeply nested ? operator
+fn step1() -> ResultInt { return ResultInt_Ok(1) }
+fn step2(x: int) -> ResultInt { return ResultInt_Ok(x + 2) }
+fn step3(x: int) -> ResultInt { return ResultInt_Ok(x + 3) }
+fn step4(x: int) -> ResultInt { return ResultInt_Ok(x + 4) }
+
+fn deep_chain() -> ResultInt {
+    var a = step1()?
+    var b = step2(a)?
+    var c = step3(b)?
+    var d = step4(c)?
+    return ResultInt_Ok(d)
+}
+
+// Edge 2: ? with error in middle of chain
+fn fail_step(x: int) -> ResultInt { return ResultInt_Err("boom") }
+
+fn chain_fails_mid() -> ResultInt {
+    var a = step1()?
+    var b = fail_step(a)?
+    var c = step3(b)?
+    return ResultInt_Ok(c)
+}
+
+// Edge 3: string interp with empty string
+fn empty_interp() -> string {
+    var s = ""
+    return "before${s}after"
+}
+
+// Edge 4: string interp with int 0
+fn zero_interp() -> string {
+    var n = 0
+    return "val=${n}"
+}
+
+// Edge 5: spawn returning 0 (falsy value)
+fn return_zero() -> int { return 0 }
+
+// Edge 6: spawn returning negative
+fn return_neg() -> int { return -42 }
+
+// Edge 7: many sequential spawns with defaults
+fn inc(x: int, by: int = 1) -> int { return x + by }
+
+fn main() -> int {
+    // Edge 1: deep ? chain
+    var r1 = deep_chain()
+    if !ResultInt_is_ok(r1) { println("FAIL: deep chain"); return 1 }
+
+    // Edge 2: ? fails mid-chain
+    var r2 = chain_fails_mid()
+    if !ResultInt_is_err(r2) { println("FAIL: mid-chain should err"); return 2 }
+
+    // Edge 3: empty string interp
+    if empty_interp() != "beforeafter" { println("FAIL: empty interp"); return 3 }
+
+    // Edge 4: zero interp
+    if zero_interp() != "val=0" { println("FAIL: zero interp"); return 4 }
+
+    // Edge 5: spawn returning 0
+    var f5 = spawn return_zero()
+    var v5 = await f5
+    if v5 != 0 { println("FAIL: spawn zero=${v5}"); return 5 }
+
+    // Edge 6: spawn returning negative
+    var f6 = spawn return_neg()
+    var v6 = await f6
+    if v6 != -42 { println("FAIL: spawn neg=${v6}"); return 6 }
+
+    // Edge 7: sequential spawns with defaults
+    var total = 0
+    for i in 0..50 {
+        var f = spawn inc(i)
+        total = total + await f
+    }
+    // sum(0..49) + 50*1 = 1225 + 50 = 1275
+    if total != 1275 { println("FAIL: seq spawn defaults=${total}"); return 7 }
+
+    // Edge 8: spawn with explicit override of default
+    var f8 = spawn inc(10, 100)
+    var v8 = await f8
+    if v8 != 110 { println("FAIL: spawn explicit=${v8}"); return 8 }
+
+    println("PASS: edge case pass 2 (8 checks)")
+    return 0
+}

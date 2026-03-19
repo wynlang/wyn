@@ -1,21 +1,30 @@
-// Example 54: Spawn Basics
-// Demonstrates lightweight spawn (not OS threads)
+// Spawn Basics — lightweight concurrent tasks
 
-fn worker(id: int) {
-    var x = id * 2;
+fn multiply(x: int) -> int {
+    return x * 2
 }
 
-fn main() {
-    print("Spawning 1000 lightweight tasks...\n");
-    
-    var i = 0;
-    while (i < 1000) {
-        spawn worker(i);
-        i = i + 1;
+fn main() -> int {
+    println("=== Spawn Basics ===")
+    println("")
+
+    // Single spawn + await
+    var f = spawn multiply(21)
+    var result = await f
+    println("  spawn multiply(21) = ${result}")
+
+    // Multiple spawns + await_all
+    var futures = []
+    for i in 0..5 {
+        futures.push(spawn multiply(i))
     }
-    
-    print("All spawns created!\n");
-    print("Memory efficient: ~4-8 KB per spawn\n");
-    
-    return 0;
+    var results = await_all(futures)
+    println("  await_all: [${results[0]}, ${results[1]}, ${results[2]}, ${results[3]}, ${results[4]}]")
+
+    // await_any — first to complete
+    var first = await_any([spawn multiply(10), spawn multiply(20), spawn multiply(30)])
+    println("  await_any: ${first}")
+
+    println("")
+    return 0
 }

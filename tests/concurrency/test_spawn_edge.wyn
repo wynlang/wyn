@@ -1,0 +1,79 @@
+// Stress test: spawn edge cases
+
+struct Pair { a: int, b: int }
+
+fn add(x: int, y: int) -> int { return x + y }
+fn identity(x: int) -> int { return x }
+fn make_pair(a: int, b: int) -> Pair { return Pair { a: a, b: b } }
+fn greet(name: string) -> string { return "hi " + name }
+
+fn fib(n: int) -> int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn increment(counter: int) -> int {
+    Shared.add(counter, 1)
+}
+
+fn main() {
+    Test.init("Spawn Edge Cases")
+
+    // 1: spawn with 0 args
+    var f0 = spawn identity(42)
+    Test.assert_eq_int(await f0, 42, "0-context spawn")
+
+    // 2: spawn with 2 args
+    var f2 = spawn add(10, 20)
+    Test.assert_eq_int(await f2, 30, "2-arg spawn")
+
+    // 3: spawn returning struct
+    var fs = spawn make_pair(3, 7)
+    var p = await fs
+    Test.assert_eq_int(p.a + p.b, 10, "struct spawn")
+
+    // 4: spawn returning string
+    var fg = spawn greet("wyn")
+    Test.assert_eq_str(await fg, "hi wyn", "string spawn")
+
+    // 5: await_all with empty-ish array
+    var futures1 = [spawn identity(1)]
+    var r1 = await_all(futures1)
+    Test.assert_eq_int(r1[0], 1, "await_all single")
+
+    // 6: await_all with computation
+    var futures5 = []
+    for i in 0..5 {
+        futures5.push(spawn fib(10 + i))
+    }
+    var r5 = await_all(futures5)
+    Test.assert_eq_int(r5[0], 55, "fib(10)=55")
+    Test.assert_eq_int(r5[4], 377, "fib(14)=377")
+
+    // 7: await_any
+    var first = await_any([spawn identity(99), spawn identity(88)])
+    Test.assert(first == 99 || first == 88, "await_any valid")
+
+    // 8: Shared with concurrent reads and writes
+    var c = Shared.new(0)
+    var inc_f = []
+    for i in 0..500 {
+        inc_f.push(spawn increment(c))
+    }
+    await_all(inc_f)
+    Test.assert_eq_int(Shared.get(c), 500, "500 atomic increments")
+
+    // 9: inline await spawn
+    var v = await spawn add(100, 200)
+    Test.assert_eq_int(v, 300, "inline await spawn")
+
+    // 10: sequential spawn+await in loop
+    var sum = 0
+    for i in 0..100 {
+        var f = spawn identity(i)
+        sum = sum + await f
+    }
+    Test.assert_eq_int(sum, 4950, "100 sequential spawns")
+
+    Test.summary()
+}

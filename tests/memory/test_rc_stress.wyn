@@ -1,0 +1,77 @@
+// Stress test: RC string lifecycle under various patterns
+
+fn make_greeting(name: string) -> string {
+    var prefix = "hello "
+    var result = prefix + name
+    return result
+}
+
+fn chain_concat(n: int) -> string {
+    var s = ""
+    for i in 0..n {
+        s = s + "x"
+    }
+    return s
+}
+
+fn pass_through(s: string) -> string {
+    return s
+}
+
+fn main() {
+    Test.init("RC Stress Test")
+
+    // 1: repeated reassignment in loop
+    var s = "start"
+    for i in 0..200 {
+        s = "iter_" + i.to_string()
+    }
+    Test.assert_eq_str(s, "iter_199", "200 reassignments")
+
+    // 2: function call chain
+    var g1 = make_greeting("alice")
+    var g2 = make_greeting("bob")
+    var g3 = make_greeting("charlie")
+    Test.assert_eq_str(g1, "hello alice", "greeting 1")
+    Test.assert_eq_str(g2, "hello bob", "greeting 2")
+    Test.assert_eq_str(g3, "hello charlie", "greeting 3")
+
+    // 3: string concat chain
+    var long_str = chain_concat(100)
+    Test.assert_eq_int(long_str.len(), 100, "100-char string")
+
+    // 4: copy then reassign original
+    var orig = "original " + "value"
+    var copy = orig
+    orig = "changed"
+    Test.assert_eq_str(copy, "original value", "copy survives reassign")
+    Test.assert_eq_str(orig, "changed", "original changed")
+
+    // 5: pass string to function and back
+    var input = "round " + "trip"
+    var output = pass_through(input)
+    Test.assert_eq_str(output, "round trip", "pass-through works")
+
+    // 6: nested function calls
+    var nested = make_greeting(make_greeting("inner"))
+    Test.assert_eq_str(nested, "hello hello inner", "nested greeting")
+
+    // 7: string in conditional
+    var cond_str = ""
+    if 1 > 0 {
+        cond_str = "true " + "branch"
+    }
+    Test.assert_eq_str(cond_str, "true branch", "conditional string")
+
+    // 8: multiple copies of same string
+    var base = "shared " + "base"
+    var c1 = base
+    var c2 = base
+    var c3 = base
+    base = "replaced"
+    Test.assert_eq_str(c1, "shared base", "copy 1 survives")
+    Test.assert_eq_str(c2, "shared base", "copy 2 survives")
+    Test.assert_eq_str(c3, "shared base", "copy 3 survives")
+
+    Test.summary()
+}

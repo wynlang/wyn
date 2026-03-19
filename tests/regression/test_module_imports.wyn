@@ -1,0 +1,14 @@
+// Test: Module imports with shared mutable state and cross-module calls
+import { get_counter, increment } from state
+
+fn main() -> int {
+    increment()
+    increment()
+    increment()
+    if get_counter() != 3 {
+        println("FAIL: counter should be 3")
+        return 1
+    }
+    println("PASS: module imports with shared state work")
+    return 0
+}

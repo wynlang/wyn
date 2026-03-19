@@ -1,0 +1,29 @@
+// TDD: spawn functions that return strings
+
+fn greet(name: string) -> string {
+    return "hello " + name
+}
+
+fn upper_name(name: string) -> string {
+    return name.upper()
+}
+
+fn main() {
+    Test.init("Spawn String Return")
+
+    // Test 1: basic string return from spawn
+    var f = spawn greet("world")
+    var result = await f
+    Test.assert_eq_str(result, "hello world", "greet returns string")
+
+    // Test 2: inline await spawn string
+    var result2 = await spawn greet("wyn")
+    Test.assert_eq_str(result2, "hello wyn", "inline await spawn string")
+
+    // Test 3: string method in spawned function
+    var f3 = spawn upper_name("alice")
+    var result3 = await f3
+    Test.assert_eq_str(result3, "ALICE", "upper_name returns string")
+
+    Test.summary()
+}

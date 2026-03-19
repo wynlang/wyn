@@ -1,0 +1,76 @@
+// Option and nested pattern tests
+
+fn find_idx(arr: [int], target: int) -> Option<int> {
+    for i in 0..arr.len() {
+        if arr[i] == target { return Some(i) }
+    }
+    return None
+}
+
+fn safe_div(a: int, b: int) -> Result<int, string> {
+    if b == 0 { return Err("zero") }
+    return Ok(a / b)
+}
+
+fn main() -> int {
+    var pass = 0
+    var fail = 0
+
+    // Test 1: Some match
+    var r1 = find_idx([10, 20, 30], 20)
+    var found1 = -1
+    match r1 {
+        Some(idx) => { found1 = idx },
+        None => { found1 = -1 }
+    }
+    if found1 == 1 { pass += 1 } else { fail += 1; println("FAIL: Some match") }
+
+    // Test 2: None match
+    var r2 = find_idx([10, 20, 30], 99)
+    var found2 = -1
+    match r2 {
+        Some(idx) => { found2 = idx },
+        None => { found2 = -1 }
+    }
+    if found2 == -1 { pass += 1 } else { fail += 1; println("FAIL: None match") }
+
+    // Test 3: Ok match
+    var r3 = safe_div(10, 2)
+    var val3 = 0
+    match r3 {
+        Ok(v) => { val3 = v },
+        Err(e) => { val3 = -1 }
+    }
+    if val3 == 5 { pass += 1 } else { fail += 1; println("FAIL: Ok match") }
+
+    // Test 4: Err match
+    var r4 = safe_div(10, 0)
+    var got_err = 0
+    match r4 {
+        Ok(v) => { got_err = 0 },
+        Err(e) => { got_err = 1 }
+    }
+    if got_err == 1 { pass += 1 } else { fail += 1; println("FAIL: Err match") }
+
+    // Test 5: Ok(_) wildcard
+    var r5 = safe_div(10, 2)
+    var is_ok = 0
+    match r5 {
+        Ok(_) => { is_ok = 1 },
+        Err(_) => { is_ok = 0 }
+    }
+    if is_ok == 1 { pass += 1 } else { fail += 1; println("FAIL: Ok wildcard") }
+
+    // Test 6: Multiple Result matches (unique var names)
+    var r6a = safe_div(100, 10)
+    var r6b = safe_div(100, 0)
+    var v6a = 0
+    var v6b = 0
+    match r6a { Ok(v) => { v6a = v }, Err(e) => { v6a = -1 } }
+    match r6b { Ok(v) => { v6b = v }, Err(e) => { v6b = -1 } }
+    if v6a == 10 && v6b == -1 { pass += 1 } else { fail += 1; println("FAIL: multiple matches") }
+
+    println("Pattern tests: ${pass} pass, ${fail} fail")
+    if fail > 0 { return 1 }
+    return 0
+}

@@ -1,0 +1,53 @@
+// Test: Task.select — wait on multiple channels
+
+fn sender(ch: int, val: int, delay_ms: int) -> int {
+    sleep_ms(delay_ms)
+    Task.send(ch, val)
+    return 0
+}
+
+fn main() -> int {
+    // Test 1: select with one channel having data
+    var ch1 = Task.channel(8)
+    var ch2 = Task.channel(8)
+    Task.send(ch1, 42)
+    var ready = Task.select_2(ch1, ch2)
+    if ready != 0 { println("FAIL test1: expected 0, got " + ready.to_string()); return 1 }
+    var val = Task.recv(ch1)
+    if val != 42 { println("FAIL test1: expected 42, got " + val.to_string()); return 1 }
+    println("Test 1 PASS: select returns correct channel")
+
+    // Test 2: select with second channel having data
+    var ch3 = Task.channel(8)
+    var ch4 = Task.channel(8)
+    Task.send(ch4, 99)
+    var ready2 = Task.select_2(ch3, ch4)
+    if ready2 != 1 { println("FAIL test2: expected 1, got " + ready2.to_string()); return 2 }
+    var val2 = Task.recv(ch4)
+    if val2 != 99 { println("FAIL test2: expected 99, got " + val2.to_string()); return 2 }
+    println("Test 2 PASS: select returns second channel")
+
+    // Test 3: select with spawned sender (async)
+    var ch5 = Task.channel(8)
+    var ch6 = Task.channel(8)
+    spawn sender(ch6, 77, 10)
+    var ready3 = Task.select_2(ch5, ch6)
+    if ready3 != 1 { println("FAIL test3: expected 1, got " + ready3.to_string()); return 3 }
+    var val3 = Task.recv(ch6)
+    if val3 != 77 { println("FAIL test3: expected 77, got " + val3.to_string()); return 3 }
+    println("Test 3 PASS: select with async sender")
+
+    // Test 4: select_3 with three channels
+    var ch7 = Task.channel(8)
+    var ch8 = Task.channel(8)
+    var ch9 = Task.channel(8)
+    Task.send(ch9, 55)
+    var ready4 = Task.select_3(ch7, ch8, ch9)
+    if ready4 != 2 { println("FAIL test4: expected 2, got " + ready4.to_string()); return 4 }
+    var val4 = Task.recv(ch9)
+    if val4 != 55 { println("FAIL test4: expected 55, got " + val4.to_string()); return 4 }
+    println("Test 4 PASS: select_3 returns correct channel")
+
+    println("All select tests PASS")
+    return 0
+}

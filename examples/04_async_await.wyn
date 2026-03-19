@@ -1,21 +1,52 @@
-// Async/Await - Asynchronous programming
-async fn fetch_data() -> int {
-    return 42;
+// Concurrency — spawn, await, await_all, await_any, Shared
+
+fn fetch_data() -> int {
+    return 42
 }
 
-async fn process_data(value: int) -> int {
-    return value * 2;
+fn process_data(value: int) -> int {
+    return value * 2
+}
+
+fn compute(n: int) -> int {
+    var sum = 0
+    for i in 0..n { sum = sum + i }
+    return sum
+}
+
+fn increment(counter: int) -> int {
+    Shared.add(counter, 1)
+    return 0
 }
 
 fn main() -> int {
-    var future1 = fetch_data();
-    var data = await future1;
-    
-    var future2 = process_data(data);
-    var result = await future2;
-    
-    print("Result: ");
-    print(result);
-    
-    return 0;
+    // Basic spawn + await
+    var future = spawn fetch_data()
+    var data = await future
+    var future2 = spawn process_data(data)
+    var result = await future2
+    println("Basic:     fetch -> process = ${result}")
+
+    // await_all — run multiple tasks, collect all results
+    var futures = []
+    for i in 0..5 {
+        futures.push(spawn compute(i * 1000))
+    }
+    var results = await_all(futures)
+    println("await_all: [${results[0]}, ${results[1]}, ${results[2]}, ${results[3]}, ${results[4]}]")
+
+    // await_any — race multiple tasks, get first result
+    var first = await_any([spawn compute(100), spawn compute(200), spawn compute(300)])
+    println("await_any: first = ${first}")
+
+    // Shared atomic counter — safe concurrent mutation
+    var counter = Shared.new(0)
+    var inc_futures = []
+    for i in 0..100 {
+        inc_futures.push(spawn increment(counter))
+    }
+    await_all(inc_futures)
+    println("Shared:    100 increments = ${Shared.get(counter)}")
+
+    return 0
 }

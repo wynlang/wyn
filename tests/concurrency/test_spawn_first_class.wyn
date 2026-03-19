@@ -1,0 +1,46 @@
+// Test: Spawn/await as first-class citizens
+fn compute(n: int) -> int {
+    var result = 0
+    for i in 0..n { result += i }
+    return result
+}
+
+fn fetch_name(id: int) -> string {
+    return "user_${id}"
+}
+
+fn main() {
+    // Basic spawn + await
+    var f = spawn compute(100)
+    var result = await f
+    Test.assert(result == 4950, "spawn await int")
+
+    // await_all with int returns
+    var futures = []
+    for i in 0..5 {
+        futures.push(spawn compute((i + 1) * 10))
+    }
+    var results = await_all(futures)
+    Test.assert(results[0] == 45, "await_all[0]")
+    Test.assert(results[4] == 1225, "await_all[4]")
+
+    // await_all with string returns
+    var str_futures = []
+    for i in 0..3 {
+        str_futures.push(spawn fetch_name(i))
+    }
+    var names = await_all(str_futures)
+    Test.assert(names[0] == "user_0", "await_all str[0]")
+    Test.assert(names[2] == "user_2", "await_all str[2]")
+
+    // Fire-and-forget spawn (STMT_SPAWN)
+    spawn compute(10)
+    Time.sleep(50)
+
+    // Inline spawn (no yield points)
+    var f2 = spawn compute(50)
+    var r2 = await f2
+    Test.assert(r2 == 1225, "inline spawn")
+
+    println("PASS: spawn/await first-class")
+}

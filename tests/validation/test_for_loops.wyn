@@ -1,0 +1,49 @@
+// Test: For loops — all patterns
+fn main() {
+    // Range for
+    var sum = 0
+    for i in 0..5 { sum += i }
+    Test.assert(sum == 10, "range 0..5")
+
+    // Range with expression
+    var n = 3
+    sum = 0
+    for i in 0..n { sum += i }
+    Test.assert(sum == 3, "range 0..n")
+
+    // Array for
+    var arr = [10, 20, 30]
+    var total = 0
+    for x in arr { total += x }
+    Test.assert(total == 60, "array for")
+
+    // Nested for
+    var count = 0
+    for i in 0..3 {
+        for j in 0..4 {
+            count += 1
+        }
+    }
+    Test.assert(count == 12, "nested for")
+
+    // For with break-like pattern (using flag)
+    var found = -1
+    var data = [5, 3, 8, 1, 9]
+    for i in 0..data.len() {
+        if data[i] == 8 {
+            found = i
+        }
+    }
+    Test.assert(found == 2, "find index")
+
+    // For building array
+    var squares = []
+    for i in 1..6 {
+        squares.push(i * i)
+    }
+    Test.assert(squares.len() == 5, "build array len")
+    Test.assert(squares[0] == 1, "squares[0]")
+    Test.assert(squares[4] == 25, "squares[4]")
+
+    println("PASS: for loops")
+}

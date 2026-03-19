@@ -1,0 +1,51 @@
+// Test: ? operator for error propagation (8.1)
+
+fn parse_int(s: string) -> ResultInt {
+    if s == "42" {
+        return ResultInt_Ok(42)
+    }
+    return ResultInt_Err("not a number")
+}
+
+fn double_parsed(s: string) -> ResultInt {
+    var n = parse_int(s)?
+    return ResultInt_Ok(n * 2)
+}
+
+fn chain_ops(s: string) -> ResultInt {
+    var a = parse_int(s)?
+    var b = parse_int(s)?
+    return ResultInt_Ok(a + b)
+}
+
+fn main() -> int {
+    // ? on success path
+    var r1 = double_parsed("42")
+    if ResultInt_is_ok(r1) {
+        println("ok: doubled")
+    } else {
+        println("FAIL: expected ok")
+        return 1
+    }
+
+    // ? on error path — should propagate
+    var r2 = double_parsed("abc")
+    if ResultInt_is_err(r2) {
+        println("err: propagated")
+    } else {
+        println("FAIL: expected err")
+        return 2
+    }
+
+    // Chained ? operators
+    var r3 = chain_ops("42")
+    if ResultInt_is_ok(r3) {
+        println("chain: ok")
+    } else {
+        println("FAIL: chain expected ok")
+        return 3
+    }
+
+    println("PASS: ? operator")
+    return 0
+}

@@ -1,0 +1,75 @@
+// Test CSV writer
+
+fn main() -> int {
+    println("=== Testing CSV writer ===")
+    
+    // Create test data
+    var rows = [
+        ["Name", "Age", "City"],
+        ["John", "25", "New York"],
+        ["Jane", "30", "San Francisco"],
+        ["Bob", "35", "Chicago"]
+    ]
+    
+    // Write CSV
+    var path = "/tmp/test_output.csv"
+    Csv.write(path, rows)
+    
+    // Read it back
+    var content = File.read(path)
+    println("CSV content:")
+    println(content)
+    
+    // Parse and verify
+    var doc = Csv.parse(content)
+    var row_count = Csv.row_count(doc)
+    
+    if row_count != 4 {
+        println("ERROR: Expected 4 rows, got ${row_count}")
+        return 1
+    }
+    
+    // Check header
+    var name_header = Csv.header(doc, 0)
+    if name_header != "Name" {
+        println("ERROR: Expected 'Name' header, got " + name_header)
+        return 1
+    }
+    
+    // Check data
+    var john_age = Csv.get(doc, 1, 1)
+    if john_age != "25" {
+        println("ERROR: Expected '25', got " + john_age)
+        return 1
+    }
+    
+    // Test with special characters (commas, quotes, newlines)
+    var special_rows = [
+        ["Field1", "Field2", "Field3"],
+        ["Simple", "With, comma", "Normal"],
+        ["Quote", "With \"quotes\"", "End"],
+        ["Multi", "Line\nbreak", "Test"]
+    ]
+    
+    Csv.write("/tmp/test_special.csv", special_rows)
+    var special_content = File.read("/tmp/test_special.csv")
+    println("\nSpecial CSV content:")
+    println(special_content)
+    
+    // Parse special CSV
+    var special_doc = Csv.parse(special_content)
+    var field_with_comma = Csv.get(special_doc, 1, 1)
+    if field_with_comma != "With, comma" {
+        println("ERROR: Comma escaping failed, got: " + field_with_comma)
+        return 1
+    }
+    
+    var field_with_quotes = Csv.get(special_doc, 2, 1)
+    if field_with_quotes != "With \"quotes\"" {
+        println("ERROR: Quote escaping failed, got: " + field_with_quotes)
+        return 1
+    }
+    
+    println("\n✓ CSV writer tests passed")
+    return 0
+}

@@ -1,0 +1,47 @@
+// Test: Match expressions and statements
+enum Color { Red, Green, Blue }
+
+fn color_name(c: Color) -> string {
+    match c {
+        Color.Red => return "red"
+        Color.Green => return "green"
+        Color.Blue => return "blue"
+    }
+    return "unknown"
+}
+
+fn classify(n: int) -> string {
+    if n < 0 { return "negative" }
+    if n == 0 { return "zero" }
+    if n < 10 { return "small" }
+    return "big"
+}
+
+fn main() {
+    // Match on int
+    var x = 3
+    match x {
+        1 => println("one")
+        2 => println("two")
+        3 => println("three")
+        _ => println("other")
+    }
+
+    // Match on enum
+    var c = Color.Green
+    Test.assert(color_name(c) == "green", "match enum")
+    Test.assert(color_name(Color.Red) == "red", "match enum red")
+    Test.assert(color_name(Color.Blue) == "blue", "match enum blue")
+
+    // If-expression as match alternative
+    var label = if x > 5 { "big" } else { "small" }
+    Test.assert(label == "small", "if-expr")
+
+    // Classify function
+    Test.assert(classify(-1) == "negative", "classify neg")
+    Test.assert(classify(0) == "zero", "classify zero")
+    Test.assert(classify(5) == "small", "classify small")
+    Test.assert(classify(100) == "big", "classify big")
+
+    println("PASS: match and control flow")
+}

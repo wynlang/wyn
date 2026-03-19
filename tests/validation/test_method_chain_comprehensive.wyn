@@ -1,0 +1,35 @@
+// Test: Method chaining — the core of Wyn's "flow"
+fn main() {
+    // Array chaining
+    var data = [5, 3, 8, 1, 9, 2, 7, 4, 6]
+    Test.assert(data.sort().join(", ") == "1, 2, 3, 4, 5, 6, 7, 8, 9", "sort+join")
+    Test.assert(data.sort().reverse().slice(0, 3).join(", ") == "9, 8, 7", "sort+rev+slice+join")
+    Test.assert(data.sum() == 45, "sum")
+    Test.assert(data.min() == 1, "min")
+    Test.assert(data.max() == 9, "max")
+    Test.assert(data.len() == 9, "len")
+    Test.assert(data.contains(5) == 1, "contains true")
+    Test.assert(data.contains(99) == 0, "contains false")
+
+    // String chaining
+    Test.assert("  hello  ".trim() == "hello", "trim")
+    Test.assert("hello".upper() == "HELLO", "upper")
+    Test.assert("HELLO".lower() == "hello", "lower")
+    Test.assert("hello world".replace("world", "wyn") == "hello wyn", "replace")
+    Test.assert("a,b,c".split(",").join(" ") == "a b c", "split+join")
+    Test.assert("hello".starts_with("hel") == 1, "starts_with")
+    Test.assert("hello".ends_with("llo") == 1, "ends_with")
+    Test.assert("hello".contains("ell") == 1, "str contains")
+    Test.assert("hello".len() == 5, "str len")
+
+    // Int methods
+    Test.assert(42.to_string() == "42", "int to_string")
+    Test.assert(42.clamp(0, 10) == 10, "clamp high")
+    Test.assert(42.clamp(0, 100) == 42, "clamp mid")
+    Test.assert((-5).abs() == 5, "abs")
+
+    // String padding
+    Test.assert("7".pad_left(3, "0") == "007", "pad_left")
+
+    println("PASS: method chaining")
+}

@@ -1,0 +1,55 @@
+// Test: Concurrency patterns — channels, shared state, parallel map
+fn worker(id: int) -> int {
+    var result = 0
+    for i in 0..1000 { result += 1 }
+    return result * id
+}
+
+fn fetch(url: string) -> string {
+    return "response_from_${url}"
+}
+
+fn main() {
+    // Parallel computation with await_all
+    var futures = []
+    for i in 1..9 {
+        futures.push(spawn worker(i))
+    }
+    var results = await_all(futures)
+    Test.assert(results[0] == 1000, "worker 1")
+    Test.assert(results[7] == 8000, "worker 8")
+
+    // String-returning spawn
+    var sf = []
+    sf.push(spawn fetch("api/users"))
+    sf.push(spawn fetch("api/posts"))
+    sf.push(spawn fetch("api/comments"))
+    var responses = await_all(sf)
+    Test.assert(responses[0] == "response_from_api/users", "fetch users")
+    Test.assert(responses[2] == "response_from_api/comments", "fetch comments")
+
+    // Single spawn + await
+    var f = spawn worker(42)
+    var r = await f
+    Test.assert(r == 42000, "single spawn")
+
+    // Fire-and-forget spawn
+    spawn worker(1)
+    Time.sleep(50)
+
+    // Task channels
+    var ch = Task.channel(10)
+    spawn send_values(ch)
+    var v1 = Task.recv(ch)
+    var v2 = Task.recv(ch)
+    Test.assert(v1 == 100, "channel recv 1")
+    Test.assert(v2 == 200, "channel recv 2")
+    Task.close(ch)
+
+    println("PASS: concurrency patterns")
+}
+
+fn send_values(ch: int) {
+    Task.send(ch, 100)
+    Task.send(ch, 200)
+}

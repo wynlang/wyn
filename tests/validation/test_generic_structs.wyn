@@ -1,0 +1,38 @@
+// TDD: generic structs
+
+struct Pair<T> {
+    first: T
+    second: T
+}
+
+struct Box<T> {
+    value: T
+    label: string
+}
+
+fn main() {
+    Test.init("Generic Structs")
+
+    // Int pair
+    var p = Pair { first: 10, second: 20 }
+    Test.assert_eq_int(p.first, 10, "pair.first")
+    Test.assert_eq_int(p.second, 20, "pair.second")
+
+    // Field method call
+    Test.assert_eq_str(p.first.to_string(), "10", "pair.first.to_string()")
+
+    // Field in expression
+    Test.assert_eq_int(p.first + p.second, 30, "pair sum")
+
+    // Var from field
+    var x = p.first
+    Test.assert_eq_int(x, 10, "var from field")
+    Test.assert_eq_str(x.to_string(), "10", "var.to_string()")
+
+    // Box with string label
+    var b = Box { value: 42, label: "answer" }
+    Test.assert_eq_int(b.value, 42, "box.value")
+    Test.assert_eq_str(b.label, "answer", "box.label")
+
+    Test.summary()
+}

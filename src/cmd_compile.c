@@ -102,6 +102,48 @@ static int compile_file_with_output(const char* filename, const char* output_nam
     }
     
     char cmd[4096];
+
+    // Read source to detect modules that need extra link flags
+    char* source_content = NULL;
+    FILE* src_f = fopen(output_c, "r");
+    if (!src_f) src_f = fopen(filename, "r");
+    if (src_f) {
+        fseek(src_f, 0, SEEK_END);
+        long sz = ftell(src_f);
+        fseek(src_f, 0, SEEK_SET);
+        source_content = malloc(sz + 1);
+        fread(source_content, 1, sz, src_f);
+        source_content[sz] = '\0';
+        fclose(src_f);
+    }
+
+    const char* extra_flags = "";
+    if (source_content) {
+        if (strstr(source_content, "App.") || strstr(source_content, "App_create")) {
+#ifdef __APPLE__
+            extra_flags = " -framework WebKit -framework Cocoa";
+            char wv_obj[512];
+            snprintf(wv_obj, sizeof(wv_obj), "%s/src/wyn_webview.o", wyn_dir);
+            FILE* wv_test = fopen(wv_obj, "r");
+            if (wv_test) {
+                fclose(wv_test);
+                static char wv_flags[1024];
+                snprintf(wv_flags, sizeof(wv_flags), " %s -framework WebKit -framework Cocoa", wv_obj);
+                extra_flags = wv_flags;
+            }
+#elif defined(__linux__)
+            extra_flags = " $(pkg-config --cflags --libs gtk+-3.0 webkit2gtk-4.0 2>/dev/null)";
+#elif defined(_WIN32)
+            {
+                static char wv_flags[1024];
+                snprintf(wv_flags, sizeof(wv_flags), " %s/src/wyn_webview_win.c", wyn_dir);
+                extra_flags = wv_flags;
+            }
+#endif
+        }
+        free(source_content);
+    }
+
     // Try precompiled runtime first, fall back to source
     char rt_path[512];
     snprintf(rt_path, sizeof(rt_path), "%s/runtime/libwyn_rt.a", wyn_dir);
@@ -110,8 +152,8 @@ static int compile_file_with_output(const char* filename, const char* output_nam
         fclose(rt_test);
         snprintf(cmd, sizeof(cmd),
                  "gcc -O2 -w -I %s/src -o %s %s %s/runtime/libwyn_rt.a "
-                 "-L%s/runtime/parser_lib -lwyn_c_parser -lpthread -lm 2>&1",
-                 wyn_dir, output_bin, output_c, wyn_dir, wyn_dir);
+                 "-L%s/runtime/parser_lib -lwyn_c_parser -lpthread -lm%s 2>&1",
+                 wyn_dir, output_bin, output_c, wyn_dir, wyn_dir, extra_flags);
     } else {
         snprintf(cmd, sizeof(cmd), 
                  "gcc -O2 -w -I %s/src -o %s %s %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
@@ -122,12 +164,12 @@ static int compile_file_with_output(const char* filename, const char* output_nam
                  "%s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c "
                  "%s/src/spawn.c %s/src/net.c %s/src/net_runtime.c "
                  "%s/src/test_runtime.c %s/src/net_advanced.c "
-                 "-L%s/runtime/parser_lib -lwyn_c_parser -lpthread -lm 2>&1",
+                 "-L%s/runtime/parser_lib -lwyn_c_parser -lpthread -lm%s 2>&1",
                  wyn_dir, output_bin, output_c,
                  wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir,
                  wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir,
                  wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir,
-                 wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir);
+                 wyn_dir, wyn_dir, wyn_dir, wyn_dir, wyn_dir, extra_flags);
     }
     
     if (getenv("WYN_DEBUG")) fprintf(stderr, "CMD: %s\n", cmd); int result = system(cmd);

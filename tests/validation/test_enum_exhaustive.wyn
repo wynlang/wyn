@@ -1,0 +1,24 @@
+// TDD: enum exhaustiveness — match should warn on missing variants
+
+enum Color { Red, Green, Blue }
+
+fn color_code(c: Color) -> int {
+    // Exhaustive match — all variants covered
+    match c {
+        Red => return 1
+        Green => return 2
+        Blue => return 3
+    }
+    return 0
+}
+
+fn main() -> int {
+    Test.init("Enum Exhaustiveness")
+
+    Test.assert_eq_int(color_code(Color.Red), 1, "red = 1")
+    Test.assert_eq_int(color_code(Color.Green), 2, "green = 2")
+    Test.assert_eq_int(color_code(Color.Blue), 3, "blue = 3")
+
+    Test.summary()
+    return 0
+}

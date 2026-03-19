@@ -19,7 +19,7 @@ fn main() -> int {
 EOF
 
 echo "Test 1: Fibonacci(30)"
-./wyn-llvm /tmp/bench_fib.wyn 2>&1 > /dev/null
+./wyn run /tmp/bench_fib.wyn 2>&1 > /dev/null
 if [ $? -eq 0 ]; then
     start=$(date +%s%N)
     /tmp/bench_fib.out
@@ -63,7 +63,7 @@ EOF
 
 echo ""
 echo "Test 2: Prime sieve (count primes < 10000)"
-./wyn-llvm /tmp/bench_primes.wyn 2>&1 > /dev/null
+./wyn run /tmp/bench_primes.wyn 2>&1 > /dev/null
 if [ $? -eq 0 ]; then
     start=$(date +%s%N)
     /tmp/bench_primes.out
@@ -103,7 +103,7 @@ EOF
 
 echo ""
 echo "Test 3: Array operations (1000 iterations)"
-./wyn-llvm /tmp/bench_array.wyn 2>&1 > /dev/null
+./wyn run /tmp/bench_array.wyn 2>&1 > /dev/null
 if [ $? -eq 0 ]; then
     start=$(date +%s%N)
     /tmp/bench_array.out

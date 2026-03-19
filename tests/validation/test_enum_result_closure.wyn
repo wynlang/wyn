@@ -1,0 +1,79 @@
+// Stress test: enums, match, Result type, closures
+
+enum Shape { Circle, Square, Triangle }
+
+fn shape_name(s: Shape) -> string {
+    match s {
+        Circle => return "circle"
+        Square => return "square"
+        Triangle => return "triangle"
+    }
+    return "unknown"
+}
+
+fn safe_div(a: int, b: int) -> ResultInt {
+    if b == 0 { return ResultInt_Err("division by zero") }
+    return ResultInt_Ok(a / b)
+}
+
+fn apply(x: int, f: fn(int) -> int) -> int {
+    return f(x)
+}
+
+fn main() {
+    Test.init("Enums, Result, Closures")
+
+    // 1: enum creation and match
+    var c = Shape.Circle
+    var sq = Shape.Square
+    var t = Shape.Triangle
+    Test.assert_eq_str(shape_name(c), "circle", "enum circle")
+    Test.assert_eq_str(shape_name(sq), "square", "enum square")
+    Test.assert_eq_str(shape_name(t), "triangle", "enum triangle")
+
+    // 2: Result Ok path
+    var r1 = safe_div(10, 3)
+    Test.assert(ResultInt_is_ok(r1), "div ok")
+    Test.assert_eq_int(ResultInt_unwrap(r1), 3, "10/3 = 3")
+
+    // 3: Result Err path
+    var r2 = safe_div(10, 0)
+    Test.assert(ResultInt_is_err(r2), "div by zero err")
+
+    // 4: ? operator propagation
+    // (tested indirectly — safe_div returns ResultInt)
+
+    // 5: higher-order function with named fn
+    var doubled = apply(21, fn(x: int) -> int { return x * 2 })
+    Test.assert_eq_int(doubled, 42, "apply lambda")
+
+    // 6: pipe operator
+    var piped = 10 |> fn(x: int) -> int { return x + 5 } |> fn(x: int) -> int { return x * 2 }
+    Test.assert_eq_int(piped, 30, "pipe chain")
+
+    // 7: match with int
+    var grade = 85
+    var letter = "F"
+    if grade >= 90 { letter = "A" }
+    else if grade >= 80 { letter = "B" }
+    else if grade >= 70 { letter = "C" }
+    Test.assert_eq_str(letter, "B", "grade match")
+
+    // 8: nested match
+    var x = 2
+    var y = 3
+    var result = 0
+    match x {
+        1 => result = 10
+        2 => {
+            match y {
+                3 => result = 23
+                _ => result = 20
+            }
+        }
+        _ => result = 0
+    }
+    Test.assert_eq_int(result, 23, "nested match")
+
+    Test.summary()
+}

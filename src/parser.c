@@ -99,6 +99,16 @@ static bool check(WynTokenType type) {
     return parser.current.type == type;
 }
 
+// Check if the token after current looks like a value (for ternary ? disambiguation)
+static bool check_next_is_value(void) {
+    if (!parser.current.start) return false;
+    const char* p = parser.current.start + parser.current.length;
+    while (*p && (*p == ' ' || *p == '\t')) p++;
+    if (!*p) return false;
+    return (*p >= '0' && *p <= '9') || *p == '"' || *p == '\'' || *p == '(' || *p == '-' ||
+           (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_';
+}
+
 static bool match(WynTokenType type) {
     if (!check(type)) return false;
     advance();
@@ -193,8 +203,10 @@ static Expr* primary() {
     if (match(TOKEN_STRING)) {
         // Check for string interpolation
         Token str_token = parser.previous;
-        const char* str = str_token.start + 1; // Skip opening quote
-        int len = str_token.length - 2; // Skip quotes
+        bool is_triple = (str_token.length >= 6 && str_token.start[0] == '"' && str_token.start[1] == '"' && str_token.start[2] == '"');
+        int quote_len = is_triple ? 3 : 1;
+        const char* str = str_token.start + quote_len;
+        int len = str_token.length - quote_len * 2;
         
         // Simple check for ${} pattern
         bool has_interp = false;
@@ -230,10 +242,20 @@ static Expr* primary() {
                         expr->string_interp.count++;
                     }
                     
-                    // Find the closing }
+                    // Find the closing } (tracking brace depth and nested strings)
                     int expr_start = i + 2;
                     int expr_end = expr_start;
-                    while (expr_end < len && str[expr_end] != '}') {
+                    int _bd = 1;
+                    while (expr_end < len && _bd > 0) {
+                        if (str[expr_end] == '{') _bd++;
+                        else if (str[expr_end] == '}') { _bd--; if (_bd == 0) break; }
+                        else if (str[expr_end] == '"') {
+                            expr_end++;
+                            while (expr_end < len && str[expr_end] != '"') {
+                                if (str[expr_end] == '\\' && expr_end + 1 < len) expr_end++;
+                                expr_end++;
+                            }
+                        }
                         expr_end++;
                     }
                     
@@ -399,8 +421,8 @@ static Expr* primary() {
         expr->type = EXPR_IDENT;
         expr->token = name;
         
-        // T2.5.1: Check for optional type suffix '?'
-        if (check(TOKEN_QUESTION)) {
+        // T2.5.1: Check for optional type suffix '?' — only in type context
+        if (check(TOKEN_QUESTION) && !check_next_is_value() && parser.allow_struct_init == false) {
             advance(); // consume '?'
             Expr* optional_expr = alloc_expr();
             optional_expr->type = EXPR_OPTIONAL_TYPE;
@@ -790,17 +812,32 @@ static Expr* primary() {
         
         // Parse body - can be expression or block
         if (check(TOKEN_LBRACE)) {
-            // Block body: { return expr; }
-            // Skip the opening brace
-            advance();
+            // Block body: |x| { stmts; return expr; }
+            // Delegate to the same multiline lambda parsing as fn-style
+            advance(); // consume {
             
-            // Skip to return statement
-            if (match(TOKEN_RETURN)) {
-                lambda_expr->lambda.body = expression();
-                match(TOKEN_SEMI); // optional semi after return in lambda ';' after return expression");
-            } else {
-                // No return, just parse expression
-                lambda_expr->lambda.body = expression();
+            lambda_expr->lambda.body_stmts = malloc(sizeof(Stmt*) * 32);
+            lambda_expr->lambda.body_stmt_count = 0;
+            lambda_expr->lambda.body = NULL;
+            
+            while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                if (check(TOKEN_RETURN)) {
+                    advance();
+                    lambda_expr->lambda.body = expression();
+                    match(TOKEN_SEMI);
+                    break;
+                }
+                // Parse as expression statement
+                Expr* e = expression();
+                if (e) {
+                    Stmt* es = alloc_stmt();
+                    es->type = STMT_EXPR;
+                    es->expr = e;
+                    lambda_expr->lambda.body_stmts[lambda_expr->lambda.body_stmt_count++] = es;
+                }
+                match(TOKEN_SEMI);
+                // Also handle var declarations
+                if (check(TOKEN_VAR) || check(TOKEN_CONST)) break; // bail — too complex for pipe lambda
             }
             
             expect(TOKEN_RBRACE, "Expected '}' after lambda block body");
@@ -860,19 +897,19 @@ static Expr* primary() {
                 // Block body: { var y = x * 2; return y + 1; }
                 advance(); // consume '{'
                 
-                // For now, skip all statements until we find a return or reach the end
-                // This is a simplified implementation for Task 7.1
+                lambda_expr->lambda.body_stmts = malloc(sizeof(Stmt*) * 32);
+                lambda_expr->lambda.body_stmt_count = 0;
+                
                 while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                     if (match(TOKEN_RETURN)) {
                         lambda_expr->lambda.body = expression();
                         match(TOKEN_SEMI);
                         break;
                     } else {
-                        // Skip other statements for now
-                        while (!check(TOKEN_SEMI) && !check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-                            advance();
+                        Stmt* s = statement();
+                        if (s && lambda_expr->lambda.body_stmt_count < 32) {
+                            lambda_expr->lambda.body_stmts[lambda_expr->lambda.body_stmt_count++] = s;
                         }
-                        if (check(TOKEN_SEMI)) advance();
                     }
                 }
                 
@@ -885,18 +922,29 @@ static Expr* primary() {
             // Block syntax: fn(x: int) -> int { return x * 2 }
             advance(); // consume '{'
             
+            // Parse multiline lambda body
+            lambda_expr->lambda.body_stmts = malloc(sizeof(Stmt*) * 32);
+            lambda_expr->lambda.body_stmt_count = 0;
+            
             while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
                 if (match(TOKEN_RETURN)) {
                     lambda_expr->lambda.body = expression();
                     match(TOKEN_SEMI);
                     break;
                 } else {
-                    // Skip other statements for now
-                    while (!check(TOKEN_SEMI) && !check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-                        advance();
+                    Stmt* s = statement();
+                    if (s && lambda_expr->lambda.body_stmt_count < 32) {
+                        lambda_expr->lambda.body_stmts[lambda_expr->lambda.body_stmt_count++] = s;
                     }
-                    if (check(TOKEN_SEMI)) advance();
                 }
+            }
+            
+            // If no return statement, default to returning 0 (void lambda)
+            if (!lambda_expr->lambda.body) {
+                lambda_expr->lambda.body = alloc_expr();
+                lambda_expr->lambda.body->type = EXPR_INT;
+                lambda_expr->lambda.body->token.start = "0";
+                lambda_expr->lambda.body->token.length = 1;
             }
             
             expect(TOKEN_RBRACE, "Expected '}' after lambda block body");
@@ -959,11 +1007,34 @@ static Expr* call() {
             if (!check(TOKEN_RPAREN)) {
                 int capacity = 8;
                 call_expr->call.args = malloc(sizeof(Expr*) * capacity);
+                call_expr->call.arg_names = calloc(capacity, sizeof(Token));
                 do {
                     if (call_expr->call.arg_count >= capacity) {
                         capacity *= 2;
                         call_expr->call.args = realloc(call_expr->call.args, sizeof(Expr*) * capacity);
+                        call_expr->call.arg_names = realloc(call_expr->call.arg_names, sizeof(Token) * capacity);
                     }
+                    // Check for named argument: ident: expr
+                    // Detect by checking if current is IDENT and next is COLON
+                    if (parser.current.type == TOKEN_IDENT) {
+                        Token saved_current = parser.current;
+                        Token saved_previous = parser.previous;
+                        extern void save_lexer_state(void);
+                        extern void restore_lexer_state(void);
+                        save_lexer_state();
+                        advance(); // consume potential name
+                        if (check(TOKEN_COLON)) {
+                            advance(); // consume ':'
+                            call_expr->call.arg_names[call_expr->call.arg_count] = saved_current;
+                            call_expr->call.args[call_expr->call.arg_count++] = expression();
+                            continue;
+                        }
+                        // Not a named arg — backtrack
+                        restore_lexer_state();
+                        parser.current = saved_current;
+                        parser.previous = saved_previous;
+                    }
+                    call_expr->call.arg_names[call_expr->call.arg_count] = (Token){0};
                     call_expr->call.args[call_expr->call.arg_count++] = expression();
                 } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
             }
@@ -1123,8 +1194,10 @@ static Expr* call() {
                 }
             }
             }
-        } else if (match(TOKEN_QUESTION)) {
+        } else if (check(TOKEN_QUESTION) && !check_next_is_value()) {
             // TASK-028: Handle ? operator for error propagation
+            // Only consume ? when NOT followed by a value (to avoid ternary confusion)
+            advance(); // consume ?
             Expr* try_expr = alloc_expr();
             try_expr->type = EXPR_TRY;
             try_expr->try_expr.value = expr;
@@ -1278,6 +1351,20 @@ static Expr* pipeline() {
 
 static Expr* assignment() {
     Expr* expr = pipeline();
+    
+    // Ternary operator: expr ? then : else
+    if (check(TOKEN_QUESTION) && check_next_is_value()) {
+        advance(); // consume ?
+        Expr* then_expr = pipeline();
+        expect(TOKEN_COLON, "Expected ':' in ternary expression");
+        Expr* else_expr = pipeline();
+        Expr* ternary = alloc_expr();
+        ternary->type = EXPR_TERNARY;
+        ternary->ternary.condition = expr;
+        ternary->ternary.then_expr = then_expr;
+        ternary->ternary.else_expr = else_expr;
+        return ternary;
+    }
     
     // Check for null expression
     if (!expr) {
@@ -1496,6 +1583,14 @@ Stmt* statement() {
         return stmt;
     }
     
+    if (match(TOKEN_YIELD)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_YIELD;
+        stmt->yield_stmt.value = expression();
+        match(TOKEN_SEMI);
+        return stmt;
+    }
+    
     if (match(TOKEN_DEFER)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_DEFER;
@@ -1614,6 +1709,97 @@ Stmt* statement() {
             return stmt;
         }
         
+        // Tuple destructuring: var (a, b) = expr
+        if (decl_type == TOKEN_VAR && match(TOKEN_LPAREN)) {
+            Token names[16]; int name_count = 0;
+            while (!check(TOKEN_RPAREN) && !check(TOKEN_EOF) && name_count < 16) {
+                if (match(TOKEN_UNDERSCORE)) {
+                    // Wildcard: skip this element
+                    static char underscore_name[] = "_";
+                    names[name_count].start = underscore_name;
+                    names[name_count].length = 1;
+                    name_count++;
+                } else {
+                    expect(TOKEN_IDENT, "Expected variable name in tuple destructuring");
+                    names[name_count++] = parser.previous;
+                }
+                if (!match(TOKEN_COMMA)) break;
+            }
+            expect(TOKEN_RPAREN, "Expected ')' after tuple destructuring");
+            expect(TOKEN_EQ, "Expected '=' after tuple destructuring pattern");
+            Expr* init = expression();
+            
+            // Optimization: if init is a tuple literal, assign elements directly
+            if (init->type == EXPR_TUPLE && init->tuple.count >= name_count) {
+                stmt->type = STMT_BLOCK;
+                stmt->block.stmts = malloc(sizeof(Stmt*) * name_count);
+                stmt->block.count = name_count;
+                for (int i = 0; i < name_count; i++) {
+                    if (names[i].length == 1 && names[i].start[0] == '_') {
+                        Stmt* noop = alloc_stmt();
+                        noop->type = STMT_EXPR;
+                        noop->expr = init->tuple.elements[i];
+                        stmt->block.stmts[i] = noop;
+                    } else {
+                        Stmt* vs = alloc_stmt();
+                        vs->type = STMT_VAR;
+                        vs->var.is_const = false; vs->var.is_mutable = true;
+                        vs->var.name = names[i]; vs->var.type = NULL;
+                        vs->var.init = init->tuple.elements[i];
+                        stmt->block.stmts[i] = vs;
+                    }
+                }
+                match(TOKEN_SEMI);
+                return stmt;
+            }
+            
+            stmt->type = STMT_BLOCK;
+            stmt->block.stmts = malloc(sizeof(Stmt*) * (name_count + 1));
+            stmt->block.count = name_count + 1;
+            
+            // var __tdestruct = init
+            Stmt* tup_stmt = alloc_stmt();
+            tup_stmt->type = STMT_VAR;
+            tup_stmt->var.is_const = false; tup_stmt->var.is_mutable = true;
+            static char tdestruct_name[] = "__tdestruct";
+            tup_stmt->var.name.start = tdestruct_name; tup_stmt->var.name.length = 11;
+            tup_stmt->var.init = init; tup_stmt->var.type = NULL;
+            stmt->block.stmts[0] = tup_stmt;
+            
+            for (int i = 0; i < name_count; i++) {
+                // Skip wildcards
+                if (names[i].length == 1 && names[i].start[0] == '_') {
+                    Stmt* noop = alloc_stmt();
+                    noop->type = STMT_EXPR;
+                    Expr* zero = alloc_expr();
+                    zero->type = EXPR_INT;
+                    static char zero_str[] = "0";
+                    zero->token.start = zero_str; zero->token.length = 1;
+                    noop->expr = zero;
+                    stmt->block.stmts[i + 1] = noop;
+                    continue;
+                }
+                Stmt* vs = alloc_stmt();
+                vs->type = STMT_VAR;
+                vs->var.is_const = false; vs->var.is_mutable = true;
+                vs->var.name = names[i]; vs->var.type = NULL;
+                
+                // var a = __tdestruct.0
+                Expr* tup_ref = alloc_expr();
+                tup_ref->type = EXPR_IDENT;
+                tup_ref->token.start = tdestruct_name; tup_ref->token.length = 11;
+                
+                Expr* tidx = alloc_expr();
+                tidx->type = EXPR_TUPLE_INDEX;
+                tidx->tuple_index.tuple = tup_ref;
+                tidx->tuple_index.index = i;
+                vs->var.init = tidx;
+                stmt->block.stmts[i + 1] = vs;
+            }
+            match(TOKEN_SEMI);
+            return stmt;
+        }
+
         if (decl_type == TOKEN_CONST) {
             stmt->type = STMT_CONST;
             stmt->const_stmt.is_const = true;
@@ -2360,9 +2546,12 @@ Stmt* struct_decl() {
             method->param_count = 0;
             method->params = malloc(sizeof(Token) * 16);
             method->param_types = malloc(sizeof(Expr*) * 16);
+            method->param_mutable = malloc(sizeof(bool) * 16);
+            method->param_defaults = malloc(sizeof(Expr*) * 16);
             
             if (!check(TOKEN_RPAREN)) {
                 do {
+                    method->param_mutable[method->param_count] = false;
                     method->params[method->param_count] = parser.current;
                     if (check(TOKEN_SELF)) { advance(); } else { expect(TOKEN_IDENT, "Expected parameter name"); }
                     if (method->params[method->param_count].length == 4 &&
@@ -2372,6 +2561,12 @@ Stmt* struct_decl() {
                     } else {
                         expect(TOKEN_COLON, "Expected ':' after parameter");
                         method->param_types[method->param_count] = parse_type();
+                    }
+                    // Parse default parameter value
+                    if (match(TOKEN_EQ)) {
+                        method->param_defaults[method->param_count] = expression();
+                    } else {
+                        method->param_defaults[method->param_count] = NULL;
                     }
                     method->param_count++;
                 } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
@@ -2778,13 +2973,25 @@ Stmt* enum_decl() {
             
             if (!check(TOKEN_RPAREN)) {
                 do {
-                    // Simple type parsing - just grab the identifier
+                    // Type parsing — skip optional "name:" prefix
                     if (check(TOKEN_IDENT)) {
-                        Expr* type_expr = alloc_expr();
-                        type_expr->type = EXPR_IDENT;
-                        type_expr->token = parser.current;
-                        types[type_count++] = type_expr;
+                        Token first = parser.current;
                         advance();
+                        if (match(TOKEN_COLON)) {
+                            // "name: type" format — skip name, parse type
+                            if (!check(TOKEN_IDENT)) { fprintf(stderr, "Error: Expected type after ':'\n"); break; }
+                            Expr* type_expr = alloc_expr();
+                            type_expr->type = EXPR_IDENT;
+                            type_expr->token = parser.current;
+                            types[type_count++] = type_expr;
+                            advance();
+                        } else {
+                            // Just a type name
+                            Expr* type_expr = alloc_expr();
+                            type_expr->type = EXPR_IDENT;
+                            type_expr->token = first;
+                            types[type_count++] = type_expr;
+                        }
                     } else {
                         fprintf(stderr, "Error: Expected type name in variant\n");
                         break;
@@ -2802,19 +3009,16 @@ Stmt* enum_decl() {
         
         stmt->enum_decl.variant_count++;
         
-        // After each variant, we expect either ',' or '}'
+        // After each variant, we expect either ',' or '}' or next variant (newline-separated)
         if (match(TOKEN_COMMA)) {
-            // Allow trailing comma - check if we're at the end
-            if (check(TOKEN_RBRACE)) {
-                break;
-            }
-            // Continue to next variant
+            if (check(TOKEN_RBRACE)) break;
             continue;
         } else if (check(TOKEN_RBRACE)) {
-            // End of enum
             break;
+        } else if (check(TOKEN_IDENT) || check(TOKEN_NONE) || check(TOKEN_SOME) || check(TOKEN_OK) || check(TOKEN_ERR) || check(TOKEN_TRUE) || check(TOKEN_FALSE)) {
+            // Allow newline-separated variants (no comma needed)
+            continue;
         } else {
-            // Unexpected token
             fprintf(stderr, "Error: Expected ',' or '}' after enum variant, got type=%d\n", parser.current.type);
             break;
         }
@@ -3130,9 +3334,16 @@ Program* parse_program() {
             prog->stmts[prog->count++] = impl_block();
         } else if (check(TOKEN_TRAIT)) {
             prog->stmts[prog->count++] = trait_decl();
-        } else if (check(TOKEN_TEST)) {
-            // T1.6.2: Testing Framework Agent addition
-            prog->stmts[prog->count++] = parse_test_statement();
+        } else if (check(TOKEN_IDENT) && parser.current.length == 4 && memcmp(parser.current.start, "test", 4) == 0) {
+            // T1.6.2: Testing Framework — check if next char after 'test' suggests a test block
+            // test "name" { ... } or test name { ... } — NOT test() or test = ...
+            const char* after = parser.current.start + 4;
+            while (*after == ' ' || *after == '\t') after++;
+            if (*after == '"' || (*after >= 'a' && *after <= 'z') || (*after >= 'A' && *after <= 'Z') || *after == '{') {
+                prog->stmts[prog->count++] = parse_test_statement();
+            } else {
+                prog->stmts[prog->count++] = statement();
+            }
         } else if (check(TOKEN_IDENT) && parser.current.length == 11 && memcmp(parser.current.start, "before_each", 11) == 0) {
             // before_each { } — parsed as test block with special name
             advance();
@@ -3180,7 +3391,16 @@ Program* parse_program() {
             // Global variable/constant declarations
             prog->stmts[prog->count++] = statement();
         } else {
-            prog->stmts[prog->count++] = statement();
+            // Script mode: allow arbitrary statements at top level
+            Stmt* stmt = statement();
+            if (stmt) {
+                prog->stmts[prog->count++] = stmt;
+            } else if (!parser.had_error) {
+                fprintf(stderr, "Error at line %d: Unexpected token '%.*s'\n",
+                    parser.current.line, parser.current.length, parser.current.start);
+                parser.had_error = true;
+                advance();
+            }
         }
     }
     
@@ -3471,6 +3691,26 @@ static Stmt* parse_match_statement() {
 static Expr* parse_type() {
     Expr* base_type;
     
+    // Handle tuple types: (T1, T2, ...)
+    if (match(TOKEN_LPAREN)) {
+        Expr* first = parse_type();
+        if (match(TOKEN_COMMA)) {
+            // It's a tuple type
+            base_type = alloc_expr();
+            base_type->type = EXPR_TUPLE;
+            base_type->tuple.elements = malloc(sizeof(Expr*) * 8);
+            base_type->tuple.count = 1;
+            base_type->tuple.elements[0] = first;
+            do {
+                base_type->tuple.elements[base_type->tuple.count++] = parse_type();
+            } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
+            expect(TOKEN_RPAREN, "Expected ')' after tuple type");
+            return base_type;
+        }
+        expect(TOKEN_RPAREN, "Expected ')' after grouped type");
+        return first; // Just a grouped type (T)
+    }
+    
     // Handle function types: fn(T1, T2) -> R
     if (match(TOKEN_FN)) {
         expect(TOKEN_LPAREN, "Expected '(' after 'fn'");
@@ -3619,13 +3859,29 @@ static Pattern* parse_pattern() {
             }
             
             if (match(TOKEN_LPAREN)) {
-                // Shape.Circle(r) — enum variant with data
+                // Shape.Circle(r) or Shape.Rect(w, h) — enum variant with data
                 pattern->type = PATTERN_OPTION;
                 pattern->option.is_some = true;
                 pattern->option.enum_name = potential_struct;
                 pattern->option.variant_name = variant_name;
+                pattern->option.inners = NULL;
+                pattern->option.inner_count = 0;
                 if (!check(TOKEN_RPAREN)) {
-                    pattern->option.inner = parse_pattern();
+                    // Parse first pattern
+                    Pattern* first = parse_pattern();
+                    if (match(TOKEN_COMMA)) {
+                        // Multiple bindings: Rect(w, h)
+                        pattern->option.inners = safe_malloc(sizeof(Pattern*) * 8);
+                        pattern->option.inners[0] = first;
+                        pattern->option.inner_count = 1;
+                        do {
+                            pattern->option.inners[pattern->option.inner_count++] = parse_pattern();
+                        } while (match(TOKEN_COMMA));
+                        pattern->option.inner = first; // backward compat
+                    } else {
+                        // Single binding: Circle(r)
+                        pattern->option.inner = first;
+                    }
                 } else {
                     pattern->option.inner = NULL;
                 }
@@ -3641,14 +3897,27 @@ static Pattern* parse_pattern() {
             return pattern;
         }
         
-        // Check for enum variant with data: Some(x) or Option_Some(x)
+        // Check for enum variant with data: Some(x) or Rect(w, h)
         if (match(TOKEN_LPAREN)) {
-            pattern->type = PATTERN_OPTION;  // Reuse PATTERN_OPTION for all enum variants
-            pattern->option.is_some = true;  // Has data
+            pattern->type = PATTERN_OPTION;
+            pattern->option.is_some = true;
             pattern->option.variant_name = potential_struct;
+            pattern->option.inners = NULL;
+            pattern->option.inner_count = 0;
             
             if (!check(TOKEN_RPAREN)) {
-                pattern->option.inner = parse_pattern();
+                Pattern* first = parse_pattern();
+                if (match(TOKEN_COMMA)) {
+                    pattern->option.inners = safe_malloc(sizeof(Pattern*) * 8);
+                    pattern->option.inners[0] = first;
+                    pattern->option.inner_count = 1;
+                    do {
+                        pattern->option.inners[pattern->option.inner_count++] = parse_pattern();
+                    } while (match(TOKEN_COMMA));
+                    pattern->option.inner = first;
+                } else {
+                    pattern->option.inner = first;
+                }
             } else {
                 pattern->option.inner = NULL;
             }

@@ -1,0 +1,40 @@
+// Test: Array and tuple destructuring
+fn divmod(a: int, b: int) -> (int, int) {
+    return (a / b, a % b)
+}
+
+fn minmax(a: int, b: int) -> (int, int) {
+    if a < b { return (a, b) }
+    return (b, a)
+}
+
+fn main() {
+    // Array destructuring
+    var arr = [10, 20, 30]
+    var [a, b, c] = arr
+    Test.assert(a == 10, "array destruct a")
+    Test.assert(b == 20, "array destruct b")
+    Test.assert(c == 30, "array destruct c")
+
+    // Spread destructuring
+    var data = [1, 2, 3, 4, 5]
+    var [first, ...rest] = data
+    Test.assert(first == 1, "spread first")
+    Test.assert(rest.len() == 4, "spread rest len")
+
+    // Tuple destructuring
+    var (q, r) = divmod(17, 5)
+    Test.assert(q == 3, "tuple destruct q")
+    Test.assert(r == 2, "tuple destruct r")
+
+    // Tuple destructuring with function
+    var (lo, hi) = minmax(9, 3)
+    Test.assert(lo == 3, "tuple minmax lo")
+    Test.assert(hi == 9, "tuple minmax hi")
+
+    // Wildcard in tuple destructuring
+    var (quotient, _) = divmod(100, 7)
+    Test.assert(quotient == 14, "tuple wildcard")
+
+    println("PASS: destructuring")
+}

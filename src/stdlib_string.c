@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include "wyn_arena.h"
 
 // String module - comprehensive string manipulation functions
 
@@ -31,34 +32,36 @@ int wyn_string_ends_with(const char* str, const char* suffix) {
 
 // To upper: convert string to uppercase
 char* wyn_string_to_upper(const char* str) {
-    char* result = malloc(strlen(str) + 1);
-    for (int i = 0; str[i]; i++) {
+    size_t len = strlen(str);
+    char* result = wyn_str_alloc(len);
+    for (size_t i = 0; i < len; i++) {
         result[i] = toupper(str[i]);
     }
-    result[strlen(str)] = '\0';
+    result[len] = '\0';
     return result;
 }
 
 // To lower: convert string to lowercase
 char* wyn_string_to_lower(const char* str) {
-    char* result = malloc(strlen(str) + 1);
-    for (int i = 0; str[i]; i++) {
+    size_t len = strlen(str);
+    char* result = wyn_str_alloc(len);
+    for (size_t i = 0; i < len; i++) {
         result[i] = tolower(str[i]);
     }
-    result[strlen(str)] = '\0';
+    result[len] = '\0';
     return result;
 }
 
 // Trim: remove leading/trailing whitespace
 char* wyn_string_trim(const char* str) {
     while (isspace(*str)) str++;
-    if (*str == 0) return strdup("");
+    if (*str == 0) return wyn_strdup("");
     
     const char* end = str + strlen(str) - 1;
     while (end > str && isspace(*end)) end--;
     
     size_t len = end - str + 1;
-    char* result = malloc(len + 1);
+    char* result = wyn_str_alloc(len);
     memcpy(result, str, len);
     result[len] = '\0';
     return result;
@@ -66,11 +69,11 @@ char* wyn_string_trim(const char* str) {
 
 // Replace: replace all occurrences of old with new
 char* wyn_str_replace(const char* str, const char* old, const char* new) {
-    if (!str || !old || !new) return strdup(str ? str : "");
+    if (!str || !old || !new) return wyn_strdup(str ? str : "");
     
     size_t old_len = strlen(old);
     size_t new_len = strlen(new);
-    if (old_len == 0) return strdup(str);
+    if (old_len == 0) return wyn_strdup(str);
     
     // Count occurrences
     int count = 0;
@@ -80,11 +83,11 @@ char* wyn_str_replace(const char* str, const char* old, const char* new) {
         p += old_len;
     }
     
-    if (count == 0) return strdup(str);
+    if (count == 0) return wyn_strdup(str);
     
     // Allocate result
     size_t result_len = strlen(str) + count * (new_len - old_len);
-    char* result = malloc(result_len + 1);
+    char* result = wyn_str_alloc(result_len);
     char* dst = result;
     
     // Replace
@@ -118,16 +121,16 @@ char** wyn_string_split(const char* str, const char* delim, int* count) {
         p += strlen(delim);
     }
     
-    // Allocate array
+    // Allocate array (pointer array, not string data)
     char** result = malloc(sizeof(char*) * parts);
     *count = parts;
     
-    // Split
+    // Split — use malloc for working copy since strtok modifies it
     char* str_copy = strdup(str);
     char* token = strtok(str_copy, delim);
     int i = 0;
     while (token && i < parts) {
-        result[i++] = strdup(token);
+        result[i++] = wyn_strdup(token);
         token = strtok(NULL, delim);
     }
     free(str_copy);
@@ -137,7 +140,7 @@ char** wyn_string_split(const char* str, const char* delim, int* count) {
 
 // Join: join array of strings with delimiter
 char* wyn_string_join(char** strings, int count, const char* delim) {
-    if (!strings || count == 0) return strdup("");
+    if (!strings || count == 0) return wyn_strdup("");
     
     // Calculate total length
     size_t total_len = 0;
@@ -148,7 +151,7 @@ char* wyn_string_join(char** strings, int count, const char* delim) {
     }
     
     // Build result
-    char* result = malloc(total_len + 1);
+    char* result = wyn_str_alloc(total_len);
     char* p = result;
     for (int i = 0; i < count; i++) {
         size_t len = strlen(strings[i]);
@@ -168,10 +171,10 @@ char* wyn_str_substring(const char* str, int start, int end) {
     int len = strlen(str);
     if (start < 0) start = 0;
     if (end > len) end = len;
-    if (start >= end) return strdup("");
+    if (start >= end) return wyn_strdup("");
     
     int sub_len = end - start;
-    char* result = malloc(sub_len + 1);
+    char* result = wyn_str_alloc(sub_len);
     memcpy(result, str + start, sub_len);
     result[sub_len] = '\0';
     return result;
@@ -196,9 +199,9 @@ int wyn_string_last_index_of(const char* str, const char* substr) {
 
 // Repeat: repeat string n times
 char* wyn_string_repeat(const char* str, int n) {
-    if (n <= 0) return strdup("");
+    if (n <= 0) return wyn_strdup("");
     size_t len = strlen(str);
-    char* result = malloc(len * n + 1);
+    char* result = wyn_str_alloc(len * n);
     char* p = result;
     for (int i = 0; i < n; i++) {
         memcpy(p, str, len);
@@ -211,11 +214,11 @@ char* wyn_string_repeat(const char* str, int n) {
 // Pad left: pad string to width with pad_char on the left
 char* wyn_string_pad_left(const char* str, int width, const char* pad_char) {
     int len = strlen(str);
-    if (width <= len) return strdup(str);
+    if (width <= len) return wyn_strdup(str);
     
     char pad = pad_char && pad_char[0] ? pad_char[0] : ' ';
     int pad_count = width - len;
-    char* result = malloc(width + 1);
+    char* result = wyn_str_alloc(width);
     
     for (int i = 0; i < pad_count; i++) {
         result[i] = pad;
@@ -228,12 +231,10 @@ char* wyn_string_pad_left(const char* str, int width, const char* pad_char) {
 // Pad right: pad string to width with pad_char on the right
 char* wyn_string_pad_right(const char* str, int width, const char* pad_char) {
     int len = strlen(str);
-    if (width <= len) return strdup(str);
+    if (width <= len) return wyn_strdup(str);
     
     char pad = pad_char && pad_char[0] ? pad_char[0] : ' ';
-    int pad_count = width - len;
-    (void)pad_count;
-    char* result = malloc(width + 1);
+    char* result = wyn_str_alloc(width);
     
     memcpy(result, str, len);
     for (int i = len; i < width; i++) {
@@ -246,7 +247,7 @@ char* wyn_string_pad_right(const char* str, int width, const char* pad_char) {
 // Reverse: reverse string
 char* wyn_string_reverse(const char* str) {
     int len = strlen(str);
-    char* result = malloc(len + 1);
+    char* result = wyn_str_alloc(len);
     for (int i = 0; i < len; i++) {
         result[i] = str[len - 1 - i];
     }
