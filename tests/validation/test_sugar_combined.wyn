@@ -1,0 +1,62 @@
+// Test: Syntactic sugar combined — flowy code patterns
+struct Point { x: int, y: int }
+
+trait Printable {
+    fn to_str(self) -> string
+}
+
+impl Printable for Point {
+    fn to_str(self) -> string {
+        return "(${self.x}, ${self.y})"
+    }
+}
+
+fn double(x: int) -> int { return x * 2 }
+
+fn divmod(a: int, b: int) -> (int, int) {
+    return (a / b, a % b)
+}
+
+fn main() {
+    // Pipe + method chaining
+    var data = [5, 3, 8, 1, 9, 2, 7, 4, 6]
+    var top3 = data.sort().reverse().slice(0, 3)
+    Test.assert(top3[0] == 9, "chain top3[0]")
+
+    // If-expression in string interpolation
+    var x = 42
+    var msg = "x is " + if x > 0 { "positive" } else { "non-positive" }
+    Test.assert(msg == "x is positive", "if-expr in concat")
+
+    // Tuple destructuring + function
+    var (q, r) = divmod(17, 5)
+    Test.assert(q == 3 && r == 2, "tuple destruct combo")
+
+    // Array destructuring
+    var [first, ...rest] = [10, 20, 30, 40]
+    Test.assert(first == 10, "array destruct first")
+    Test.assert(rest.len() == 3, "spread rest")
+
+    // Lambdas + filter + map
+    var evens_doubled = data.filter(|x| x % 2 == 0).map(|x| x * 2)
+    Test.assert(evens_doubled.len() == 4, "filter+map len")
+
+    // Struct + trait
+    var p = Point { x: 3, y: 4 }
+    Test.assert(p.to_str() == "(3, 4)", "trait method")
+
+    // Named arguments
+    var greeting = greet(name: "Wyn", style: "casual")
+    Test.assert(greeting == "Hey Wyn!", "named args")
+
+    // Pipe operator
+    var piped = 5 |> double |> double
+    Test.assert(piped == 20, "pipe chain")
+
+    println("PASS: sugar combined")
+}
+
+fn greet(name: string, style: string = "formal") -> string {
+    if style == "casual" { return "Hey ${name}!" }
+    return "Hello, ${name}."
+}

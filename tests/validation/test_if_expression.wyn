@@ -1,0 +1,23 @@
+// Test: If-expressions
+fn main() {
+    // Basic if-expression
+    var x = 10
+    var label = if x > 5 { "big" } else { "small" }
+    Test.assert(label == "big", "if-expr true branch")
+
+    var label2 = if x < 5 { "big" } else { "small" }
+    Test.assert(label2 == "small", "if-expr false branch")
+
+    // If-expression with int
+    var val = if x == 10 { 100 } else { 0 }
+    Test.assert(val == 100, "if-expr int")
+
+    // Nested if-expression
+    var grade = if x >= 9 { "A" } else { if x >= 7 { "B" } else { "C" } }
+    Test.assert(grade == "A", "nested if-expr")
+
+    // If-expression in function call
+    println(if 1 == 1 { "yes" } else { "no" })
+
+    println("PASS: if-expressions")
+}

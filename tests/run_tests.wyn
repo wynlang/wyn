@@ -101,9 +101,15 @@ fn main() -> int {
         "tests/validation/test_method_chaining.wyn",
         "tests/validation/test_multiline_lambda.wyn",
         "tests/validation/test_expressive.wyn",
-        "tests/validation/test_showcase.wyn"
+        "tests/validation/test_showcase.wyn",
+        "tests/validation/test_pipe_operator.wyn",
+        "tests/validation/test_if_expression.wyn",
+        "tests/validation/test_destructuring.wyn",
+        "tests/validation/test_lambdas_functional.wyn",
+        "tests/concurrency/test_spawn_first_class.wyn",
+        "tests/validation/test_sugar_combined.wyn"
     ]
-    var count = 90
+    var count = 96
     var pass = 0
     var fail = 0
     for i in 0..count {

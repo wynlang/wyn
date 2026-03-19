@@ -1668,6 +1668,73 @@ Stmt* statement() {
             return stmt;
         }
         
+        // Tuple destructuring: var (a, b) = expr
+        if (decl_type == TOKEN_VAR && match(TOKEN_LPAREN)) {
+            Token names[16]; int name_count = 0;
+            while (!check(TOKEN_RPAREN) && !check(TOKEN_EOF) && name_count < 16) {
+                if (match(TOKEN_UNDERSCORE)) {
+                    // Wildcard: skip this element
+                    static char underscore_name[] = "_";
+                    names[name_count].start = underscore_name;
+                    names[name_count].length = 1;
+                    name_count++;
+                } else {
+                    expect(TOKEN_IDENT, "Expected variable name in tuple destructuring");
+                    names[name_count++] = parser.previous;
+                }
+                if (!match(TOKEN_COMMA)) break;
+            }
+            expect(TOKEN_RPAREN, "Expected ')' after tuple destructuring");
+            expect(TOKEN_EQ, "Expected '=' after tuple destructuring pattern");
+            Expr* init = expression();
+            
+            stmt->type = STMT_BLOCK;
+            stmt->block.stmts = malloc(sizeof(Stmt*) * (name_count + 1));
+            stmt->block.count = name_count + 1;
+            
+            // var __tdestruct = init
+            Stmt* tup_stmt = alloc_stmt();
+            tup_stmt->type = STMT_VAR;
+            tup_stmt->var.is_const = false; tup_stmt->var.is_mutable = true;
+            static char tdestruct_name[] = "__tdestruct";
+            tup_stmt->var.name.start = tdestruct_name; tup_stmt->var.name.length = 11;
+            tup_stmt->var.init = init; tup_stmt->var.type = NULL;
+            stmt->block.stmts[0] = tup_stmt;
+            
+            for (int i = 0; i < name_count; i++) {
+                // Skip wildcards
+                if (names[i].length == 1 && names[i].start[0] == '_') {
+                    Stmt* noop = alloc_stmt();
+                    noop->type = STMT_EXPR;
+                    Expr* zero = alloc_expr();
+                    zero->type = EXPR_INT;
+                    static char zero_str[] = "0";
+                    zero->token.start = zero_str; zero->token.length = 1;
+                    noop->expr = zero;
+                    stmt->block.stmts[i + 1] = noop;
+                    continue;
+                }
+                Stmt* vs = alloc_stmt();
+                vs->type = STMT_VAR;
+                vs->var.is_const = false; vs->var.is_mutable = true;
+                vs->var.name = names[i]; vs->var.type = NULL;
+                
+                // var a = __tdestruct.0
+                Expr* tup_ref = alloc_expr();
+                tup_ref->type = EXPR_IDENT;
+                tup_ref->token.start = tdestruct_name; tup_ref->token.length = 11;
+                
+                Expr* tidx = alloc_expr();
+                tidx->type = EXPR_TUPLE_INDEX;
+                tidx->tuple_index.tuple = tup_ref;
+                tidx->tuple_index.index = i;
+                vs->var.init = tidx;
+                stmt->block.stmts[i + 1] = vs;
+            }
+            match(TOKEN_SEMI);
+            return stmt;
+        }
+
         if (decl_type == TOKEN_CONST) {
             stmt->type = STMT_CONST;
             stmt->const_stmt.is_const = true;

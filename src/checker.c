@@ -3295,11 +3295,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return sym->type;
         }
         case EXPR_PIPELINE: {
-            // Check all stages
+            // Check all stages, return type of last stage
+            Type* last_type = builtin_int;
             for (int i = 0; i < expr->pipeline.stage_count; i++) {
-                check_expr(expr->pipeline.stages[i], scope);
+                last_type = check_expr(expr->pipeline.stages[i], scope);
             }
-            return builtin_int;
+            expr->expr_type = last_type;
+            return last_type;
         }
         case EXPR_IF_EXPR: {
             check_expr(expr->if_expr.condition, scope);
@@ -3331,10 +3333,23 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             return builtin_string;
         case EXPR_AWAIT:
-            if (expr->await.expr) check_expr(expr->await.expr, scope);
+            if (expr->await.expr) {
+                Type* inner = check_expr(expr->await.expr, scope);
+                // Propagate the inner type for codegen
+                if (expr->await.expr && expr->await.expr->expr_type) {
+                    expr->expr_type = expr->await.expr->expr_type;
+                    return expr->await.expr->expr_type;
+                }
+                if (inner) { expr->expr_type = inner; return inner; }
+            }
             return builtin_int;
         case EXPR_SPAWN:
-            if (expr->spawn.call) check_expr(expr->spawn.call, scope);
+            if (expr->spawn.call) {
+                Type* call_type = check_expr(expr->spawn.call, scope);
+                // The spawn returns a future wrapping the call's return type
+                // Store the inner type for await to use
+                if (call_type) { expr->expr_type = call_type; return call_type; }
+            }
             return builtin_int;
         case EXPR_RANGE:
             return builtin_int; // Range type

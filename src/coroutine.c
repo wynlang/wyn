@@ -14,7 +14,7 @@
 #include "../vendor/minicoro/minicoro.h"
 #include "coroutine.h"
 
-#define WYN_CORO_STACK_SIZE 8388608
+#define WYN_CORO_STACK_SIZE 65536
 
 static size_t wyn_coro_stack_size(void) {
     static size_t sz = 0;

@@ -275,6 +275,12 @@ void codegen_stmt(Stmt* stmt) {
                         c_type = "const char*";
                         is_already_const = true;
                     }
+                    extern int is_known_array_var(const char*);
+                    if (is_known_array_var(_idn)) {
+                        c_type = "WynArray";
+                        char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                        extern void register_array_var(const char*); register_array_var(_vn);
+                    }
                 } else if (stmt->var.init->type == EXPR_STRING_INTERP) {
                     c_type = "char*";
                     needs_arc_management = true;
