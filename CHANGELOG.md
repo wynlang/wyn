@@ -4,15 +4,16 @@
 - Generators/yield: `yield` keyword, `.collect()`, `.map()`, `.filter()`, `.take()`, `for x in gen()`
 - Tuple destructuring: `var (a, b) = divmod(17, 5)` with wildcard `_` support
 - Array destructuring fix: `var [a, b, c] = arr` now works with all array types
-- Pipe operator: `5 |> double |> add_one` (was parsed but untested, now fully validated)
-- If-expressions: `var x = if cond { a } else { b }` (was parsed but untested, now validated)
+- Ternary operator: `var y = x > 5 ? 100 : 0` (was crashing compiler — infinite loop)
+- Pipe operator: `5 |> double |> add_one` (fully validated)
+- If-expressions: `var x = if cond { a } else { b }` (fully validated)
 - Improved type checker: spawn/await/pipeline now propagate return types
 - Coroutine stack: 8MB → 64KB default (128x less memory per spawn, env override: WYN_CORO_STACK)
 - Debugger: `wyn debug` with DWARF + lldb integration, shows .wyn source
 - LSP: find-all-references, rename, prepareRename (scope-aware, cross-file)
 - 5 new packages: sdl, opengl, wgpu, target-ios, target-android (36 total)
 - Cross-compile CI: linux-arm64 + windows-x64 via zig
-- 107 tests (was 90), 43 sample apps
+- 110 tests (was 90), 43 sample apps
 - Fix: nested string interpolation crash
 - Fix: type alias checker for string/float/bool types
 - Fix: SQL injection in sample-apps/web/rest-api

@@ -99,6 +99,16 @@ static bool check(WynTokenType type) {
     return parser.current.type == type;
 }
 
+// Check if the token after current looks like a value (for ternary ? disambiguation)
+static bool check_next_is_value(void) {
+    if (!parser.current.start) return false;
+    const char* p = parser.current.start + parser.current.length;
+    while (*p && (*p == ' ' || *p == '\t')) p++;
+    if (!*p) return false;
+    return (*p >= '0' && *p <= '9') || *p == '"' || *p == '\'' || *p == '(' || *p == '-' ||
+           (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_';
+}
+
 static bool match(WynTokenType type) {
     if (!check(type)) return false;
     advance();
@@ -411,8 +421,8 @@ static Expr* primary() {
         expr->type = EXPR_IDENT;
         expr->token = name;
         
-        // T2.5.1: Check for optional type suffix '?'
-        if (check(TOKEN_QUESTION)) {
+        // T2.5.1: Check for optional type suffix '?' — only in type context
+        if (check(TOKEN_QUESTION) && !check_next_is_value() && parser.allow_struct_init == false) {
             advance(); // consume '?'
             Expr* optional_expr = alloc_expr();
             optional_expr->type = EXPR_OPTIONAL_TYPE;
@@ -1184,8 +1194,10 @@ static Expr* call() {
                 }
             }
             }
-        } else if (match(TOKEN_QUESTION)) {
+        } else if (check(TOKEN_QUESTION) && !check_next_is_value()) {
             // TASK-028: Handle ? operator for error propagation
+            // Only consume ? when NOT followed by a value (to avoid ternary confusion)
+            advance(); // consume ?
             Expr* try_expr = alloc_expr();
             try_expr->type = EXPR_TRY;
             try_expr->try_expr.value = expr;
@@ -1339,6 +1351,20 @@ static Expr* pipeline() {
 
 static Expr* assignment() {
     Expr* expr = pipeline();
+    
+    // Ternary operator: expr ? then : else
+    if (check(TOKEN_QUESTION) && check_next_is_value()) {
+        advance(); // consume ?
+        Expr* then_expr = pipeline();
+        expect(TOKEN_COLON, "Expected ':' in ternary expression");
+        Expr* else_expr = pipeline();
+        Expr* ternary = alloc_expr();
+        ternary->type = EXPR_TERNARY;
+        ternary->ternary.condition = expr;
+        ternary->ternary.then_expr = then_expr;
+        ternary->ternary.else_expr = else_expr;
+        return ternary;
+    }
     
     // Check for null expression
     if (!expr) {
