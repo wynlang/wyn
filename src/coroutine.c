@@ -10,6 +10,7 @@
 #define MCO_MIN_STACK_SIZE 4096
 #define MCO_DEFAULT_STACK_SIZE 8388608
 #define MINICORO_IMPL
+#define MCO_LOG(s) ((void)0)
 #include "../vendor/minicoro/minicoro.h"
 #include "coroutine.h"
 
