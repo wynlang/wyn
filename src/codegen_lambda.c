@@ -375,9 +375,13 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 // Emit body statements (multiline lambda)
                 for (int si = 0; si < expr->lambda.body_stmt_count; si++)
                     pos += lambda_stmt_to_string(expr->lambda.body_stmts[si], func_code + pos, 8192 - pos);
-                pos += snprintf(func_code + pos, 8192 - pos, "    return ");
-                pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
-                pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
+                if (expr->lambda.body) {
+                    pos += snprintf(func_code + pos, 8192 - pos, "    return ");
+                    pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
+                    pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
+                } else {
+                    pos += snprintf(func_code + pos, 8192 - pos, "    return 0;\n}\n");
+                }
             } else {
                 // Non-return lambda with captures: use static globals
                 if (capture_count > 0) {
@@ -403,9 +407,13 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 // Emit body statements (multiline lambda)
                 for (int si = 0; si < expr->lambda.body_stmt_count; si++)
                     pos += lambda_stmt_to_string(expr->lambda.body_stmts[si], func_code + pos, 8192 - pos);
-                pos += snprintf(func_code + pos, 8192 - pos, "    return ");
-                pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
-                pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
+                if (expr->lambda.body) {
+                    pos += snprintf(func_code + pos, 8192 - pos, "    return ");
+                    pos += lambda_expr_to_string(expr->lambda.body, func_code + pos, 8192 - pos);
+                    pos += snprintf(func_code + pos, 8192 - pos, ";\n}\n");
+                } else {
+                    pos += snprintf(func_code + pos, 8192 - pos, "    return 0;\n}\n");
+                }
                 // Undef capture aliases
                 for (int i = 0; i < capture_count; i++)
                     pos += snprintf(func_code + pos, 8192 - pos, "#undef %s\n", captured_vars[i]);

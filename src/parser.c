@@ -1703,6 +1703,30 @@ Stmt* statement() {
             expect(TOKEN_EQ, "Expected '=' after tuple destructuring pattern");
             Expr* init = expression();
             
+            // Optimization: if init is a tuple literal, assign elements directly
+            if (init->type == EXPR_TUPLE && init->tuple.count >= name_count) {
+                stmt->type = STMT_BLOCK;
+                stmt->block.stmts = malloc(sizeof(Stmt*) * name_count);
+                stmt->block.count = name_count;
+                for (int i = 0; i < name_count; i++) {
+                    if (names[i].length == 1 && names[i].start[0] == '_') {
+                        Stmt* noop = alloc_stmt();
+                        noop->type = STMT_EXPR;
+                        noop->expr = init->tuple.elements[i];
+                        stmt->block.stmts[i] = noop;
+                    } else {
+                        Stmt* vs = alloc_stmt();
+                        vs->type = STMT_VAR;
+                        vs->var.is_const = false; vs->var.is_mutable = true;
+                        vs->var.name = names[i]; vs->var.type = NULL;
+                        vs->var.init = init->tuple.elements[i];
+                        stmt->block.stmts[i] = vs;
+                    }
+                }
+                match(TOKEN_SEMI);
+                return stmt;
+            }
+            
             stmt->type = STMT_BLOCK;
             stmt->block.stmts = malloc(sizeof(Stmt*) * (name_count + 1));
             stmt->block.count = name_count + 1;

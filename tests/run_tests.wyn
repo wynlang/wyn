@@ -115,9 +115,12 @@ fn main() -> int {
         "tests/concurrency/test_concurrency_patterns.wyn",
         "tests/validation/test_string_interpolation.wyn",
         "tests/validation/test_for_loops.wyn",
-        "tests/validation/test_hashmap_ops.wyn"
+        "tests/validation/test_hashmap_ops.wyn",
+        "tests/validation/test_tuple_destruct_complete.wyn",
+        "tests/validation/test_void_lambda_blocks.wyn",
+        "tests/validation/test_complete_flow.wyn"
     ]
-    var count = 104
+    var count = 107
     var pass = 0
     var fail = 0
     for i in 0..count {

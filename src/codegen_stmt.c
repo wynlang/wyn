@@ -876,7 +876,7 @@ void codegen_stmt(Stmt* stmt) {
                         }
                     }
                 } else if (stmt->var.init->type == EXPR_TUPLE) {
-                    // Tuple type - use __auto_type to match anonymous struct
+                    // Tuple type - use __auto_type (clang only, TCC uses typeof path)
                     c_type = "__auto_type";
                 } else if (stmt->var.init->type == EXPR_CALL) {
                     // Detect module constructor calls first: Module.new()
@@ -965,6 +965,12 @@ void codegen_stmt(Stmt* stmt) {
                                             c_type = "ResultInt";
                                             break;
                                         }
+                                    } else if (fs->fn.return_type->type == EXPR_TUPLE) {
+                                        // Tuple return type: use _wyn_tup_<fn_name>
+                                        static char _tup_var_buf[256];
+                                        snprintf(_tup_var_buf, sizeof(_tup_var_buf), "_wyn_tup_%.*s", (int)fn_name.length, fn_name.start);
+                                        c_type = _tup_var_buf;
+                                        break;
                                     } else if (fs->fn.return_type->type == EXPR_IDENT) {
                                     Token rt = fs->fn.return_type->token;
                                     if (rt.length == 9 && memcmp(rt.start, "ResultInt", 9) == 0) {

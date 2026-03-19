@@ -12,13 +12,16 @@
 - LSP: find-all-references, rename, prepareRename (scope-aware, cross-file)
 - 5 new packages: sdl, opengl, wgpu, target-ios, target-android (36 total)
 - Cross-compile CI: linux-arm64 + windows-x64 via zig
-- 104 tests (was 90), 43 sample apps
+- 107 tests (was 90), 43 sample apps
 - Fix: nested string interpolation crash
 - Fix: type alias checker for string/float/bool types
 - Fix: SQL injection in sample-apps/web/rest-api
 - Fix: fragile Time.sleep() replaced with await_all in sample apps
 - Fix: checker crash on void lambdas with body_stmts (NULL body)
 - Fix: pipe-style lambda blocks: `|x| { sum += x }` now works
+- Fix: tuple literal destructuring: `var (a, b) = (10, 20)` optimized to direct assignment
+- Fix: tuple fn destructuring: `var (q, r) = divmod(17, 5)` uses correct _wyn_tup_ type
+- Fix: void lambda codegen: emit `return 0` when body is NULL (was missing return)
 
 ## v1.8.0 (2026-02-27)
 - Concurrency: spawn/await with M:N scheduler, coroutine pool, await_all/await_any
