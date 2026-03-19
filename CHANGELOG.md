@@ -12,11 +12,13 @@
 - LSP: find-all-references, rename, prepareRename (scope-aware, cross-file)
 - 5 new packages: sdl, opengl, wgpu, target-ios, target-android (36 total)
 - Cross-compile CI: linux-arm64 + windows-x64 via zig
-- 96 tests (was 90), 43 sample apps
+- 104 tests (was 90), 43 sample apps
 - Fix: nested string interpolation crash
 - Fix: type alias checker for string/float/bool types
 - Fix: SQL injection in sample-apps/web/rest-api
 - Fix: fragile Time.sleep() replaced with await_all in sample apps
+- Fix: checker crash on void lambdas with body_stmts (NULL body)
+- Fix: pipe-style lambda blocks: `|x| { sum += x }` now works
 
 ## v1.8.0 (2026-02-27)
 - Concurrency: spawn/await with M:N scheduler, coroutine pool, await_all/await_any

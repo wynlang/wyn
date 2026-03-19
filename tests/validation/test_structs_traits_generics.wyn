@@ -1,0 +1,45 @@
+// Test: Structs, traits, generics — the type system
+struct Vec2 { x: int, y: int }
+
+impl Vec2 {
+    fn add(self, other: Vec2) -> Vec2 {
+        return Vec2 { x: self.x + other.x, y: self.y + other.y }
+    }
+    fn magnitude_sq(self) -> int {
+        return self.x * self.x + self.y * self.y
+    }
+}
+
+trait Displayable {
+    fn display(self) -> string
+}
+
+impl Displayable for Vec2 {
+    fn display(self) -> string {
+        return "(${self.x}, ${self.y})"
+    }
+}
+
+struct Pair<T> {
+    first: T
+    second: T
+}
+
+fn main() {
+    // Struct creation and methods
+    var a = Vec2 { x: 3, y: 4 }
+    var b = Vec2 { x: 1, y: 2 }
+    var c = a.add(b)
+    Test.assert(c.x == 4, "struct method x")
+    Test.assert(c.y == 6, "struct method y")
+    Test.assert(a.magnitude_sq() == 25, "magnitude_sq")
+
+    // Trait method
+    Test.assert(a.display() == "(3, 4)", "trait display")
+
+    // Generic struct
+    var p = Pair { first: 10, second: 20 }
+    println("Pair: " + p.first.to_string() + ", " + p.second.to_string())
+
+    println("PASS: structs traits generics")
+}

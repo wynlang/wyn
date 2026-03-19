@@ -1,0 +1,38 @@
+// Test: String interpolation edge cases
+struct User { name: string, age: int }
+
+impl User {
+    fn greeting(self) -> string {
+        return "Hi, I'm ${self.name} (${self.age})"
+    }
+}
+
+fn main() {
+    // Basic
+    var x = 42
+    Test.assert("x=${x}" == "x=42", "basic")
+
+    // Method call in interpolation
+    Test.assert("${"hello".upper()}" == "HELLO", "method")
+
+    // Arithmetic
+    Test.assert("${2 + 3}" == "5", "arith")
+
+    // Multiple interpolations
+    var name = "Wyn"
+    Test.assert("${name} has ${x} pts" == "Wyn has 42 pts", "multi")
+
+    // Struct field
+    var u = User { name: "Alice", age: 30 }
+    Test.assert(u.greeting() == "Hi, I'm Alice (30)", "struct interp")
+
+    // Array length
+    var arr = [1, 2, 3]
+    Test.assert("len=${arr.len()}" == "len=3", "array len")
+
+    // Conditional in interpolation
+    var status = if x > 0 { "positive" } else { "negative" }
+    Test.assert("x is ${status}" == "x is positive", "if-expr in interp")
+
+    println("PASS: string interpolation")
+}

@@ -802,17 +802,32 @@ static Expr* primary() {
         
         // Parse body - can be expression or block
         if (check(TOKEN_LBRACE)) {
-            // Block body: { return expr; }
-            // Skip the opening brace
-            advance();
+            // Block body: |x| { stmts; return expr; }
+            // Delegate to the same multiline lambda parsing as fn-style
+            advance(); // consume {
             
-            // Skip to return statement
-            if (match(TOKEN_RETURN)) {
-                lambda_expr->lambda.body = expression();
-                match(TOKEN_SEMI); // optional semi after return in lambda ';' after return expression");
-            } else {
-                // No return, just parse expression
-                lambda_expr->lambda.body = expression();
+            lambda_expr->lambda.body_stmts = malloc(sizeof(Stmt*) * 32);
+            lambda_expr->lambda.body_stmt_count = 0;
+            lambda_expr->lambda.body = NULL;
+            
+            while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                if (check(TOKEN_RETURN)) {
+                    advance();
+                    lambda_expr->lambda.body = expression();
+                    match(TOKEN_SEMI);
+                    break;
+                }
+                // Parse as expression statement
+                Expr* e = expression();
+                if (e) {
+                    Stmt* es = alloc_stmt();
+                    es->type = STMT_EXPR;
+                    es->expr = e;
+                    lambda_expr->lambda.body_stmts[lambda_expr->lambda.body_stmt_count++] = es;
+                }
+                match(TOKEN_SEMI);
+                // Also handle var declarations
+                if (check(TOKEN_VAR) || check(TOKEN_CONST)) break; // bail — too complex for pipe lambda
             }
             
             expect(TOKEN_RBRACE, "Expected '}' after lambda block body");

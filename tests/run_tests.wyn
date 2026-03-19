@@ -107,9 +107,17 @@ fn main() -> int {
         "tests/validation/test_destructuring.wyn",
         "tests/validation/test_lambdas_functional.wyn",
         "tests/concurrency/test_spawn_first_class.wyn",
-        "tests/validation/test_sugar_combined.wyn"
+        "tests/validation/test_sugar_combined.wyn",
+        "tests/validation/test_pipe_lambda_blocks.wyn",
+        "tests/validation/test_method_chain_comprehensive.wyn",
+        "tests/validation/test_match_control_flow.wyn",
+        "tests/validation/test_structs_traits_generics.wyn",
+        "tests/concurrency/test_concurrency_patterns.wyn",
+        "tests/validation/test_string_interpolation.wyn",
+        "tests/validation/test_for_loops.wyn",
+        "tests/validation/test_hashmap_ops.wyn"
     ]
-    var count = 96
+    var count = 104
     var pass = 0
     var fail = 0
     for i in 0..count {

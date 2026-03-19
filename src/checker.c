@@ -3377,14 +3377,26 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             
             // Check lambda body in the new scope
-            Type* body_type = check_expr(expr->lambda.body, &lambda_scope);
-            if (!body_type) {
-                had_error = true;
-                return NULL;
+            Type* body_type = builtin_void;
+            if (expr->lambda.body) {
+                body_type = check_expr(expr->lambda.body, &lambda_scope);
+                if (!body_type) {
+                    had_error = true;
+                    return NULL;
+                }
             }
             
             // Perform capture analysis - find free variables in lambda body
-            analyze_lambda_captures(&expr->lambda, expr->lambda.body, scope);
+            if (expr->lambda.body) {
+                analyze_lambda_captures(&expr->lambda, expr->lambda.body, scope);
+            }
+            // Also analyze captures in body statements
+            for (int ci = 0; ci < expr->lambda.body_stmt_count; ci++) {
+                Stmt* cs = expr->lambda.body_stmts[ci];
+                if (cs && cs->type == STMT_EXPR && cs->expr) {
+                    analyze_lambda_captures(&expr->lambda, cs->expr, scope);
+                }
+            }
             
             // Create function type for lambda
             Type* lambda_type = make_type(TYPE_FUNCTION);
