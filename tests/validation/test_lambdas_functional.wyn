@@ -1,0 +1,39 @@
+// Test: Lambda syntaxes and functional patterns
+fn main() {
+    var nums = [1, 2, 3, 4, 5]
+
+    // Pipe-style lambda
+    var doubled = nums.map(|x| x * 2)
+    Test.assert(doubled[0] == 2, "pipe lambda map")
+    Test.assert(doubled[4] == 10, "pipe lambda map last")
+
+    // fn-arrow lambda
+    var tripled = nums.map(fn(x: int) => x * 3)
+    Test.assert(tripled[0] == 3, "arrow lambda")
+
+    // fn-block lambda with return
+    var squared = nums.map(fn(x: int) -> int { return x * x })
+    Test.assert(squared[2] == 9, "block lambda")
+
+    // filter
+    var evens = nums.filter(|x| x % 2 == 0)
+    Test.assert(evens.len() == 2, "filter len")
+    Test.assert(evens[0] == 2, "filter first")
+
+    // each (void lambda)
+    var sum = 0
+    nums.each(fn(x: int) { sum += x })
+    Test.assert(sum == 15, "each sum")
+
+    // Closure capture
+    var multiplier = 10
+    var scaled = nums.map(|x| x * multiplier)
+    Test.assert(scaled[0] == 10, "closure capture")
+
+    // Method chaining with lambdas
+    var result = [5, 3, 8, 1, 9].sort().reverse().slice(0, 3)
+    Test.assert(result[0] == 9, "chain first")
+    Test.assert(result[2] == 5, "chain third")
+
+    println("PASS: lambdas and functional")
+}

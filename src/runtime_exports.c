@@ -1,5 +1,3 @@
-// Compile all inline functions from wyn_runtime.h into the runtime library
-#define _POSIX_C_SOURCE 200809L
+// runtime_exports.c — compile inline functions from wyn_runtime.h into libwyn_rt.a
+// This ensures functions declared in wyn_runtime_slim.h are available when linking
 #include "wyn_runtime.h"
-// This file exists solely to ensure all inline/static functions from
-// wyn_runtime.h are compiled into libwyn_rt.a

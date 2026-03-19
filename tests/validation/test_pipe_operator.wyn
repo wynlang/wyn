@@ -1,0 +1,24 @@
+// Test: Pipe operator |>
+fn double(x: int) -> int { return x * 2 }
+fn add_one(x: int) -> int { return x + 1 }
+fn negate(x: int) -> int { return 0 - x }
+
+fn main() {
+    // Basic pipe
+    var r1 = 5 |> double
+    Test.assert(r1 == 10, "basic pipe")
+
+    // Chained pipe
+    var r2 = 5 |> double |> add_one
+    Test.assert(r2 == 11, "chained pipe")
+
+    // Triple pipe
+    var r3 = 3 |> double |> double |> add_one
+    Test.assert(r3 == 13, "triple pipe")
+
+    // Pipe with negate
+    var r4 = 5 |> negate
+    Test.assert(r4 == -5, "pipe negate")
+
+    println("PASS: pipe operator")
+}

@@ -74,40 +74,29 @@ void merge_module_exports(Program* module, Program* target, ImportStmt* import) 
     (void)import;
     if (!module || !target) return;
     
-    // Merge ALL functions for codegen (including private ones for dependencies)
-    // Exported functions are wrapped in STMT_EXPORT, private ones are just STMT_FN
-    // The function registration loop will only register STMT_EXPORT functions
     for (int i = 0; i < module->count; i++) {
         Stmt* stmt = module->stmts[i];
         
-        if (stmt->type == STMT_EXPORT && stmt->export.stmt && stmt->export.stmt->type == STMT_FN) {
-            // Exported function - add the export wrapper
-            bool already_exists = false;
-            for (int k = 0; k < target->count; k++) {
-                if (target->stmts[k] == stmt) {
-                    already_exists = true;
-                    break;
-                }
-            }
-            
-            if (!already_exists) {
+        // Check if already merged
+        bool already_exists = false;
+        for (int k = 0; k < target->count; k++) {
+            if (target->stmts[k] == stmt) { already_exists = true; break; }
+        }
+        if (already_exists) continue;
+        
+        // Merge exported functions, enums, structs, and vars
+        if (stmt->type == STMT_EXPORT && stmt->export.stmt) {
+            int inner_type = stmt->export.stmt->type;
+            if (inner_type == STMT_FN || inner_type == STMT_ENUM || 
+                inner_type == STMT_STRUCT || inner_type == STMT_VAR) {
                 target->stmts = realloc(target->stmts, sizeof(Stmt*) * (target->count + 1));
                 target->stmts[target->count++] = stmt;
             }
-        } else if (stmt->type == STMT_FN) {
-            // Private function - add for codegen but won't be registered
-            bool already_exists = false;
-            for (int k = 0; k < target->count; k++) {
-                if (target->stmts[k] == stmt) {
-                    already_exists = true;
-                    break;
-                }
-            }
-            
-            if (!already_exists) {
-                target->stmts = realloc(target->stmts, sizeof(Stmt*) * (target->count + 1));
-                target->stmts[target->count++] = stmt;
-            }
+        } else if (stmt->type == STMT_FN || stmt->type == STMT_VAR || 
+                   stmt->type == STMT_ENUM || stmt->type == STMT_STRUCT) {
+            // Private items needed for dependencies
+            target->stmts = realloc(target->stmts, sizeof(Stmt*) * (target->count + 1));
+            target->stmts[target->count++] = stmt;
         }
     }
 }

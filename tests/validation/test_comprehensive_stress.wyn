@@ -1,0 +1,72 @@
+// Stress test: RC pathological patterns, closures, recursive strings, HashMap
+
+fn repeat_str(s: string, n: int) -> string {
+    if n <= 0 { return "" }
+    if n == 1 { return s }
+    return s + repeat_str(s, n - 1)
+}
+
+fn join_range(start: int, end_val: int, sep: string) -> string {
+    if start >= end_val { return "" }
+    if start == end_val - 1 { return start.to_string() }
+    return start.to_string() + sep + join_range(start + 1, end_val, sep)
+}
+
+fn apply(x: int, f: fn(int) -> int) -> int {
+    return f(x)
+}
+
+fn main() {
+    Test.init("Comprehensive Stress")
+
+    // RC: 10K reassignments
+    var s = ""
+    for i in 0..10000 {
+        s = "val_" + i.to_string()
+    }
+    Test.assert_eq_str(s, "val_9999", "10K reassignments")
+
+    // RC: concat accumulation
+    var acc = ""
+    for i in 0..100 {
+        acc = acc + "."
+    }
+    Test.assert_eq_int(acc.len(), 100, "100 concat")
+
+    // RC: copy chain
+    var x = "original " + "value"
+    var y = x
+    var z = y
+    x = "changed"
+    y = "also changed"
+    Test.assert_eq_str(z, "original value", "copy chain")
+
+    // Recursive string
+    Test.assert_eq_str(repeat_str("ab", 3), "ababab", "repeat 3x")
+    Test.assert_eq_str(join_range(0, 5, ","), "0,1,2,3,4", "join range")
+
+    // Closures
+    var offset = 100
+    var r = apply(5, fn(x: int) -> int { return x + offset })
+    Test.assert_eq_int(r, 105, "closure capture")
+
+    // Pipe
+    var piped = 3 |> fn(x: int) -> int { return x + 1 } |> fn(x: int) -> int { return x * 10 }
+    Test.assert_eq_int(piped, 40, "chained pipe")
+
+    // HashMap stress
+    var m = HashMap.new()
+    for i in 0..100 {
+        m.set("k" + i.to_string(), "v" + i.to_string())
+    }
+    Test.assert_eq_int(m.len(), 100, "100 map entries")
+    Test.assert_eq_str(m.get("k99"), "v99", "map get last")
+    m.remove("k50")
+    Test.assert(!m.has("k50"), "map remove")
+
+    // String methods chain
+    var chain = "  Hello World  ".trim().upper()
+    Test.assert_eq_str(chain, "HELLO WORLD", "method chain")
+
+    Test.summary()
+}

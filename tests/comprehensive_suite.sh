@@ -10,7 +10,7 @@ run_test() {
     local expected="$3"
     
     echo "$code" > /tmp/test_wyn.wyn
-    if ./wyn-llvm /tmp/test_wyn.wyn 2>&1 > /dev/null && [ -f /tmp/test_wyn.out ]; then
+    if ./wyn run /tmp/test_wyn.wyn 2>&1 > /dev/null && [ -f /tmp/test_wyn.out ]; then
         /tmp/test_wyn.out > /dev/null 2>&1
         local result=$?
         if [ "$result" -eq "$expected" ]; then

@@ -1,14 +1,15 @@
-// Fibonacci Example - Demonstrates recursion and functions
+// Fibonacci - Demonstrates recursion and performance
 
 fn fibonacci(n: int) -> int {
     if n <= 1 {
-        return n;
+        return n
     }
-    return fibonacci(n - 1) + fibonacci(n - 2);
+    return fibonacci(n - 1) + fibonacci(n - 2)
 }
 
 fn main() -> int {
-    var fib5 = fibonacci(5);
-    var fib7 = fibonacci(7);
-    return fib5 + fib7;
+    for i in 0..10 {
+        println("fib(" + i.to_string() + ") = " + fibonacci(i).to_string())
+    }
+    return 0
 }

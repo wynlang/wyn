@@ -29,6 +29,10 @@ int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
 
     const char* extra_flags = (include_path && include_path[0]) ? include_path : "";
     
+    // Detect bundled system headers/CRT (Lambda deployment)
+    // TCC is configured with correct --sysincludepaths/--crtprefix at build time,
+    // so no extra flags needed for system headers/CRT.
+
     // Use pre-compiled TCC runtime library for speed
     char rt_tcc[512];
     snprintf(rt_tcc, sizeof(rt_tcc), "%s/vendor/tcc/lib/libwyn_rt_tcc.a", wyn_root);
@@ -49,40 +53,26 @@ int wyn_tcc_compile_to_exe(const char* c_source, const char* output_path,
         }
         
         snprintf(cmd, sizeof(cmd),
-            "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -w %s %s "
-            "%s %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s %s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
-            tcc_bin, output_path, wyn_root, wyn_root, extra_flags, sqlite_inc,
-            c_path, wyn_root, wyn_root, rt_tcc, sqlite_file);
+            "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s %s "
+            "%s ",
+            tcc_bin, output_path, wyn_root, wyn_root, wyn_root, wyn_root, extra_flags, sqlite_inc,
+            c_path);
+        // Append all runtime source files (same list as main.c wyn build TCC path)
+        int p = strlen(cmd);
+        const char* srcs[] = {"wyn_arena","wyn_rc","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","wyn_wrapper","wyn_interface","coroutine","spawn","spawn_fast","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
+        for (int si = 0; srcs[si]; si++) p += snprintf(cmd + p, sizeof(cmd) - p, "%s/src/%s.c ", wyn_root, srcs[si]);
+        snprintf(cmd + p, sizeof(cmd) - p, "%s %s -lpthread -lm 2>/tmp/wyn_tcc_err.txt", rt_tcc, sqlite_file);
     } else {
-        // Fallback: compile runtime from source
+        // Fallback: compile runtime from source using unified source list
+        extern const char* wyn_runtime_sources[];
+        extern void build_source_list(char* buf, int bufsize, const char* prefix);
+        char src_list[4096];
+        build_source_list(src_list, sizeof(src_list), wyn_root);
         snprintf(cmd, sizeof(cmd),
-            "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -w -D__TINYC__ "
-            "%s %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
-            "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c "
-            "%s/src/test_runtime.c %s/src/spawn.c %s/src/spawn_fast.c "
-            "%s/src/future.c %s/src/net.c %s/src/net_runtime.c "
-            "%s/src/io.c %s/src/optional.c %s/src/result.c "
-            "%s/src/arc_runtime.c %s/src/safe_memory.c %s/src/error.c "
-            "%s/src/string_runtime.c %s/src/concurrency.c "
-            "%s/src/stdlib_runtime.c %s/src/stdlib_string.c "
-            "%s/src/stdlib_array.c %s/src/stdlib_time.c "
-            "%s/src/stdlib_math.c %s/src/stdlib_crypto.c "
-            "%s/src/stdlib_enhanced.c %s/src/file_io_simple.c "
-            "%s/src/net_advanced.c %s/src/hashmap_runtime.c "
-            "-lpthread -lm 2>/tmp/wyn_tcc_err.txt",
-            tcc_bin, output_path, wyn_root, wyn_root,
-            c_path, wyn_root, wyn_root,
-            wyn_root, wyn_root, wyn_root,
-            wyn_root, wyn_root, wyn_root,
-            wyn_root, wyn_root, wyn_root,
-            wyn_root, wyn_root, wyn_root,
-            wyn_root, wyn_root, wyn_root,
-            wyn_root, wyn_root,
-            wyn_root, wyn_root,
-            wyn_root, wyn_root,
-            wyn_root, wyn_root,
-            wyn_root, wyn_root,
-            wyn_root, wyn_root);
+            "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -D__TINYC__ -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 "
+            "%s %s -lpthread -lm 2>/tmp/wyn_tcc_err.txt",
+            tcc_bin, output_path, wyn_root, wyn_root, wyn_root, wyn_root,
+            c_path, src_list);
     }
 
     int result = system(cmd);

@@ -1,0 +1,99 @@
+// Wyn Coroutine Benchmark Suite
+// Tests: spawn overhead, concurrent channels, nested spawn
+
+fn tiny(x: int) -> int { return x }
+
+fn fib(n: int) -> int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn producer(ch: int, count: int) -> int {
+    for i in 0..count {
+        Task.send(ch, i)
+    }
+    return 0
+}
+
+fn consumer(ch: int, count: int) -> int {
+    var sum = 0
+    for i in 0..count {
+        sum = sum + Task.recv(ch)
+    }
+    return sum
+}
+
+fn chain(depth: int) -> int {
+    if depth <= 0 { return 0 }
+    var f = spawn chain(depth - 1)
+    return await f + 1
+}
+
+fn main() -> int {
+    println("=== Wyn Coroutine Benchmark ===")
+    println("")
+
+    // 1. Spawn+await overhead (10K sequential)
+    var t0 = DateTime.micros()
+    for i in 0..10000 {
+        var f = spawn tiny(i)
+        await f
+    }
+    var t1 = DateTime.micros()
+    var spawn_us = (t1 - t0) / 10000
+    println("  Spawn+await (10K seq):     " + spawn_us.to_string() + " us/op")
+
+    // 2. Fire-and-forget 100K spawns
+    var t2 = DateTime.micros()
+    for i in 0..100000 {
+        spawn tiny(i)
+    }
+    var t3 = DateTime.micros()
+    var fire_ms = (t3 - t2) / 1000
+    println("  Fire-forget (100K):        " + fire_ms.to_string() + " ms")
+
+    // 3. Parallel compute (fib(30) x 4)
+    var t4 = DateTime.micros()
+    var f1 = spawn fib(30)
+    var f2 = spawn fib(30)
+    var f3 = spawn fib(30)
+    var f4 = spawn fib(30)
+    await f1
+    await f2
+    await f3
+    await f4
+    var t5 = DateTime.micros()
+    var par_ms = (t5 - t4) / 1000
+    println("  Parallel fib(30) x4:       " + par_ms.to_string() + " ms")
+
+    // 4. Channel ping-pong (1K messages)
+    var ch = Task.channel(64)
+    var t6 = DateTime.micros()
+    var fp = spawn producer(ch, 1000)
+    var fc = spawn consumer(ch, 1000)
+    await fp
+    var sum = await fc
+    var t7 = DateTime.micros()
+    var chan_ms = (t7 - t6) / 1000
+    println("  Channel 1K msgs:           " + chan_ms.to_string() + " ms (sum=" + sum.to_string() + ")")
+
+    // 5. Nested spawn chain depth 100
+    var t8 = DateTime.micros()
+    var fch = spawn chain(100)
+    var rch = await fch
+    var t9 = DateTime.micros()
+    var chain_ms = (t9 - t8) / 1000
+    println("  Nested chain(100):         " + chain_ms.to_string() + " ms (result=" + rch.to_string() + ")")
+
+    println("")
+
+    // Assertions
+    Test.init("Coroutine Benchmark Assertions")
+    Test.assert(spawn_us < 100, "spawn overhead < 100us")
+    Test.assert(fire_ms < 5000, "100K fire-forget < 5s")
+    Test.assert_eq_int(sum, 499500, "channel sum = 499500")
+    Test.assert_eq_int(rch, 100, "chain(100) = 100")
+    Test.summary()
+
+    return 0
+}

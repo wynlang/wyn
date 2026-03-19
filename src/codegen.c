@@ -27,6 +27,18 @@ Type* make_type(TypeKind kind); // Forward declaration for type creation
 extern bool is_builtin_module(const char* name);  // Module system
 
 static FILE* out = NULL;
+FILE* codegen_get_output(void) { return out; }
+
+// Current block context for liveness analysis
+static Stmt** current_block_stmts = NULL;
+static int current_block_count = 0;
+static int current_stmt_idx = 0;
+
+// Escape analysis: skip wyn_strdup for temporaries that don't escape
+static bool codegen_skip_strdup = false;
+
+// Spawn array: emit WynIntArray instead of WynArray for current init
+static bool codegen_emit_int_array = false;
 
 // Module emission tracking (reset per compilation)
 static bool modules_emitted_this_compilation = false;
@@ -238,10 +250,251 @@ int is_known_array_var(const char* name) {
     return 0;
 }
 
+// String content array tracking — arrays whose elements are strings
+static char* str_array_var_names[64];
+static int str_array_var_count = 0;
+void register_str_array_var(const char* name) {
+    for (int i = 0; i < str_array_var_count; i++)
+        if (strcmp(str_array_var_names[i], name) == 0) return;
+    if (str_array_var_count < 64) str_array_var_names[str_array_var_count++] = strdup(name);
+}
+int is_str_array_var(const char* name) {
+    for (int i = 0; i < str_array_var_count; i++)
+        if (strcmp(str_array_var_names[i], name) == 0) return 1;
+    return 0;
+}
+
+// String variable tracking for RC release on reassignment
+static char* string_var_names[256];
+static int string_var_count = 0;
+static int string_var_scope_depth = 0;
+
+// Scope stack: tracks string_var_count at each scope entry for block-scoped release
+#define SCOPE_STACK_MAX 64
+static int scope_var_count_stack[SCOPE_STACK_MAX];
+static int scope_stack_top = 0;
+
+void push_string_scope(void) {
+    if (scope_stack_top < SCOPE_STACK_MAX)
+        scope_var_count_stack[scope_stack_top++] = string_var_count;
+}
+void pop_string_scope_and_release(void) {
+    if (scope_stack_top <= 0) return;
+    int saved = scope_var_count_stack[--scope_stack_top];
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (out) {
+        for (int i = saved; i < string_var_count; i++)
+            fprintf(out, "wyn_rc_release(%s); ", string_var_names[i]);
+    }
+    // Restore count — inner-scope vars are no longer tracked
+    string_var_count = saved;
+}
+// Emit releases for current block's vars (for continue/break)
+void emit_block_string_releases(void) {
+    if (scope_stack_top <= 0) return;
+    int saved = scope_var_count_stack[scope_stack_top - 1];
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (out) {
+        for (int i = saved; i < string_var_count; i++)
+            fprintf(out, "wyn_rc_release(%s); ", string_var_names[i]);
+    }
+}
+void register_string_var(const char* name) {
+    // Always register for type detection (used by + operator)
+    for (int i = 0; i < string_var_count; i++)
+        if (strcmp(string_var_names[i], name) == 0) return;
+    if (string_var_count < 256) string_var_names[string_var_count++] = strdup(name);
+}
+// Only top-level string vars are released at scope exit
+static char* string_var_releasable[256];
+static int string_var_releasable_count = 0;
+void register_releasable_string_var(const char* name) {
+    if (string_var_scope_depth > 0) return;
+    for (int i = 0; i < string_var_releasable_count; i++)
+        if (strcmp(string_var_releasable[i], name) == 0) return;
+    if (string_var_releasable_count < 256) string_var_releasable[string_var_releasable_count++] = strdup(name);
+}
+int is_string_var(const char* name) {
+    for (int i = 0; i < string_var_count; i++)
+        if (strcmp(string_var_names[i], name) == 0) return 1;
+    return 0;
+}
+void unregister_string_var(const char* name) {
+    for (int i = 0; i < string_var_count; i++) {
+        if (strcmp(string_var_names[i], name) == 0) {
+            free(string_var_names[i]);
+            string_var_names[i] = string_var_names[--string_var_count];
+            break;
+        }
+    }
+    for (int i = 0; i < string_var_releasable_count; i++) {
+        if (strcmp(string_var_releasable[i], name) == 0) {
+            free(string_var_releasable[i]);
+            string_var_releasable[i] = string_var_releasable[--string_var_releasable_count];
+            return;
+        }
+    }
+}
+void reset_string_vars(void) { string_var_count = 0; string_var_releasable_count = 0; string_var_scope_depth = -1; }
+void emit_string_releases(const char* except_var) {
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (!out) return;
+    for (int i = 0; i < string_var_releasable_count; i++) {
+        if (except_var && strcmp(string_var_releasable[i], except_var) == 0) continue;
+        fprintf(out, "wyn_rc_release(%s); ", string_var_releasable[i]);
+    }
+}
+int get_string_var_count(void) { return string_var_releasable_count; }
+
+// Liveness: check if a variable name appears in an expression
+static int expr_references_var(Expr* e, const char* name) {
+    if (!e) return 0;
+    switch (e->type) {
+        case EXPR_IDENT: {
+            int nl = strlen(name);
+            return (e->token.length == nl && memcmp(e->token.start, name, nl) == 0);
+        }
+        case EXPR_BINARY: return expr_references_var(e->binary.left, name) || expr_references_var(e->binary.right, name);
+        case EXPR_UNARY: return expr_references_var(e->unary.operand, name);
+        case EXPR_CALL:
+            if (expr_references_var(e->call.callee, name)) return 1;
+            for (int i = 0; i < e->call.arg_count; i++)
+                if (expr_references_var(e->call.args[i], name)) return 1;
+            return 0;
+        case EXPR_METHOD_CALL:
+            if (expr_references_var(e->method_call.object, name)) return 1;
+            for (int i = 0; i < e->method_call.arg_count; i++)
+                if (expr_references_var(e->method_call.args[i], name)) return 1;
+            return 0;
+        case EXPR_ASSIGN: return expr_references_var(e->assign.value, name);
+        case EXPR_AWAIT: return expr_references_var(e->await.expr, name);
+        case EXPR_SPAWN: return expr_references_var(e->spawn.call, name);
+        case EXPR_INDEX:
+            return expr_references_var(e->index.array, name) || expr_references_var(e->index.index, name);
+        default: return 0;
+    }
+}
+
+// Check if variable is referenced in remaining statements of a block
+static int stmt_references_var(Stmt* s, const char* name);
+static int block_references_var_from(Stmt** stmts, int count, int from_idx, const char* name) {
+    for (int i = from_idx; i < count; i++)
+        if (stmt_references_var(stmts[i], name)) return 1;
+    return 0;
+}
+
+static int stmt_references_var(Stmt* s, const char* name) {
+    if (!s) return 0;
+    switch (s->type) {
+        case STMT_EXPR: return expr_references_var(s->expr, name);
+        case STMT_VAR: return expr_references_var(s->var.init, name);
+        case STMT_RETURN: return expr_references_var(s->ret.value, name);
+        case STMT_IF:
+            if (expr_references_var(s->if_stmt.condition, name)) return 1;
+            if (stmt_references_var(s->if_stmt.then_branch, name)) return 1;
+            if (stmt_references_var(s->if_stmt.else_branch, name)) return 1;
+            return 0;
+        case STMT_WHILE:
+            if (expr_references_var(s->while_stmt.condition, name)) return 1;
+            return stmt_references_var(s->while_stmt.body, name);
+        case STMT_FOR:
+            if (expr_references_var(s->for_stmt.condition, name)) return 1;
+            return stmt_references_var(s->for_stmt.body, name);
+        case STMT_BLOCK:
+            return block_references_var_from(s->block.stmts, s->block.count, 0, name);
+        default: return 0;
+    }
+}
+
+// Check if var is used after stmt at index `after_idx` in a block
+int var_is_live_after(Stmt** stmts, int count, int after_idx, const char* name) {
+    return block_references_var_from(stmts, count, after_idx + 1, name);
+}
+
+// Check if a function body contains yield points or external calls
+static int expr_has_yield(Expr* e) {
+    if (!e) return 0;
+    if (e->type == EXPR_AWAIT) return 1;
+    switch (e->type) {
+        case EXPR_BINARY: return expr_has_yield(e->binary.left) || expr_has_yield(e->binary.right);
+        case EXPR_UNARY: return expr_has_yield(e->unary.operand);
+        case EXPR_CALL:
+            // Any function call makes it non-inlineable (conservative)
+            return 1;
+        case EXPR_METHOD_CALL:
+            // Any method call makes it non-inlineable
+            return 1;
+        case EXPR_ASSIGN: return expr_has_yield(e->assign.value);
+        default: return 0;
+    }
+}
+static int stmt_has_yield(Stmt* s) {
+    if (!s) return 0;
+    switch (s->type) {
+        case STMT_YIELD: return 1;
+        case STMT_EXPR: return expr_has_yield(s->expr);
+        case STMT_VAR: return expr_has_yield(s->var.init);
+        case STMT_RETURN: return expr_has_yield(s->ret.value);
+        case STMT_IF:
+            return expr_has_yield(s->if_stmt.condition) ||
+                   stmt_has_yield(s->if_stmt.then_branch) ||
+                   stmt_has_yield(s->if_stmt.else_branch);
+        case STMT_WHILE: return expr_has_yield(s->while_stmt.condition) || stmt_has_yield(s->while_stmt.body);
+        case STMT_FOR: return expr_has_yield(s->for_stmt.condition) || stmt_has_yield(s->for_stmt.body);
+        case STMT_BLOCK:
+            for (int i = 0; i < s->block.count; i++)
+                if (stmt_has_yield(s->block.stmts[i])) return 1;
+            return 0;
+        default: return 0;
+    }
+}
+// L3: Check if a function statement contains yield (is a generator)
+static int _has_yield_stmt(Stmt* s) {
+    if (!s) return 0;
+    if (s->type == STMT_YIELD) return 1;
+    if (s->type == STMT_BLOCK) { for (int i = 0; i < s->block.count; i++) if (_has_yield_stmt(s->block.stmts[i])) return 1; }
+    if (s->type == STMT_FOR && _has_yield_stmt(s->for_stmt.body)) return 1;
+    if (s->type == STMT_WHILE && _has_yield_stmt(s->while_stmt.body)) return 1;
+    if (s->type == STMT_IF && (_has_yield_stmt(s->if_stmt.then_branch) || _has_yield_stmt(s->if_stmt.else_branch))) return 1;
+    return 0;
+}
+int fn_is_generator(Stmt* fn_stmt) {
+    if (!fn_stmt || fn_stmt->type != STMT_FN) return 0;
+    return _has_yield_stmt(fn_stmt->fn.body);
+}
+int function_can_inline(const char* name) {
+    extern Program* current_program;
+    if (!current_program) return 0;
+    for (int i = 0; i < current_program->count; i++) {
+        if (current_program->stmts[i]->type == STMT_FN) {
+            FnStmt* fn = &current_program->stmts[i]->fn;
+            if ((int)strlen(name) == fn->name.length && memcmp(name, fn->name.start, fn->name.length) == 0) {
+                return !stmt_has_yield(fn->body);
+            }
+        }
+    }
+    return 0; // unknown function — don't inline
+}
+
 static char* sb_var_names[64];
 static int sb_var_count = 0;
 static void register_sb_var(const char* name) {
-    if (sb_var_count < 64) { sb_var_names[sb_var_count++] = strdup(name);  }
+    if (sb_var_count < 64) { sb_var_names[sb_var_count++] = strdup(name); }
+}
+
+static char* float_var_names[256];
+static int float_var_count = 0;
+void register_float_var(const char* name) {
+    if (float_var_count < 256) float_var_names[float_var_count++] = strdup(name);
+}
+int is_known_float_var(const char* name) {
+    for (int i = 0; i < float_var_count; i++) {
+        if (strcmp(float_var_names[i], name) == 0) return 1;
+    }
+    return 0;
 }
 int is_known_sb_var(const char* name) {
     for (int i = 0; i < sb_var_count; i++) {
@@ -325,7 +578,55 @@ static int lambda_count = 0;
 static int lambda_id_counter = 0;
 static int lambda_ref_counter = 0;
 static bool in_return_lambda = false;
-static Program* current_program = NULL;
+Program* current_program = NULL;
+
+// Look up a struct method's return type string ("float", "string", "int", etc.)
+const char* lookup_struct_method_return_type(const char* struct_name, const char* method_name) {
+    if (!current_program) return NULL;
+    for (int i = 0; i < current_program->count; i++) {
+        // Check struct methods
+        if (current_program->stmts[i]->type == STMT_STRUCT) {
+            StructStmt* s = &current_program->stmts[i]->struct_decl;
+            if (s->name.length == (int)strlen(struct_name) &&
+                memcmp(s->name.start, struct_name, s->name.length) == 0) {
+                for (int j = 0; j < s->method_count; j++) {
+                    FnStmt* m = s->methods[j];
+                    if (m->name.length == (int)strlen(method_name) &&
+                        memcmp(m->name.start, method_name, m->name.length) == 0) {
+                        if (m->return_type && m->return_type->type == EXPR_IDENT) {
+                            static char buf[64];
+                            int len = m->return_type->token.length < 63 ? m->return_type->token.length : 63;
+                            memcpy(buf, m->return_type->token.start, len);
+                            buf[len] = 0;
+                            return buf;
+                        }
+                    }
+                }
+            }
+        }
+        // Check impl blocks
+        if (current_program->stmts[i]->type == STMT_IMPL) {
+            Token impl_name = current_program->stmts[i]->impl.type_name;
+            if (impl_name.length == (int)strlen(struct_name) &&
+                memcmp(impl_name.start, struct_name, impl_name.length) == 0) {
+                for (int j = 0; j < current_program->stmts[i]->impl.method_count; j++) {
+                    FnStmt* ms = current_program->stmts[i]->impl.methods[j];
+                    if (ms->name.length == (int)strlen(method_name) &&
+                        memcmp(ms->name.start, method_name, ms->name.length) == 0) {
+                        if (ms->return_type && ms->return_type->type == EXPR_IDENT) {
+                            static char buf2[64];
+                            int len = ms->return_type->token.length < 63 ? ms->return_type->token.length : 63;
+                            memcpy(buf2, ms->return_type->token.start, len);
+                            buf2[len] = 0;
+                            return buf2;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return NULL;
+}
 
 // Track lambda variable names and their captures for call site injection
 typedef struct {
@@ -345,11 +646,79 @@ typedef struct {
     char func_name[256];
     int arg_count;
     int spawn_id;
+    int returns_void;
+    int returns_string;
+    char return_type[64];
+    int can_inline;     // 1 if function has no yield points (no await/channel)
 } SpawnWrapper;
 
 static SpawnWrapper spawn_wrappers[256];
 static int spawn_wrapper_count = 0;
 static int spawn_id_counter = 0;
+
+// Spawn array tracking — arrays that hold Future pointers use WynIntArray
+static char spawn_array_vars[64][256];
+static int spawn_array_count = 0;
+void register_spawn_array(const char* name) {
+    for (int i = 0; i < spawn_array_count; i++)
+        if (strcmp(spawn_array_vars[i], name) == 0) return;
+    if (spawn_array_count < 64)
+        strcpy(spawn_array_vars[spawn_array_count++], name);
+}
+int is_spawn_array(const char* name) {
+    for (int i = 0; i < spawn_array_count; i++)
+        if (strcmp(spawn_array_vars[i], name) == 0) return 1;
+    return 0;
+}
+
+// String future tracking — variables that hold futures from string-returning spawns
+static char string_future_vars[64][256];
+static int string_future_count = 0;
+void register_string_future(const char* name) {
+    for (int i = 0; i < string_future_count; i++)
+        if (strcmp(string_future_vars[i], name) == 0) return;
+    if (string_future_count < 64)
+        strcpy(string_future_vars[string_future_count++], name);
+}
+
+// String spawn array tracking — arrays that hold futures from string-returning spawns
+static char string_spawn_array_vars[64][256];
+static int string_spawn_array_count = 0;
+void register_string_spawn_array(const char* name) {
+    for (int i = 0; i < string_spawn_array_count; i++)
+        if (strcmp(string_spawn_array_vars[i], name) == 0) return;
+    if (string_spawn_array_count < 64)
+        strcpy(string_spawn_array_vars[string_spawn_array_count++], name);
+}
+int is_string_spawn_array(const char* name) {
+    for (int i = 0; i < string_spawn_array_count; i++)
+        if (strcmp(string_spawn_array_vars[i], name) == 0) return 1;
+    return 0;
+}
+int is_string_future(const char* name) {
+    for (int i = 0; i < string_future_count; i++)
+        if (strcmp(string_future_vars[i], name) == 0) return 1;
+    return 0;
+}
+
+// Struct future tracking — variables that hold futures from struct-returning spawns
+static char struct_future_vars[64][256];
+static char struct_future_types[64][64];
+static int struct_future_count = 0;
+void register_struct_future(const char* name, const char* type_name) {
+    for (int i = 0; i < struct_future_count; i++)
+        if (strcmp(struct_future_vars[i], name) == 0) { strncpy(struct_future_types[i], type_name, 63); return; }
+    if (struct_future_count < 64) {
+        strcpy(struct_future_vars[struct_future_count], name);
+        strncpy(struct_future_types[struct_future_count], type_name, 63);
+        struct_future_count++;
+    }
+}
+const char* get_struct_future_type(const char* name) {
+    for (int i = 0; i < struct_future_count; i++)
+        if (strcmp(struct_future_vars[i], name) == 0) return struct_future_types[i];
+    return NULL;
+}
 
 // Forward declaration
 static void emit(const char* fmt, ...);
@@ -514,6 +883,17 @@ static void emit_type_from_expr(Expr* type_expr) {
     }
 }
 
+static const char* c_type_from_expr(Expr* type_expr) {
+    if (type_expr && type_expr->type == EXPR_IDENT) {
+        Token t = type_expr->token;
+        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return "int";
+        if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return "const char*";
+        if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return "int";
+        if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return "double";
+    }
+    return "long long";
+}
+
 
 // Expression code generation
 #include "codegen_expr.c"
@@ -522,8 +902,16 @@ static void emit_type_from_expr(Expr* type_expr) {
 static bool in_async_function = false;
 
 // codegen_c_header - emit runtime include
+// Use slim header for release builds (40% faster execution)
+static bool use_slim_runtime = false;
+void codegen_set_slim_runtime(bool slim) { use_slim_runtime = slim; }
 void codegen_c_header() {
-    emit("#include \"wyn_runtime.h\"\n\n");
+    if (use_slim_runtime) {
+        emit("#include \"wyn_runtime_slim.h\"\n\n");
+    } else {
+        emit("#include \"wyn_runtime.h\"\n");
+        emit("#ifdef __TINYC__\n#define __auto_type long long\n#endif\n\n");
+    }
 }
 
 // Statement code generation (includes emit_function_with_prefix)
@@ -563,9 +951,98 @@ int is_enum_type(const char* name) {
     return 0;
 }
 
+// Data enum tracking (enums with variant data)
+static char* data_enum_names[64];
+static int data_enum_count = 0;
+void register_data_enum_type(const char* name) {
+    if (data_enum_count < 64) data_enum_names[data_enum_count++] = strdup(name);
+}
+int is_data_enum_type(const char* name) {
+    for (int i = 0; i < data_enum_count; i++) {
+        if (strcmp(data_enum_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
 // Track variables that hold data-carrying enum types
 static struct { char var_name[64]; char enum_name[64]; } enum_var_map[128];
 static int enum_var_count = 0;
+
+// Track variables that hold struct types
+static struct { char var_name[64]; char struct_name[64]; } struct_var_map[128];
+static int struct_var_count = 0;
+void register_struct_var(const char* var, const char* struct_type) {
+    if (struct_var_count < 128) {
+        strncpy(struct_var_map[struct_var_count].var_name, var, 63);
+        strncpy(struct_var_map[struct_var_count].struct_name, struct_type, 63);
+        struct_var_count++;
+    }
+}
+const char* get_struct_var_type(const char* var) {
+    for (int i = struct_var_count - 1; i >= 0; i--) {
+        if (strcmp(struct_var_map[i].var_name, var) == 0) return struct_var_map[i].struct_name;
+    }
+    return NULL;
+}
+int is_known_struct(const char* name) {
+    if (!current_program) return 0;
+    for (int i = 0; i < current_program->count; i++) {
+        if (current_program->stmts[i]->type == STMT_STRUCT) {
+            StructStmt* s = &current_program->stmts[i]->struct_decl;
+            if (s->name.length == (int)strlen(name) && memcmp(s->name.start, name, s->name.length) == 0) return 1;
+        }
+    }
+    return 0;
+}
+
+// Track enum variant data types: "EnumName.VariantName" -> C type
+static struct { char key[128]; char c_type[64]; } enum_variant_types[256];
+static int enum_variant_type_count = 0;
+void register_enum_variant_type(const char* enum_name, const char* variant_name, const char* c_type) {
+    if (enum_variant_type_count < 256) {
+        snprintf(enum_variant_types[enum_variant_type_count].key, 128, "%s.%s", enum_name, variant_name);
+        strncpy(enum_variant_types[enum_variant_type_count].c_type, c_type, 63);
+        enum_variant_type_count++;
+    }
+}
+const char* get_enum_variant_c_type(const char* enum_name, const char* variant_name) {
+    char key[128];
+    snprintf(key, 128, "%s.%s", enum_name, variant_name);
+    for (int i = 0; i < enum_variant_type_count; i++) {
+        if (strcmp(enum_variant_types[i].key, key) == 0) return enum_variant_types[i].c_type;
+    }
+    return "long long"; // default
+}
+
+const char* find_enum_for_variant(const char* variant_name) {
+    // Search "EnumName.VariantName" keys for matching variant
+    
+    for (int i = 0; i < enum_variant_type_count; i++) {
+        char* dot = strchr(enum_variant_types[i].key, '.');
+        if (dot && strcmp(dot + 1, variant_name) == 0) {
+            static char _found_enum[128];
+            int elen = dot - enum_variant_types[i].key;
+            memcpy(_found_enum, enum_variant_types[i].key, elen);
+            _found_enum[elen] = '\0';
+            return _found_enum;
+        }
+    }
+    // Also check data_enum_names with enum_type_names
+    // Try prefixing with each known data enum
+    for (int i = 0; i < data_enum_count; i++) {
+        char tag_name[128];
+        snprintf(tag_name, 128, "%s_%s_TAG", data_enum_names[i], variant_name);
+        // We can't easily check if this tag exists, but return the first data enum
+        // that has this variant registered
+        char key[128];
+        snprintf(key, 128, "%s.%s", data_enum_names[i], variant_name);
+        for (int j = 0; j < enum_variant_type_count; j++) {
+            if (strcmp(enum_variant_types[j].key, key) == 0) return data_enum_names[i];
+        }
+    }
+    return NULL;
+}
+
 void register_enum_var(const char* var, const char* enum_type) {
     if (enum_var_count < 128) {
         strncpy(enum_var_map[enum_var_count].var_name, var, 63);
@@ -581,16 +1058,74 @@ const char* get_enum_var_type(const char* var) {
 }
 
 // Function default parameter registry
-static struct { char name[128]; Expr** defaults; int param_count; } fn_defaults[256];
+static struct { char name[128]; Expr** defaults; int param_count; char return_type[32]; char param_names[16][64]; } fn_defaults[256];
 static int fn_defaults_count = 0;
 
 void register_fn_defaults(const char* name, Expr** defaults, int param_count) {
+    // Update existing entry if present
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, name) == 0) {
+            fn_defaults[i].defaults = defaults;
+            fn_defaults[i].param_count = param_count;
+            return;
+        }
+    }
     if (fn_defaults_count < 256) {
         strncpy(fn_defaults[fn_defaults_count].name, name, 127);
         fn_defaults[fn_defaults_count].defaults = defaults;
         fn_defaults[fn_defaults_count].param_count = param_count;
+        fn_defaults[fn_defaults_count].return_type[0] = '\0';
         fn_defaults_count++;
     }
+}
+
+void register_fn_param_names(const char* name, Token* params, int count) {
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, name) == 0) {
+            for (int j = 0; j < count && j < 16; j++) {
+                int len = params[j].length < 63 ? params[j].length : 63;
+                memcpy(fn_defaults[i].param_names[j], params[j].start, len);
+                fn_defaults[i].param_names[j][len] = '\0';
+            }
+            return;
+        }
+    }
+}
+
+int get_fn_param_index(const char* fn_name, const char* param_name) {
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, fn_name) == 0) {
+            for (int j = 0; j < fn_defaults[i].param_count; j++) {
+                if (strcmp(fn_defaults[i].param_names[j], param_name) == 0) return j;
+            }
+        }
+    }
+    return -1;
+}
+
+void register_fn_return_type(const char* name, const char* ret_type) {
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, name) == 0) {
+            strncpy(fn_defaults[i].return_type, ret_type, 31);
+            return;
+        }
+    }
+    // Function not yet registered — add it
+    if (fn_defaults_count < 256) {
+        strncpy(fn_defaults[fn_defaults_count].name, name, 127);
+        fn_defaults[fn_defaults_count].defaults = NULL;
+        fn_defaults[fn_defaults_count].param_count = 0;
+        strncpy(fn_defaults[fn_defaults_count].return_type, ret_type, 31);
+        fn_defaults_count++;
+    }
+}
+
+const char* get_function_return_type(const char* name) {
+    for (int i = 0; i < fn_defaults_count; i++) {
+        if (strcmp(fn_defaults[i].name, name) == 0 && fn_defaults[i].return_type[0])
+            return fn_defaults[i].return_type;
+    }
+    return NULL;
 }
 
 Expr* get_fn_default(const char* name, int param_index) {

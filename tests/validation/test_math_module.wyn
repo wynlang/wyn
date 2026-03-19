@@ -24,8 +24,8 @@ fn main() -> int {
     println("ceil(3.2) = " + float_to_string(ceil_val))
     
     // Random
-    var rand1 = Math_random()
-    var rand2 = Math_random()
+    var rand1 = Random.float()
+    var rand2 = Random.float()
     println("random1 = " + float_to_string(rand1))
     println("random2 = " + float_to_string(rand2))
     

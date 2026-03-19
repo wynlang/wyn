@@ -1,32 +1,59 @@
-// TDD: Basic trait system
-// Tests trait definition, impl blocks, and trait method calls
+// TDD: traits and trait bounds
 
-trait Display {
-    fn to_string(self) -> string
+trait Describable {
+    fn describe(self) -> string
 }
 
-struct Point { x: int, y: int }
+trait HasArea {
+    fn area(self) -> int
+}
 
-impl Display for Point {
-    fn to_string(self) -> string {
-        return "Point(" + self.x.to_string() + ", " + self.y.to_string() + ")"
+struct Circle {
+    radius: int
+}
+
+struct Rect {
+    width: int
+    height: int
+}
+
+impl Describable for Circle {
+    fn describe(self) -> string {
+        return "circle(r=" + self.radius.to_string() + ")"
     }
 }
 
-struct Color { r: int, g: int, b: int }
-
-impl Display for Color {
-    fn to_string(self) -> string {
-        return "Color(" + self.r.to_string() + "," + self.g.to_string() + "," + self.b.to_string() + ")"
+impl Describable for Rect {
+    fn describe(self) -> string {
+        return "rect(" + self.width.to_string() + "x" + self.height.to_string() + ")"
     }
 }
 
-fn main() -> int {
-    var p = Point { x: 10, y: 20 }
-    println(p.to_string())
+impl HasArea for Rect {
+    fn area(self) -> int {
+        return self.width * self.height
+    }
+}
 
-    var c = Color { r: 255, g: 128, b: 0 }
-    println(c.to_string())
+// Trait-bounded function parameter
+fn show(item: Describable) -> string {
+    return item.describe()
+}
 
-    return 0
+fn main() {
+    Test.init("Traits and Bounds")
+
+    var c = Circle { radius: 5 }
+    var r = Rect { width: 3, height: 4 }
+
+    // Direct method calls
+    Test.assert_eq_str(c.describe(), "circle(r=5)", "circle describe")
+    Test.assert_eq_str(r.describe(), "rect(3x4)", "rect describe")
+    Test.assert_eq_int(r.area(), 12, "rect area")
+
+    // Trait dispatch
+    Test.assert_eq_str(show(c), "circle(r=5)", "dispatch circle")
+    Test.assert_eq_str(show(r), "rect(3x4)", "dispatch rect")
+
+    Test.summary()
 }

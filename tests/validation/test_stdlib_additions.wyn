@@ -1,0 +1,57 @@
+// Validation test for stdlib additions
+// Tests: UUID v4, File.read_lines, TOML parser
+
+fn test_uuid() -> int {
+    var id1 = Uuid.v4()
+    var id2 = Uuid.v4()
+    var id3 = Uuid.generate()
+    // All should be different
+    if id1 == id2 { println("FAIL: uuid not unique"); return 1 }
+    // Should contain hyphens (8-4-4-4-12 format)
+    if id1.contains("-") == false { println("FAIL: uuid format"); return 1 }
+    println("  ✓ Uuid.v4() — " + id1)
+    return 0
+}
+
+fn test_read_lines() -> int {
+    // Write test file
+    File.write("/tmp/wyn_test_lines.txt", "alpha\nbeta\ngamma")
+    var content = File.read_lines("/tmp/wyn_test_lines.txt")
+    var lines = content.lines()
+    if lines.len() != 3 { println("FAIL: expected 3 lines, got " + lines.len().to_string()); return 1 }
+    println("  ✓ File.read_lines() — " + lines.len().to_string() + " lines")
+    return 0
+}
+
+fn test_toml() -> int {
+    // Write test TOML
+    File.write("/tmp/wyn_test.toml", "[project]\nname = \"myapp\"\nversion = \"2.0\"\n\n[db]\nhost = \"localhost\"\nport = \"5432\"")
+    var doc = Toml.parse_file("/tmp/wyn_test.toml")
+    if Toml.get(doc, "project.name") != "myapp" { println("FAIL: name"); return 1 }
+    if Toml.get(doc, "project.version") != "2.0" { println("FAIL: version"); return 1 }
+    if Toml.get(doc, "db.host") != "localhost" { println("FAIL: host"); return 1 }
+    if Toml.get(doc, "db.port") != "5432" { println("FAIL: port"); return 1 }
+    // Missing key returns empty string
+    if Toml.get(doc, "missing") != "" { println("FAIL: missing key"); return 1 }
+    
+    // Inline parse
+    var doc2 = Toml.parse("key = \"value\"")
+    if Toml.get(doc2, "key") != "value" { println("FAIL: inline"); return 1 }
+    
+    println("  ✓ Toml.parse/get — 6 assertions")
+    return 0
+}
+
+fn main() -> int {
+    println("=== Stdlib Additions Test ===")
+    var failures = 0
+    failures = failures + test_uuid()
+    failures = failures + test_read_lines()
+    failures = failures + test_toml()
+    if failures == 0 {
+        println("\n✓ All stdlib tests passed")
+    } else {
+        println("\n✗ " + failures.to_string() + " test(s) failed")
+    }
+    return failures
+}

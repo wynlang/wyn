@@ -1,0 +1,84 @@
+// Backward compatibility test — v1.7 features that must always work
+// If this file stops compiling, we've broken backward compat.
+
+struct Point {
+    x: int
+    y: int
+
+    fn distance(self, other: Point) -> float {
+        var dx = (other.x - self.x) * (other.x - self.x)
+        var dy = (other.y - self.y) * (other.y - self.y)
+        return Math.sqrt(dx + dy)
+    }
+}
+
+enum Color {
+    Red
+    Green
+    Blue
+}
+
+fn double(x: int) -> int { return x * 2 }
+fn add1(x: int) -> int { return x + 1 }
+
+fn fib(n: int) -> int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() -> int {
+    // Variables and types
+    var x = 42
+    var name = "Wyn"
+    const MAX = 100
+
+    // String operations
+    if name.contains("y") == false { println("FAIL: contains"); return 1 }
+    if name.upper() != "WYN" { println("FAIL: upper"); return 1 }
+    if name.len() != 3 { println("FAIL: len"); return 1 }
+
+    // Arrays
+    var arr = [1, 2, 3, 4, 5]
+    arr.push(6)
+    if arr[0] != 1 { println("FAIL: arr[0]"); return 1 }
+    if arr.len() != 6 { println("FAIL: arr.len"); return 1 }
+
+    // Structs
+    var p1 = Point { x: 0, y: 0 }
+    var p2 = Point { x: 3, y: 4 }
+    println("dist: " + p1.distance(p2).to_string())
+
+    // Enums + match
+    var c = Color.Green
+    match c {
+        Color.Red => println("red")
+        Color.Green => println("green")
+        Color.Blue => println("blue")
+    }
+
+    // Pipe operator
+    var result = 5 |> add1 |> double
+    if result != 12 { println("FAIL: pipe"); return 1 }
+
+    // For loops
+    var sum = 0
+    for i in 0..5 {
+        sum = sum + i
+    }
+    if sum != 10 { println("FAIL: for range"); return 1 }
+
+    // String interpolation
+    var msg = "x=${x.to_string()}"
+    if msg.contains("42") == false { println("FAIL: interp"); return 1 }
+
+    // File I/O
+    File.write("/tmp/wyn_compat_test.txt", "hello")
+    var content = File.read("/tmp/wyn_compat_test.txt")
+    if content != "hello" { println("FAIL: file io"); return 1 }
+
+    // Fibonacci
+    if fib(10) != 55 { println("FAIL: fib"); return 1 }
+
+    println("✓ Backward compat test passed (v1.7 features)")
+    return 0
+}

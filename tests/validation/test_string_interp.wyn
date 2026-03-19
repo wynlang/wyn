@@ -1,0 +1,41 @@
+// Test: String interpolation everywhere (11.2)
+
+fn double(x: int) -> int {
+    return x * 2
+}
+
+fn main() {
+    // Basic interpolation
+    var name = "Wyn"
+    println("Hello, ${name}!")
+
+    // Expression in interpolation
+    var x = 5
+    println("Double: ${x * 2}")
+
+    // Function call in interpolation
+    println("Result: ${double(21)}")
+
+    // Method call in interpolation
+    var n = 42
+    println("String: ${n.to_string()}")
+
+    // Nested interpolation in match
+    var val = 3
+    match val {
+        1 => println("one")
+        2 => println("two")
+        3 => println("three: ${val}")
+        _ => println("other: ${val}")
+    }
+
+    // Interpolation in array
+    var items = ["a", "b", "c"]
+    for item in items {
+        println("item: ${item}")
+    }
+
+    // Interpolation in struct field init
+    var prefix = "hello"
+    println("${prefix}_world")
+}

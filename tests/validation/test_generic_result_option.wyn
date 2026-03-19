@@ -15,7 +15,7 @@ fn find_even(x: int) -> OptionInt {
     return None()
 }
 
-fn main() -> int {
+fn main() {
     // Test 1: Result with Ok
     var r1 = divide(10, 2)
     println(ResultInt_is_ok(r1))
@@ -34,5 +34,4 @@ fn main() -> int {
     var o2 = find_even(3)
     println(OptionInt_is_none(o2))
 
-    return 0
 }

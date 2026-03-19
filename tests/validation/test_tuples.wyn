@@ -1,0 +1,35 @@
+// TDD: tuple types
+
+fn divmod(a: int, b: int) -> (int, int) {
+    return (a / b, a % b)
+}
+
+fn pair(a: int, b: int) -> (int, int) {
+    return (b, a)
+}
+
+fn main() {
+    Test.init("Tuple Types")
+
+    // Basic tuple return
+    var dm = divmod(17, 5)
+    Test.assert_eq_int(dm.0, 3, "divmod quotient")
+    Test.assert_eq_int(dm.1, 2, "divmod remainder")
+
+    // Swap via tuple
+    var s = pair(10, 20)
+    Test.assert_eq_int(s.0, 20, "pair first")
+    Test.assert_eq_int(s.1, 10, "pair second")
+
+    // Tuple element in expression
+    var q = divmod(100, 7)
+    var total = q.0 * 7 + q.1
+    Test.assert_eq_int(total, 100, "q*7+r = original")
+
+    // Multiple calls
+    var a = divmod(10, 3)
+    var b = divmod(20, 7)
+    Test.assert_eq_int(a.0 + b.0, 5, "sum of quotients")
+
+    Test.summary()
+}

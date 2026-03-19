@@ -1,0 +1,49 @@
+// TDD: Concurrency — validates spawn/await correctness and basic scaling
+
+fn counter(id: int) -> int {
+    return id + 1
+}
+
+fn fib(n: int) -> int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    Test.init("Concurrency")
+
+    // Test 1: Basic spawn+await
+    var f1 = spawn counter(41)
+    Test.assert_eq_int(await f1, 42, "spawn counter(41) = 42")
+
+    // Test 2: Multiple concurrent spawns
+    var f2 = spawn counter(99)
+    var f3 = spawn counter(199)
+    Test.assert_eq_int(await f2, 100, "spawn counter(99) = 100")
+    Test.assert_eq_int(await f3, 200, "spawn counter(199) = 200")
+
+    // Test 3: Spawn with computation
+    var f4 = spawn fib(10)
+    Test.assert_eq_int(await f4, 55, "spawn fib(10) = 55")
+
+    // Test 4: 1K concurrent spawns with sum verification
+    var futures = []
+    for i in 0..1000 {
+        futures.push(spawn counter(i))
+    }
+    var sum = 0
+    for i in 0..1000 {
+        sum = sum + await futures[i]
+    }
+    Test.assert_eq_int(sum, 500500, "1K concurrent spawns (sum)")
+
+    // Test 5: 5K sequential spawn+await
+    var seq_sum = 0
+    for i in 0..5000 {
+        var f = spawn counter(i)
+        seq_sum = seq_sum + await f
+    }
+    Test.assert_eq_int(seq_sum, 12502500, "5K sequential spawn+await")
+
+    Test.summary()
+}

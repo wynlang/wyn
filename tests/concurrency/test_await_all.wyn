@@ -1,0 +1,40 @@
+// TDD: await_all and await_any primitives
+
+fn multiply(x: int) -> int {
+    return x * 2
+}
+
+fn slow_add(a: int, b: int) -> int {
+    return a + b
+}
+
+fn main() {
+    Test.init("await_all / await_any")
+
+    // Test 1: await_all with array of futures
+    var futures = []
+    for i in 0..5 {
+        futures.push(spawn multiply(i))
+    }
+    var results = await_all(futures)
+    Test.assert_eq_int(results[0], 0, "await_all[0] = 0")
+    Test.assert_eq_int(results[1], 2, "await_all[1] = 2")
+    Test.assert_eq_int(results[2], 4, "await_all[2] = 4")
+    Test.assert_eq_int(results[3], 6, "await_all[3] = 6")
+    Test.assert_eq_int(results[4], 8, "await_all[4] = 8")
+
+    // Test 2: await_any returns first completed
+    var f1 = spawn multiply(10)
+    var f2 = spawn multiply(20)
+    var f3 = spawn multiply(30)
+    var first = await_any([f1, f2, f3])
+    // Result should be one of 20, 40, 60
+    Test.assert(first == 20 || first == 40 || first == 60, "await_any returns valid result")
+
+    // Test 3: await_all with single future
+    var single = [spawn multiply(42)]
+    var single_results = await_all(single)
+    Test.assert_eq_int(single_results[0], 84, "await_all single = 84")
+
+    Test.summary()
+}

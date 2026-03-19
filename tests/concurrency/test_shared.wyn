@@ -1,0 +1,39 @@
+// TDD: shared atomic values for concurrent access
+
+fn increment(counter: int) -> int {
+    // counter is a shared handle — .add returns old value
+    Shared.add(counter, 1)
+}
+
+fn main() {
+    Test.init("Shared Atomic Values")
+
+    // Test 1: basic shared value
+    var s = Shared.new(0)
+    Test.assert_eq_int(Shared.get(s), 0, "initial value = 0")
+
+    // Test 2: set and get
+    Shared.set(s, 42)
+    Test.assert_eq_int(Shared.get(s), 42, "set/get = 42")
+
+    // Test 3: atomic add
+    Shared.set(s, 0)
+    Shared.add(s, 10)
+    Shared.add(s, 20)
+    Test.assert_eq_int(Shared.get(s), 30, "add 10 + 20 = 30")
+
+    // Test 4: atomic sub
+    Shared.sub(s, 5)
+    Test.assert_eq_int(Shared.get(s), 25, "sub 5 = 25")
+
+    // Test 5: concurrent increments
+    var counter = Shared.new(0)
+    var futures = []
+    for i in 0..1000 {
+        futures.push(spawn increment(counter))
+    }
+    await_all(futures)
+    Test.assert_eq_int(Shared.get(counter), 1000, "1K concurrent increments = 1000")
+
+    Test.summary()
+}

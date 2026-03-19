@@ -523,6 +523,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "clamp") == 0 && arg_count == 2) {
             out->c_function = "int_clamp"; return true;
         }
+        if (strcmp(method_name, "times") == 0 && arg_count == 1) {
+            out->c_function = "int_times"; return true;
+        }
         if (strcmp(method_name, "is_even") == 0 && arg_count == 0) {
             out->c_function = "int_is_even"; return true;
         }
@@ -728,13 +731,13 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
             out->c_function = "array_index_of"; return true;
         }
         if (strcmp(method_name, "reverse") == 0 && arg_count == 0) {
-            out->c_function = "array_reverse";
-            out->pass_by_ref = true;
+            out->c_function = "array_reverse_copy";
+            out->pass_by_ref = false;
             return true;
         }
         if (strcmp(method_name, "sort") == 0 && arg_count == 0) {
-            out->c_function = "array_sort";
-            out->pass_by_ref = true;
+            out->c_function = "array_sort_copy";
+            out->pass_by_ref = false;
             return true;
         }
         if (strcmp(method_name, "first") == 0 && arg_count == 0) {
@@ -777,6 +780,18 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "average") == 0 && arg_count == 0) {
             out->c_function = "array_average"; return true;
+        }
+        if (strcmp(method_name, "each") == 0 && arg_count == 1) {
+            out->c_function = "array_each"; return true;
+        }
+        if (strcmp(method_name, "every") == 0 && arg_count == 1) {
+            out->c_function = "array_every"; return true;
+        }
+        if (strcmp(method_name, "find") == 0 && arg_count == 1) {
+            out->c_function = "array_find_fn"; return true;
+        }
+        if (strcmp(method_name, "flat_map") == 0 && arg_count == 1) {
+            out->c_function = "array_flat_map"; return true;
         }
         if (strcmp(method_name, "remove") == 0 && arg_count == 1) {
             out->c_function = "array_remove_value";
@@ -993,21 +1008,33 @@ const char* lookup_module_fn_return_type(const char* fn_name) {
         {"Crypto_hmac_sha256", "string"}, {"Crypto_random_bytes", "string"},
         {"Encoding_base64_encode", "string"}, {"Encoding_base64_decode", "string"},
         {"Encoding_hex_encode", "string"}, {"Encoding_hex_decode", "string"},
+        {"Base64_encode", "string"}, {"Base64_decode", "string"},
         {"Json_stringify", "string"}, {"Json_to_pretty_string", "string"},
         {"Json_get", "string"}, {"Json_keys", "string"},
         {"Os_platform", "string"}, {"Os_arch", "string"},
         {"Os_hostname", "string"}, {"Os_home_dir", "string"}, {"Os_temp_dir", "string"},
-        {"Uuid_generate", "string"}, {"Process_exec_capture", "string"},
+        {"Uuid_generate", "string"}, {"Uuid_v4", "string"}, {"Process_exec_capture", "string"},
         {"Csv_get", "string"}, {"Csv_get_field", "string"}, {"Csv_header", "string"},
+        {"Toml_get", "string"}, {"Toml_parse", "int"}, {"Toml_parse_file", "int"},
+        {"Bcrypt_hash", "string"}, {"Bcrypt_verify", "bool"},
         {"Path_basename", "string"}, {"Path_dirname", "string"}, {"Path_extension", "string"}, {"Path_join", "string"},
         {"DateTime_to_iso", "string"}, {"DateTime_format_duration", "string"},
         {"Regex_replace", "string"}, {"Regex_find_all", "string"},
+        {"Regex_match", "bool"},
         {"File_read", "string"}, {"File_temp_file", "string"}, {"File_read_line", "string"},
         {"System_exec", "string"}, {"System_env", "string"},
+        {"System_shell_escape", "string"},
+        {"System_arg", "string"},
         {"Net_resolve", "string"}, {"Url_encode", "string"}, {"Url_decode", "string"},
         {"StringBuilder_to_string", "string"},
         {"Template_render", "string"},
         {"Template_render_string", "string"},
+        {"Args_get", "string"},
+        {"Args_has", "bool"},
+        {"Args_positional", "array"},
+        {"Random_string", "string"}, {"Random_hex", "string"}, {"Random_uuid", "string"},
+        {"Random_bool", "bool"}, {"Random_choice_str", "string"},
+        {"Web_render", "string"},
         {NULL, NULL}
     };
     for (int i = 0; fns[i].name; i++) {

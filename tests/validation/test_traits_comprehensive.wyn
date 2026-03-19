@@ -1,0 +1,91 @@
+// Trait comprehensive tests
+
+trait Describable {
+    fn describe(self) -> string
+}
+
+trait Greeter {
+    fn greet(self, name: string) -> string
+}
+
+trait Calculator {
+    fn compute(self, x: int, y: int) -> int
+}
+
+struct Point { x: int, y: int }
+struct Circle { radius: int }
+struct Formal { title: string }
+struct Casual {}
+struct Adder {}
+struct Multiplier {}
+
+impl Describable for Point {
+    fn describe(self) -> string { return "Point(${self.x},${self.y})" }
+}
+
+impl Describable for Circle {
+    fn describe(self) -> string { return "Circle(r=${self.radius})" }
+}
+
+impl Greeter for Formal {
+    fn greet(self, name: string) -> string { return "${self.title} ${name}" }
+}
+
+impl Greeter for Casual {
+    fn greet(self, name: string) -> string { return "Hey ${name}" }
+}
+
+impl Calculator for Adder {
+    fn compute(self, x: int, y: int) -> int { return x + y }
+}
+
+impl Calculator for Multiplier {
+    fn compute(self, x: int, y: int) -> int { return x * y }
+}
+
+fn print_desc(d: Describable) -> string { return d.describe() }
+fn do_greet(g: Greeter, name: string) -> string { return g.greet(name) }
+fn do_calc(c: Calculator, x: int, y: int) -> int { return c.compute(x, y) }
+
+fn main() -> int {
+    var pass = 0
+    var fail = 0
+
+    // Test 1: Basic trait method
+    var p = Point { x: 3, y: 4 }
+    var d1 = p.describe()
+    if d1 == "Point(3,4)" { pass += 1 } else { fail += 1; println("FAIL: basic trait, got '${d1}'") }
+
+    // Test 2: Polymorphic dispatch (self-only)
+    var c = Circle { radius: 5 }
+    var d2 = print_desc(p)
+    var d3 = print_desc(c)
+    if d2 == "Point(3,4)" { pass += 1 } else { fail += 1; println("FAIL: poly Point, got '${d2}'") }
+    if d3 == "Circle(r=5)" { pass += 1 } else { fail += 1; println("FAIL: poly Circle, got '${d3}'") }
+
+    // Test 3: Trait with string param
+    var f = Formal { title: "Dr." }
+    var g1 = f.greet("Smith")
+    if g1 == "Dr. Smith" { pass += 1 } else { fail += 1; println("FAIL: string param, got '${g1}'") }
+
+    // Test 4: Polymorphic dispatch with string param
+    var cas = Casual {}
+    var g2 = do_greet(f, "Smith")
+    var g3 = do_greet(cas, "Bob")
+    if g2 == "Dr. Smith" { pass += 1 } else { fail += 1; println("FAIL: poly greet Formal, got '${g2}'") }
+    if g3 == "Hey Bob" { pass += 1 } else { fail += 1; println("FAIL: poly greet Casual, got '${g3}'") }
+
+    // Test 5: Trait with two int params
+    var add = Adder {}
+    var mul = Multiplier {}
+    if add.compute(3, 4) == 7 { pass += 1 } else { fail += 1; println("FAIL: adder") }
+    if mul.compute(3, 4) == 12 { pass += 1 } else { fail += 1; println("FAIL: multiplier") }
+
+    // Test 6: Polymorphic dispatch with two int params
+    if do_calc(add, 10, 5) == 15 { pass += 1 } else { fail += 1; println("FAIL: poly add") }
+    if do_calc(mul, 10, 5) == 50 { pass += 1 } else { fail += 1; println("FAIL: poly mul") }
+
+    println("Trait tests: ${pass} pass, ${fail} fail")
+    if fail > 0 { return 1 }
+    return 0
+}

@@ -1,0 +1,14 @@
+// Spawn 1M tasks — fire-and-forget
+// Tests: scheduler throughput, memory efficiency at scale
+
+fn work(id: int) -> int {
+    return id * id
+}
+
+fn main() -> int {
+    for i in 0..1000000 {
+        spawn work(i)
+    }
+    println("spawned 1M tasks")
+    return 0
+}

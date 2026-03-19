@@ -1,0 +1,77 @@
+// Edge case pass 3: boundary values, stress, combos
+
+// Edge 1: function with many defaults (8 params)
+fn many(a: int = 1, b: int = 2, c: int = 3, d: int = 4, e: int = 5, f: int = 6, g: int = 7, h: int = 8) -> int {
+    return a + b + c + d + e + f + g + h
+}
+
+// Edge 2: default is 0 (falsy)
+fn with_zero(x: int = 0) -> int { return x }
+
+// Edge 3: default is negative
+fn with_neg(x: int = -1) -> int { return x }
+
+// Edge 4: default is large number
+fn with_large(x: int = 999999) -> int { return x }
+
+// Edge 5: ? operator returns immediately on first call
+fn instant_err() -> ResultInt {
+    var x = ResultInt_Err("instant")?
+    return ResultInt_Ok(x)
+}
+
+// Edge 6: string default with special chars
+fn with_special(s: string = "hello world") -> string { return s }
+
+// Edge 7: multiple spawns of same function with different default usage
+fn flex(a: int, b: int = 10, c: int = 20) -> int {
+    return a + b + c
+}
+
+fn main() -> int {
+    // Edge 1: many defaults - all default
+    if many() != 36 { println("FAIL: many() = ${many()}"); return 1 }
+    // partial
+    if many(10) != 45 { println("FAIL: many(10)"); return 2 }
+    // all explicit
+    if many(10, 20, 30, 40, 50, 60, 70, 80) != 360 { println("FAIL: many(all)"); return 3 }
+
+    // Edge 2: zero default
+    if with_zero() != 0 { println("FAIL: zero default"); return 4 }
+    if with_zero(5) != 5 { println("FAIL: zero override"); return 5 }
+
+    // Edge 3: negative default
+    if with_neg() != -1 { println("FAIL: neg default"); return 6 }
+
+    // Edge 4: large default
+    if with_large() != 999999 { println("FAIL: large default"); return 7 }
+
+    // Edge 5: instant error
+    var r5 = instant_err()
+    if !ResultInt_is_err(r5) { println("FAIL: instant err"); return 8 }
+
+    // Edge 6: string default with space
+    if with_special() != "hello world" { println("FAIL: special default"); return 9 }
+
+    // Edge 7: spawn flex with various arg counts
+    var f1 = spawn flex(1)
+    var f2 = spawn flex(1, 100)
+    var f3 = spawn flex(1, 100, 200)
+    var v1 = await f1
+    var v2 = await f2
+    var v3 = await f3
+    if v1 != 31 { println("FAIL: flex(1)=${v1}"); return 10 }
+    if v2 != 121 { println("FAIL: flex(1,100)=${v2}"); return 11 }
+    if v3 != 301 { println("FAIL: flex(1,100,200)=${v3}"); return 12 }
+
+    // Edge 8: stress - 200 spawns with defaults
+    var sum = 0
+    for i in 0..200 {
+        var f = spawn with_zero()
+        sum = sum + await f
+    }
+    if sum != 0 { println("FAIL: stress zero sum=${sum}"); return 13 }
+
+    println("PASS: edge case pass 3 (13 checks)")
+    return 0
+}

@@ -1,0 +1,35 @@
+// Test Base64 encode/decode
+
+fn main() -> int {
+    // Test basic encoding
+    var encoded = Base64.encode("Hello, World!")
+    println("Encoded: " + encoded)
+    
+    // Test decoding
+    var decoded = Base64.decode(encoded)
+    println("Decoded: " + decoded)
+    
+    // Verify round-trip
+    if decoded != "Hello, World!" {
+        println("ERROR: Round-trip failed")
+        return 1
+    }
+    
+    // Test empty string
+    var empty_enc = Base64.encode("")
+    var empty_dec = Base64.decode(empty_enc)
+    if empty_dec != "" {
+        println("ERROR: Empty string failed")
+        return 1
+    }
+    
+    // Test known value
+    var result = Base64.encode("test")
+    if result != "dGVzdA==" {
+        println("ERROR: Expected dGVzdA==, got " + result)
+        return 1
+    }
+    
+    println("✓ Base64 tests passed")
+    return 0
+}

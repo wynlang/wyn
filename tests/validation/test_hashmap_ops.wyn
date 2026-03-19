@@ -1,0 +1,26 @@
+// Test: HashMap operations
+fn main() {
+    var m = HashMap.new()
+    HashMap.set(m, "name", "Wyn")
+    HashMap.set(m, "version", "1.9")
+    HashMap.set(m, "type", "language")
+
+    Test.assert(HashMap.get(m, "name") == "Wyn", "get name")
+    Test.assert(HashMap.get(m, "version") == "1.9", "get version")
+    Test.assert(HashMap.has(m, "name") == 1, "has name")
+    Test.assert(HashMap.has(m, "missing") == 0, "has missing")
+
+    // Overwrite
+    HashMap.set(m, "version", "2.0")
+    Test.assert(HashMap.get(m, "version") == "2.0", "overwrite")
+
+    // Remove
+    HashMap.remove(m, "type")
+    Test.assert(HashMap.has(m, "type") == 0, "removed")
+
+    // Keys
+    var keys = HashMap.keys(m)
+    Test.assert(keys.len() == 2, "keys len after remove")
+
+    println("PASS: hashmap")
+}

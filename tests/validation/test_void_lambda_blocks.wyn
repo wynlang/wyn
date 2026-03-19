@@ -1,0 +1,34 @@
+// Test: Void pipe-lambda blocks with captures
+fn main() {
+    var nums = [1, 2, 3, 4, 5]
+
+    // Capture + mutate via block
+    var sum = 0
+    nums.each(|n| { sum = sum + n })
+    Test.assert(sum == 15, "capture mutate")
+
+    // Multiple statements in block
+    var count = 0
+    var last = 0
+    nums.each(|n| {
+        count = count + 1
+        last = n
+    })
+    Test.assert(count == 5, "multi stmt count")
+    Test.assert(last == 5, "multi stmt last")
+
+    // Block with return (map)
+    var doubled = nums.map(|x| { return x * 2 })
+    Test.assert(doubled[0] == 2 && doubled[4] == 10, "block return")
+
+    // Expression body still works
+    var tripled = nums.map(|x| x * 3)
+    Test.assert(tripled[0] == 3, "expr body")
+
+    // fn-style block (was already working)
+    var total = 0
+    nums.each(fn(n: int) { total += n })
+    Test.assert(total == 15, "fn block")
+
+    println("PASS: void lambda blocks")
+}

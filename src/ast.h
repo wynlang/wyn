@@ -80,6 +80,7 @@ typedef struct {
     Expr* callee;
     Expr** args;
     int arg_count;
+    Token* arg_names;  // Named arguments: arg_names[i].length > 0 means named
     void* selected_overload;  // T1.5.3: Selected function overload (void* to avoid circular dependency)
 } CallExpr;
 
@@ -165,7 +166,9 @@ typedef struct {
 } RangePattern;
 
 typedef struct {
-    Pattern* inner;       // Pattern inside Some() or None
+    Pattern* inner;       // Pattern inside Some() or None (single arg)
+    Pattern** inners;     // Multiple inner patterns for multi-arg variants
+    int inner_count;      // Number of inner patterns (0 = use single inner)
     bool is_some;         // true for Some(pattern), false for None
     Token variant_name;   // Variant name (Some, None, Ok, Err, etc.)
     Token enum_name;      // Enum type name (Result, Option, etc.)
@@ -386,7 +389,7 @@ typedef enum {
     STMT_MATCH, // T1.4.3: Control Flow Agent addition
     STMT_TRAIT, // T3.2.1: Trait definition statement
     STMT_MODULE, // T3.5.1: Module declaration statement
-    STMT_SPAWN, // Concurrency: spawn statement
+    STMT_SPAWN, STMT_YIELD, // Concurrency: spawn statement
 } StmtType;
 
 typedef struct Stmt Stmt;
@@ -582,7 +585,7 @@ struct Stmt {
         Expr* expr;
         VarStmt var;
         VarStmt const_stmt;  // Reuse VarStmt structure for constants
-        ReturnStmt ret;
+        ReturnStmt ret; struct { Expr* value; } yield_stmt;
         BlockStmt block;
         FnStmt fn;
         ExternStmt extern_fn;

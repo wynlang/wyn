@@ -1,0 +1,42 @@
+// Test: While loops and control flow
+fn main() {
+    // Basic while
+    var i = 0
+    while i < 5 { i += 1 }
+    Test.assert(i == 5, "basic while")
+
+    // While with accumulator
+    var sum = 0
+    i = 1
+    while i <= 10 {
+        sum += i
+        i += 1
+    }
+    Test.assert(sum == 55, "while sum")
+
+    // While with complex condition
+    i = 0
+    var product = 1
+    while i < 10 && product < 100 {
+        i += 1
+        product = product * 2
+    }
+    Test.assert(product == 128, "while complex")
+
+    // Countdown
+    var countdown = 10
+    while countdown > 0 { countdown -= 1 }
+    Test.assert(countdown == 0, "countdown")
+
+    // While building array
+    var arr = []
+    i = 0
+    while i < 5 {
+        arr.push(i * i)
+        i += 1
+    }
+    Test.assert(arr.len() == 5, "while array len")
+    Test.assert(arr[4] == 16, "while array[4]")
+
+    println("PASS: while loops")
+}

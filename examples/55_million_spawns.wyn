@@ -1,29 +1,37 @@
-// Example 55: Million Spawns
-// Stress test: spawn 1 million lightweight tasks
+// Spawn Scaling — demonstrates spawn throughput via batching
+// With 8MB default stacks, ~5-10K concurrent spawns are practical.
+// Higher throughput achieved by batching: spawn, await, recycle.
 
-fn worker() {
-    var x = 42;
+fn worker(id: int) -> int {
+    return id + 1
 }
 
-fn main() {
-    print("Spawning 1,000,000 lightweight tasks...\n");
-    print("This would require 8TB with OS threads!\n");
-    print("With spawns: only ~4-8 GB\n\n");
-    
-    var i = 0;
-    while (i < 1000000) {
-        spawn worker();
-        i = i + 1;
-        
-        if (i % 100000 == 0) {
-            print("Spawned ");
-            print(i);
-            print(" tasks\n");
+fn main() -> int {
+    println("=== Spawn Scaling ===")
+    println("")
+
+    // Batch 10 × 1K = 10K total spawns with recycling
+    var total = 0
+    for batch in 0..10 {
+        var futures = []
+        for i in 0..1000 {
+            futures.push(spawn worker(batch * 1000 + i))
+        }
+        var results = await_all(futures)
+        for i in 0..1000 {
+            total = total + results[i]
         }
     }
-    
-    print("\nAll 1 million spawns created!\n");
-    print("Work-stealing scheduler handles load balancing\n");
-    
-    return 0;
+
+    // sum of (i+1) for i=0..9999 = 50005000
+    println("  10K spawns (10 × 1K batches): total = ${total}")
+    if total == 50005000 {
+        println("  ✓ Correct!")
+    }
+
+    println("")
+    println("  Note: ~5-10K concurrent spawns with 8MB stacks.")
+    println("  Higher throughput via batching (spawn, await_all, recycle).")
+    println("")
+    return 0
 }

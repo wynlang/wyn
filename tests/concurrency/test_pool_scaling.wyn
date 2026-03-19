@@ -1,0 +1,47 @@
+// Pool allocator scaling test
+// Tests recycling throughput via batched concurrent spawns
+
+fn counter(x: int) -> int {
+    return x + 1
+}
+
+fn main() {
+    Test.init("Pool Allocator Scaling")
+
+    // Test 1: 1K concurrent spawns
+    var futures1k = []
+    for i in 0..1000 {
+        futures1k.push(spawn counter(i))
+    }
+    var results1k = await_all(futures1k)
+    var sum1k = 0
+    for i in 0..1000 {
+        sum1k = sum1k + results1k[i]
+    }
+    Test.assert_eq_int(sum1k, 500500, "1K concurrent: correct sum")
+
+    // Test 2: 1K batches × 10 = 10K total (tests pool recycling)
+    var grand_sum = 0
+    for batch in 0..10 {
+        var futures = []
+        for i in 0..1000 {
+            futures.push(spawn counter(batch * 1000 + i))
+        }
+        var results = await_all(futures)
+        for i in 0..1000 {
+            grand_sum = grand_sum + results[i]
+        }
+    }
+    // sum of (i+1) for i=0..9999 = 50005000
+    Test.assert_eq_int(grand_sum, 50005000, "10K batched (10×1K): correct sum")
+
+    // Test 3: 5K sequential spawn+await (pool recycles each coroutine)
+    var total = 0
+    for i in 0..5000 {
+        var f = spawn counter(i)
+        total = total + await f
+    }
+    Test.assert_eq_int(total, 12502500, "5K sequential: correct sum")
+
+    Test.summary()
+}

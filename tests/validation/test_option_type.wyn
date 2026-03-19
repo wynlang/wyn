@@ -8,7 +8,7 @@ fn find_positive(x: int) -> OptionInt {
     return OptionInt_None()
 }
 
-fn main() -> int {
+fn main() {
     // Test 1: Some value
     var a = OptionInt_Some(42)
     println(OptionInt_is_some(a))
@@ -40,5 +40,4 @@ fn main() -> int {
     println(OptionString_is_none(ns))
     println(OptionString_unwrap_or(ns, "default"))
 
-    return 0
 }

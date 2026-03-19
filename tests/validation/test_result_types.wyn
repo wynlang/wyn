@@ -1,0 +1,43 @@
+// Test: Result and Option types
+fn safe_div(a: int, b: int) -> Result<int, string> {
+    if b == 0 { return Err("division by zero") }
+    return Ok(a / b)
+}
+
+fn find_index(arr: [int], target: int) -> Result<int, string> {
+    for i in 0..arr.len() {
+        if arr[i] == target { return Ok(i) }
+    }
+    return Err("not found")
+}
+
+fn main() {
+    // Result Ok
+    var r1 = safe_div(10, 2)
+    match r1 {
+        Ok(v) => Test.assert(v == 5, "ok value")
+        Err(e) => Test.assert(false, "unexpected err")
+    }
+
+    // Result Err
+    var r2 = safe_div(10, 0)
+    match r2 {
+        Ok(v) => Test.assert(false, "unexpected ok")
+        Err(e) => Test.assert(e == "division by zero", "err msg")
+    }
+
+    // Result from search
+    var r3 = find_index([10, 20, 30], 20)
+    match r3 {
+        Ok(idx) => Test.assert(idx == 1, "found index")
+        Err(e) => Test.assert(false, "should find")
+    }
+
+    var r4 = find_index([10, 20, 30], 99)
+    match r4 {
+        Ok(idx) => Test.assert(false, "should not find")
+        Err(e) => Test.assert(e == "not found", "not found msg")
+    }
+
+    println("PASS: result types")
+}

@@ -1,0 +1,30 @@
+// Test: Ternary operator and conditional expressions
+fn main() {
+    var x = 10
+
+    // Basic ternary
+    Test.assert(x > 5 ? 100 : 0 == 100, "ternary true")
+    Test.assert(x < 5 ? 100 : 0 == 0, "ternary false")
+
+    // String ternary
+    var s = x > 0 ? "pos" : "neg"
+    Test.assert(s == "pos", "string ternary")
+
+    // Ternary in assignment
+    var bonus = x >= 10 ? 50 : 0
+    Test.assert(bonus == 50, "ternary assign")
+
+    // If-expression (alternative syntax)
+    var label = if x > 5 { "big" } else { "small" }
+    Test.assert(label == "big", "if-expr")
+
+    // If-expression with int
+    var val = if x == 10 { 999 } else { 0 }
+    Test.assert(val == 999, "if-expr int")
+
+    // Ternary with comparison
+    var cmp = 3 > 2 ? "yes" : "no"
+    Test.assert(cmp == "yes", "ternary cmp")
+
+    println("PASS: ternary and conditionals")
+}

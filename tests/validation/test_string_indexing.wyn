@@ -1,7 +1,7 @@
 // TDD: String indexing regression test
 // Tests str[i] to get character at index
 
-fn main() -> int {
+fn main() {
     var s = "hello"
 
     // Test 1: basic indexing
@@ -18,5 +18,4 @@ fn main() -> int {
     println(word[0])
     println(word[2])
 
-    return 0
 }

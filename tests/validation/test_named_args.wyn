@@ -1,0 +1,29 @@
+// TDD: named arguments
+
+fn make_conn(host: string, port: int, timeout: int = 30) -> string {
+    return host + ":" + port.to_string() + " (timeout=" + timeout.to_string() + ")"
+}
+
+fn greet(name: string, greeting: string = "Hello") -> string {
+    return greeting + ", " + name + "!"
+}
+
+fn main() {
+    Test.init("Named Arguments")
+
+    // Positional (existing behavior)
+    Test.assert_eq_str(make_conn("localhost", 8080, 60), "localhost:8080 (timeout=60)", "positional")
+
+    // Named arguments
+    Test.assert_eq_str(make_conn(host: "localhost", port: 8080), "localhost:8080 (timeout=30)", "named with default")
+    Test.assert_eq_str(make_conn(host: "db.local", port: 5432, timeout: 10), "db.local:5432 (timeout=10)", "named all")
+
+    // Named with reorder
+    Test.assert_eq_str(make_conn(port: 3000, host: "api.local"), "api.local:3000 (timeout=30)", "named reorder")
+
+    // Mixed: positional then named
+    Test.assert_eq_str(greet("World"), "Hello, World!", "default greeting")
+    Test.assert_eq_str(greet(name: "Wyn", greeting: "Hey"), "Hey, Wyn!", "named greeting")
+
+    Test.summary()
+}

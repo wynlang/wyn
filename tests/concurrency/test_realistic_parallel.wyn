@@ -1,0 +1,67 @@
+// Realistic test: parallel string processing (like a web scraper)
+
+fn process_item(id: int) -> string {
+    var prefix = "item_"
+    var num = id.to_string()
+    var result = prefix + num + "_processed"
+    return result
+}
+
+fn format_report(items: [string]) -> string {
+    var report = "Report: "
+    for i in 0..items.len() {
+        if i > 0 { report = report + ", " }
+        report = report + items[i]
+    }
+    return report
+}
+
+fn main() {
+    Test.init("Realistic Parallel Processing")
+
+    // 1: process items in parallel, collect results
+    var futures = []
+    for i in 0..5 {
+        futures.push(spawn process_item(i))
+    }
+
+    // Collect string results
+    var items: [string] = []
+    for i in 0..5 {
+        var f = futures[i]
+        var result = await f
+        items.push(result)
+    }
+
+    Test.assert_eq_int(items.len(), 5, "collected 5 items")
+    Test.assert_eq_str(items[0], "item_0_processed", "item 0")
+    Test.assert_eq_str(items[4], "item_4_processed", "item 4")
+
+    // 2: sequential processing with string accumulation
+    var output = ""
+    for i in 0..10 {
+        var f = spawn process_item(i)
+        var item = await f
+        if output.len() > 0 { output = output + "; " }
+        output = output + item
+    }
+    Test.assert(output.contains("item_0_processed"), "log has item 0")
+    Test.assert(output.contains("item_9_processed"), "log has item 9")
+
+    // 3: shared counter with string results
+    var counter = Shared.new(0)
+    var str_futures = []
+    for i in 0..20 {
+        str_futures.push(spawn process_item(i))
+    }
+    // Await all and count
+    for i in 0..20 {
+        var r = await str_futures[i]
+        if r.contains("processed") {
+            Shared.add(counter, 1)
+        }
+    }
+    Test.assert_eq_int(Shared.get(counter), 20, "all 20 processed")
+
+    Test.summary()
+}
