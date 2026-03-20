@@ -781,11 +781,21 @@ int cmd_debug(const char* program, int argc, char** argv) {
     snprintf(c_path, sizeof(c_path), "%s.c", program);
     
     // Detect wyn root
-    char exe[1024]; uint32_t sz = sizeof(exe);
+    char exe[1024];
+#ifdef __APPLE__
+    uint32_t sz = sizeof(exe);
     if (_NSGetExecutablePath(exe, &sz) == 0) {
         char* sl = strrchr(exe, '/');
         if (sl) { *sl = 0; strncpy(wyn_root, exe, sizeof(wyn_root)-1); }
     }
+#else
+    ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe)-1);
+    if (len > 0) {
+        exe[len] = 0;
+        char* sl = strrchr(exe, '/');
+        if (sl) { *sl = 0; strncpy(wyn_root, exe, sizeof(wyn_root)-1); }
+    }
+#endif
     
     // Build .c file via wyn build (creates both binary and .c)
     printf("\033[1mCompiling\033[0m %s with debug info...\n", program);
