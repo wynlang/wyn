@@ -2027,7 +2027,7 @@ int main(int argc, char** argv) {
                 "clang -std=c11 -O2 -w -arch arm64 -isysroot %s "
                 "-miphoneos-version-min=15.0 "
                 "-I %s/src -I %s/vendor/minicoro -o %s.ios %s.c "
-                "%s/src/wyn_arena.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
+                "%s/src/wyn_arena.c %s/src/wyn_rc.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
                 "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c "
                 "%s/src/string_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c "
                 "%s/src/test_runtime.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/io_loop.c %s/src/coroutine.c %s/src/future.c "
@@ -2037,7 +2037,7 @@ int main(int argc, char** argv) {
                 "%s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c "
                 "-lpthread -lm",
                 sdk_path, wyn_root, wyn_root, file, file,
-                wyn_root, wyn_root, wyn_root,
+                wyn_root, wyn_root, wyn_root, wyn_root,
                 wyn_root, wyn_root, wyn_root,
                 wyn_root, wyn_root, wyn_root,
                 wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
