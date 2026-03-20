@@ -97,8 +97,8 @@ static int coro_pool_cs_init = 0;
 #define coro_pool_unlock() LeaveCriticalSection(&coro_pool_cs)
 #else
 static pthread_mutex_t coro_pool_mtx = PTHREAD_MUTEX_INITIALIZER;
-#define coro_pool_lock() coro_pool_lock()
-#define coro_pool_unlock() coro_pool_unlock()
+#define coro_pool_lock() pthread_mutex_lock(&coro_pool_mtx)
+#define coro_pool_unlock() pthread_mutex_unlock(&coro_pool_mtx)
 #endif
 
 static void* coro_pool_alloc(size_t size, void* ud) {
