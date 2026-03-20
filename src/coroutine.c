@@ -3,8 +3,25 @@
 #include <stdio.h>
 #include <stdatomic.h>
 #include <string.h>
+#ifndef _WIN32
 #include <pthread.h>
 #include <sys/mman.h>
+#else
+#include <windows.h>
+// Minimal mmap shim for Windows
+#define MAP_PRIVATE 0x02
+#define MAP_ANONYMOUS 0x20
+#define MAP_FIXED 0x10
+#define MAP_FAILED ((void*)-1)
+#define PROT_READ 0x1
+#define PROT_WRITE 0x2
+static inline void* mmap(void* addr, size_t len, int prot, int flags, int fd, long off) {
+    (void)prot; (void)fd; (void)off;
+    if (flags & MAP_FIXED) { VirtualFree(addr, 0, MEM_RELEASE); }
+    return VirtualAlloc(addr, len, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+}
+static inline int munmap(void* addr, size_t len) { (void)len; VirtualFree(addr, 0, MEM_RELEASE); return 0; }
+#endif
 
 #define MCO_USE_VMEM_ALLOCATOR
 #define MCO_MIN_STACK_SIZE 4096
@@ -73,21 +90,30 @@ static void wc_dealloc(WynCoroutine* wc) {
 static void* coro_pool_slots[CORO_POOL_MAX];
 static int coro_pool_count = 0;
 static size_t coro_pool_block_size = 0;
+#ifdef _WIN32
+static CRITICAL_SECTION coro_pool_cs;
+static int coro_pool_cs_init = 0;
+#define coro_pool_lock() do { if (!coro_pool_cs_init) { InitializeCriticalSection(&coro_pool_cs); coro_pool_cs_init = 1; } EnterCriticalSection(&coro_pool_cs); } while(0)
+#define coro_pool_unlock() LeaveCriticalSection(&coro_pool_cs)
+#else
 static pthread_mutex_t coro_pool_mtx = PTHREAD_MUTEX_INITIALIZER;
+#define coro_pool_lock() coro_pool_lock()
+#define coro_pool_unlock() coro_pool_unlock()
+#endif
 
 static void* coro_pool_alloc(size_t size, void* ud) {
     (void)ud;
     if (size == coro_pool_block_size) {
-        pthread_mutex_lock(&coro_pool_mtx);
+        coro_pool_lock();
         if (coro_pool_count > 0) {
             void* ptr = coro_pool_slots[--coro_pool_count];
-            pthread_mutex_unlock(&coro_pool_mtx);
+            coro_pool_unlock();
             // Remap to get fresh zeroed pages at the same virtual address.
             void* fresh = mmap(ptr, size, PROT_READ | PROT_WRITE,
                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
             return (fresh != MAP_FAILED) ? fresh : NULL;
         }
-        pthread_mutex_unlock(&coro_pool_mtx);
+        coro_pool_unlock();
     }
     void* ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     return ptr != MAP_FAILED ? ptr : NULL;
@@ -96,13 +122,13 @@ static void* coro_pool_alloc(size_t size, void* ud) {
 static void coro_pool_dealloc(void* ptr, size_t size, void* ud) {
     (void)ud;
     if (size == coro_pool_block_size) {
-        pthread_mutex_lock(&coro_pool_mtx);
+        coro_pool_lock();
         if (coro_pool_count < CORO_POOL_MAX) {
             coro_pool_slots[coro_pool_count++] = ptr;
-            pthread_mutex_unlock(&coro_pool_mtx);
+            coro_pool_unlock();
             return;
         }
-        pthread_mutex_unlock(&coro_pool_mtx);
+        coro_pool_unlock();
     }
     munmap(ptr, size);
 }

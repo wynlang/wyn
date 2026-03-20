@@ -772,6 +772,12 @@ int cmd_lsp(int argc, char** argv) {
 
 int cmd_debug(const char* program, int argc, char** argv) {
     (void)argc; (void)argv;
+#ifdef _WIN32
+    fprintf(stderr, "Error: wyn debug is not supported on Windows (requires lldb)\n");
+    (void)program;
+    return 1;
+#else
+    (void)argc; (void)argv;
     if (!program) { fprintf(stderr, "Usage: wyn debug <program>\n"); return 1; }
     FILE* f = fopen(program, "r");
     if (!f) { fprintf(stderr, "Error: Cannot open %s\n", program); return 1; }
@@ -789,13 +795,17 @@ int cmd_debug(const char* program, int argc, char** argv) {
         char* sl = strrchr(exe, '/');
         if (sl) { *sl = 0; strncpy(wyn_root, exe, sizeof(wyn_root)-1); }
     }
-#else
+#elif !defined(_WIN32)
     ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe)-1);
     if (len > 0) {
         exe[len] = 0;
         char* sl = strrchr(exe, '/');
         if (sl) { *sl = 0; strncpy(wyn_root, exe, sizeof(wyn_root)-1); }
     }
+#else
+    GetModuleFileNameA(NULL, exe, sizeof(exe));
+    char* sl = strrchr(exe, '\\');
+    if (sl) { *sl = 0; strncpy(wyn_root, exe, sizeof(wyn_root)-1); }
 #endif
     
     // Build .c file via wyn build (creates both binary and .c)
@@ -842,6 +852,7 @@ int cmd_debug(const char* program, int argc, char** argv) {
     system(cmd);
     unlink(init_path);
     return 0;
+#endif // !_WIN32
 }
 
 int cmd_init(const char* name, int argc, char** argv) {
