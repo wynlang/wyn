@@ -38,11 +38,16 @@ tests/test_codegen
 
 # OS
 .DS_Store
+
+# Runtime build artifacts
 runtime/libwyn_rt.a
 runtime/obj/
 wyn_cc_err.txt
 runtime/libwyn_runtime.a
 wyn_runtime.h.gch
+
+# Database files
+*.db
 
 # Test binaries (compiled from .wyn)
 tests/concurrency/test_*
