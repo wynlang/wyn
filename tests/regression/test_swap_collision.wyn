@@ -1,0 +1,13 @@
+// Regression test: user-defined fn swap() must not collide with runtime
+// Bug: runtime defines bare `swap()` which causes C linker error
+// EXPECT: 2 1
+
+fn swap(a: int, b: int) -> [int] {
+    return [b, a]
+}
+
+fn main() -> int {
+    var result = swap(1, 2)
+    println(result[0].to_string() + " " + result[1].to_string())
+    return 0
+}
