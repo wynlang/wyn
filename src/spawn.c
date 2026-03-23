@@ -1,26 +1,37 @@
 // Spawn runtime implementation
-#ifndef _WIN32
-#define _DEFAULT_SOURCE
-#endif
 #include "spawn.h"
 #include "coroutine.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
-#ifndef _WIN32
+
+#ifdef _WIN32
+// Windows: stub implementations — spawn runs synchronously
+WynScheduler* global_scheduler = NULL;
+WynScheduler* wyn_scheduler_init(int n) { (void)n; return NULL; }
+void wyn_scheduler_start(WynScheduler* s) { (void)s; }
+void wyn_scheduler_shutdown(WynScheduler* s) { (void)s; }
+void wyn_scheduler_enqueue(WynScheduler* s, WynSpawnFunc f, void* a) { (void)s; f(a); }
+void wyn_spawn(WynSpawnFunc f, void* a) { f(a); }
+void wyn_yield(void) {}
+WynTask* wyn_task_new(int cap) {
+    WynTask* t = calloc(1, sizeof(WynTask));
+    t->capacity = cap; t->buffer = calloc(cap, sizeof(void*));
+    return t;
+}
+void wyn_task_send(WynTask* t, void* v) { if (t->size < t->capacity) t->buffer[t->write_pos++ % t->capacity] = v, t->size++; }
+void* wyn_task_recv(WynTask* t) { if (t->size > 0) { t->size--; return t->buffer[t->read_pos++ % t->capacity]; } return NULL; }
+void wyn_task_close(WynTask* t) { t->closed = 1; }
+void wyn_task_free(WynTask* t) { free(t->buffer); free(t); }
+#else
+
+#define _DEFAULT_SOURCE
 #include <unistd.h>
 #include <sched.h>
 #ifdef __APPLE__
 #ifndef __TINYC__
 #include <sys/sysctl.h>
 #endif
-#endif
-#else
-#include <windows.h>
-// Windows doesn't have usleep, use Sleep (milliseconds) instead
-#define usleep(us) Sleep((us) / 1000)
-// Windows doesn't have sched_yield, use SwitchToThread
-#define sched_yield() SwitchToThread()
 #endif
 
 WynScheduler* global_scheduler = NULL;
@@ -336,3 +347,5 @@ void wyn_task_free(WynTask* task) {
     free(task->buffer);
     free(task);
 }
+
+#endif // !_WIN32
