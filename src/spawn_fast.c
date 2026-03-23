@@ -527,44 +527,72 @@ Future* wyn_spawn_async(TaskFuncWithReturn func, void* arg) {
     return wyn_spawn_async_traced(func, arg, NULL, 0);
 }
 
-// Thread wrapper for spawn_async — runs func on a real OS thread
-typedef struct { TaskFuncWithReturn func; void* arg; Future* future; } ThreadSpawnArgs;
-static void* thread_spawn_wrapper(void* raw) {
-    ThreadSpawnArgs* tsa = (ThreadSpawnArgs*)raw;
-    void* result = tsa->func(tsa->arg);
-    future_set(tsa->future, result);
-    free(tsa);
-    atomic_fetch_add(&total_completed, 1);
+// === Thread Pool for spawn_async ===
+// Fixed pool of worker threads that pick up tasks from a shared queue.
+// Eliminates pthread_create overhead per spawn.
+
+typedef struct { TaskFuncWithReturn func; void* arg; Future* future; } PoolTask;
+
+#define POOL_QUEUE_SIZE 4096
+static PoolTask pool_queue[POOL_QUEUE_SIZE];
+static _Atomic int pool_head = 0;
+static _Atomic int pool_tail = 0;
+static pthread_mutex_t pool_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t pool_cond = PTHREAD_COND_INITIALIZER;
+static _Atomic int pool_started = 0;
+static _Atomic int pool_shutdown = 0;
+#define POOL_THREADS 8
+static pthread_t pool_threads[POOL_THREADS];
+
+static void* pool_worker(void* arg) {
+    (void)arg;
+    while (!atomic_load(&pool_shutdown)) {
+        pthread_mutex_lock(&pool_lock);
+        while (atomic_load(&pool_head) == atomic_load(&pool_tail) && !atomic_load(&pool_shutdown)) {
+            pthread_cond_wait(&pool_cond, &pool_lock);
+        }
+        if (atomic_load(&pool_shutdown)) { pthread_mutex_unlock(&pool_lock); break; }
+        int idx = atomic_load(&pool_head) % POOL_QUEUE_SIZE;
+        PoolTask task = pool_queue[idx];
+        atomic_fetch_add(&pool_head, 1);
+        pthread_mutex_unlock(&pool_lock);
+        
+        void* result = task.func(task.arg);
+        future_set(task.future, result);
+        atomic_fetch_add(&total_completed, 1);
+    }
     return NULL;
+}
+
+static void init_pool(void) {
+    if (atomic_exchange(&pool_started, 1)) return;
+    for (int i = 0; i < POOL_THREADS; i++) {
+        pthread_create(&pool_threads[i], NULL, pool_worker, NULL);
+    }
 }
 
 Future* wyn_spawn_async_traced(TaskFuncWithReturn func, void* arg, const char* file, int line) {
     (void)file; (void)line;
-    init_scheduler();
+    init_pool();
     
     Future* future = future_new();
     atomic_fetch_add(&total_spawned, 1);
     
-    ThreadSpawnArgs* tsa = malloc(sizeof(ThreadSpawnArgs));
-    if (!tsa) {
+    pthread_mutex_lock(&pool_lock);
+    int tail = atomic_load(&pool_tail);
+    // If queue is full, run inline
+    if (tail - atomic_load(&pool_head) >= POOL_QUEUE_SIZE) {
+        pthread_mutex_unlock(&pool_lock);
         void* result = func(arg);
         future_set(future, result);
         atomic_fetch_add(&total_completed, 1);
         return future;
     }
-    tsa->func = func;
-    tsa->arg = arg;
-    tsa->future = future;
+    pool_queue[tail % POOL_QUEUE_SIZE] = (PoolTask){ func, arg, future };
+    atomic_fetch_add(&pool_tail, 1);
+    pthread_cond_signal(&pool_cond);
+    pthread_mutex_unlock(&pool_lock);
     
-    pthread_t thread;
-    if (pthread_create(&thread, NULL, thread_spawn_wrapper, tsa) != 0) {
-        void* result = func(arg);
-        future_set(future, result);
-        free(tsa);
-        atomic_fetch_add(&total_completed, 1);
-        return future;
-    }
-    pthread_detach(thread);
     return future;
 }
 
