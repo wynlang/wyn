@@ -1197,15 +1197,13 @@ void codegen_stmt(Stmt* stmt) {
             if (stmt->var.init && stmt->var.init->type == EXPR_LAMBDA) {
                 // Function pointer syntax: int (*name)(params...)
                 // Check if name is a C keyword
-                const char* c_keywords[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
-                bool is_c_keyword = false;
-                for (int i = 0; c_keywords[i] != NULL; i++) {
-                    if ((int)stmt->var.name.length == (int)strlen(c_keywords[i]) && 
-                        memcmp(stmt->var.name.start, c_keywords[i], stmt->var.name.length) == 0) {
-                        is_c_keyword = true;
-                        break;
-                    }
-                }
+                // Check if name is a C keyword or runtime collision
+                extern int is_c_name_collision(const char*);
+                extern void register_user_collision(const char*);
+                char _vn[256]; int _vnl = stmt->var.name.length < 255 ? stmt->var.name.length : 255;
+                memcpy(_vn, stmt->var.name.start, _vnl); _vn[_vnl] = '\0';
+                bool is_c_keyword = is_c_name_collision(_vn);
+                if (is_c_keyword) register_user_collision(_vn);
                 
                 // Find this lambda in the lambda_functions array to get capture count
                 int total_params = stmt->var.init->lambda.param_count;
@@ -1634,9 +1632,10 @@ void codegen_stmt(Stmt* stmt) {
                 // Check for C keyword collision
                 char _fn_name[256];
                 snprintf(_fn_name, sizeof(_fn_name), "%.*s", stmt->fn.name.length, stmt->fn.name.start);
-                const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
-                bool _is_ckw = false;
-                for (int _k = 0; _ckw[_k]; _k++) { if (strcmp(_fn_name, _ckw[_k]) == 0) { _is_ckw = true; break; } }
+                extern int is_c_name_collision(const char*);
+                extern void register_user_collision(const char*);
+                bool _is_ckw = is_c_name_collision(_fn_name);
+                if (_is_ckw) register_user_collision(_fn_name);
                 emit("%s %s%.*s(", return_type, _is_ckw ? "_" : "", stmt->fn.name.length, stmt->fn.name.start);
             }
             for (int i = 0; i < stmt->fn.param_count; i++) {
@@ -1725,8 +1724,8 @@ void codegen_stmt(Stmt* stmt) {
                 // Emit with pointer for mut params
                 bool is_mut_p = stmt->fn.param_mutable && stmt->fn.param_mutable[i];
                 char _pn[256]; snprintf(_pn, sizeof(_pn), "%.*s", stmt->fn.params[i].length, stmt->fn.params[i].start);
-                static const char* _pkw2[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
-                bool _ipk = false; for (int _k = 0; _pkw2[_k]; _k++) { if (strcmp(_pn, _pkw2[_k]) == 0) { _ipk = true; break; } }
+                static const char* _c_kw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                bool _ipk = false; for (int _k = 0; _c_kw[_k]; _k++) { if (strcmp(_pn, _c_kw[_k]) == 0) { _ipk = true; break; } }
                 if (is_mut_p) {
                     emit("%s *%s%.*s", param_type, _ipk ? "_" : "", stmt->fn.params[i].length, stmt->fn.params[i].start);
                 } else {

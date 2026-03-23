@@ -2,7 +2,7 @@
 // These names should not collide with runtime internals
 // EXPECT: 10
 // EXPECT: hello
-// EXPECT: 3
+// EXPECT: 1
 
 fn clamp(val: int, lo: int, hi: int) -> int {
     if val < lo { return lo }

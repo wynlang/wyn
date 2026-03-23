@@ -235,18 +235,11 @@ void codegen_expr(Expr* expr) {
                 snprintf(temp_ident, sizeof(temp_ident), "%s.%s", resolved, function_part);
             }
             
-            // Check if this is a C keyword that needs prefix
-            const char* c_keywords[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
-            bool is_c_keyword = false;
-            (void)is_c_keyword;
-            for (int i = 0; c_keywords[i] != NULL; i++) {
-                if (strlen(temp_ident) == strlen(c_keywords[i]) && 
-                    strcmp(temp_ident, c_keywords[i]) == 0) {
-                    is_c_keyword = true;
-                    ident[0] = '_';
-                    offset = 1;
-                    break;
-                }
+            // Check if this is a user-defined name that collides with C/runtime
+            extern int is_user_collision(const char*);
+            if (is_user_collision(temp_ident)) {
+                ident[0] = '_';
+                offset = 1;
             }
             
             strcpy(ident + offset, temp_ident);
@@ -3379,9 +3372,9 @@ void codegen_expr(Expr* expr) {
                 for (int i = expr->pipeline.stage_count - 1; i >= 1; i--) {
                     if (expr->pipeline.stages[i]->type == EXPR_IDENT) {
                         char _pn[128]; snprintf(_pn, sizeof(_pn), "%.*s", expr->pipeline.stages[i]->token.length, expr->pipeline.stages[i]->token.start);
-                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
                         const char* _pfx = "";
-                        for (int k = 0; _ckw[k]; k++) { if (strcmp(_pn, _ckw[k]) == 0) { _pfx = "_"; break; } }
+                        extern int is_user_collision(const char*);
+                        if (is_user_collision(_pn)) _pfx = "_";
                         emit("%s%s(", _pfx, _pn);
                     } else if (expr->pipeline.stages[i]->type == EXPR_METHOD_CALL) {
                         emit("%.*s(", 

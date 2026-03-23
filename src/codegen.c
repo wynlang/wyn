@@ -29,6 +29,103 @@ extern bool is_builtin_module(const char* name);  // Module system
 static FILE* out = NULL;
 FILE* codegen_get_output(void) { return out; }
 
+// Centralized name collision check: C keywords + runtime function names
+// Returns true if 'name' would collide with a C keyword or wyn_runtime.h symbol
+int is_c_name_collision(const char* name) {
+    // C keywords and standard library
+    static const char* reserved[] = {
+        "double","float","int","char","void","return","if","else","while","for",
+        "switch","case","break","continue","struct","union","enum","typedef",
+        "static","extern","register","volatile","const","signed","unsigned",
+        "short","long","auto","default","do","goto","sizeof",
+        "div","abs","exit","free","malloc","printf","puts","remove","rename",
+        "signal","time","clock","rand","log","exp","sqrt",
+        // wyn_runtime.h functions that collide with user names
+        "swap","clamp","clamp_float","lerp","map_range","sign",
+        "gcd","lcm","pow_int","abs_val","abs_float","sqrt_int","ceil_int",
+        "floor_int","round_int",
+        "input","input_float","input_line",
+        "print","print_float","print_str","print_bool","print_hex","print_bin",
+        "println","print_debug","print_int","print_value","print_error",
+        "print_int_no_nl","print_float_no_nl","print_str_no_nl","print_bool_no_nl",
+        "print_array","print_array_no_nl","print_args_impl","printf_wyn",
+        "panic","todo","assert_eq","assert_true","assert_false",
+        "range","range_has_next","range_next","len",
+        "array_new","array_push","array_push_str","array_push_int","array_push_array",
+        "array_pop","array_len","array_clear","array_contains","array_contains_str",
+        "array_index_of","array_index_of_str","array_remove_at","array_remove_str",
+        "array_remove_value","array_insert","array_insert_at","array_reverse",
+        "array_reverse_copy","array_sort","array_sort_copy","array_sort_str",
+        "array_unique_int","array_sum","array_min","array_max","array_average",
+        "array_first","array_last","array_is_empty","array_count","array_each",
+        "array_every","array_concat","array_take","array_skip","array_flat_map",
+        "array_get_nested_int","array_get_nested3_int","array_length_dyn",
+        "array_new_int","array_filter","array_map","array_reduce","array_from_values",
+        "arr_sum","arr_max","arr_min","arr_contains","arr_find","arr_reverse",
+        "arr_sort","arr_count","arr_fill","arr_all","arr_join",
+        "arr_map_double","arr_map_square","arr_filter_positive","arr_filter_even",
+        "arr_filter_greater_than_3","arr_reduce_sum","arr_reduce_product",
+        "str_len","str_eq","str_contains","str_starts_with","str_ends_with",
+        "str_count","str_contains_substr","str_free","str_index_of",
+        "str_parse_int_failed","str_parse_float","str_to_float",
+        "string_len","string_length","string_contains","string_starts_with",
+        "string_ends_with","string_equals","string_index_of","string_last_index_of",
+        "string_count","string_is_empty","string_is_alpha","string_is_digit",
+        "string_is_alnum","string_is_numeric","string_is_whitespace",
+        "string_chars","string_lines","string_words","string_split",
+        "string_to_bytes","string_format",
+        "char_at","char_to_int","char_from_int","char_to_upper","char_to_lower",
+        "char_is_alpha","char_is_numeric","char_is_alphanumeric",
+        "char_is_uppercase","char_is_lowercase","char_is_whitespace",
+        "is_numeric","is_even","is_odd","split_get","split_count",
+        "sin_approx","cos_approx","pi_const","e_const",
+        "int_abs","int_sign","int_clamp","int_min","int_max","int_pow",
+        "int_is_even","int_is_odd","int_is_positive","int_is_negative","int_is_zero",
+        "int_times","int_to_float","int_array_len","int_array_push",
+        "float_abs","float_sign","float_clamp","float_min","float_max","float_pow",
+        "float_sqrt","float_floor","float_ceil","float_round","float_round_to",
+        "float_sin","float_cos","float_tan","float_asin","float_acos","float_atan",
+        "float_exp","float_log","float_log2","float_log10",
+        "float_is_nan","float_is_infinite","float_is_finite",
+        "float_is_positive","float_is_negative",
+        "bool_and","bool_or","bool_not","bool_xor","bool_to_int",
+        "bit_set","bit_clear","bit_toggle","bit_check","bit_count",
+        "file_exists","file_size","file_file_size","file_delete","file_copy",
+        "file_move","file_write","file_list_dir","file_mkdir","file_rmdir",
+        "file_is_file","file_is_dir","file_create_dir","file_create_dir_all",
+        "file_remove_dir_all","file_modified_time",
+        "random_int","random_range","random_float","random_bool",
+        "random_choice_int","random_seed_auto","seed_random",
+        "sleep_ms","exit_program","setenv_var",
+        "hashmap_new","hashmap_insert","hashmap_get","hashmap_has","hashmap_remove",
+        "hashmap_free","hashmap_set","hashmap_clear","hashmap_count","hashmap_len",
+        "hashmap_keys","hashmap_keys_string","hashmap_values",
+        "hashmap_insert_int","hashmap_insert_float","hashmap_insert_string","hashmap_insert_bool",
+        "hashmap_get_int","hashmap_get_float","hashmap_get_string","hashmap_get_bool",
+        "hashset_new","hashset_add","hashset_contains","hashset_remove","hashset_free",
+        "set_clear","set_is_subset","set_is_superset","set_is_disjoint",
+        "json_parse","json_get_string","json_get_int","json_free","json_new",
+        "json_set_int","json_set_string","json_stringify",
+        "hash_string","regex_match",
+        "map_get","map_set","map_has","map_remove","map_len","map_is_empty",
+        "map_clear","map_merge","map_get_or_default",
+        "http_set_header",
+        "none","none_int","none_float","none_string","none_bool",
+        "some","some_int","some_float","some_string","some_bool",
+        "ok_int","ok_float","ok_string","ok_bool","ok_void",
+        "err_int","err_float","err_string","err_bool",
+        "unwrap_int","unwrap_float","unwrap_string","unwrap_bool",
+        "unwrap_result_int","unwrap_result_float","unwrap_result_string","unwrap_result_bool",
+        "unwrap_error_int","unwrap_error_float","unwrap_error_string","unwrap_error_bool",
+        "validate_buffer","validate_memory_range","validate_string","validate_string_bounds",
+        NULL
+    };
+    for (int i = 0; reserved[i]; i++) {
+        if (strcmp(name, reserved[i]) == 0) return 1;
+    }
+    return 0;
+}
+
 // Current block context for liveness analysis
 static Stmt** current_block_stmts = NULL;
 static int current_block_count = 0;
@@ -64,6 +161,21 @@ static const char* module_to_c_ident(const char* module_name) {
 // Simple function registry for current module
 static char* module_functions[256];
 static int module_function_count = 0;
+
+// Track user-defined function names that collide with runtime
+static char* user_collision_fns[512];
+static int user_collision_fn_count = 0;
+
+void register_user_collision(const char* name) {
+    if (user_collision_fn_count < 512)
+        user_collision_fns[user_collision_fn_count++] = strdup(name);
+}
+
+int is_user_collision(const char* name) {
+    for (int i = 0; i < user_collision_fn_count; i++)
+        if (strcmp(user_collision_fns[i], name) == 0) return 1;
+    return 0;
+}
 
 // Map short module names to full paths (http -> network/http)
 static struct {
