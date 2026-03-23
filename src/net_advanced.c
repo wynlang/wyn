@@ -1,31 +1,29 @@
 // Advanced Networking Runtime for Wyn
 // Comprehensive networking utilities with HTTP, WebSocket, and async support
 
-#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <time.h>
+
 #ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
+// Windows: networking functions are provided by wyn_runtime.h stubs
+// Full implementation requires winsock2 port (future work)
 #else
+
+#define _POSIX_C_SOURCE 200809L
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#endif
-#include "wyn_arena.h"
-#include "coroutine.h"
-#include "io_loop.h"
-#ifndef _WIN32
 #include <netdb.h>
 #include <fcntl.h>
 #include <poll.h>
-#endif
-#include <errno.h>
-#include <time.h>
+#include "wyn_arena.h"
+#include "coroutine.h"
+#include "io_loop.h"
 
 // ============================================================================
 // HTTP Client
@@ -500,3 +498,6 @@ char* Url_decode(const char* str) {
     
     return decoded;
 }
+
+
+#endif // !_WIN32

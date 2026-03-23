@@ -28,7 +28,10 @@ jobs:
         shell: pwsh
 
       - name: Build compiler
-        run: make clean && make
+        run: |
+          # Remove macOS-only binaries that don't work on other platforms
+          rm -f vendor/tcc/bin/tcc runtime/libwyn_rt.a runtime/libwyn_rt_tcc.a 2>/dev/null || true
+          make clean && make
         shell: bash
 
       - name: Smoke test (Unix)

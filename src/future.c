@@ -1,7 +1,13 @@
 // Lightweight Future — recyclable slab, zero malloc
 #include <stdlib.h>
 #include <stdatomic.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#define sched_yield() SwitchToThread()
+#else
 #include <sched.h>
+#endif
 #include "coroutine.h"
 #include "io_loop.h"
 

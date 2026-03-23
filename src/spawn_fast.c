@@ -12,17 +12,24 @@
 
 #ifdef _WIN32
 // Windows: stub implementation — spawn runs synchronously
+typedef void (*TaskFunc)(void*);
 void wyn_io_park(void) {}
 int wyn_spawn_origin_line(void) { return 0; }
-void wyn_spawn_fast(void (*func)(void*), void* arg) { func(arg); }
-void wyn_spawn_fast_traced(void (*func)(void*), void* arg, const char* file, int line) { (void)file; (void)line; func(arg); }
+const char* wyn_spawn_origin_file(void) { return ""; }
+int wyn_spawn_origin_id(void) { return 0; }
+void wyn_spawn_fast(TaskFunc func, void* arg) { func(arg); }
+void wyn_spawn_fast_traced(TaskFunc func, void* arg, const char* file, int line) { (void)file; (void)line; func(arg); }
 void wyn_sched_enqueue(void* task_ptr) { (void)task_ptr; }
 void wyn_spawn_wait(void) {}
-WynFuture* wyn_spawn_async(void* (*func)(void*), void* arg) {
-    WynFuture* future = future_new();
+Future* wyn_spawn_async(void* (*func)(void*), void* arg) {
+    Future* future = future_new();
     void* result = func(arg);
     future_set(future, result);
     return future;
+}
+Future* wyn_spawn_async_traced(void* (*func)(void*), void* arg, const char* f, int l) {
+    (void)f; (void)l;
+    return wyn_spawn_async(func, arg);
 }
 #else
 #include <pthread.h>

@@ -1369,11 +1369,11 @@ int main(int argc, char** argv) {
                 fclose(_rt_check);
                 snprintf(cmd, sizeof(cmd),
 #ifdef _WIN32
-                    "%s -std=c11 -O3 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>NUL",
+                    "%s -std=c11 -O3 -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm 2>NUL",
 #elif defined(__APPLE__)
                     "%s -std=c11 -O3 -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src -Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
 #else
-                    "%s -std=c11 -O3 -w -ffunction-sections -fdata-sections -I %s/src -Wl,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
+                    "%s -std=c11 -O3 -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
 #endif
                     cc, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
 #ifdef __APPLE__
@@ -1388,8 +1388,10 @@ int main(int argc, char** argv) {
                 for (int _si = 0; _srcs[_si]; _si++) _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s/src/%s.c ", wyn_root, _srcs[_si]);
 #ifdef __APPLE__
                 _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,-dead_strip -lpthread -lm 2>&1", sqlite_src);
+#elif defined(_WIN32)
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,--allow-multiple-definition -lws2_32 -lpthread -lm 2>&1", sqlite_src);
 #else
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,--gc-sections -lpthread -lm 2>&1", sqlite_src);
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,--allow-multiple-definition,--gc-sections -lpthread -lm 2>&1", sqlite_src);
 #endif
             }
             result = system(cmd);
@@ -2253,9 +2255,11 @@ int main(int argc, char** argv) {
         
         // Platform-specific link flags
         #ifdef _WIN32
-        const char* platform_libs = "-lws2_32 -lpthread -lm";
-        #else
+        const char* platform_libs = "-Wl,--allow-multiple-definition -lws2_32 -lpthread -lm";
+        #elif defined(__APPLE__)
         const char* platform_libs = "-lpthread -lm";
+        #else
+        const char* platform_libs = "-Wl,--allow-multiple-definition -lpthread -lm";
         #endif
         
         // Incremental: skip recompilation if binary is newer than source
@@ -2472,7 +2476,7 @@ int main(int argc, char** argv) {
             char src_list[4096];
             build_source_list(src_list, sizeof(src_list), wyn_root);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s.out %s.c %s %s 2>wyn_cc_err.txt",
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s.out %s.c %s %s 2>wyn_cc_err.txt",
                      cc, opt_level, wyn_root, wyn_root, file, file, src_list, platform_libs);
         }
         // Append optional flags before the redirect
