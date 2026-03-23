@@ -19,10 +19,12 @@
 #include "wyn_arena.h"
 #include "coroutine.h"
 #include "io_loop.h"
+#ifndef _WIN32
 #include <netdb.h>
 #include <fcntl.h>
-#include <errno.h>
 #include <poll.h>
+#endif
+#include <errno.h>
 #include <time.h>
 
 // ============================================================================

@@ -32,7 +32,7 @@ const char* wyn_runtime_sources[] = {
     "src/io.c", "src/optional.c", "src/result.c",
     "src/arc_runtime.c", "src/concurrency.c", "src/async_runtime.c",
     "src/safe_memory.c", "src/error.c", "src/string_runtime.c",
-    "src/hashmap.c", "src/hashset.c", "src/json.c", "src/json_runtime.c",
+    "src/hashmap.c", "src/hashset.c", "src/json.c",
     "src/stdlib_runtime.c", "src/hashmap_runtime.c",
     "src/stdlib_string.c", "src/stdlib_array.c",
     "src/stdlib_time.c", "src/stdlib_crypto.c", "src/stdlib_math.c",
@@ -1384,7 +1384,7 @@ int main(int argc, char** argv) {
                 // No precompiled runtime — compile from source files
                 int _p = 0;
                 _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -ffunction-sections -fdata-sections -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, entry);
-                const char* _srcs[] = {"wyn_arena","wyn_rc","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","json_runtime","stdlib_runtime","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
+                const char* _srcs[] = {"wyn_arena","wyn_rc","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
                 for (int _si = 0; _srcs[_si]; _si++) _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s/src/%s.c ", wyn_root, _srcs[_si]);
 #ifdef __APPLE__
                 _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,-dead_strip -lpthread -lm 2>&1", sqlite_src);
@@ -1849,7 +1849,7 @@ int main(int argc, char** argv) {
                     "%s/src/runtime_exports.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c "
                     "%s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c "
                     "%s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c "
-                    "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c "
+                    "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c "
                     "%s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c "
                     "%s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c "
                     "%s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c "

@@ -3,21 +3,31 @@
 // Per-processor local deque + global queue + work-stealing
 // Each spawn creates a stackful coroutine via minicoro.h
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <process.h>
-#else
-#include <pthread.h>
-#include <unistd.h>
-#include <sched.h>
-#endif
 #include <stdlib.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include "future.h"
 #include "coroutine.h"
 #include "io_loop.h"
+
+#ifdef _WIN32
+// Windows: stub implementation — spawn runs synchronously
+void wyn_io_park(void) {}
+int wyn_spawn_origin_line(void) { return 0; }
+void wyn_spawn_fast(void (*func)(void*), void* arg) { func(arg); }
+void wyn_spawn_fast_traced(void (*func)(void*), void* arg, const char* file, int line) { (void)file; (void)line; func(arg); }
+void wyn_sched_enqueue(void* task_ptr) { (void)task_ptr; }
+void wyn_spawn_wait(void) {}
+WynFuture* wyn_spawn_async(void* (*func)(void*), void* arg) {
+    WynFuture* future = future_new();
+    void* result = func(arg);
+    future_set(future, result);
+    return future;
+}
+#else
+#include <pthread.h>
+#include <unistd.h>
+#include <sched.h>
 
 #ifndef _SC_NPROCESSORS_ONLN
 #define _SC_NPROCESSORS_ONLN 58
@@ -345,11 +355,7 @@ static void init_scheduler(void) {
     if (atomic_exchange(&initialized, 1)) return;
     
     int cpus;
-#ifdef _WIN32
-    SYSTEM_INFO si; GetSystemInfo(&si); cpus = (int)si.dwNumberOfProcessors;
-#else
     cpus = (int)sysconf(_SC_NPROCESSORS_ONLN);
-#endif
     if (cpus < 1) cpus = 4;
     if (cpus > MAX_PROCESSORS) cpus = MAX_PROCESSORS;
     
@@ -578,3 +584,5 @@ Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg) {
     future_set(future, result);
     return future;
 }
+
+#endif // !_WIN32

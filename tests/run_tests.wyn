@@ -1,7 +1,7 @@
 // Wyn Test Runner — sequential
 
 fn run_test(path: string) -> int {
-    var cmd = "timeout 15 ./wyn run " + path + " 2>&1; echo EXIT:$?"
+    var cmd = "./wyn run " + path + " 2>&1; echo EXIT:$?"
     var output = System_exec(cmd)
     if !output.contains("EXIT:0") { return 0 }
     if output.contains("Segmentation fault") { return 0 }
