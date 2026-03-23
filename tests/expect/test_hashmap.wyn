@@ -1,0 +1,14 @@
+// EXPECT: Alice
+// EXPECT: 3
+// EXPECT: true
+
+fn main() -> int {
+    var m = HashMap.new()
+    m.insert("name", "Alice")
+    m.insert("age", "30")
+    m.insert("active", "true")
+    println(m.get("name"))
+    println(m.keys().len().to_string())
+    println(m.has("active").to_string())
+    return 0
+}

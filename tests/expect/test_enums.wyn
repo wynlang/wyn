@@ -1,0 +1,26 @@
+// EXPECT: red
+// EXPECT: 2
+// EXPECT: green
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+fn color_name(c: Color) -> string {
+    match c {
+        Color.Red => return "red"
+        Color.Green => return "green"
+        Color.Blue => return "blue"
+    }
+    return "unknown"
+}
+
+fn main() -> int {
+    var c = Color.Red
+    println(color_name(c))
+    println(Color.Blue.to_string())
+    println(color_name(Color.Green))
+    return 0
+}
