@@ -1,4 +1,4 @@
-// BDD: User can define functions with common names
+// Expect: User can define functions with common names
 // These names should not collide with runtime internals
 // EXPECT: 10
 // EXPECT: hello

@@ -1371,9 +1371,9 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
                     "%s -std=c11 -O3 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>NUL",
 #elif defined(__APPLE__)
-                    "%s -std=c11 -O3 -w -Wno-int-conversion -I %s/src -Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
+                    "%s -std=c11 -O3 -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src -Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
 #else
-                    "%s -std=c11 -O3 -w -I %s/src -Wl,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
+                    "%s -std=c11 -O3 -w -ffunction-sections -fdata-sections -I %s/src -Wl,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
 #endif
                     cc, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
 #ifdef __APPLE__
@@ -1383,12 +1383,23 @@ int main(int argc, char** argv) {
             } else {
                 // No precompiled runtime — compile from source files
                 int _p = 0;
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, entry);
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -ffunction-sections -fdata-sections -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, entry);
                 const char* _srcs[] = {"wyn_arena","wyn_rc","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","net","net_runtime","net_advanced","test_runtime",NULL};
                 for (int _si = 0; _srcs[_si]; _si++) _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s/src/%s.c ", wyn_root, _srcs[_si]);
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -lpthread -lm 2>&1", sqlite_src);
+#ifdef __APPLE__
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,-dead_strip -lpthread -lm 2>&1", sqlite_src);
+#else
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,--gc-sections -lpthread -lm 2>&1", sqlite_src);
+#endif
             }
             result = system(cmd);
+        }
+        
+        // Strip debug symbols for release builds
+        if (result == 0 && build_release) {
+            char strip_cmd[1024];
+            snprintf(strip_cmd, sizeof(strip_cmd), "strip %s 2>/dev/null", bin_path);
+            system(strip_cmd);
         }
         
         // Don't unlink C file yet if PGO is requested

@@ -44,8 +44,8 @@ run_test() {
     fi
 }
 
-echo "=== BDD Tests ==="
-for f in tests/bdd/*.wyn; do
+echo "=== Expect Tests ==="
+for f in tests/expect/*.wyn; do
     [ -f "$f" ] && run_test "$f"
 done
 
