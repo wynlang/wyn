@@ -541,8 +541,9 @@ static pthread_mutex_t pool_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t pool_cond = PTHREAD_COND_INITIALIZER;
 static _Atomic int pool_started = 0;
 static _Atomic int pool_shutdown = 0;
-#define POOL_THREADS 8
-static pthread_t pool_threads[POOL_THREADS];
+static int pool_thread_count = 0;
+#define POOL_MAX_THREADS 32
+static pthread_t pool_threads[POOL_MAX_THREADS];
 
 static void* pool_worker(void* arg) {
     (void)arg;
@@ -566,9 +567,17 @@ static void* pool_worker(void* arg) {
 
 static void init_pool(void) {
     if (atomic_exchange(&pool_started, 1)) return;
-    for (int i = 0; i < POOL_THREADS; i++) {
-        pthread_create(&pool_threads[i], NULL, pool_worker, NULL);
+    int cpus = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    if (cpus < 2) cpus = 2;
+    if (cpus > POOL_MAX_THREADS) cpus = POOL_MAX_THREADS;
+    pool_thread_count = cpus;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 512 * 1024);
+    for (int i = 0; i < pool_thread_count; i++) {
+        pthread_create(&pool_threads[i], &attr, pool_worker, NULL);
     }
+    pthread_attr_destroy(&attr);
 }
 
 Future* wyn_spawn_async_traced(TaskFuncWithReturn func, void* arg, const char* file, int line) {

@@ -24,12 +24,13 @@ typedef struct Future {
 
 // === Recyclable slab allocator ===
 // Futures are recycled after await — memory stays constant regardless of spawn count
-#define FUTURE_SLAB_SIZE (64 * 1024)  // 64K futures = 1MB slab
+#define FUTURE_SLAB_SIZE 4096  // 4K futures — enough for most programs
 static Future future_slab[FUTURE_SLAB_SIZE];
 static _Atomic int future_slab_idx = 0;
 
-// Lock-free free list using indices
 #define FREE_STACK_SIZE FUTURE_SLAB_SIZE
+
+// Lock-free free list using indices
 static _Atomic int free_stack[FREE_STACK_SIZE];
 static _Atomic int free_top = 0;  // number of items in free stack
 
