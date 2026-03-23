@@ -2420,7 +2420,8 @@ int main(int argc, char** argv) {
             if (strcmp(argv[i], "--release") == 0) { use_release = 1; }
         }
         
-        // Try TCC backend first (fast, no external deps) unless --release
+        // Use TCC in-process when available (handles ARC edge cases better)
+        // Fall back to system cc + precompiled runtime when TCC unavailable
         if (!use_release && !shared_mode && !generate_node && wyn_tcc_available()) {
             // Read the generated C source
             char* c_source = read_file(out_path);
@@ -2469,8 +2470,8 @@ int main(int argc, char** argv) {
         if (rt_check) {
             fclose(rt_check);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a %s 2>wyn_cc_err.txt",
-                     cc, opt_level, wyn_root, file, file, wyn_root, wyn_root, platform_libs);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s 2>wyn_cc_err.txt",
+                     cc, opt_level, wyn_root, file, file, wyn_root, platform_libs);
         } else {
             // Fallback: compile from source using unified source list
             char src_list[4096];

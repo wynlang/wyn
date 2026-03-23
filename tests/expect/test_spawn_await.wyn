@@ -1,0 +1,41 @@
+// EXPECT: spawn_basic: ok
+// EXPECT: spawn_return: ok
+// EXPECT: spawn_many: ok
+// EXPECT: spawn_nested: ok
+
+fn compute(n: int) -> int {
+    var sum = 0
+    for i in 0..n { sum = sum + i }
+    return sum
+}
+
+fn main() -> int {
+    // Basic spawn + await
+    var f = spawn compute(100)
+    var r = await f
+    if r == 4950 { println("spawn_basic: ok") }
+
+    // Multiple spawns with return values
+    var f1 = spawn compute(1000)
+    var f2 = spawn compute(2000)
+    var f3 = spawn compute(3000)
+    var r1 = await f1
+    var r2 = await f2
+    var r3 = await f3
+    if r1 == 499500 { if r2 == 1999000 { if r3 == 4498500 { println("spawn_return: ok") } } }
+
+    // Many spawns
+    var total = 0
+    for i in 0..50 {
+        var fi = spawn compute(100)
+        total = total + await fi
+    }
+    if total == 247500 { println("spawn_many: ok") }
+
+    // Nested computation
+    var fa = spawn compute(5000)
+    var fb = spawn compute(5000)
+    if await fa == await fb { println("spawn_nested: ok") }
+
+    return 0
+}

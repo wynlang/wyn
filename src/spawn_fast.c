@@ -201,7 +201,19 @@ static inline void wake_processor(void) {
             pthread_mutex_lock(&processors[i].park_lock);
             pthread_cond_signal(&processors[i].park_cond);
             pthread_mutex_unlock(&processors[i].park_lock);
-            return;
+            return;  // Wake one — it will steal and wake others if needed
+        }
+    }
+}
+
+// Wake all parked processors — used when multiple tasks are enqueued at once
+static inline void wake_all_processors(void) {
+    int n = atomic_load_explicit(&num_processors, memory_order_relaxed);
+    for (int i = 0; i < n; i++) {
+        if (atomic_load_explicit(&processors[i].parked, memory_order_acquire)) {
+            pthread_mutex_lock(&processors[i].park_lock);
+            pthread_cond_signal(&processors[i].park_cond);
+            pthread_mutex_unlock(&processors[i].park_lock);
         }
     }
 }
@@ -508,64 +520,51 @@ void wyn_spawn_fast_traced(TaskFunc func, void* arg, const char* file, int line)
     long spawned = atomic_fetch_add(&total_spawned, 1);
     t->spawn_id = spawned + 1;
     enqueue_task(t);
-    if (spawned == 0 || (spawned & 63) == 0) wake_processor();
+    wake_processor();  // Always wake — ensures tasks run in parallel
 }
 
 Future* wyn_spawn_async(TaskFuncWithReturn func, void* arg) {
     return wyn_spawn_async_traced(func, arg, NULL, 0);
 }
 
+// Thread wrapper for spawn_async — runs func on a real OS thread
+typedef struct { TaskFuncWithReturn func; void* arg; Future* future; } ThreadSpawnArgs;
+static void* thread_spawn_wrapper(void* raw) {
+    ThreadSpawnArgs* tsa = (ThreadSpawnArgs*)raw;
+    void* result = tsa->func(tsa->arg);
+    future_set(tsa->future, result);
+    free(tsa);
+    atomic_fetch_add(&total_completed, 1);
+    return NULL;
+}
+
 Future* wyn_spawn_async_traced(TaskFuncWithReturn func, void* arg, const char* file, int line) {
+    (void)file; (void)line;
     init_scheduler();
     
     Future* future = future_new();
+    atomic_fetch_add(&total_spawned, 1);
     
-    SpawnAsyncArgs* sa = malloc(sizeof(SpawnAsyncArgs));
-    if (!sa) {
-        // OOM fallback: run directly
+    ThreadSpawnArgs* tsa = malloc(sizeof(ThreadSpawnArgs));
+    if (!tsa) {
         void* result = func(arg);
         future_set(future, result);
-        atomic_fetch_add(&total_spawned, 1);
         atomic_fetch_add(&total_completed, 1);
         return future;
     }
-    sa->func = func;
-    sa->arg = arg;
-    sa->future = future;
+    tsa->func = func;
+    tsa->arg = arg;
+    tsa->future = future;
     
-    WynCoroutine* coro = wyn_coro_create(spawn_async_coro_body, sa);
-    if (!coro) {
-        // OOM fallback: run directly on calling thread
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, thread_spawn_wrapper, tsa) != 0) {
         void* result = func(arg);
         future_set(future, result);
-        free(sa);
-        atomic_fetch_add(&total_spawned, 1);
+        free(tsa);
         atomic_fetch_add(&total_completed, 1);
         return future;
     }
-    
-    Task* t = alloc_task();
-    if (!t) {
-        // OOM: run directly (don't resume coro — it would free sa, then we'd double-free)
-        void* result = func(arg);
-        future_set(future, result);
-        wyn_coro_destroy(coro);
-        free(sa);
-        atomic_fetch_add(&total_spawned, 1);
-        atomic_fetch_add(&total_completed, 1);
-        return future;
-    }
-    t->coro = coro;
-    t->future = future;
-    t->spawn_file = file;
-    t->spawn_line = line;
-    atomic_store_explicit(&t->running, 0, memory_order_relaxed);
-    
-    long spawned = atomic_fetch_add(&total_spawned, 1);
-    t->spawn_id = spawned + 1;
-    enqueue_task(t);
-    if (spawned == 0 || (spawned & 63) == 0) wake_processor();
-    
+    pthread_detach(thread);
     return future;
 }
 
@@ -587,10 +586,7 @@ void wyn_spawn_wait(void) {
 // Used for spawned functions that have no yield points (no await/channel ops).
 // Much cheaper: no mmap, no coroutine struct, no scheduler overhead.
 Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg) {
-    Future* future = future_new();
-    void* result = func(arg);
-    future_set(future, result);
-    return future;
+    return wyn_spawn_async(func, arg);
 }
 
 #endif // !_WIN32
