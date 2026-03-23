@@ -1,3 +1,4 @@
+// EXPECT: PASS: enum variants with data work
 // Test: Enum variants with data + match extraction
 enum Shape {
     Circle(float)

@@ -1,0 +1,27 @@
+// EXPECT: 10
+// EXPECT: 10
+// EXPECT: 5050
+
+fn main() -> int {
+    // while loop
+    var i = 0
+    while i < 10 {
+        i = i + 1
+    }
+    println(i.to_string())
+
+    // for loop with range
+    var sum = 0
+    for x in 0..5 {
+        sum = sum + x
+    }
+    println(sum.to_string())
+
+    // sum 1..100
+    var total = 0
+    for n in 1..101 {
+        total = total + n
+    }
+    println(total.to_string())
+    return 0
+}

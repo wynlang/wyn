@@ -1,3 +1,4 @@
+// EXPECT: PASS: HashMaps in arrays work
 // Test: HashMaps stored in arrays
 var maps = []
 

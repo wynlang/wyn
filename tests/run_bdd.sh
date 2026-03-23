@@ -18,9 +18,9 @@ run_test() {
         return  # No expectations, skip
     fi
 
-    # Try to build and run, strip compiler status lines
+    # Try to build and run, strip compiler status lines and warnings
     local output
-    output=$($WYN run "$file" 2>&1 | grep -v "^Compiled in\|^\x1b\[2mCompiled") || true
+    output=$($WYN run "$file" 2>&1 | grep -v "^Compiled in\|^\x1b\[2mCompiled\|^\x1b\[33mWarning") || true
 
     # Compare line by line
     local exp_lines=$(echo "$expected" | wc -l | tr -d ' ')

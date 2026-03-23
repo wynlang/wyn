@@ -1,0 +1,19 @@
+// EXPECT: Alice is 30
+// EXPECT: Bob is 25
+
+struct Person {
+    name: string,
+    age: int
+}
+
+fn describe(p: Person) -> string {
+    return p.name + " is " + p.age.to_string()
+}
+
+fn main() -> int {
+    var alice = Person { name: "Alice", age: 30 }
+    var bob = Person { name: "Bob", age: 25 }
+    println(describe(alice))
+    println(describe(bob))
+    return 0
+}

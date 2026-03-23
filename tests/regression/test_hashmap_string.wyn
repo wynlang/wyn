@@ -1,3 +1,4 @@
+// EXPECT: PASS: HashMap string keys/values work
 // Test: HashMap with string values, keys(), values()
 var m = HashMap.new()
 m.set("name", "wyn")

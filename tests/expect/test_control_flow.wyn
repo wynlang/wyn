@@ -1,0 +1,22 @@
+// EXPECT: positive
+// EXPECT: zero
+// EXPECT: big
+
+fn classify(n: int) -> string {
+    if n > 0 { return "positive" }
+    if n < 0 { return "negative" }
+    return "zero"
+}
+
+fn size(n: int) -> string {
+    if n > 100 { return "big" }
+    if n > 10 { return "medium" }
+    return "small"
+}
+
+fn main() -> int {
+    println(classify(42))
+    println(classify(0))
+    println(size(200))
+    return 0
+}

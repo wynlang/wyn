@@ -1,3 +1,4 @@
+// EXPECT: PASS: string array argument passing works
 // Test: passing [string] arrays to functions
 fn join_items(items: [string], sep: string) -> string {
     var result = ""
