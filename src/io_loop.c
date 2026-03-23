@@ -4,7 +4,9 @@
 
 #include "io_loop.h"
 #include <stdatomic.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 // Implemented in spawn_fast.c
 extern void wyn_sched_enqueue(void* task_ptr);

@@ -3,12 +3,18 @@
 // Per-processor local deque + global queue + work-stealing
 // Each spawn creates a stackful coroutine via minicoro.h
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <process.h>
+#else
 #include <pthread.h>
+#include <unistd.h>
+#include <sched.h>
+#endif
 #include <stdlib.h>
 #include <stdatomic.h>
 #include <stdbool.h>
-#include <unistd.h>
-#include <sched.h>
 #include "future.h"
 #include "coroutine.h"
 #include "io_loop.h"
@@ -338,7 +344,12 @@ static __thread int current_processor_id = -1;
 static void init_scheduler(void) {
     if (atomic_exchange(&initialized, 1)) return;
     
-    int cpus = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    int cpus;
+#ifdef _WIN32
+    SYSTEM_INFO si; GetSystemInfo(&si); cpus = (int)si.dwNumberOfProcessors;
+#else
+    cpus = (int)sysconf(_SC_NPROCESSORS_ONLN);
+#endif
     if (cpus < 1) cpus = 4;
     if (cpus > MAX_PROCESSORS) cpus = MAX_PROCESSORS;
     

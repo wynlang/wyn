@@ -7,7 +7,11 @@
 // Source context for error messages
 static const char* checker_source = NULL;
 static const char* checker_filename = NULL;
-void set_checker_source(const char* src, const char* fname) { checker_source = src; checker_filename = fname; }
+void set_checker_source(const char* src, const char* fname) {
+    checker_source = src; checker_filename = fname;
+    extern void error_set_source(const char*, const char*);
+    error_set_source(src, fname);
+}
 const char* get_checker_source(void) { return checker_source; }
 const char* get_checker_filename(void) { return checker_filename; }
 

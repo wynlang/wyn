@@ -11,6 +11,11 @@ static WynError* errors = NULL;
 static int error_count = 0;
 static int error_capacity = 0;
 
+// Source context for error display — set by checker, read by error functions
+static const char* _error_source = NULL;
+static const char* _error_filename = NULL;
+void error_set_source(const char* src, const char* fname) { _error_source = src; _error_filename = fname; }
+
 void report_error(ErrorCode code, const char* filename, int line, int column, const char* message) {
     report_error_with_suggestion(code, filename, line, column, message, NULL);
 }
@@ -231,10 +236,10 @@ static const char* get_conversion_suggestion(const char* from_type, const char* 
 
 void type_error_mismatch(const char* expected_type, const char* actual_type, const char* context, int line, int column) {
     // Get source from checker for inline display
-    extern const char* get_checker_source(void);
-    extern const char* get_checker_filename(void);
-    const char* src = get_checker_source();
-    const char* fname = get_checker_filename();
+    
+    
+    const char* src = _error_source;
+    const char* fname = _error_filename;
 
     printf("\n" RED BOLD "Error:" RESET " Type mismatch at line %d:%d\n", line, column);
     if (fname) printf("  --> %s:%d:%d\n", fname, line, column);
@@ -350,10 +355,10 @@ void type_error_undefined_function(const char* func_name, int line, int column) 
     }
     
     // Enhanced error message with source line
-    extern const char* get_checker_source(void);
-    extern const char* get_checker_filename(void);
-    const char* _src = get_checker_source();
-    const char* _fname = get_checker_filename();
+    
+    
+    const char* _src = _error_source;
+    const char* _fname = _error_filename;
     
     printf("\n" RED BOLD "Error:" RESET " Undefined function at line %d\n", line);
     if (_fname) printf("  --> %s:%d\n", _fname, line);
@@ -375,10 +380,10 @@ void type_error_undefined_function(const char* func_name, int line, int column) 
 }
 
 void type_error_wrong_arg_count(const char* func_name, int expected, int actual, int line, int column) {
-    extern const char* get_checker_source(void);
-    extern const char* get_checker_filename(void);
-    const char* _src = get_checker_source();
-    const char* _fname = get_checker_filename();
+    
+    
+    const char* _src = _error_source;
+    const char* _fname = _error_filename;
     
     printf("\n" RED BOLD "Error:" RESET " Wrong number of arguments at line %d:%d\n", line, column);
     if (_fname) printf("  --> %s:%d:%d\n", _fname, line, column);

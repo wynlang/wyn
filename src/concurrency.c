@@ -2,7 +2,9 @@
 // Note: wyn_spawn is now in spawn.c
 #include "concurrency.h"
 #include <stdlib.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 // Join a thread (wait for completion)
 int wyn_join(WynThread* thread) {

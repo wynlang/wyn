@@ -5,14 +5,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#endif
 #include "wyn_arena.h"
 #include "coroutine.h"
 #include "io_loop.h"
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <netdb.h>
 #include <fcntl.h>
 #include <errno.h>

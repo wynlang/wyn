@@ -59,10 +59,11 @@ jobs:
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
         run: |
-          echo fn main() -> int { println("Hello from Wyn CI"); return 0 } > smoke.wyn
+          @echo off
+          echo fn main() -^> int { println("Hello from Wyn CI"); return 0 } > smoke.wyn
           .\wyn.exe build smoke.wyn
           .\smoke.exe
-          echo "Smoke test passed"
+          echo Smoke test passed
         shell: cmd
 
       - name: Run test suite (Unix)
