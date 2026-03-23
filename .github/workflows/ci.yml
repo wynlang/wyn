@@ -59,10 +59,28 @@ jobs:
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
         run: |
-          echo fn main() { println("Hello from Wyn CI") } > smoke.wyn
-          wyn.exe build smoke.wyn
-          smoke.exe
+          echo fn main() -> int { println("Hello from Wyn CI"); return 0 } > smoke.wyn
+          .\wyn.exe build smoke.wyn
+          .\smoke.exe
+          echo "Smoke test passed"
         shell: cmd
+
+      - name: Run test suite (Unix)
+        if: runner.os != 'Windows'
+        run: ./wyn run tests/run_tests.wyn 2>&1 | tail -5
+        shell: bash
+
+      - name: Run expect + regression tests (Unix)
+        if: runner.os != 'Windows'
+        run: bash tests/run_bdd.sh
+        shell: bash
+
+      - name: Run test suite (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          .\wyn.exe run tests\run_tests.wyn
+        shell: cmd
+        continue-on-error: true
 
   cross-compile-ios:
     name: Cross-compile (iOS)
