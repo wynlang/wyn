@@ -69,6 +69,21 @@ struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
   #define X_OK 0
   #define access _access
   
+  // Minimal pthread stubs for Windows
+  typedef CRITICAL_SECTION pthread_mutex_t;
+  typedef CONDITION_VARIABLE pthread_cond_t;
+  typedef HANDLE pthread_t;
+  #define pthread_mutex_init(m,a) InitializeCriticalSection(m)
+  #define pthread_mutex_lock(m) EnterCriticalSection(m)
+  #define pthread_mutex_unlock(m) LeaveCriticalSection(m)
+  #define pthread_mutex_destroy(m) DeleteCriticalSection(m)
+  #define pthread_cond_init(c,a) InitializeConditionVariable(c)
+  #define pthread_cond_signal(c) WakeConditionVariable(c)
+  #define pthread_cond_broadcast(c) WakeAllConditionVariable(c)
+  #define pthread_cond_wait(c,m) SleepConditionVariableCS(c,m,INFINITE)
+  #define pthread_cond_destroy(c) ((void)0)
+  #define sched_yield() SwitchToThread()
+  
   // Minimal dirent.h for Windows
   typedef struct { HANDLE hFind; WIN32_FIND_DATAA data; int first; } DIR;
   struct dirent { char d_name[MAX_PATH]; };

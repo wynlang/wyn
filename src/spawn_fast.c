@@ -16,7 +16,7 @@ typedef void (*TaskFunc)(void*);
 void wyn_io_park(void) {}
 int wyn_spawn_origin_line(void) { return 0; }
 const char* wyn_spawn_origin_file(void) { return ""; }
-int wyn_spawn_origin_id(void) { return 0; }
+long wyn_spawn_origin_id(void) { return 0; }
 void wyn_spawn_fast(TaskFunc func, void* arg) { func(arg); }
 void wyn_spawn_fast_traced(TaskFunc func, void* arg, const char* file, int line) { (void)file; (void)line; func(arg); }
 void wyn_sched_enqueue(void* task_ptr) { (void)task_ptr; }
