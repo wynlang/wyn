@@ -14,6 +14,7 @@
 // Windows: stub implementation — spawn runs synchronously
 typedef void (*TaskFunc)(void*);
 void wyn_io_park(void) {}
+void* wyn_current_task(void) { return NULL; }
 int wyn_spawn_origin_line(void) { return 0; }
 const char* wyn_spawn_origin_file(void) { return ""; }
 long wyn_spawn_origin_id(void) { return 0; }
