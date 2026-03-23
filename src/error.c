@@ -81,12 +81,53 @@ static const char* wynter_tip_for(ErrorCode code) {
     return tips[wynter_tip_counter++ % count];
 }
 
+// Source line cache — read file once, reuse for all errors
+static struct { char* filename; char** lines; int count; } src_cache[32];
+static int src_cache_count = 0;
+
+static const char* get_source_line(const char* filename, int line) {
+    if (!filename || line < 1) return NULL;
+    // Check cache
+    for (int i = 0; i < src_cache_count; i++) {
+        if (strcmp(src_cache[i].filename, filename) == 0) {
+            return (line <= src_cache[i].count) ? src_cache[i].lines[line - 1] : NULL;
+        }
+    }
+    // Load file
+    if (src_cache_count >= 32) return NULL;
+    FILE* f = fopen(filename, "r");
+    if (!f) return NULL;
+    int idx = src_cache_count++;
+    src_cache[idx].filename = strdup(filename);
+    src_cache[idx].lines = NULL;
+    src_cache[idx].count = 0;
+    char buf[2048];
+    while (fgets(buf, sizeof(buf), f)) {
+        src_cache[idx].lines = realloc(src_cache[idx].lines, (src_cache[idx].count + 1) * sizeof(char*));
+        // Strip trailing newline
+        int len = strlen(buf);
+        if (len > 0 && buf[len-1] == '\n') buf[len-1] = '\0';
+        src_cache[idx].lines[src_cache[idx].count++] = strdup(buf);
+    }
+    fclose(f);
+    return (line <= src_cache[idx].count) ? src_cache[idx].lines[line - 1] : NULL;
+}
+
 void print_error(WynError* error) {
     const char* severity_str = (error->severity == ERROR_FATAL) ? "FATAL" :
                               (error->severity == ERROR_ERROR) ? "ERROR" : "WARNING";
     
     if (error->filename) {
         printf("%s:%d:%d: %s: %s\n", error->filename, error->line, error->column, severity_str, error->message);
+        // Show source line with caret
+        const char* src = get_source_line(error->filename, error->line);
+        if (src) {
+            printf("  %4d | %s\n", error->line, src);
+            printf("       | ");
+            int col = error->column > 0 ? error->column - 1 : 0;
+            for (int i = 0; i < col; i++) printf(src[i] == '\t' ? "\t" : " ");
+            printf("^\n");
+        }
     } else {
         printf("%s: %s\n", severity_str, error->message);
     }
@@ -94,8 +135,6 @@ void print_error(WynError* error) {
     if (error->suggestion) {
         printf("  Suggestion: %s\n", error->suggestion);
     }
-    
-    printf("  \033[36m🐉 Wynter:\033[0m %s\n", wynter_tip_for(error->code));
 }
 
 bool has_errors(void) {
@@ -191,20 +230,36 @@ static const char* get_conversion_suggestion(const char* from_type, const char* 
 }
 
 void type_error_mismatch(const char* expected_type, const char* actual_type, const char* context, int line, int column) {
-    // Enhanced error message with colors and detailed information
+    // Get source from checker for inline display
+    extern const char* get_checker_source(void);
+    extern const char* get_checker_filename(void);
+    const char* src = get_checker_source();
+    const char* fname = get_checker_filename();
+
     printf("\n" RED BOLD "Error:" RESET " Type mismatch at line %d:%d\n", line, column);
-    printf("  " BOLD "Context:" RESET "  %s\n", context);
+    if (fname) printf("  --> %s:%d:%d\n", fname, line, column);
+    
+    // Show source line
+    if (src && line >= 1) {
+        const char* p = src;
+        int cur = 1;
+        while (*p && cur < line) { if (*p == '\n') cur++; p++; }
+        if (cur == line) {
+            const char* end = p;
+            while (*end && *end != '\n') end++;
+            printf("  %4d | %.*s\n", line, (int)(end - p), p);
+            printf("       | ");
+            int col = column > 0 ? column - 1 : 0;
+            for (int i = 0; i < col && i < (int)(end - p); i++) printf(p[i] == '\t' ? "\t" : " ");
+            printf("^\n");
+        }
+    }
+    
     printf("  " BOLD "Expected:" RESET " %s (%s)\n", 
            expected_type, get_detailed_type_description(expected_type));
     printf("  " BOLD "Got:" RESET "      %s (%s)\n", 
            actual_type, get_detailed_type_description(actual_type));
     
-    // Show where types come from
-    printf("  " BLUE "Type origin:" RESET "\n");
-    printf("    - Expected type comes from: variable declaration or function signature\n");
-    printf("    - Actual type comes from: expression evaluation\n");
-    
-    // Provide helpful suggestion
     const char* suggestion = get_conversion_suggestion(actual_type, expected_type);
     printf("  " YELLOW "Suggestion:" RESET " %s\n", suggestion);
     
@@ -294,8 +349,22 @@ void type_error_undefined_function(const char* func_name, int line, int column) 
                 "Define function '%s' or check for typos in the function name", func_name);
     }
     
-    // Enhanced error message with colors
+    // Enhanced error message with source line
+    extern const char* get_checker_source(void);
+    extern const char* get_checker_filename(void);
+    const char* _src = get_checker_source();
+    const char* _fname = get_checker_filename();
+    
     printf("\n" RED BOLD "Error:" RESET " Undefined function at line %d\n", line);
+    if (_fname) printf("  --> %s:%d\n", _fname, line);
+    if (_src && line >= 1) {
+        const char* p = _src; int cur = 1;
+        while (*p && cur < line) { if (*p == '\n') cur++; p++; }
+        if (cur == line) {
+            const char* end = p; while (*end && *end != '\n') end++;
+            printf("  %4d | %.*s\n", line, (int)(end - p), p);
+        }
+    }
     printf("  " BOLD "Function:" RESET " %s\n", func_name);
     if (similar) {
         printf("  " YELLOW "Did you mean:" RESET " %s?\n", similar);
@@ -306,8 +375,21 @@ void type_error_undefined_function(const char* func_name, int line, int column) 
 }
 
 void type_error_wrong_arg_count(const char* func_name, int expected, int actual, int line, int column) {
-    // Enhanced error message with colors and detailed information
+    extern const char* get_checker_source(void);
+    extern const char* get_checker_filename(void);
+    const char* _src = get_checker_source();
+    const char* _fname = get_checker_filename();
+    
     printf("\n" RED BOLD "Error:" RESET " Wrong number of arguments at line %d:%d\n", line, column);
+    if (_fname) printf("  --> %s:%d:%d\n", _fname, line, column);
+    if (_src && line >= 1) {
+        const char* p = _src; int cur = 1;
+        while (*p && cur < line) { if (*p == '\n') cur++; p++; }
+        if (cur == line) {
+            const char* end = p; while (*end && *end != '\n') end++;
+            printf("  %4d | %.*s\n", line, (int)(end - p), p);
+        }
+    }
     printf("  " BOLD "Function:" RESET " %s\n", func_name);
     printf("  " BOLD "Expected:" RESET " %d argument%s\n", expected, expected == 1 ? "" : "s");
     printf("  " BOLD "Got:" RESET "      %d argument%s\n", actual, actual == 1 ? "" : "s");

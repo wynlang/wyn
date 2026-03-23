@@ -8,6 +8,8 @@
 static const char* checker_source = NULL;
 static const char* checker_filename = NULL;
 void set_checker_source(const char* src, const char* fname) { checker_source = src; checker_filename = fname; }
+const char* get_checker_source(void) { return checker_source; }
+const char* get_checker_filename(void) { return checker_filename; }
 
 static void show_source_line(int line) {
     if (!checker_source || line < 1) return;
