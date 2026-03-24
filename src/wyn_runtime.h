@@ -1862,15 +1862,15 @@ bool bool_or(bool x, bool y) { return x || y; }
 bool bool_xor(bool x, bool y) { return x != y; }
 long long wyn_safe_div(long long a, long long b) {
     if (b == 0) {
-        fprintf(stderr, "Warning: Division by zero\n");
-        return 0;
+        fprintf(stderr, "panic: division by zero\n");
+        exit(1);
     }
     return a / b;
 }
 long long wyn_safe_mod(long long a, long long b) {
     if (b == 0) {
-        fprintf(stderr, "Warning: Modulo by zero\n");
-        return 0;
+        fprintf(stderr, "panic: modulo by zero\n");
+        exit(1);
     }
     return a % b;
 }

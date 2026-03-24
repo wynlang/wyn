@@ -35,6 +35,7 @@ static _Atomic int free_stack[FREE_STACK_SIZE];
 static _Atomic int free_top = 0;  // number of items in free stack
 
 static inline void future_recycle(Future* f) {
+    atomic_store_explicit(&f->state, FUTURE_FREE, memory_order_release);
     int idx = (int)(f - future_slab);
     if (idx < 0 || idx >= FUTURE_SLAB_SIZE) { free(f); return; }
     // Atomically claim a slot — if full, just drop (slab still owns the memory)
@@ -90,6 +91,8 @@ void future_set(Future* f, void* result) {
 
 void* future_get(Future* f) {
     if (!f) return NULL;
+    // Guard against double-await
+    if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_FREE) return NULL;
     // Fast path
     if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
         void* r = f->result;

@@ -1340,7 +1340,10 @@ int main(int argc, char** argv) {
         }
 #endif
 
-        if (build_flag[0] == 0 && !build_release && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
+        // Prefer precompiled runtime (fast) over TCC (recompiles all sources)
+        if (build_flag[0] == 0 && !build_release && access(rt_lib, R_OK) == 0) {
+            // Skip TCC — use system cc + precompiled runtime
+        } else if (build_flag[0] == 0 && !build_release && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
             int _p = 0;
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s ", tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, wyn_root, sqlite_flags);
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s.c ", entry);
@@ -1367,15 +1370,16 @@ int main(int argc, char** argv) {
             FILE* _rt_check = fopen(rt_lib, "r");
             if (_rt_check) {
                 fclose(_rt_check);
+                const char* _opt = build_release ? "-O3" : "-O0";
                 snprintf(cmd, sizeof(cmd),
 #ifdef _WIN32
-                    "%s -std=c11 -O3 -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm 2>NUL",
+                    "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm 2>NUL",
 #elif defined(__APPLE__)
-                    "%s -std=c11 -O3 -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src -Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
+                    "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src -Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
 #else
-                    "%s -std=c11 -O3 -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
+                    "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
 #endif
-                    cc, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
+                    cc, _opt, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
 #ifdef __APPLE__
                     , app_link
 #endif
@@ -2400,7 +2404,7 @@ int main(int argc, char** argv) {
         }
         
         // Check for --fast flag (use -O0 for fastest compile)
-        const char* opt_level = "-O1";
+        const char* opt_level = "-O0";  // Fast dev builds; --release uses -O3
         int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python, 4=--node
         for (int i = 3; i < argc; i++) {
             if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; }

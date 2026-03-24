@@ -351,8 +351,8 @@ void codegen_expr(Expr* expr) {
                     case TOKEN_PLUS: result = l + r; break;
                     case TOKEN_MINUS: result = l - r; break;
                     case TOKEN_STAR: result = l * r; break;
-                    case TOKEN_SLASH: result = r != 0 ? l / r : 0; break;
-                    case TOKEN_PERCENT: result = r != 0 ? l % r : 0; break;
+                    case TOKEN_SLASH: if (r == 0) folded = false; else result = l / r; break;
+                    case TOKEN_PERCENT: if (r == 0) folded = false; else result = l % r; break;
                     case TOKEN_EQEQ: result = l == r; break;
                     case TOKEN_BANGEQ: result = l != r; break;
                     case TOKEN_LT: result = l < r; break;
