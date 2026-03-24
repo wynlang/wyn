@@ -635,7 +635,7 @@ int get_shadow_suffix(const char* name) {
     return 0;
 }
 
-static bool is_local_variable(const char* name) {
+bool is_local_variable(const char* name) {
     for (int i = 0; i < current_local_count; i++) {
         if (strcmp(current_function_locals[i], name) == 0) {
             return true;

@@ -1721,7 +1721,7 @@ char* url_decode(const char* str) {
 char* base64_encode(const char* str) {
     static const char* b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     int len = strlen(str);
-    char* out = malloc(((len + 2) / 3) * 4 + 1);
+    char* out = wyn_str_alloc(((len + 2) / 3) * 4 + 1);
     int i = 0, j = 0;
     while(i < len) {
         uint32_t a = i < len ? (unsigned char)str[i++] : 0;
@@ -3041,20 +3041,20 @@ void seed_random(int seed) { srand(seed); }
 int random_bool() { return rand() % 2; }
 char* random_string(int len) {
     static const char chars[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    char* s = malloc(len + 1);
+    char* s = wyn_str_alloc(len + 1);
     for (int i = 0; i < len; i++) s[i] = chars[rand() % 62];
     s[len] = '\0';
     return s;
 }
 char* random_hex(int len) {
     static const char hex[] = "0123456789abcdef";
-    char* s = malloc(len + 1);
+    char* s = wyn_str_alloc(len + 1);
     for (int i = 0; i < len; i++) s[i] = hex[rand() % 16];
     s[len] = '\0';
     return s;
 }
 char* random_uuid() {
-    char* u = malloc(37);
+    char* u = wyn_str_alloc(37);
     snprintf(u, 37, "%08x-%04x-4%03x-%04x-%012llx",
         rand(), rand() & 0xffff, rand() & 0xfff,
         (rand() & 0x3fff) | 0x8000, ((long long)rand() << 16) | rand());
