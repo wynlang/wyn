@@ -439,8 +439,16 @@ int main(int argc, char** argv) {
         snprintf(doctor_cmd, sizeof(doctor_cmd), "cc --version %s", devnull);
         int has_cc = (system(doctor_cmd) == 0);
         if (!has_cc) { snprintf(doctor_cmd, sizeof(doctor_cmd), "gcc --version %s", devnull); has_cc = (system(doctor_cmd) == 0); }
-        printf("  %s System C compiler for --release (%s)\n", has_cc ? "\033[32m✓\033[0m" : "\033[33m○\033[0m", cc);
-        if (!has_cc) printf("    Optional: install for optimized builds (xcode-select --install)\n");
+        printf("  %s System C compiler (%s)\n", has_cc ? "\033[32m✓\033[0m" : "\033[33m○\033[0m", cc);
+        if (!has_cc) {
+#ifdef __APPLE__
+            printf("    Recommended: xcode-select --install (2.5x faster builds)\n");
+#elif defined(__linux__)
+            printf("    Recommended: sudo apt install gcc (2.5x faster builds)\n");
+#else
+            printf("    Recommended: install gcc or clang (2.5x faster builds)\n");
+#endif
+        }
         
         // Check precompiled runtime (for system cc)
         char rt_path[512]; snprintf(rt_path, sizeof(rt_path), "%s/runtime/libwyn_rt.a", doc_root);
@@ -483,7 +491,8 @@ int main(int argc, char** argv) {
         }
         
         printf("\n");
-        if (issues == 0) printf("\033[32m✓ All good! No external dependencies needed.\033[0m\n");
+        if (issues == 0 && has_cc && has_rt) printf("\033[32m✓ All good! Using fast compile path (system cc + precompiled runtime).\033[0m\n");
+        else if (issues == 0) printf("\033[32m✓ All good! Using TCC backend. Install a C compiler for 2.5x faster builds.\033[0m\n");
         else printf("\033[31m%d issue(s) found.\033[0m Fix them and run wyn doctor again.\n", issues);
         return issues > 0 ? 1 : 0;
     }
