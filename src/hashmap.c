@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define HASHMAP_SIZE 128
+#define HASHMAP_SIZE 4096
 
 typedef struct Entry {
     char* key;
@@ -16,9 +16,10 @@ struct WynHashMap {
 };
 
 static unsigned int hash(const char* key) {
-    unsigned int h = 0;
+    unsigned int h = 2166136261u;  // FNV-1a
     while (*key) {
-        h = h * 31 + *key++;
+        h ^= (unsigned char)*key++;
+        h *= 16777619u;
     }
     return h % HASHMAP_SIZE;
 }

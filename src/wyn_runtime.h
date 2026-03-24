@@ -1853,8 +1853,8 @@ const char* Fs_read_file(const char* path) {
 char* str_repeat(const char* s, int count) { int len = strlen(s); char* r = malloc(len * count + 1); r[0] = 0; for(int i = 0; i < count; i++) strcat(r, s); return r; }
 char* str_reverse(const char* s) { int len = strlen(s); char* r = malloc(len + 1); for(int i = 0; i < len; i++) r[i] = s[len-1-i]; r[len] = 0; return r; }
 char* int_to_string(long long x) { char* r = wyn_str_alloc(32); snprintf(r, 32, "%lld", x); return r; }
-char* float_to_string(double x) { char* r = malloc(32); snprintf(r, 32, "%g", x); if (!strchr(r, '.') && !strchr(r, 'e') && !strchr(r, 'E') && !strchr(r, 'n') && !strchr(r, 'i')) strcat(r, ".0"); return r; }
-char* bool_to_string(bool x) { char* r = malloc(8); strcpy(r, x ? "true" : "false"); return r; }
+char* float_to_string(double x) { char* r = wyn_str_alloc(32); snprintf(r, 32, "%g", x); if (!strchr(r, '.') && !strchr(r, 'e') && !strchr(r, 'E') && !strchr(r, 'n') && !strchr(r, 'i')) strcat(r, ".0"); return r; }
+char* bool_to_string(bool x) { return (char*)(x ? "true" : "false"); }
 int bool_to_int(bool x) { return x ? 1 : 0; }
 bool bool_not(bool x) { return !x; }
 bool bool_and(bool x, bool y) { return x && y; }
@@ -1874,7 +1874,7 @@ long long wyn_safe_mod(long long a, long long b) {
     }
     return a % b;
 }
-char* char_to_string(char x) { char* r = malloc(2); r[0] = x; r[1] = 0; return r; }
+char* char_to_string(char x) { char* r = wyn_str_alloc(2); r[0] = x; r[1] = 0; return r; }
 int char_to_int(char x) { return (int)x; }
 char char_from_int(int x) { return (char)x; }
 bool char_is_alpha(char x) { return (x >= 'A' && x <= 'Z') || (x >= 'a' && x <= 'z'); }
