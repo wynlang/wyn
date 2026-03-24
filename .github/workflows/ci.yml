@@ -71,9 +71,7 @@ jobs:
 
       - name: Run test suite (Unix)
         if: runner.os != 'Windows'
-        run: |
-          ./wyn run tests/run_tests.wyn 2>&1 | tee /tmp/test_output.txt | tail -10
-          grep -q "0 fail" /tmp/test_output.txt
+        run: bash tests/run_tests_parallel.sh
         shell: bash
 
       - name: Run expect + regression tests (Unix)
