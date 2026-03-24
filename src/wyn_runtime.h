@@ -2631,11 +2631,22 @@ char* System_exec(const char* cmd) {
 #else
     FILE* pipe = popen(cmd, "r");
     if (!pipe) return "";
-    char* result = malloc(65536);
+    size_t cap = 4096, len = 0;
+    char* result = wyn_str_alloc(cap);
     result[0] = 0;
     char buffer[1024];
     while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-        strcat(result, buffer);
+        size_t blen = strlen(buffer);
+        if (len + blen >= cap) {
+            cap = (len + blen) * 2;
+            char* newbuf = wyn_str_alloc(cap);
+            memcpy(newbuf, result, len);
+            wyn_rc_release(result);
+            result = newbuf;
+        }
+        memcpy(result + len, buffer, blen);
+        len += blen;
+        result[len] = 0;
     }
     pclose(pipe);
     return result;

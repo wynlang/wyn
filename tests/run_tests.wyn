@@ -1,4 +1,4 @@
-// Wyn Test Runner — sequential
+// Wyn Test Runner — parallel via spawn/await (batched)
 
 fn run_test(path: string) -> int {
     var cmd = "./wyn run " + path + " 2>&1; echo EXIT:$?"
@@ -11,126 +11,49 @@ fn run_test(path: string) -> int {
 fn main() -> int {
     var start = DateTime_millis()
     println("=== Wyn Test Runner ===")
-    var tests = [
-        "tests/validation/test_struct_methods.wyn",
-        "tests/validation/test_option_type.wyn",
-        "tests/validation/test_generic_result_option.wyn",
-        "tests/validation/test_string_indexing.wyn",
-        "tests/validation/test_comprehensive_all_features.wyn",
-        "tests/validation/test_struct_arrays.wyn",
-        "tests/validation/test_enum_literal_comparison.wyn",
-        "tests/validation/test_result_type.wyn",
-        "tests/validation/test_real_world_suite.wyn",
-        "tests/validation/test_production_ready.wyn",
-        "tests/validation/test_v19_features.wyn",
-        "tests/validation/test_v19_edge_cases.wyn",
-        "tests/validation/test_result_comprehensive.wyn",
-        "tests/validation/test_traits_comprehensive.wyn",
-        "tests/validation/test_patterns_comprehensive.wyn",
-        "tests/validation/test_hashmap_simple.wyn",
-        "tests/validation/test_enum_simple.wyn",
-        "tests/validation/test_var_in_nested_scopes.wyn",
-        "tests/validation/test_struct_init_null_field.wyn",
-        "tests/validation/test_struct_param.wyn",
-        "tests/validation/test_struct_simple.wyn",
-        "tests/validation/test_debug.wyn",
-        "tests/validation/test_1_1_result.wyn",
-        "tests/validation/test_1_8_structs.wyn",
-        "tests/validation/epic1_task_1_8.wyn",
-        "tests/validation/epic1_stress_test.wyn",
-        "tests/validation/epic1_final.wyn",
-        "tests/validation/epic1_comprehensive.wyn",
-        "tests/validation/test_traits.wyn",
-        "tests/validation/test_returning_closures.wyn",
-        "tests/validation/test_math_module.wyn",
-        "tests/validation/test_datetime_module.wyn",
-        "tests/validation/test_math_stdlib.wyn",
-        "tests/validation/test_path_stdlib.wyn",
-        "tests/validation/test_string_stdlib.wyn",
-        "tests/validation/test_json_module.wyn",
-        "tests/validation/test_runtime_extraction.wyn",
-        "tests/validation/test_generic_syntax.wyn",
-        "tests/validation/test_array_params.wyn",
-        "tests/validation/test_method_chaining.wyn",
-        "tests/validation/test_split_operations.wyn",
-        "tests/validation/test_namespaced_api.wyn",
-        "tests/validation/test_json.wyn",
-        "tests/validation/test_regex.wyn",
-        "tests/validation/test_http.wyn",
-        "tests/stdlib/test_v17_features.wyn",
-        "tests/stdlib/test_epic28_generics.wyn",
-        "tests/stdlib/test_epic29_struct_returns.wyn",
-        "tests/stdlib/test_epic30_char.wyn",
-        "tests/stdlib/test_epic31_self_hosted.wyn",
-        "tests/stdlib/test_deferred_features.wyn",
-        "tests/multifile/test_import.wyn",
-        "tests/validation/test_base64.wyn",
-        "tests/validation/test_log.wyn",
-        "tests/validation/test_csv_manual.wyn",
-        "tests/validation/test_default_params.wyn",
-        "tests/validation/test_coroutine_traces.wyn",
-        "tests/validation/test_string_interp.wyn",
-        "tests/validation/test_try_operator.wyn",
-        "tests/validation/test_semver.wyn",
-        "tests/validation/test_v18_edge_cases.wyn",
-        "tests/validation/test_edge_pass1.wyn",
-        "tests/validation/test_edge_pass2.wyn",
-        "tests/validation/test_edge_pass3.wyn",
-        "tests/validation/test_circular_import.wyn",
-        "tests/regression/test_global_forward_ref.wyn",
-        "tests/regression/test_hashmap_string.wyn",
-        "tests/regression/test_string_array_args.wyn",
-        "tests/regression/test_hashmap_in_array.wyn",
-        "tests/memory/test_rc_stress.wyn",
-        "tests/memory/test_string_edge.wyn",
-        "tests/memory/test_refcount.wyn",
-        "tests/concurrency/test_spawn_edge.wyn",
-        "tests/concurrency/test_spawn_string_rc.wyn",
-        "tests/concurrency/test_spawn_struct.wyn",
-        "tests/concurrency/test_realistic_parallel.wyn",
-        "tests/validation/test_type_edge.wyn",
-        "tests/validation/test_enum_result_closure.wyn",
-        "tests/validation/test_struct_defaults.wyn",
-        "tests/validation/test_array_ops.wyn",
-        "tests/validation/test_comprehensive_stress.wyn",
-        "tests/concurrency/test_await_all_string.wyn",
-        "tests/concurrency/test_await_all.wyn",
-        "tests/memory/test_block_rc.wyn",
-        "tests/validation/test_enum_exhaustive.wyn",
-        "tests/validation/test_stdlib_new.wyn",
-        "tests/validation/test_method_chaining.wyn",
-        "tests/validation/test_multiline_lambda.wyn",
-        "tests/validation/test_expressive.wyn",
-        "tests/validation/test_showcase.wyn",
-        "tests/validation/test_pipe_operator.wyn",
-        "tests/validation/test_if_expression.wyn",
-        "tests/validation/test_destructuring.wyn",
-        "tests/validation/test_lambdas_functional.wyn",
-        "tests/concurrency/test_spawn_first_class.wyn",
-        "tests/validation/test_sugar_combined.wyn",
-        "tests/validation/test_pipe_lambda_blocks.wyn",
-        "tests/validation/test_method_chain_comprehensive.wyn",
-        "tests/validation/test_match_control_flow.wyn",
-        "tests/validation/test_structs_traits_generics.wyn",
-        "tests/concurrency/test_concurrency_patterns.wyn",
-        "tests/validation/test_string_interpolation.wyn",
-        "tests/validation/test_for_loops.wyn",
-        "tests/validation/test_hashmap_ops.wyn",
-        "tests/validation/test_tuple_destruct_complete.wyn",
-        "tests/validation/test_void_lambda_blocks.wyn",
-        "tests/validation/test_complete_flow.wyn",
-        "tests/validation/test_ternary_conditionals.wyn",
-        "tests/validation/test_while_loops.wyn",
-        "tests/validation/test_result_types.wyn"
-    ]
-    var count = 110
+    var tests: [string] = []
+    var lines = read_file_content("tests/test_list.txt")
+    // Parse test list — one path per line
+    var current = ""
+    for i in 0..lines.len() {
+        var ch = lines.char_at(i)
+        if ch == "\n" {
+            if current.len() > 0 { tests.push(current) }
+            current = ""
+        } else {
+            current = current + ch
+        }
+    }
+    if current.len() > 0 { tests.push(current) }
+
+    var count = tests.len()
     var pass = 0
     var fail = 0
-    for i in 0..count {
-        var result = run_test(tests[i])
-        if result == 1 { pass = pass + 1 }
-        else { fail = fail + 1; println("  FAIL: " + tests[i]) }
+    var batch = 12
+
+    var i = 0
+    while i < count {
+        // Spawn a batch
+        var futures: [int] = []
+        var batch_end = i + batch
+        if batch_end > count { batch_end = count }
+        var j = i
+        while j < batch_end {
+            var f = spawn run_test(tests[j])
+            futures.push(f)
+            j = j + 1
+        }
+        // Await batch
+        j = 0
+        while j < futures.len() {
+            var result = await futures[j]
+            if result == 1 { pass = pass + 1 }
+            else { fail = fail + 1; println("  FAIL: " + tests[i + j]) }
+            j = j + 1
+        }
+        i = batch_end
     }
+
     var elapsed = DateTime_millis() - start
     println("")
     println("Results: " + pass.to_string() + " pass, " + fail.to_string() + " fail (" + elapsed.to_string() + "ms)")
