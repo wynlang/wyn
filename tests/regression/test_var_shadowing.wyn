@@ -1,8 +1,7 @@
 // Regression: variable shadowing in blocks
-// Known limitation: inner var shadows outer but doesn't restore after block
-// This is a codegen limitation of the #define-based shadowing approach
+// Inner var x should NOT leak to outer scope
 // EXPECT: 20
-// EXPECT: 20
+// EXPECT: 10
 
 fn main() -> int {
     var x = 10

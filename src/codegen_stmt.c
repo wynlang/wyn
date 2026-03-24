@@ -16,6 +16,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     // Register function parameters for scope tracking
     clear_parameters();
     clear_local_variables();
+    { extern void reset_shadow_vars(void); reset_shadow_vars(); }
     { extern void reset_string_vars(void); reset_string_vars(); }
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
         char param_name[256];
@@ -1455,6 +1456,25 @@ void codegen_stmt(Stmt* stmt) {
                 extern void pop_string_scope_and_release(void);
                 if (_is_inner_block) push_string_scope();
                 
+                // Save shadow state for vars declared in inner blocks
+                extern int get_current_shadow(const char*);
+                extern void set_shadow_count(const char*, int);
+                extern void remove_shadow_entry(const char*);
+                typedef struct { char name[64]; int prev; } _ShSave;
+                _ShSave _shsaves[64];
+                int _shcount = 0;
+                if (_is_inner_block) {
+                    for (int _i = 0; _i < stmt->block.count && _shcount < 64; _i++) {
+                        if (stmt->block.stmts[_i]->type == STMT_VAR) {
+                            int nl = stmt->block.stmts[_i]->var.name.length < 63 ? stmt->block.stmts[_i]->var.name.length : 63;
+                            memcpy(_shsaves[_shcount].name, stmt->block.stmts[_i]->var.name.start, nl);
+                            _shsaves[_shcount].name[nl] = 0;
+                            _shsaves[_shcount].prev = get_current_shadow(_shsaves[_shcount].name);
+                            _shcount++;
+                        }
+                    }
+                }
+                
                 extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
                 Stmt** _saved_stmts = current_block_stmts; int _saved_count = current_block_count; int _saved_idx = current_stmt_idx;
                 current_block_stmts = stmt->block.stmts; current_block_count = stmt->block.count;
@@ -1465,7 +1485,24 @@ void codegen_stmt(Stmt* stmt) {
                 }
                 current_block_stmts = _saved_stmts; current_block_count = _saved_count; current_stmt_idx = _saved_idx;
                 
+                // String cleanup first (needs macros still defined)
                 if (_is_inner_block) pop_string_scope_and_release();
+                
+                // Then restore shadow state for shadowed variables
+                if (_is_inner_block) {
+                    for (int _i = 0; _i < _shcount; _i++) {
+                        if (_shsaves[_i].prev < 0) continue;  // New var, no restore needed
+                        int cur = get_current_shadow(_shsaves[_i].name);
+                        if (cur > _shsaves[_i].prev) {
+                            emit("\n#undef %s\n", _shsaves[_i].name);
+                            if (_shsaves[_i].prev > 0) {
+                                emit("#define %s %s__%d\n", _shsaves[_i].name, _shsaves[_i].name, _shsaves[_i].prev);
+                            }
+                            // Restore scope level (next counter stays high for unique C names)
+                            set_shadow_count(_shsaves[_i].name, _shsaves[_i].prev);
+                        }
+                    }
+                }
             }
             { extern int string_var_scope_depth; string_var_scope_depth--; }
             break;
@@ -1738,6 +1775,7 @@ void codegen_stmt(Stmt* stmt) {
             // Register parameters for mut tracking
             clear_parameters();
             clear_local_variables();
+            { extern void reset_shadow_vars(void); reset_shadow_vars(); }
             { extern void reset_string_vars(void); reset_string_vars(); }
             for (int i = 0; i < stmt->fn.param_count; i++) {
                 char pname[256];

@@ -616,20 +616,27 @@ int is_known_sb_var(const char* name) {
 }
 
 // Variable shadowing: track declared names and return shadow suffix
-static struct { char name[64]; int count; } shadow_vars[512];
+// count = current scope level (saved/restored at block boundaries)
+// next  = monotonically increasing suffix counter (never restored)
+static struct { char name[64]; int count; int next; } shadow_vars[512];
 static int shadow_var_count = 0;
 
-// Returns shadow count for a variable name (0 = first declaration)
+void reset_shadow_vars(void) { shadow_var_count = 0; }
+
+// Returns shadow suffix for a variable name (0 = first declaration, >0 = shadow)
 int get_shadow_suffix(const char* name) {
     for (int i = 0; i < shadow_var_count; i++) {
         if (strcmp(shadow_vars[i].name, name) == 0) {
-            return ++shadow_vars[i].count;
+            shadow_vars[i].next++;
+            shadow_vars[i].count = shadow_vars[i].next;
+            return shadow_vars[i].count;
         }
     }
     if (shadow_var_count < 512) {
         strncpy(shadow_vars[shadow_var_count].name, name, 63);
         shadow_vars[shadow_var_count].name[63] = 0;
         shadow_vars[shadow_var_count].count = 0;
+        shadow_vars[shadow_var_count].next = 0;
         shadow_var_count++;
     }
     return 0;
@@ -1039,7 +1046,25 @@ int get_current_shadow(const char* name) {
     for (int i = 0; i < shadow_var_count; i++) {
         if (strcmp(shadow_vars[i].name, name) == 0) return shadow_vars[i].count;
     }
-    return 0;
+    return -1;  // -1 = not in table (never declared)
+}
+
+void set_shadow_count(const char* name, int count) {
+    for (int i = 0; i < shadow_var_count; i++) {
+        if (strcmp(shadow_vars[i].name, name) == 0) {
+            shadow_vars[i].count = count;
+            return;
+        }
+    }
+}
+
+void remove_shadow_entry(const char* name) {
+    for (int i = 0; i < shadow_var_count; i++) {
+        if (strcmp(shadow_vars[i].name, name) == 0) {
+            shadow_vars[i] = shadow_vars[--shadow_var_count];
+            return;
+        }
+    }
 }
 
 // Defer stack
