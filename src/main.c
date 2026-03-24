@@ -2424,9 +2424,12 @@ int main(int argc, char** argv) {
             if (strcmp(argv[i], "--release") == 0) { use_release = 1; }
         }
         
-        // Use TCC in-process when available (handles ARC edge cases better)
-        // Fall back to system cc + precompiled runtime when TCC unavailable
-        if (!use_release && !shared_mode && !generate_node && wyn_tcc_available()) {
+        // Prefer precompiled runtime (system cc) over TCC when available
+        // TCC is fallback for when no precompiled runtime exists
+        char rt_lib[512];
+        snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
+        int _use_tcc = (!use_release && !shared_mode && !generate_node && wyn_tcc_available() && access(rt_lib, R_OK) != 0);
+        if (_use_tcc) {
             // Read the generated C source
             char* c_source = read_file(out_path);
             if (c_source) {
@@ -2468,8 +2471,6 @@ int main(int argc, char** argv) {
         const char* cc = detect_cc();
         // Use precompiled runtime library for fast compilation
         // Falls back to source compilation if libwyn_rt.a doesn't exist
-        char rt_lib[512];
-        snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
         FILE* rt_check = fopen(rt_lib, "r");
         if (rt_check) {
             fclose(rt_check);

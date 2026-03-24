@@ -1,0 +1,19 @@
+// Expect: boolean operations return "true"/"false" consistently
+// EXPECT: false
+// EXPECT: true
+// EXPECT: false
+// EXPECT: false
+// EXPECT: true
+// EXPECT: true
+
+fn main() -> int {
+    var a = true
+    var b = false
+    println((a == b).to_string())
+    println((a != b).to_string())
+    println((!a).to_string())
+    println((a && b).to_string())
+    println((a || b).to_string())
+    println((5 > 3).to_string())
+    return 0
+}

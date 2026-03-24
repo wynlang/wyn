@@ -1268,9 +1268,7 @@ void codegen_stmt(Stmt* stmt) {
             }
             
             if (needs_arc_management) {
-                emit("({ ");
                 codegen_expr(stmt->var.init);
-                emit("; /* ARC retain for %.*s */ })", stmt->var.name.length, stmt->var.name.start);
             } else {
                 // Set spawn array flag for WynIntArray emission
                 bool _was_int_array = codegen_emit_int_array;

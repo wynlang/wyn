@@ -273,8 +273,8 @@ void codegen_expr(Expr* expr) {
             emit("(bool)%.*s", expr->token.length, expr->token.start);
             break;
         case EXPR_UNARY:
-            if (expr->unary.op.type == TOKEN_NOT) {
-                emit("!");
+            if (expr->unary.op.type == TOKEN_NOT || expr->unary.op.type == TOKEN_BANG) {
+                emit("(bool)!");
             } else {
                 emit("%.*s", expr->unary.op.length, expr->unary.op.start);
             }
@@ -340,7 +340,14 @@ void codegen_expr(Expr* expr) {
             }
             break;
         }
-        case EXPR_BINARY:
+        case EXPR_BINARY: {
+            // Check if this is a boolean-producing operator
+            bool _is_bool_op = (expr->binary.op.type == TOKEN_EQEQ || expr->binary.op.type == TOKEN_BANGEQ ||
+                expr->binary.op.type == TOKEN_LT || expr->binary.op.type == TOKEN_GT ||
+                expr->binary.op.type == TOKEN_LTEQ || expr->binary.op.type == TOKEN_GTEQ ||
+                expr->binary.op.type == TOKEN_AND || expr->binary.op.type == TOKEN_AMPAMP ||
+                expr->binary.op.type == TOKEN_OR || expr->binary.op.type == TOKEN_PIPEPIPE);
+            if (_is_bool_op) emit("(bool)");
             // Constant folding: if both sides are int literals, compute at compile time
             if (expr->binary.left->type == EXPR_INT && expr->binary.right->type == EXPR_INT) {
                 long long l = strtoll(expr->binary.left->token.start, NULL, 0);
@@ -628,6 +635,7 @@ void codegen_expr(Expr* expr) {
                 }
             }
             break;
+        }
         case EXPR_CALL:
             // Handle assert() and assert_eq() for test blocks
             if (expr->call.callee->type == EXPR_IDENT) {
@@ -1896,6 +1904,8 @@ void codegen_expr(Expr* expr) {
                  expr->method_call.object->type == EXPR_PIPELINE ||
                  expr->method_call.object->type == EXPR_AWAIT ||
                  expr->method_call.object->type == EXPR_CALL ||
+                 expr->method_call.object->type == EXPR_BINARY ||
+                 expr->method_call.object->type == EXPR_UNARY ||
                  expr->method_call.object->type == EXPR_IDENT)) {
                 emit("to_string(");
                 codegen_expr(expr->method_call.object);
