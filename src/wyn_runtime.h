@@ -630,7 +630,10 @@ void int_array_push(WynIntArray* a, long long v) {
     a->data[a->count++] = v;
 }
 long long int_array_get(WynIntArray a, int i) {
-    if (i < 0 || i >= a.count) return 0;
+    if (i < 0 || i >= a.count) {
+        fprintf(stderr, "panic: array index out of bounds: index %d, length %d\n", i, a.count);
+        exit(1);
+    }
     return a.data[i];
 }
 int int_array_len(WynIntArray a) { return a.count; }
@@ -1531,7 +1534,7 @@ char* http_request(const char* method, const char* url, const char* body) {
             return result;
         }
         
-        char* result = malloc(strlen(body_start) + 1);
+        char* result = wyn_str_alloc(strlen(body_start) + 1);
         strcpy(result, body_start);
         free(response);
         return result;
@@ -1681,7 +1684,7 @@ char* wyn_http_error() { return http_last_error[0] ? http_last_error : NULL; }
 char* last_error_get() { return last_error[0] ? last_error : NULL; }
 
 char* url_encode(const char* str) {
-    char* result = malloc(strlen(str) * 3 + 1);
+    char* result = wyn_str_alloc(strlen(str) * 3 + 1);
     char* p = result;
     while(*str) {
         if((*str >= 'A' && *str <= 'Z') || (*str >= 'a' && *str <= 'z') || (*str >= '0' && *str <= '9') || *str == '-' || *str == '_' || *str == '.' || *str == '~') {
@@ -1699,7 +1702,7 @@ char* url_encode(const char* str) {
 }
 
 char* url_decode(const char* str) {
-    char* result = malloc(strlen(str) + 1);
+    char* result = wyn_str_alloc(strlen(str) + 1);
     char* p = result;
     while(*str) {
         if(*str == '%' && str[1] && str[2]) {
@@ -1843,7 +1846,7 @@ const char* Fs_read_file(const char* path) {
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* buffer = malloc(size + 1);
+    char* buffer = wyn_str_alloc(size + 1);
     if (!buffer) { fclose(f); return ""; }
     size_t read = fread(buffer, 1, size, f);
     buffer[read] = '\0';
@@ -1958,7 +1961,7 @@ char* file_read(const char* path) {
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* buf = malloc(sz + 1);
+    char* buf = wyn_str_alloc(sz + 1);
     if(!buf) { snprintf(last_error, 256, "Out of memory"); fclose(f); return NULL; }
     fread(buf, 1, sz, f);
     buf[sz] = 0;
@@ -2006,7 +2009,7 @@ char* file_path_join(const char* a, const char* b) {
     int len_a = strlen(a);
     int len_b = strlen(b);
     int needs_sep = (len_a > 0 && a[len_a-1] != '/') ? 1 : 0;
-    char* result = malloc(len_a + len_b + needs_sep + 1);
+    char* result = wyn_str_alloc(len_a + len_b + needs_sep + 1);
     strcpy(result, a);
     if (needs_sep) strcat(result, "/");
     strcat(result, b);
@@ -2015,11 +2018,11 @@ char* file_path_join(const char* a, const char* b) {
 char* file_basename(const char* path) {
     const char* last_slash = strrchr(path, '/');
     if (last_slash == NULL) {
-        char* result = malloc(strlen(path) + 1);
+        char* result = wyn_str_alloc(strlen(path) + 1);
         strcpy(result, path);
         return result;
     }
-    char* result = malloc(strlen(last_slash));
+    char* result = wyn_str_alloc(strlen(last_slash));
     strcpy(result, last_slash + 1);
     return result;
 }
@@ -2037,7 +2040,7 @@ char* file_extension(const char* path) {
     const char* last_dot = strrchr(path, '.');
     const char* last_slash = strrchr(path, '/');
     if (last_dot == NULL || (last_slash != NULL && last_dot < last_slash)) return "";
-    char* result = malloc(strlen(last_dot));
+    char* result = wyn_str_alloc(strlen(last_dot));
     strcpy(result, last_dot + 1);
     return result;
 }
@@ -2093,7 +2096,7 @@ int File_mkdir(const char* p) { return file_mkdir(p); }
 char* File_list_dir(const char* p) {
     DIR* dir = opendir(p);
     if (!dir) return "";
-    char* result = malloc(65536);
+    char* result = wyn_str_alloc(65536);
     result[0] = 0;
     struct dirent* entry;
     while ((entry = readdir(dir)) != NULL) {
@@ -2301,7 +2304,7 @@ char* Http_accept(int server_fd) {
     char* body_start = strstr(buf_copy, "\r\n\r\n");
     const char* body = body_start ? body_start + 4 : "";
     
-    char* result = malloc(16384);
+    char* result = wyn_str_alloc(16384);
     snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
     return result;
 }
@@ -2479,7 +2482,7 @@ void Terminal_print_color(const char* s, int fg) { printf("\033[%dm%s\033[0m", f
 // Usage: Color.red("error"), Color.bold("title"), Color.green("ok")
 static char* _color_wrap(const char* s, const char* code) {
     // \033[CODEm + s + \033[0m + null
-    char* buf = malloc(strlen(s) + strlen(code) + 10);
+    char* buf = wyn_str_alloc(strlen(s) + strlen(code) + 10);
     sprintf(buf, "\033[%sm%s\033[0m", code, s);
     return buf;
 }
@@ -2610,7 +2613,7 @@ int file_remove_dir_all(const char* path) {
 char* System_shell_escape(const char* s) {
     if (!s) return "''";
     size_t len = strlen(s);
-    char* out = malloc(len * 4 + 3); // worst case: every char escaped + quotes
+    char* out = wyn_str_alloc(len * 4 + 3); // worst case: every char escaped + quotes
     size_t j = 0;
     out[j++] = '\'';
     for (size_t i = 0; i < len; i++) {
@@ -2668,7 +2671,7 @@ void System_exit(int code) { exit(code); }
 char* System_env(const char* key) {
     char* val = getenv(key);
     if (!val) return "";
-    char* result = malloc(strlen(val) + 1);
+    char* result = wyn_str_alloc(strlen(val) + 1);
     strcpy(result, val);
     return result;
 }

@@ -138,7 +138,7 @@ void* future_get(Future* f) {
         future_recycle(f);
         return r;
     }
-    // Main thread: spin with CPU hints then yield loop
+    // Spin-yield until result is ready
     for (int i = 0; i < 256; i++) {
         if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
             void* r = f->result;
