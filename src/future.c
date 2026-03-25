@@ -151,6 +151,7 @@ void* future_get(Future* f) {
         __asm__ volatile("isb");
         #endif
     }
+    // Spin-yield until result is ready
     while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY)
         sched_yield();
     void* r = f->result;

@@ -1637,7 +1637,7 @@ char* http_put(const char* url, const char* data) {
             "printf 'PUT %s HTTP/1.1\\r\\nHost: %s\\r\\nContent-Length: %d\\r\\nConnection: close\\r\\n\\r\\n%s' | openssl s_client -quiet -connect %s:443 2>/dev/null",
             path, hostname, dlen, data?data:"", hostname);
         FILE* fp = popen(cmd, "r"); if (!fp) return "";
-        char* resp = malloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
+        char* resp = wyn_str_alloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
         char* body = strstr(resp, "\r\n\r\n");
         if (body) { body+=4; char* r=wyn_strdup(body); free(resp); return r; }
         return resp;
@@ -1657,7 +1657,7 @@ char* http_delete(const char* url) {
             "printf 'DELETE %s HTTP/1.1\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n' | openssl s_client -quiet -connect %s:443 2>/dev/null",
             path, hostname, hostname);
         FILE* fp = popen(cmd, "r"); if (!fp) return "";
-        char* resp = malloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
+        char* resp = wyn_str_alloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
         char* body = strstr(resp, "\r\n\r\n");
         if (body) { body+=4; char* r=wyn_strdup(body); free(resp); return r; }
         return resp;
@@ -1993,7 +1993,7 @@ int file_is_dir(const char* path) {
     return S_ISDIR(st.st_mode);
 }
 char* file_get_cwd() {
-    char* buf = malloc(1024);
+    char* buf = wyn_str_alloc(1024);
     if (getcwd(buf, 1024) == NULL) { free(buf); return ""; }
     return buf;
 }
@@ -2131,7 +2131,7 @@ long long File_open(const char* path, const char* mode) {
 }
 char* File_read_line(long long handle) {
     if (handle <= 0 || handle >= MAX_FILE_HANDLES || !file_handles[handle]) return "";
-    char* buf = malloc(4096);
+    char* buf = wyn_str_alloc(4096);
     if (fgets(buf, 4096, file_handles[handle])) return buf;
     free(buf);
     return "";
@@ -2342,7 +2342,7 @@ WynArray hashmap_values(WynHashMap* map) {
 char* string_split_to_str(const char* s, const char* delim) {
     if (!s || !delim) return "";
     int dlen = strlen(delim);
-    char* result = malloc(strlen(s) + 256);
+    char* result = wyn_str_alloc(strlen(s) + 256);
     result[0] = 0;
     const char* p = s;
     while (1) {
@@ -2842,7 +2842,7 @@ long long DateTime_micros() { struct timeval tv; gettimeofday(&tv, NULL); return
 char* DateTime_format(int timestamp, const char* fmt) {
     time_t t = (time_t)timestamp;
     struct tm* tm_info = localtime(&t);
-    char* buffer = malloc(256);
+    char* buffer = wyn_str_alloc(256);
     strftime(buffer, 256, fmt, tm_info);
     return buffer;
 }
@@ -2985,7 +2985,7 @@ int Net_send(int sockfd, const char* data) {
 }
 
 char* Net_recv(int sockfd) {
-    char* buffer = malloc(4096);
+    char* buffer = wyn_str_alloc(4096);
     int received = recv(sockfd, buffer, 4095, 0);
     if (received < 0) {
         free(buffer);
@@ -3002,7 +3002,7 @@ int Net_close(int sockfd) {
 char* Time_format(int timestamp) {
     time_t t = (time_t)timestamp;
     struct tm* tm_info = localtime(&t);
-    char* buffer = malloc(64);
+    char* buffer = wyn_str_alloc(64);
     strftime(buffer, 64, "%Y-%m-%d %H:%M:%S", tm_info);
     return buffer;
 }
@@ -3090,7 +3090,7 @@ long long time_now() { return (long long)time(NULL); }
 char* time_format(int timestamp, const char* fmt) {
     time_t t = (time_t)timestamp;
     struct tm* tm_info = localtime(&t);
-    char* buffer = malloc(80);
+    char* buffer = wyn_str_alloc(80);
     strftime(buffer, 80, fmt, tm_info);
     return buffer;
 }
@@ -3170,7 +3170,7 @@ int ResultInt_unwrap(ResultInt r) { if (r.tag == 1) { fprintf(stderr, "Error: un
 const char* ResultInt_unwrap_err(ResultInt r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 long long ResultInt_unwrap_or(ResultInt r, long long def) { return r.tag == 0 ? r.data.ok_value : def; }
 char* ResultInt_to_string(ResultInt r) {
-    char* buf = malloc(256);
+    char* buf = wyn_str_alloc(256);
     if (r.tag == 0) snprintf(buf, 256, "Ok(%d)", r.data.ok_value);
     else snprintf(buf, 256, "Err(%s)", r.data.err_value);
     return buf;
@@ -3454,7 +3454,7 @@ char* Db_query(long long handle, const char* sql) {
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db_handles[handle], sql, -1, &stmt, NULL) != SQLITE_OK) return "";
     
-    char* result = malloc(65536);
+    char* result = wyn_str_alloc(65536);
     result[0] = 0;
     int first_row = 1;
     
@@ -3511,7 +3511,7 @@ char* Db_query_p(long long handle, const char* sql, WynArray params) {
         else
             sqlite3_bind_int64(stmt, i+1, params.data[i].data.int_val);
     }
-    char* result = malloc(65536); result[0] = 0;
+    char* result = wyn_str_alloc(65536); result[0] = 0;
     int first_row = 1;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         if (!first_row) strcat(result, "\n"); first_row = 0;
@@ -3714,7 +3714,7 @@ char* Json_get(long long root, const char* key) {
     int c = json_find_child((int)root, key);
     if (c < 0) return "";
     if (json_nodes[c].type == 's') return json_nodes[c].str_val ? json_nodes[c].str_val : "";
-    if (json_nodes[c].type == 'n') { char* buf = malloc(32); snprintf(buf, 32, "%g", json_nodes[c].num_val); return buf; }
+    if (json_nodes[c].type == 'n') { char* buf = wyn_str_alloc(32); snprintf(buf, 32, "%g", json_nodes[c].num_val); return buf; }
     if (json_nodes[c].type == 'b') return json_nodes[c].num_val ? "true" : "false";
     return "";
 }
@@ -3748,12 +3748,12 @@ char* Json_node_str(long long node) {
     int n = (int)node;
     if (n < 0 || n >= json_node_count) return "";
     if (json_nodes[n].type == 's') return json_nodes[n].str_val ? json_nodes[n].str_val : "";
-    if (json_nodes[n].type == 'n') { char* buf = malloc(32); snprintf(buf, 32, "%g", json_nodes[n].num_val); return buf; }
+    if (json_nodes[n].type == 'n') { char* buf = wyn_str_alloc(32); snprintf(buf, 32, "%g", json_nodes[n].num_val); return buf; }
     return "";
 }
 
 char* Json_keys(long long root) {
-    char* result = malloc(4096); result[0] = 0;
+    char* result = wyn_str_alloc(4096); result[0] = 0;
     int c = json_nodes[(int)root].first_child;
     while (c >= 0) {
         if (json_nodes[c].key) { strcat(result, json_nodes[c].key); strcat(result, "\n"); }
