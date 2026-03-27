@@ -1,0 +1,35 @@
+// Regression: memory safety — all leak patterns must not crash or leak
+// Tests concat temps, interpolation temps, split cleanup, reassignment, HashMap cleanup
+// EXPECT: 11
+// EXPECT: hello
+// EXPECT: 3
+// EXPECT: done
+
+fn build(n: int) -> string { return "item_" + n.to_string() }
+
+fn main() -> int {
+    // Concat temp release
+    var last = ""
+    for i in 0..1000000 {
+        last = build(i)
+    }
+    println(last.len().to_string())
+
+    // Split + array cleanup
+    for i in 0..1000 {
+        var parts = "hello,world".split(",")
+        if i == 0 { println(parts[0]) }
+    }
+
+    // HashMap cleanup
+    for i in 0..1000 {
+        var m = HashMap.new()
+        m.insert("a", "1")
+        m.insert("b", "2")
+        m.insert("c", "3")
+        if i == 0 { println(m.len().to_string()) }
+    }
+
+    println("done")
+    return 0
+}
