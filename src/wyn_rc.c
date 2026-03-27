@@ -15,8 +15,8 @@ typedef struct {
 } WynRcHeaderFull;
 
 // Track the heap range to avoid reading before string literals
-static void* heap_low = NULL;
-static void* heap_high = NULL;
+static _Atomic(void*) heap_low = NULL;
+static _Atomic(void*) heap_high = NULL;
 
 static inline WynRcHeaderFull* rc_full_header(const void* ptr) {
     return (WynRcHeaderFull*)((char*)ptr - sizeof(WynRcHeaderFull));
@@ -31,15 +31,27 @@ void* wyn_rc_alloc(size_t size) {
     hdr->length = 0;  // Set by concat when known
     void* ptr = (char*)hdr + sizeof(WynRcHeaderFull);
     // Track heap range
-    if (!heap_low || ptr < heap_low) heap_low = hdr;
-    if (!heap_high || (char*)ptr + size > (char*)heap_high) heap_high = (char*)ptr + size;
+    // Track heap range (atomic CAS for thread safety)
+    void* lo = atomic_load_explicit(&heap_low, memory_order_relaxed);
+    while (!lo || (void*)hdr < lo) {
+        if (atomic_compare_exchange_weak_explicit(&heap_low, &lo, (void*)hdr,
+                memory_order_relaxed, memory_order_relaxed)) break;
+    }
+    void* hi = atomic_load_explicit(&heap_high, memory_order_relaxed);
+    void* new_hi = (void*)((char*)ptr + size);
+    while (!hi || new_hi > hi) {
+        if (atomic_compare_exchange_weak_explicit(&heap_high, &hi, new_hi,
+                memory_order_relaxed, memory_order_relaxed)) break;
+    }
     return ptr;
 }
 
 int wyn_rc_is_heap(const void* ptr) {
-    if (!ptr || !heap_low) return 0;
-    // Quick range check: only read header if pointer is in heap range
-    if (ptr < heap_low || ptr > heap_high) return 0;
+    if (!ptr) return 0;
+    void* lo = atomic_load_explicit(&heap_low, memory_order_relaxed);
+    if (!lo) return 0;
+    void* hi = atomic_load_explicit(&heap_high, memory_order_relaxed);
+    if (ptr < lo || ptr > hi) return 0;
     WynRcHeaderFull* hdr = rc_full_header(ptr);
     return hdr->magic == WYN_RC_MAGIC;
 }
@@ -47,17 +59,18 @@ int wyn_rc_is_heap(const void* ptr) {
 void wyn_rc_retain(const void* ptr) {
     if (!ptr || !wyn_rc_is_heap(ptr)) return;
     WynRcHeaderFull* hdr = rc_full_header(ptr);
-    int32_t rc = atomic_load(&hdr->refcount);
+    int32_t rc = atomic_load_explicit(&hdr->refcount, memory_order_relaxed);
     if (rc == WYN_RC_IMMORTAL) return;
-    atomic_fetch_add(&hdr->refcount, 1);
+    atomic_fetch_add_explicit(&hdr->refcount, 1, memory_order_relaxed);
 }
 
 void wyn_rc_release(const void* ptr) {
     if (!ptr || !wyn_rc_is_heap(ptr)) return;
     WynRcHeaderFull* hdr = rc_full_header(ptr);
-    int32_t rc = atomic_load(&hdr->refcount);
+    int32_t rc = atomic_load_explicit(&hdr->refcount, memory_order_relaxed);
     if (rc == WYN_RC_IMMORTAL) return;
-    if (atomic_fetch_sub(&hdr->refcount, 1) == 1) {
+    if (atomic_fetch_sub_explicit(&hdr->refcount, 1, memory_order_acq_rel) == 1) {
+        atomic_thread_fence(memory_order_acquire); // Ensure all reads complete before free
         hdr->magic = 0;
         free(hdr);
     }

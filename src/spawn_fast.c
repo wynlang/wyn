@@ -583,6 +583,16 @@ static void* pool_worker(void* arg) {
     return NULL;
 }
 
+static void shutdown_pool(void) {
+    atomic_store(&pool_shutdown, 1);
+    pthread_mutex_lock(&pool_lock);
+    pthread_cond_broadcast(&pool_cond);
+    pthread_mutex_unlock(&pool_lock);
+    for (int i = 0; i < pool_thread_count; i++) {
+        pthread_join(pool_threads[i], NULL);
+    }
+}
+
 static void init_pool(void) {
     if (atomic_exchange(&pool_started, 1)) return;
     int cpus = (int)sysconf(_SC_NPROCESSORS_ONLN);
@@ -596,6 +606,7 @@ static void init_pool(void) {
         pthread_create(&pool_threads[i], &attr, pool_worker, NULL);
     }
     pthread_attr_destroy(&attr);
+    atexit(shutdown_pool);
 }
 
 Future* wyn_spawn_async_traced(TaskFuncWithReturn func, void* arg, const char* file, int line) {
