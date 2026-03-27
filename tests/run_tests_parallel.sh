@@ -20,7 +20,7 @@ run_test() {
 }
 
 # Read test list from run_tests.wyn
-TESTS=$(grep '"tests/' tests/run_tests.wyn | sed 's/.*"\(tests\/[^"]*\)".*/\1/')
+TESTS=$(cat tests/test_list.txt 2>/dev/null || grep '"tests/' tests/run_tests.wyn | sed 's/.*"\(tests\/[^"]*\)".*/\1/')
 
 # Launch all in parallel (limit concurrency to avoid overwhelming the system)
 JOBS=0

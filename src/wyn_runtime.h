@@ -1855,7 +1855,7 @@ double pi_const() { return 3.14159265359; }
 double e_const() { return 2.71828182846; }
 int str_len(const char* s) { return strlen(s); }
 int str_eq(const char* a, const char* b) { return strcmp(a, b) == 0; }
-char* str_concat(const char* a, const char* b) { char* r = wyn_str_alloc(strlen(a) + strlen(b) + 1); strcpy(r, a); strcat(r, b); return r; }
+char* str_concat(const char* a, const char* b) { size_t la = strlen(a), lb = strlen(b); char* r = wyn_str_alloc(la + lb + 1); memcpy(r, a, la); memcpy(r + la, b, lb + 1); return r; }
 char* str_upper(const char* s) { size_t len = strlen(s); char* r = wyn_str_alloc(len + 1); for(size_t i = 0; i < len; i++) r[i] = toupper(s[i]); r[len] = 0; return r; }
 char* str_lower(const char* s) { size_t len = strlen(s); char* r = wyn_str_alloc(len + 1); for(size_t i = 0; i < len; i++) r[i] = tolower(s[i]); r[len] = 0; return r; }
 int str_contains(const char* s, const char* sub) { return strstr(s, sub) != NULL; }
@@ -2028,13 +2028,12 @@ int file_file_size(const char* path) {
     return (int)st.st_size;
 }
 char* file_path_join(const char* a, const char* b) {
-    int len_a = strlen(a);
-    int len_b = strlen(b);
-    int needs_sep = (len_a > 0 && a[len_a-1] != '/') ? 1 : 0;
-    char* result = wyn_str_alloc(len_a + len_b + needs_sep + 1);
-    strcpy(result, a);
-    if (needs_sep) strcat(result, "/");
-    strcat(result, b);
+    size_t la = strlen(a), lb = strlen(b);
+    int needs_sep = (la > 0 && a[la-1] != '/') ? 1 : 0;
+    char* result = wyn_str_alloc(la + lb + needs_sep + 1);
+    memcpy(result, a, la);
+    if (needs_sep) result[la] = '/';
+    memcpy(result + la + needs_sep, b, lb + 1);
     return result;
 }
 char* file_basename(const char* path) {
@@ -2118,14 +2117,23 @@ int File_mkdir(const char* p) { return file_mkdir(p); }
 char* File_list_dir(const char* p) {
     DIR* dir = opendir(p);
     if (!dir) return "";
-    char* result = wyn_str_alloc(65536);
-    result[0] = 0;
+    // Two-pass: compute size, then build
+    size_t total = 0;
     struct dirent* entry;
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_name[0] == '.') continue;
-        strcat(result, entry->d_name);
-        strcat(result, "\n");
+        total += strlen(entry->d_name) + 1;
     }
+    rewinddir(dir);
+    char* result = wyn_str_alloc(total + 1);
+    size_t pos = 0;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        size_t nl = strlen(entry->d_name);
+        memcpy(result + pos, entry->d_name, nl); pos += nl;
+        result[pos++] = '\n';
+    }
+    result[pos] = 0;
     closedir(dir);
     return result;
 }
