@@ -138,9 +138,13 @@ void* future_get(Future* f) {
         future_recycle(f);
         return r;
     }
-    // Spin-yield until result is ready
+    // Help drain queue while waiting — prevents deadlock in recursive spawn
+    // Safe with mutex pool (no data races unlike Chase-Lev re-entrant pop)
+    extern _Atomic int ws_blocked;
+    atomic_fetch_add(&ws_blocked, 1);
     for (int i = 0; i < 256; i++) {
         if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
+            atomic_fetch_sub(&ws_blocked, 1);
             void* r = f->result;
             future_recycle(f);
             return r;
@@ -151,9 +155,12 @@ void* future_get(Future* f) {
         __asm__ volatile("isb");
         #endif
     }
-    // Spin-yield until result is ready
-    while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY)
-        sched_yield();
+    // Help drain queue while waiting
+    extern int pool_try_run_one(void);
+    while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY) {
+        if (!pool_try_run_one()) sched_yield();
+    }
+    atomic_fetch_sub(&ws_blocked, 1);
     void* r = f->result;
     future_recycle(f);
     return r;

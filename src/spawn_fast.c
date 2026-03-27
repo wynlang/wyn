@@ -542,8 +542,26 @@ static pthread_cond_t pool_cond = PTHREAD_COND_INITIALIZER;
 static _Atomic int pool_started = 0;
 static _Atomic int pool_shutdown = 0;
 static int pool_thread_count = 0;
+_Atomic int ws_blocked = 0; // Threads blocked in future_get
 #define POOL_MAX_THREADS 32
 static pthread_t pool_threads[POOL_MAX_THREADS];
+
+// Dequeue and run one task. Called from future_get to prevent deadlock.
+int pool_try_run_one(void) {
+    pthread_mutex_lock(&pool_lock);
+    if (atomic_load(&pool_head) == atomic_load(&pool_tail)) {
+        pthread_mutex_unlock(&pool_lock);
+        return 0;
+    }
+    int idx = atomic_load(&pool_head) % POOL_QUEUE_SIZE;
+    PoolTask task = pool_queue[idx];
+    atomic_fetch_add(&pool_head, 1);
+    pthread_mutex_unlock(&pool_lock);
+    void* result = task.func(task.arg);
+    future_set(task.future, result);
+    atomic_fetch_add(&total_completed, 1);
+    return 1;
+}
 
 static void* pool_worker(void* arg) {
     (void)arg;
