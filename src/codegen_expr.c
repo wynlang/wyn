@@ -479,30 +479,30 @@ void codegen_expr(Expr* expr) {
                 }
                 
                 if (left_is_string || right_is_string) {
-                    // Use ARC-managed string concatenation with automatic conversion
-                    emit("wyn_string_concat_safe(");
+                    // ARC-managed concat — release right temporary after concat
+                    // Left is NOT released because concat may reuse it (realloc optimization)
+                    bool right_is_temp = (expr->binary.right->type == EXPR_CALL ||
+                                         expr->binary.right->type == EXPR_METHOD_CALL ||
+                                         expr->binary.right->type == EXPR_BINARY);
+                    if (right_is_int && !right_is_string) right_is_temp = true;
                     
-                    // Convert left operand to string if it's an int
-                    if (left_is_int && !left_is_string) {
-                        emit("int_to_string(");
-                        codegen_expr(expr->binary.left);
-                        emit(")");
+                    if (right_is_temp) {
+                        emit("({ const char* __cr = ");
+                        if (right_is_int && !right_is_string) { emit("int_to_string("); codegen_expr(expr->binary.right); emit(")"); }
+                        else codegen_expr(expr->binary.right);
+                        emit("; const char* __cx = wyn_string_concat_safe(");
+                        if (left_is_int && !left_is_string) { emit("int_to_string("); codegen_expr(expr->binary.left); emit(")"); }
+                        else codegen_expr(expr->binary.left);
+                        emit(", __cr); wyn_rc_release(__cr); __cx; })");
                     } else {
-                        codegen_expr(expr->binary.left);
-                    }
-                    
-                    emit(", ");
-                    
-                    // Convert right operand to string if it's an int
-                    if (right_is_int && !right_is_string) {
-                        emit("int_to_string(");
-                        codegen_expr(expr->binary.right);
+                        emit("wyn_string_concat_safe(");
+                        if (left_is_int && !left_is_string) { emit("int_to_string("); codegen_expr(expr->binary.left); emit(")"); }
+                        else codegen_expr(expr->binary.left);
+                        emit(", ");
+                        if (right_is_int && !right_is_string) { emit("int_to_string("); codegen_expr(expr->binary.right); emit(")"); }
+                        else codegen_expr(expr->binary.right);
                         emit(")");
-                    } else {
-                        codegen_expr(expr->binary.right);
                     }
-                    
-                    emit(")");
                     break;
                 }
             }

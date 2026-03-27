@@ -33,6 +33,11 @@ struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
 
 #include <stdio.h>
 #include <stdlib.h>
+
+// Safe allocators — abort on OOM instead of returning NULL
+static inline void* wyn_malloc(size_t n) { void* p = malloc(n); if (!p && n) { fprintf(stderr, "wyn: out of memory (%zu bytes)\n", n); abort(); } return p; }
+static inline void* wyn_calloc(size_t c, size_t n) { void* p = calloc(c, n); if (!p && c && n) { fprintf(stderr, "wyn: out of memory\n"); abort(); } return p; }
+static inline void* wyn_realloc(void* p, size_t n) { void* q = realloc(p, n); if (!q && n) { fprintf(stderr, "wyn: out of memory\n"); abort(); } return q; }
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -88,7 +93,7 @@ struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
   typedef struct { HANDLE hFind; WIN32_FIND_DATAA data; int first; } DIR;
   struct dirent { char d_name[MAX_PATH]; };
   static DIR* opendir(const char* path) {
-      DIR* d = malloc(sizeof(DIR));
+      DIR* d = wyn_malloc(sizeof(DIR));
       char pattern[MAX_PATH];
       snprintf(pattern, MAX_PATH, "%s\\*", path);
       d->hFind = FindFirstFileA(pattern, &d->data);
@@ -174,7 +179,7 @@ const char* wyn_string_concat_safe(const char* left, const char* right) {
             size_t cap = needed;
             if (cap < 64) cap = 64;
             else { cap--; cap |= cap >> 1; cap |= cap >> 2; cap |= cap >> 4; cap |= cap >> 8; cap |= cap >> 16; cap++; }
-            RcHdr* new_hdr = realloc(hdr, sizeof(RcHdr) + cap);
+            RcHdr* new_hdr = wyn_realloc(hdr, sizeof(RcHdr) + cap);
             if (new_hdr) {
                 char* s = (char*)new_hdr + sizeof(RcHdr);
                 memcpy(s + l1, right, l2);
@@ -315,8 +320,8 @@ char* regex_find_all(const char* str, const char* pattern) {
 char* regex_split(const char* str, const char* pattern) {
     struct wre_nfa nfa;
     if (!wre_compile(&nfa, pattern)) return wyn_strdup(str);
-    char* result = (char*)malloc(strlen(str) + 256); result[0] = 0;
-    int pos = 0, slen = (int)strlen(str);
+    size_t slen = strlen(str);
+    char* result = wyn_str_alloc(slen * 2 + 256); size_t pos = 0, rpos = 0;
     while (pos <= slen) {
         int ms, me;
         wre_find(str + pos, pattern, &ms, &me);
@@ -488,7 +493,7 @@ static inline WynValue* wyn_array_realloc(WynValue* old, int old_cap, int new_ca
     size_t size = sizeof(WynValue) * new_cap;
 #if defined(__TINYC__)
     // TCC: use standard realloc
-    WynValue* p = realloc(old, size);
+    WynValue* p = wyn_realloc(old, size);
 #else
     size = (size + 15) & ~15;  // round up to 16-byte alignment
     WynValue* p;
@@ -522,7 +527,7 @@ void array_push_str(WynArray* restrict arr, const char* value) {
         arr->capacity = new_cap;
     }
     arr->data[arr->count].type = WYN_TYPE_STRING;
-    arr->data[arr->count].data.string_val = strdup(value);
+    arr->data[arr->count].data.string_val = wyn_strdup(value);
     arr->count++;
 }
 void array_push_array(WynArray* restrict arr, WynArray* nested) {
@@ -533,7 +538,7 @@ void array_push_array(WynArray* restrict arr, WynArray* nested) {
     }
     arr->data[arr->count].type = WYN_TYPE_ARRAY;
     // Heap-allocate a copy so the nested array outlives the stack frame
-    WynArray* copy = malloc(sizeof(WynArray));
+    WynArray* copy = wyn_malloc(sizeof(WynArray));
     *copy = *nested;
     arr->data[arr->count].data.array_val = copy;
     arr->count++;
@@ -625,7 +630,7 @@ WynIntArray int_array_new() { WynIntArray a = {0}; return a; }
 void int_array_push(WynIntArray* a, long long v) {
     if (a->count >= a->capacity) {
         a->capacity = a->capacity == 0 ? 8 : a->capacity * 2;
-        a->data = realloc(a->data, sizeof(long long) * a->capacity);
+        a->data = wyn_realloc(a->data, sizeof(long long) * a->capacity);
     }
     a->data[a->count++] = v;
 }
@@ -652,10 +657,10 @@ void array_push(WynArray* arr, long long value) {
     StructType __temp_val = (value); \
     if ((arr)->count >= (arr)->capacity) { \
         (arr)->capacity = (arr)->capacity == 0 ? 4 : (arr)->capacity * 2; \
-        (arr)->data = realloc((arr)->data, sizeof(WynValue) * (arr)->capacity); \
+        (arr)->data = wyn_realloc((arr)->data, sizeof(WynValue) * (arr)->capacity); \
     } \
     (arr)->data[(arr)->count].type = WYN_TYPE_STRUCT; \
-    (arr)->data[(arr)->count].data.struct_val = malloc(sizeof(StructType)); \
+    (arr)->data[(arr)->count].data.struct_val = wyn_malloc(sizeof(StructType)); \
     memcpy((arr)->data[(arr)->count].data.struct_val, &__temp_val, sizeof(StructType)); \
     (arr)->count++; \
 } while(0)
@@ -808,7 +813,7 @@ WynArray array_take(WynArray arr, int n) {
     for (int i = 0; i < count; i++) {
         if (result.count >= result.capacity) {
             result.capacity = result.capacity == 0 ? 4 : result.capacity * 2;
-            result.data = realloc(result.data, sizeof(WynValue) * result.capacity);
+            result.data = wyn_realloc(result.data, sizeof(WynValue) * result.capacity);
         }
         result.data[result.count++] = arr.data[i];
     }
@@ -819,7 +824,7 @@ WynArray array_skip(WynArray arr, int n) {
     for (int i = n; i < arr.count; i++) {
         if (result.count >= result.capacity) {
             result.capacity = result.capacity == 0 ? 4 : result.capacity * 2;
-            result.data = realloc(result.data, sizeof(WynValue) * result.capacity);
+            result.data = wyn_realloc(result.data, sizeof(WynValue) * result.capacity);
         }
         result.data[result.count++] = arr.data[i];
     }
@@ -832,7 +837,7 @@ WynArray wyn_array_slice_range(WynArray arr, int start, int end) {
     for (int i = start; i < end; i++) {
         if (result.count >= result.capacity) {
             result.capacity = result.capacity == 0 ? 4 : result.capacity * 2;
-            result.data = realloc(result.data, sizeof(WynValue) * result.capacity);
+            result.data = wyn_realloc(result.data, sizeof(WynValue) * result.capacity);
         }
         result.data[result.count++] = arr.data[i];
     }
@@ -854,16 +859,18 @@ char* array_join(WynArray arr, const char* sep) {
         if (i < arr.count - 1) total_len += sep_len;
     }
     char* result = wyn_str_alloc(total_len);
-    result[0] = '\0';
+    size_t pos = 0;
     for (int i = 0; i < arr.count; i++) {
         if (arr.data[i].type == WYN_TYPE_STRING) {
-            strcat(result, arr.data[i].data.string_val);
+            size_t sl = strlen(arr.data[i].data.string_val);
+            memcpy(result + pos, arr.data[i].data.string_val, sl); pos += sl;
         } else if (arr.data[i].type == WYN_TYPE_INT) {
-            char buf[16]; sprintf(buf, "%d", arr.data[i].data.int_val);
-            strcat(result, buf);
+            char buf[16]; int bl = snprintf(buf, sizeof(buf), "%d", arr.data[i].data.int_val);
+            memcpy(result + pos, buf, bl); pos += bl;
         }
-        if (i < arr.count - 1) strcat(result, sep);
+        if (i < arr.count - 1 && sep_len > 0) { memcpy(result + pos, sep, sep_len); pos += sep_len; }
     }
+    result[pos] = '\0';
     return result;
 }
 WynArray array_concat(WynArray arr1, WynArray arr2) {
@@ -871,14 +878,14 @@ WynArray array_concat(WynArray arr1, WynArray arr2) {
     for (int i = 0; i < arr1.count; i++) {
         if (result.count >= result.capacity) {
             result.capacity = result.capacity == 0 ? 4 : result.capacity * 2;
-            result.data = realloc(result.data, sizeof(WynValue) * result.capacity);
+            result.data = wyn_realloc(result.data, sizeof(WynValue) * result.capacity);
         }
         result.data[result.count++] = arr1.data[i];
     }
     for (int i = 0; i < arr2.count; i++) {
         if (result.count >= result.capacity) {
             result.capacity = result.capacity == 0 ? 4 : result.capacity * 2;
-            result.data = realloc(result.data, sizeof(WynValue) * result.capacity);
+            result.data = wyn_realloc(result.data, sizeof(WynValue) * result.capacity);
         }
         result.data[result.count++] = arr2.data[i];
     }
@@ -1122,7 +1129,7 @@ WynArray string_split(const char* str, const char* delim) {
     while (1) {
         const char* found = strstr(p, delim);
         if (!found) {
-            array_push_str(&arr, strdup(p));
+            array_push_str(&arr, wyn_strdup(p));
             break;
         }
         int len = found - p;
@@ -1184,7 +1191,7 @@ WynArray string_lines(const char* str) {
     char* copy = strdup(str);
     char* token = strtok(copy, "\n");
     while (token != NULL) {
-        array_push_str(&arr, strdup(token));
+        array_push_str(&arr, wyn_strdup(token));
         token = strtok(NULL, "\n");
     }
     free(copy);
@@ -1195,7 +1202,7 @@ WynArray string_words(const char* str) {
     char* copy = strdup(str);
     char* token = strtok(copy, " \t\n\r");
     while (token != NULL) {
-        array_push_str(&arr, strdup(token));
+        array_push_str(&arr, wyn_strdup(token));
         token = strtok(NULL, " \t\n\r");
     }
     free(copy);
@@ -1263,7 +1270,7 @@ char* int_to_binary(int n) {
 }
 char* int_to_hex(int n) {
     char* result = wyn_str_alloc(11);
-    sprintf(result, "%x", n);
+    snprintf(result, 32, "%x", n);
     return result;
 }
 
@@ -1317,8 +1324,8 @@ void map_set(WynMap* map, const char* key, int value) {
         }
     }
     // Add new key-value pair
-    map->keys = realloc(map->keys, sizeof(void*) * (map->count + 1));
-    map->values = realloc(map->values, sizeof(void*) * (map->count + 1));
+    map->keys = wyn_realloc(map->keys, sizeof(void*) * (map->count + 1));
+    map->values = wyn_realloc(map->values, sizeof(void*) * (map->count + 1));
     map->keys[map->count] = (void*)strdup(key);
     map->values[map->count] = (void*)(intptr_t)value;
     map->count++;
@@ -1338,7 +1345,7 @@ void map_clear(WynMap* map) {
 }
 
 char** map_keys(WynMap map) {
-    char** keys = malloc(sizeof(char*) * (map.count + 1));
+    char** keys = wyn_malloc(sizeof(char*) * (map.count + 1));
     for (int i = 0; i < map.count; i++) {
         keys[i] = (char*)map.keys[i];
     }
@@ -1452,7 +1459,7 @@ char* http_request(const char* method, const char* url, const char* body) {
     }
     
     // Build request
-    char* request = malloc(8192);
+    char* request = wyn_malloc(8192);
     int len = snprintf(request, 8192, "%s %s HTTP/1.1\r\nHost: %s\r\n", method, path, hostname);
     len += snprintf(request + len, 8192 - len, "User-Agent: Wyn/1.4\r\n");
     len += snprintf(request + len, 8192 - len, "Accept: */*\r\n");
@@ -1481,13 +1488,13 @@ char* http_request(const char* method, const char* url, const char* body) {
     
     // Read response with dynamic allocation
     size_t capacity = 65536, total = 0;
-    char* response = malloc(capacity);
+    char* response = wyn_malloc(capacity);
     int n;
     while((n = recv(sock, response + total, capacity - total - 1, 0)) > 0) {
         total += n;
         if(total >= capacity - 1024) {
             capacity *= 2;
-            char* new_resp = realloc(response, capacity);
+            char* new_resp = wyn_realloc(response, capacity);
             if(!new_resp) { free(response); close(sock); return NULL; }
             response = new_resp;
         }
@@ -1515,7 +1522,7 @@ char* http_request(const char* method, const char* url, const char* body) {
         
         // Handle chunked transfer encoding
         if(strstr(response, "Transfer-Encoding: chunked") || strstr(response, "transfer-encoding: chunked")) {
-            char* result = malloc(capacity);
+            char* result = wyn_malloc(capacity);
             char* dst = result;
             char* src = body_start;
             while(*src) {
@@ -1563,7 +1570,7 @@ char* https_get(const char* url) {
         path, hostname, hostname);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* response = malloc(131072);
+    char* response = wyn_malloc(131072);
     size_t len = fread(response, 1, 131071, fp);
     response[len] = 0;
     pclose(fp);
@@ -1597,7 +1604,7 @@ char* https_post(const char* url, const char* data) {
         path, hostname, dlen, data ? data : "", hostname);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* response = malloc(131072);
+    char* response = wyn_malloc(131072);
     size_t len = fread(response, 1, 131071, fp);
     response[len] = 0;
     pclose(fp);
@@ -1668,7 +1675,7 @@ char* http_delete(const char* url) {
 
 void http_set_header(const char* key, const char* val) {
     if(http_header_count < 32) {
-        char* header = malloc(512);
+        char* header = wyn_malloc(512);
         snprintf(header, 512, "%s: %s", key, val);
         http_headers[http_header_count++] = header;
     }
@@ -1692,7 +1699,7 @@ char* url_encode(const char* str) {
         } else if(*str == ' ') {
             *p++ = '+';
         } else {
-            sprintf(p, "%%%02X", (unsigned char)*str);
+            snprintf(p, 4, "%%%02X", (unsigned char)*str);
             p += 3;
         }
         str++;
@@ -1922,8 +1929,8 @@ char* str_remove_prefix(const char* s, const char* prefix) { int plen = strlen(p
 char* str_remove_suffix(const char* s, const char* suffix) { int slen = strlen(s); int suflen = strlen(suffix); if(slen >= suflen && strcmp(s + slen - suflen, suffix) == 0) { char* r = wyn_str_alloc(slen - suflen + 1); strncpy(r, s, slen - suflen); r[slen - suflen] = 0; return r; } char* r = wyn_str_alloc(slen + 1); strcpy(r, s); return r; }
 char* str_capitalize(const char* s) { char* r = wyn_str_alloc(strlen(s) + 1); strcpy(r, s); if(r[0]) r[0] = toupper(r[0]); for(int i = 1; r[i]; i++) r[i] = tolower(r[i]); return r; }
 char* str_center(const char* s, int width) { int len = strlen(s); if(len >= width) { char* r = wyn_str_alloc(len + 1); strcpy(r, s); return r; } int pad = (width - len) / 2; char* r = wyn_str_alloc(width + 1); for(int i = 0; i < pad; i++) r[i] = ' '; strcpy(r + pad, s); for(int i = pad + len; i < width; i++) r[i] = ' '; r[width] = 0; return r; }
-char** str_lines(const char* s) { char** lines = malloc(sizeof(char*)); lines[0] = malloc(strlen(s) + 1); strcpy(lines[0], s); return lines; }
-char** str_words(const char* s) { char** words = malloc(sizeof(char*)); words[0] = malloc(strlen(s) + 1); strcpy(words[0], s); return words; }
+char** str_lines(const char* s) { char** lines = wyn_malloc(sizeof(char*)); lines[0] = wyn_malloc(strlen(s) + 1); strcpy(lines[0], s); return lines; }
+char** str_words(const char* s) { char** words = wyn_malloc(sizeof(char*)); words[0] = wyn_malloc(strlen(s) + 1); strcpy(words[0], s); return words; }
 void str_free(char* s) { if(s) free(s); }
 long long str_parse_int(const char* s) {
     if(!s || !*s) return 0;
@@ -1975,7 +1982,7 @@ WynArray file_list_dir(const char* path) {
     struct dirent* entry;
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
-        char* name = malloc(strlen(entry->d_name) + 1);
+        char* name = wyn_malloc(strlen(entry->d_name) + 1);
         strcpy(name, entry->d_name);
         array_push_str(&arr, name);
     }
@@ -2483,7 +2490,7 @@ void Terminal_print_color(const char* s, int fg) { printf("\033[%dm%s\033[0m", f
 static char* _color_wrap(const char* s, const char* code) {
     // \033[CODEm + s + \033[0m + null
     char* buf = wyn_str_alloc(strlen(s) + strlen(code) + 10);
-    sprintf(buf, "\033[%sm%s\033[0m", code, s);
+    snprintf(buf, strlen(s) + strlen(code) + 10, "\033[%sm%s\033[0m", code, s);
     return buf;
 }
 char* Color_red(const char* s) { return _color_wrap(s, "31"); }
@@ -2686,7 +2693,7 @@ int System_set_env(const char* key, const char* value) {
 
 WynArray System_args() {
     WynArray arr;
-    arr.data = malloc(__wyn_argc * sizeof(WynValue));
+    arr.data = wyn_malloc(__wyn_argc * sizeof(WynValue));
     arr.count = __wyn_argc;
     arr.capacity = __wyn_argc;
     for (int i = 0; i < __wyn_argc; i++) {
@@ -2740,7 +2747,7 @@ bool Args_has(const char* name) {
 // Args.positional() — returns array of non-flag arguments
 WynArray Args_positional() {
     int argc = wyn_get_argc();
-    WynArray arr; arr.data = malloc(argc * sizeof(WynValue)); arr.count = 0; arr.capacity = argc;
+    WynArray arr; arr.data = wyn_malloc(argc * sizeof(WynValue)); arr.count = 0; arr.capacity = argc;
     for (int i = 1; i < argc; i++) {
         const char* arg = wyn_get_argv(i);
         if (arg[0] == '-') {
@@ -2768,7 +2775,7 @@ WynArray Env_all() {
     WynArray arr;
     int count = 0;
     for (char** env = environ; *env; env++) count++;
-    arr.data = malloc(count * sizeof(WynValue));
+    arr.data = wyn_malloc(count * sizeof(WynValue));
     arr.count = count;
     arr.capacity = count;
     for (int i = 0; i < count; i++) {
@@ -2860,7 +2867,7 @@ void Time_sleep(long long ms) {
 typedef struct { WynArray arr; } Queue;
 
 Queue* Queue_new() {
-    Queue* q = malloc(sizeof(Queue));
+    Queue* q = wyn_malloc(sizeof(Queue));
     q->arr.data = NULL;
     q->arr.count = 0;
     q->arr.capacity = 0;
@@ -2870,7 +2877,7 @@ Queue* Queue_new() {
 void Queue_push(Queue* q, int value) {
     if (q->arr.count >= q->arr.capacity) {
         q->arr.capacity = q->arr.capacity == 0 ? 4 : q->arr.capacity * 2;
-        q->arr.data = realloc(q->arr.data, sizeof(WynValue) * q->arr.capacity);
+        q->arr.data = wyn_realloc(q->arr.data, sizeof(WynValue) * q->arr.capacity);
     }
     q->arr.data[q->arr.count].type = WYN_TYPE_INT;
     q->arr.data[q->arr.count].data.int_val = value;
@@ -2903,7 +2910,7 @@ int Queue_is_empty(Queue* q) {
 typedef struct { WynArray arr; } Stack;
 
 Stack* Stack_new() {
-    Stack* s = malloc(sizeof(Stack));
+    Stack* s = wyn_malloc(sizeof(Stack));
     s->arr.data = NULL;
     s->arr.count = 0;
     s->arr.capacity = 0;
@@ -2913,7 +2920,7 @@ Stack* Stack_new() {
 void Stack_push(Stack* s, int value) {
     if (s->arr.count >= s->arr.capacity) {
         s->arr.capacity = s->arr.capacity == 0 ? 4 : s->arr.capacity * 2;
-        s->arr.data = realloc(s->arr.data, sizeof(WynValue) * s->arr.capacity);
+        s->arr.data = wyn_realloc(s->arr.data, sizeof(WynValue) * s->arr.capacity);
     }
     s->arr.data[s->arr.count].type = WYN_TYPE_INT;
     s->arr.data[s->arr.count].data.int_val = value;
@@ -3116,7 +3123,7 @@ int round_int(double x) { return (int)round(x); }
 double abs_float(double x) { return fabs(x); }
 char* str_replace(const char* s, const char* old, const char* new) { int count = 0; const char* p = s; int oldlen = strlen(old); int newlen = strlen(new); while((p = strstr(p, old))) { count++; p += oldlen; } int total = strlen(s) + count * (newlen - oldlen) + 1; char* r = wyn_str_alloc(total); char* dst = r; p = s; while(*p) { if(strncmp(p, old, oldlen) == 0) { memcpy(dst, new, newlen); dst += newlen; p += oldlen; } else { *dst++ = *p++; } } *dst = 0; return r; }
 char** str_split(const char* s, const char* delim, int* count) {
-    char** r = malloc(100 * sizeof(char*));
+    char** r = wyn_malloc(100 * sizeof(char*));
     *count = 0;
     int dlen = strlen(delim);
     const char* p = s;
@@ -3128,7 +3135,7 @@ char** str_split(const char* s, const char* delim, int* count) {
             break;
         }
         int len = found - p;
-        r[*count] = malloc(len + 1);
+        r[*count] = wyn_malloc(len + 1);
         memcpy(r[*count], p, len);
         r[*count][len] = 0;
         (*count)++;
@@ -3215,7 +3222,7 @@ typedef struct {
 static WynSharedValue* shared_registry[MAX_SHARED_VALUES] = {0};
 
 long long Task_value(long long initial) {
-    WynSharedValue* sv = malloc(sizeof(WynSharedValue));
+    WynSharedValue* sv = wyn_malloc(sizeof(WynSharedValue));
     sv->value = initial;
     pthread_mutex_init(&sv->lock, NULL);
     for (int i = 1; i < MAX_SHARED_VALUES; i++) {
@@ -3567,7 +3574,7 @@ long long StringBuilder_new() {
     for (int i = 1; i < MAX_STRING_BUILDERS; i++) {
         if (!sb_pool[i].data) {
             sb_pool[i].cap = 256;
-            sb_pool[i].data = malloc(256);
+            sb_pool[i].data = wyn_malloc(256);
             sb_pool[i].data[0] = 0;
             sb_pool[i].len = 0;
             return i;
@@ -3582,7 +3589,7 @@ void StringBuilder_append(long long handle, const char* s) {
     int slen = strlen(s);
     while (sb->len + slen + 1 > sb->cap) {
         sb->cap *= 2;
-        sb->data = realloc(sb->data, sb->cap);
+        sb->data = wyn_realloc(sb->data, sb->cap);
     }
     memcpy(sb->data + sb->len, s, slen);
     sb->len += slen;
@@ -3632,7 +3639,7 @@ static const char* json_parse_string_raw(const char* p, char** out) {
     const char* start = p;
     while (*p && *p != '"') { if (*p == '\\') p++; p++; }
     int len = p - start;
-    *out = malloc(len + 1);
+    *out = wyn_malloc(len + 1);
     memcpy(*out, start, len);
     (*out)[len] = 0;
     if (*p == '"') p++;
@@ -3767,7 +3774,7 @@ static const char b64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu
 char* Encoding_base64_encode(const char* data) {
     int len = strlen(data);
     int out_len = 4 * ((len + 2) / 3);
-    char* out = malloc(out_len + 1);
+    char* out = wyn_malloc(out_len + 1);
     int j = 0;
     for (int i = 0; i < len; i += 3) {
         int a = data[i], b = (i+1 < len) ? data[i+1] : 0, c = (i+2 < len) ? data[i+2] : 0;
@@ -3791,7 +3798,7 @@ static int b64_decode_char(char c) {
 
 char* Encoding_base64_decode(const char* data) {
     int len = strlen(data);
-    char* out = malloc(len);
+    char* out = wyn_malloc(len);
     int j = 0;
     for (int i = 0; i < len; i += 4) {
         int a = b64_decode_char(data[i]), b = b64_decode_char(data[i+1]);
@@ -3808,8 +3815,8 @@ char* Encoding_base64_decode(const char* data) {
 
 char* Encoding_hex_encode(const char* data) {
     int len = strlen(data);
-    char* out = malloc(len * 2 + 1);
-    for (int i = 0; i < len; i++) sprintf(out + i*2, "%02x", (unsigned char)data[i]);
+    char* out = wyn_malloc(len * 2 + 1);
+    for (int i = 0; i < len; i++) snprintf(out + i*2, 3, "%02x", (unsigned char)data[i]);
     out[len*2] = 0;
     return out;
 }
@@ -3825,7 +3832,7 @@ char* Crypto_sha256(const char* data) {
     snprintf(cmd, sizeof(cmd), "printf '%%s' '%s' | openssl dgst -sha256 -hex 2>/dev/null | awk '{print $NF}'", data);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* result = malloc(65); result[0] = 0;
+    char* result = wyn_malloc(65); result[0] = 0;
     fgets(result, 65, fp);
     pclose(fp);
     // Trim newline
@@ -3839,7 +3846,7 @@ char* Crypto_md5(const char* data) {
     snprintf(cmd, sizeof(cmd), "printf '%%s' '%s' | openssl dgst -md5 -hex 2>/dev/null | awk '{print $NF}'", data);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* result = malloc(33); result[0] = 0;
+    char* result = wyn_malloc(33); result[0] = 0;
     fgets(result, 33, fp);
     pclose(fp);
     int len = strlen(result);
@@ -3890,7 +3897,7 @@ char* Os_home_dir() { char* h = getenv("HOME"); return h ? h : "/tmp"; }
 
 // === UUID v4 ===
 char* Uuid_generate() {
-    char* uuid = malloc(37);
+    char* uuid = wyn_malloc(37);
     unsigned char bytes[16];
     FILE* f = fopen("/dev/urandom", "rb");
     if (f) { fread(bytes, 1, 16, f); fclose(f); }
@@ -3918,7 +3925,7 @@ char* Bcrypt_hash(const char* password) {
         char* h = Crypto_hmac_sha256(salt, cur);
         free(cur); cur = h;
     }
-    char* result = malloc(256);
+    char* result = wyn_malloc(256);
     snprintf(result, 256, "$wyn$10$%s$%s", salt, cur);
     free(cur);
     return result;
@@ -3972,7 +3979,7 @@ WynArray array_sort_copy(WynArray arr) {
 }
 
 char* array_join_str(WynArray arr, const char* sep) {
-    char* result = malloc(65536); result[0] = 0;
+    char* result = wyn_malloc(65536); result[0] = 0;
     for (int i = 0; i < arr.count; i++) {
         if (i > 0) strcat(result, sep);
         if (arr.data[i].type == WYN_TYPE_STRING) strcat(result, arr.data[i].data.string_val);
@@ -4012,7 +4019,7 @@ extern void hashmap_clear(WynHashMap* map);
 
 char* hashmap_values_string(WynHashMap* map) {
     if (!map) return "";
-    char* result = malloc(65536); result[0] = 0;
+    char* result = wyn_malloc(65536); result[0] = 0;
     for (int i = 0; i < 128; i++) {
         void* entry = ((void**)map)[i]; // bucket
         // Walk chain — simplified, just use keys and get
@@ -4050,7 +4057,7 @@ long long DateTime_add_seconds(long long t, long long n) { return t + n; }
 char* DateTime_to_iso(long long timestamp) {
     time_t t = (time_t)timestamp;
     struct tm* tm = gmtime(&t);
-    char* buf = malloc(32);
+    char* buf = wyn_malloc(32);
     strftime(buf, 32, "%Y-%m-%dT%H:%M:%SZ", tm);
     return buf;
 }
@@ -4069,12 +4076,12 @@ long long regex_find(const char* str, const char* pattern) {
 char* regex_find_all(const char* str, const char* pattern) {
     regex_t re;
     if (regcomp(&re, pattern, REG_EXTENDED) != 0) return "";
-    char* result = malloc(65536); result[0] = 0;
+    char* result = wyn_malloc(65536); result[0] = 0;
     const char* p = str;
     regmatch_t match;
     while (regexec(&re, p, 1, &match, 0) == 0) {
         int len = match.rm_eo - match.rm_so;
-        char* m = malloc(len + 1); memcpy(m, p + match.rm_so, len); m[len] = 0;
+        char* m = wyn_malloc(len + 1); memcpy(m, p + match.rm_so, len); m[len] = 0;
         strcat(result, m); strcat(result, "\n"); free(m);
         p += match.rm_eo;
     }
@@ -4099,7 +4106,7 @@ char* Net_resolve(const char* hostname) {
     struct addrinfo hints = {0}, *res;
     hints.ai_family = AF_INET;
     if (getaddrinfo(hostname, NULL, &hints, &res) != 0) return "";
-    char* ip = malloc(INET_ADDRSTRLEN);
+    char* ip = wyn_malloc(INET_ADDRSTRLEN);
     struct sockaddr_in* addr = (struct sockaddr_in*)res->ai_addr;
     inet_ntop(AF_INET, &addr->sin_addr, ip, INET_ADDRSTRLEN);
     freeaddrinfo(res);
@@ -4109,7 +4116,7 @@ char* Net_resolve(const char* hostname) {
 // === Db extensions ===
 char* Db_escape(const char* str) {
     int len = strlen(str);
-    char* out = malloc(len * 2 + 1);
+    char* out = wyn_malloc(len * 2 + 1);
     int j = 0;
     for (int i = 0; i < len; i++) {
         if (str[i] == '\'') { out[j++] = '\''; out[j++] = '\''; }
@@ -4145,7 +4152,7 @@ char* Process_exec_capture(const char* cmd) {
     snprintf(full_cmd, sizeof(full_cmd), "%s 2>&1", cmd);
     FILE* fp = popen(full_cmd, "r");
     if (!fp) return "";
-    char* result = malloc(131072);
+    char* result = wyn_malloc(131072);
     size_t len = fread(result, 1, 131071, fp);
     result[len] = 0;
     pclose(fp);
@@ -4234,7 +4241,7 @@ char* File_glob(const char* pattern) {
     snprintf(cmd, sizeof(cmd), "ls -1 %s 2>/dev/null", pattern);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* result = malloc(65536); result[0] = 0;
+    char* result = wyn_malloc(65536); result[0] = 0;
     char line[1024];
     while (fgets(line, sizeof(line), fp)) strcat(result, line);
     pclose(fp);
@@ -4246,7 +4253,7 @@ char* File_walk_dir(const char* path) {
     snprintf(cmd, sizeof(cmd), "find '%s' -type f 2>/dev/null", path);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* result = malloc(262144); result[0] = 0;
+    char* result = wyn_malloc(262144); result[0] = 0;
     char line[1024];
     while (fgets(line, sizeof(line), fp)) strcat(result, line);
     pclose(fp);
@@ -4255,7 +4262,7 @@ char* File_walk_dir(const char* path) {
 
 char* File_temp_file() {
     static int counter = 0;
-    char* path = malloc(256);
+    char* path = wyn_malloc(256);
 #ifdef _WIN32
     const char* tmp = getenv("TEMP");
     if (!tmp) tmp = ".";
@@ -4268,7 +4275,7 @@ char* File_temp_file() {
 
 // === DateTime extensions round 2 ===
 char* DateTime_format_duration(long long ms) {
-    char* buf = malloc(64);
+    char* buf = wyn_malloc(64);
     if (ms < 1000) snprintf(buf, 64, "%lldms", ms);
     else if (ms < 60000) snprintf(buf, 64, "%.1fs", ms / 1000.0);
     else if (ms < 3600000) snprintf(buf, 64, "%lldm %llds", ms / 60000, (ms % 60000) / 1000);
@@ -4294,7 +4301,7 @@ long long DateTime_second(long long timestamp) { time_t t = (time_t)timestamp; s
 char* regex_split(const char* str, const char* pattern) {
     regex_t re;
     if (regcomp(&re, pattern, REG_EXTENDED) != 0) return wyn_strdup(str);
-    char* result = malloc(strlen(str) + 256); result[0] = 0;
+    char* result = wyn_malloc(strlen(str) + 256); result[0] = 0;
     const char* p = str;
     regmatch_t match;
     while (regexec(&re, p, 1, &match, 0) == 0) {
@@ -4311,7 +4318,7 @@ char* regex_split(const char* str, const char* pattern) {
 // === Encoding extensions round 2 ===
 char* Encoding_hex_decode(const char* hex) {
     int len = strlen(hex) / 2;
-    char* out = malloc(len + 1);
+    char* out = wyn_malloc(len + 1);
     for (int i = 0; i < len; i++) {
         unsigned int byte;
         sscanf(hex + i*2, "%2x", &byte);
@@ -4323,7 +4330,7 @@ char* Encoding_hex_decode(const char* hex) {
 
 char* Encoding_csv_parse(const char* csv) {
     // Returns pipe-separated fields, newline-separated rows
-    char* result = malloc(strlen(csv) + 256); result[0] = 0;
+    char* result = wyn_malloc(strlen(csv) + 256); result[0] = 0;
     const char* p = csv;
     while (*p) {
         if (*p == ',') strcat(result, "|");
@@ -4340,7 +4347,7 @@ char* Crypto_hmac_sha256(const char* key, const char* data) {
     snprintf(cmd, sizeof(cmd), "printf '%%s' '%s' | openssl dgst -sha256 -hmac '%s' -hex 2>/dev/null | awk '{print $NF}'", data, key);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* result = malloc(65); result[0] = 0;
+    char* result = wyn_malloc(65); result[0] = 0;
     fgets(result, 65, fp); pclose(fp);
     int len = strlen(result);
     if (len > 0 && result[len-1] == '\n') result[len-1] = 0;
@@ -4348,9 +4355,9 @@ char* Crypto_hmac_sha256(const char* key, const char* data) {
 }
 
 char* Crypto_random_bytes(long long n) {
-    char* bytes = malloc(n * 2 + 1);
+    char* bytes = wyn_malloc(n * 2 + 1);
     bytes[0] = 0;
-    unsigned char* raw = malloc(n);
+    unsigned char* raw = wyn_malloc(n);
 #ifdef _WIN32
     for (int i = 0; i < (int)n; i++) raw[i] = rand() & 0xFF;
 #else
@@ -4418,7 +4425,7 @@ char* Json_to_pretty_string(WynJson* j) {
     char* raw = json_stringify(j);
     if (!raw) return wyn_strdup("{}");
     int rlen = strlen(raw);
-    char* out = malloc(rlen * 4 + 1);
+    char* out = wyn_malloc(rlen * 4 + 1);
     int o = 0, indent = 0;
     int in_str = 0;
     for (int i = 0; i < rlen; i++) {
@@ -4451,17 +4458,17 @@ typedef struct { CsvRow* rows; int row_count; char** headers; int header_count; 
 
 static CsvRow csv_parse_row(const char* line) {
     CsvRow row = {0};
-    row.fields = malloc(sizeof(char*) * 128);
+    row.fields = wyn_malloc(sizeof(char*) * 128);
     const char* p = line;
     while (*p) {
         if (*p == '"') {
             p++;
-            int cap = 256; char* f = malloc(cap); int len = 0;
+            int cap = 256; char* f = wyn_malloc(cap); int len = 0;
             while (*p) {
                 if (*p == '"' && *(p+1) == '"') { f[len++] = '"'; p += 2; }
                 else if (*p == '"') { p++; break; }
                 else { f[len++] = *p++; }
-                if (len >= cap - 1) { cap *= 2; f = realloc(f, cap); }
+                if (len >= cap - 1) { cap *= 2; f = wyn_realloc(f, cap); }
             }
             f[len] = 0;
             row.fields[row.field_count++] = f;
@@ -4470,7 +4477,7 @@ static CsvRow csv_parse_row(const char* line) {
             const char* start = p;
             while (*p && *p != ',' && *p != '\n' && *p != '\r') p++;
             int len = p - start;
-            char* f = malloc(len + 1); memcpy(f, start, len); f[len] = 0;
+            char* f = wyn_malloc(len + 1); memcpy(f, start, len); f[len] = 0;
             row.fields[row.field_count++] = f;
             if (*p == ',') p++;
         }
@@ -4479,8 +4486,8 @@ static CsvRow csv_parse_row(const char* line) {
 }
 
 long long Csv_parse(const char* text) {
-    CsvDoc* doc = malloc(sizeof(CsvDoc));
-    doc->rows = malloc(sizeof(CsvRow) * 4096);
+    CsvDoc* doc = wyn_malloc(sizeof(CsvDoc));
+    doc->rows = wyn_malloc(sizeof(CsvRow) * 4096);
     doc->row_count = 0; doc->headers = NULL; doc->header_count = 0;
     const char* p = text;
     while (*p) {
@@ -4489,7 +4496,7 @@ long long Csv_parse(const char* text) {
         int len = eol - p;
         if (len > 0 && p[len-1] == '\r') len--;
         if (len > 0) {
-            char* line = malloc(len + 1); memcpy(line, p, len); line[len] = 0;
+            char* line = wyn_malloc(len + 1); memcpy(line, p, len); line[len] = 0;
             CsvRow row = csv_parse_row(line);
             free(line);
             if (doc->row_count == 0) {
@@ -4588,9 +4595,9 @@ typedef struct { char key[256]; char value[1024]; } TomlEntry;
 typedef struct { TomlEntry* entries; int count; int cap; } TomlDoc;
 
 long long Toml_parse(const char* text) {
-    TomlDoc* doc = malloc(sizeof(TomlDoc));
+    TomlDoc* doc = wyn_malloc(sizeof(TomlDoc));
     doc->cap = 64; doc->count = 0;
-    doc->entries = malloc(sizeof(TomlEntry) * doc->cap);
+    doc->entries = wyn_malloc(sizeof(TomlEntry) * doc->cap);
     char section[128] = "";
     const char* p = text;
     while (*p) {
@@ -4621,7 +4628,7 @@ long long Toml_parse(const char* text) {
         // Strip quotes
         if (vl >= 2 && val[0] == '"' && val[vl-1] == '"') { val[vl-1] = '\0'; val++; }
         // Store as section.key or just key
-        if (doc->count >= doc->cap) { doc->cap *= 2; doc->entries = realloc(doc->entries, sizeof(TomlEntry) * doc->cap); }
+        if (doc->count >= doc->cap) { doc->cap *= 2; doc->entries = wyn_realloc(doc->entries, sizeof(TomlEntry) * doc->cap); }
         if (section[0]) snprintf(doc->entries[doc->count].key, 256, "%s.%s", section, key);
         else snprintf(doc->entries[doc->count].key, 256, "%s", key);
         snprintf(doc->entries[doc->count].value, 1024, "%s", val);
@@ -4704,7 +4711,7 @@ WynHashMap* Data_load(const char* path) {
 static char* html_escape(const char* s) {
     if (!s) return "";
     int len = strlen(s);
-    char* out = malloc(len * 6 + 1); // worst case: every char is &
+    char* out = wyn_malloc(len * 6 + 1); // worst case: every char is &
     char* p = out;
     for (int i = 0; i < len; i++) {
         switch (s[i]) {
@@ -4723,7 +4730,7 @@ char* Template_render(const char* path, WynHashMap* ctx);
 char* Template_render_string(const char* tmpl, WynHashMap* ctx) {
     if (!tmpl) return "";
     int tlen = strlen(tmpl);
-    char* result = malloc(tlen * 4 + 65536);
+    char* result = wyn_malloc(tlen * 4 + 65536);
     char* out = result;
     
     extern char* hashmap_get_string(WynHashMap*, const char*);
@@ -4784,7 +4791,7 @@ char* Template_render_string(const char* tmpl, WynHashMap* ctx) {
                 }
                 // Extract block template
                 int blen = block_end - block_start;
-                char* block_tmpl = malloc(blen + 1);
+                char* block_tmpl = wyn_malloc(blen + 1);
                 memcpy(block_tmpl, tmpl + block_start, blen);
                 block_tmpl[blen] = 0;
                 // Iterate over comma-separated values — simple string replace
@@ -4796,7 +4803,7 @@ char* Template_render_string(const char* tmpl, WynHashMap* ctx) {
                         char* comma = strchr(pos, ',');
                         if (comma) *comma = 0;
                         // Replace ${item} in block_tmpl with current item
-                        char* rendered = malloc(blen * 2 + strlen(pos) * 10 + 1);
+                        char* rendered = wyn_malloc(blen * 2 + strlen(pos) * 10 + 1);
                         char* rp = rendered;
                         for (int bi = 0; bi < blen; bi++) {
                             if (block_tmpl[bi] == '$' && bi + 6 < blen && strncmp(block_tmpl + bi, "${item}", 7) == 0) {
@@ -4867,7 +4874,7 @@ char* Template_render(const char* path, WynHashMap* ctx) {
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* tmpl = malloc(len + 1);
+    char* tmpl = wyn_malloc(len + 1);
     fread(tmpl, 1, len, f);
     tmpl[len] = 0;
     fclose(f);
@@ -4948,10 +4955,10 @@ char* Web_render(const char* name, const char* vars) {
     char path[1024];
     snprintf(path, sizeof(path), "%s/%s", _web_template_dir, name);
     FILE* f = fopen(path, "r");
-    if (!f) { char* e = malloc(256); snprintf(e, 256, "Template not found: %s", name); return e; }
+    if (!f) { char* e = wyn_malloc(256); snprintf(e, 256, "Template not found: %s", name); return e; }
     fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
-    char* tmpl = malloc(sz + 1); fread(tmpl, 1, sz, f); tmpl[sz] = '\0'; fclose(f);
-    char* out = malloc(sz * 4 + 4096); int oi = 0;
+    char* tmpl = wyn_malloc(sz + 1); fread(tmpl, 1, sz, f); tmpl[sz] = '\0'; fclose(f);
+    char* out = wyn_malloc(sz * 4 + 4096); int oi = 0;
     for (int i = 0; tmpl[i]; i++) {
         if (tmpl[i] == '{' && tmpl[i+1] == '{') {
             i += 2; char key[128]; int ki = 0;
