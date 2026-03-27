@@ -419,6 +419,34 @@ void register_string_var(const char* name) {
         if (strcmp(string_var_names[i], name) == 0) return;
     if (string_var_count < 256) string_var_names[string_var_count++] = strdup(name);
 }
+
+// Array scope tracking — parallel to string scope
+static char* array_scope_names[256];
+static int array_scope_count = 0;
+static int array_scope_stack[SCOPE_STACK_MAX];
+static int array_scope_top = 0;
+
+void push_array_scope(void) {
+    if (array_scope_top < SCOPE_STACK_MAX)
+        array_scope_stack[array_scope_top++] = array_scope_count;
+}
+void pop_array_scope_and_release(void) {
+    if (array_scope_top <= 0) return;
+    int saved = array_scope_stack[--array_scope_top];
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (out) {
+        for (int i = saved; i < array_scope_count; i++)
+            fprintf(out, "array_free(&%s); ", array_scope_names[i]);
+    }
+    array_scope_count = saved;
+}
+void register_array_scope_var(const char* name) {
+    for (int i = 0; i < array_scope_count; i++)
+        if (strcmp(array_scope_names[i], name) == 0) return;
+    if (array_scope_count < 256) array_scope_names[array_scope_count++] = strdup(name);
+}
+void reset_array_scope(void) { array_scope_count = 0; array_scope_top = 0; }
 // Only top-level string vars are released at scope exit
 static char* string_var_releasable[256];
 static int string_var_releasable_count = 0;

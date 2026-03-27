@@ -510,6 +510,19 @@ WynArray wyn_array_map(WynArray arr, long long (*fn)(long long));
 WynArray wyn_array_filter(WynArray arr, long long (*fn)(long long));
 long long wyn_array_reduce(WynArray arr, long long (*fn)(long long, long long), long long initial);
 WynArray array_new() { WynArray arr = {0}; return arr; }
+void array_free(WynArray* arr) {
+    if (!arr || !arr->data) return;
+    // Release RC-managed strings inside (skip non-heap strings)
+    extern int wyn_rc_is_heap(const void*);
+    for (int i = 0; i < arr->count; i++) {
+        if (arr->data[i].type == WYN_TYPE_STRING && arr->data[i].data.string_val
+            && wyn_rc_is_heap(arr->data[i].data.string_val)) {
+            wyn_rc_release(arr->data[i].data.string_val);
+        }
+    }
+    free(arr->data);
+    arr->data = NULL; arr->count = 0; arr->capacity = 0;
+}
 void array_push_int(WynArray* restrict arr, long long value) {
     if (arr->count >= arr->capacity) {
         int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
@@ -527,7 +540,9 @@ void array_push_str(WynArray* restrict arr, const char* value) {
         arr->capacity = new_cap;
     }
     arr->data[arr->count].type = WYN_TYPE_STRING;
-    arr->data[arr->count].data.string_val = wyn_strdup(value);
+    // Take ownership — caller transfers the string to the array
+    // array_free will release RC strings
+    arr->data[arr->count].data.string_val = (char*)value;
     arr->count++;
 }
 void array_push_array(WynArray* restrict arr, WynArray* nested) {
@@ -2330,7 +2345,7 @@ WynArray hashmap_keys(WynHashMap* map) {
     if (!raw || raw[0] == 0) return arr;
     char* copy = strdup(raw);
     char* line = strtok(copy, "\n");
-    while (line) { if (line[0]) array_push_str(&arr, line); line = strtok(NULL, "\n"); }
+    while (line) { if (line[0]) array_push_str(&arr, wyn_strdup(line)); line = strtok(NULL, "\n"); }
     free(copy);
     return arr;
 }
@@ -2340,7 +2355,7 @@ WynArray hashmap_values(WynHashMap* map) {
     if (!raw || raw[0] == 0) return arr;
     char* copy = strdup(raw);
     char* line = strtok(copy, "\n");
-    while (line) { if (line[0]) array_push_str(&arr, line); line = strtok(NULL, "\n"); }
+    while (line) { if (line[0]) array_push_str(&arr, wyn_strdup(line)); line = strtok(NULL, "\n"); }
     free(copy);
     return arr;
 }

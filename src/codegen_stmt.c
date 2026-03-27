@@ -18,6 +18,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     clear_local_variables();
     { extern void reset_shadow_vars(void); reset_shadow_vars(); }
     { extern void reset_string_vars(void); reset_string_vars(); }
+    { extern void reset_array_scope(void); reset_array_scope(); }
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
         char param_name[256];
         snprintf(param_name, 256, "%.*s", fn_stmt->fn.params[i].length, fn_stmt->fn.params[i].start);
@@ -1265,6 +1266,11 @@ void codegen_stmt(Stmt* stmt) {
                 char var_name[256];
                 snprintf(var_name, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
                 register_local_variable(var_name);
+                // Track arrays for scope-based cleanup
+                if (strcmp(c_type, "WynArray") == 0) {
+                    extern void register_array_scope_var(const char*);
+                    register_array_scope_var(var_name);
+                }
             }
             
             if (needs_arc_management) {
@@ -1452,7 +1458,9 @@ void codegen_stmt(Stmt* stmt) {
                 
                 extern void push_string_scope(void);
                 extern void pop_string_scope_and_release(void);
-                if (_is_inner_block) push_string_scope();
+                extern void push_array_scope(void);
+                extern void pop_array_scope_and_release(void);
+                if (_is_inner_block) { push_string_scope(); push_array_scope(); }
                 
                 // Save shadow state for vars declared in inner blocks
                 extern int get_current_shadow(const char*);
@@ -1484,7 +1492,7 @@ void codegen_stmt(Stmt* stmt) {
                 current_block_stmts = _saved_stmts; current_block_count = _saved_count; current_stmt_idx = _saved_idx;
                 
                 // String cleanup first (needs macros still defined)
-                if (_is_inner_block) pop_string_scope_and_release();
+                if (_is_inner_block) { pop_string_scope_and_release(); pop_array_scope_and_release(); }
                 
                 // Then restore shadow state for shadowed variables
                 if (_is_inner_block) {
@@ -1775,6 +1783,7 @@ void codegen_stmt(Stmt* stmt) {
             clear_local_variables();
             { extern void reset_shadow_vars(void); reset_shadow_vars(); }
             { extern void reset_string_vars(void); reset_string_vars(); }
+            { extern void reset_array_scope(void); reset_array_scope(); }
             for (int i = 0; i < stmt->fn.param_count; i++) {
                 char pname[256];
                 snprintf(pname, 256, "%.*s", stmt->fn.params[i].length, stmt->fn.params[i].start);
