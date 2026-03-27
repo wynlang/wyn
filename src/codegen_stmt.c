@@ -2110,7 +2110,8 @@ void codegen_stmt(Stmt* stmt) {
             emit("}\n\n");
             
             // Generate methods defined in struct
-            emit("/* Generating %d methods */\n", stmt->struct_decl.method_count);
+            if (stmt->struct_decl.method_count > 0)
+                emit("/* %d methods */\n", stmt->struct_decl.method_count);
             for (int i = 0; i < stmt->struct_decl.method_count; i++) {
                 FnStmt* method = stmt->struct_decl.methods[i];
                 // Generate as TypeName_methodname(TypeName self, ...)

@@ -2838,27 +2838,16 @@ void codegen_expr(Expr* expr) {
                 needs_arc = true;
             }
             
-            if (needs_arc) {
-                // Generate ARC-managed struct initialization with cast
-                emit("*(%.*s*)wyn_arc_new(sizeof(%.*s), &(%.*s){", 
-                     actual_type_name_len, actual_type_name,
-                     actual_type_name_len, actual_type_name,
-                     actual_type_name_len, actual_type_name);
+            // Simple struct initialization — stack allocated
+            // Wrapped in extra parens to protect commas in macro contexts
+            {
+                emit("((%.*s){", actual_type_name_len, actual_type_name);
                 for (int i = 0; i < expr->struct_init.field_count; i++) {
                     if (i > 0) emit(", ");
                     emit(".%.*s = ", expr->struct_init.field_names[i].length, expr->struct_init.field_names[i].start);
                     codegen_expr(expr->struct_init.field_values[i]);
                 }
-                emit("})->data");
-            } else {
-                // Generate simple struct initialization
-                emit("(%.*s){", actual_type_name_len, actual_type_name);
-                for (int i = 0; i < expr->struct_init.field_count; i++) {
-                    if (i > 0) emit(", ");
-                    emit(".%.*s = ", expr->struct_init.field_names[i].length, expr->struct_init.field_names[i].start);
-                    codegen_expr(expr->struct_init.field_values[i]);
-                }
-                emit("}");
+                emit("})");
             }
             break;
         }
