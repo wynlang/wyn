@@ -447,6 +447,34 @@ void register_array_scope_var(const char* name) {
     if (array_scope_count < 256) array_scope_names[array_scope_count++] = strdup(name);
 }
 void reset_array_scope(void) { array_scope_count = 0; array_scope_top = 0; }
+
+// HashMap scope tracking
+static char* hashmap_scope_names[256];
+static int hashmap_scope_count = 0;
+static int hashmap_scope_stack[SCOPE_STACK_MAX];
+static int hashmap_scope_top = 0;
+
+void push_hashmap_scope(void) {
+    if (hashmap_scope_top < SCOPE_STACK_MAX)
+        hashmap_scope_stack[hashmap_scope_top++] = hashmap_scope_count;
+}
+void pop_hashmap_scope_and_release(void) {
+    if (hashmap_scope_top <= 0) return;
+    int saved = hashmap_scope_stack[--hashmap_scope_top];
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (out) {
+        for (int i = saved; i < hashmap_scope_count; i++)
+            fprintf(out, "hashmap_free(%s); ", hashmap_scope_names[i]);
+    }
+    hashmap_scope_count = saved;
+}
+void register_hashmap_scope_var(const char* name) {
+    for (int i = 0; i < hashmap_scope_count; i++)
+        if (strcmp(hashmap_scope_names[i], name) == 0) return;
+    if (hashmap_scope_count < 256) hashmap_scope_names[hashmap_scope_count++] = strdup(name);
+}
+void reset_hashmap_scope(void) { hashmap_scope_count = 0; hashmap_scope_top = 0; }
 // Only top-level string vars are released at scope exit
 static char* string_var_releasable[256];
 static int string_var_releasable_count = 0;

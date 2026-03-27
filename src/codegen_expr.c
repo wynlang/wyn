@@ -2760,10 +2760,21 @@ void codegen_expr(Expr* expr) {
                 if (is_string_var(target_name)) _rc_string_assign = true;
             }
             if (_rc_string_assign) {
-                // Retain new, release old (standard RC semantics)
-                emit("({ const char* __rc_tmp = ");
-                codegen_expr(expr->assign.value);
-                emit("; wyn_rc_retain(__rc_tmp); wyn_rc_release(%s); %s = __rc_tmp; })", target_name, target_name);
+                Expr* rhs = expr->assign.value;
+                bool rhs_is_fresh = (rhs->type == EXPR_BINARY || rhs->type == EXPR_CALL ||
+                                     rhs->type == EXPR_METHOD_CALL || rhs->type == EXPR_STRING_INTERP);
+                if (rhs_is_fresh) {
+                    // Fresh temporary: ownership transfer
+                    // If concat reused the buffer (same pointer), don't release
+                    emit("({ const char* __rc_tmp = ");
+                    codegen_expr(expr->assign.value);
+                    emit("; if (__rc_tmp != %s) { wyn_rc_release(%s); } %s = __rc_tmp; })", target_name, target_name, target_name);
+                } else {
+                    // Shared reference: retain new, release old
+                    emit("({ const char* __rc_tmp = ");
+                    codegen_expr(expr->assign.value);
+                    emit("; wyn_rc_retain(__rc_tmp); wyn_rc_release(%s); %s = __rc_tmp; })", target_name, target_name);
+                }
                 break;
             }
             
