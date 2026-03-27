@@ -479,28 +479,49 @@ void codegen_expr(Expr* expr) {
                 }
                 
                 if (left_is_string || right_is_string) {
-                    // ARC-managed concat — release right temporary after concat
-                    // Left is NOT released because concat may reuse it (realloc optimization)
-                    bool right_is_temp = (expr->binary.right->type == EXPR_CALL ||
+                    // ARC-managed concat — release temporaries after concat
+                    // Left temp: only release if it's a chained concat/call (not reused by realloc)
+                    // Right temp: always release (never reused)
+                    bool left_is_temp = (left_is_int && !left_is_string) ||
+                                        expr->binary.left->type == EXPR_CALL ||
+                                        expr->binary.left->type == EXPR_METHOD_CALL ||
+                                        expr->binary.left->type == EXPR_BINARY;
+                    bool right_is_temp = (right_is_int && !right_is_string) ||
+                                         expr->binary.right->type == EXPR_CALL ||
                                          expr->binary.right->type == EXPR_METHOD_CALL ||
-                                         expr->binary.right->type == EXPR_BINARY);
-                    if (right_is_int && !right_is_string) right_is_temp = true;
+                                         expr->binary.right->type == EXPR_BINARY;
                     
-                    if (right_is_temp) {
-                        emit("({ const char* __cr = ");
-                        if (right_is_int && !right_is_string) { emit("int_to_string("); codegen_expr(expr->binary.right); emit(")"); }
-                        else codegen_expr(expr->binary.right);
-                        emit("; const char* __cx = wyn_string_concat_safe(");
-                        if (left_is_int && !left_is_string) { emit("int_to_string("); codegen_expr(expr->binary.left); emit(")"); }
-                        else codegen_expr(expr->binary.left);
-                        emit(", __cr); wyn_rc_release(__cr); __cx; })");
+                    if (left_is_temp || right_is_temp) {
+                        emit("({ ");
+                        if (left_is_temp) {
+                            emit("const char* __cl = ");
+                            if (left_is_int && !left_is_string) { emit("int_to_string("); codegen_expr(expr->binary.left); emit(")"); }
+                            else codegen_expr(expr->binary.left);
+                            emit("; ");
+                        }
+                        if (right_is_temp) {
+                            emit("const char* __cr = ");
+                            if (right_is_int && !right_is_string) { emit("int_to_string("); codegen_expr(expr->binary.right); emit(")"); }
+                            else codegen_expr(expr->binary.right);
+                            emit("; ");
+                        }
+                        emit("const char* __cx = wyn_string_concat_safe(");
+                        if (left_is_temp) emit("__cl");
+                        else { if (left_is_int && !left_is_string) { emit("int_to_string("); codegen_expr(expr->binary.left); emit(")"); } else codegen_expr(expr->binary.left); }
+                        emit(", ");
+                        if (right_is_temp) emit("__cr");
+                        else { if (right_is_int && !right_is_string) { emit("int_to_string("); codegen_expr(expr->binary.right); emit(")"); } else codegen_expr(expr->binary.right); }
+                        emit(");");
+                        // Release temps — but only if concat didn't reuse them
+                        // concat reuses left when refcount==1, so check if result != left
+                        if (left_is_temp) emit(" if (__cx != __cl) wyn_rc_release(__cl);");
+                        if (right_is_temp) emit(" wyn_rc_release(__cr);");
+                        emit(" __cx; })");
                     } else {
                         emit("wyn_string_concat_safe(");
-                        if (left_is_int && !left_is_string) { emit("int_to_string("); codegen_expr(expr->binary.left); emit(")"); }
-                        else codegen_expr(expr->binary.left);
+                        codegen_expr(expr->binary.left);
                         emit(", ");
-                        if (right_is_int && !right_is_string) { emit("int_to_string("); codegen_expr(expr->binary.right); emit(")"); }
-                        else codegen_expr(expr->binary.right);
+                        codegen_expr(expr->binary.right);
                         emit(")");
                     }
                     break;
@@ -3409,54 +3430,72 @@ void codegen_expr(Expr* expr) {
             break;
         case EXPR_STRING_INTERP: {
             // String interpolation: "Hello ${name}" -> sprintf format
-            emit("({ char __buf[512]; snprintf(__buf, 512, \"");
+            // Count expression parts for temp variable allocation
+            int _interp_expr_count = 0;
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                if (expr->string_interp.expressions[i]) _interp_expr_count++;
+            }
             
-            // Build format string - use %s for everything and convert with _Generic
+            emit("({ ");
+            // Capture temporaries
+            int _ti = 0;
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                if (expr->string_interp.expressions[i]) {
+                    Expr* e = expr->string_interp.expressions[i];
+                    emit("const char* __si%d = ", _ti);
+                    if (e->type == EXPR_STRING) {
+                        codegen_expr(e);
+                    } else {
+                        emit("to_string(");
+                        codegen_expr(e);
+                        emit(")");
+                    }
+                    emit("; ");
+                    _ti++;
+                }
+            }
+            
+            emit("char __buf[512]; snprintf(__buf, 512, \"");
             for (int i = 0; i < expr->string_interp.count; i++) {
                 if (expr->string_interp.parts[i]) {
-                    // String literal part
                     const char* part = expr->string_interp.parts[i];
-                    const char* part_start_ptr = part;
                     while (*part) {
-                        if (*part == '%') emit("%%%%"); // Escape % for sprintf
+                        if (*part == '%') emit("%%%%");
                         else if (*part == '\n') emit("\\n");
-                        else if (*part == '"' && (part == part_start_ptr || *(part-1) != '\\')) emit("\\\"");
+                        else if (*part == '\\' && *(part+1) == '"') { emit("\\\""); part++; }
+                        else if (*part == '"') emit("\\\"");
                         else emit("%c", *part);
                         part++;
                     }
                 } else {
-                    // Expression part - use %s and convert with to_string
                     emit("%%s");
                 }
             }
-            
             emit("\"");
-            
-            // Add arguments for expressions with type conversion
+            _ti = 0;
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                if (expr->string_interp.expressions[i]) {
+                    emit(", __si%d", _ti++);
+                }
+            }
+            emit("); ");
+            // Release temporaries (only non-string expressions that created new strings)
+            _ti = 0;
             for (int i = 0; i < expr->string_interp.count; i++) {
                 if (expr->string_interp.expressions[i]) {
                     Expr* e = expr->string_interp.expressions[i];
-                    // If expression is a method call to .to_string(), emit directly
-                    if (e->type == EXPR_METHOD_CALL && 
-                        e->method_call.method.length == 9 &&
-                        memcmp(e->method_call.method.start, "to_string", 9) == 0) {
-                        emit(", to_string(");
-                        codegen_expr(e->method_call.object);
-                        emit(")");
-                    } else if (e->type == EXPR_STRING) {
-                        // String literal — emit directly
-                        emit(", ");
-                        codegen_expr(e);
-                    } else {
-                        // Wrap any expression in to_string()
-                        emit(", to_string(");
-                        codegen_expr(e);
-                        emit(")");
+                    // Only release if the expression is NOT already a string
+                    // (to_string on a string returns the same pointer — releasing it frees the original)
+                    bool is_str_expr = (e->type == EXPR_STRING) ||
+                                       (e->expr_type && e->expr_type->kind == TYPE_STRING) ||
+                                       (e->type == EXPR_IDENT && e->expr_type && e->expr_type->kind == TYPE_STRING);
+                    if (!is_str_expr) {
+                        emit("wyn_rc_release(__si%d); ", _ti);
                     }
+                    _ti++;
                 }
             }
-            
-            emit("); %s; })", codegen_skip_strdup ? "__buf" : "wyn_strdup(__buf)");
+            emit("%s; })", codegen_skip_strdup ? "__buf" : "wyn_strdup(__buf)");
             break;
         }
         case EXPR_RANGE:
