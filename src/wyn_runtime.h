@@ -183,27 +183,21 @@ const char* wyn_string_concat_safe(const char* left, const char* right) {
     if (left_hdr && atomic_load(&left_hdr->refcount) == 1) {
         size_t needed = l1 + l2 + 1;
         if (needed <= left_hdr->capacity) {
-            // Fast path: just append, no realloc
+            // Fast path: just append in place, no allocation
             char* s = (char*)left;
             memcpy(s + l1, right, l2);
             s[l1 + l2] = 0;
             left_hdr->length = (unsigned int)(l1 + l2);
             return s;
         }
-        size_t cap = needed;
-        if (cap < 64) cap = 64;
-        else { cap--; cap |= cap >> 1; cap |= cap >> 2; cap |= cap >> 4; cap |= cap >> 8; cap |= cap >> 16; cap++; }
-        RcHdr* new_hdr = wyn_realloc(left_hdr, sizeof(RcHdr) + cap);
-        if (new_hdr) {
-            new_hdr->capacity = (unsigned int)cap;
-            new_hdr->length = (unsigned int)(l1 + l2);
-            char* s = (char*)new_hdr + sizeof(RcHdr);
-            memcpy(s + l1, right, l2);
-            s[l1 + l2] = 0;
-            return s;
-        }
+        // Need more space: allocate new, copy, DON'T realloc
+        // (realloc frees old ptr, but caller may still reference it for comparison)
     }
-    char* r = wyn_str_alloc(l1 + l2 + 1);
+    // Allocate new buffer with power-of-2 over-allocation
+    size_t alloc_size = l1 + l2 + 1;
+    if (alloc_size < 64) alloc_size = 64;
+    else { alloc_size--; alloc_size |= alloc_size >> 1; alloc_size |= alloc_size >> 2; alloc_size |= alloc_size >> 4; alloc_size |= alloc_size >> 8; alloc_size |= alloc_size >> 16; alloc_size++; }
+    char* r = wyn_str_alloc(alloc_size);
     memcpy(r, left, l1);
     memcpy(r + l1, right, l2);
     r[l1 + l2] = 0;
