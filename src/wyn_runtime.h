@@ -4034,28 +4034,36 @@ extern void hashmap_clear(WynHashMap* map);
 
 char* hashmap_values_string(WynHashMap* map) {
     if (!map) return "";
-    char* result = wyn_malloc(65536); result[0] = 0;
-    for (int i = 0; i < 128; i++) {
-        void* entry = ((void**)map)[i]; // bucket
-        // Walk chain — simplified, just use keys and get
-    }
-    // Use keys + get approach
     char* keys = hashmap_keys_string(map);
+    if (!keys || !*keys) return "";
+    // Two-pass: compute size, then build
+    size_t total = 0;
     const char* p = keys;
     while (*p) {
         const char* nl = strchr(p, '\n');
         if (!nl) break;
         int klen = nl - p;
-        char key[256]; memcpy(key, p, klen); key[klen] = 0;
+        char key[256]; if (klen > 255) klen = 255; memcpy(key, p, klen); key[klen] = 0;
         char* val = hashmap_get_string(map, key);
-        if (val && *val) { strcat(result, val); strcat(result, "\n"); }
-        else {
-            int ival = hashmap_get_int(map, key);
-            char buf[32]; snprintf(buf, 32, "%d", ival);
-            strcat(result, buf); strcat(result, "\n");
-        }
+        if (val && *val) total += strlen(val) + 1;
+        else total += 12; // int
         p = nl + 1;
     }
+    char* result = wyn_str_alloc(total + 1);
+    size_t pos = 0;
+    p = keys;
+    while (*p) {
+        const char* nl = strchr(p, '\n');
+        if (!nl) break;
+        int klen = nl - p;
+        char key[256]; if (klen > 255) klen = 255; memcpy(key, p, klen); key[klen] = 0;
+        char* val = hashmap_get_string(map, key);
+        if (val && *val) { size_t vl = strlen(val); memcpy(result + pos, val, vl); pos += vl; }
+        else { int ival = hashmap_get_int(map, key); pos += snprintf(result + pos, 32, "%d", ival); }
+        result[pos++] = '\n';
+        p = nl + 1;
+    }
+    result[pos] = 0;
     return result;
 }
 
