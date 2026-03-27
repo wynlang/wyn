@@ -1395,9 +1395,14 @@ void codegen_expr(Expr* expr) {
             bool _mc_chain_wrap = false;
             static int _mc_ctr = 0;
             int _mc_id = -1;
-            if (_mc_obj->type == EXPR_METHOD_CALL &&
-                _mc_obj->expr_type && _mc_obj->expr_type->kind == TYPE_STRING &&
-                _mc_obj->_codegen_temp_id < 0) {
+            // Only wrap if: (1) object is a fresh string temp, (2) this method returns a value
+            // Skip void methods like .push(), .set(), etc.
+            bool _mc_returns_value = expr->expr_type != NULL;
+            if (_mc_returns_value && _mc_obj->_codegen_temp_id < 0 &&
+                ((_mc_obj->type == EXPR_METHOD_CALL && _mc_obj->expr_type && _mc_obj->expr_type->kind == TYPE_STRING) ||
+                 (_mc_obj->type == EXPR_BINARY && _mc_obj->expr_type && _mc_obj->expr_type->kind == TYPE_STRING) ||
+                 _mc_obj->type == EXPR_STRING_INTERP ||
+                 (_mc_obj->type == EXPR_CALL && _mc_obj->expr_type && _mc_obj->expr_type->kind == TYPE_STRING))) {
                 _mc_chain_wrap = true;
                 _mc_id = _mc_ctr++;
                 emit("({ const char* __mo%d = ", _mc_id);
