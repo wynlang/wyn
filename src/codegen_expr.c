@@ -3,6 +3,11 @@
 
 void codegen_expr(Expr* expr) {
     if (!expr) return;
+    // If this expr was pre-evaluated to a temp, emit the temp name
+    if (expr->_codegen_temp_id >= 0) {
+        emit("__sa%d", expr->_codegen_temp_id);
+        return;
+    }
     
     switch (expr->type) {
         case EXPR_INT: {
@@ -797,9 +802,24 @@ void codegen_expr(Expr* expr) {
                     // Escape analysis: string interp arg to print doesn't escape
                     bool prev_skip = codegen_skip_strdup;
                     if (expr->call.args[0]->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
-                    emit("print(");
-                    codegen_expr(expr->call.args[0]);
-                    emit(")");
+                    Expr* parg = expr->call.args[0];
+                    bool _print_temp = (parg->type == EXPR_BINARY) ||
+                                       (parg->type == EXPR_STRING_INTERP);
+                    if (!_print_temp && parg->type == EXPR_METHOD_CALL &&
+                        parg->method_call.method.length == 9 &&
+                        memcmp(parg->method_call.method.start, "to_string", 9) == 0 &&
+                        !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
+                        _print_temp = true;
+                    }
+                    if (_print_temp) {
+                        emit("({ const char* __ps = ");
+                        codegen_expr(parg);
+                        emit("; print(__ps); wyn_rc_release(__ps); })");
+                    } else {
+                        emit("print(");
+                        codegen_expr(parg);
+                        emit(")");
+                    }
                     codegen_skip_strdup = prev_skip;
                 } else if (expr->call.arg_count >= 2 && 
                            expr->call.args[0]->type == EXPR_STRING) {

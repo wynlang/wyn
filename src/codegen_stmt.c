@@ -1,6 +1,33 @@
 // codegen_stmt.c - Statement code generation
 // Included from codegen.c - shares all statics
 
+// Check if expression produces a fresh RC string that needs release
+// Conservative: only match patterns known to allocate new strings
+static bool is_fresh_string_temp(Expr* e) {
+    if (!e) return false;
+    // String concat always allocates
+    if (e->type == EXPR_BINARY) return true;
+    // String interpolation always allocates
+    if (e->type == EXPR_STRING_INTERP) return true;
+    // to_string() on non-string types always allocates
+    if (e->type == EXPR_METHOD_CALL &&
+        e->method_call.method.length == 9 &&
+        memcmp(e->method_call.method.start, "to_string", 9) == 0 &&
+        !(e->method_call.object->expr_type && e->method_call.object->expr_type->kind == TYPE_STRING))
+        return true;
+    // Free function calls returning string (user-defined functions allocate fresh strings)
+    if (e->type == EXPR_CALL && e->call.callee->type == EXPR_IDENT &&
+        e->expr_type && e->expr_type->kind == TYPE_STRING) {
+        // Exclude builtins that return shared refs
+        int len = e->call.callee->token.length;
+        const char* name = e->call.callee->token.start;
+        if (len == 5 && memcmp(name, "input", 5) == 0) return false;
+        if (len == 8 && memcmp(name, "get_argv", 8) == 0) return false;
+        return true;
+    }
+    return false;
+}
+
 static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     if (!fn_stmt || fn_stmt->type != STMT_FN) {
         return;
@@ -183,7 +210,35 @@ void codegen_stmt(Stmt* stmt) {
                 // Release unused string return values to prevent leaks
                 bool _is_str_call = (stmt->expr->type == EXPR_CALL || stmt->expr->type == EXPR_METHOD_CALL) &&
                     stmt->expr->expr_type && stmt->expr->expr_type->kind == TYPE_STRING;
-                if (_is_str_call) {
+                // Check for fresh string args that need release
+                Expr* _se = stmt->expr;
+                int _nargs = 0;
+                Expr** _args = NULL;
+                if (_se->type == EXPR_CALL) { _nargs = _se->call.arg_count; _args = _se->call.args; }
+                else if (_se->type == EXPR_METHOD_CALL) { _nargs = _se->method_call.arg_count; _args = _se->method_call.args; }
+                int _fresh[16]; int _fc = 0;
+                for (int ai = 0; ai < _nargs && _fc < 16; ai++) {
+                    if (is_fresh_string_temp(_args[ai])) _fresh[_fc++] = ai;
+                }
+                if (_fc > 0 && !_is_str_call) {
+                    emit("{ ");
+                    // Evaluate fresh args to temps
+                    for (int si = 0; si < _fc; si++) {
+                        emit("const char* __sa%d = ", si);
+                        codegen_expr(_args[_fresh[si]]);
+                        emit("; ");
+                        _args[_fresh[si]]->_codegen_temp_id = si;
+                    }
+                    // Emit call (args with temp IDs emit __sa{id} instead)
+                    codegen_expr(_se);
+                    emit("; ");
+                    // Release temps
+                    for (int si = 0; si < _fc; si++) {
+                        emit("wyn_rc_release(__sa%d); ", si);
+                        _args[_fresh[si]]->_codegen_temp_id = -1;
+                    }
+                    emit("}\n");
+                } else if (_is_str_call) {
                     emit("wyn_rc_release(");
                     codegen_expr(stmt->expr);
                     emit(");\n");

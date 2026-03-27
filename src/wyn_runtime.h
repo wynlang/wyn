@@ -6,6 +6,8 @@
 // Reference counting (wyn_rc.c)
 void wyn_rc_retain(const void* ptr);
 void wyn_rc_release(const void* ptr);
+void wyn_rc_set_length(const void* ptr, unsigned int len);
+unsigned int wyn_rc_get_length(const void* ptr);
 
 // Inline spawn for non-yielding functions (spawn_fast.c)
 struct Future;
@@ -929,7 +931,12 @@ WynRange wyn_range(int start, int end) {
 bool range_has_next(WynRange* r) { return r->current < r->end; }
 int range_next(WynRange* r) { return r->current++; }
 
-int string_length(const char* str) { return strlen(str); }
+int string_length(const char* str) {
+    if (!str) return 0;
+    unsigned int cached = wyn_rc_get_length(str);
+    if (cached > 0) return (int)cached;
+    return strlen(str);
+}
 char* string_substring(const char* str, int start, int end) {
     int len = end - start;
     char* result = wyn_str_alloc(len + 1);
@@ -948,21 +955,23 @@ char* string_concat(const char* a, const char* b) {
     return result;
 }
 char* string_upper(const char* str) {
-    int len = strlen(str);
+    int len = string_length(str);
     char* result = wyn_str_alloc(len);
     for (int i = 0; i < len; i++) {
         result[i] = toupper(str[i]);
     }
     result[len] = '\0';
+    wyn_rc_set_length(result, len);
     return result;
 }
 char* string_lower(const char* str) {
-    int len = strlen(str);
+    int len = string_length(str);
     char* result = wyn_str_alloc(len);
     for (int i = 0; i < len; i++) {
         result[i] = tolower(str[i]);
     }
     result[len] = '\0';
+    wyn_rc_set_length(result, len);
     return result;
 }
 int string_is_alpha(const char* str) {
@@ -1040,13 +1049,14 @@ char* string_capitalize(const char* str) {
     return result;
 }
 char* string_reverse(const char* str) {
-    int len = strlen(str);
+    int len = string_length(str);
     char* result = wyn_str_alloc(len + 1);
     for (int i = 0; i < len; i++) result[i] = str[len - 1 - i];
     result[len] = '\0';
+    wyn_rc_set_length(result, len);
     return result;
 }
-int string_len(const char* str) { return strlen(str); }
+int string_len(const char* str) { return string_length(str); }
 bool string_is_empty(const char* str) { return str[0] == '\0'; }
 bool string_starts_with(const char* str, const char* prefix) {
     return strncmp(str, prefix, strlen(prefix)) == 0;
@@ -1107,14 +1117,16 @@ char* string_slice(const char* str, int start, int end) {
     return result;
 }
 char* string_repeat(const char* str, int count) {
-    int len = strlen(str);
-    char* result = wyn_str_alloc(len * count);
+    int len = string_length(str);
+    int total = len * count;
+    char* result = wyn_str_alloc(total);
     for (int i = 0; i < count; i++) memcpy(result + i * len, str, len);
-    result[len * count] = '\0';
+    result[total] = '\0';
+    wyn_rc_set_length(result, total);
     return result;
 }
 char* string_title(const char* str) {
-    int len = strlen(str);
+    int len = string_length(str);
     char* result = wyn_str_alloc(len + 1);
     int capitalize_next = 1;
     for (int i = 0; i < len; i++) {
@@ -1892,8 +1904,8 @@ const char* Fs_read_file(const char* path) {
 }
 char* str_repeat(const char* s, int count) { size_t len = strlen(s); char* r = wyn_str_alloc(len * count + 1); for(int i = 0; i < count; i++) memcpy(r + i * len, s, len); r[len * count] = 0; return r; }
 char* str_reverse(const char* s) { int len = strlen(s); char* r = wyn_str_alloc(len + 1); for(int i = 0; i < len; i++) r[i] = s[len-1-i]; r[len] = 0; return r; }
-char* int_to_string(long long x) { char* r = wyn_str_alloc(32); snprintf(r, 32, "%lld", x); return r; }
-char* float_to_string(double x) { char* r = wyn_str_alloc(32); snprintf(r, 32, "%g", x); if (!strchr(r, '.') && !strchr(r, 'e') && !strchr(r, 'E') && !strchr(r, 'n') && !strchr(r, 'i')) strcat(r, ".0"); return r; }
+char* int_to_string(long long x) { char* r = wyn_str_alloc(32); int n = snprintf(r, 32, "%lld", x); wyn_rc_set_length(r, (unsigned int)n); return r; }
+char* float_to_string(double x) { char* r = wyn_str_alloc(32); snprintf(r, 32, "%g", x); if (!strchr(r, '.') && !strchr(r, 'e') && !strchr(r, 'E') && !strchr(r, 'n') && !strchr(r, 'i')) { size_t l = strlen(r); r[l] = '.'; r[l+1] = '0'; r[l+2] = 0; } wyn_rc_set_length(r, (unsigned int)strlen(r)); return r; }
 char* bool_to_string(bool x) { return (char*)(x ? "true" : "false"); }
 int bool_to_int(bool x) { return x ? 1 : 0; }
 bool bool_not(bool x) { return !x; }
@@ -4017,12 +4029,28 @@ WynArray array_sort_copy(WynArray arr) {
 }
 
 char* array_join_str(WynArray arr, const char* sep) {
-    char* result = wyn_malloc(65536); result[0] = 0;
+    if (arr.count == 0) return wyn_strdup("");
+    size_t sep_len = strlen(sep);
+    // Calculate total size
+    size_t total = 0;
     for (int i = 0; i < arr.count; i++) {
-        if (i > 0) strcat(result, sep);
-        if (arr.data[i].type == WYN_TYPE_STRING) strcat(result, arr.data[i].data.string_val);
-        else { char buf[32]; snprintf(buf, 32, "%lld", (long long)arr.data[i].data.int_val); strcat(result, buf); }
+        if (i > 0) total += sep_len;
+        if (arr.data[i].type == WYN_TYPE_STRING) total += strlen(arr.data[i].data.string_val);
+        else total += 20; // max digits for int64
     }
+    char* result = wyn_str_alloc(total + 1);
+    size_t pos = 0;
+    for (int i = 0; i < arr.count; i++) {
+        if (i > 0) { memcpy(result + pos, sep, sep_len); pos += sep_len; }
+        if (arr.data[i].type == WYN_TYPE_STRING) {
+            size_t l = strlen(arr.data[i].data.string_val);
+            memcpy(result + pos, arr.data[i].data.string_val, l); pos += l;
+        } else {
+            pos += snprintf(result + pos, 21, "%lld", (long long)arr.data[i].data.int_val);
+        }
+    }
+    result[pos] = 0;
+    wyn_rc_set_length(result, (unsigned int)pos);
     return result;
 }
 

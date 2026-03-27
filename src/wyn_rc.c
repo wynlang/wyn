@@ -56,6 +56,19 @@ int wyn_rc_is_heap(const void* ptr) {
     return hdr->magic == WYN_RC_MAGIC;
 }
 
+void wyn_rc_set_length(const void* ptr, uint32_t len) {
+    if (ptr && wyn_rc_is_heap(ptr)) {
+        rc_full_header(ptr)->length = len;
+    }
+}
+
+uint32_t wyn_rc_get_length(const void* ptr) {
+    if (ptr && wyn_rc_is_heap(ptr)) {
+        return rc_full_header(ptr)->length;
+    }
+    return 0;
+}
+
 void wyn_rc_retain(const void* ptr) {
     if (!ptr || !wyn_rc_is_heap(ptr)) return;
     WynRcHeaderFull* hdr = rc_full_header(ptr);
