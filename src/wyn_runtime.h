@@ -321,16 +321,29 @@ int Regex_find(const char* s, const char* p) { int ms, me; wre_find(s, p, &ms, &
 char* regex_find_all(const char* str, const char* pattern) {
     struct wre_nfa nfa;
     if (!wre_compile(&nfa, pattern)) return wyn_strdup("");
-    char* result = (char*)malloc(65536); result[0] = 0;
+    size_t cap = 1024, len = 0;
+    char* result = wyn_str_alloc(cap);
     int pos = 0, slen = (int)strlen(str);
     while (pos <= slen) {
         int ms, me;
         wre_find(str + pos, pattern, &ms, &me);
         if (ms < 0 || me <= ms) break;
-        strncat(result, str + pos + ms, me - ms);
-        strcat(result, "\n");
+        size_t match_len = me - ms;
+        size_t needed = len + match_len + 1; // +1 for newline
+        if (needed >= cap) {
+            cap = needed * 2;
+            char* nr = wyn_str_alloc(cap);
+            memcpy(nr, result, len);
+            wyn_rc_release(result);
+            result = nr;
+        }
+        memcpy(result + len, str + pos + ms, match_len);
+        len += match_len;
+        result[len++] = '\n';
         pos += ms + (me - ms);
     }
+    result[len] = 0;
+    wyn_rc_set_length(result, (unsigned int)len);
     return result;
 }
 char* regex_split(const char* str, const char* pattern) {
@@ -4150,15 +4163,27 @@ long long regex_find(const char* str, const char* pattern) {
 char* regex_find_all(const char* str, const char* pattern) {
     regex_t re;
     if (regcomp(&re, pattern, REG_EXTENDED) != 0) return "";
-    char* result = wyn_malloc(65536); result[0] = 0;
+    size_t cap = 1024, rlen = 0;
+    char* result = wyn_str_alloc(cap);
     const char* p = str;
     regmatch_t match;
     while (regexec(&re, p, 1, &match, 0) == 0) {
-        int len = match.rm_eo - match.rm_so;
-        char* m = wyn_malloc(len + 1); memcpy(m, p + match.rm_so, len); m[len] = 0;
-        strcat(result, m); strcat(result, "\n"); free(m);
+        size_t mlen = match.rm_eo - match.rm_so;
+        size_t needed = rlen + mlen + 1;
+        if (needed >= cap) {
+            cap = needed * 2;
+            char* nr = wyn_str_alloc(cap);
+            memcpy(nr, result, rlen);
+            wyn_rc_release(result);
+            result = nr;
+        }
+        memcpy(result + rlen, p + match.rm_so, mlen);
+        rlen += mlen;
+        result[rlen++] = '\n';
         p += match.rm_eo;
     }
+    result[rlen] = 0;
+    wyn_rc_set_length(result, (unsigned int)rlen);
     regfree(&re);
     return result;
 }
