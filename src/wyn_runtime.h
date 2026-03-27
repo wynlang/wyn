@@ -941,10 +941,10 @@ bool string_contains(const char* str, const char* substr) {
     return strstr(str, substr) != NULL;
 }
 char* string_concat(const char* a, const char* b) {
-    int len_a = strlen(a), len_b = strlen(b);
-    char* result = wyn_str_alloc(len_a + len_b + 1);
-    strcpy(result, a);
-    strcat(result, b);
+    size_t la = strlen(a), lb = strlen(b);
+    char* result = wyn_str_alloc(la + lb + 1);
+    memcpy(result, a, la);
+    memcpy(result + la, b, lb + 1);
     return result;
 }
 char* string_upper(const char* str) {
@@ -1079,7 +1079,8 @@ char* string_replace(const char* str, const char* old, const char* new) {
             memcpy(r, new, new_len); r += new_len;
             p = match + old_len;
         } else {
-            strcpy(r, p); break;
+            size_t tail = strlen(p);
+            memcpy(r, p, tail + 1); break;
         }
     }
     result[result_len] = '\0';
@@ -1952,12 +1953,12 @@ WynError DivisionByZeroError(const char* msg) { WynError e = {msg, "DivisionByZe
 char* str_substring(const char* s, int start, int end) { int len = strlen(s); if(start < 0) start = 0; if(end > len) end = len; if(start >= end) return wyn_str_alloc(1); int sublen = end - start; char* r = wyn_str_alloc(sublen + 1); strncpy(r, s + start, sublen); r[sublen] = 0; return r; }
 int str_index_of(const char* s, const char* sub) { char* p = strstr(s, sub); return p ? (int)(p - s) : -1; }
 char* str_slice(const char* s, int start, int end) { return str_substring(s, start, end); }
-char* str_pad_start(const char* s, int len, const char* pad) { int slen = strlen(s); if(slen >= len) { char* r = wyn_str_alloc(slen + 1); strcpy(r, s); return r; } int padlen = len - slen; char* r = wyn_str_alloc(len + 1); for(int i = 0; i < padlen; i++) r[i] = pad[0]; strcpy(r + padlen, s); return r; }
-char* str_pad_end(const char* s, int len, const char* pad) { int slen = strlen(s); if(slen >= len) { char* r = wyn_str_alloc(slen + 1); strcpy(r, s); return r; } char* r = wyn_str_alloc(len + 1); strcpy(r, s); for(int i = slen; i < len; i++) r[i] = pad[0]; r[len] = 0; return r; }
-char* str_remove_prefix(const char* s, const char* prefix) { int plen = strlen(prefix); if(strncmp(s, prefix, plen) == 0) { char* r = wyn_str_alloc(strlen(s) - plen + 1); strcpy(r, s + plen); return r; } char* r = wyn_str_alloc(strlen(s) + 1); strcpy(r, s); return r; }
-char* str_remove_suffix(const char* s, const char* suffix) { int slen = strlen(s); int suflen = strlen(suffix); if(slen >= suflen && strcmp(s + slen - suflen, suffix) == 0) { char* r = wyn_str_alloc(slen - suflen + 1); strncpy(r, s, slen - suflen); r[slen - suflen] = 0; return r; } char* r = wyn_str_alloc(slen + 1); strcpy(r, s); return r; }
-char* str_capitalize(const char* s) { char* r = wyn_str_alloc(strlen(s) + 1); strcpy(r, s); if(r[0]) r[0] = toupper(r[0]); for(int i = 1; r[i]; i++) r[i] = tolower(r[i]); return r; }
-char* str_center(const char* s, int width) { int len = strlen(s); if(len >= width) { char* r = wyn_str_alloc(len + 1); strcpy(r, s); return r; } int pad = (width - len) / 2; char* r = wyn_str_alloc(width + 1); for(int i = 0; i < pad; i++) r[i] = ' '; strcpy(r + pad, s); for(int i = pad + len; i < width; i++) r[i] = ' '; r[width] = 0; return r; }
+char* str_pad_start(const char* s, int len, const char* pad) { int slen = strlen(s); if(slen >= len) { char* r = wyn_str_alloc(slen + 1); memcpy(r, s, slen + 1); return r; } int padlen = len - slen; char* r = wyn_str_alloc(len + 1); for(int i = 0; i < padlen; i++) r[i] = pad[0]; memcpy(r + padlen, s, slen + 1); return r; }
+char* str_pad_end(const char* s, int len, const char* pad) { int slen = strlen(s); if(slen >= len) { char* r = wyn_str_alloc(slen + 1); memcpy(r, s, slen + 1); return r; } char* r = wyn_str_alloc(len + 1); memcpy(r, s, slen); for(int i = slen; i < len; i++) r[i] = pad[0]; r[len] = 0; return r; }
+char* str_remove_prefix(const char* s, const char* prefix) { int slen = strlen(s); int plen = strlen(prefix); if(strncmp(s, prefix, plen) == 0) { int rlen = slen - plen; char* r = wyn_str_alloc(rlen + 1); memcpy(r, s + plen, rlen + 1); return r; } char* r = wyn_str_alloc(slen + 1); memcpy(r, s, slen + 1); return r; }
+char* str_remove_suffix(const char* s, const char* suffix) { int slen = strlen(s); int suflen = strlen(suffix); if(slen >= suflen && strcmp(s + slen - suflen, suffix) == 0) { int rlen = slen - suflen; char* r = wyn_str_alloc(rlen + 1); memcpy(r, s, rlen); r[rlen] = 0; return r; } char* r = wyn_str_alloc(slen + 1); memcpy(r, s, slen + 1); return r; }
+char* str_capitalize(const char* s) { int slen = strlen(s); char* r = wyn_str_alloc(slen + 1); memcpy(r, s, slen + 1); if(r[0]) r[0] = toupper(r[0]); for(int i = 1; r[i]; i++) r[i] = tolower(r[i]); return r; }
+char* str_center(const char* s, int width) { int len = strlen(s); if(len >= width) { char* r = wyn_str_alloc(len + 1); memcpy(r, s, len + 1); return r; } int pad = (width - len) / 2; char* r = wyn_str_alloc(width + 1); for(int i = 0; i < pad; i++) r[i] = ' '; memcpy(r + pad, s, len); for(int i = pad + len; i < width; i++) r[i] = ' '; r[width] = 0; return r; }
 char** str_lines(const char* s) { char** lines = wyn_malloc(sizeof(char*)); lines[0] = wyn_malloc(strlen(s) + 1); strcpy(lines[0], s); return lines; }
 char** str_words(const char* s) { char** words = wyn_malloc(sizeof(char*)); words[0] = wyn_malloc(strlen(s) + 1); strcpy(words[0], s); return words; }
 void str_free(char* s) { if(s) free(s); }

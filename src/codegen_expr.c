@@ -899,9 +899,27 @@ void codegen_expr(Expr* expr) {
                 // Escape analysis: string interp arg to println doesn't escape
                 bool prev_skip = codegen_skip_strdup;
                 if (expr->call.args[0]->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
-                emit("println(");
-                codegen_expr(expr->call.args[0]);
-                emit(")");
+                // Release temp strings passed to println (only fresh allocations)
+                Expr* parg = expr->call.args[0];
+                // Only release: concat results, string interpolation, to_string calls
+                bool _println_temp = (parg->type == EXPR_BINARY) ||
+                                     (parg->type == EXPR_STRING_INTERP);
+                // to_string method call on non-string types
+                if (!_println_temp && parg->type == EXPR_METHOD_CALL &&
+                    parg->method_call.method.length == 9 &&
+                    memcmp(parg->method_call.method.start, "to_string", 9) == 0 &&
+                    !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
+                    _println_temp = true;
+                }
+                if (_println_temp) {
+                    emit("({ const char* __ps = ");
+                    codegen_expr(parg);
+                    emit("; println(__ps); wyn_rc_release(__ps); })");
+                } else {
+                    emit("println(");
+                    codegen_expr(parg);
+                    emit(")");
+                }
                 codegen_skip_strdup = prev_skip;
             } else if (expr->call.callee->type == EXPR_IDENT && 
                        expr->call.callee->token.length == 8 &&
