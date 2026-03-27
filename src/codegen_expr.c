@@ -591,20 +591,12 @@ void codegen_expr(Expr* expr) {
                         codegen_expr(expr->binary.right);
                         emit(")");
                     } else if (expr->binary.right->type == EXPR_INT) {
-                        // Constant divisor — strength reduce or skip safe_div
                         long long dv = strtoll(expr->binary.right->token.start, NULL, 0);
                         if (dv == 0) {
-                            // Division by zero — emit safe_div to get runtime panic
                             emit(expr->binary.op.type == TOKEN_SLASH ? "wyn_safe_div(" : "wyn_safe_mod(");
                             codegen_expr(expr->binary.left); emit(", 0)");
-                        } else if (expr->binary.op.type == TOKEN_PERCENT && dv == 2) {
-                            emit("("); codegen_expr(expr->binary.left); emit(" & 1)");
-                        } else if (expr->binary.op.type == TOKEN_SLASH && dv == 2) {
-                            emit("("); codegen_expr(expr->binary.left); emit(" >> 1)");
-                        } else if (expr->binary.op.type == TOKEN_SLASH && dv == 4) {
-                            emit("("); codegen_expr(expr->binary.left); emit(" >> 2)");
                         } else {
-                            // Known non-zero constant — skip runtime check
+                            // Known non-zero constant — skip runtime check, use C division
                             emit("("); codegen_expr(expr->binary.left);
                             emit(expr->binary.op.type == TOKEN_SLASH ? " / " : " %% ");
                             codegen_expr(expr->binary.right); emit(")");

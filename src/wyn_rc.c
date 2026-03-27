@@ -11,7 +11,7 @@ typedef struct {
     uint32_t magic;
     _Atomic int32_t refcount;
     uint32_t capacity;  // Allocated bytes (for realloc-in-place)
-    uint32_t _pad;
+    uint32_t length;    // Cached string length (avoids O(n) strlen)
 } WynRcHeaderFull;
 
 // Track the heap range to avoid reading before string literals
@@ -28,6 +28,7 @@ void* wyn_rc_alloc(size_t size) {
     hdr->magic = WYN_RC_MAGIC;
     atomic_store(&hdr->refcount, 1);
     hdr->capacity = (uint32_t)size;
+    hdr->length = 0;  // Set by concat when known
     void* ptr = (char*)hdr + sizeof(WynRcHeaderFull);
     // Track heap range
     if (!heap_low || ptr < heap_low) heap_low = hdr;

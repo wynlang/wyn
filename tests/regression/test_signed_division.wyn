@@ -1,0 +1,13 @@
+// Regression: signed division must truncate toward zero (not floor)
+// EXPECT: -3
+// EXPECT: 3
+// EXPECT: -1
+// EXPECT: 1
+
+fn main() -> int {
+    println((-7 / 2).to_string())
+    println((7 / 2).to_string())
+    println((-7 % 2).to_string())
+    println((7 % 2).to_string())
+    return 0
+}

@@ -165,42 +165,53 @@ bool wyn_file_exists(const char* path);
 const char* wyn_string_concat_safe(const char* left, const char* right) {
     if (!left) left = "";
     if (!right) right = "";
-    size_t l1 = strlen(left), l2 = strlen(right);
+    size_t l2 = strlen(right);
     if (l2 == 0) return left;
+    // Use cached length for left if available
+    extern int wyn_rc_is_heap(const void*);
+    size_t l1;
+    typedef struct { unsigned int magic; _Atomic int refcount; unsigned int capacity; unsigned int length; } RcHdr;
+    RcHdr* left_hdr = NULL;
+    if (wyn_rc_is_heap(left)) {
+        left_hdr = (RcHdr*)((char*)left - sizeof(RcHdr));
+        l1 = left_hdr->length ? left_hdr->length : strlen(left);
+    } else {
+        l1 = strlen(left);
+    }
     if (l1 == 0) { const char* d = wyn_strdup(right); return d; }
     // Optimization: if left has refcount 1, grow in place
-    extern int wyn_rc_is_heap(const void*);
-    if (wyn_rc_is_heap(left)) {
-        typedef struct { unsigned int magic; _Atomic int refcount; unsigned int capacity; unsigned int _pad; } RcHdr;
-        RcHdr* hdr = (RcHdr*)((char*)left - sizeof(RcHdr));
-        if (atomic_load(&hdr->refcount) == 1) {
-            size_t needed = l1 + l2 + 1;
-            // Check if current capacity is sufficient
-            if (needed <= hdr->capacity) {
-                // Fast path: just append, no realloc
-                char* s = (char*)left;
-                memcpy(s + l1, right, l2);
-                s[l1 + l2] = 0;
-                return s;
-            }
-            // Over-allocate: next power of 2 >= needed size
-            size_t cap = needed;
-            if (cap < 64) cap = 64;
-            else { cap--; cap |= cap >> 1; cap |= cap >> 2; cap |= cap >> 4; cap |= cap >> 8; cap |= cap >> 16; cap++; }
-            RcHdr* new_hdr = wyn_realloc(hdr, sizeof(RcHdr) + cap);
-            if (new_hdr) {
-                new_hdr->capacity = (unsigned int)cap;
-                char* s = (char*)new_hdr + sizeof(RcHdr);
-                memcpy(s + l1, right, l2);
-                s[l1 + l2] = 0;
-                return s;
-            }
+    if (left_hdr && atomic_load(&left_hdr->refcount) == 1) {
+        size_t needed = l1 + l2 + 1;
+        if (needed <= left_hdr->capacity) {
+            // Fast path: just append, no realloc
+            char* s = (char*)left;
+            memcpy(s + l1, right, l2);
+            s[l1 + l2] = 0;
+            left_hdr->length = (unsigned int)(l1 + l2);
+            return s;
+        }
+        size_t cap = needed;
+        if (cap < 64) cap = 64;
+        else { cap--; cap |= cap >> 1; cap |= cap >> 2; cap |= cap >> 4; cap |= cap >> 8; cap |= cap >> 16; cap++; }
+        RcHdr* new_hdr = wyn_realloc(left_hdr, sizeof(RcHdr) + cap);
+        if (new_hdr) {
+            new_hdr->capacity = (unsigned int)cap;
+            new_hdr->length = (unsigned int)(l1 + l2);
+            char* s = (char*)new_hdr + sizeof(RcHdr);
+            memcpy(s + l1, right, l2);
+            s[l1 + l2] = 0;
+            return s;
         }
     }
     char* r = wyn_str_alloc(l1 + l2 + 1);
     memcpy(r, left, l1);
     memcpy(r + l1, right, l2);
     r[l1 + l2] = 0;
+    // Cache length on new string
+    if (wyn_rc_is_heap(r)) {
+        RcHdr* rh = (RcHdr*)((char*)r - sizeof(RcHdr));
+        rh->length = (unsigned int)(l1 + l2);
+    }
     return r;
 }
 
@@ -889,7 +900,7 @@ char* array_join(WynArray arr, const char* sep) {
             size_t sl = strlen(arr.data[i].data.string_val);
             memcpy(result + pos, arr.data[i].data.string_val, sl); pos += sl;
         } else if (arr.data[i].type == WYN_TYPE_INT) {
-            char buf[16]; int bl = snprintf(buf, sizeof(buf), "%d", arr.data[i].data.int_val);
+            char buf[16]; int bl = snprintf(buf, sizeof(buf), "%lld", arr.data[i].data.int_val);
             memcpy(result + pos, buf, bl); pos += bl;
         }
         if (i < arr.count - 1 && sep_len > 0) { memcpy(result + pos, sep, sep_len); pos += sep_len; }
