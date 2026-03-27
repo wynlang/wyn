@@ -4,8 +4,12 @@
 void codegen_expr(Expr* expr) {
     if (!expr) return;
     // If this expr was pre-evaluated to a temp, emit the temp name
-    if (expr->_codegen_temp_id >= 0) {
+    if (expr->_codegen_temp_id >= 0 && expr->_codegen_temp_id < 1000) {
         emit("__sa%d", expr->_codegen_temp_id);
+        return;
+    }
+    if (expr->_codegen_temp_id >= 1000) {
+        emit("__mo%d", expr->_codegen_temp_id - 1000);
         return;
     }
     
@@ -1384,7 +1388,24 @@ void codegen_expr(Expr* expr) {
             break;
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
-            
+
+            // Release intermediate string temps from chained method calls
+            // e.g. "hello".upper().trim() — upper() result leaked without this
+            Expr* _mc_obj = expr->method_call.object;
+            bool _mc_chain_wrap = false;
+            static int _mc_ctr = 0;
+            int _mc_id = -1;
+            if (_mc_obj->type == EXPR_METHOD_CALL &&
+                _mc_obj->expr_type && _mc_obj->expr_type->kind == TYPE_STRING &&
+                _mc_obj->_codegen_temp_id < 0) {
+                _mc_chain_wrap = true;
+                _mc_id = _mc_ctr++;
+                emit("({ const char* __mo%d = ", _mc_id);
+                codegen_expr(_mc_obj);
+                emit("; __auto_type __mcr%d = ", _mc_id);
+                _mc_obj->_codegen_temp_id = 1000 + _mc_id;
+            }
+
             // L3: Iterator methods — .collect() and .take() are iterator-only
             // .map() and .filter() only use wyn_iter_* when chained on an iterator
             {
@@ -2329,7 +2350,7 @@ void codegen_expr(Expr* expr) {
                         }
                     }
                     emit(")");
-                    break;
+                    goto method_done;
                 }
             }
             
@@ -2469,6 +2490,10 @@ void codegen_expr(Expr* expr) {
                         method.length, method.start);
             }
             method_done:
+            if (_mc_chain_wrap && _mc_id >= 0) {
+                emit("; wyn_rc_release(__mo%d); __mcr%d; })", _mc_id, _mc_id);
+                _mc_obj->_codegen_temp_id = -1;
+            }
             break;
         }
         case EXPR_ARRAY: {
