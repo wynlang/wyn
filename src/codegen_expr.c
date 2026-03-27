@@ -2760,7 +2760,7 @@ void codegen_expr(Expr* expr) {
                 if (is_string_var(target_name)) _rc_string_assign = true;
             }
             if (_rc_string_assign) {
-                // Emit: ({ const char* __rc_tmp = <rhs>; wyn_rc_release(old); old = __rc_tmp; })
+                // Retain new, release old (standard RC assignment)
                 emit("({ const char* __rc_tmp = ");
                 codegen_expr(expr->assign.value);
                 emit("; wyn_rc_retain(__rc_tmp); wyn_rc_release(%s); %s = __rc_tmp; })", target_name, target_name);

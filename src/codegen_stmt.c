@@ -180,8 +180,17 @@ void codegen_stmt(Stmt* stmt) {
                     emit(";\n");
                 }
             } else {
-                codegen_expr(stmt->expr);
-                emit(";\n");
+                // Release unused string return values to prevent leaks
+                bool _is_str_call = (stmt->expr->type == EXPR_CALL || stmt->expr->type == EXPR_METHOD_CALL) &&
+                    stmt->expr->expr_type && stmt->expr->expr_type->kind == TYPE_STRING;
+                if (_is_str_call) {
+                    emit("wyn_rc_release(");
+                    codegen_expr(stmt->expr);
+                    emit(");\n");
+                } else {
+                    codegen_expr(stmt->expr);
+                    emit(";\n");
+                }
                 // Readback captured variables after lambda calls (capture by reference)
                 if (stmt->expr->type == EXPR_METHOD_CALL) {
                     for (int ai = 0; ai < stmt->expr->method_call.arg_count; ai++) {
