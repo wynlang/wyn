@@ -168,19 +168,28 @@ const char* wyn_string_concat_safe(const char* left, const char* right) {
     size_t l1 = strlen(left), l2 = strlen(right);
     if (l2 == 0) return left;
     if (l1 == 0) { const char* d = wyn_strdup(right); return d; }
-    // Optimization: if left has refcount 1, try to grow in place with 2x capacity
+    // Optimization: if left has refcount 1, grow in place
     extern int wyn_rc_is_heap(const void*);
     if (wyn_rc_is_heap(left)) {
-        typedef struct { unsigned int magic; _Atomic int refcount; } RcHdr;
+        typedef struct { unsigned int magic; _Atomic int refcount; unsigned int capacity; unsigned int _pad; } RcHdr;
         RcHdr* hdr = (RcHdr*)((char*)left - sizeof(RcHdr));
         if (atomic_load(&hdr->refcount) == 1) {
-            // Over-allocate: next power of 2 >= needed size
             size_t needed = l1 + l2 + 1;
+            // Check if current capacity is sufficient
+            if (needed <= hdr->capacity) {
+                // Fast path: just append, no realloc
+                char* s = (char*)left;
+                memcpy(s + l1, right, l2);
+                s[l1 + l2] = 0;
+                return s;
+            }
+            // Over-allocate: next power of 2 >= needed size
             size_t cap = needed;
             if (cap < 64) cap = 64;
             else { cap--; cap |= cap >> 1; cap |= cap >> 2; cap |= cap >> 4; cap |= cap >> 8; cap |= cap >> 16; cap++; }
             RcHdr* new_hdr = wyn_realloc(hdr, sizeof(RcHdr) + cap);
             if (new_hdr) {
+                new_hdr->capacity = (unsigned int)cap;
                 char* s = (char*)new_hdr + sizeof(RcHdr);
                 memcpy(s + l1, right, l2);
                 s[l1 + l2] = 0;

@@ -580,7 +580,6 @@ void codegen_expr(Expr* expr) {
             } else {
                 // Check for division or modulo - add runtime check
                 if (expr->binary.op.type == TOKEN_SLASH || expr->binary.op.type == TOKEN_PERCENT) {
-                    // Check for float/int mixed division
                     bool lf = (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_FLOAT) || expr->binary.left->type == EXPR_FLOAT;
                     bool rf = (expr->binary.right->expr_type && expr->binary.right->expr_type->kind == TYPE_FLOAT) || expr->binary.right->type == EXPR_FLOAT;
                     if (lf || rf) {
@@ -591,6 +590,25 @@ void codegen_expr(Expr* expr) {
                         if (!rf) emit("(double)");
                         codegen_expr(expr->binary.right);
                         emit(")");
+                    } else if (expr->binary.right->type == EXPR_INT) {
+                        // Constant divisor — strength reduce or skip safe_div
+                        long long dv = strtoll(expr->binary.right->token.start, NULL, 0);
+                        if (dv == 0) {
+                            // Division by zero — emit safe_div to get runtime panic
+                            emit(expr->binary.op.type == TOKEN_SLASH ? "wyn_safe_div(" : "wyn_safe_mod(");
+                            codegen_expr(expr->binary.left); emit(", 0)");
+                        } else if (expr->binary.op.type == TOKEN_PERCENT && dv == 2) {
+                            emit("("); codegen_expr(expr->binary.left); emit(" & 1)");
+                        } else if (expr->binary.op.type == TOKEN_SLASH && dv == 2) {
+                            emit("("); codegen_expr(expr->binary.left); emit(" >> 1)");
+                        } else if (expr->binary.op.type == TOKEN_SLASH && dv == 4) {
+                            emit("("); codegen_expr(expr->binary.left); emit(" >> 2)");
+                        } else {
+                            // Known non-zero constant — skip runtime check
+                            emit("("); codegen_expr(expr->binary.left);
+                            emit(expr->binary.op.type == TOKEN_SLASH ? " / " : " %% ");
+                            codegen_expr(expr->binary.right); emit(")");
+                        }
                     } else {
                         if (expr->binary.op.type == TOKEN_SLASH) emit("wyn_safe_div(");
                         else emit("wyn_safe_mod(");
