@@ -419,13 +419,16 @@ void codegen_stmt(Stmt* stmt) {
                             }
                         }
                     }
-                    // Methods that return arrays → WynArray
+                    // Methods that return arrays → WynArray (only when object is array, not string)
                     if (!_found_method_rt) {
                         char _mn2[64]; snprintf(_mn2, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
-                        if (strcmp(_mn2, "sort") == 0 || strcmp(_mn2, "reverse") == 0 ||
+                        // Check if object is a string — these methods return string, not array
+                        bool _obj_is_string = stmt->var.init->method_call.object->expr_type &&
+                            stmt->var.init->method_call.object->expr_type->kind == TYPE_STRING;
+                        if (!_obj_is_string && (strcmp(_mn2, "sort") == 0 || strcmp(_mn2, "reverse") == 0 ||
                             strcmp(_mn2, "filter") == 0 || strcmp(_mn2, "map") == 0 ||
                             strcmp(_mn2, "unique") == 0 || strcmp(_mn2, "slice") == 0 ||
-                            strcmp(_mn2, "flat_map") == 0 || strcmp(_mn2, "collect") == 0) {
+                            strcmp(_mn2, "flat_map") == 0 || strcmp(_mn2, "collect") == 0)) {
                             c_type = "WynArray";
                             char _vn2[256]; snprintf(_vn2, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
                             extern void register_array_var(const char*); register_array_var(_vn2);

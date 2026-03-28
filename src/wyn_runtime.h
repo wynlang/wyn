@@ -737,29 +737,23 @@ void array_reverse(WynArray* arr) {
         arr->data[arr->count - 1 - i] = temp;
     }
 }
+static int _wyn_cmp_int(const void* a, const void* b) {
+    long long va = ((const WynValue*)a)->data.int_val;
+    long long vb = ((const WynValue*)b)->data.int_val;
+    return (va > vb) - (va < vb);
+}
+static int _wyn_cmp_str(const void* a, const void* b) {
+    const char* sa = ((const WynValue*)a)->data.string_val;
+    const char* sb = ((const WynValue*)b)->data.string_val;
+    if (!sa) sa = "";
+    if (!sb) sb = "";
+    return strcmp(sa, sb);
+}
 void array_sort(WynArray* arr) {
-    for (int i = 0; i < arr->count - 1; i++) {
-        for (int j = 0; j < arr->count - i - 1; j++) {
-            if (arr->data[j].data.int_val > arr->data[j + 1].data.int_val) {
-                WynValue temp = arr->data[j];
-                arr->data[j] = arr->data[j + 1];
-                arr->data[j + 1] = temp;
-            }
-        }
-    }
+    if (arr->count > 1) qsort(arr->data, arr->count, sizeof(WynValue), _wyn_cmp_int);
 }
 void array_sort_str(WynArray* arr) {
-    for (int i = 0; i < arr->count - 1; i++) {
-        for (int j = 0; j < arr->count - i - 1; j++) {
-            const char* a = arr->data[j].data.string_val ? arr->data[j].data.string_val : "";
-            const char* b = arr->data[j+1].data.string_val ? arr->data[j+1].data.string_val : "";
-            if (strcmp(a, b) > 0) {
-                WynValue temp = arr->data[j];
-                arr->data[j] = arr->data[j + 1];
-                arr->data[j + 1] = temp;
-            }
-        }
-    }
+    if (arr->count > 1) qsort(arr->data, arr->count, sizeof(WynValue), _wyn_cmp_str);
 }
 
 int array_first(WynArray arr) {

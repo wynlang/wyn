@@ -1823,10 +1823,10 @@ void codegen_expr(Expr* expr) {
                 }
                 // arr.sort() -> arr_sort(arr.data, arr.count) (in-place)
                 if (method.length == 4 && memcmp(method.start, "sort", 4) == 0 && expr->method_call.arg_count == 0) {
-                    emit("array_sort_copy(");
+                    emit("array_sort(&(");
                     codegen_expr(expr->method_call.object);
-                    emit(")");
-                    break;
+                    emit("))");
+                    goto method_done;
                 }
                 // arr.sort_by(cmp_fn) -> wyn_array_sort_by(&arr, cmp_fn)
                 if (method.length == 7 && memcmp(method.start, "sort_by", 7) == 0 && expr->method_call.arg_count == 1) {

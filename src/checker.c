@@ -2988,6 +2988,21 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 } else if (strcmp(method_name, "repeat") == 0) {
                     expr->expr_type = builtin_string;
                     return builtin_string;
+                } else if (strcmp(method_name, "reverse") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "slice") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "char_at") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "pad_left") == 0 || strcmp(method_name, "pad_right") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if (strcmp(method_name, "capitalize") == 0 || strcmp(method_name, "title") == 0) {
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
                 } else if (strcmp(method_name, "index_of") == 0) {
                     expr->expr_type = builtin_int;
                     return builtin_int;
