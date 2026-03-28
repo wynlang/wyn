@@ -1823,7 +1823,21 @@ void codegen_expr(Expr* expr) {
                 }
                 // arr.sort() -> arr_sort(arr.data, arr.count) (in-place)
                 if (method.length == 4 && memcmp(method.start, "sort", 4) == 0 && expr->method_call.arg_count == 0) {
-                    emit("array_sort(&(");
+                    // Check if array contains strings
+                    bool _is_str_arr = false;
+                    Expr* _sobj = expr->method_call.object;
+                    if (_sobj->expr_type && _sobj->expr_type->kind == TYPE_ARRAY &&
+                        _sobj->expr_type->array_type.element_type &&
+                        _sobj->expr_type->array_type.element_type->kind == TYPE_STRING) {
+                        _is_str_arr = true;
+                    }
+                    // Also check if it's a known string array variable
+                    if (!_is_str_arr && _sobj->type == EXPR_IDENT) {
+                        extern int is_str_array_var(const char*);
+                        char _vn[256]; snprintf(_vn, 256, "%.*s", _sobj->token.length, _sobj->token.start);
+                        if (is_str_array_var(_vn)) _is_str_arr = true;
+                    }
+                    emit(_is_str_arr ? "array_sort_str(&(" : "array_sort(&(");
                     codegen_expr(expr->method_call.object);
                     emit("))");
                     goto method_done;

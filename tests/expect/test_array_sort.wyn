@@ -1,0 +1,28 @@
+// EXPECT: 1 1 2 3 4
+// EXPECT: -9 -1 -1 3 4 5
+// EXPECT: apple banana cherry
+// EXPECT: empty ok
+
+fn main() -> int {
+    // Int sort
+    var nums: [int] = [3, 1, 4, 1, 5, 9, 2, 6]
+    nums.sort()
+    println(nums[0].to_string() + " " + nums[1].to_string() + " " + nums[2].to_string() + " " + nums[3].to_string() + " " + nums[4].to_string())
+
+    // Negative numbers
+    var neg: [int] = [3, -1, 4, -1, 5, -9]
+    neg.sort()
+    println(neg[0].to_string() + " " + neg[1].to_string() + " " + neg[2].to_string() + " " + neg[3].to_string() + " " + neg[4].to_string() + " " + neg[5].to_string())
+
+    // String sort
+    var strs = ["cherry", "apple", "banana"]
+    strs.sort()
+    println(strs[0] + " " + strs[1] + " " + strs[2])
+
+    // Empty sort (should not crash)
+    var empty: [int] = []
+    empty.sort()
+    println("empty ok")
+
+    return 0
+}
