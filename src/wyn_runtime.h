@@ -2414,6 +2414,34 @@ int Http_serve(int port) {
     if (listen(server_fd, 128) < 0) { close(server_fd); return -1; }
     return server_fd;
 }
+int Http_listen(int port) { return Http_serve(port); }
+
+// Parse fields from Http_accept result ("METHOD|PATH|BODY|FD")
+static char* _http_field(const char* raw, int idx) {
+    if (!raw || !*raw) return "";
+    const char* p = raw;
+    for (int i = 0; i < idx; i++) {
+        const char* pipe = strchr(p, '|');
+        if (!pipe) return "";
+        p = pipe + 1;
+    }
+    const char* end = strchr(p, '|');
+    size_t len = end ? (size_t)(end - p) : strlen(p);
+    char* r = wyn_str_alloc(len + 1);
+    memcpy(r, p, len);
+    r[len] = 0;
+    wyn_rc_set_length(r, (unsigned int)len);
+    return r;
+}
+char* Http_method(const char* raw) { return _http_field(raw, 0); }
+char* Http_path(const char* raw)   { return _http_field(raw, 1); }
+char* Http_req_body(const char* raw) { return _http_field(raw, 2); }
+int Http_fd(const char* raw) {
+    const char* s = _http_field(raw, 3);
+    int fd = atoi(s);
+    wyn_rc_release(s);
+    return fd;
+}
 
 char* Http_accept(int server_fd) {
     // Reset arena per request to prevent memory leak in long-running servers

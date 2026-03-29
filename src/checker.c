@@ -1634,6 +1634,8 @@ void init_checker() {
         {"Http_method", 11, 1, builtin_string},
         {"Http_path", 9, 1, builtin_string},
         {"Http_body", 9, 1, builtin_string},
+        {"Http_req_body", 13, 1, builtin_string},
+        {"Http_fd", 7, 1, builtin_int},
         {"Http_respond", 12, 4, builtin_void},
         {"Http_respond_json", 17, 3, builtin_void},
         {"Http_respond_with_header", 24, 5, builtin_void},
