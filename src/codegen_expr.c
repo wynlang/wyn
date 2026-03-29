@@ -2147,14 +2147,22 @@ void codegen_expr(Expr* expr) {
                 int mlen = method.length < 63 ? method.length : 63;
                 memcpy(mname, method.start, mlen);
                 mname[mlen] = '\0';
-                if (strcmp(mname, "len") == 0 || strcmp(mname, "upper") == 0 ||
+                // Only assume string if the object's type is actually string (or unknown)
+                bool _obj_is_int = expr->method_call.object->expr_type &&
+                    expr->method_call.object->expr_type->kind == TYPE_INT;
+                bool _obj_is_float = expr->method_call.object->expr_type &&
+                    expr->method_call.object->expr_type->kind == TYPE_FLOAT;
+                bool _obj_is_bool = expr->method_call.object->expr_type &&
+                    expr->method_call.object->expr_type->kind == TYPE_BOOL;
+                if (!_obj_is_int && !_obj_is_float && !_obj_is_bool &&
+                    (strcmp(mname, "len") == 0 || strcmp(mname, "upper") == 0 ||
                     strcmp(mname, "lower") == 0 || strcmp(mname, "trim") == 0 ||
                     strcmp(mname, "contains") == 0 || strcmp(mname, "starts_with") == 0 ||
                     strcmp(mname, "ends_with") == 0 || strcmp(mname, "replace") == 0 ||
                     strcmp(mname, "repeat") == 0 || strcmp(mname, "index_of") == 0 ||
                     strcmp(mname, "substring") == 0 || strcmp(mname, "split_at") == 0 ||
                     strcmp(mname, "split_count") == 0 || strcmp(mname, "to_int") == 0 ||
-                    strcmp(mname, "to_float") == 0 || strcmp(mname, "bytes") == 0 || strcmp(mname, "chars") == 0) {
+                    strcmp(mname, "to_float") == 0 || strcmp(mname, "bytes") == 0 || strcmp(mname, "chars") == 0)) {
                     receiver_type = "string";
                 }
             }
@@ -2164,12 +2172,10 @@ void codegen_expr(Expr* expr) {
                 int mlen = method.length < 63 ? method.length : 63;
                 memcpy(mname, method.start, mlen);
                 mname[mlen] = '\0';
+                // Only override to string for methods that make sense on both types
+                // (to_int, to_float are valid on strings; upper/lower/trim are NOT valid on int)
                 if (strcmp(mname, "to_int") == 0 || strcmp(mname, "to_float") == 0 ||
-                    strcmp(mname, "split_at") == 0 || strcmp(mname, "split_count") == 0 ||
-                    strcmp(mname, "upper") == 0 || strcmp(mname, "lower") == 0 ||
-                    strcmp(mname, "trim") == 0 || strcmp(mname, "contains") == 0 ||
-                    strcmp(mname, "starts_with") == 0 || strcmp(mname, "ends_with") == 0 ||
-                    strcmp(mname, "substring") == 0 || strcmp(mname, "replace") == 0) {
+                    strcmp(mname, "split_at") == 0 || strcmp(mname, "split_count") == 0) {
                     receiver_type = "string";
                 }
             }
