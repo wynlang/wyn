@@ -9,7 +9,7 @@ No new language features. Every change is about making the existing language fas
 - **fib(35)**: 120ms → 33ms (3.6x faster via -O2 release builds)
 - **1M string append**: 12,143ms → 6ms (2,024x faster — RC header caches length + capacity)
 - **1M `.len()`**: ~100ms → 1ms (O(1) from RC length cache, was O(n) strlen)
-- **Array sort**: 189ms → 1ms for 10K ints (O(n²) bubble sort → O(n log n) qsort)
+- **Array sort**: 189ms → 1ms for 10K ints (O(n²) bubble sort → O(n log n) inline introsort)
 - **`wyn build`**: ~4s → 411ms (precompiled `libwyn_rt.a` + system cc)
 - **Binary size**: 425KB → 49KB (dead code stripping)
 - **Spawn overhead**: ~20μs → 6μs per task
@@ -51,6 +51,10 @@ All 64KB fixed buffers replaced with dynamic RC-tracked buffers:
 
 ### Bug Fixes
 
+- **Stdlib param counts**: all ~100 builtin module functions (Json, Http, Db, Crypto, Regex, DateTime) had hardcoded 1-param limit in the checker. `Json.get(handle, "key")` was rejected as "wrong number of arguments". Now all work correctly.
+- **`int.upper()` segfault**: calling a string method on an int variable crashed at runtime. Now gives clear error: "Unknown method 'upper' for type 'int'".
+- **`Http.listen()` missing**: was registered in checker but had no implementation. Added as alias to `Http_serve`. Also added `Http.method()`, `Http.path()`, `Http.fd()` helpers for parsing request data.
+- **String array `.sort()`**: used int comparator instead of `strcmp`. Now correctly dispatches to string sort.
 - **`.sort()` was a no-op**: codegen emitted `array_sort_copy()` which returned a sorted copy that was discarded. Now emits in-place `array_sort(&arr)`.
 - **Signed division**: `-7 / 2` gave `-4` (arithmetic shift rounds toward -∞). Removed shift strength reductions for signed division. Now correctly gives `-3`.
 - **Division by zero**: panics at runtime with clear message (was silent 0).
