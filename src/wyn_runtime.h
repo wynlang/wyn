@@ -749,8 +749,88 @@ static int _wyn_cmp_str(const void* a, const void* b) {
     if (!sb) sb = "";
     return strcmp(sa, sb);
 }
+// Inline introsort for raw long long arrays — maximum cache efficiency
+static void _wyn_isort_ll(long long* d, int n) {
+    for (int i = 1; i < n; i++) {
+        long long key = d[i];
+        int j = i - 1;
+        while (j >= 0 && d[j] > key) { d[j+1] = d[j]; j--; }
+        d[j+1] = key;
+    }
+}
+static int _wyn_cmp_ll(const void* a, const void* b) {
+    long long va = *(const long long*)a, vb = *(const long long*)b;
+    return (va > vb) - (va < vb);
+}
+static void _wyn_qsort_ll(long long* d, int n, int depth) {
+    while (n > 16) {
+        if (depth == 0) { qsort(d, n, sizeof(long long), _wyn_cmp_ll); return; }
+        depth--;
+        int mid = n / 2;
+        if (d[0] > d[mid]) { long long t = d[0]; d[0] = d[mid]; d[mid] = t; }
+        if (d[0] > d[n-1]) { long long t = d[0]; d[0] = d[n-1]; d[n-1] = t; }
+        if (d[mid] > d[n-1]) { long long t = d[mid]; d[mid] = d[n-1]; d[n-1] = t; }
+        long long pivot = d[mid];
+        { long long t = d[mid]; d[mid] = d[n-2]; d[n-2] = t; }
+        int i = 0, j = n - 2;
+        for (;;) {
+            while (d[++i] < pivot);
+            while (d[--j] > pivot);
+            if (i >= j) break;
+            { long long t = d[i]; d[i] = d[j]; d[j] = t; }
+        }
+        { long long t = d[i]; d[i] = d[n-2]; d[n-2] = t; }
+        int left = i, right = n - i - 1;
+        if (left < right) { _wyn_qsort_ll(d, left, depth); d += i + 1; n = right; }
+        else { _wyn_qsort_ll(d + i + 1, right, depth); n = left; }
+    }
+    _wyn_isort_ll(d, n);
+}
+// Inline introsort for int arrays — avoids qsort function pointer overhead
+static inline void _wyn_swap_val(WynValue* a, WynValue* b) {
+    WynValue t = *a; *a = *b; *b = t;
+}
+static void _wyn_isort_int(WynValue* d, int n) {
+    for (int i = 1; i < n; i++) {
+        WynValue key = d[i];
+        long long kv = key.data.int_val;
+        int j = i - 1;
+        while (j >= 0 && d[j].data.int_val > kv) { d[j+1] = d[j]; j--; }
+        d[j+1] = key;
+    }
+}
+static void _wyn_qsort_int(WynValue* d, int n, int depth) {
+    while (n > 16) {
+        if (depth == 0) { qsort(d, n, sizeof(WynValue), _wyn_cmp_int); return; } // heapsort fallback
+        depth--;
+        // Median-of-three pivot
+        int mid = n / 2;
+        if (d[0].data.int_val > d[mid].data.int_val) _wyn_swap_val(&d[0], &d[mid]);
+        if (d[0].data.int_val > d[n-1].data.int_val) _wyn_swap_val(&d[0], &d[n-1]);
+        if (d[mid].data.int_val > d[n-1].data.int_val) _wyn_swap_val(&d[mid], &d[n-1]);
+        long long pivot = d[mid].data.int_val;
+        _wyn_swap_val(&d[mid], &d[n-2]);
+        int i = 0, j = n - 2;
+        for (;;) {
+            while (d[++i].data.int_val < pivot);
+            while (d[--j].data.int_val > pivot);
+            if (i >= j) break;
+            _wyn_swap_val(&d[i], &d[j]);
+        }
+        _wyn_swap_val(&d[i], &d[n-2]);
+        // Recurse on smaller partition, loop on larger
+        int left = i, right = n - i - 1;
+        if (left < right) { _wyn_qsort_int(d, left, depth); d += i + 1; n = right; }
+        else { _wyn_qsort_int(d + i + 1, right, depth); n = left; }
+    }
+    _wyn_isort_int(d, n);
+}
 void array_sort(WynArray* arr) {
-    if (arr->count > 1) qsort(arr->data, arr->count, sizeof(WynValue), _wyn_cmp_int);
+    int n = arr->count;
+    if (n <= 1) return;
+    int depth = 0; for (int t = n; t > 1; t >>= 1) depth++;
+    depth *= 2;
+    _wyn_qsort_int(arr->data, n, depth);
 }
 void array_sort_str(WynArray* arr) {
     if (arr->count > 1) qsort(arr->data, arr->count, sizeof(WynValue), _wyn_cmp_str);
