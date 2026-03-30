@@ -379,6 +379,20 @@ void codegen_expr(Expr* expr) {
                 }
                 if (folded) { emit("%lld", result); break; }
             }
+            // String repeat: "ha" * 3 → string_repeat("ha", 3)
+            if (expr->binary.op.type == TOKEN_STAR) {
+                bool left_is_str = (expr->binary.left->type == EXPR_STRING) ||
+                    (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_STRING);
+                if (left_is_str) {
+                    emit("string_repeat(");
+                    codegen_expr(expr->binary.left);
+                    emit(", ");
+                    codegen_expr(expr->binary.right);
+                    emit(")");
+                    break;
+                }
+            }
+
             // Special handling for string concatenation with + operator
             if (expr->binary.op.type == TOKEN_PLUS) {
                 // Check if either operand is actually a string type

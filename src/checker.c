@@ -2237,6 +2237,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return builtin_int;
             }
             
+            // String repeat: "ha" * 3 → string
+            if (expr->binary.op.type == TOKEN_STAR && left->kind == TYPE_STRING && right->kind == TYPE_INT) {
+                expr->expr_type = builtin_string;
+                return builtin_string;
+            }
+
             // Allow string concatenation with + operator
             if (expr->binary.op.type == TOKEN_PLUS) {
                 // Allow string + string, string + int, int + string
