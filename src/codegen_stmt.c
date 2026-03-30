@@ -480,6 +480,11 @@ void codegen_stmt(Stmt* stmt) {
                             char _vn3[64]; snprintf(_vn3, 64, "%.*s", _obj->token.length, _obj->token.start);
                             extern const char* get_struct_var_type(const char*);
                             _stype = get_struct_var_type(_vn3);
+                            // Static constructor: Type.new() — object is the type name itself
+                            if (!_stype) {
+                                extern int is_known_struct(const char*);
+                                if (is_known_struct(_vn3)) _stype = _vn3;
+                            }
                         }
                         // Chained method on struct
                         if (!_stype && _obj->type == EXPR_METHOD_CALL && _obj->method_call.object->type == EXPR_IDENT) {

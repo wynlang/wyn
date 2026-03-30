@@ -1555,11 +1555,22 @@ void codegen_expr(Expr* expr) {
                     break;
                 }
                 
+                // Check if this is a static method call (Type.method() vs instance.method())
+                bool is_static_call = false;
+                if (expr->method_call.object->type == EXPR_IDENT) {
+                    char _tn[128]; snprintf(_tn, 128, "%.*s", type_name.length, type_name.start);
+                    char _on[128]; snprintf(_on, 128, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                    if (strcmp(_tn, _on) == 0) is_static_call = true;
+                }
+                
                 emit("%.*s_%.*s(", type_name.length, type_name.start, 
                      method.length, method.start);
-                codegen_expr(expr->method_call.object);
+                if (!is_static_call) {
+                    codegen_expr(expr->method_call.object);
+                    if (expr->method_call.arg_count > 0) emit(", ");
+                }
                 for (int i = 0; i < expr->method_call.arg_count; i++) {
-                    emit(", ");
+                    if (i > 0) emit(", ");
                     codegen_expr(expr->method_call.args[i]);
                 }
                 emit(")");

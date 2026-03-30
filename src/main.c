@@ -223,7 +223,7 @@ int main(int argc, char** argv) {
         
         fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
         fprintf(stderr, "  \033[33m--fast\033[0m                  Skip optimizations (fastest compile)\n");
-        fprintf(stderr, "  \033[33m--release               Full optimizations (-O3)\n");
+        fprintf(stderr, "  \033[33m--release\033[0m               Full optimizations (-O3)\n");
         fprintf(stderr, "  \033[33m--debug\033[0m                Keep .c and .out artifacts\n");
         
         fprintf(stderr, "\n\033[2mhttps://wynlang.com\033[0m\n");
@@ -648,7 +648,7 @@ int main(int argc, char** argv) {
         print_banner(get_version());
         fprintf(stderr, "\033[1mUsage:\033[0m wyn \033[33m<command>\033[0m [options]\n\n");
         fprintf(stderr, "\033[1mDevelop:\033[0m\n");
-        fprintf(stderr, "  \033[32mrun <file.wyn>         Compile and run (-e for eval)\n");
+        fprintf(stderr, "  \033[32mrun\033[0m <file.wyn>         Compile and run (-e for eval)\n");
         fprintf(stderr, "  \033[32mcheck\033[0m <file.wyn>       Type-check without compiling\n");
         fprintf(stderr, "  \033[32mfmt\033[0m <file.wyn>         Format source file\n");
         fprintf(stderr, "  \033[32mtest\033[0m                    Run project tests\n");
@@ -675,7 +675,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
         fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
         fprintf(stderr, "  \033[33m--fast\033[0m                  Skip optimizations (fastest compile)\n");
-        fprintf(stderr, "  \033[33m--release               Full optimizations (-O3)\n");
+        fprintf(stderr, "  \033[33m--release\033[0m               Full optimizations (-O3)\n");
         fprintf(stderr, "  \033[33m--debug\033[0m                Keep .c and .out artifacts\n");
         fprintf(stderr, "\n\033[1mCross-compile targets:\033[0m\n");
         fprintf(stderr, "  linux, macos, windows, ios, android\n");
