@@ -3594,11 +3594,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
         }
         case EXPR_OPTIONAL_TYPE: {
-            // T2.5.1: Optional Type Implementation - Type System Agent addition
+            // T2.5.1: Optional Type Implementation
             Type* inner_type = check_expr(expr->optional_type.inner_type, scope);
             if (!inner_type) return NULL;
             
-            // Create optional type
+            // Map int? → OptionInt, string? → OptionString (concrete struct types)
+            if (inner_type->kind == TYPE_INT) {
+                Token oi_name = {TOKEN_IDENT, "OptionInt", 9, 0};
+                Symbol* sym = find_symbol(scope, oi_name);
+                if (sym) { expr->expr_type = sym->type; return sym->type; }
+            } else if (inner_type->kind == TYPE_STRING) {
+                Token os_name = {TOKEN_IDENT, "OptionString", 12, 0};
+                Symbol* sym = find_symbol(scope, os_name);
+                if (sym) { expr->expr_type = sym->type; return sym->type; }
+            }
+            
+            // Fallback: generic optional type
             Type* optional_type = make_type(TYPE_OPTIONAL);
             optional_type->optional_type.inner_type = inner_type;
             expr->expr_type = optional_type;
@@ -3982,12 +3993,17 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     Type* actual_type = check_expr(stmt->var.init, scope);
                     // Task 1.1: Check type mismatch between declared and actual type
                     if (init_type && actual_type && !types_equal(init_type, actual_type)) {
-                        char expected_str[128], actual_str[128];
-                        snprintf(expected_str, sizeof(expected_str), "%s", type_to_string(init_type));
-                        snprintf(actual_str, sizeof(actual_str), "%s", type_to_string(actual_type));
-                        type_error_mismatch(expected_str, actual_str, "variable declaration",
-                            stmt->var.name.line, 0);
-                        had_error = true;
+                        // Allow optional types to accept struct values (OptionInt_Some returns struct)
+                        if (init_type->kind == TYPE_OPTIONAL && actual_type->kind == TYPE_STRUCT) {
+                            // Compatible — OptionInt is a struct
+                        } else {
+                            char expected_str[128], actual_str[128];
+                            snprintf(expected_str, sizeof(expected_str), "%s", type_to_string(init_type));
+                            snprintf(actual_str, sizeof(actual_str), "%s", type_to_string(actual_type));
+                            type_error_mismatch(expected_str, actual_str, "variable declaration",
+                                stmt->var.name.line, 0);
+                            had_error = true;
+                        }
                     }
                 }
             } else if (stmt->var.init) {

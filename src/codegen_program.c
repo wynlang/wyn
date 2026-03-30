@@ -479,7 +479,15 @@ void codegen_program(Program* prog) {
                         return_type = return_type_buf;
                     }
                 } else if (fn->return_type->type == EXPR_OPTIONAL_TYPE) {
-                    return_type = "WynOptional*";
+                    Expr* inner = fn->return_type->optional_type.inner_type;
+                    if (inner && inner->type == EXPR_IDENT) {
+                        Token t = inner->token;
+                        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return_type = "OptionInt";
+                        else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return_type = "OptionString";
+                        else return_type = "WynOptional*";
+                    } else {
+                        return_type = "WynOptional*";
+                    }
                 } else if (fn->return_type->type == EXPR_FN_TYPE) {
                     // Function type: fn(int) -> int becomes WynClosure
                     return_type = "WynClosure";

@@ -279,9 +279,16 @@ void codegen_stmt(Stmt* stmt) {
             // Check for explicit type annotation first
             if (stmt->var.type) {
                 if (stmt->var.type->type == EXPR_OPTIONAL_TYPE) {
-                    // Handle optional type annotation like int?
-                    c_type = "WynOptional*";
-                    needs_arc_management = true;
+                    // Handle optional type annotation like int?, string?
+                    Expr* inner = stmt->var.type->optional_type.inner_type;
+                    if (inner && inner->type == EXPR_IDENT && inner->token.length == 3 && memcmp(inner->token.start, "int", 3) == 0) {
+                        c_type = "OptionInt";
+                    } else if (inner && inner->type == EXPR_IDENT && inner->token.length == 6 && memcmp(inner->token.start, "string", 6) == 0) {
+                        c_type = "OptionString";
+                    } else {
+                        c_type = "WynOptional*";
+                        needs_arc_management = true;
+                    }
                 } else if (stmt->var.type->type == EXPR_ARRAY) {
                     // Handle typed array annotation like [int], [TokenType]
                     // Use WynIntArray for [int] for performance (only when not returned from function)
@@ -1707,7 +1714,16 @@ void codegen_stmt(Stmt* stmt) {
                         return_type = return_type_buf;
                     }
                 } else if (stmt->fn.return_type->type == EXPR_OPTIONAL_TYPE) {
-                    return_type = "WynOptional*";
+                    // Map TYPE? to the concrete optional type
+                    Expr* inner = stmt->fn.return_type->optional_type.inner_type;
+                    if (inner && inner->type == EXPR_IDENT) {
+                        Token t = inner->token;
+                        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return_type = "OptionInt";
+                        else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return_type = "OptionString";
+                        else return_type = "WynOptional*";
+                    } else {
+                        return_type = "WynOptional*";
+                    }
                 } else if (stmt->fn.return_type->type == EXPR_FN_TYPE) {
                     return_type = "WynClosure";
                 }

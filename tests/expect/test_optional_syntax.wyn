@@ -1,0 +1,11 @@
+// EXPECT: 42
+// EXPECT: 0
+// Test: int? optional syntax parses correctly
+
+fn main() -> int {
+    var a: int? = OptionInt_Some(42)
+    println(OptionInt_unwrap(a).to_string())
+    var b: int? = OptionInt_None()
+    println(OptionInt_is_some(b).to_string())
+    return 0
+}
