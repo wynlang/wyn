@@ -283,8 +283,22 @@ void codegen_stmt(Stmt* stmt) {
                     c_type = "WynOptional*";
                     needs_arc_management = true;
                 } else if (stmt->var.type->type == EXPR_ARRAY) {
-                    // Handle typed array annotation like [TokenType]
-                    c_type = "WynArray";
+                    // Handle typed array annotation like [int], [TokenType]
+                    // Use WynIntArray for [int] for performance (only when not returned from function)
+                    bool is_int_array = false;
+                    extern bool codegen_fn_returns_array;
+                    if (!codegen_fn_returns_array && stmt->var.type->array.count > 0 && stmt->var.type->array.elements[0]->type == EXPR_IDENT) {
+                        Token et = stmt->var.type->array.elements[0]->token;
+                        if (et.length == 3 && memcmp(et.start, "int", 3) == 0) is_int_array = true;
+                    }
+                    if (is_int_array) {
+                        c_type = "WynIntArray";
+                        char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                        extern void register_int_array_var(const char*);
+                        register_int_array_var(_vn);
+                    } else {
+                        c_type = "WynArray";
+                    }
                     needs_arc_management = false;
                 } else if (stmt->var.type->type == EXPR_CALL) {
                     // Handle generic type instantiation: Array<T>, HashMap<K,V>, Option<T>, etc.
@@ -1367,10 +1381,11 @@ void codegen_stmt(Stmt* stmt) {
             if (needs_arc_management) {
                 codegen_expr(stmt->var.init);
             } else {
-                // Set spawn array flag for WynIntArray emission
+                // Set spawn/int array flag for WynIntArray emission
                 bool _was_int_array = codegen_emit_int_array;
                 { char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
-                  if (is_spawn_array(_vn)) codegen_emit_int_array = true; }
+                  extern int is_int_array_var(const char*);
+                  if (is_spawn_array(_vn) || is_int_array_var(_vn)) codegen_emit_int_array = true; }
                 codegen_expr(stmt->var.init);
                 codegen_emit_int_array = _was_int_array;
             }
@@ -1617,6 +1632,9 @@ void codegen_stmt(Stmt* stmt) {
         case STMT_FN: {
             // Determine return type
             { extern void reset_defers(); reset_defers(); }
+            extern bool codegen_fn_returns_array;
+            bool _prev_fn_returns_array = codegen_fn_returns_array;
+            codegen_fn_returns_array = (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_ARRAY);
             const char* return_type = stmt->fn.return_type ? "long long" : "void"; // default
             char return_type_buf[256] = {0};  // Buffer for custom return types
             bool is_async = stmt->fn.is_async;
@@ -2034,6 +2052,7 @@ void codegen_stmt(Stmt* stmt) {
             
             pop_scope();   // Auto-cleanup before function end
             current_fn_return_kind = prev_fn_return_kind;
+            codegen_fn_returns_array = _prev_fn_returns_array;
             emit("}\n\n");
             break;
         }
@@ -2795,6 +2814,24 @@ void codegen_stmt(Stmt* stmt) {
                         if (stmt->for_stmt.body) codegen_stmt(stmt->for_stmt.body);
                         emit("    }\n");
                         emit("    wyn_iter_destroy(__iter);\n");
+                        pop_scope(); emit("}\n");
+                        break;
+                    }
+                }
+                // Check if iterating over a WynIntArray
+                if (stmt->for_stmt.array_expr->type == EXPR_IDENT) {
+                    char _ian[128]; snprintf(_ian, 128, "%.*s", stmt->for_stmt.array_expr->token.length, stmt->for_stmt.array_expr->token.start);
+                    extern int is_int_array_var(const char*);
+                    if (is_int_array_var(_ian)) {
+                        emit("{\n"); push_scope();
+                        emit("    WynIntArray __iter_iarr = "); codegen_expr(stmt->for_stmt.array_expr); emit(";\n");
+                        emit("    for (long long __i = 0; __i < __iter_iarr.count; __i++) {\n");
+                        emit("        long long %.*s = __iter_iarr.data[__i];\n", stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
+                        if (stmt->for_stmt.has_index) {
+                            emit("        long long %.*s = __i;\n", stmt->for_stmt.index_var.length, stmt->for_stmt.index_var.start);
+                        }
+                        codegen_stmt(stmt->for_stmt.body);
+                        emit("    }\n");
                         pop_scope(); emit("}\n");
                         break;
                     }

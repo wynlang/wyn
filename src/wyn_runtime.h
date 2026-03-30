@@ -697,6 +697,8 @@ long long int_array_get(WynIntArray a, int i) {
     return a.data[i];
 }
 int int_array_len(WynIntArray a) { return a.count; }
+static int _int_array_cmp(const void* a, const void* b) { long long x = *(const long long*)a, y = *(const long long*)b; return (x > y) - (x < y); }
+void int_array_sort(WynIntArray* a) { if (a->count > 1) qsort(a->data, a->count, sizeof(long long), _int_array_cmp); }
 
 void array_push(WynArray* arr, long long value) {
     if (arr->count >= arr->capacity) {

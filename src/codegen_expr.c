@@ -1714,6 +1714,25 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
+            // WynIntArray dispatch — typed [int] arrays
+            if (expr->method_call.object->type == EXPR_IDENT) {
+                char _ian[128]; snprintf(_ian, 128, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                extern int is_int_array_var(const char*);
+                if (is_int_array_var(_ian)) {
+                    Token m = expr->method_call.method;
+                    if (m.length == 4 && memcmp(m.start, "push", 4) == 0) {
+                        emit("int_array_push(&("); codegen_expr(expr->method_call.object); emit("), ");
+                        codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                    }
+                    if (m.length == 4 && memcmp(m.start, "sort", 4) == 0) {
+                        emit("int_array_sort(&("); codegen_expr(expr->method_call.object); emit("))"); break;
+                    }
+                    if (m.length == 3 && memcmp(m.start, "len", 3) == 0) {
+                        emit("int_array_len("); codegen_expr(expr->method_call.object); emit(")"); break;
+                    }
+                }
+            }
+
             // Type-aware method dispatch (Phase 4)
             Type* object_type = expr->method_call.object->expr_type;
             
@@ -2560,6 +2579,16 @@ void codegen_expr(Expr* expr) {
                 emit("({ WynIntArray __arr_%d = int_array_new(); __arr_%d; })", arr_id, arr_id);
                 break;
             }
+            if (codegen_emit_int_array && expr->array.count > 0) {
+                emit("({ WynIntArray __arr_%d = int_array_new(); ", arr_id);
+                for (int i = 0; i < expr->array.count; i++) {
+                    emit("int_array_push(&__arr_%d, ", arr_id);
+                    codegen_expr(expr->array.elements[i]);
+                    emit("); ");
+                }
+                emit("__arr_%d; })", arr_id);
+                break;
+            }
             emit("({ WynArray __arr_%d = array_new(); ", arr_id);
             for (int i = 0; i < expr->array.count; i++) {
                 Expr* elem = expr->array.elements[i];
@@ -2711,7 +2740,8 @@ void codegen_expr(Expr* expr) {
                 if (expr->index.array->type == EXPR_IDENT) {
                     char _on[256]; int _ol = expr->index.array->token.length < 255 ? expr->index.array->token.length : 255;
                     memcpy(_on, expr->index.array->token.start, _ol); _on[_ol] = '\0';
-                    if (is_spawn_array(_on)) {
+                    extern int is_int_array_var(const char*);
+                    if (is_spawn_array(_on) || is_int_array_var(_on)) {
                         emit("int_array_get(");
                         codegen_expr(expr->index.array);
                         emit(", ");

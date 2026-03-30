@@ -136,6 +136,7 @@ static bool codegen_skip_strdup = false;
 
 // Spawn array: emit WynIntArray instead of WynArray for current init
 static bool codegen_emit_int_array = false;
+static bool codegen_fn_returns_array = false;
 
 // Module emission tracking (reset per compilation)
 static bool modules_emitted_this_compilation = false;
@@ -365,6 +366,19 @@ int is_known_array_var(const char* name) {
 // String content array tracking — arrays whose elements are strings
 static char* str_array_var_names[64];
 static int str_array_var_count = 0;
+
+// Typed int array tracking — [int] arrays using WynIntArray
+static char* int_array_var_names[256];
+static int int_array_var_count = 0;
+void register_int_array_var(const char* name) {
+    if (int_array_var_count < 256) int_array_var_names[int_array_var_count++] = strdup(name);
+}
+int is_int_array_var(const char* name) {
+    for (int i = 0; i < int_array_var_count; i++) {
+        if (strcmp(int_array_var_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
 void register_str_array_var(const char* name) {
     for (int i = 0; i < str_array_var_count; i++)
         if (strcmp(str_array_var_names[i], name) == 0) return;
