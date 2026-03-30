@@ -2254,23 +2254,18 @@ int File_mkdir(const char* p) { return file_mkdir(p); }
 char* File_list_dir(const char* p) {
     DIR* dir = opendir(p);
     if (!dir) return "";
-    // Two-pass: compute size, then build
-    size_t total = 0;
+    size_t cap = 1024, pos = 0;
+    char* result = wyn_str_alloc(cap);
     struct dirent* entry;
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_name[0] == '.') continue;
-        total += strlen(entry->d_name) + 1;
-    }
-    rewinddir(dir);
-    char* result = wyn_str_alloc(total + 1);
-    size_t pos = 0;
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
         size_t nl = strlen(entry->d_name);
+        if (pos + nl + 1 >= cap) { cap = (pos + nl + 1) * 2; char* nr = wyn_str_alloc(cap); memcpy(nr, result, pos); wyn_rc_release(result); result = nr; }
         memcpy(result + pos, entry->d_name, nl); pos += nl;
         result[pos++] = '\n';
     }
     result[pos] = 0;
+    wyn_rc_set_length(result, (unsigned int)pos);
     closedir(dir);
     return result;
 }
