@@ -24,7 +24,14 @@ jobs:
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
-        run: choco install make mingw -y
+        run: |
+          for ($i = 0; $i -lt 3; $i++) {
+            choco install make mingw -y --no-progress 2>$null
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "Retry $($i+1)/3..."
+            Start-Sleep -Seconds 10
+          }
+          gcc --version
         shell: pwsh
 
       - name: Build compiler
