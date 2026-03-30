@@ -2159,22 +2159,27 @@ int main(int argc, char** argv) {
         // If argument is a directory, format all .wyn files recursively
         struct stat fmt_st;
         if (stat(argv[2], &fmt_st) == 0 && S_ISDIR(fmt_st.st_mode)) {
-            char fmt_cmd[4096];
-            if (check_only) {
-                snprintf(fmt_cmd, sizeof(fmt_cmd),
-                    "changed=0; for f in $(find %s -name '*.wyn' -not -path '*/.archive/*'); do "
-                    "orig=$(cat \"$f\"); formatted=$(%s fmt \"$f\" 2>/dev/null && cat \"$f\"); "
-                    "if [ \"$orig\" != \"$formatted\" ]; then echo \"  ✗ $f\"; changed=1; fi; done; "
-                    "[ $changed -eq 0 ] && echo '✓ All files formatted' || exit 1",
-                    argv[2], argv[0]);
-            } else {
-                snprintf(fmt_cmd, sizeof(fmt_cmd),
-                    "count=0; for f in $(find %s -name '*.wyn' -not -path '*/.archive/*'); do "
-                    "%s fmt \"$f\" 2>/dev/null && count=$((count+1)); done; "
-                    "echo \"✓ Formatted $count files\"",
-                    argv[2], argv[0]);
+            // Use cmd_fmt directly on each file (no shell exec)
+            extern int cmd_fmt(const char*, int, char**);
+            int fmt_fail = 0, fmt_count = 0;
+            // Simple recursive scan using find via popen (cross-platform enough)
+            char find_cmd[512];
+            snprintf(find_cmd, sizeof(find_cmd), "find %s -name '*.wyn' -not -path '*/.archive/*'", argv[2]);
+            FILE* fp = popen(find_cmd, "r");
+            if (fp) {
+                char fpath[512];
+                while (fgets(fpath, sizeof(fpath), fp)) {
+                    fpath[strcspn(fpath, "\n")] = 0;
+                    if (cmd_fmt(fpath, argc, argv) != 0) fmt_fail++;
+                    fmt_count++;
+                }
+                pclose(fp);
             }
-            return system(fmt_cmd) == 0 ? 0 : 1;
+            if (check_only) {
+                return fmt_fail > 0 ? 1 : 0;
+            }
+            printf("✓ Formatted %d files\n", fmt_count);
+            return 0;
         }
         return cmd_fmt(argv[2], argc, argv);
     }
