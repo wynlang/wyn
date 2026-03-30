@@ -10,22 +10,44 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
 #endif
-
-extern int cmd_compile(const char* target, int argc, char** argv);
+#endif
 
 typedef struct {
     int total, passed, failed;
     double total_time;
 } TestResults;
 
+// Get path to the wyn executable itself
+static char wyn_exe[1024] = "";
+static void find_wyn_exe(void) {
+    if (wyn_exe[0]) return;
+#ifdef __APPLE__
+    uint32_t sz = sizeof(wyn_exe);
+    if (_NSGetExecutablePath(wyn_exe, &sz) != 0) strcpy(wyn_exe, "wyn");
+#elif defined(__linux__)
+    ssize_t len = readlink("/proc/self/exe", wyn_exe, sizeof(wyn_exe) - 1);
+    if (len > 0) wyn_exe[len] = '\0'; else strcpy(wyn_exe, "wyn");
+#elif defined(_WIN32)
+    GetModuleFileNameA(NULL, wyn_exe, sizeof(wyn_exe));
+#else
+    strcpy(wyn_exe, "wyn");
+#endif
+}
+
 // Cross-platform process execution (no system() / shell)
-static int run_binary(const char* path) {
+static int run_process(const char* path, char* const argv[]) {
 #ifdef _WIN32
     STARTUPINFO si = { .cb = sizeof(si) };
     PROCESS_INFORMATION pi;
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "%s", path);
+    // Build command line from argv
+    char cmd[4096] = "";
+    for (int i = 0; argv[i]; i++) {
+        if (i > 0) strcat(cmd, " ");
+        strcat(cmd, argv[i]);
+    }
     if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
         return 1;
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -34,6 +56,26 @@ static int run_binary(const char* path) {
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     return (int)exit_code;
+#else
+    pid_t pid = fork();
+    if (pid < 0) return 1;
+    if (pid == 0) {
+        // Suppress stdout/stderr from build
+        freopen("/dev/null", "w", stdout);
+        freopen("/dev/null", "w", stderr);
+        execv(path, argv);
+        _exit(127);
+    }
+    int status;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+#endif
+}
+
+static int run_binary(const char* path) {
+#ifdef _WIN32
+    char* argv[] = {(char*)path, NULL};
+    return run_process(path, argv);
 #else
     pid_t pid = fork();
     if (pid < 0) return 1;
@@ -82,6 +124,7 @@ static int collect_tests(const char* dir, char files[][512], int max) {
 int cmd_test(const char* test_dir, int argc, char** argv) {
     (void)argc; (void)argv;
     if (!test_dir) test_dir = "tests";
+    find_wyn_exe();
 
     printf("\033[1m🧪 Wyn Test Runner\033[0m\n");
     printf("Scanning: %s/\n\n", test_dir);
@@ -100,16 +143,19 @@ int cmd_test(const char* test_dir, int argc, char** argv) {
         r.total++;
         clock_t ts = clock();
 
-        // Compile
-        if (cmd_compile(files[i], 0, NULL) != 0) {
+        // Compile using `wyn build <file>` (handles WYN_ROOT correctly)
+        char bin[512];
+        snprintf(bin, sizeof(bin), "%.*s", (int)(strlen(files[i]) - 4), files[i]);
+        char* build_argv[] = {wyn_exe, "build", files[i], NULL};
+        int compile_rc = run_process(wyn_exe, build_argv);
+
+        if (compile_rc != 0) {
             r.failed++;
             printf("  \033[31m✗\033[0m %s (compile error)\n", files[i]);
             continue;
         }
 
         // Run compiled binary
-        char bin[512];
-        snprintf(bin, sizeof(bin), "%s.out", files[i]);
         int rc = run_binary(bin);
         double dt = (double)(clock() - ts) / CLOCKS_PER_SEC;
 

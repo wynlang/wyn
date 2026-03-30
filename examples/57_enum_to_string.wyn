@@ -1,31 +1,16 @@
 // Enum to_string() — v1.11 feature
 // Enums now have a .to_string() method that returns the variant name.
 
-enum Color {
-    Red,
-    Green,
-    Blue
-}
-
-enum Direction {
-    North,
-    South,
-    East,
-    West
-}
+enum Color { Red, Green, Blue }
+enum Direction { North, South, East, West }
 
 fn main() -> int {
-    var c = Color::Red;
-    println("Color: ${c.to_string()}");  // Color: Red
+    println(Color.Red.to_string())
+    println(Color.Green.to_string())
+    println(Color.Blue.to_string())
 
-    var d = Direction::West;
-    println("Direction: ${d.to_string()}");  // Direction: West
+    var d = Direction.West
+    println(d.to_string())
 
-    // Useful for logging and debugging
-    var colors = [Color::Red, Color::Green, Color::Blue];
-    for i, col in colors {
-        println("  colors[${i}] = ${col.to_string()}");
-    }
-
-    return 0;
+    return 0
 }

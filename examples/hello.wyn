@@ -1,8 +1,7 @@
 fn main() -> int {
-    print(42)
-    print(100)
+    println("Hello, World! 🐉")
     var x = 5
     var y = 10
-    print(x + y)
+    println("x + y = " + (x + y).to_string())
     return 0
 }

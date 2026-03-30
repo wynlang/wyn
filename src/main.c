@@ -2918,7 +2918,7 @@ int create_new_project(const char* project_name) {
     printf("  %s/tests/test_main.wyn\n", project_name);
     printf("  %s/README.md\n", project_name);
     printf("\nTo build and run:\n  cd %s\n  wyn run\n", project_name);
-    printf("\nTo run tests:\n  wyn run tests/test_main.wyn\n");
+    printf("\nTo run tests:\n  wyn test\n");
     
     return 0;
 }
@@ -2994,7 +2994,7 @@ int create_new_project_with_template(const char* name, const char* template, con
         "| GET | `/api/items` | List items (JSON) |\n"
         "| POST | `/api/items` | Create item |\n"
         "| GET | `/api/health` | Health check |\n\n"
-        "## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n\n"
+        "## Test\n\n```bash\nwyn test\n```\n\n"
         "## Deploy\n\n```bash\nwyn deploy dev\n```\n");
     else if (strcmp(template, "api") == 0) fprintf(f,
         "A REST API built with [Wyn](https://wynlang.com).\n\n"
@@ -3017,14 +3017,14 @@ int create_new_project_with_template(const char* name, const char* template, con
         "curl http://localhost:8080/api/items/1\n"
         "curl -X DELETE http://localhost:8080/api/items/1\n"
         "```\n\n"
-        "## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n\n"
+        "## Test\n\n```bash\nwyn test\n```\n\n"
         "## Deploy\n\n```bash\nwyn deploy dev\n```\n");
     else if (strcmp(template, "cli") == 0) fprintf(f,
         "A CLI tool built with [Wyn](https://wynlang.com).\n\n"
         "## Usage\n\n"
         "```bash\nwyn run help\nwyn run info\nwyn run run <file>\nwyn run list\n```\n\n"
         "## Build\n\n```bash\nwyn build .\n./%s --help\n```\n\n"
-        "## Test\n\n```bash\nwyn run tests/test_main.wyn\n```\n", name);
+        "## Test\n\n```bash\nwyn test\n```\n", name);
     else if (strcmp(template, "lib") == 0) {
         if (lib_target && strcmp(lib_target, "wyn") == 0)
             fprintf(f, "A Wyn package.\n\n## Install\n\n```bash\nwyn pkg install github.com/yourname/%s\n```\n\n## Usage\n\n```wyn\nimport %s\nprintln(%s.greet())\n```\n", name, name, name);
