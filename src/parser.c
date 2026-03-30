@@ -2074,8 +2074,19 @@ Stmt* statement() {
         
         // Check for range syntax: for i in 0..10 or array iteration: for item in array
         if (check(TOKEN_IDENT)) {
-            Token loop_var = parser.current;
+            Token first_var = parser.current;
             advance();
+            
+            // Check for indexed iteration: for i, v in arr
+            Token index_var = {0};
+            bool has_index = false;
+            if (match(TOKEN_COMMA)) {
+                index_var = first_var;
+                has_index = true;
+                first_var = parser.current;
+                expect(TOKEN_IDENT, "Expected value variable after ','");
+            }
+            
             if (match(TOKEN_IN)) {
                 // Parse the expression after 'in'
                 Expr* iter_expr = expression();
@@ -2100,7 +2111,7 @@ Stmt* statement() {
                     // Desugar to: for var i = start; i < end; i += 1
                     stmt->for_stmt.init = alloc_stmt();
                     stmt->for_stmt.init->type = STMT_VAR;
-                    stmt->for_stmt.init->var.name = loop_var;
+                    stmt->for_stmt.init->var.name = first_var;
                     stmt->for_stmt.init->var.init = iter_expr;
                     stmt->for_stmt.init->var.is_const = false;
                     
@@ -2108,7 +2119,7 @@ Stmt* statement() {
                     cond->type = EXPR_BINARY;
                     cond->binary.left = alloc_expr();
                     cond->binary.left->type = EXPR_IDENT;
-                    cond->binary.left->token = loop_var;
+                    cond->binary.left->token = first_var;
                     cond->binary.op.type = TOKEN_LT;
                     cond->binary.op.start = "<";
                     cond->binary.op.length = 1;
@@ -2117,12 +2128,12 @@ Stmt* statement() {
                     
                     Expr* inc = alloc_expr();
                     inc->type = EXPR_ASSIGN;
-                    inc->assign.name = loop_var;
+                    inc->assign.name = first_var;
                     Expr* inc_val = alloc_expr();
                     inc_val->type = EXPR_BINARY;
                     inc_val->binary.left = alloc_expr();
                     inc_val->binary.left->type = EXPR_IDENT;
-                    inc_val->binary.left->token = loop_var;
+                    inc_val->binary.left->token = first_var;
                     inc_val->binary.op.type = TOKEN_PLUS;
                     inc_val->binary.op.start = "+";
                     inc_val->binary.op.length = 1;
@@ -2133,7 +2144,7 @@ Stmt* statement() {
                     inc->assign.value = inc_val;
                     stmt->for_stmt.increment = inc;
                 } else {
-                    // Array iteration: for item in array
+                    // Array iteration: for item in array  OR  for i, v in array
                     // If we had opening parens, expect closing parens
                     if (has_parens) {
                         expect(TOKEN_RPAREN, "Expected ')' after array");
@@ -2142,45 +2153,44 @@ Stmt* statement() {
                     // Simplified approach: desugar to range-based loop
                     // for item in array -> for i in 0..array.length { var item = array[i]; ... }
                     
-                    // Create index variable name (loop_var + "_i")
+                    // Create index variable name
                     static char index_name[64];
-                    snprintf(index_name, 64, "%.*s_i", loop_var.length, loop_var.start);
-                    Token index_var = {TOKEN_IDENT, index_name, strlen(index_name), loop_var.line};
+                    snprintf(index_name, 64, "%.*s_i", first_var.length, first_var.start);
+                    Token idx_tok = {TOKEN_IDENT, index_name, strlen(index_name), first_var.line};
                     
-                    // Initialize: var loop_var_i = 0
+                    // Initialize: var idx = 0
                     stmt->for_stmt.init = alloc_stmt();
                     stmt->for_stmt.init->type = STMT_VAR;
-                    stmt->for_stmt.init->var.name = index_var;
+                    stmt->for_stmt.init->var.name = idx_tok;
                     stmt->for_stmt.init->var.init = alloc_expr();
                     stmt->for_stmt.init->var.init->type = EXPR_INT;
                     Token zero = {TOKEN_INT, "0", 1, 0};
                     stmt->for_stmt.init->var.init->token = zero;
                     stmt->for_stmt.init->var.is_const = false;
                     
-                    // Condition: loop_var_i < array.length (simplified - use hardcoded length for now)
+                    // Condition: idx < array.length (simplified - use hardcoded length for now)
                     stmt->for_stmt.condition = alloc_expr();
                     stmt->for_stmt.condition->type = EXPR_BINARY;
                     stmt->for_stmt.condition->binary.left = alloc_expr();
                     stmt->for_stmt.condition->binary.left->type = EXPR_IDENT;
-                    stmt->for_stmt.condition->binary.left->token = index_var;
+                    stmt->for_stmt.condition->binary.left->token = idx_tok;
                     stmt->for_stmt.condition->binary.op.type = TOKEN_LT;
                     stmt->for_stmt.condition->binary.op.start = "<";
                     stmt->for_stmt.condition->binary.op.length = 1;
-                    // For now, assume array length is 3 (hardcoded for testing)
                     stmt->for_stmt.condition->binary.right = alloc_expr();
                     stmt->for_stmt.condition->binary.right->type = EXPR_INT;
                     Token three = {TOKEN_INT, "3", 1, 0};
                     stmt->for_stmt.condition->binary.right->token = three;
                     
-                    // Increment: loop_var_i += 1
+                    // Increment: idx += 1
                     stmt->for_stmt.increment = alloc_expr();
                     stmt->for_stmt.increment->type = EXPR_ASSIGN;
-                    stmt->for_stmt.increment->assign.name = index_var;
+                    stmt->for_stmt.increment->assign.name = idx_tok;
                     Expr* inc_val = alloc_expr();
                     inc_val->type = EXPR_BINARY;
                     inc_val->binary.left = alloc_expr();
                     inc_val->binary.left->type = EXPR_IDENT;
-                    inc_val->binary.left->token = index_var;
+                    inc_val->binary.left->token = idx_tok;
                     inc_val->binary.op.type = TOKEN_PLUS;
                     inc_val->binary.op.start = "+";
                     inc_val->binary.op.length = 1;
@@ -2192,7 +2202,9 @@ Stmt* statement() {
                     
                     // Store array expression and loop variable for body processing
                     stmt->for_stmt.array_expr = iter_expr;
-                    stmt->for_stmt.loop_var = loop_var;
+                    stmt->for_stmt.loop_var = first_var;
+                    stmt->for_stmt.has_index = has_index;
+                    if (has_index) stmt->for_stmt.index_var = index_var;
                 }
                 
                 expect(TOKEN_LBRACE, "Expected '{' after for header");

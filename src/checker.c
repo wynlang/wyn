@@ -4110,6 +4110,10 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     elem_type = array_type->array_type.element_type;
                 }
                 add_symbol(scope, stmt->for_stmt.loop_var, elem_type, false);
+                // Add index variable for indexed iteration: for i, v in arr
+                if (stmt->for_stmt.has_index) {
+                    add_symbol(scope, stmt->for_stmt.index_var, builtin_int, false);
+                }
             }
             
             check_stmt(stmt->for_stmt.body, scope);

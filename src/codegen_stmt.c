@@ -2861,6 +2861,11 @@ void codegen_stmt(Stmt* stmt) {
                     emit("long long %.*s = (__elem.type == WYN_TYPE_INT) ? __elem.data.int_val : 0;\n",
                          stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
                 }
+                // Emit index variable for indexed iteration: for i, v in arr
+                if (stmt->for_stmt.has_index) {
+                    emit("        long long %.*s = __i;\n",
+                         stmt->for_stmt.index_var.length, stmt->for_stmt.index_var.start);
+                }
                 codegen_stmt(stmt->for_stmt.body);
                 emit("    }\n");
                 pop_scope();

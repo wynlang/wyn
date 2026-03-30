@@ -1,0 +1,11 @@
+// EXPECT: 0:a
+// EXPECT: 1:b
+// EXPECT: 2:c
+
+fn main() -> int {
+    var arr = ["a", "b", "c"]
+    for i, v in arr {
+        println(i.to_string() + ":" + v)
+    }
+    return 0
+}
