@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.11.0 — "The Developer Experience Release" (2026-03-30)
+
+Make developers productive in their first hour. Every change improves error messages, tooling, or language ergonomics.
+
+### Language Features
+
+- **`enum.to_string()`** returns variant name: `Color.Red.to_string()` → `"Red"` (was `"0"`)
+- **`for i, v in arr`** indexed iteration: `for i, v in ["a","b","c"] { println(i.to_string() + ":" + v) }`
+- **`int?` optional syntax**: `var x: int? = OptionInt_Some(42)` — sugar for `OptionInt`
+- **`"ha" * 3` string repeat**: `"-" * 40` produces a 40-character separator line
+
+### Compiler Improvements
+
+- **Missing return is now an error**, not a warning: `fn get() -> int { }` fails to compile
+- **Type mismatch errors from Wyn**, not C: `var x: int = "hello"` shows clear Wyn error with line number and suggestion
+- **Typed arrays**: `var arr: [int] = []` uses `WynIntArray` (raw `long long*`) — sum 1M ints 2x faster
+
+### Tooling
+
+- **`wyn test`** rewritten: cross-platform test runner using direct process spawning (no shell exec), works on Windows
+- **`wyn fmt`** functional: 4-space indent, no semicolons, braces on same line. `wyn fmt --check` for CI
+
+### Internal
+
+- Converted strcat/strcpy to memcpy in codegen hot paths
+- 4 new expect tests, 4 new examples (57-60)
+- 5 new official package READMEs (opengl, sdl, wgpu, target-android, target-ios)
+
+### Metrics
+
+| Metric | v1.10 | v1.11 |
+|--------|-------|-------|
+| Unit tests | 110 | 110 |
+| BDD tests | 32 | 36 |
+| Binary size | 49KB | 49KB |
+| fib(35) | 33ms | 34ms |
+| Official packages | 31 | 36 |
+
 ## v1.10.0 — "The Quality Release" (2026-03-28)
 
 No new language features. Every change is about making the existing language faster, safer, and more stable.

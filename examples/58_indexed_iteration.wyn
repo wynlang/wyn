@@ -1,0 +1,23 @@
+// Indexed Iteration — v1.11 feature
+// for i, v in arr gives both the index and value.
+
+fn main() -> int {
+    var fruits = ["apple", "banana", "cherry"];
+
+    println("=== Indexed Iteration ===");
+    for i, fruit in fruits {
+        println("  ${i}: ${fruit}");
+    }
+    // Output:
+    //   0: apple
+    //   1: banana
+    //   2: cherry
+
+    // Works with int arrays too
+    var scores = [90, 85, 77];
+    for i, s in scores {
+        println("  Student ${i} scored ${s}");
+    }
+
+    return 0;
+}

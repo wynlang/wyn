@@ -1,0 +1,27 @@
+// Optional Types — v1.11 feature
+// Use int? to declare optional values. Wrap with OptionInt_Some/None, unwrap with OptionInt_unwrap.
+
+fn find_index(arr: [int], target: int) -> int? {
+    for i, v in arr {
+        if v == target {
+            return OptionInt_Some(i);
+        }
+    }
+    return OptionInt_None();
+}
+
+fn main() -> int {
+    var numbers = [10, 20, 30, 40];
+
+    var found = find_index(numbers, 30);
+    println("Found 30 at index: ${OptionInt_unwrap(found)}");  // 2
+
+    var missing = find_index(numbers, 99);
+    println("Is 99 missing? ${missing == OptionInt_None()}");  // true
+
+    // Direct optional variable
+    var x: int? = OptionInt_Some(42);
+    println("x = ${OptionInt_unwrap(x)}");  // 42
+
+    return 0;
+}

@@ -2190,6 +2190,25 @@ int main(int argc, char** argv) {
         return cmd_debug(argv[2], argc, argv);
     }
     
+    // Unknown command — check if it's a .wyn file or a typo
+    if (strcmp(command, "run") != 0) {
+        // Check if it looks like a filename
+        const char* ext = strrchr(command, '.');
+        if (!ext || strcmp(ext, ".wyn") != 0) {
+            fprintf(stderr, "\033[31mError:\033[0m Unknown command '%s'\n", command);
+            fprintf(stderr, "  Run \033[1mwyn help\033[0m for available commands.\n");
+            // Suggest closest match
+            const char* cmds[] = {"run","build","test","fmt","init","new","check","clean","repl","doc","bench","watch","deploy","version","help",NULL};
+            for (int i = 0; cmds[i]; i++) {
+                if (cmds[i][0] == command[0] || (strlen(command) > 2 && strstr(cmds[i], command))) {
+                    fprintf(stderr, "  Did you mean \033[1mwyn %s\033[0m?\n", cmds[i]);
+                    break;
+                }
+            }
+            return 1;
+        }
+    }
+
     if (strcmp(command, "run") == 0) {
         if (argc < 3) {
             // Try to find main.wyn or read wyn.toml
