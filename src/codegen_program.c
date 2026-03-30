@@ -607,8 +607,9 @@ void codegen_program(Program* prog) {
                         
                         // Build parameter types
                         char params_buf[256] = "";
+                        int pb_len = 0;
                         for (int k = 0; k < fn_type->param_count; k++) {
-                            if (k > 0) strcat(params_buf, ", ");
+                            if (k > 0) { memcpy(params_buf + pb_len, ", ", 2); pb_len += 2; }
                             const char* pt = "long long";
                             if (fn_type->param_types[k] && fn_type->param_types[k]->type == EXPR_IDENT) {
                                 Token pt_tok = fn_type->param_types[k]->token;
@@ -617,7 +618,9 @@ void codegen_program(Program* prog) {
                                 else if (pt_tok.length == 5 && memcmp(pt_tok.start, "float", 5) == 0) pt = "double";
                                 else if (pt_tok.length == 4 && memcmp(pt_tok.start, "bool", 4) == 0) pt = "bool";
                             }
-                            strcat(params_buf, pt);
+                            int ptl = strlen(pt);
+                            memcpy(params_buf + pb_len, pt, ptl); pb_len += ptl;
+                            params_buf[pb_len] = '\0';
                         }
                         
                         // Generate function pointer type: ret_type (*param_name)(params)
