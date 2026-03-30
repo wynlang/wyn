@@ -325,6 +325,13 @@ void codegen_stmt(Stmt* stmt) {
                         memcpy(custom_type_buf, type_name.start, len);
                         custom_type_buf[len] = '\0';
                         c_type = custom_type_buf;
+                        // Register enum var if this is an enum type
+                        extern int is_enum_type(const char*);
+                        if (is_enum_type(custom_type_buf)) {
+                            char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                            extern void register_enum_var(const char*, const char*);
+                            register_enum_var(_vn, custom_type_buf);
+                        }
                     }
                 }
             } else if (stmt->var.init) {
@@ -1165,6 +1172,8 @@ void codegen_stmt(Stmt* stmt) {
                                 Token type_name = stmt->var.init->expr_type->name;
                                 snprintf(enum_type_buf, 128, "%.*s", type_name.length, type_name.start);
                                 c_type = enum_type_buf;
+                                // Register enum var for to_string dispatch
+                                { char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start); extern void register_enum_var(const char*, const char*); register_enum_var(_vn, enum_type_buf); }
                                 break;
                             }
                             case TYPE_ARRAY:
@@ -1172,6 +1181,17 @@ void codegen_stmt(Stmt* stmt) {
                                 break;
                             default:
                                 c_type = "long long";
+                        }
+                    }
+                    // Fallback: detect enum field access (Color.Red) when expr_type not set
+                    if (strcmp(c_type, "long long") == 0 && stmt->var.init->type == EXPR_FIELD_ACCESS &&
+                        stmt->var.init->field_access.object->type == EXPR_IDENT) {
+                        char _en[128]; snprintf(_en, 128, "%.*s", stmt->var.init->field_access.object->token.length, stmt->var.init->field_access.object->token.start);
+                        extern int is_enum_type(const char*);
+                        if (is_enum_type(_en)) {
+                            char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                            extern void register_enum_var(const char*, const char*);
+                            register_enum_var(_vn, _en);
                         }
                     }
                 }

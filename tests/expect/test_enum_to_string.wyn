@@ -1,0 +1,16 @@
+// EXPECT: Red
+// EXPECT: Green
+// EXPECT: Blue
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+fn main() -> int {
+    println(Color.Red.to_string())
+    println(Color.Green.to_string())
+    println(Color.Blue.to_string())
+    return 0
+}

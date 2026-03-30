@@ -2004,6 +2004,37 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
+            // Enum .to_string() — route to generated EnumName_toString function
+            if (method.length == 9 && memcmp(method.start, "to_string", 9) == 0 &&
+                expr->method_call.arg_count == 0) {
+                // Case 1: Color.Red.to_string() — object is field access on enum type
+                if (expr->method_call.object->type == EXPR_FIELD_ACCESS) {
+                    Expr* fa_obj = expr->method_call.object->field_access.object;
+                    if (fa_obj->type == EXPR_IDENT) {
+                        char _en[128]; snprintf(_en, 128, "%.*s", fa_obj->token.length, fa_obj->token.start);
+                        extern int is_enum_type(const char*);
+                        if (is_enum_type(_en)) {
+                            emit("%s_toString(", _en);
+                            codegen_expr(expr->method_call.object);
+                            emit(")");
+                            break;
+                        }
+                    }
+                }
+                // Case 2: c.to_string() where c is an enum variable
+                if (expr->method_call.object->type == EXPR_IDENT) {
+                    char _vn[128]; snprintf(_vn, 128, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                    extern const char* get_enum_var_type(const char*);
+                    const char* _et = get_enum_var_type(_vn);
+                    if (_et) {
+                        emit("%s_toString(", _et);
+                        codegen_expr(expr->method_call.object);
+                        emit(")");
+                        break;
+                    }
+                }
+            }
+
             // When .to_string() is called on an expression whose type can't be
             // statically resolved, use _Generic so C dispatches correctly
             if (method.length == 9 && memcmp(method.start, "to_string", 9) == 0 &&
