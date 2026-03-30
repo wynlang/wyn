@@ -1317,7 +1317,11 @@ int main(int argc, char** argv) {
         // Determine wyn_root
         char wyn_root[1024] = ".";
         char exe_path[1024]; strncpy(exe_path, argv[0], sizeof(exe_path)-1);
-        char* ls = strrchr(exe_path, '/'); if (ls) { *ls = 0; snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path); }
+        char* ls = strrchr(exe_path, '/');
+#ifdef _WIN32
+        if (!ls) ls = strrchr(exe_path, '\\');
+#endif
+        if (ls) { *ls = 0; snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path); }
 
         // Compile with TCC or system cc
         const char* cc = detect_cc();
@@ -1382,7 +1386,7 @@ int main(int argc, char** argv) {
                 const char* _opt = build_release ? "-O3" : "-O0";
                 snprintf(cmd, sizeof(cmd),
 #ifdef _WIN32
-                    "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm 2>NUL",
+                    "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm",
 #elif defined(__APPLE__)
                     "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src -Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
 #else
