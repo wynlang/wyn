@@ -32,6 +32,8 @@ Future* wyn_spawn_async_traced(void* (*func)(void*), void* arg, const char* f, i
     (void)f; (void)l;
     return wyn_spawn_async(func, arg);
 }
+_Atomic int ws_blocked = 0;
+int pool_try_run_one(void) { return 0; }
 #else
 #include <pthread.h>
 #ifdef _WIN32
