@@ -5852,7 +5852,7 @@ void check_program(Program* prog) {
             
             check_stmt(fn->body, &local_scope);
             
-            // Warn about missing return in non-void functions
+            // Error on missing return in non-void functions
             if (current_function_return_type && current_function_return_type->kind != TYPE_VOID &&
                 !(fn->name.length == 4 && memcmp(fn->name.start, "main", 4) == 0)) {
                 bool has_return = false;
@@ -5860,6 +5860,11 @@ void check_program(Program* prog) {
                     for (int j = 0; j < fn->body->block.count; j++) {
                         if (fn->body->block.stmts[j] && fn->body->block.stmts[j]->type == STMT_RETURN)
                             has_return = true;
+                    }
+                    // Implicit return: last statement is an expression
+                    if (!has_return && fn->body->block.count > 0) {
+                        Stmt* last = fn->body->block.stmts[fn->body->block.count - 1];
+                        if (last && last->type == STMT_EXPR) has_return = true;
                     }
                 }
                 if (!has_return) {
@@ -5884,9 +5889,11 @@ void check_program(Program* prog) {
                             }
                         }
                     }
-                    if (!_has_yield)
-                    fprintf(stderr, "\033[33mWarning:\033[0m function '%.*s' may not return a value (line %d)\n",
-                        fn->name.length, fn->name.start, fn->name.line);
+                    if (!_has_yield) {
+                        fprintf(stderr, "\033[31m\033[1mError:\033[0m function '%.*s' may not return a value (line %d)\n",
+                            fn->name.length, fn->name.start, fn->name.line);
+                        had_error = true;
+                    }
                 }
             }
             
