@@ -1494,57 +1494,12 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "test") == 0) {
-        int parallel = 0;
-        for (int i = 2; i < argc; i++) { if (strcmp(argv[i], "--parallel") == 0) parallel = 1; }
-        struct stat st;
-        // Prefer run_tests.wyn if it exists (unless --parallel)
-        if (!parallel && stat("tests/run_tests.wyn", &st) == 0) {
-            printf("\033[1mRunning tests...\033[0m\n\n");
-            char cmd[512];
-            snprintf(cmd, sizeof(cmd), "%s run tests/run_tests.wyn", argv[0]);
-            return system(cmd) == 0 ? 0 : 1;
+        const char* test_dir = NULL;
+        for (int i = 2; i < argc; i++) {
+            if (argv[i][0] != '-') { test_dir = argv[i]; break; }
         }
-        if (stat("tests", &st) != 0 || !S_ISDIR(st.st_mode)) {
-            fprintf(stderr, "\033[33mNo tests/ directory found.\033[0m\n");
-            fprintf(stderr, "Create tests/*.wyn files to get started.\n");
-            return 1;
-        }
-        printf("\033[1mRunning tests...\033[0m\n\n");
-        char cmd[4096];
-        snprintf(cmd, sizeof(cmd),
-            "pass=0; fail=0; "
-            "for f in tests/test_*.wyn tests/*/test_*.wyn tests/test_*.🐉 tests/*/test_*.🐉; do "
-            "  [ -f \"$f\" ] || continue; "
-            "  result=$(%s run \"$f\" 2>&1); "
-            "  if [ $? -eq 0 ]; then "
-            "    echo \"  \\033[32m✓\\033[0m $f\"; pass=$((pass+1)); "
-            "  else "
-            "    echo \"  \\033[31m✗\\033[0m $f\"; fail=$((fail+1)); "
-            "    echo \"$result\" | tail -3 | sed 's/^/    /'; "
-            "  fi; "
-            "done; "
-            "echo; echo \"\\033[1mResults:\\033[0m $pass passed, $fail failed\"; "
-            "[ $fail -eq 0 ]",
-            argv[0]);
-        if (parallel) {
-            // Parallel: run all test files concurrently
-            snprintf(cmd, sizeof(cmd),
-                "echo '\\033[1mRunning tests in parallel...\\033[0m\\n'; "
-                "pass=0; fail=0; tmpdir=$(mktemp -d); "
-                "for f in tests/test_*.wyn tests/*/test_*.wyn tests/test_*.🐉 tests/*/test_*.🐉; do "
-                "  [ -f \"$f\" ] || continue; "
-                "  ( %s run \"$f\" > /dev/null 2>&1; echo $? > \"$tmpdir/$(echo $f | tr / _)\" ) & "
-                "done; wait; "
-                "for r in \"$tmpdir\"/*; do "
-                "  f=$(basename \"$r\" | tr _ /); "
-                "  if [ \"$(cat $r)\" = \"0\" ]; then echo \"  \\033[32m✓\\033[0m $f\"; pass=$((pass+1)); "
-                "  else echo \"  \\033[31m✗\\033[0m $f\"; fail=$((fail+1)); fi; "
-                "done; rm -rf \"$tmpdir\"; "
-                "echo; echo \"\\033[1mResults:\\033[0m $pass passed, $fail failed\"; "
-                "[ $fail -eq 0 ]",
-                argv[0]);
-        }
-        return system(cmd) == 0 ? 0 : 1;
+        extern int cmd_test(const char*, int, char**);
+        return cmd_test(test_dir, argc, argv);
     }
     
     if (strcmp(command, "build-runtime") == 0) {
