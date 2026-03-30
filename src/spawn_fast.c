@@ -34,8 +34,14 @@ Future* wyn_spawn_async_traced(void* (*func)(void*), void* arg, const char* f, i
 }
 #else
 #include <pthread.h>
+#ifdef _WIN32
+#include <windows.h>
+#define sched_yield() SwitchToThread()
+static long sysconf(int name) { (void)name; SYSTEM_INFO si; GetSystemInfo(&si); return si.dwNumberOfProcessors; }
+#else
 #include <unistd.h>
 #include <sched.h>
+#endif
 
 #ifndef _SC_NPROCESSORS_ONLN
 #define _SC_NPROCESSORS_ONLN 58
