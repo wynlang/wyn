@@ -1,3 +1,4 @@
+// EXPECT: PASS: function arrays work
 // Test: Function pointers in arrays
 fn double(x: int) -> int { return x * 2 }
 fn triple(x: int) -> int { return x * 3 }

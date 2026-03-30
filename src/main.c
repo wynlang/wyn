@@ -32,7 +32,7 @@ const char* wyn_runtime_sources[] = {
     "src/io.c", "src/optional.c", "src/result.c",
     "src/arc_runtime.c", "src/concurrency.c", "src/async_runtime.c",
     "src/safe_memory.c", "src/error.c", "src/string_runtime.c",
-    "src/hashmap.c", "src/hashset.c", "src/json.c", "src/json_runtime.c",
+    "src/hashmap.c", "src/hashset.c", "src/json.c",
     "src/stdlib_runtime.c", "src/hashmap_runtime.c",
     "src/stdlib_string.c", "src/stdlib_array.c",
     "src/stdlib_time.c", "src/stdlib_crypto.c", "src/stdlib_math.c",
@@ -168,7 +168,7 @@ static char* get_version() {
             }
             fclose(f);
         }
-        if (version[0] == 0) strcpy(version, "1.9.0");
+        if (version[0] == 0) strcpy(version, "1.10.0");
         
         // Version string
     }
@@ -439,8 +439,16 @@ int main(int argc, char** argv) {
         snprintf(doctor_cmd, sizeof(doctor_cmd), "cc --version %s", devnull);
         int has_cc = (system(doctor_cmd) == 0);
         if (!has_cc) { snprintf(doctor_cmd, sizeof(doctor_cmd), "gcc --version %s", devnull); has_cc = (system(doctor_cmd) == 0); }
-        printf("  %s System C compiler for --release (%s)\n", has_cc ? "\033[32m✓\033[0m" : "\033[33m○\033[0m", cc);
-        if (!has_cc) printf("    Optional: install for optimized builds (xcode-select --install)\n");
+        printf("  %s System C compiler (%s)\n", has_cc ? "\033[32m✓\033[0m" : "\033[33m○\033[0m", cc);
+        if (!has_cc) {
+#ifdef __APPLE__
+            printf("    Recommended: xcode-select --install (2.5x faster builds)\n");
+#elif defined(__linux__)
+            printf("    Recommended: sudo apt install gcc (2.5x faster builds)\n");
+#else
+            printf("    Recommended: install gcc or clang (2.5x faster builds)\n");
+#endif
+        }
         
         // Check precompiled runtime (for system cc)
         char rt_path[512]; snprintf(rt_path, sizeof(rt_path), "%s/runtime/libwyn_rt.a", doc_root);
@@ -483,7 +491,8 @@ int main(int argc, char** argv) {
         }
         
         printf("\n");
-        if (issues == 0) printf("\033[32m✓ All good! No external dependencies needed.\033[0m\n");
+        if (issues == 0 && has_cc && has_rt) printf("\033[32m✓ All good! Using fast compile path (system cc + precompiled runtime).\033[0m\n");
+        else if (issues == 0) printf("\033[32m✓ All good! Using TCC backend. Install a C compiler for 2.5x faster builds.\033[0m\n");
         else printf("\033[31m%d issue(s) found.\033[0m Fix them and run wyn doctor again.\n", issues);
         return issues > 0 ? 1 : 0;
     }
@@ -1308,7 +1317,11 @@ int main(int argc, char** argv) {
         // Determine wyn_root
         char wyn_root[1024] = ".";
         char exe_path[1024]; strncpy(exe_path, argv[0], sizeof(exe_path)-1);
-        char* ls = strrchr(exe_path, '/'); if (ls) { *ls = 0; snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path); }
+        char* ls = strrchr(exe_path, '/');
+#ifdef _WIN32
+        if (!ls) ls = strrchr(exe_path, '\\');
+#endif
+        if (ls) { *ls = 0; snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path); }
 
         // Compile with TCC or system cc
         const char* cc = detect_cc();
@@ -1340,7 +1353,10 @@ int main(int argc, char** argv) {
         }
 #endif
 
-        if (build_flag[0] == 0 && !build_release && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
+        // Prefer precompiled runtime (fast) over TCC (recompiles all sources)
+        if (build_flag[0] == 0 && !build_release && access(rt_lib, R_OK) == 0) {
+            // Skip TCC — use system cc + precompiled runtime
+        } else if (build_flag[0] == 0 && !build_release && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
             int _p = 0;
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s ", tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, wyn_root, sqlite_flags);
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s.c ", entry);
@@ -1367,15 +1383,16 @@ int main(int argc, char** argv) {
             FILE* _rt_check = fopen(rt_lib, "r");
             if (_rt_check) {
                 fclose(_rt_check);
+                const char* _opt = build_release ? "-O3" : "-O0";
                 snprintf(cmd, sizeof(cmd),
 #ifdef _WIN32
-                    "%s -std=c11 -O3 -w -I %s/src -o %s %s %s.c %s%s -lpthread -lm 2>NUL",
+                    "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm",
 #elif defined(__APPLE__)
-                    "%s -std=c11 -O3 -w -Wno-int-conversion -I %s/src -Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
+                    "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src -Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
 #else
-                    "%s -std=c11 -O3 -w -I %s/src -Wl,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
+                    "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
 #endif
-                    cc, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
+                    cc, _opt, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
 #ifdef __APPLE__
                     , app_link
 #endif
@@ -1383,12 +1400,25 @@ int main(int argc, char** argv) {
             } else {
                 // No precompiled runtime — compile from source files
                 int _p = 0;
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, entry);
-                const char* _srcs[] = {"wyn_arena","wyn_rc","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","net","net_runtime","net_advanced","test_runtime",NULL};
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -ffunction-sections -fdata-sections -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, entry);
+                const char* _srcs[] = {"wyn_arena","wyn_rc","wyn_wrapper","wyn_interface","coroutine","spawn_fast","spawn","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
                 for (int _si = 0; _srcs[_si]; _si++) _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s/src/%s.c ", wyn_root, _srcs[_si]);
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -lpthread -lm 2>&1", sqlite_src);
+#ifdef __APPLE__
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,-dead_strip -lpthread -lm 2>&1", sqlite_src);
+#elif defined(_WIN32)
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,--allow-multiple-definition -lws2_32 -lpthread -lm 2>&1", sqlite_src);
+#else
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,--allow-multiple-definition,--gc-sections -lpthread -lm 2>&1", sqlite_src);
+#endif
             }
             result = system(cmd);
+        }
+        
+        // Strip debug symbols for release builds
+        if (result == 0 && build_release) {
+            char strip_cmd[1024];
+            snprintf(strip_cmd, sizeof(strip_cmd), "strip %s 2>/dev/null", bin_path);
+            system(strip_cmd);
         }
         
         // Don't unlink C file yet if PGO is requested
@@ -1838,7 +1868,7 @@ int main(int argc, char** argv) {
                     "%s/src/runtime_exports.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c "
                     "%s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c "
                     "%s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c "
-                    "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c %s/src/json_runtime.c "
+                    "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c "
                     "%s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c "
                     "%s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c "
                     "%s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c "
@@ -2242,9 +2272,11 @@ int main(int argc, char** argv) {
         
         // Platform-specific link flags
         #ifdef _WIN32
-        const char* platform_libs = "-lws2_32 -lpthread -lm";
-        #else
+        const char* platform_libs = "-Wl,--allow-multiple-definition -lws2_32 -lpthread -lm";
+        #elif defined(__APPLE__)
         const char* platform_libs = "-lpthread -lm";
+        #else
+        const char* platform_libs = "-Wl,--allow-multiple-definition -lpthread -lm";
         #endif
         
         // Incremental: skip recompilation if binary is newer than source
@@ -2385,7 +2417,7 @@ int main(int argc, char** argv) {
         }
         
         // Check for --fast flag (use -O0 for fastest compile)
-        const char* opt_level = "-O1";
+        const char* opt_level = "-O0";  // Fast dev builds; --release uses -O3
         int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python, 4=--node
         for (int i = 3; i < argc; i++) {
             if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; }
@@ -2405,8 +2437,12 @@ int main(int argc, char** argv) {
             if (strcmp(argv[i], "--release") == 0) { use_release = 1; }
         }
         
-        // Try TCC backend first (fast, no external deps) unless --release
-        if (!use_release && !shared_mode && !generate_node && wyn_tcc_available()) {
+        // Prefer precompiled runtime (system cc) over TCC when available
+        // TCC is fallback for when no precompiled runtime exists
+        char rt_lib[512];
+        snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
+        int _use_tcc = (!use_release && !shared_mode && !generate_node && wyn_tcc_available() && access(rt_lib, R_OK) != 0);
+        if (_use_tcc) {
             // Read the generated C source
             char* c_source = read_file(out_path);
             if (c_source) {
@@ -2448,20 +2484,18 @@ int main(int argc, char** argv) {
         const char* cc = detect_cc();
         // Use precompiled runtime library for fast compilation
         // Falls back to source compilation if libwyn_rt.a doesn't exist
-        char rt_lib[512];
-        snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
         FILE* rt_check = fopen(rt_lib, "r");
         if (rt_check) {
             fclose(rt_check);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s/runtime/parser_lib/libwyn_c_parser.a %s 2>wyn_cc_err.txt",
-                     cc, opt_level, wyn_root, file, file, wyn_root, wyn_root, platform_libs);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s 2>wyn_cc_err.txt",
+                     cc, opt_level, wyn_root, file, file, wyn_root, platform_libs);
         } else {
             // Fallback: compile from source using unified source list
             char src_list[4096];
             build_source_list(src_list, sizeof(src_list), wyn_root);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s.out %s.c %s %s 2>wyn_cc_err.txt",
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s.out %s.c %s %s 2>wyn_cc_err.txt",
                      cc, opt_level, wyn_root, wyn_root, file, file, src_list, platform_libs);
         }
         // Append optional flags before the redirect

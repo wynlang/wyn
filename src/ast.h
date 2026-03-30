@@ -325,6 +325,7 @@ struct Expr {
     Token token;
     struct Type* expr_type;  // Type information populated by checker
     bool is_implicit_return; // Mark expression as implicit return
+    int _codegen_temp_id;    // -1 = none, >=0 = emit __sa{id} instead of expr
     union {
         BinaryExpr binary;
         CallExpr call;

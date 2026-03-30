@@ -1,0 +1,14 @@
+// EXPECT: 8
+// EXPECT: 9
+
+fn double(x: int) -> int {
+    return x * 2
+}
+
+fn main() -> int {
+    println(double(4).to_string())
+
+    var square = fn(x: int) -> int { return x * x }
+    println(square(3).to_string())
+    return 0
+}

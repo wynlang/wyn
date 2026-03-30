@@ -234,11 +234,121 @@ static void get_word_at(const char* content, int line, int col, char* word, int 
 // ── Completions ──────────────────────────────────────────────
 
 // Scan document content for fn/struct/enum declarations and variables
-static int build_completions(char* buf, int max, bool dot_trigger) {
+static int build_completions(char* buf, int max, bool dot_trigger, const char* uri, int cursor_line, int cursor_col) {
     int pos = 0;
     pos += snprintf(buf+pos, max-pos, "[");
 
     if (dot_trigger) {
+        // Try to resolve receiver type for struct field completions
+        LspDoc* d = uri[0] ? doc_find(uri) : NULL;
+        char receiver_type[128] = "";
+        
+        if (d && d->content && cursor_line >= 0) {
+            // Get the variable name before the dot
+            char var_name[128] = "";
+            const char* p = d->content;
+            int cur = 0;
+            while (*p && cur < cursor_line) { if (*p == '\n') cur++; p++; }
+            // p now points to start of cursor line
+            int col = cursor_col > 0 ? cursor_col - 1 : 0; // col before the dot
+            // Walk backwards from col to find variable name
+            if (col > 0) {
+                int end = col - 1;
+                while (end >= 0 && (p[end] == ' ' || p[end] == '\t')) end--;
+                int start = end;
+                while (start > 0 && (p[start-1] == '_' || (p[start-1] >= 'a' && p[start-1] <= 'z') || (p[start-1] >= 'A' && p[start-1] <= 'Z') || (p[start-1] >= '0' && p[start-1] <= '9'))) start--;
+                int vlen = end - start + 1;
+                if (vlen > 0 && vlen < 128) { memcpy(var_name, p + start, vlen); var_name[vlen] = '\0'; }
+            }
+            
+            // Look up variable type: scan for "var <name>: <Type>" or "var <name> = <Type>{"
+            if (var_name[0]) {
+                const char* s = d->content;
+                char pat1[256]; snprintf(pat1, sizeof(pat1), "var %s:", var_name);
+                char pat2[256]; snprintf(pat2, sizeof(pat2), "var %s =", var_name);
+                const char* found = strstr(s, pat1);
+                if (found) {
+                    // "var name: Type"
+                    found += strlen(pat1);
+                    while (*found == ' ') found++;
+                    const char* te = found;
+                    while (*te && *te != ' ' && *te != '=' && *te != '\n' && *te != '{') te++;
+                    int tlen = (int)(te - found);
+                    if (tlen > 0 && tlen < 128) { memcpy(receiver_type, found, tlen); receiver_type[tlen] = '\0'; }
+                } else if ((found = strstr(s, pat2)) != NULL) {
+                    // "var name = Type{" — look for struct init
+                    found += strlen(pat2);
+                    while (*found == ' ') found++;
+                    const char* te = found;
+                    while (*te && *te != '{' && *te != '(' && *te != '\n' && *te != ' ') te++;
+                    if (*te == '{') {
+                        int tlen = (int)(te - found);
+                        if (tlen > 0 && tlen < 128) { memcpy(receiver_type, found, tlen); receiver_type[tlen] = '\0'; }
+                    }
+                }
+            }
+            
+            // If we resolved a struct type, find its fields
+            if (receiver_type[0]) {
+                char struct_pat[256]; snprintf(struct_pat, sizeof(struct_pat), "struct %s {", receiver_type);
+                // Search all docs for the struct definition
+                for (int di = 0; di < lsp_doc_count && pos < max - 256; di++) {
+                    const char* c = lsp_docs[di].content; if (!c) continue;
+                    const char* sf = strstr(c, struct_pat);
+                    if (!sf) continue;
+                    sf += strlen(struct_pat);
+                    // Parse fields until closing }
+                    while (*sf && *sf != '}' && pos < max - 256) {
+                        while (*sf == ' ' || *sf == '\n' || *sf == '\r' || *sf == '\t') sf++;
+                        if (*sf == '}') break;
+                        // Field: "name: type"
+                        const char* fn_start = sf;
+                        while (*sf && *sf != ':' && *sf != '}' && *sf != '\n') sf++;
+                        if (*sf != ':') { while (*sf && *sf != '\n' && *sf != '}') sf++; continue; }
+                        int fn_len = (int)(sf - fn_start);
+                        while (fn_len > 0 && fn_start[fn_len-1] == ' ') fn_len--;
+                        sf++; // skip ':'
+                        while (*sf == ' ') sf++;
+                        const char* ft_start = sf;
+                        while (*sf && *sf != '\n' && *sf != ',' && *sf != '}') sf++;
+                        int ft_len = (int)(sf - ft_start);
+                        while (ft_len > 0 && ft_start[ft_len-1] == ' ') ft_len--;
+                        
+                        if (fn_len > 0 && fn_len < 120 && ft_len > 0 && ft_len < 120) {
+                            if (pos > 1) pos += snprintf(buf+pos, max-pos, ",");
+                            pos += snprintf(buf+pos, max-pos, "{\"label\":\"%.*s\",\"kind\":5,\"detail\":\"%.*s\"}", fn_len, fn_start, ft_len, ft_start);
+                        }
+                    }
+                }
+                // Also add impl methods for this type
+                char impl_pat[256]; snprintf(impl_pat, sizeof(impl_pat), "fn %s_", receiver_type);
+                for (int di = 0; di < lsp_doc_count && pos < max - 256; di++) {
+                    const char* c = lsp_docs[di].content; if (!c) continue;
+                    const char* mp = c;
+                    int prefix_len = strlen(impl_pat);
+                    while ((mp = strstr(mp, impl_pat)) != NULL) {
+                        mp += prefix_len;
+                        const char* mn = mp;
+                        while (*mp && *mp != '(' && *mp != ' ' && *mp != '\n') mp++;
+                        if (*mp != '(') continue;
+                        int mlen = (int)(mp - mn);
+                        if (mlen > 0 && mlen < 120) {
+                            while (*mp && *mp != ')' && *mp != '\n') mp++;
+                            if (*mp == ')') mp++;
+                            if (pos > 1) pos += snprintf(buf+pos, max-pos, ",");
+                            pos += snprintf(buf+pos, max-pos, "{\"label\":\"%.*s\",\"kind\":2,\"detail\":\"method\"}", mlen, mn);
+                        }
+                    }
+                }
+                // If we found struct fields, return them (skip generic builtins)
+                if (pos > 1) {
+                    pos += snprintf(buf+pos, max-pos, "]");
+                    return pos;
+                }
+            }
+        }
+        
+        // Fallback: generic method completions
         // Method completions: built-in + struct methods from all docs
         const char* builtins[] = {
             "len", "() -> int", "contains", "(val) -> bool", "push", "(val)", "pop", "() -> int",
@@ -562,8 +672,13 @@ int lsp_server_start(void) {
         else if (strcmp(method, "textDocument/completion") == 0) {
             char* trigger = strstr(msg, "\"triggerCharacter\":\"");
             bool dot = trigger && trigger[20] == '.';
+            // Extract cursor position and document for type-aware completions
+            char comp_uri[512] = "";
+            json_get_string(msg, "uri", comp_uri, sizeof(comp_uri));
+            int comp_line = json_get_int(msg, "line");
+            int comp_col = json_get_int(msg, "character");
             static char comp_buf[65536];
-            build_completions(comp_buf, sizeof(comp_buf), dot);
+            build_completions(comp_buf, sizeof(comp_buf), dot, comp_uri, comp_line, comp_col);
             lsp_respond(id, comp_buf);
         }
         else if (strcmp(method, "textDocument/definition") == 0) {

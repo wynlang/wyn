@@ -35,5 +35,7 @@ int wyn_rc_count(const void* ptr);
 
 // Check if a pointer is refcounted (heap-allocated via wyn_rc_alloc)
 int wyn_rc_is_heap(const void* ptr);
+void wyn_rc_set_length(const void* ptr, uint32_t len);
+uint32_t wyn_rc_get_length(const void* ptr);
 
 #endif

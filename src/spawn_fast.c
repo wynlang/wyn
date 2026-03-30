@@ -3,15 +3,47 @@
 // Per-processor local deque + global queue + work-stealing
 // Each spawn creates a stackful coroutine via minicoro.h
 
-#include <pthread.h>
 #include <stdlib.h>
 #include <stdatomic.h>
 #include <stdbool.h>
-#include <unistd.h>
-#include <sched.h>
 #include "future.h"
 #include "coroutine.h"
 #include "io_loop.h"
+
+#ifdef _WIN32
+// Windows: stub implementation — spawn runs synchronously
+typedef void (*TaskFunc)(void*);
+void wyn_io_park(void) {}
+void* wyn_current_task(void) { return NULL; }
+int wyn_spawn_origin_line(void) { return 0; }
+const char* wyn_spawn_origin_file(void) { return ""; }
+long wyn_spawn_origin_id(void) { return 0; }
+void wyn_spawn_fast(TaskFunc func, void* arg) { func(arg); }
+void wyn_spawn_fast_traced(TaskFunc func, void* arg, const char* file, int line) { (void)file; (void)line; func(arg); }
+void wyn_sched_enqueue(void* task_ptr) { (void)task_ptr; }
+void wyn_spawn_wait(void) {}
+Future* wyn_spawn_async(void* (*func)(void*), void* arg) {
+    Future* future = future_new();
+    void* result = func(arg);
+    future_set(future, result);
+    return future;
+}
+Future* wyn_spawn_async_traced(void* (*func)(void*), void* arg, const char* f, int l) {
+    (void)f; (void)l;
+    return wyn_spawn_async(func, arg);
+}
+_Atomic int ws_blocked = 0;
+int pool_try_run_one(void) { return 0; }
+#else
+#include <pthread.h>
+#ifdef _WIN32
+#include <windows.h>
+#define sched_yield() SwitchToThread()
+static long sysconf(int name) { (void)name; SYSTEM_INFO si; GetSystemInfo(&si); return si.dwNumberOfProcessors; }
+#else
+#include <unistd.h>
+#include <sched.h>
+#endif
 
 #ifndef _SC_NPROCESSORS_ONLN
 #define _SC_NPROCESSORS_ONLN 58
@@ -177,7 +209,19 @@ static inline void wake_processor(void) {
             pthread_mutex_lock(&processors[i].park_lock);
             pthread_cond_signal(&processors[i].park_cond);
             pthread_mutex_unlock(&processors[i].park_lock);
-            return;
+            return;  // Wake one — it will steal and wake others if needed
+        }
+    }
+}
+
+// Wake all parked processors — used when multiple tasks are enqueued at once
+static inline void wake_all_processors(void) {
+    int n = atomic_load_explicit(&num_processors, memory_order_relaxed);
+    for (int i = 0; i < n; i++) {
+        if (atomic_load_explicit(&processors[i].parked, memory_order_acquire)) {
+            pthread_mutex_lock(&processors[i].park_lock);
+            pthread_cond_signal(&processors[i].park_cond);
+            pthread_mutex_unlock(&processors[i].park_lock);
         }
     }
 }
@@ -338,7 +382,8 @@ static __thread int current_processor_id = -1;
 static void init_scheduler(void) {
     if (atomic_exchange(&initialized, 1)) return;
     
-    int cpus = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    int cpus;
+    cpus = (int)sysconf(_SC_NPROCESSORS_ONLN);
     if (cpus < 1) cpus = 4;
     if (cpus > MAX_PROCESSORS) cpus = MAX_PROCESSORS;
     
@@ -483,63 +528,116 @@ void wyn_spawn_fast_traced(TaskFunc func, void* arg, const char* file, int line)
     long spawned = atomic_fetch_add(&total_spawned, 1);
     t->spawn_id = spawned + 1;
     enqueue_task(t);
-    if (spawned == 0 || (spawned & 63) == 0) wake_processor();
+    wake_processor();  // Always wake — ensures tasks run in parallel
 }
 
 Future* wyn_spawn_async(TaskFuncWithReturn func, void* arg) {
     return wyn_spawn_async_traced(func, arg, NULL, 0);
 }
 
+// === Thread Pool for spawn_async ===
+// Fixed pool of worker threads that pick up tasks from a shared queue.
+// Eliminates pthread_create overhead per spawn.
+
+typedef struct { TaskFuncWithReturn func; void* arg; Future* future; } PoolTask;
+
+#define POOL_QUEUE_SIZE 4096
+static PoolTask pool_queue[POOL_QUEUE_SIZE];
+static _Atomic int pool_head = 0;
+static _Atomic int pool_tail = 0;
+static pthread_mutex_t pool_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t pool_cond = PTHREAD_COND_INITIALIZER;
+static _Atomic int pool_started = 0;
+static _Atomic int pool_shutdown = 0;
+static int pool_thread_count = 0;
+_Atomic int ws_blocked = 0; // Threads blocked in future_get
+#define POOL_MAX_THREADS 32
+static pthread_t pool_threads[POOL_MAX_THREADS];
+
+// Dequeue and run one task. Called from future_get to prevent deadlock.
+int pool_try_run_one(void) {
+    pthread_mutex_lock(&pool_lock);
+    if (atomic_load(&pool_head) == atomic_load(&pool_tail)) {
+        pthread_mutex_unlock(&pool_lock);
+        return 0;
+    }
+    int idx = atomic_load(&pool_head) % POOL_QUEUE_SIZE;
+    PoolTask task = pool_queue[idx];
+    atomic_fetch_add(&pool_head, 1);
+    pthread_mutex_unlock(&pool_lock);
+    void* result = task.func(task.arg);
+    future_set(task.future, result);
+    atomic_fetch_add(&total_completed, 1);
+    return 1;
+}
+
+static void* pool_worker(void* arg) {
+    (void)arg;
+    while (!atomic_load(&pool_shutdown)) {
+        pthread_mutex_lock(&pool_lock);
+        while (atomic_load(&pool_head) == atomic_load(&pool_tail) && !atomic_load(&pool_shutdown)) {
+            pthread_cond_wait(&pool_cond, &pool_lock);
+        }
+        if (atomic_load(&pool_shutdown)) { pthread_mutex_unlock(&pool_lock); break; }
+        int idx = atomic_load(&pool_head) % POOL_QUEUE_SIZE;
+        PoolTask task = pool_queue[idx];
+        atomic_fetch_add(&pool_head, 1);
+        pthread_mutex_unlock(&pool_lock);
+        
+        void* result = task.func(task.arg);
+        future_set(task.future, result);
+        atomic_fetch_add(&total_completed, 1);
+    }
+    return NULL;
+}
+
+static void shutdown_pool(void) {
+    atomic_store(&pool_shutdown, 1);
+    pthread_mutex_lock(&pool_lock);
+    pthread_cond_broadcast(&pool_cond);
+    pthread_mutex_unlock(&pool_lock);
+    for (int i = 0; i < pool_thread_count; i++) {
+        pthread_join(pool_threads[i], NULL);
+    }
+}
+
+static void init_pool(void) {
+    if (atomic_exchange(&pool_started, 1)) return;
+    int cpus = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    if (cpus < 2) cpus = 2;
+    if (cpus > POOL_MAX_THREADS) cpus = POOL_MAX_THREADS;
+    pool_thread_count = cpus;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 512 * 1024);
+    for (int i = 0; i < pool_thread_count; i++) {
+        pthread_create(&pool_threads[i], &attr, pool_worker, NULL);
+    }
+    pthread_attr_destroy(&attr);
+    atexit(shutdown_pool);
+}
+
 Future* wyn_spawn_async_traced(TaskFuncWithReturn func, void* arg, const char* file, int line) {
-    init_scheduler();
+    (void)file; (void)line;
+    init_pool();
     
     Future* future = future_new();
+    atomic_fetch_add(&total_spawned, 1);
     
-    SpawnAsyncArgs* sa = malloc(sizeof(SpawnAsyncArgs));
-    if (!sa) {
-        // OOM fallback: run directly
+    pthread_mutex_lock(&pool_lock);
+    int tail = atomic_load(&pool_tail);
+    // If queue is full, run inline
+    if (tail - atomic_load(&pool_head) >= POOL_QUEUE_SIZE) {
+        pthread_mutex_unlock(&pool_lock);
         void* result = func(arg);
         future_set(future, result);
-        atomic_fetch_add(&total_spawned, 1);
         atomic_fetch_add(&total_completed, 1);
         return future;
     }
-    sa->func = func;
-    sa->arg = arg;
-    sa->future = future;
-    
-    WynCoroutine* coro = wyn_coro_create(spawn_async_coro_body, sa);
-    if (!coro) {
-        // OOM fallback: run directly on calling thread
-        void* result = func(arg);
-        future_set(future, result);
-        free(sa);
-        atomic_fetch_add(&total_spawned, 1);
-        atomic_fetch_add(&total_completed, 1);
-        return future;
-    }
-    
-    Task* t = alloc_task();
-    if (!t) {
-        // OOM: run directly (don't resume coro — it would free sa, then we'd double-free)
-        void* result = func(arg);
-        future_set(future, result);
-        wyn_coro_destroy(coro);
-        free(sa);
-        atomic_fetch_add(&total_spawned, 1);
-        atomic_fetch_add(&total_completed, 1);
-        return future;
-    }
-    t->coro = coro;
-    t->future = future;
-    t->spawn_file = file;
-    t->spawn_line = line;
-    atomic_store_explicit(&t->running, 0, memory_order_relaxed);
-    
-    long spawned = atomic_fetch_add(&total_spawned, 1);
-    t->spawn_id = spawned + 1;
-    enqueue_task(t);
-    if (spawned == 0 || (spawned & 63) == 0) wake_processor();
+    pool_queue[tail % POOL_QUEUE_SIZE] = (PoolTask){ func, arg, future };
+    atomic_fetch_add(&pool_tail, 1);
+    pthread_cond_signal(&pool_cond);
+    pthread_mutex_unlock(&pool_lock);
     
     return future;
 }
@@ -562,8 +660,7 @@ void wyn_spawn_wait(void) {
 // Used for spawned functions that have no yield points (no await/channel ops).
 // Much cheaper: no mmap, no coroutine struct, no scheduler overhead.
 Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg) {
-    Future* future = future_new();
-    void* result = func(arg);
-    future_set(future, result);
-    return future;
+    return wyn_spawn_async(func, arg);
 }
+
+#endif // !_WIN32

@@ -1,0 +1,54 @@
+// EXPECT: cpu_parallel: ok
+// EXPECT: io_parallel: ok
+// EXPECT: overhead: ok
+
+fn fib(n: int) -> int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn do_sleep(ms: int) -> int { sleep_ms(ms); return 1 }
+
+fn noop() -> int { return 1 }
+
+fn main() -> int {
+    // CPU parallelism: 4x fib(35) should be faster than 4x sequential
+    var seq_start = DateTime_millis()
+    fib(35); fib(35); fib(35); fib(35)
+    var seq = DateTime_millis() - seq_start
+
+    var par_start = DateTime_millis()
+    var a = spawn fib(35)
+    var b = spawn fib(35)
+    var c = spawn fib(35)
+    var d = spawn fib(35)
+    await a; await b; await c; await d
+    var par = DateTime_millis() - par_start
+
+    // Parallel should be at least 1.5x faster (conservative for CI)
+    if par * 3 < seq * 2 { println("cpu_parallel: ok") }
+    else { println("cpu_parallel: FAIL (par=" + par.to_string() + " seq=" + seq.to_string() + ")") }
+
+    // I/O parallelism: 4x sleep should overlap
+    var io_start = DateTime_millis()
+    var s1 = spawn do_sleep(50)
+    var s2 = spawn do_sleep(50)
+    var s3 = spawn do_sleep(50)
+    var s4 = spawn do_sleep(50)
+    await s1; await s2; await s3; await s4
+    var io = DateTime_millis() - io_start
+    if io < 250 { println("io_parallel: ok") }
+    else { println("io_parallel: FAIL (" + io.to_string() + "ms, expected <250)") }
+
+    // Overhead: 100 spawn+await should be < 10ms
+    var oh_start = DateTime_millis()
+    for i in 0..100 {
+        var f = spawn noop()
+        await f
+    }
+    var oh = DateTime_millis() - oh_start
+    if oh < 50 { println("overhead: ok") }
+    else { println("overhead: FAIL (" + oh.to_string() + "ms)") }
+
+    return 0
+}

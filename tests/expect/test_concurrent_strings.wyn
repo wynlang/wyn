@@ -1,0 +1,23 @@
+// Expect test: concurrent string operations produce correct results
+// Tests: 4 threads × 5K chained concat + len check
+// EXPECT: 20000
+
+fn work(n: int) -> int {
+    var count = 0
+    for i in 0..5000 {
+        var s = "item_" + i.to_string() + "_data"
+        if s.len() > 5 {
+            count = count + 1
+        }
+    }
+    return count
+}
+
+fn main() -> int {
+    var a = spawn work(1)
+    var b = spawn work(2)
+    var c = spawn work(3)
+    var d = spawn work(4)
+    println((await a + await b + await c + await d).to_string())
+    return 0
+}

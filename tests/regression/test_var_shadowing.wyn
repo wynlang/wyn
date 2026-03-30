@@ -1,0 +1,14 @@
+// Regression: variable shadowing in blocks
+// Inner var x should NOT leak to outer scope
+// EXPECT: 20
+// EXPECT: 10
+
+fn main() -> int {
+    var x = 10
+    if true {
+        var x = 20
+        println(x.to_string())
+    }
+    println(x.to_string())
+    return 0
+}

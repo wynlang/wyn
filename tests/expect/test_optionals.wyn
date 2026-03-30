@@ -1,0 +1,15 @@
+// EXPECT: 42
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 99
+
+fn main() -> int {
+    var a = OptionInt_Some(42)
+    println(OptionInt_unwrap(a).to_string())
+    println(OptionInt_is_some(a).to_string())
+
+    var b = OptionInt_None()
+    println(OptionInt_is_some(b).to_string())
+    println(OptionInt_unwrap_or(b, 99).to_string())
+    return 0
+}

@@ -6,6 +6,8 @@
 // Reference counting (wyn_rc.c)
 void wyn_rc_retain(const void* ptr);
 void wyn_rc_release(const void* ptr);
+void wyn_rc_set_length(const void* ptr, unsigned int len);
+unsigned int wyn_rc_get_length(const void* ptr);
 
 // Inline spawn for non-yielding functions (spawn_fast.c)
 struct Future;
@@ -33,6 +35,11 @@ struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
 
 #include <stdio.h>
 #include <stdlib.h>
+
+// Safe allocators — abort on OOM instead of returning NULL
+static inline void* wyn_malloc(size_t n) { void* p = malloc(n); if (!p && n) { fprintf(stderr, "wyn: out of memory (%zu bytes)\n", n); abort(); } return p; }
+static inline void* wyn_calloc(size_t c, size_t n) { void* p = calloc(c, n); if (!p && c && n) { fprintf(stderr, "wyn: out of memory\n"); abort(); } return p; }
+static inline void* wyn_realloc(void* p, size_t n) { void* q = realloc(p, n); if (!q && n) { fprintf(stderr, "wyn: out of memory\n"); abort(); } return q; }
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -69,11 +76,26 @@ struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
   #define X_OK 0
   #define access _access
   
+  // Minimal pthread stubs for Windows
+  typedef CRITICAL_SECTION pthread_mutex_t;
+  typedef CONDITION_VARIABLE pthread_cond_t;
+  typedef HANDLE pthread_t;
+  #define pthread_mutex_init(m,a) InitializeCriticalSection(m)
+  #define pthread_mutex_lock(m) EnterCriticalSection(m)
+  #define pthread_mutex_unlock(m) LeaveCriticalSection(m)
+  #define pthread_mutex_destroy(m) DeleteCriticalSection(m)
+  #define pthread_cond_init(c,a) InitializeConditionVariable(c)
+  #define pthread_cond_signal(c) WakeConditionVariable(c)
+  #define pthread_cond_broadcast(c) WakeAllConditionVariable(c)
+  #define pthread_cond_wait(c,m) SleepConditionVariableCS(c,m,INFINITE)
+  #define pthread_cond_destroy(c) ((void)0)
+  #define sched_yield() SwitchToThread()
+  
   // Minimal dirent.h for Windows
   typedef struct { HANDLE hFind; WIN32_FIND_DATAA data; int first; } DIR;
   struct dirent { char d_name[MAX_PATH]; };
   static DIR* opendir(const char* path) {
-      DIR* d = malloc(sizeof(DIR));
+      DIR* d = wyn_malloc(sizeof(DIR));
       char pattern[MAX_PATH];
       snprintf(pattern, MAX_PATH, "%s\\*", path);
       d->hFind = FindFirstFileA(pattern, &d->data);
@@ -145,11 +167,47 @@ bool wyn_file_exists(const char* path);
 const char* wyn_string_concat_safe(const char* left, const char* right) {
     if (!left) left = "";
     if (!right) right = "";
-    size_t l1 = strlen(left), l2 = strlen(right);
-    char* r = wyn_str_alloc(l1 + l2 + 1);
+    size_t l2 = strlen(right);
+    if (l2 == 0) return left;
+    // Use cached length for left if available
+    extern int wyn_rc_is_heap(const void*);
+    size_t l1;
+    typedef struct { unsigned int magic; _Atomic int refcount; unsigned int capacity; unsigned int length; } RcHdr;
+    RcHdr* left_hdr = NULL;
+    if (wyn_rc_is_heap(left)) {
+        left_hdr = (RcHdr*)((char*)left - sizeof(RcHdr));
+        l1 = left_hdr->length ? left_hdr->length : strlen(left);
+    } else {
+        l1 = strlen(left);
+    }
+    if (l1 == 0) { const char* d = wyn_strdup(right); return d; }
+    // Optimization: if left has refcount 1, grow in place
+    if (left_hdr && atomic_load(&left_hdr->refcount) == 1) {
+        size_t needed = l1 + l2 + 1;
+        if (needed <= left_hdr->capacity) {
+            // Fast path: just append in place, no allocation
+            char* s = (char*)left;
+            memcpy(s + l1, right, l2);
+            s[l1 + l2] = 0;
+            left_hdr->length = (unsigned int)(l1 + l2);
+            return s;
+        }
+        // Need more space: allocate new, copy, DON'T realloc
+        // (realloc frees old ptr, but caller may still reference it for comparison)
+    }
+    // Allocate new buffer with power-of-2 over-allocation
+    size_t alloc_size = l1 + l2 + 1;
+    if (alloc_size < 64) alloc_size = 64;
+    else { alloc_size--; alloc_size |= alloc_size >> 1; alloc_size |= alloc_size >> 2; alloc_size |= alloc_size >> 4; alloc_size |= alloc_size >> 8; alloc_size |= alloc_size >> 16; alloc_size++; }
+    char* r = wyn_str_alloc(alloc_size);
     memcpy(r, left, l1);
     memcpy(r + l1, right, l2);
     r[l1 + l2] = 0;
+    // Cache length on new string
+    if (wyn_rc_is_heap(r)) {
+        RcHdr* rh = (RcHdr*)((char*)r - sizeof(RcHdr));
+        rh->length = (unsigned int)(l1 + l2);
+    }
     return r;
 }
 
@@ -240,21 +298,25 @@ bool regex_match(const char* str, const char* pattern) { return wre_match_full(s
 char* regex_replace(const char* str, const char* pattern, const char* replacement) {
     struct wre_nfa nfa;
     if (!wre_compile(&nfa, pattern)) return wyn_strdup(str);
-    char* result = (char*)malloc(strlen(str) * 2 + strlen(replacement) * 10 + 1);
-    int ri = 0;
-    int pos = 0;
     int slen = (int)strlen(str);
+    int rlen = (int)strlen(replacement);
+    size_t cap = slen + rlen * 4 + 64;
+    char* result = wyn_str_alloc(cap);
+    size_t ri = 0;
+    int pos = 0;
     while (pos <= slen) {
         int ms, me;
         wre_find(str + pos, pattern, &ms, &me);
-        if (ms < 0 || me <= ms) { memcpy(result + ri, str + pos, slen - pos); ri += slen - pos; break; }
+        if (ms < 0 || me <= ms) { size_t tail = slen - pos; if (ri + tail >= cap) { cap = (ri + tail) * 2; char* nr = wyn_str_alloc(cap); memcpy(nr, result, ri); wyn_rc_release(result); result = nr; } memcpy(result + ri, str + pos, tail); ri += tail; break; }
+        size_t needed = ri + ms + rlen;
+        if (needed >= cap) { cap = needed * 2; char* nr = wyn_str_alloc(cap); memcpy(nr, result, ri); wyn_rc_release(result); result = nr; }
         memcpy(result + ri, str + pos, ms); ri += ms;
-        int rlen = (int)strlen(replacement);
         memcpy(result + ri, replacement, rlen); ri += rlen;
         pos += ms + (me - ms);
-        if (me == ms) { if (str[pos]) result[ri++] = str[pos++]; else break; } // prevent infinite loop on zero-width match
+        if (me == ms) { if (str[pos]) { if (ri >= cap) { cap *= 2; char* nr = wyn_str_alloc(cap); memcpy(nr, result, ri); wyn_rc_release(result); result = nr; } result[ri++] = str[pos++]; } else break; }
     }
     result[ri] = '\0';
+    wyn_rc_set_length(result, (unsigned int)ri);
     return result;
 }
 bool Regex_match(const char* s, const char* p) { return regex_match(s, p); }
@@ -263,32 +325,56 @@ int Regex_find(const char* s, const char* p) { int ms, me; wre_find(s, p, &ms, &
 char* regex_find_all(const char* str, const char* pattern) {
     struct wre_nfa nfa;
     if (!wre_compile(&nfa, pattern)) return wyn_strdup("");
-    char* result = (char*)malloc(65536); result[0] = 0;
+    size_t cap = 1024, len = 0;
+    char* result = wyn_str_alloc(cap);
     int pos = 0, slen = (int)strlen(str);
     while (pos <= slen) {
         int ms, me;
         wre_find(str + pos, pattern, &ms, &me);
         if (ms < 0 || me <= ms) break;
-        strncat(result, str + pos + ms, me - ms);
-        strcat(result, "\n");
+        size_t match_len = me - ms;
+        size_t needed = len + match_len + 1; // +1 for newline
+        if (needed >= cap) {
+            cap = needed * 2;
+            char* nr = wyn_str_alloc(cap);
+            memcpy(nr, result, len);
+            wyn_rc_release(result);
+            result = nr;
+        }
+        memcpy(result + len, str + pos + ms, match_len);
+        len += match_len;
+        result[len++] = '\n';
         pos += ms + (me - ms);
     }
+    result[len] = 0;
+    wyn_rc_set_length(result, (unsigned int)len);
     return result;
 }
 char* regex_split(const char* str, const char* pattern) {
     struct wre_nfa nfa;
     if (!wre_compile(&nfa, pattern)) return wyn_strdup(str);
-    char* result = (char*)malloc(strlen(str) + 256); result[0] = 0;
-    int pos = 0, slen = (int)strlen(str);
+    size_t slen = strlen(str);
+    size_t cap = slen * 2 + 256, rpos = 0;
+    char* result = wyn_str_alloc(cap);
+    size_t pos = 0;
     while (pos <= slen) {
         int ms, me;
         wre_find(str + pos, pattern, &ms, &me);
-        if (ms < 0 || me <= ms) { strcat(result, str + pos); break; }
-        strncat(result, str + pos, ms);
-        strcat(result, "\n");
+        if (ms < 0 || me <= ms) {
+            size_t tail = slen - pos;
+            if (rpos + tail >= cap) { cap = (rpos + tail) * 2; char* nr = wyn_str_alloc(cap); memcpy(nr, result, rpos); wyn_rc_release(result); result = nr; }
+            memcpy(result + rpos, str + pos, tail); rpos += tail;
+            break;
+        }
+        size_t needed = rpos + ms + 1;
+        if (needed >= cap) { cap = needed * 2; char* nr = wyn_str_alloc(cap); memcpy(nr, result, rpos); wyn_rc_release(result); result = nr; }
+        memcpy(result + rpos, str + pos, ms); rpos += ms;
+        result[rpos++] = '\n';
         pos += ms + (me - ms);
         if (me == ms) pos++;
     }
+    result[rpos] = 0;
+    wyn_rc_set_length(result, (unsigned int)rpos);
     return result;
 }
 #else
@@ -303,28 +389,24 @@ bool regex_match(const char* str, const char* pattern) {
 char* regex_replace(const char* str, const char* pattern, const char* replacement) {
     regex_t re;
     if (regcomp(&re, pattern, REG_EXTENDED) != 0) return wyn_strdup(str);
-    
-    char* result = wyn_str_alloc(strlen(str) * 2 + strlen(replacement) + 1);
-    int ri = 0;
+    int rlen = strlen(replacement);
+    size_t cap = strlen(str) + rlen * 4 + 64;
+    char* result = wyn_str_alloc(cap);
+    size_t ri = 0;
     const char* p = str;
     regmatch_t match;
-    
     while (regexec(&re, p, 1, &match, 0) == 0) {
-        // Copy text before match
-        memcpy(result + ri, p, match.rm_so);
-        ri += match.rm_so;
-        // Copy replacement
-        int rlen = strlen(replacement);
-        memcpy(result + ri, replacement, rlen);
-        ri += rlen;
+        size_t needed = ri + match.rm_so + rlen;
+        if (needed >= cap) { cap = needed * 2; char* nr = wyn_str_alloc(cap); memcpy(nr, result, ri); wyn_rc_release(result); result = nr; }
+        memcpy(result + ri, p, match.rm_so); ri += match.rm_so;
+        memcpy(result + ri, replacement, rlen); ri += rlen;
         p += match.rm_eo;
     }
-    // Copy remaining
-    int remaining = strlen(p);
-    memcpy(result + ri, p, remaining);
-    ri += remaining;
+    size_t remaining = strlen(p);
+    if (ri + remaining >= cap) { cap = (ri + remaining) * 2; char* nr = wyn_str_alloc(cap); memcpy(nr, result, ri); wyn_rc_release(result); result = nr; }
+    memcpy(result + ri, p, remaining); ri += remaining;
     result[ri] = '\0';
-    
+    wyn_rc_set_length(result, (unsigned int)ri);
     regfree(&re);
     return result;
 }
@@ -451,7 +533,7 @@ static inline WynValue* wyn_array_realloc(WynValue* old, int old_cap, int new_ca
     size_t size = sizeof(WynValue) * new_cap;
 #if defined(__TINYC__)
     // TCC: use standard realloc
-    WynValue* p = realloc(old, size);
+    WynValue* p = wyn_realloc(old, size);
 #else
     size = (size + 15) & ~15;  // round up to 16-byte alignment
     WynValue* p;
@@ -468,6 +550,19 @@ WynArray wyn_array_map(WynArray arr, long long (*fn)(long long));
 WynArray wyn_array_filter(WynArray arr, long long (*fn)(long long));
 long long wyn_array_reduce(WynArray arr, long long (*fn)(long long, long long), long long initial);
 WynArray array_new() { WynArray arr = {0}; return arr; }
+void array_free(WynArray* arr) {
+    if (!arr || !arr->data) return;
+    // Release RC-managed strings inside (skip non-heap strings)
+    extern int wyn_rc_is_heap(const void*);
+    for (int i = 0; i < arr->count; i++) {
+        if (arr->data[i].type == WYN_TYPE_STRING && arr->data[i].data.string_val
+            && wyn_rc_is_heap(arr->data[i].data.string_val)) {
+            wyn_rc_release(arr->data[i].data.string_val);
+        }
+    }
+    free(arr->data);
+    arr->data = NULL; arr->count = 0; arr->capacity = 0;
+}
 void array_push_int(WynArray* restrict arr, long long value) {
     if (arr->count >= arr->capacity) {
         int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
@@ -485,7 +580,9 @@ void array_push_str(WynArray* restrict arr, const char* value) {
         arr->capacity = new_cap;
     }
     arr->data[arr->count].type = WYN_TYPE_STRING;
-    arr->data[arr->count].data.string_val = strdup(value);
+    // Take ownership — caller transfers the string to the array
+    // array_free will release RC strings
+    arr->data[arr->count].data.string_val = (char*)value;
     arr->count++;
 }
 void array_push_array(WynArray* restrict arr, WynArray* nested) {
@@ -496,7 +593,7 @@ void array_push_array(WynArray* restrict arr, WynArray* nested) {
     }
     arr->data[arr->count].type = WYN_TYPE_ARRAY;
     // Heap-allocate a copy so the nested array outlives the stack frame
-    WynArray* copy = malloc(sizeof(WynArray));
+    WynArray* copy = wyn_malloc(sizeof(WynArray));
     *copy = *nested;
     arr->data[arr->count].data.array_val = copy;
     arr->count++;
@@ -588,12 +685,15 @@ WynIntArray int_array_new() { WynIntArray a = {0}; return a; }
 void int_array_push(WynIntArray* a, long long v) {
     if (a->count >= a->capacity) {
         a->capacity = a->capacity == 0 ? 8 : a->capacity * 2;
-        a->data = realloc(a->data, sizeof(long long) * a->capacity);
+        a->data = wyn_realloc(a->data, sizeof(long long) * a->capacity);
     }
     a->data[a->count++] = v;
 }
 long long int_array_get(WynIntArray a, int i) {
-    if (i < 0 || i >= a.count) return 0;
+    if (i < 0 || i >= a.count) {
+        fprintf(stderr, "panic: array index out of bounds: index %d, length %d\n", i, a.count);
+        exit(1);
+    }
     return a.data[i];
 }
 int int_array_len(WynIntArray a) { return a.count; }
@@ -612,10 +712,10 @@ void array_push(WynArray* arr, long long value) {
     StructType __temp_val = (value); \
     if ((arr)->count >= (arr)->capacity) { \
         (arr)->capacity = (arr)->capacity == 0 ? 4 : (arr)->capacity * 2; \
-        (arr)->data = realloc((arr)->data, sizeof(WynValue) * (arr)->capacity); \
+        (arr)->data = wyn_realloc((arr)->data, sizeof(WynValue) * (arr)->capacity); \
     } \
     (arr)->data[(arr)->count].type = WYN_TYPE_STRUCT; \
-    (arr)->data[(arr)->count].data.struct_val = malloc(sizeof(StructType)); \
+    (arr)->data[(arr)->count].data.struct_val = wyn_malloc(sizeof(StructType)); \
     memcpy((arr)->data[(arr)->count].data.struct_val, &__temp_val, sizeof(StructType)); \
     (arr)->count++; \
 } while(0)
@@ -637,29 +737,103 @@ void array_reverse(WynArray* arr) {
         arr->data[arr->count - 1 - i] = temp;
     }
 }
-void array_sort(WynArray* arr) {
-    for (int i = 0; i < arr->count - 1; i++) {
-        for (int j = 0; j < arr->count - i - 1; j++) {
-            if (arr->data[j].data.int_val > arr->data[j + 1].data.int_val) {
-                WynValue temp = arr->data[j];
-                arr->data[j] = arr->data[j + 1];
-                arr->data[j + 1] = temp;
-            }
-        }
+static int _wyn_cmp_int(const void* a, const void* b) {
+    long long va = ((const WynValue*)a)->data.int_val;
+    long long vb = ((const WynValue*)b)->data.int_val;
+    return (va > vb) - (va < vb);
+}
+static int _wyn_cmp_str(const void* a, const void* b) {
+    const char* sa = ((const WynValue*)a)->data.string_val;
+    const char* sb = ((const WynValue*)b)->data.string_val;
+    if (!sa) sa = "";
+    if (!sb) sb = "";
+    return strcmp(sa, sb);
+}
+// Inline introsort for raw long long arrays — maximum cache efficiency
+static void _wyn_isort_ll(long long* d, int n) {
+    for (int i = 1; i < n; i++) {
+        long long key = d[i];
+        int j = i - 1;
+        while (j >= 0 && d[j] > key) { d[j+1] = d[j]; j--; }
+        d[j+1] = key;
     }
 }
-void array_sort_str(WynArray* arr) {
-    for (int i = 0; i < arr->count - 1; i++) {
-        for (int j = 0; j < arr->count - i - 1; j++) {
-            const char* a = arr->data[j].data.string_val ? arr->data[j].data.string_val : "";
-            const char* b = arr->data[j+1].data.string_val ? arr->data[j+1].data.string_val : "";
-            if (strcmp(a, b) > 0) {
-                WynValue temp = arr->data[j];
-                arr->data[j] = arr->data[j + 1];
-                arr->data[j + 1] = temp;
-            }
+static int _wyn_cmp_ll(const void* a, const void* b) {
+    long long va = *(const long long*)a, vb = *(const long long*)b;
+    return (va > vb) - (va < vb);
+}
+static void _wyn_qsort_ll(long long* d, int n, int depth) {
+    while (n > 16) {
+        if (depth == 0) { qsort(d, n, sizeof(long long), _wyn_cmp_ll); return; }
+        depth--;
+        int mid = n / 2;
+        if (d[0] > d[mid]) { long long t = d[0]; d[0] = d[mid]; d[mid] = t; }
+        if (d[0] > d[n-1]) { long long t = d[0]; d[0] = d[n-1]; d[n-1] = t; }
+        if (d[mid] > d[n-1]) { long long t = d[mid]; d[mid] = d[n-1]; d[n-1] = t; }
+        long long pivot = d[mid];
+        { long long t = d[mid]; d[mid] = d[n-2]; d[n-2] = t; }
+        int i = 0, j = n - 2;
+        for (;;) {
+            while (d[++i] < pivot);
+            while (d[--j] > pivot);
+            if (i >= j) break;
+            { long long t = d[i]; d[i] = d[j]; d[j] = t; }
         }
+        { long long t = d[i]; d[i] = d[n-2]; d[n-2] = t; }
+        int left = i, right = n - i - 1;
+        if (left < right) { _wyn_qsort_ll(d, left, depth); d += i + 1; n = right; }
+        else { _wyn_qsort_ll(d + i + 1, right, depth); n = left; }
     }
+    _wyn_isort_ll(d, n);
+}
+// Inline introsort for int arrays — avoids qsort function pointer overhead
+static inline void _wyn_swap_val(WynValue* a, WynValue* b) {
+    WynValue t = *a; *a = *b; *b = t;
+}
+static void _wyn_isort_int(WynValue* d, int n) {
+    for (int i = 1; i < n; i++) {
+        WynValue key = d[i];
+        long long kv = key.data.int_val;
+        int j = i - 1;
+        while (j >= 0 && d[j].data.int_val > kv) { d[j+1] = d[j]; j--; }
+        d[j+1] = key;
+    }
+}
+static void _wyn_qsort_int(WynValue* d, int n, int depth) {
+    while (n > 16) {
+        if (depth == 0) { qsort(d, n, sizeof(WynValue), _wyn_cmp_int); return; } // heapsort fallback
+        depth--;
+        // Median-of-three pivot
+        int mid = n / 2;
+        if (d[0].data.int_val > d[mid].data.int_val) _wyn_swap_val(&d[0], &d[mid]);
+        if (d[0].data.int_val > d[n-1].data.int_val) _wyn_swap_val(&d[0], &d[n-1]);
+        if (d[mid].data.int_val > d[n-1].data.int_val) _wyn_swap_val(&d[mid], &d[n-1]);
+        long long pivot = d[mid].data.int_val;
+        _wyn_swap_val(&d[mid], &d[n-2]);
+        int i = 0, j = n - 2;
+        for (;;) {
+            while (d[++i].data.int_val < pivot);
+            while (d[--j].data.int_val > pivot);
+            if (i >= j) break;
+            _wyn_swap_val(&d[i], &d[j]);
+        }
+        _wyn_swap_val(&d[i], &d[n-2]);
+        // Recurse on smaller partition, loop on larger
+        int left = i, right = n - i - 1;
+        if (left < right) { _wyn_qsort_int(d, left, depth); d += i + 1; n = right; }
+        else { _wyn_qsort_int(d + i + 1, right, depth); n = left; }
+    }
+    _wyn_isort_int(d, n);
+}
+void array_sort(WynArray* arr) {
+    int n = arr->count;
+    if (n <= 1) return;
+    int depth = 0; for (int t = n; t > 1; t >>= 1) depth++;
+    depth *= 2;
+    _wyn_qsort_int(arr->data, n, depth);
+}
+void array_sort_str(WynArray* arr) {
+    if (arr->count > 1) qsort(arr->data, arr->count, sizeof(WynValue), _wyn_cmp_str);
 }
 
 int array_first(WynArray arr) {
@@ -768,7 +942,7 @@ WynArray array_take(WynArray arr, int n) {
     for (int i = 0; i < count; i++) {
         if (result.count >= result.capacity) {
             result.capacity = result.capacity == 0 ? 4 : result.capacity * 2;
-            result.data = realloc(result.data, sizeof(WynValue) * result.capacity);
+            result.data = wyn_realloc(result.data, sizeof(WynValue) * result.capacity);
         }
         result.data[result.count++] = arr.data[i];
     }
@@ -779,7 +953,7 @@ WynArray array_skip(WynArray arr, int n) {
     for (int i = n; i < arr.count; i++) {
         if (result.count >= result.capacity) {
             result.capacity = result.capacity == 0 ? 4 : result.capacity * 2;
-            result.data = realloc(result.data, sizeof(WynValue) * result.capacity);
+            result.data = wyn_realloc(result.data, sizeof(WynValue) * result.capacity);
         }
         result.data[result.count++] = arr.data[i];
     }
@@ -792,7 +966,7 @@ WynArray wyn_array_slice_range(WynArray arr, int start, int end) {
     for (int i = start; i < end; i++) {
         if (result.count >= result.capacity) {
             result.capacity = result.capacity == 0 ? 4 : result.capacity * 2;
-            result.data = realloc(result.data, sizeof(WynValue) * result.capacity);
+            result.data = wyn_realloc(result.data, sizeof(WynValue) * result.capacity);
         }
         result.data[result.count++] = arr.data[i];
     }
@@ -814,16 +988,18 @@ char* array_join(WynArray arr, const char* sep) {
         if (i < arr.count - 1) total_len += sep_len;
     }
     char* result = wyn_str_alloc(total_len);
-    result[0] = '\0';
+    size_t pos = 0;
     for (int i = 0; i < arr.count; i++) {
         if (arr.data[i].type == WYN_TYPE_STRING) {
-            strcat(result, arr.data[i].data.string_val);
+            size_t sl = strlen(arr.data[i].data.string_val);
+            memcpy(result + pos, arr.data[i].data.string_val, sl); pos += sl;
         } else if (arr.data[i].type == WYN_TYPE_INT) {
-            char buf[16]; sprintf(buf, "%d", arr.data[i].data.int_val);
-            strcat(result, buf);
+            char buf[16]; int bl = snprintf(buf, sizeof(buf), "%lld", arr.data[i].data.int_val);
+            memcpy(result + pos, buf, bl); pos += bl;
         }
-        if (i < arr.count - 1) strcat(result, sep);
+        if (i < arr.count - 1 && sep_len > 0) { memcpy(result + pos, sep, sep_len); pos += sep_len; }
     }
+    result[pos] = '\0';
     return result;
 }
 WynArray array_concat(WynArray arr1, WynArray arr2) {
@@ -831,14 +1007,14 @@ WynArray array_concat(WynArray arr1, WynArray arr2) {
     for (int i = 0; i < arr1.count; i++) {
         if (result.count >= result.capacity) {
             result.capacity = result.capacity == 0 ? 4 : result.capacity * 2;
-            result.data = realloc(result.data, sizeof(WynValue) * result.capacity);
+            result.data = wyn_realloc(result.data, sizeof(WynValue) * result.capacity);
         }
         result.data[result.count++] = arr1.data[i];
     }
     for (int i = 0; i < arr2.count; i++) {
         if (result.count >= result.capacity) {
             result.capacity = result.capacity == 0 ? 4 : result.capacity * 2;
-            result.data = realloc(result.data, sizeof(WynValue) * result.capacity);
+            result.data = wyn_realloc(result.data, sizeof(WynValue) * result.capacity);
         }
         result.data[result.count++] = arr2.data[i];
     }
@@ -853,40 +1029,53 @@ WynRange wyn_range(int start, int end) {
 bool range_has_next(WynRange* r) { return r->current < r->end; }
 int range_next(WynRange* r) { return r->current++; }
 
-int string_length(const char* str) { return strlen(str); }
+int string_length(const char* str) {
+    if (!str) return 0;
+    unsigned int cached = wyn_rc_get_length(str);
+    if (cached > 0) return (int)cached;
+    return strlen(str);
+}
 char* string_substring(const char* str, int start, int end) {
+    if (!str) return wyn_strdup("");
+    int slen = string_length(str);
+    if (start < 0) start = 0;
+    if (end > slen) end = slen;
+    if (start >= end) return wyn_strdup("");
     int len = end - start;
     char* result = wyn_str_alloc(len + 1);
-    strncpy(result, str + start, len);
+    memcpy(result, str + start, len);
     result[len] = '\0';
+    wyn_rc_set_length(result, len);
     return result;
 }
 bool string_contains(const char* str, const char* substr) {
     return strstr(str, substr) != NULL;
 }
 char* string_concat(const char* a, const char* b) {
-    int len_a = strlen(a), len_b = strlen(b);
-    char* result = wyn_str_alloc(len_a + len_b + 1);
-    strcpy(result, a);
-    strcat(result, b);
+    size_t la = strlen(a), lb = strlen(b);
+    char* result = wyn_str_alloc(la + lb + 1);
+    memcpy(result, a, la);
+    memcpy(result + la, b, lb + 1);
     return result;
 }
 char* string_upper(const char* str) {
-    int len = strlen(str);
+    int len = string_length(str);
     char* result = wyn_str_alloc(len);
     for (int i = 0; i < len; i++) {
         result[i] = toupper(str[i]);
     }
     result[len] = '\0';
+    wyn_rc_set_length(result, len);
     return result;
 }
 char* string_lower(const char* str) {
-    int len = strlen(str);
+    int len = string_length(str);
     char* result = wyn_str_alloc(len);
     for (int i = 0; i < len; i++) {
         result[i] = tolower(str[i]);
     }
     result[len] = '\0';
+    wyn_rc_set_length(result, len);
     return result;
 }
 int string_is_alpha(const char* str) {
@@ -918,11 +1107,12 @@ int string_is_whitespace(const char* str) {
     return 1;
 }
 const char* string_char_at(const char* str, int index) {
-    int len = strlen(str);
+    int len = string_length(str);
     if (index < 0 || index >= len) return "";
-    char* result = wyn_str_alloc(1);
+    char* result = wyn_str_alloc(2);
     result[0] = str[index];
     result[1] = '\0';
+    wyn_rc_set_length(result, 1);
     return result;
 }
 int string_equals(const char* a, const char* b) {
@@ -964,13 +1154,14 @@ char* string_capitalize(const char* str) {
     return result;
 }
 char* string_reverse(const char* str) {
-    int len = strlen(str);
+    int len = string_length(str);
     char* result = wyn_str_alloc(len + 1);
     for (int i = 0; i < len; i++) result[i] = str[len - 1 - i];
     result[len] = '\0';
+    wyn_rc_set_length(result, len);
     return result;
 }
-int string_len(const char* str) { return strlen(str); }
+int string_len(const char* str) { return string_length(str); }
 bool string_is_empty(const char* str) { return str[0] == '\0'; }
 bool string_starts_with(const char* str, const char* prefix) {
     return strncmp(str, prefix, strlen(prefix)) == 0;
@@ -1003,7 +1194,8 @@ char* string_replace(const char* str, const char* old, const char* new) {
             memcpy(r, new, new_len); r += new_len;
             p = match + old_len;
         } else {
-            strcpy(r, p); break;
+            size_t tail = strlen(p);
+            memcpy(r, p, tail + 1); break;
         }
     }
     result[result_len] = '\0';
@@ -1019,7 +1211,7 @@ int string_last_index_of(const char* str, const char* substr) {
     return last ? (int)(last - str) : -1;
 }
 char* string_slice(const char* str, int start, int end) {
-    int len = strlen(str);
+    int len = string_length(str);
     if (start < 0) start = 0;
     if (end > len) end = len;
     if (start >= end) return wyn_strdup("");
@@ -1027,17 +1219,20 @@ char* string_slice(const char* str, int start, int end) {
     char* result = wyn_str_alloc(slice_len);
     memcpy(result, str + start, slice_len);
     result[slice_len] = '\0';
+    wyn_rc_set_length(result, slice_len);
     return result;
 }
 char* string_repeat(const char* str, int count) {
-    int len = strlen(str);
-    char* result = wyn_str_alloc(len * count);
+    int len = string_length(str);
+    int total = len * count;
+    char* result = wyn_str_alloc(total);
     for (int i = 0; i < count; i++) memcpy(result + i * len, str, len);
-    result[len * count] = '\0';
+    result[total] = '\0';
+    wyn_rc_set_length(result, total);
     return result;
 }
 char* string_title(const char* str) {
-    int len = strlen(str);
+    int len = string_length(str);
     char* result = wyn_str_alloc(len + 1);
     int capitalize_next = 1;
     for (int i = 0; i < len; i++) {
@@ -1082,7 +1277,7 @@ WynArray string_split(const char* str, const char* delim) {
     while (1) {
         const char* found = strstr(p, delim);
         if (!found) {
-            array_push_str(&arr, strdup(p));
+            array_push_str(&arr, wyn_strdup(p));
             break;
         }
         int len = found - p;
@@ -1120,45 +1315,46 @@ WynArray string_to_bytes(const char* str) {
     return arr;
 }
 char* string_pad_left(const char* str, int width, const char* pad) {
-    int len = strlen(str);
+    int len = string_length(str);
     if (len >= width) return wyn_strdup(str);
     int pad_len = width - len;
     char* result = wyn_str_alloc(width);
     for (int i = 0; i < pad_len; i++) result[i] = pad[0];
-    strcpy(result + pad_len, str);
+    memcpy(result + pad_len, str, len + 1);
+    wyn_rc_set_length(result, width);
     return result;
 }
 char* string_pad_right(const char* str, int width, const char* pad) {
-    int len = strlen(str);
+    int len = string_length(str);
     if (len >= width) return wyn_strdup(str);
-    int pad_len = width - len;
     char* result = wyn_str_alloc(width);
-    strcpy(result, str);
+    memcpy(result, str, len);
     for (int i = len; i < width; i++) result[i] = pad[0];
     result[width] = '\0';
+    wyn_rc_set_length(result, width);
     return result;
 }
 
 WynArray string_lines(const char* str) {
     WynArray arr = array_new();
-    char* copy = strdup(str);
+    char* copy = wyn_strdup(str);
     char* token = strtok(copy, "\n");
     while (token != NULL) {
-        array_push_str(&arr, strdup(token));
+        array_push_str(&arr, wyn_strdup(token));
         token = strtok(NULL, "\n");
     }
-    free(copy);
+    wyn_rc_release(copy);
     return arr;
 }
 WynArray string_words(const char* str) {
     WynArray arr = array_new();
-    char* copy = strdup(str);
+    char* copy = wyn_strdup(str);
     char* token = strtok(copy, " \t\n\r");
     while (token != NULL) {
-        array_push_str(&arr, strdup(token));
+        array_push_str(&arr, wyn_strdup(token));
         token = strtok(NULL, " \t\n\r");
     }
-    free(copy);
+    wyn_rc_release(copy);
     return arr;
 }
 
@@ -1223,7 +1419,7 @@ char* int_to_binary(int n) {
 }
 char* int_to_hex(int n) {
     char* result = wyn_str_alloc(11);
-    sprintf(result, "%x", n);
+    snprintf(result, 32, "%x", n);
     return result;
 }
 
@@ -1277,9 +1473,9 @@ void map_set(WynMap* map, const char* key, int value) {
         }
     }
     // Add new key-value pair
-    map->keys = realloc(map->keys, sizeof(void*) * (map->count + 1));
-    map->values = realloc(map->values, sizeof(void*) * (map->count + 1));
-    map->keys[map->count] = (void*)strdup(key);
+    map->keys = wyn_realloc(map->keys, sizeof(void*) * (map->count + 1));
+    map->values = wyn_realloc(map->values, sizeof(void*) * (map->count + 1));
+    map->keys[map->count] = (void*)wyn_strdup(key);
     map->values[map->count] = (void*)(intptr_t)value;
     map->count++;
 }
@@ -1298,7 +1494,7 @@ void map_clear(WynMap* map) {
 }
 
 char** map_keys(WynMap map) {
-    char** keys = malloc(sizeof(char*) * (map.count + 1));
+    char** keys = wyn_malloc(sizeof(char*) * (map.count + 1));
     for (int i = 0; i < map.count; i++) {
         keys[i] = (char*)map.keys[i];
     }
@@ -1412,7 +1608,7 @@ char* http_request(const char* method, const char* url, const char* body) {
     }
     
     // Build request
-    char* request = malloc(8192);
+    char* request = wyn_malloc(8192);
     int len = snprintf(request, 8192, "%s %s HTTP/1.1\r\nHost: %s\r\n", method, path, hostname);
     len += snprintf(request + len, 8192 - len, "User-Agent: Wyn/1.4\r\n");
     len += snprintf(request + len, 8192 - len, "Accept: */*\r\n");
@@ -1441,13 +1637,13 @@ char* http_request(const char* method, const char* url, const char* body) {
     
     // Read response with dynamic allocation
     size_t capacity = 65536, total = 0;
-    char* response = malloc(capacity);
+    char* response = wyn_malloc(capacity);
     int n;
     while((n = recv(sock, response + total, capacity - total - 1, 0)) > 0) {
         total += n;
         if(total >= capacity - 1024) {
             capacity *= 2;
-            char* new_resp = realloc(response, capacity);
+            char* new_resp = wyn_realloc(response, capacity);
             if(!new_resp) { free(response); close(sock); return NULL; }
             response = new_resp;
         }
@@ -1475,7 +1671,7 @@ char* http_request(const char* method, const char* url, const char* body) {
         
         // Handle chunked transfer encoding
         if(strstr(response, "Transfer-Encoding: chunked") || strstr(response, "transfer-encoding: chunked")) {
-            char* result = malloc(capacity);
+            char* result = wyn_malloc(capacity);
             char* dst = result;
             char* src = body_start;
             while(*src) {
@@ -1494,7 +1690,7 @@ char* http_request(const char* method, const char* url, const char* body) {
             return result;
         }
         
-        char* result = malloc(strlen(body_start) + 1);
+        char* result = wyn_str_alloc(strlen(body_start) + 1);
         strcpy(result, body_start);
         free(response);
         return result;
@@ -1523,7 +1719,7 @@ char* https_get(const char* url) {
         path, hostname, hostname);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* response = malloc(131072);
+    char* response = wyn_malloc(131072);
     size_t len = fread(response, 1, 131071, fp);
     response[len] = 0;
     pclose(fp);
@@ -1557,7 +1753,7 @@ char* https_post(const char* url, const char* data) {
         path, hostname, dlen, data ? data : "", hostname);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* response = malloc(131072);
+    char* response = wyn_malloc(131072);
     size_t len = fread(response, 1, 131071, fp);
     response[len] = 0;
     pclose(fp);
@@ -1597,7 +1793,7 @@ char* http_put(const char* url, const char* data) {
             "printf 'PUT %s HTTP/1.1\\r\\nHost: %s\\r\\nContent-Length: %d\\r\\nConnection: close\\r\\n\\r\\n%s' | openssl s_client -quiet -connect %s:443 2>/dev/null",
             path, hostname, dlen, data?data:"", hostname);
         FILE* fp = popen(cmd, "r"); if (!fp) return "";
-        char* resp = malloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
+        char* resp = wyn_str_alloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
         char* body = strstr(resp, "\r\n\r\n");
         if (body) { body+=4; char* r=wyn_strdup(body); free(resp); return r; }
         return resp;
@@ -1617,7 +1813,7 @@ char* http_delete(const char* url) {
             "printf 'DELETE %s HTTP/1.1\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n' | openssl s_client -quiet -connect %s:443 2>/dev/null",
             path, hostname, hostname);
         FILE* fp = popen(cmd, "r"); if (!fp) return "";
-        char* resp = malloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
+        char* resp = wyn_str_alloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
         char* body = strstr(resp, "\r\n\r\n");
         if (body) { body+=4; char* r=wyn_strdup(body); free(resp); return r; }
         return resp;
@@ -1628,7 +1824,7 @@ char* http_delete(const char* url) {
 
 void http_set_header(const char* key, const char* val) {
     if(http_header_count < 32) {
-        char* header = malloc(512);
+        char* header = wyn_malloc(512);
         snprintf(header, 512, "%s: %s", key, val);
         http_headers[http_header_count++] = header;
     }
@@ -1644,7 +1840,7 @@ char* wyn_http_error() { return http_last_error[0] ? http_last_error : NULL; }
 char* last_error_get() { return last_error[0] ? last_error : NULL; }
 
 char* url_encode(const char* str) {
-    char* result = malloc(strlen(str) * 3 + 1);
+    char* result = wyn_str_alloc(strlen(str) * 3 + 1);
     char* p = result;
     while(*str) {
         if((*str >= 'A' && *str <= 'Z') || (*str >= 'a' && *str <= 'z') || (*str >= '0' && *str <= '9') || *str == '-' || *str == '_' || *str == '.' || *str == '~') {
@@ -1652,7 +1848,7 @@ char* url_encode(const char* str) {
         } else if(*str == ' ') {
             *p++ = '+';
         } else {
-            sprintf(p, "%%%02X", (unsigned char)*str);
+            snprintf(p, 4, "%%%02X", (unsigned char)*str);
             p += 3;
         }
         str++;
@@ -1662,7 +1858,7 @@ char* url_encode(const char* str) {
 }
 
 char* url_decode(const char* str) {
-    char* result = malloc(strlen(str) + 1);
+    char* result = wyn_str_alloc(strlen(str) + 1);
     char* p = result;
     while(*str) {
         if(*str == '%' && str[1] && str[2]) {
@@ -1684,7 +1880,7 @@ char* url_decode(const char* str) {
 char* base64_encode(const char* str) {
     static const char* b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     int len = strlen(str);
-    char* out = malloc(((len + 2) / 3) * 4 + 1);
+    char* out = wyn_str_alloc(((len + 2) / 3) * 4 + 1);
     int i = 0, j = 0;
     while(i < len) {
         uint32_t a = i < len ? (unsigned char)str[i++] : 0;
@@ -1793,31 +1989,32 @@ double pi_const() { return 3.14159265359; }
 double e_const() { return 2.71828182846; }
 int str_len(const char* s) { return strlen(s); }
 int str_eq(const char* a, const char* b) { return strcmp(a, b) == 0; }
-char* str_concat(const char* a, const char* b) { char* r = malloc(strlen(a) + strlen(b) + 1); strcpy(r, a); strcat(r, b); return r; }
-char* str_upper(const char* s) { char* r = malloc(strlen(s) + 1); for(int i = 0; s[i]; i++) r[i] = toupper(s[i]); r[strlen(s)] = 0; return r; }
-char* str_lower(const char* s) { char* r = malloc(strlen(s) + 1); for(int i = 0; s[i]; i++) r[i] = tolower(s[i]); r[strlen(s)] = 0; return r; }
+char* str_concat(const char* a, const char* b) { size_t la = strlen(a), lb = strlen(b); char* r = wyn_str_alloc(la + lb + 1); memcpy(r, a, la); memcpy(r + la, b, lb + 1); return r; }
+char* str_upper(const char* s) { size_t len = string_length(s); char* r = wyn_str_alloc(len + 1); for(size_t i = 0; i < len; i++) r[i] = toupper(s[i]); r[len] = 0; wyn_rc_set_length(r, (unsigned int)len); return r; }
+char* str_lower(const char* s) { size_t len = string_length(s); char* r = wyn_str_alloc(len + 1); for(size_t i = 0; i < len; i++) r[i] = tolower(s[i]); r[len] = 0; wyn_rc_set_length(r, (unsigned int)len); return r; }
 int str_contains(const char* s, const char* sub) { return strstr(s, sub) != NULL; }
 int str_starts_with(const char* s, const char* prefix) { return strncmp(s, prefix, strlen(prefix)) == 0; }
-int str_ends_with(const char* s, const char* suffix) { int sl = strlen(s); int pl = strlen(suffix); return sl >= pl && strcmp(s + sl - pl, suffix) == 0; }
-char* str_trim(const char* s) { while(*s == ' ') s++; int len = strlen(s); while(len > 0 && s[len-1] == ' ') len--; char* r = malloc(len + 1); strncpy(r, s, len); r[len] = 0; return r; }
+int str_ends_with(const char* s, const char* suffix) { int sl = string_length(s); int pl = strlen(suffix); return sl >= pl && strcmp(s + sl - pl, suffix) == 0; }
+char* str_trim(const char* s) { while(*s == ' ') s++; int len = strlen(s); while(len > 0 && s[len-1] == ' ') len--; char* r = wyn_str_alloc(len + 1); memcpy(r, s, len); r[len] = 0; wyn_rc_set_length(r, len); return r; }
 const char* Fs_read_file(const char* path) {
     FILE* f = fopen(path, "r");
     if (!f) return "";
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* buffer = malloc(size + 1);
+    char* buffer = wyn_str_alloc(size + 1);
     if (!buffer) { fclose(f); return ""; }
     size_t read = fread(buffer, 1, size, f);
     buffer[read] = '\0';
+    wyn_rc_set_length(buffer, (unsigned int)read);
     fclose(f);
     return buffer;
 }
-char* str_repeat(const char* s, int count) { int len = strlen(s); char* r = malloc(len * count + 1); r[0] = 0; for(int i = 0; i < count; i++) strcat(r, s); return r; }
-char* str_reverse(const char* s) { int len = strlen(s); char* r = malloc(len + 1); for(int i = 0; i < len; i++) r[i] = s[len-1-i]; r[len] = 0; return r; }
-char* int_to_string(long long x) { char* r = wyn_str_alloc(32); snprintf(r, 32, "%lld", x); return r; }
-char* float_to_string(double x) { char* r = malloc(32); snprintf(r, 32, "%g", x); if (!strchr(r, '.') && !strchr(r, 'e') && !strchr(r, 'E') && !strchr(r, 'n') && !strchr(r, 'i')) strcat(r, ".0"); return r; }
-char* bool_to_string(bool x) { char* r = malloc(8); strcpy(r, x ? "true" : "false"); return r; }
+char* str_repeat(const char* s, int count) { size_t len = string_length(s); size_t total = len * count; char* r = wyn_str_alloc(total + 1); for(int i = 0; i < count; i++) memcpy(r + i * len, s, len); r[total] = 0; wyn_rc_set_length(r, (unsigned int)total); return r; }
+char* str_reverse(const char* s) { int len = string_length(s); char* r = wyn_str_alloc(len + 1); for(int i = 0; i < len; i++) r[i] = s[len-1-i]; r[len] = 0; wyn_rc_set_length(r, len); return r; }
+char* int_to_string(long long x) { char* r = wyn_str_alloc(32); int n = snprintf(r, 32, "%lld", x); wyn_rc_set_length(r, (unsigned int)n); return r; }
+char* float_to_string(double x) { char* r = wyn_str_alloc(32); snprintf(r, 32, "%g", x); if (!strchr(r, '.') && !strchr(r, 'e') && !strchr(r, 'E') && !strchr(r, 'n') && !strchr(r, 'i')) { size_t l = strlen(r); r[l] = '.'; r[l+1] = '0'; r[l+2] = 0; } wyn_rc_set_length(r, (unsigned int)strlen(r)); return r; }
+char* bool_to_string(bool x) { return (char*)(x ? "true" : "false"); }
 int bool_to_int(bool x) { return x ? 1 : 0; }
 bool bool_not(bool x) { return !x; }
 bool bool_and(bool x, bool y) { return x && y; }
@@ -1825,19 +2022,19 @@ bool bool_or(bool x, bool y) { return x || y; }
 bool bool_xor(bool x, bool y) { return x != y; }
 long long wyn_safe_div(long long a, long long b) {
     if (b == 0) {
-        fprintf(stderr, "Warning: Division by zero\n");
-        return 0;
+        fprintf(stderr, "panic: division by zero\n");
+        exit(1);
     }
     return a / b;
 }
 long long wyn_safe_mod(long long a, long long b) {
     if (b == 0) {
-        fprintf(stderr, "Warning: Modulo by zero\n");
-        return 0;
+        fprintf(stderr, "panic: modulo by zero\n");
+        exit(1);
     }
     return a % b;
 }
-char* char_to_string(char x) { char* r = malloc(2); r[0] = x; r[1] = 0; return r; }
+char* char_to_string(char x) { char* r = wyn_str_alloc(2); r[0] = x; r[1] = 0; return r; }
 int char_to_int(char x) { return (int)x; }
 char char_from_int(int x) { return (char)x; }
 bool char_is_alpha(char x) { return (x >= 'A' && x <= 'Z') || (x >= 'a' && x <= 'z'); }
@@ -1845,7 +2042,7 @@ bool char_is_numeric(char x) { return x >= '0' && x <= '9'; }
 bool char_is_alphanumeric(char x) { return char_is_alpha(x) || char_is_numeric(x); }
 bool char_is_whitespace(char x) { return x == ' ' || x == '\t' || x == '\n' || x == '\r'; }
 char* String_from_chars(WynArray arr) {
-    char* r = malloc(arr.count + 1);
+    char* r = wyn_str_alloc(arr.count + 1);
     for (int i = 0; i < arr.count; i++) {
         const char* s = arr.data[i].data.string_val;
         r[i] = (s && *s) ? s[0] : 0;
@@ -1873,17 +2070,17 @@ WynError Error(const char* msg) { WynError e = {msg, "Error"}; return e; }
 WynError TypeError(const char* msg) { WynError e = {msg, "TypeError"}; return e; }
 WynError ValueError(const char* msg) { WynError e = {msg, "ValueError"}; return e; }
 WynError DivisionByZeroError(const char* msg) { WynError e = {msg, "DivisionByZeroError"}; return e; }
-char* str_substring(const char* s, int start, int end) { int len = strlen(s); if(start < 0) start = 0; if(end > len) end = len; if(start >= end) return malloc(1); int sublen = end - start; char* r = malloc(sublen + 1); strncpy(r, s + start, sublen); r[sublen] = 0; return r; }
+char* str_substring(const char* s, int start, int end) { int len = string_length(s); if(start < 0) start = 0; if(end > len) end = len; if(start >= end) return wyn_strdup(""); int sublen = end - start; char* r = wyn_str_alloc(sublen + 1); memcpy(r, s + start, sublen); r[sublen] = 0; wyn_rc_set_length(r, sublen); return r; }
 int str_index_of(const char* s, const char* sub) { char* p = strstr(s, sub); return p ? (int)(p - s) : -1; }
 char* str_slice(const char* s, int start, int end) { return str_substring(s, start, end); }
-char* str_pad_start(const char* s, int len, const char* pad) { int slen = strlen(s); if(slen >= len) { char* r = malloc(slen + 1); strcpy(r, s); return r; } int padlen = len - slen; char* r = malloc(len + 1); for(int i = 0; i < padlen; i++) r[i] = pad[0]; strcpy(r + padlen, s); return r; }
-char* str_pad_end(const char* s, int len, const char* pad) { int slen = strlen(s); if(slen >= len) { char* r = malloc(slen + 1); strcpy(r, s); return r; } char* r = malloc(len + 1); strcpy(r, s); for(int i = slen; i < len; i++) r[i] = pad[0]; r[len] = 0; return r; }
-char* str_remove_prefix(const char* s, const char* prefix) { int plen = strlen(prefix); if(strncmp(s, prefix, plen) == 0) { char* r = malloc(strlen(s) - plen + 1); strcpy(r, s + plen); return r; } char* r = malloc(strlen(s) + 1); strcpy(r, s); return r; }
-char* str_remove_suffix(const char* s, const char* suffix) { int slen = strlen(s); int suflen = strlen(suffix); if(slen >= suflen && strcmp(s + slen - suflen, suffix) == 0) { char* r = malloc(slen - suflen + 1); strncpy(r, s, slen - suflen); r[slen - suflen] = 0; return r; } char* r = malloc(slen + 1); strcpy(r, s); return r; }
-char* str_capitalize(const char* s) { char* r = malloc(strlen(s) + 1); strcpy(r, s); if(r[0]) r[0] = toupper(r[0]); for(int i = 1; r[i]; i++) r[i] = tolower(r[i]); return r; }
-char* str_center(const char* s, int width) { int len = strlen(s); if(len >= width) { char* r = malloc(len + 1); strcpy(r, s); return r; } int pad = (width - len) / 2; char* r = malloc(width + 1); for(int i = 0; i < pad; i++) r[i] = ' '; strcpy(r + pad, s); for(int i = pad + len; i < width; i++) r[i] = ' '; r[width] = 0; return r; }
-char** str_lines(const char* s) { char** lines = malloc(sizeof(char*)); lines[0] = malloc(strlen(s) + 1); strcpy(lines[0], s); return lines; }
-char** str_words(const char* s) { char** words = malloc(sizeof(char*)); words[0] = malloc(strlen(s) + 1); strcpy(words[0], s); return words; }
+char* str_pad_start(const char* s, int len, const char* pad) { int slen = strlen(s); if(slen >= len) { char* r = wyn_str_alloc(slen + 1); memcpy(r, s, slen + 1); return r; } int padlen = len - slen; char* r = wyn_str_alloc(len + 1); for(int i = 0; i < padlen; i++) r[i] = pad[0]; memcpy(r + padlen, s, slen + 1); return r; }
+char* str_pad_end(const char* s, int len, const char* pad) { int slen = strlen(s); if(slen >= len) { char* r = wyn_str_alloc(slen + 1); memcpy(r, s, slen + 1); return r; } char* r = wyn_str_alloc(len + 1); memcpy(r, s, slen); for(int i = slen; i < len; i++) r[i] = pad[0]; r[len] = 0; return r; }
+char* str_remove_prefix(const char* s, const char* prefix) { int slen = strlen(s); int plen = strlen(prefix); if(strncmp(s, prefix, plen) == 0) { int rlen = slen - plen; char* r = wyn_str_alloc(rlen + 1); memcpy(r, s + plen, rlen + 1); return r; } char* r = wyn_str_alloc(slen + 1); memcpy(r, s, slen + 1); return r; }
+char* str_remove_suffix(const char* s, const char* suffix) { int slen = strlen(s); int suflen = strlen(suffix); if(slen >= suflen && strcmp(s + slen - suflen, suffix) == 0) { int rlen = slen - suflen; char* r = wyn_str_alloc(rlen + 1); memcpy(r, s, rlen); r[rlen] = 0; return r; } char* r = wyn_str_alloc(slen + 1); memcpy(r, s, slen + 1); return r; }
+char* str_capitalize(const char* s) { int slen = strlen(s); char* r = wyn_str_alloc(slen + 1); memcpy(r, s, slen + 1); if(r[0]) r[0] = toupper(r[0]); for(int i = 1; r[i]; i++) r[i] = tolower(r[i]); return r; }
+char* str_center(const char* s, int width) { int len = strlen(s); if(len >= width) { char* r = wyn_str_alloc(len + 1); memcpy(r, s, len + 1); return r; } int pad = (width - len) / 2; char* r = wyn_str_alloc(width + 1); for(int i = 0; i < pad; i++) r[i] = ' '; memcpy(r + pad, s, len); for(int i = pad + len; i < width; i++) r[i] = ' '; r[width] = 0; return r; }
+char** str_lines(const char* s) { char** lines = wyn_malloc(sizeof(char*)); lines[0] = wyn_malloc(strlen(s) + 1); strcpy(lines[0], s); return lines; }
+char** str_words(const char* s) { char** words = wyn_malloc(sizeof(char*)); words[0] = wyn_malloc(strlen(s) + 1); strcpy(words[0], s); return words; }
 void str_free(char* s) { if(s) free(s); }
 long long str_parse_int(const char* s) {
     if(!s || !*s) return 0;
@@ -1894,7 +2091,7 @@ long long str_parse_int(const char* s) {
     return val;
 }
 long long str_ascii(const char* s) { return (s && *s) ? (unsigned char)s[0] : 0; }
-const char* String_char_from_int(long long n) { char* r = malloc(2); r[0] = (char)n; r[1] = 0; return r; }
+const char* String_char_from_int(long long n) { char* r = wyn_str_alloc(2); r[0] = (char)n; r[1] = 0; return r; }
 
 // Data.save/load — forward declared, defined after hashmap functions
 void Data_save(const char* path, WynHashMap* map);
@@ -1921,7 +2118,7 @@ char* file_read(const char* path) {
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* buf = malloc(sz + 1);
+    char* buf = wyn_str_alloc(sz + 1);
     if(!buf) { snprintf(last_error, 256, "Out of memory"); fclose(f); return NULL; }
     fread(buf, 1, sz, f);
     buf[sz] = 0;
@@ -1935,7 +2132,7 @@ WynArray file_list_dir(const char* path) {
     struct dirent* entry;
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
-        char* name = malloc(strlen(entry->d_name) + 1);
+        char* name = wyn_malloc(strlen(entry->d_name) + 1);
         strcpy(name, entry->d_name);
         array_push_str(&arr, name);
     }
@@ -1953,7 +2150,7 @@ int file_is_dir(const char* path) {
     return S_ISDIR(st.st_mode);
 }
 char* file_get_cwd() {
-    char* buf = malloc(1024);
+    char* buf = wyn_str_alloc(1024);
     if (getcwd(buf, 1024) == NULL) { free(buf); return ""; }
     return buf;
 }
@@ -1966,24 +2163,21 @@ int file_file_size(const char* path) {
     return (int)st.st_size;
 }
 char* file_path_join(const char* a, const char* b) {
-    int len_a = strlen(a);
-    int len_b = strlen(b);
-    int needs_sep = (len_a > 0 && a[len_a-1] != '/') ? 1 : 0;
-    char* result = malloc(len_a + len_b + needs_sep + 1);
-    strcpy(result, a);
-    if (needs_sep) strcat(result, "/");
-    strcat(result, b);
+    size_t la = strlen(a), lb = strlen(b);
+    int needs_sep = (la > 0 && a[la-1] != '/') ? 1 : 0;
+    char* result = wyn_str_alloc(la + lb + needs_sep + 1);
+    memcpy(result, a, la);
+    if (needs_sep) result[la] = '/';
+    memcpy(result + la + needs_sep, b, lb + 1);
     return result;
 }
 char* file_basename(const char* path) {
     const char* last_slash = strrchr(path, '/');
-    if (last_slash == NULL) {
-        char* result = malloc(strlen(path) + 1);
-        strcpy(result, path);
-        return result;
-    }
-    char* result = malloc(strlen(last_slash));
-    strcpy(result, last_slash + 1);
+    const char* name = last_slash ? last_slash + 1 : path;
+    size_t len = strlen(name);
+    char* result = wyn_str_alloc(len + 1);
+    memcpy(result, name, len + 1);
+    wyn_rc_set_length(result, (unsigned int)len);
     return result;
 }
 char* file_dirname(const char* path) {
@@ -1992,16 +2186,20 @@ char* file_dirname(const char* path) {
     int len = last_slash - path;
     if (len == 0) return "/";
     char* result = wyn_str_alloc(len + 1);
-    strncpy(result, path, len);
+    memcpy(result, path, len);
     result[len] = '\0';
+    wyn_rc_set_length(result, len);
     return result;
 }
 char* file_extension(const char* path) {
     const char* last_dot = strrchr(path, '.');
     const char* last_slash = strrchr(path, '/');
     if (last_dot == NULL || (last_slash != NULL && last_dot < last_slash)) return "";
-    char* result = malloc(strlen(last_dot));
-    strcpy(result, last_dot + 1);
+    const char* ext = last_dot + 1;
+    size_t len = strlen(ext);
+    char* result = wyn_str_alloc(len + 1);
+    memcpy(result, ext, len + 1);
+    wyn_rc_set_length(result, (unsigned int)len);
     return result;
 }
 char* Path_basename(const char* p) { return file_basename(p); }
@@ -2056,14 +2254,18 @@ int File_mkdir(const char* p) { return file_mkdir(p); }
 char* File_list_dir(const char* p) {
     DIR* dir = opendir(p);
     if (!dir) return "";
-    char* result = malloc(65536);
-    result[0] = 0;
+    size_t cap = 1024, pos = 0;
+    char* result = wyn_str_alloc(cap);
     struct dirent* entry;
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_name[0] == '.') continue;
-        strcat(result, entry->d_name);
-        strcat(result, "\n");
+        size_t nl = strlen(entry->d_name);
+        if (pos + nl + 1 >= cap) { cap = (pos + nl + 1) * 2; char* nr = wyn_str_alloc(cap); memcpy(nr, result, pos); wyn_rc_release(result); result = nr; }
+        memcpy(result + pos, entry->d_name, nl); pos += nl;
+        result[pos++] = '\n';
     }
+    result[pos] = 0;
+    wyn_rc_set_length(result, (unsigned int)pos);
     closedir(dir);
     return result;
 }
@@ -2091,7 +2293,7 @@ long long File_open(const char* path, const char* mode) {
 }
 char* File_read_line(long long handle) {
     if (handle <= 0 || handle >= MAX_FILE_HANDLES || !file_handles[handle]) return "";
-    char* buf = malloc(4096);
+    char* buf = wyn_str_alloc(4096);
     if (fgets(buf, 4096, file_handles[handle])) return buf;
     free(buf);
     return "";
@@ -2207,6 +2409,34 @@ int Http_serve(int port) {
     if (listen(server_fd, 128) < 0) { close(server_fd); return -1; }
     return server_fd;
 }
+int Http_listen(int port) { return Http_serve(port); }
+
+// Parse fields from Http_accept result ("METHOD|PATH|BODY|FD")
+static char* _http_field(const char* raw, int idx) {
+    if (!raw || !*raw) return "";
+    const char* p = raw;
+    for (int i = 0; i < idx; i++) {
+        const char* pipe = strchr(p, '|');
+        if (!pipe) return "";
+        p = pipe + 1;
+    }
+    const char* end = strchr(p, '|');
+    size_t len = end ? (size_t)(end - p) : strlen(p);
+    char* r = wyn_str_alloc(len + 1);
+    memcpy(r, p, len);
+    r[len] = 0;
+    wyn_rc_set_length(r, (unsigned int)len);
+    return r;
+}
+char* Http_method(const char* raw) { return _http_field(raw, 0); }
+char* Http_path(const char* raw)   { return _http_field(raw, 1); }
+char* Http_req_body(const char* raw) { return _http_field(raw, 2); }
+int Http_fd(const char* raw) {
+    const char* s = _http_field(raw, 3);
+    int fd = atoi(s);
+    wyn_rc_release(s);
+    return fd;
+}
 
 char* Http_accept(int server_fd) {
     // Reset arena per request to prevent memory leak in long-running servers
@@ -2264,7 +2494,7 @@ char* Http_accept(int server_fd) {
     char* body_start = strstr(buf_copy, "\r\n\r\n");
     const char* body = body_start ? body_start + 4 : "";
     
-    char* result = malloc(16384);
+    char* result = wyn_str_alloc(16384);
     snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
     return result;
 }
@@ -2283,7 +2513,7 @@ WynArray hashmap_keys(WynHashMap* map) {
     if (!raw || raw[0] == 0) return arr;
     char* copy = strdup(raw);
     char* line = strtok(copy, "\n");
-    while (line) { if (line[0]) array_push_str(&arr, line); line = strtok(NULL, "\n"); }
+    while (line) { if (line[0]) array_push_str(&arr, wyn_strdup(line)); line = strtok(NULL, "\n"); }
     free(copy);
     return arr;
 }
@@ -2293,7 +2523,7 @@ WynArray hashmap_values(WynHashMap* map) {
     if (!raw || raw[0] == 0) return arr;
     char* copy = strdup(raw);
     char* line = strtok(copy, "\n");
-    while (line) { if (line[0]) array_push_str(&arr, line); line = strtok(NULL, "\n"); }
+    while (line) { if (line[0]) array_push_str(&arr, wyn_strdup(line)); line = strtok(NULL, "\n"); }
     free(copy);
     return arr;
 }
@@ -2302,7 +2532,7 @@ WynArray hashmap_values(WynHashMap* map) {
 char* string_split_to_str(const char* s, const char* delim) {
     if (!s || !delim) return "";
     int dlen = strlen(delim);
-    char* result = malloc(strlen(s) + 256);
+    char* result = wyn_str_alloc(strlen(s) + 256);
     result[0] = 0;
     const char* p = s;
     while (1) {
@@ -2442,8 +2672,8 @@ void Terminal_print_color(const char* s, int fg) { printf("\033[%dm%s\033[0m", f
 // Usage: Color.red("error"), Color.bold("title"), Color.green("ok")
 static char* _color_wrap(const char* s, const char* code) {
     // \033[CODEm + s + \033[0m + null
-    char* buf = malloc(strlen(s) + strlen(code) + 10);
-    sprintf(buf, "\033[%sm%s\033[0m", code, s);
+    char* buf = wyn_str_alloc(strlen(s) + strlen(code) + 10);
+    snprintf(buf, strlen(s) + strlen(code) + 10, "\033[%sm%s\033[0m", code, s);
     return buf;
 }
 char* Color_red(const char* s) { return _color_wrap(s, "31"); }
@@ -2573,7 +2803,7 @@ int file_remove_dir_all(const char* path) {
 char* System_shell_escape(const char* s) {
     if (!s) return "''";
     size_t len = strlen(s);
-    char* out = malloc(len * 4 + 3); // worst case: every char escaped + quotes
+    char* out = wyn_str_alloc(len * 4 + 3); // worst case: every char escaped + quotes
     size_t j = 0;
     out[j++] = '\'';
     for (size_t i = 0; i < len; i++) {
@@ -2594,11 +2824,22 @@ char* System_exec(const char* cmd) {
 #else
     FILE* pipe = popen(cmd, "r");
     if (!pipe) return "";
-    char* result = malloc(65536);
+    size_t cap = 4096, len = 0;
+    char* result = wyn_str_alloc(cap);
     result[0] = 0;
     char buffer[1024];
     while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-        strcat(result, buffer);
+        size_t blen = strlen(buffer);
+        if (len + blen >= cap) {
+            cap = (len + blen) * 2;
+            char* newbuf = wyn_str_alloc(cap);
+            memcpy(newbuf, result, len);
+            wyn_rc_release(result);
+            result = newbuf;
+        }
+        memcpy(result + len, buffer, blen);
+        len += blen;
+        result[len] = 0;
     }
     pclose(pipe);
     return result;
@@ -2620,7 +2861,7 @@ void System_exit(int code) { exit(code); }
 char* System_env(const char* key) {
     char* val = getenv(key);
     if (!val) return "";
-    char* result = malloc(strlen(val) + 1);
+    char* result = wyn_str_alloc(strlen(val) + 1);
     strcpy(result, val);
     return result;
 }
@@ -2635,7 +2876,7 @@ int System_set_env(const char* key, const char* value) {
 
 WynArray System_args() {
     WynArray arr;
-    arr.data = malloc(__wyn_argc * sizeof(WynValue));
+    arr.data = wyn_malloc(__wyn_argc * sizeof(WynValue));
     arr.count = __wyn_argc;
     arr.capacity = __wyn_argc;
     for (int i = 0; i < __wyn_argc; i++) {
@@ -2689,7 +2930,7 @@ bool Args_has(const char* name) {
 // Args.positional() — returns array of non-flag arguments
 WynArray Args_positional() {
     int argc = wyn_get_argc();
-    WynArray arr; arr.data = malloc(argc * sizeof(WynValue)); arr.count = 0; arr.capacity = argc;
+    WynArray arr; arr.data = wyn_malloc(argc * sizeof(WynValue)); arr.count = 0; arr.capacity = argc;
     for (int i = 1; i < argc; i++) {
         const char* arg = wyn_get_argv(i);
         if (arg[0] == '-') {
@@ -2717,7 +2958,7 @@ WynArray Env_all() {
     WynArray arr;
     int count = 0;
     for (char** env = environ; *env; env++) count++;
-    arr.data = malloc(count * sizeof(WynValue));
+    arr.data = wyn_malloc(count * sizeof(WynValue));
     arr.count = count;
     arr.capacity = count;
     for (int i = 0; i < count; i++) {
@@ -2791,7 +3032,7 @@ long long DateTime_micros() { struct timeval tv; gettimeofday(&tv, NULL); return
 char* DateTime_format(int timestamp, const char* fmt) {
     time_t t = (time_t)timestamp;
     struct tm* tm_info = localtime(&t);
-    char* buffer = malloc(256);
+    char* buffer = wyn_str_alloc(256);
     strftime(buffer, 256, fmt, tm_info);
     return buffer;
 }
@@ -2809,7 +3050,7 @@ void Time_sleep(long long ms) {
 typedef struct { WynArray arr; } Queue;
 
 Queue* Queue_new() {
-    Queue* q = malloc(sizeof(Queue));
+    Queue* q = wyn_malloc(sizeof(Queue));
     q->arr.data = NULL;
     q->arr.count = 0;
     q->arr.capacity = 0;
@@ -2819,7 +3060,7 @@ Queue* Queue_new() {
 void Queue_push(Queue* q, int value) {
     if (q->arr.count >= q->arr.capacity) {
         q->arr.capacity = q->arr.capacity == 0 ? 4 : q->arr.capacity * 2;
-        q->arr.data = realloc(q->arr.data, sizeof(WynValue) * q->arr.capacity);
+        q->arr.data = wyn_realloc(q->arr.data, sizeof(WynValue) * q->arr.capacity);
     }
     q->arr.data[q->arr.count].type = WYN_TYPE_INT;
     q->arr.data[q->arr.count].data.int_val = value;
@@ -2852,7 +3093,7 @@ int Queue_is_empty(Queue* q) {
 typedef struct { WynArray arr; } Stack;
 
 Stack* Stack_new() {
-    Stack* s = malloc(sizeof(Stack));
+    Stack* s = wyn_malloc(sizeof(Stack));
     s->arr.data = NULL;
     s->arr.count = 0;
     s->arr.capacity = 0;
@@ -2862,7 +3103,7 @@ Stack* Stack_new() {
 void Stack_push(Stack* s, int value) {
     if (s->arr.count >= s->arr.capacity) {
         s->arr.capacity = s->arr.capacity == 0 ? 4 : s->arr.capacity * 2;
-        s->arr.data = realloc(s->arr.data, sizeof(WynValue) * s->arr.capacity);
+        s->arr.data = wyn_realloc(s->arr.data, sizeof(WynValue) * s->arr.capacity);
     }
     s->arr.data[s->arr.count].type = WYN_TYPE_INT;
     s->arr.data[s->arr.count].data.int_val = value;
@@ -2934,7 +3175,7 @@ int Net_send(int sockfd, const char* data) {
 }
 
 char* Net_recv(int sockfd) {
-    char* buffer = malloc(4096);
+    char* buffer = wyn_str_alloc(4096);
     int received = recv(sockfd, buffer, 4095, 0);
     if (received < 0) {
         free(buffer);
@@ -2951,7 +3192,7 @@ int Net_close(int sockfd) {
 char* Time_format(int timestamp) {
     time_t t = (time_t)timestamp;
     struct tm* tm_info = localtime(&t);
-    char* buffer = malloc(64);
+    char* buffer = wyn_str_alloc(64);
     strftime(buffer, 64, "%Y-%m-%d %H:%M:%S", tm_info);
     return buffer;
 }
@@ -2965,7 +3206,7 @@ void arr_sort(int* arr, int len) { for(int i = 0; i < len-1; i++) for(int j = 0;
 int arr_count(int* arr, int len, int val) { int c = 0; for(int i = 0; i < len; i++) if(arr[i] == val) c++; return c; }
 void arr_fill(int* arr, int len, int val) { for(int i = 0; i < len; i++) arr[i] = val; }
 int arr_all(int* arr, int len, int val) { for(int i = 0; i < len; i++) if(arr[i] != val) return 0; return 1; }
-char* arr_join(int* arr, int len, const char* sep) { int total = 0; for(int i = 0; i < len; i++) { total += snprintf(NULL, 0, "%d", arr[i]); if(i < len-1) total += strlen(sep); } char* r = malloc(total + 1); r[0] = 0; for(int i = 0; i < len; i++) { char buf[32]; snprintf(buf, 32, "%d", arr[i]); strcat(r, buf); if(i < len-1) strcat(r, sep); } return r; }
+char* arr_join(int* arr, int len, const char* sep) { int total = 0; for(int i = 0; i < len; i++) { total += snprintf(NULL, 0, "%d", arr[i]); if(i < len-1) total += strlen(sep); } char* r = wyn_str_alloc(total + 1); char* p = r; int seplen = strlen(sep); for(int i = 0; i < len; i++) { p += sprintf(p, "%d", arr[i]); if(i < len-1) { memcpy(p, sep, seplen); p += seplen; } } *p = 0; return r; }
 WynArray arr_map_double(WynArray arr) { WynArray result = array_new(); for(int i = 0; i < arr.count; i++) { int val = array_get_int(arr, i); array_push_int(&result, val * 2); } return result; }
 WynArray arr_map_square(WynArray arr) { WynArray result = array_new(); for(int i = 0; i < arr.count; i++) { int val = array_get_int(arr, i); array_push_int(&result, val * val); } return result; }
 WynArray arr_filter_positive(WynArray arr) { WynArray result = array_new(); for(int i = 0; i < arr.count; i++) { int val = array_get_int(arr, i); if(val > 0) array_push_int(&result, val); } return result; }
@@ -3004,20 +3245,20 @@ void seed_random(int seed) { srand(seed); }
 int random_bool() { return rand() % 2; }
 char* random_string(int len) {
     static const char chars[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    char* s = malloc(len + 1);
+    char* s = wyn_str_alloc(len + 1);
     for (int i = 0; i < len; i++) s[i] = chars[rand() % 62];
     s[len] = '\0';
     return s;
 }
 char* random_hex(int len) {
     static const char hex[] = "0123456789abcdef";
-    char* s = malloc(len + 1);
+    char* s = wyn_str_alloc(len + 1);
     for (int i = 0; i < len; i++) s[i] = hex[rand() % 16];
     s[len] = '\0';
     return s;
 }
 char* random_uuid() {
-    char* u = malloc(37);
+    char* u = wyn_str_alloc(37);
     snprintf(u, 37, "%08x-%04x-4%03x-%04x-%012llx",
         rand(), rand() & 0xffff, rand() & 0xfff,
         (rand() & 0x3fff) | 0x8000, ((long long)rand() << 16) | rand());
@@ -3039,7 +3280,7 @@ long long time_now() { return (long long)time(NULL); }
 char* time_format(int timestamp, const char* fmt) {
     time_t t = (time_t)timestamp;
     struct tm* tm_info = localtime(&t);
-    char* buffer = malloc(80);
+    char* buffer = wyn_str_alloc(80);
     strftime(buffer, 80, fmt, tm_info);
     return buffer;
 }
@@ -3063,9 +3304,9 @@ int ceil_int(double x) { return (int)ceil(x); }
 int floor_int(double x) { return (int)floor(x); }
 int round_int(double x) { return (int)round(x); }
 double abs_float(double x) { return fabs(x); }
-char* str_replace(const char* s, const char* old, const char* new) { int count = 0; const char* p = s; int oldlen = strlen(old); int newlen = strlen(new); while((p = strstr(p, old))) { count++; p += oldlen; } int total = strlen(s) + count * (newlen - oldlen) + 1; char* r = malloc(total); char* dst = r; p = s; while(*p) { if(strncmp(p, old, oldlen) == 0) { memcpy(dst, new, newlen); dst += newlen; p += oldlen; } else { *dst++ = *p++; } } *dst = 0; return r; }
+char* str_replace(const char* s, const char* old, const char* new) { int count = 0; const char* p = s; int oldlen = strlen(old); int newlen = strlen(new); while((p = strstr(p, old))) { count++; p += oldlen; } int total = strlen(s) + count * (newlen - oldlen) + 1; char* r = wyn_str_alloc(total); char* dst = r; p = s; while(*p) { if(strncmp(p, old, oldlen) == 0) { memcpy(dst, new, newlen); dst += newlen; p += oldlen; } else { *dst++ = *p++; } } *dst = 0; return r; }
 char** str_split(const char* s, const char* delim, int* count) {
-    char** r = malloc(100 * sizeof(char*));
+    char** r = wyn_malloc(100 * sizeof(char*));
     *count = 0;
     int dlen = strlen(delim);
     const char* p = s;
@@ -3077,7 +3318,7 @@ char** str_split(const char* s, const char* delim, int* count) {
             break;
         }
         int len = found - p;
-        r[*count] = malloc(len + 1);
+        r[*count] = wyn_malloc(len + 1);
         memcpy(r[*count], p, len);
         r[*count][len] = 0;
         (*count)++;
@@ -3091,8 +3332,8 @@ char* char_at(const char* s, int index) { if (index < 0 || index >= strlen(s)) r
 int is_numeric(const char* s) { if (!s || !*s) return 0; int i = 0; if (s[0] == '-' || s[0] == '+') i++; if (!s[i]) return 0; while (s[i]) { if (s[i] < '0' || s[i] > '9') return 0; i++; } return 1; }
 int str_count(const char* s, const char* substr) { if (!s || !substr || !*substr) return 0; int count = 0; const char* p = s; while ((p = strstr(p, substr)) != NULL) { count++; p += strlen(substr); } return count; }
 int str_contains_substr(const char* s, const char* substr) { return strstr(s, substr) != NULL; }
-char* str_join(char** arr, int len, const char* sep) { int total = 0; for(int i = 0; i < len; i++) total += strlen(arr[i]); total += (len - 1) * strlen(sep) + 1; char* r = malloc(total); r[0] = 0; for(int i = 0; i < len; i++) { if(i > 0) strcat(r, sep); strcat(r, arr[i]); } return r; }
-char* int_to_str(int n) { char* r = malloc(12); snprintf(r, 12, "%d", n); return r; }
+char* str_join(char** arr, int len, const char* sep) { int total = 0; int seplen = strlen(sep); for(int i = 0; i < len; i++) total += strlen(arr[i]); total += (len - 1) * seplen + 1; char* r = wyn_str_alloc(total); char* p = r; for(int i = 0; i < len; i++) { if(i > 0) { memcpy(p, sep, seplen); p += seplen; } int slen = strlen(arr[i]); memcpy(p, arr[i], slen); p += slen; } *p = 0; return r; }
+char* int_to_str(int n) { char* r = wyn_str_alloc(12); snprintf(r, 12, "%d", n); return r; }
 long long str_to_int(const char* s) { return atoll(s); }
 double str_to_float(const char* s) { return atof(s); }
 void swap(int* a, int* b) { int t = *a; *a = *b; *b = t; }
@@ -3119,7 +3360,7 @@ int ResultInt_unwrap(ResultInt r) { if (r.tag == 1) { fprintf(stderr, "Error: un
 const char* ResultInt_unwrap_err(ResultInt r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 long long ResultInt_unwrap_or(ResultInt r, long long def) { return r.tag == 0 ? r.data.ok_value : def; }
 char* ResultInt_to_string(ResultInt r) {
-    char* buf = malloc(256);
+    char* buf = wyn_str_alloc(256);
     if (r.tag == 0) snprintf(buf, 256, "Ok(%d)", r.data.ok_value);
     else snprintf(buf, 256, "Err(%s)", r.data.err_value);
     return buf;
@@ -3164,7 +3405,7 @@ typedef struct {
 static WynSharedValue* shared_registry[MAX_SHARED_VALUES] = {0};
 
 long long Task_value(long long initial) {
-    WynSharedValue* sv = malloc(sizeof(WynSharedValue));
+    WynSharedValue* sv = wyn_malloc(sizeof(WynSharedValue));
     sv->value = initial;
     pthread_mutex_init(&sv->lock, NULL);
     for (int i = 1; i < MAX_SHARED_VALUES; i++) {
@@ -3403,7 +3644,7 @@ char* Db_query(long long handle, const char* sql) {
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db_handles[handle], sql, -1, &stmt, NULL) != SQLITE_OK) return "";
     
-    char* result = malloc(65536);
+    char* result = wyn_str_alloc(65536);
     result[0] = 0;
     int first_row = 1;
     
@@ -3460,7 +3701,7 @@ char* Db_query_p(long long handle, const char* sql, WynArray params) {
         else
             sqlite3_bind_int64(stmt, i+1, params.data[i].data.int_val);
     }
-    char* result = malloc(65536); result[0] = 0;
+    char* result = wyn_str_alloc(65536); result[0] = 0;
     int first_row = 1;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         if (!first_row) strcat(result, "\n"); first_row = 0;
@@ -3516,7 +3757,7 @@ long long StringBuilder_new() {
     for (int i = 1; i < MAX_STRING_BUILDERS; i++) {
         if (!sb_pool[i].data) {
             sb_pool[i].cap = 256;
-            sb_pool[i].data = malloc(256);
+            sb_pool[i].data = wyn_malloc(256);
             sb_pool[i].data[0] = 0;
             sb_pool[i].len = 0;
             return i;
@@ -3531,7 +3772,7 @@ void StringBuilder_append(long long handle, const char* s) {
     int slen = strlen(s);
     while (sb->len + slen + 1 > sb->cap) {
         sb->cap *= 2;
-        sb->data = realloc(sb->data, sb->cap);
+        sb->data = wyn_realloc(sb->data, sb->cap);
     }
     memcpy(sb->data + sb->len, s, slen);
     sb->len += slen;
@@ -3581,7 +3822,7 @@ static const char* json_parse_string_raw(const char* p, char** out) {
     const char* start = p;
     while (*p && *p != '"') { if (*p == '\\') p++; p++; }
     int len = p - start;
-    *out = malloc(len + 1);
+    *out = wyn_malloc(len + 1);
     memcpy(*out, start, len);
     (*out)[len] = 0;
     if (*p == '"') p++;
@@ -3663,7 +3904,7 @@ char* Json_get(long long root, const char* key) {
     int c = json_find_child((int)root, key);
     if (c < 0) return "";
     if (json_nodes[c].type == 's') return json_nodes[c].str_val ? json_nodes[c].str_val : "";
-    if (json_nodes[c].type == 'n') { char* buf = malloc(32); snprintf(buf, 32, "%g", json_nodes[c].num_val); return buf; }
+    if (json_nodes[c].type == 'n') { char* buf = wyn_str_alloc(32); snprintf(buf, 32, "%g", json_nodes[c].num_val); return buf; }
     if (json_nodes[c].type == 'b') return json_nodes[c].num_val ? "true" : "false";
     return "";
 }
@@ -3697,12 +3938,12 @@ char* Json_node_str(long long node) {
     int n = (int)node;
     if (n < 0 || n >= json_node_count) return "";
     if (json_nodes[n].type == 's') return json_nodes[n].str_val ? json_nodes[n].str_val : "";
-    if (json_nodes[n].type == 'n') { char* buf = malloc(32); snprintf(buf, 32, "%g", json_nodes[n].num_val); return buf; }
+    if (json_nodes[n].type == 'n') { char* buf = wyn_str_alloc(32); snprintf(buf, 32, "%g", json_nodes[n].num_val); return buf; }
     return "";
 }
 
 char* Json_keys(long long root) {
-    char* result = malloc(4096); result[0] = 0;
+    char* result = wyn_str_alloc(4096); result[0] = 0;
     int c = json_nodes[(int)root].first_child;
     while (c >= 0) {
         if (json_nodes[c].key) { strcat(result, json_nodes[c].key); strcat(result, "\n"); }
@@ -3716,7 +3957,7 @@ static const char b64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu
 char* Encoding_base64_encode(const char* data) {
     int len = strlen(data);
     int out_len = 4 * ((len + 2) / 3);
-    char* out = malloc(out_len + 1);
+    char* out = wyn_malloc(out_len + 1);
     int j = 0;
     for (int i = 0; i < len; i += 3) {
         int a = data[i], b = (i+1 < len) ? data[i+1] : 0, c = (i+2 < len) ? data[i+2] : 0;
@@ -3740,7 +3981,7 @@ static int b64_decode_char(char c) {
 
 char* Encoding_base64_decode(const char* data) {
     int len = strlen(data);
-    char* out = malloc(len);
+    char* out = wyn_malloc(len);
     int j = 0;
     for (int i = 0; i < len; i += 4) {
         int a = b64_decode_char(data[i]), b = b64_decode_char(data[i+1]);
@@ -3757,8 +3998,8 @@ char* Encoding_base64_decode(const char* data) {
 
 char* Encoding_hex_encode(const char* data) {
     int len = strlen(data);
-    char* out = malloc(len * 2 + 1);
-    for (int i = 0; i < len; i++) sprintf(out + i*2, "%02x", (unsigned char)data[i]);
+    char* out = wyn_malloc(len * 2 + 1);
+    for (int i = 0; i < len; i++) snprintf(out + i*2, 3, "%02x", (unsigned char)data[i]);
     out[len*2] = 0;
     return out;
 }
@@ -3774,7 +4015,7 @@ char* Crypto_sha256(const char* data) {
     snprintf(cmd, sizeof(cmd), "printf '%%s' '%s' | openssl dgst -sha256 -hex 2>/dev/null | awk '{print $NF}'", data);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* result = malloc(65); result[0] = 0;
+    char* result = wyn_malloc(65); result[0] = 0;
     fgets(result, 65, fp);
     pclose(fp);
     // Trim newline
@@ -3788,7 +4029,7 @@ char* Crypto_md5(const char* data) {
     snprintf(cmd, sizeof(cmd), "printf '%%s' '%s' | openssl dgst -md5 -hex 2>/dev/null | awk '{print $NF}'", data);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* result = malloc(33); result[0] = 0;
+    char* result = wyn_malloc(33); result[0] = 0;
     fgets(result, 33, fp);
     pclose(fp);
     int len = strlen(result);
@@ -3839,7 +4080,7 @@ char* Os_home_dir() { char* h = getenv("HOME"); return h ? h : "/tmp"; }
 
 // === UUID v4 ===
 char* Uuid_generate() {
-    char* uuid = malloc(37);
+    char* uuid = wyn_malloc(37);
     unsigned char bytes[16];
     FILE* f = fopen("/dev/urandom", "rb");
     if (f) { fread(bytes, 1, 16, f); fclose(f); }
@@ -3867,7 +4108,7 @@ char* Bcrypt_hash(const char* password) {
         char* h = Crypto_hmac_sha256(salt, cur);
         free(cur); cur = h;
     }
-    char* result = malloc(256);
+    char* result = wyn_malloc(256);
     snprintf(result, 256, "$wyn$10$%s$%s", salt, cur);
     free(cur);
     return result;
@@ -3921,12 +4162,28 @@ WynArray array_sort_copy(WynArray arr) {
 }
 
 char* array_join_str(WynArray arr, const char* sep) {
-    char* result = malloc(65536); result[0] = 0;
+    if (arr.count == 0) return wyn_strdup("");
+    size_t sep_len = strlen(sep);
+    // Calculate total size
+    size_t total = 0;
     for (int i = 0; i < arr.count; i++) {
-        if (i > 0) strcat(result, sep);
-        if (arr.data[i].type == WYN_TYPE_STRING) strcat(result, arr.data[i].data.string_val);
-        else { char buf[32]; snprintf(buf, 32, "%lld", (long long)arr.data[i].data.int_val); strcat(result, buf); }
+        if (i > 0) total += sep_len;
+        if (arr.data[i].type == WYN_TYPE_STRING) total += strlen(arr.data[i].data.string_val);
+        else total += 20; // max digits for int64
     }
+    char* result = wyn_str_alloc(total + 1);
+    size_t pos = 0;
+    for (int i = 0; i < arr.count; i++) {
+        if (i > 0) { memcpy(result + pos, sep, sep_len); pos += sep_len; }
+        if (arr.data[i].type == WYN_TYPE_STRING) {
+            size_t l = strlen(arr.data[i].data.string_val);
+            memcpy(result + pos, arr.data[i].data.string_val, l); pos += l;
+        } else {
+            pos += snprintf(result + pos, 21, "%lld", (long long)arr.data[i].data.int_val);
+        }
+    }
+    result[pos] = 0;
+    wyn_rc_set_length(result, (unsigned int)pos);
     return result;
 }
 
@@ -3961,28 +4218,36 @@ extern void hashmap_clear(WynHashMap* map);
 
 char* hashmap_values_string(WynHashMap* map) {
     if (!map) return "";
-    char* result = malloc(65536); result[0] = 0;
-    for (int i = 0; i < 128; i++) {
-        void* entry = ((void**)map)[i]; // bucket
-        // Walk chain — simplified, just use keys and get
-    }
-    // Use keys + get approach
     char* keys = hashmap_keys_string(map);
+    if (!keys || !*keys) return "";
+    // Two-pass: compute size, then build
+    size_t total = 0;
     const char* p = keys;
     while (*p) {
         const char* nl = strchr(p, '\n');
         if (!nl) break;
         int klen = nl - p;
-        char key[256]; memcpy(key, p, klen); key[klen] = 0;
+        char key[256]; if (klen > 255) klen = 255; memcpy(key, p, klen); key[klen] = 0;
         char* val = hashmap_get_string(map, key);
-        if (val && *val) { strcat(result, val); strcat(result, "\n"); }
-        else {
-            int ival = hashmap_get_int(map, key);
-            char buf[32]; snprintf(buf, 32, "%d", ival);
-            strcat(result, buf); strcat(result, "\n");
-        }
+        if (val && *val) total += strlen(val) + 1;
+        else total += 12; // int
         p = nl + 1;
     }
+    char* result = wyn_str_alloc(total + 1);
+    size_t pos = 0;
+    p = keys;
+    while (*p) {
+        const char* nl = strchr(p, '\n');
+        if (!nl) break;
+        int klen = nl - p;
+        char key[256]; if (klen > 255) klen = 255; memcpy(key, p, klen); key[klen] = 0;
+        char* val = hashmap_get_string(map, key);
+        if (val && *val) { size_t vl = strlen(val); memcpy(result + pos, val, vl); pos += vl; }
+        else { int ival = hashmap_get_int(map, key); pos += snprintf(result + pos, 32, "%d", ival); }
+        result[pos++] = '\n';
+        p = nl + 1;
+    }
+    result[pos] = 0;
     return result;
 }
 
@@ -3999,7 +4264,7 @@ long long DateTime_add_seconds(long long t, long long n) { return t + n; }
 char* DateTime_to_iso(long long timestamp) {
     time_t t = (time_t)timestamp;
     struct tm* tm = gmtime(&t);
-    char* buf = malloc(32);
+    char* buf = wyn_malloc(32);
     strftime(buf, 32, "%Y-%m-%dT%H:%M:%SZ", tm);
     return buf;
 }
@@ -4018,15 +4283,27 @@ long long regex_find(const char* str, const char* pattern) {
 char* regex_find_all(const char* str, const char* pattern) {
     regex_t re;
     if (regcomp(&re, pattern, REG_EXTENDED) != 0) return "";
-    char* result = malloc(65536); result[0] = 0;
+    size_t cap = 1024, rlen = 0;
+    char* result = wyn_str_alloc(cap);
     const char* p = str;
     regmatch_t match;
     while (regexec(&re, p, 1, &match, 0) == 0) {
-        int len = match.rm_eo - match.rm_so;
-        char* m = malloc(len + 1); memcpy(m, p + match.rm_so, len); m[len] = 0;
-        strcat(result, m); strcat(result, "\n"); free(m);
+        size_t mlen = match.rm_eo - match.rm_so;
+        size_t needed = rlen + mlen + 1;
+        if (needed >= cap) {
+            cap = needed * 2;
+            char* nr = wyn_str_alloc(cap);
+            memcpy(nr, result, rlen);
+            wyn_rc_release(result);
+            result = nr;
+        }
+        memcpy(result + rlen, p + match.rm_so, mlen);
+        rlen += mlen;
+        result[rlen++] = '\n';
         p += match.rm_eo;
     }
+    result[rlen] = 0;
+    wyn_rc_set_length(result, (unsigned int)rlen);
     regfree(&re);
     return result;
 }
@@ -4048,7 +4325,7 @@ char* Net_resolve(const char* hostname) {
     struct addrinfo hints = {0}, *res;
     hints.ai_family = AF_INET;
     if (getaddrinfo(hostname, NULL, &hints, &res) != 0) return "";
-    char* ip = malloc(INET_ADDRSTRLEN);
+    char* ip = wyn_malloc(INET_ADDRSTRLEN);
     struct sockaddr_in* addr = (struct sockaddr_in*)res->ai_addr;
     inet_ntop(AF_INET, &addr->sin_addr, ip, INET_ADDRSTRLEN);
     freeaddrinfo(res);
@@ -4058,7 +4335,7 @@ char* Net_resolve(const char* hostname) {
 // === Db extensions ===
 char* Db_escape(const char* str) {
     int len = strlen(str);
-    char* out = malloc(len * 2 + 1);
+    char* out = wyn_malloc(len * 2 + 1);
     int j = 0;
     for (int i = 0; i < len; i++) {
         if (str[i] == '\'') { out[j++] = '\''; out[j++] = '\''; }
@@ -4094,7 +4371,7 @@ char* Process_exec_capture(const char* cmd) {
     snprintf(full_cmd, sizeof(full_cmd), "%s 2>&1", cmd);
     FILE* fp = popen(full_cmd, "r");
     if (!fp) return "";
-    char* result = malloc(131072);
+    char* result = wyn_malloc(131072);
     size_t len = fread(result, 1, 131071, fp);
     result[len] = 0;
     pclose(fp);
@@ -4183,9 +4460,16 @@ char* File_glob(const char* pattern) {
     snprintf(cmd, sizeof(cmd), "ls -1 %s 2>/dev/null", pattern);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* result = malloc(65536); result[0] = 0;
+    size_t cap = 4096, len = 0;
+    char* result = wyn_str_alloc(cap);
     char line[1024];
-    while (fgets(line, sizeof(line), fp)) strcat(result, line);
+    while (fgets(line, sizeof(line), fp)) {
+        size_t ll = strlen(line);
+        if (len + ll >= cap) { cap = (len + ll) * 2; char* nr = wyn_str_alloc(cap); memcpy(nr, result, len); wyn_rc_release(result); result = nr; }
+        memcpy(result + len, line, ll); len += ll;
+    }
+    result[len] = 0;
+    wyn_rc_set_length(result, (unsigned int)len);
     pclose(fp);
     return result;
 }
@@ -4195,16 +4479,23 @@ char* File_walk_dir(const char* path) {
     snprintf(cmd, sizeof(cmd), "find '%s' -type f 2>/dev/null", path);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* result = malloc(262144); result[0] = 0;
+    size_t cap = 4096, len = 0;
+    char* result = wyn_str_alloc(cap);
     char line[1024];
-    while (fgets(line, sizeof(line), fp)) strcat(result, line);
+    while (fgets(line, sizeof(line), fp)) {
+        size_t ll = strlen(line);
+        if (len + ll >= cap) { cap = (len + ll) * 2; char* nr = wyn_str_alloc(cap); memcpy(nr, result, len); wyn_rc_release(result); result = nr; }
+        memcpy(result + len, line, ll); len += ll;
+    }
+    result[len] = 0;
+    wyn_rc_set_length(result, (unsigned int)len);
     pclose(fp);
     return result;
 }
 
 char* File_temp_file() {
     static int counter = 0;
-    char* path = malloc(256);
+    char* path = wyn_malloc(256);
 #ifdef _WIN32
     const char* tmp = getenv("TEMP");
     if (!tmp) tmp = ".";
@@ -4217,7 +4508,7 @@ char* File_temp_file() {
 
 // === DateTime extensions round 2 ===
 char* DateTime_format_duration(long long ms) {
-    char* buf = malloc(64);
+    char* buf = wyn_malloc(64);
     if (ms < 1000) snprintf(buf, 64, "%lldms", ms);
     else if (ms < 60000) snprintf(buf, 64, "%.1fs", ms / 1000.0);
     else if (ms < 3600000) snprintf(buf, 64, "%lldm %llds", ms / 60000, (ms % 60000) / 1000);
@@ -4243,7 +4534,7 @@ long long DateTime_second(long long timestamp) { time_t t = (time_t)timestamp; s
 char* regex_split(const char* str, const char* pattern) {
     regex_t re;
     if (regcomp(&re, pattern, REG_EXTENDED) != 0) return wyn_strdup(str);
-    char* result = malloc(strlen(str) + 256); result[0] = 0;
+    char* result = wyn_malloc(strlen(str) + 256); result[0] = 0;
     const char* p = str;
     regmatch_t match;
     while (regexec(&re, p, 1, &match, 0) == 0) {
@@ -4260,7 +4551,7 @@ char* regex_split(const char* str, const char* pattern) {
 // === Encoding extensions round 2 ===
 char* Encoding_hex_decode(const char* hex) {
     int len = strlen(hex) / 2;
-    char* out = malloc(len + 1);
+    char* out = wyn_malloc(len + 1);
     for (int i = 0; i < len; i++) {
         unsigned int byte;
         sscanf(hex + i*2, "%2x", &byte);
@@ -4272,7 +4563,7 @@ char* Encoding_hex_decode(const char* hex) {
 
 char* Encoding_csv_parse(const char* csv) {
     // Returns pipe-separated fields, newline-separated rows
-    char* result = malloc(strlen(csv) + 256); result[0] = 0;
+    char* result = wyn_malloc(strlen(csv) + 256); result[0] = 0;
     const char* p = csv;
     while (*p) {
         if (*p == ',') strcat(result, "|");
@@ -4289,7 +4580,7 @@ char* Crypto_hmac_sha256(const char* key, const char* data) {
     snprintf(cmd, sizeof(cmd), "printf '%%s' '%s' | openssl dgst -sha256 -hmac '%s' -hex 2>/dev/null | awk '{print $NF}'", data, key);
     FILE* fp = popen(cmd, "r");
     if (!fp) return "";
-    char* result = malloc(65); result[0] = 0;
+    char* result = wyn_malloc(65); result[0] = 0;
     fgets(result, 65, fp); pclose(fp);
     int len = strlen(result);
     if (len > 0 && result[len-1] == '\n') result[len-1] = 0;
@@ -4297,9 +4588,9 @@ char* Crypto_hmac_sha256(const char* key, const char* data) {
 }
 
 char* Crypto_random_bytes(long long n) {
-    char* bytes = malloc(n * 2 + 1);
+    char* bytes = wyn_malloc(n * 2 + 1);
     bytes[0] = 0;
-    unsigned char* raw = malloc(n);
+    unsigned char* raw = wyn_malloc(n);
 #ifdef _WIN32
     for (int i = 0; i < (int)n; i++) raw[i] = rand() & 0xFF;
 #else
@@ -4367,7 +4658,7 @@ char* Json_to_pretty_string(WynJson* j) {
     char* raw = json_stringify(j);
     if (!raw) return wyn_strdup("{}");
     int rlen = strlen(raw);
-    char* out = malloc(rlen * 4 + 1);
+    char* out = wyn_malloc(rlen * 4 + 1);
     int o = 0, indent = 0;
     int in_str = 0;
     for (int i = 0; i < rlen; i++) {
@@ -4400,17 +4691,17 @@ typedef struct { CsvRow* rows; int row_count; char** headers; int header_count; 
 
 static CsvRow csv_parse_row(const char* line) {
     CsvRow row = {0};
-    row.fields = malloc(sizeof(char*) * 128);
+    row.fields = wyn_malloc(sizeof(char*) * 128);
     const char* p = line;
     while (*p) {
         if (*p == '"') {
             p++;
-            int cap = 256; char* f = malloc(cap); int len = 0;
+            int cap = 256; char* f = wyn_malloc(cap); int len = 0;
             while (*p) {
                 if (*p == '"' && *(p+1) == '"') { f[len++] = '"'; p += 2; }
                 else if (*p == '"') { p++; break; }
                 else { f[len++] = *p++; }
-                if (len >= cap - 1) { cap *= 2; f = realloc(f, cap); }
+                if (len >= cap - 1) { cap *= 2; f = wyn_realloc(f, cap); }
             }
             f[len] = 0;
             row.fields[row.field_count++] = f;
@@ -4419,7 +4710,7 @@ static CsvRow csv_parse_row(const char* line) {
             const char* start = p;
             while (*p && *p != ',' && *p != '\n' && *p != '\r') p++;
             int len = p - start;
-            char* f = malloc(len + 1); memcpy(f, start, len); f[len] = 0;
+            char* f = wyn_malloc(len + 1); memcpy(f, start, len); f[len] = 0;
             row.fields[row.field_count++] = f;
             if (*p == ',') p++;
         }
@@ -4428,8 +4719,8 @@ static CsvRow csv_parse_row(const char* line) {
 }
 
 long long Csv_parse(const char* text) {
-    CsvDoc* doc = malloc(sizeof(CsvDoc));
-    doc->rows = malloc(sizeof(CsvRow) * 4096);
+    CsvDoc* doc = wyn_malloc(sizeof(CsvDoc));
+    doc->rows = wyn_malloc(sizeof(CsvRow) * 4096);
     doc->row_count = 0; doc->headers = NULL; doc->header_count = 0;
     const char* p = text;
     while (*p) {
@@ -4438,7 +4729,7 @@ long long Csv_parse(const char* text) {
         int len = eol - p;
         if (len > 0 && p[len-1] == '\r') len--;
         if (len > 0) {
-            char* line = malloc(len + 1); memcpy(line, p, len); line[len] = 0;
+            char* line = wyn_malloc(len + 1); memcpy(line, p, len); line[len] = 0;
             CsvRow row = csv_parse_row(line);
             free(line);
             if (doc->row_count == 0) {
@@ -4537,9 +4828,9 @@ typedef struct { char key[256]; char value[1024]; } TomlEntry;
 typedef struct { TomlEntry* entries; int count; int cap; } TomlDoc;
 
 long long Toml_parse(const char* text) {
-    TomlDoc* doc = malloc(sizeof(TomlDoc));
+    TomlDoc* doc = wyn_malloc(sizeof(TomlDoc));
     doc->cap = 64; doc->count = 0;
-    doc->entries = malloc(sizeof(TomlEntry) * doc->cap);
+    doc->entries = wyn_malloc(sizeof(TomlEntry) * doc->cap);
     char section[128] = "";
     const char* p = text;
     while (*p) {
@@ -4570,7 +4861,7 @@ long long Toml_parse(const char* text) {
         // Strip quotes
         if (vl >= 2 && val[0] == '"' && val[vl-1] == '"') { val[vl-1] = '\0'; val++; }
         // Store as section.key or just key
-        if (doc->count >= doc->cap) { doc->cap *= 2; doc->entries = realloc(doc->entries, sizeof(TomlEntry) * doc->cap); }
+        if (doc->count >= doc->cap) { doc->cap *= 2; doc->entries = wyn_realloc(doc->entries, sizeof(TomlEntry) * doc->cap); }
         if (section[0]) snprintf(doc->entries[doc->count].key, 256, "%s.%s", section, key);
         else snprintf(doc->entries[doc->count].key, 256, "%s", key);
         snprintf(doc->entries[doc->count].value, 1024, "%s", val);
@@ -4653,7 +4944,7 @@ WynHashMap* Data_load(const char* path) {
 static char* html_escape(const char* s) {
     if (!s) return "";
     int len = strlen(s);
-    char* out = malloc(len * 6 + 1); // worst case: every char is &
+    char* out = wyn_malloc(len * 6 + 1); // worst case: every char is &
     char* p = out;
     for (int i = 0; i < len; i++) {
         switch (s[i]) {
@@ -4672,7 +4963,7 @@ char* Template_render(const char* path, WynHashMap* ctx);
 char* Template_render_string(const char* tmpl, WynHashMap* ctx) {
     if (!tmpl) return "";
     int tlen = strlen(tmpl);
-    char* result = malloc(tlen * 4 + 65536);
+    char* result = wyn_malloc(tlen * 4 + 65536);
     char* out = result;
     
     extern char* hashmap_get_string(WynHashMap*, const char*);
@@ -4733,7 +5024,7 @@ char* Template_render_string(const char* tmpl, WynHashMap* ctx) {
                 }
                 // Extract block template
                 int blen = block_end - block_start;
-                char* block_tmpl = malloc(blen + 1);
+                char* block_tmpl = wyn_malloc(blen + 1);
                 memcpy(block_tmpl, tmpl + block_start, blen);
                 block_tmpl[blen] = 0;
                 // Iterate over comma-separated values — simple string replace
@@ -4745,7 +5036,7 @@ char* Template_render_string(const char* tmpl, WynHashMap* ctx) {
                         char* comma = strchr(pos, ',');
                         if (comma) *comma = 0;
                         // Replace ${item} in block_tmpl with current item
-                        char* rendered = malloc(blen * 2 + strlen(pos) * 10 + 1);
+                        char* rendered = wyn_malloc(blen * 2 + strlen(pos) * 10 + 1);
                         char* rp = rendered;
                         for (int bi = 0; bi < blen; bi++) {
                             if (block_tmpl[bi] == '$' && bi + 6 < blen && strncmp(block_tmpl + bi, "${item}", 7) == 0) {
@@ -4816,7 +5107,7 @@ char* Template_render(const char* path, WynHashMap* ctx) {
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* tmpl = malloc(len + 1);
+    char* tmpl = wyn_malloc(len + 1);
     fread(tmpl, 1, len, f);
     tmpl[len] = 0;
     fclose(f);
@@ -4897,10 +5188,10 @@ char* Web_render(const char* name, const char* vars) {
     char path[1024];
     snprintf(path, sizeof(path), "%s/%s", _web_template_dir, name);
     FILE* f = fopen(path, "r");
-    if (!f) { char* e = malloc(256); snprintf(e, 256, "Template not found: %s", name); return e; }
+    if (!f) { char* e = wyn_malloc(256); snprintf(e, 256, "Template not found: %s", name); return e; }
     fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
-    char* tmpl = malloc(sz + 1); fread(tmpl, 1, sz, f); tmpl[sz] = '\0'; fclose(f);
-    char* out = malloc(sz * 4 + 4096); int oi = 0;
+    char* tmpl = wyn_malloc(sz + 1); fread(tmpl, 1, sz, f); tmpl[sz] = '\0'; fclose(f);
+    char* out = wyn_malloc(sz * 4 + 4096); int oi = 0;
     for (int i = 0; tmpl[i]; i++) {
         if (tmpl[i] == '{' && tmpl[i+1] == '{') {
             i += 2; char key[128]; int ki = 0;

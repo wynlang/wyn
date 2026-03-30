@@ -1,0 +1,36 @@
+// Expect: variable shadowing works correctly in all block types
+// EXPECT: 20
+// EXPECT: 10
+// EXPECT: 99
+// EXPECT: 10
+// EXPECT: 30
+// EXPECT: 10
+
+fn main() -> int {
+    var x = 10
+
+    // Shadow in if block
+    if true {
+        var x = 20
+        println(x.to_string())
+    }
+    println(x.to_string())
+
+    // Shadow in nested if
+    if true {
+        var x = 99
+        println(x.to_string())
+    }
+    println(x.to_string())
+
+    // Shadow in while block
+    var done = false
+    while !done {
+        var x = 30
+        println(x.to_string())
+        done = true
+    }
+    println(x.to_string())
+
+    return 0
+}

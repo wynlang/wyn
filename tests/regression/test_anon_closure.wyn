@@ -1,3 +1,4 @@
+// EXPECT: PASS: anonymous function closures work
 // Test: Anonymous function closures capture variables
 fn apply(arr: [int], f: fn(int) -> int) -> [int] {
     var result: [int] = []

@@ -24,11 +24,21 @@ jobs:
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
-        run: choco install make mingw -y
+        run: |
+          for ($i = 0; $i -lt 3; $i++) {
+            choco install make mingw -y --no-progress 2>$null
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "Retry $($i+1)/3..."
+            Start-Sleep -Seconds 10
+          }
+          gcc --version
         shell: pwsh
 
       - name: Build compiler
-        run: make clean && make
+        run: |
+          # Remove macOS-only binaries that don't work on other platforms
+          rm -f vendor/tcc/bin/tcc runtime/libwyn_rt.a runtime/libwyn_rt_tcc.a 2>/dev/null || true
+          make clean && make
         shell: bash
 
       - name: Smoke test (Unix)
@@ -59,9 +69,27 @@ jobs:
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
         run: |
-          echo fn main() { println("Hello from Wyn CI") } > smoke.wyn
-          wyn.exe build smoke.wyn
-          smoke.exe
+          echo fn main() -^> int { println("Hello from Wyn CI"); return 0 } > smoke.wyn
+          .\wyn.exe build smoke.wyn
+          if exist smoke.exe ( .\smoke.exe ) else if exist smoke ( .\smoke ) else ( echo ERROR: binary not found && exit /b 1 )
+        shell: cmd
+
+      - name: Run test suite (Unix)
+        if: runner.os != 'Windows'
+        run: bash tests/run_tests_parallel.sh
+        shell: bash
+
+      - name: Run expect + regression tests (Unix)
+        if: runner.os != 'Windows'
+        run: bash tests/run_bdd.sh
+        shell: bash
+
+      - name: Run test suite (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          echo fn main() -^> int { var s = "hello"; println(s.upper()); println(s.len().to_string()); var arr: [int] = [3,1,2]; arr.sort(); println(arr[0].to_string()); return 0 } > wintest.wyn
+          .\wyn.exe build wintest.wyn
+          .\wintest.exe
         shell: cmd
 
   cross-compile-ios:

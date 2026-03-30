@@ -1,0 +1,11 @@
+// EXPECT: hello HELLO hello
+// EXPECT: true
+// EXPECT: 5
+
+fn main() -> int {
+    var s = "hello"
+    println(s + " " + s.upper() + " " + s.lower())
+    println(s.contains("ell").to_string())
+    println(s.len().to_string())
+    return 0
+}

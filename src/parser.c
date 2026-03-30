@@ -138,7 +138,9 @@ static void expect(WynTokenType type, const char* message) {
 }
 
 static Expr* alloc_expr() {
-    return (Expr*)safe_calloc(1, sizeof(Expr));
+    Expr* e = (Expr*)safe_calloc(1, sizeof(Expr));
+    e->_codegen_temp_id = -1;
+    return e;
 }
 
 static Stmt* alloc_stmt() {

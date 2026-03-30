@@ -2,8 +2,9 @@
 #include "hashmap.h"
 #include <stdlib.h>
 #include <string.h>
+extern char* wyn_str_alloc(size_t n);
 
-#define HASHMAP_SIZE 128
+#define HASHMAP_SIZE 4096
 
 typedef struct Entry {
     char* key;
@@ -16,9 +17,10 @@ struct WynHashMap {
 };
 
 static unsigned int hash(const char* key) {
-    unsigned int h = 0;
+    unsigned int h = 2166136261u;  // FNV-1a
     while (*key) {
-        h = h * 31 + *key++;
+        h ^= (unsigned char)*key++;
+        h *= 16777619u;
     }
     return h % HASHMAP_SIZE;
 }
@@ -262,16 +264,25 @@ void hashmap_insert(WynHashMap* map, const char* key, int value) {
 // Return all keys as newline-separated string
 char* hashmap_keys_string(WynHashMap* map) {
     if (!map) return "";
-    char* result = malloc(65536);
-    result[0] = 0;
+    // First pass: compute total length
+    size_t total = 0;
+    for (int i = 0; i < HASHMAP_SIZE; i++) {
+        Entry* entry = map->buckets[i];
+        while (entry) { total += strlen(entry->key) + 1; entry = entry->next; }
+    }
+    if (total == 0) return "";
+    char* result = wyn_str_alloc(total);
+    size_t pos = 0;
     for (int i = 0; i < HASHMAP_SIZE; i++) {
         Entry* entry = map->buckets[i];
         while (entry) {
-            strcat(result, entry->key);
-            strcat(result, "\n");
+            size_t kl = strlen(entry->key);
+            memcpy(result + pos, entry->key, kl); pos += kl;
+            result[pos++] = '\n';
             entry = entry->next;
         }
     }
+    result[pos] = 0;
     return result;
 }
 

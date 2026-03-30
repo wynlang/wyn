@@ -3,6 +3,15 @@
 
 void codegen_expr(Expr* expr) {
     if (!expr) return;
+    // If this expr was pre-evaluated to a temp, emit the temp name
+    if (expr->_codegen_temp_id >= 0 && expr->_codegen_temp_id < 1000) {
+        emit("__sa%d", expr->_codegen_temp_id);
+        return;
+    }
+    if (expr->_codegen_temp_id >= 1000) {
+        emit("__mo%d", expr->_codegen_temp_id - 1000);
+        return;
+    }
     
     switch (expr->type) {
         case EXPR_INT: {
@@ -235,18 +244,11 @@ void codegen_expr(Expr* expr) {
                 snprintf(temp_ident, sizeof(temp_ident), "%s.%s", resolved, function_part);
             }
             
-            // Check if this is a C keyword that needs prefix
-            const char* c_keywords[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
-            bool is_c_keyword = false;
-            (void)is_c_keyword;
-            for (int i = 0; c_keywords[i] != NULL; i++) {
-                if (strlen(temp_ident) == strlen(c_keywords[i]) && 
-                    strcmp(temp_ident, c_keywords[i]) == 0) {
-                    is_c_keyword = true;
-                    ident[0] = '_';
-                    offset = 1;
-                    break;
-                }
+            // Check if this is a user-defined name that collides with C/runtime
+            extern int is_user_collision(const char*);
+            if (is_user_collision(temp_ident)) {
+                ident[0] = '_';
+                offset = 1;
             }
             
             strcpy(ident + offset, temp_ident);
@@ -280,8 +282,8 @@ void codegen_expr(Expr* expr) {
             emit("(bool)%.*s", expr->token.length, expr->token.start);
             break;
         case EXPR_UNARY:
-            if (expr->unary.op.type == TOKEN_NOT) {
-                emit("!");
+            if (expr->unary.op.type == TOKEN_NOT || expr->unary.op.type == TOKEN_BANG) {
+                emit("(bool)!");
             } else {
                 emit("%.*s", expr->unary.op.length, expr->unary.op.start);
             }
@@ -347,7 +349,14 @@ void codegen_expr(Expr* expr) {
             }
             break;
         }
-        case EXPR_BINARY:
+        case EXPR_BINARY: {
+            // Check if this is a boolean-producing operator
+            bool _is_bool_op = (expr->binary.op.type == TOKEN_EQEQ || expr->binary.op.type == TOKEN_BANGEQ ||
+                expr->binary.op.type == TOKEN_LT || expr->binary.op.type == TOKEN_GT ||
+                expr->binary.op.type == TOKEN_LTEQ || expr->binary.op.type == TOKEN_GTEQ ||
+                expr->binary.op.type == TOKEN_AND || expr->binary.op.type == TOKEN_AMPAMP ||
+                expr->binary.op.type == TOKEN_OR || expr->binary.op.type == TOKEN_PIPEPIPE);
+            if (_is_bool_op) emit("(bool)");
             // Constant folding: if both sides are int literals, compute at compile time
             if (expr->binary.left->type == EXPR_INT && expr->binary.right->type == EXPR_INT) {
                 long long l = strtoll(expr->binary.left->token.start, NULL, 0);
@@ -358,8 +367,8 @@ void codegen_expr(Expr* expr) {
                     case TOKEN_PLUS: result = l + r; break;
                     case TOKEN_MINUS: result = l - r; break;
                     case TOKEN_STAR: result = l * r; break;
-                    case TOKEN_SLASH: result = r != 0 ? l / r : 0; break;
-                    case TOKEN_PERCENT: result = r != 0 ? l % r : 0; break;
+                    case TOKEN_SLASH: if (r == 0) folded = false; else result = l / r; break;
+                    case TOKEN_PERCENT: if (r == 0) folded = false; else result = l % r; break;
                     case TOKEN_EQEQ: result = l == r; break;
                     case TOKEN_BANGEQ: result = l != r; break;
                     case TOKEN_LT: result = l < r; break;
@@ -479,30 +488,51 @@ void codegen_expr(Expr* expr) {
                 }
                 
                 if (left_is_string || right_is_string) {
-                    // Use ARC-managed string concatenation with automatic conversion
-                    emit("wyn_string_concat_safe(");
+                    // ARC-managed concat — release temporaries after concat
+                    // Left temp: only release if it's a chained concat/call (not reused by realloc)
+                    // Right temp: always release (never reused)
+                    bool left_is_temp = (left_is_int && !left_is_string) ||
+                                        expr->binary.left->type == EXPR_CALL ||
+                                        expr->binary.left->type == EXPR_METHOD_CALL ||
+                                        expr->binary.left->type == EXPR_BINARY;
+                    bool right_is_temp = (right_is_int && !right_is_string) ||
+                                         expr->binary.right->type == EXPR_CALL ||
+                                         expr->binary.right->type == EXPR_METHOD_CALL ||
+                                         expr->binary.right->type == EXPR_BINARY;
                     
-                    // Convert left operand to string if it's an int
-                    if (left_is_int && !left_is_string) {
-                        emit("int_to_string(");
-                        codegen_expr(expr->binary.left);
-                        emit(")");
+                    if (left_is_temp || right_is_temp) {
+                        emit("({ ");
+                        if (left_is_temp) {
+                            emit("const char* __cl = ");
+                            if (left_is_int && !left_is_string) { emit("int_to_string("); codegen_expr(expr->binary.left); emit(")"); }
+                            else codegen_expr(expr->binary.left);
+                            emit("; ");
+                        }
+                        if (right_is_temp) {
+                            emit("const char* __cr = ");
+                            if (right_is_int && !right_is_string) { emit("int_to_string("); codegen_expr(expr->binary.right); emit(")"); }
+                            else codegen_expr(expr->binary.right);
+                            emit("; ");
+                        }
+                        emit("const char* __cx = wyn_string_concat_safe(");
+                        if (left_is_temp) emit("__cl");
+                        else { if (left_is_int && !left_is_string) { emit("int_to_string("); codegen_expr(expr->binary.left); emit(")"); } else codegen_expr(expr->binary.left); }
+                        emit(", ");
+                        if (right_is_temp) emit("__cr");
+                        else { if (right_is_int && !right_is_string) { emit("int_to_string("); codegen_expr(expr->binary.right); emit(")"); } else codegen_expr(expr->binary.right); }
+                        emit(");");
+                        // Release temps — but only if concat didn't reuse them
+                        // concat reuses left when refcount==1, so check if result != left
+                        if (left_is_temp) emit(" if (__cx != __cl) wyn_rc_release(__cl);");
+                        if (right_is_temp) emit(" wyn_rc_release(__cr);");
+                        emit(" __cx; })");
                     } else {
+                        emit("wyn_string_concat_safe(");
                         codegen_expr(expr->binary.left);
-                    }
-                    
-                    emit(", ");
-                    
-                    // Convert right operand to string if it's an int
-                    if (right_is_int && !right_is_string) {
-                        emit("int_to_string(");
+                        emit(", ");
                         codegen_expr(expr->binary.right);
                         emit(")");
-                    } else {
-                        codegen_expr(expr->binary.right);
                     }
-                    
-                    emit(")");
                     break;
                 }
             }
@@ -559,7 +589,6 @@ void codegen_expr(Expr* expr) {
             } else {
                 // Check for division or modulo - add runtime check
                 if (expr->binary.op.type == TOKEN_SLASH || expr->binary.op.type == TOKEN_PERCENT) {
-                    // Check for float/int mixed division
                     bool lf = (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_FLOAT) || expr->binary.left->type == EXPR_FLOAT;
                     bool rf = (expr->binary.right->expr_type && expr->binary.right->expr_type->kind == TYPE_FLOAT) || expr->binary.right->type == EXPR_FLOAT;
                     if (lf || rf) {
@@ -570,6 +599,17 @@ void codegen_expr(Expr* expr) {
                         if (!rf) emit("(double)");
                         codegen_expr(expr->binary.right);
                         emit(")");
+                    } else if (expr->binary.right->type == EXPR_INT) {
+                        long long dv = strtoll(expr->binary.right->token.start, NULL, 0);
+                        if (dv == 0) {
+                            emit(expr->binary.op.type == TOKEN_SLASH ? "wyn_safe_div(" : "wyn_safe_mod(");
+                            codegen_expr(expr->binary.left); emit(", 0)");
+                        } else {
+                            // Known non-zero constant — skip runtime check, use C division
+                            emit("("); codegen_expr(expr->binary.left);
+                            emit(expr->binary.op.type == TOKEN_SLASH ? " / " : " %% ");
+                            codegen_expr(expr->binary.right); emit(")");
+                        }
                     } else {
                         if (expr->binary.op.type == TOKEN_SLASH) emit("wyn_safe_div(");
                         else emit("wyn_safe_mod(");
@@ -635,6 +675,7 @@ void codegen_expr(Expr* expr) {
                 }
             }
             break;
+        }
         case EXPR_CALL:
             // Handle assert() and assert_eq() for test blocks
             if (expr->call.callee->type == EXPR_IDENT) {
@@ -765,9 +806,24 @@ void codegen_expr(Expr* expr) {
                     // Escape analysis: string interp arg to print doesn't escape
                     bool prev_skip = codegen_skip_strdup;
                     if (expr->call.args[0]->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
-                    emit("print(");
-                    codegen_expr(expr->call.args[0]);
-                    emit(")");
+                    Expr* parg = expr->call.args[0];
+                    bool _print_temp = (parg->type == EXPR_BINARY) ||
+                                       (parg->type == EXPR_STRING_INTERP);
+                    if (!_print_temp && parg->type == EXPR_METHOD_CALL &&
+                        parg->method_call.method.length == 9 &&
+                        memcmp(parg->method_call.method.start, "to_string", 9) == 0 &&
+                        !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
+                        _print_temp = true;
+                    }
+                    if (_print_temp) {
+                        emit("({ const char* __ps = ");
+                        codegen_expr(parg);
+                        emit("; print(__ps); wyn_rc_release(__ps); })");
+                    } else {
+                        emit("print(");
+                        codegen_expr(parg);
+                        emit(")");
+                    }
                     codegen_skip_strdup = prev_skip;
                 } else if (expr->call.arg_count >= 2 && 
                            expr->call.args[0]->type == EXPR_STRING) {
@@ -867,9 +923,27 @@ void codegen_expr(Expr* expr) {
                 // Escape analysis: string interp arg to println doesn't escape
                 bool prev_skip = codegen_skip_strdup;
                 if (expr->call.args[0]->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
-                emit("println(");
-                codegen_expr(expr->call.args[0]);
-                emit(")");
+                // Release temp strings passed to println (only fresh allocations)
+                Expr* parg = expr->call.args[0];
+                // Only release: concat results, string interpolation, to_string calls
+                bool _println_temp = (parg->type == EXPR_BINARY) ||
+                                     (parg->type == EXPR_STRING_INTERP);
+                // to_string method call on non-string types
+                if (!_println_temp && parg->type == EXPR_METHOD_CALL &&
+                    parg->method_call.method.length == 9 &&
+                    memcmp(parg->method_call.method.start, "to_string", 9) == 0 &&
+                    !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
+                    _println_temp = true;
+                }
+                if (_println_temp) {
+                    emit("({ const char* __ps = ");
+                    codegen_expr(parg);
+                    emit("; println(__ps); wyn_rc_release(__ps); })");
+                } else {
+                    emit("println(");
+                    codegen_expr(parg);
+                    emit(")");
+                }
                 codegen_skip_strdup = prev_skip;
             } else if (expr->call.callee->type == EXPR_IDENT && 
                        expr->call.callee->token.length == 8 &&
@@ -1314,7 +1388,29 @@ void codegen_expr(Expr* expr) {
             break;
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
-            
+
+            // Release intermediate string temps from chained method calls
+            // e.g. "hello".upper().trim() — upper() result leaked without this
+            Expr* _mc_obj = expr->method_call.object;
+            bool _mc_chain_wrap = false;
+            static int _mc_ctr = 0;
+            int _mc_id = -1;
+            // Only wrap if: (1) object is a fresh string temp, (2) this method returns a value
+            // Skip void methods like .push(), .set(), etc.
+            bool _mc_returns_value = expr->expr_type != NULL;
+            if (_mc_returns_value && _mc_obj->_codegen_temp_id < 0 &&
+                ((_mc_obj->type == EXPR_METHOD_CALL && _mc_obj->expr_type && _mc_obj->expr_type->kind == TYPE_STRING) ||
+                 (_mc_obj->type == EXPR_BINARY && _mc_obj->expr_type && _mc_obj->expr_type->kind == TYPE_STRING) ||
+                 _mc_obj->type == EXPR_STRING_INTERP ||
+                 (_mc_obj->type == EXPR_CALL && _mc_obj->expr_type && _mc_obj->expr_type->kind == TYPE_STRING))) {
+                _mc_chain_wrap = true;
+                _mc_id = _mc_ctr++;
+                emit("({ const char* __mo%d = ", _mc_id);
+                codegen_expr(_mc_obj);
+                emit("; __auto_type __mcr%d = ", _mc_id);
+                _mc_obj->_codegen_temp_id = 1000 + _mc_id;
+            }
+
             // L3: Iterator methods — .collect() and .take() are iterator-only
             // .map() and .filter() only use wyn_iter_* when chained on an iterator
             {
@@ -1727,10 +1823,24 @@ void codegen_expr(Expr* expr) {
                 }
                 // arr.sort() -> arr_sort(arr.data, arr.count) (in-place)
                 if (method.length == 4 && memcmp(method.start, "sort", 4) == 0 && expr->method_call.arg_count == 0) {
-                    emit("array_sort_copy(");
+                    // Check if array contains strings
+                    bool _is_str_arr = false;
+                    Expr* _sobj = expr->method_call.object;
+                    if (_sobj->expr_type && _sobj->expr_type->kind == TYPE_ARRAY &&
+                        _sobj->expr_type->array_type.element_type &&
+                        _sobj->expr_type->array_type.element_type->kind == TYPE_STRING) {
+                        _is_str_arr = true;
+                    }
+                    // Also check if it's a known string array variable
+                    if (!_is_str_arr && _sobj->type == EXPR_IDENT) {
+                        extern int is_str_array_var(const char*);
+                        char _vn[256]; snprintf(_vn, 256, "%.*s", _sobj->token.length, _sobj->token.start);
+                        if (is_str_array_var(_vn)) _is_str_arr = true;
+                    }
+                    emit(_is_str_arr ? "array_sort_str(&(" : "array_sort(&(");
                     codegen_expr(expr->method_call.object);
-                    emit(")");
-                    break;
+                    emit("))");
+                    goto method_done;
                 }
                 // arr.sort_by(cmp_fn) -> wyn_array_sort_by(&arr, cmp_fn)
                 if (method.length == 7 && memcmp(method.start, "sort_by", 7) == 0 && expr->method_call.arg_count == 1) {
@@ -1903,6 +2013,8 @@ void codegen_expr(Expr* expr) {
                  expr->method_call.object->type == EXPR_PIPELINE ||
                  expr->method_call.object->type == EXPR_AWAIT ||
                  expr->method_call.object->type == EXPR_CALL ||
+                 expr->method_call.object->type == EXPR_BINARY ||
+                 expr->method_call.object->type == EXPR_UNARY ||
                  expr->method_call.object->type == EXPR_IDENT)) {
                 emit("to_string(");
                 codegen_expr(expr->method_call.object);
@@ -2035,14 +2147,22 @@ void codegen_expr(Expr* expr) {
                 int mlen = method.length < 63 ? method.length : 63;
                 memcpy(mname, method.start, mlen);
                 mname[mlen] = '\0';
-                if (strcmp(mname, "len") == 0 || strcmp(mname, "upper") == 0 ||
+                // Only assume string if the object's type is actually string (or unknown)
+                bool _obj_is_int = expr->method_call.object->expr_type &&
+                    expr->method_call.object->expr_type->kind == TYPE_INT;
+                bool _obj_is_float = expr->method_call.object->expr_type &&
+                    expr->method_call.object->expr_type->kind == TYPE_FLOAT;
+                bool _obj_is_bool = expr->method_call.object->expr_type &&
+                    expr->method_call.object->expr_type->kind == TYPE_BOOL;
+                if (!_obj_is_int && !_obj_is_float && !_obj_is_bool &&
+                    (strcmp(mname, "len") == 0 || strcmp(mname, "upper") == 0 ||
                     strcmp(mname, "lower") == 0 || strcmp(mname, "trim") == 0 ||
                     strcmp(mname, "contains") == 0 || strcmp(mname, "starts_with") == 0 ||
                     strcmp(mname, "ends_with") == 0 || strcmp(mname, "replace") == 0 ||
                     strcmp(mname, "repeat") == 0 || strcmp(mname, "index_of") == 0 ||
                     strcmp(mname, "substring") == 0 || strcmp(mname, "split_at") == 0 ||
                     strcmp(mname, "split_count") == 0 || strcmp(mname, "to_int") == 0 ||
-                    strcmp(mname, "to_float") == 0 || strcmp(mname, "bytes") == 0 || strcmp(mname, "chars") == 0) {
+                    strcmp(mname, "to_float") == 0 || strcmp(mname, "bytes") == 0 || strcmp(mname, "chars") == 0)) {
                     receiver_type = "string";
                 }
             }
@@ -2052,12 +2172,10 @@ void codegen_expr(Expr* expr) {
                 int mlen = method.length < 63 ? method.length : 63;
                 memcpy(mname, method.start, mlen);
                 mname[mlen] = '\0';
+                // Only override to string for methods that make sense on both types
+                // (to_int, to_float are valid on strings; upper/lower/trim are NOT valid on int)
                 if (strcmp(mname, "to_int") == 0 || strcmp(mname, "to_float") == 0 ||
-                    strcmp(mname, "split_at") == 0 || strcmp(mname, "split_count") == 0 ||
-                    strcmp(mname, "upper") == 0 || strcmp(mname, "lower") == 0 ||
-                    strcmp(mname, "trim") == 0 || strcmp(mname, "contains") == 0 ||
-                    strcmp(mname, "starts_with") == 0 || strcmp(mname, "ends_with") == 0 ||
-                    strcmp(mname, "substring") == 0 || strcmp(mname, "replace") == 0) {
+                    strcmp(mname, "split_at") == 0 || strcmp(mname, "split_count") == 0) {
                     receiver_type = "string";
                 }
             }
@@ -2257,7 +2375,7 @@ void codegen_expr(Expr* expr) {
                         }
                     }
                     emit(")");
-                    break;
+                    goto method_done;
                 }
             }
             
@@ -2397,6 +2515,10 @@ void codegen_expr(Expr* expr) {
                         method.length, method.start);
             }
             method_done:
+            if (_mc_chain_wrap && _mc_id >= 0) {
+                emit("; wyn_rc_release(__mo%d); __mcr%d; })", _mc_id, _mc_id);
+                _mc_obj->_codegen_temp_id = -1;
+            }
             break;
         }
         case EXPR_ARRAY: {
@@ -2736,10 +2858,21 @@ void codegen_expr(Expr* expr) {
                 if (is_string_var(target_name)) _rc_string_assign = true;
             }
             if (_rc_string_assign) {
-                // Emit: ({ const char* __rc_tmp = <rhs>; wyn_rc_release(old); old = __rc_tmp; })
-                emit("({ const char* __rc_tmp = ");
-                codegen_expr(expr->assign.value);
-                emit("; wyn_rc_retain(__rc_tmp); wyn_rc_release(%s); %s = __rc_tmp; })", target_name, target_name);
+                Expr* rhs = expr->assign.value;
+                bool rhs_is_fresh = (rhs->type == EXPR_BINARY || rhs->type == EXPR_CALL ||
+                                     rhs->type == EXPR_METHOD_CALL || rhs->type == EXPR_STRING_INTERP);
+                if (rhs_is_fresh) {
+                    // Fresh temporary: ownership transfer
+                    // If concat reused the buffer (same pointer), don't release
+                    emit("({ const char* __rc_tmp = ");
+                    codegen_expr(expr->assign.value);
+                    emit("; if (__rc_tmp != %s) { wyn_rc_release(%s); } %s = __rc_tmp; })", target_name, target_name, target_name);
+                } else {
+                    // Shared reference: retain new, release old
+                    emit("({ const char* __rc_tmp = ");
+                    codegen_expr(expr->assign.value);
+                    emit("; wyn_rc_retain(__rc_tmp); wyn_rc_release(%s); %s = __rc_tmp; })", target_name, target_name);
+                }
                 break;
             }
             
@@ -2835,27 +2968,16 @@ void codegen_expr(Expr* expr) {
                 needs_arc = true;
             }
             
-            if (needs_arc) {
-                // Generate ARC-managed struct initialization with cast
-                emit("*(%.*s*)wyn_arc_new(sizeof(%.*s), &(%.*s){", 
-                     actual_type_name_len, actual_type_name,
-                     actual_type_name_len, actual_type_name,
-                     actual_type_name_len, actual_type_name);
+            // Simple struct initialization — stack allocated
+            // Wrapped in extra parens to protect commas in macro contexts
+            {
+                emit("((%.*s){", actual_type_name_len, actual_type_name);
                 for (int i = 0; i < expr->struct_init.field_count; i++) {
                     if (i > 0) emit(", ");
                     emit(".%.*s = ", expr->struct_init.field_names[i].length, expr->struct_init.field_names[i].start);
                     codegen_expr(expr->struct_init.field_values[i]);
                 }
-                emit("})->data");
-            } else {
-                // Generate simple struct initialization
-                emit("(%.*s){", actual_type_name_len, actual_type_name);
-                for (int i = 0; i < expr->struct_init.field_count; i++) {
-                    if (i > 0) emit(", ");
-                    emit(".%.*s = ", expr->struct_init.field_names[i].length, expr->struct_init.field_names[i].start);
-                    codegen_expr(expr->struct_init.field_values[i]);
-                }
-                emit("}");
+                emit("})");
             }
             break;
         }
@@ -3379,9 +3501,9 @@ void codegen_expr(Expr* expr) {
                 for (int i = expr->pipeline.stage_count - 1; i >= 1; i--) {
                     if (expr->pipeline.stages[i]->type == EXPR_IDENT) {
                         char _pn[128]; snprintf(_pn, sizeof(_pn), "%.*s", expr->pipeline.stages[i]->token.length, expr->pipeline.stages[i]->token.start);
-                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
                         const char* _pfx = "";
-                        for (int k = 0; _ckw[k]; k++) { if (strcmp(_pn, _ckw[k]) == 0) { _pfx = "_"; break; } }
+                        extern int is_user_collision(const char*);
+                        if (is_user_collision(_pn)) _pfx = "_";
                         emit("%s%s(", _pfx, _pn);
                     } else if (expr->pipeline.stages[i]->type == EXPR_METHOD_CALL) {
                         emit("%.*s(", 
@@ -3417,54 +3539,72 @@ void codegen_expr(Expr* expr) {
             break;
         case EXPR_STRING_INTERP: {
             // String interpolation: "Hello ${name}" -> sprintf format
-            emit("({ char __buf[512]; snprintf(__buf, 512, \"");
+            // Count expression parts for temp variable allocation
+            int _interp_expr_count = 0;
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                if (expr->string_interp.expressions[i]) _interp_expr_count++;
+            }
             
-            // Build format string - use %s for everything and convert with _Generic
+            emit("({ ");
+            // Capture temporaries
+            int _ti = 0;
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                if (expr->string_interp.expressions[i]) {
+                    Expr* e = expr->string_interp.expressions[i];
+                    emit("const char* __si%d = ", _ti);
+                    if (e->type == EXPR_STRING) {
+                        codegen_expr(e);
+                    } else {
+                        emit("to_string(");
+                        codegen_expr(e);
+                        emit(")");
+                    }
+                    emit("; ");
+                    _ti++;
+                }
+            }
+            
+            emit("char __buf[512]; snprintf(__buf, 512, \"");
             for (int i = 0; i < expr->string_interp.count; i++) {
                 if (expr->string_interp.parts[i]) {
-                    // String literal part
                     const char* part = expr->string_interp.parts[i];
-                    const char* part_start_ptr = part;
                     while (*part) {
-                        if (*part == '%') emit("%%%%"); // Escape % for sprintf
+                        if (*part == '%') emit("%%%%");
                         else if (*part == '\n') emit("\\n");
-                        else if (*part == '"' && (part == part_start_ptr || *(part-1) != '\\')) emit("\\\"");
+                        else if (*part == '\\' && *(part+1) == '"') { emit("\\\""); part++; }
+                        else if (*part == '"') emit("\\\"");
                         else emit("%c", *part);
                         part++;
                     }
                 } else {
-                    // Expression part - use %s and convert with to_string
                     emit("%%s");
                 }
             }
-            
             emit("\"");
-            
-            // Add arguments for expressions with type conversion
+            _ti = 0;
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                if (expr->string_interp.expressions[i]) {
+                    emit(", __si%d", _ti++);
+                }
+            }
+            emit("); ");
+            // Release temporaries (only non-string expressions that created new strings)
+            _ti = 0;
             for (int i = 0; i < expr->string_interp.count; i++) {
                 if (expr->string_interp.expressions[i]) {
                     Expr* e = expr->string_interp.expressions[i];
-                    // If expression is a method call to .to_string(), emit directly
-                    if (e->type == EXPR_METHOD_CALL && 
-                        e->method_call.method.length == 9 &&
-                        memcmp(e->method_call.method.start, "to_string", 9) == 0) {
-                        emit(", to_string(");
-                        codegen_expr(e->method_call.object);
-                        emit(")");
-                    } else if (e->type == EXPR_STRING) {
-                        // String literal — emit directly
-                        emit(", ");
-                        codegen_expr(e);
-                    } else {
-                        // Wrap any expression in to_string()
-                        emit(", to_string(");
-                        codegen_expr(e);
-                        emit(")");
+                    // Only release if the expression is NOT already a string
+                    // (to_string on a string returns the same pointer — releasing it frees the original)
+                    bool is_str_expr = (e->type == EXPR_STRING) ||
+                                       (e->expr_type && e->expr_type->kind == TYPE_STRING) ||
+                                       (e->type == EXPR_IDENT && e->expr_type && e->expr_type->kind == TYPE_STRING);
+                    if (!is_str_expr) {
+                        emit("wyn_rc_release(__si%d); ", _ti);
                     }
+                    _ti++;
                 }
             }
-            
-            emit("); %s; })", codegen_skip_strdup ? "__buf" : "wyn_strdup(__buf)");
+            emit("%s; })", codegen_skip_strdup ? "__buf" : "wyn_strdup(__buf)");
             break;
         }
         case EXPR_RANGE:

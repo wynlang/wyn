@@ -1,0 +1,13 @@
+// EXPECT: hello world 42
+// EXPECT: x=10 y=20
+
+fn main() -> int {
+    var name = "world"
+    var num = 42
+    println("hello ${name} ${num}")
+
+    var x = 10
+    var y = 20
+    println("x=${x} y=${y}")
+    return 0
+}

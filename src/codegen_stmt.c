@@ -1,6 +1,33 @@
 // codegen_stmt.c - Statement code generation
 // Included from codegen.c - shares all statics
 
+// Check if expression produces a fresh RC string that needs release
+// Conservative: only match patterns known to allocate new strings
+static bool is_fresh_string_temp(Expr* e) {
+    if (!e) return false;
+    // String concat always allocates
+    if (e->type == EXPR_BINARY) return true;
+    // String interpolation always allocates
+    if (e->type == EXPR_STRING_INTERP) return true;
+    // to_string() on non-string types always allocates
+    if (e->type == EXPR_METHOD_CALL &&
+        e->method_call.method.length == 9 &&
+        memcmp(e->method_call.method.start, "to_string", 9) == 0 &&
+        !(e->method_call.object->expr_type && e->method_call.object->expr_type->kind == TYPE_STRING))
+        return true;
+    // Free function calls returning string (user-defined functions allocate fresh strings)
+    if (e->type == EXPR_CALL && e->call.callee->type == EXPR_IDENT &&
+        e->expr_type && e->expr_type->kind == TYPE_STRING) {
+        // Exclude builtins that return shared refs
+        int len = e->call.callee->token.length;
+        const char* name = e->call.callee->token.start;
+        if (len == 5 && memcmp(name, "input", 5) == 0) return false;
+        if (len == 8 && memcmp(name, "get_argv", 8) == 0) return false;
+        return true;
+    }
+    return false;
+}
+
 static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     if (!fn_stmt || fn_stmt->type != STMT_FN) {
         return;
@@ -16,7 +43,9 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     // Register function parameters for scope tracking
     clear_parameters();
     clear_local_variables();
+    { extern void reset_shadow_vars(void); reset_shadow_vars(); }
     { extern void reset_string_vars(void); reset_string_vars(); }
+    { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); }
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
         char param_name[256];
         snprintf(param_name, 256, "%.*s", fn_stmt->fn.params[i].length, fn_stmt->fn.params[i].start);
@@ -178,8 +207,45 @@ void codegen_stmt(Stmt* stmt) {
                     emit(";\n");
                 }
             } else {
-                codegen_expr(stmt->expr);
-                emit(";\n");
+                // Release unused string return values to prevent leaks
+                bool _is_str_call = (stmt->expr->type == EXPR_CALL || stmt->expr->type == EXPR_METHOD_CALL) &&
+                    stmt->expr->expr_type && stmt->expr->expr_type->kind == TYPE_STRING;
+                // Check for fresh string args that need release
+                Expr* _se = stmt->expr;
+                int _nargs = 0;
+                Expr** _args = NULL;
+                if (_se->type == EXPR_CALL) { _nargs = _se->call.arg_count; _args = _se->call.args; }
+                else if (_se->type == EXPR_METHOD_CALL) { _nargs = _se->method_call.arg_count; _args = _se->method_call.args; }
+                int _fresh[16]; int _fc = 0;
+                for (int ai = 0; ai < _nargs && _fc < 16; ai++) {
+                    if (is_fresh_string_temp(_args[ai])) _fresh[_fc++] = ai;
+                }
+                if (_fc > 0 && !_is_str_call) {
+                    emit("{ ");
+                    // Evaluate fresh args to temps
+                    for (int si = 0; si < _fc; si++) {
+                        emit("const char* __sa%d = ", si);
+                        codegen_expr(_args[_fresh[si]]);
+                        emit("; ");
+                        _args[_fresh[si]]->_codegen_temp_id = si;
+                    }
+                    // Emit call (args with temp IDs emit __sa{id} instead)
+                    codegen_expr(_se);
+                    emit("; ");
+                    // Release temps
+                    for (int si = 0; si < _fc; si++) {
+                        emit("wyn_rc_release(__sa%d); ", si);
+                        _args[_fresh[si]]->_codegen_temp_id = -1;
+                    }
+                    emit("}\n");
+                } else if (_is_str_call) {
+                    emit("wyn_rc_release(");
+                    codegen_expr(stmt->expr);
+                    emit(");\n");
+                } else {
+                    codegen_expr(stmt->expr);
+                    emit(";\n");
+                }
                 // Readback captured variables after lambda calls (capture by reference)
                 if (stmt->expr->type == EXPR_METHOD_CALL) {
                     for (int ai = 0; ai < stmt->expr->method_call.arg_count; ai++) {
@@ -353,13 +419,16 @@ void codegen_stmt(Stmt* stmt) {
                             }
                         }
                     }
-                    // Methods that return arrays → WynArray
+                    // Methods that return arrays → WynArray (only when object is array, not string)
                     if (!_found_method_rt) {
                         char _mn2[64]; snprintf(_mn2, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
-                        if (strcmp(_mn2, "sort") == 0 || strcmp(_mn2, "reverse") == 0 ||
+                        // Check if object is a string — these methods return string, not array
+                        bool _obj_is_string = stmt->var.init->method_call.object->expr_type &&
+                            stmt->var.init->method_call.object->expr_type->kind == TYPE_STRING;
+                        if (!_obj_is_string && (strcmp(_mn2, "sort") == 0 || strcmp(_mn2, "reverse") == 0 ||
                             strcmp(_mn2, "filter") == 0 || strcmp(_mn2, "map") == 0 ||
                             strcmp(_mn2, "unique") == 0 || strcmp(_mn2, "slice") == 0 ||
-                            strcmp(_mn2, "flat_map") == 0 || strcmp(_mn2, "collect") == 0) {
+                            strcmp(_mn2, "flat_map") == 0 || strcmp(_mn2, "collect") == 0)) {
                             c_type = "WynArray";
                             char _vn2[256]; snprintf(_vn2, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
                             extern void register_array_var(const char*); register_array_var(_vn2);
@@ -1197,15 +1266,13 @@ void codegen_stmt(Stmt* stmt) {
             if (stmt->var.init && stmt->var.init->type == EXPR_LAMBDA) {
                 // Function pointer syntax: int (*name)(params...)
                 // Check if name is a C keyword
-                const char* c_keywords[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
-                bool is_c_keyword = false;
-                for (int i = 0; c_keywords[i] != NULL; i++) {
-                    if ((int)stmt->var.name.length == (int)strlen(c_keywords[i]) && 
-                        memcmp(stmt->var.name.start, c_keywords[i], stmt->var.name.length) == 0) {
-                        is_c_keyword = true;
-                        break;
-                    }
-                }
+                // Check if name is a C keyword or runtime collision
+                extern int is_c_name_collision(const char*);
+                extern void register_user_collision(const char*);
+                char _vn[256]; int _vnl = stmt->var.name.length < 255 ? stmt->var.name.length : 255;
+                memcpy(_vn, stmt->var.name.start, _vnl); _vn[_vnl] = '\0';
+                bool is_c_keyword = is_c_name_collision(_vn);
+                if (is_c_keyword) register_user_collision(_vn);
                 
                 // Find this lambda in the lambda_functions array to get capture count
                 int total_params = stmt->var.init->lambda.param_count;
@@ -1266,12 +1333,19 @@ void codegen_stmt(Stmt* stmt) {
                 char var_name[256];
                 snprintf(var_name, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
                 register_local_variable(var_name);
+                // Track arrays for scope-based cleanup
+                if (strcmp(c_type, "WynArray") == 0) {
+                    extern void register_array_scope_var(const char*);
+                    register_array_scope_var(var_name);
+                }
+                if (strcmp(c_type, "WynHashMap*") == 0) {
+                    extern void register_hashmap_scope_var(const char*);
+                    register_hashmap_scope_var(var_name);
+                }
             }
             
             if (needs_arc_management) {
-                emit("({ ");
                 codegen_expr(stmt->var.init);
-                emit("; /* ARC retain for %.*s */ })", stmt->var.name.length, stmt->var.name.start);
             } else {
                 // Set spawn array flag for WynIntArray emission
                 bool _was_int_array = codegen_emit_int_array;
@@ -1455,7 +1529,30 @@ void codegen_stmt(Stmt* stmt) {
                 
                 extern void push_string_scope(void);
                 extern void pop_string_scope_and_release(void);
-                if (_is_inner_block) push_string_scope();
+                extern void push_array_scope(void);
+                extern void pop_array_scope_and_release(void);
+                extern void push_hashmap_scope(void);
+                extern void pop_hashmap_scope_and_release(void);
+                if (_is_inner_block) { push_string_scope(); push_array_scope(); push_hashmap_scope(); }
+                
+                // Save shadow state for vars declared in inner blocks
+                extern int get_current_shadow(const char*);
+                extern void set_shadow_count(const char*, int);
+                extern void remove_shadow_entry(const char*);
+                typedef struct { char name[64]; int prev; } _ShSave;
+                _ShSave _shsaves[64];
+                int _shcount = 0;
+                if (_is_inner_block) {
+                    for (int _i = 0; _i < stmt->block.count && _shcount < 64; _i++) {
+                        if (stmt->block.stmts[_i]->type == STMT_VAR) {
+                            int nl = stmt->block.stmts[_i]->var.name.length < 63 ? stmt->block.stmts[_i]->var.name.length : 63;
+                            memcpy(_shsaves[_shcount].name, stmt->block.stmts[_i]->var.name.start, nl);
+                            _shsaves[_shcount].name[nl] = 0;
+                            _shsaves[_shcount].prev = get_current_shadow(_shsaves[_shcount].name);
+                            _shcount++;
+                        }
+                    }
+                }
                 
                 extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
                 Stmt** _saved_stmts = current_block_stmts; int _saved_count = current_block_count; int _saved_idx = current_stmt_idx;
@@ -1467,7 +1564,24 @@ void codegen_stmt(Stmt* stmt) {
                 }
                 current_block_stmts = _saved_stmts; current_block_count = _saved_count; current_stmt_idx = _saved_idx;
                 
-                if (_is_inner_block) pop_string_scope_and_release();
+                // String cleanup first (needs macros still defined)
+                if (_is_inner_block) { pop_string_scope_and_release(); pop_array_scope_and_release(); pop_hashmap_scope_and_release(); }
+                
+                // Then restore shadow state for shadowed variables
+                if (_is_inner_block) {
+                    for (int _i = 0; _i < _shcount; _i++) {
+                        if (_shsaves[_i].prev < 0) continue;  // New var, no restore needed
+                        int cur = get_current_shadow(_shsaves[_i].name);
+                        if (cur > _shsaves[_i].prev) {
+                            emit("\n#undef %s\n", _shsaves[_i].name);
+                            if (_shsaves[_i].prev > 0) {
+                                emit("#define %s %s__%d\n", _shsaves[_i].name, _shsaves[_i].name, _shsaves[_i].prev);
+                            }
+                            // Restore scope level (next counter stays high for unique C names)
+                            set_shadow_count(_shsaves[_i].name, _shsaves[_i].prev);
+                        }
+                    }
+                }
             }
             { extern int string_var_scope_depth; string_var_scope_depth--; }
             break;
@@ -1634,9 +1748,10 @@ void codegen_stmt(Stmt* stmt) {
                 // Check for C keyword collision
                 char _fn_name[256];
                 snprintf(_fn_name, sizeof(_fn_name), "%.*s", stmt->fn.name.length, stmt->fn.name.start);
-                const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
-                bool _is_ckw = false;
-                for (int _k = 0; _ckw[_k]; _k++) { if (strcmp(_fn_name, _ckw[_k]) == 0) { _is_ckw = true; break; } }
+                extern int is_c_name_collision(const char*);
+                extern void register_user_collision(const char*);
+                bool _is_ckw = is_c_name_collision(_fn_name);
+                if (_is_ckw) register_user_collision(_fn_name);
                 emit("%s %s%.*s(", return_type, _is_ckw ? "_" : "", stmt->fn.name.length, stmt->fn.name.start);
             }
             for (int i = 0; i < stmt->fn.param_count; i++) {
@@ -1725,8 +1840,8 @@ void codegen_stmt(Stmt* stmt) {
                 // Emit with pointer for mut params
                 bool is_mut_p = stmt->fn.param_mutable && stmt->fn.param_mutable[i];
                 char _pn[256]; snprintf(_pn, sizeof(_pn), "%.*s", stmt->fn.params[i].length, stmt->fn.params[i].start);
-                static const char* _pkw2[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
-                bool _ipk = false; for (int _k = 0; _pkw2[_k]; _k++) { if (strcmp(_pn, _pkw2[_k]) == 0) { _ipk = true; break; } }
+                static const char* _c_kw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                bool _ipk = false; for (int _k = 0; _c_kw[_k]; _k++) { if (strcmp(_pn, _c_kw[_k]) == 0) { _ipk = true; break; } }
                 if (is_mut_p) {
                     emit("%s *%s%.*s", param_type, _ipk ? "_" : "", stmt->fn.params[i].length, stmt->fn.params[i].start);
                 } else {
@@ -1739,7 +1854,9 @@ void codegen_stmt(Stmt* stmt) {
             // Register parameters for mut tracking
             clear_parameters();
             clear_local_variables();
+            { extern void reset_shadow_vars(void); reset_shadow_vars(); }
             { extern void reset_string_vars(void); reset_string_vars(); }
+            { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); }
             for (int i = 0; i < stmt->fn.param_count; i++) {
                 char pname[256];
                 snprintf(pname, 256, "%.*s", stmt->fn.params[i].length, stmt->fn.params[i].start);
@@ -2075,7 +2192,8 @@ void codegen_stmt(Stmt* stmt) {
             emit("}\n\n");
             
             // Generate methods defined in struct
-            emit("/* Generating %d methods */\n", stmt->struct_decl.method_count);
+            if (stmt->struct_decl.method_count > 0)
+                emit("/* %d methods */\n", stmt->struct_decl.method_count);
             for (int i = 0; i < stmt->struct_decl.method_count; i++) {
                 FnStmt* method = stmt->struct_decl.methods[i];
                 // Generate as TypeName_methodname(TypeName self, ...)

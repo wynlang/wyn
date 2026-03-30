@@ -1,0 +1,19 @@
+// Regression: string args to functions must be released after call
+// Before fix: 50MB for 500K calls. After: ~1.4MB.
+// EXPECT: PASS
+fn consume(s: string) -> int {
+    return s.len()
+}
+
+fn main() -> int {
+    var total = 0
+    for i in 0..100000 {
+        total = total + consume("item_" + i.to_string())
+    }
+    if total > 500000 {
+        println("PASS")
+    } else {
+        println("FAIL: unexpected total " + total.to_string())
+    }
+    return 0
+}

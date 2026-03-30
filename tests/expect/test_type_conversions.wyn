@@ -1,0 +1,19 @@
+// EXPECT: 42
+// EXPECT: hello world
+// EXPECT: 3.14
+
+fn main() -> int {
+    // int to string
+    var n = 42
+    println(n.to_string())
+
+    // string concatenation
+    var a = "hello"
+    var b = "world"
+    println(a + " " + b)
+
+    // float to string
+    var f = 3.14
+    println(f.to_string())
+    return 0
+}

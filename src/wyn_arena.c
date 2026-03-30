@@ -15,6 +15,7 @@ char* wyn_strdup(const char* s) {
     size_t len = strlen(s);
     char* r = wyn_str_alloc(len);
     memcpy(r, s, len + 1);
+    wyn_rc_set_length(r, (uint32_t)len);
     return r;
 }
 

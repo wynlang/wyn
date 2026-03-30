@@ -1,3 +1,4 @@
+// EXPECT: PASS: float+int auto-promotion works
 // Test: float + int auto-promotion
 fn main() -> int {
     // float + int

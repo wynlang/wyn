@@ -1,7 +1,13 @@
 // Lightweight Future — recyclable slab, zero malloc
 #include <stdlib.h>
 #include <stdatomic.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#define sched_yield() SwitchToThread()
+#else
 #include <sched.h>
+#endif
 #include "coroutine.h"
 #include "io_loop.h"
 
@@ -18,16 +24,18 @@ typedef struct Future {
 
 // === Recyclable slab allocator ===
 // Futures are recycled after await — memory stays constant regardless of spawn count
-#define FUTURE_SLAB_SIZE (64 * 1024)  // 64K futures = 1MB slab
+#define FUTURE_SLAB_SIZE 4096  // 4K futures — enough for most programs
 static Future future_slab[FUTURE_SLAB_SIZE];
 static _Atomic int future_slab_idx = 0;
 
-// Lock-free free list using indices
 #define FREE_STACK_SIZE FUTURE_SLAB_SIZE
+
+// Lock-free free list using indices
 static _Atomic int free_stack[FREE_STACK_SIZE];
 static _Atomic int free_top = 0;  // number of items in free stack
 
 static inline void future_recycle(Future* f) {
+    atomic_store_explicit(&f->state, FUTURE_FREE, memory_order_release);
     int idx = (int)(f - future_slab);
     if (idx < 0 || idx >= FUTURE_SLAB_SIZE) { free(f); return; }
     // Atomically claim a slot — if full, just drop (slab still owns the memory)
@@ -83,6 +91,8 @@ void future_set(Future* f, void* result) {
 
 void* future_get(Future* f) {
     if (!f) return NULL;
+    // Guard against double-await
+    if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_FREE) return NULL;
     // Fast path
     if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
         void* r = f->result;
@@ -128,9 +138,13 @@ void* future_get(Future* f) {
         future_recycle(f);
         return r;
     }
-    // Main thread: spin with CPU hints then yield loop
+    // Help drain queue while waiting — prevents deadlock in recursive spawn
+    // Safe with mutex pool (no data races unlike Chase-Lev re-entrant pop)
+    extern _Atomic int ws_blocked;
+    atomic_fetch_add(&ws_blocked, 1);
     for (int i = 0; i < 256; i++) {
         if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
+            atomic_fetch_sub(&ws_blocked, 1);
             void* r = f->result;
             future_recycle(f);
             return r;
@@ -141,8 +155,12 @@ void* future_get(Future* f) {
         __asm__ volatile("isb");
         #endif
     }
-    while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY)
-        sched_yield();
+    // Help drain queue while waiting
+    extern int pool_try_run_one(void);
+    while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY) {
+        if (!pool_try_run_one()) sched_yield();
+    }
+    atomic_fetch_sub(&ws_blocked, 1);
     void* r = f->result;
     future_recycle(f);
     return r;

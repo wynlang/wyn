@@ -1,0 +1,28 @@
+// Expect: User can define functions with common names
+// These names should not collide with runtime internals
+// EXPECT: 10
+// EXPECT: hello
+// EXPECT: 1
+
+fn clamp(val: int, lo: int, hi: int) -> int {
+    if val < lo { return lo }
+    if val > hi { return hi }
+    return val
+}
+
+fn input(prompt: string) -> string {
+    return prompt
+}
+
+fn sign(x: int) -> int {
+    if x > 0 { return 1 }
+    if x < 0 { return -1 }
+    return 0
+}
+
+fn main() -> int {
+    println(clamp(10, 0, 100).to_string())
+    println(input("hello"))
+    println(sign(42).to_string())
+    return 0
+}

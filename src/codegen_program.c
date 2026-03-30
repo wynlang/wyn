@@ -561,8 +561,10 @@ void codegen_program(Program* prog) {
                      fn->name.length, fn->name.start);
             } else {
                 char _fn_name[256]; snprintf(_fn_name, sizeof(_fn_name), "%.*s", fn->name.length, fn->name.start);
-                const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
-                bool _is_ckw = false; for (int _k = 0; _ckw[_k]; _k++) { if (strcmp(_fn_name, _ckw[_k]) == 0) { _is_ckw = true; break; } }
+                extern int is_c_name_collision(const char*);
+                extern void register_user_collision(const char*);
+                bool _is_ckw = is_c_name_collision(_fn_name);
+                if (_is_ckw) register_user_collision(_fn_name);
                 emit("%s %s%.*s(", return_type, _is_ckw ? "_" : "", fn->name.length, fn->name.start);
             }
             for (int j = 0; j < fn->param_count; j++) {
@@ -652,8 +654,8 @@ void codegen_program(Program* prog) {
                 bool is_mut_param = fn->param_mutable && fn->param_mutable[j];
                 // Check if param name is a C keyword
                 char _pname[256]; snprintf(_pname, sizeof(_pname), "%.*s", fn->params[j].length, fn->params[j].start);
-                static const char* _pkw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof","div","abs","exit","free","malloc","printf","puts","remove","rename","signal","time","clock","rand","log","exp","sqrt",NULL};
-                bool _is_pkw = false; for (int _k = 0; _pkw[_k]; _k++) { if (strcmp(_pname, _pkw[_k]) == 0) { _is_pkw = true; break; } }
+                static const char* _c_kw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                bool _is_pkw = false; for (int _k = 0; _c_kw[_k]; _k++) { if (strcmp(_pname, _c_kw[_k]) == 0) { _is_pkw = true; break; } }
                 if (is_mut_param) {
                     emit("%s *%s%.*s", param_type, _is_pkw ? "_" : "", fn->params[j].length, fn->params[j].start);
                 } else {
