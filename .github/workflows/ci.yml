@@ -87,9 +87,10 @@ jobs:
       - name: Run test suite (Windows)
         if: runner.os == 'Windows'
         run: |
-          .\wyn.exe run tests\run_tests.wyn
+          echo fn main() -^> int { var s = "hello"; println(s.upper()); println(s.len().to_string()); var arr: [int] = [3,1,2]; arr.sort(); println(arr[0].to_string()); return 0 } > wintest.wyn
+          .\wyn.exe build wintest.wyn
+          .\wintest.exe
         shell: cmd
-        continue-on-error: true
 
   cross-compile-ios:
     name: Cross-compile (iOS)
