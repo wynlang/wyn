@@ -2022,20 +2022,22 @@ bool bool_not(bool x) { return !x; }
 bool bool_and(bool x, bool y) { return x && y; }
 bool bool_or(bool x, bool y) { return x || y; }
 bool bool_xor(bool x, bool y) { return x != y; }
-long long wyn_safe_div(long long a, long long b) {
+long long wyn_safe_div_impl(long long a, long long b, const char* file, int line) {
     if (b == 0) {
-        fprintf(stderr, "panic: division by zero\n");
+        fprintf(stderr, "panic at %s:%d: division by zero\n", file, line);
         exit(1);
     }
     return a / b;
 }
-long long wyn_safe_mod(long long a, long long b) {
+#define wyn_safe_div(a, b) wyn_safe_div_impl(a, b, __FILE__, __LINE__)
+long long wyn_safe_mod_impl(long long a, long long b, const char* file, int line) {
     if (b == 0) {
-        fprintf(stderr, "panic: modulo by zero\n");
+        fprintf(stderr, "panic at %s:%d: modulo by zero\n", file, line);
         exit(1);
     }
     return a % b;
 }
+#define wyn_safe_mod(a, b) wyn_safe_mod_impl(a, b, __FILE__, __LINE__)
 char* char_to_string(char x) { char* r = wyn_str_alloc(2); r[0] = x; r[1] = 0; return r; }
 int char_to_int(char x) { return (int)x; }
 char char_from_int(int x) { return (char)x; }

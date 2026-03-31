@@ -2265,6 +2265,24 @@ int main(int argc, char** argv) {
             return 1;
         }
         
+        // If file is a directory, resolve to entry point
+        struct stat _fs;
+        if (stat(file, &_fs) == 0 && S_ISDIR(_fs.st_mode)) {
+            char toml_path[512]; snprintf(toml_path, sizeof(toml_path), "%s/wyn.toml", file);
+            FILE* _tf = fopen(toml_path, "r");
+            if (_tf) {
+                char _tb[4096]; int _tl = fread(_tb, 1, sizeof(_tb)-1, _tf); _tb[_tl] = 0; fclose(_tf);
+                char* _ep = strstr(_tb, "entry = \"");
+                if (_ep) { static char _e[512]; char _en[256]; if (sscanf(_ep, "entry = \"%255[^\"]\"", _en) == 1) { snprintf(_e, sizeof(_e), "%s/%s", file, _en); file = _e; } }
+            }
+            if (stat(file, &_fs) != 0 || S_ISDIR(_fs.st_mode)) {
+                static char _mp[512];
+                snprintf(_mp, sizeof(_mp), "%s/src/main.wyn", file);
+                if (stat(_mp, &_fs) == 0) file = _mp;
+                else { snprintf(_mp, sizeof(_mp), "%s/main.wyn", file); if (stat(_mp, &_fs) == 0) file = _mp; }
+            }
+        }
+        
         // Platform-specific link flags
         #ifdef _WIN32
         const char* platform_libs = "-Wl,--allow-multiple-definition -lws2_32 -lpthread -lm";
@@ -2432,8 +2450,8 @@ int main(int argc, char** argv) {
             if (strcmp(argv[i], "--release") == 0) { use_release = 1; }
         }
         
-        // Prefer precompiled runtime (system cc) over TCC when available
-        // TCC is fallback for when no precompiled runtime exists
+        // Use TCC only when precompiled runtime is not available
+        // System cc + precompiled libwyn_rt.a is faster (~300ms vs ~1800ms TCC)
         char rt_lib[512];
         snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
         int _use_tcc = (!use_release && !shared_mode && !generate_node && wyn_tcc_available() && access(rt_lib, R_OK) != 0);

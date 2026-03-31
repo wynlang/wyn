@@ -1,0 +1,13 @@
+// EXPECT: line 1
+// EXPECT: line 2
+// EXPECT: line 3
+
+fn main() -> int {
+    var text = """
+line 1
+line 2
+line 3
+"""
+    println(text.trim())
+    return 0
+}
