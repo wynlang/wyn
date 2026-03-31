@@ -2133,6 +2133,26 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     return builtin_int;
                 }
                 
+                // Suppress "Undefined variable" for function-like names (will be caught by function checker)
+                // Heuristic: if name starts with lowercase and is short, it's likely a function call
+                bool _suppress_var_err = false;
+                {
+                    char _vn[256]; int _vl = expr->token.length < 255 ? expr->token.length : 255;
+                    memcpy(_vn, expr->token.start, _vl); _vn[_vl] = '\0';
+                    // Check if any function with this name exists (even with wrong args)
+                    SymbolTable* _s = scope;
+                    while (_s && !_suppress_var_err) {
+                        for (int _si = 0; _si < _s->count; _si++) {
+                            if (_s->symbols[_si].type && _s->symbols[_si].type->kind == TYPE_FUNCTION &&
+                                _s->symbols[_si].name.length == expr->token.length &&
+                                memcmp(_s->symbols[_si].name.start, expr->token.start, expr->token.length) == 0) {
+                                _suppress_var_err = true; break;
+                            }
+                        }
+                        _s = _s->parent;
+                    }
+                }
+                if (!_suppress_var_err) {
                 fprintf(stderr, "\nError at line %d: Undefined variable '%.*s'\n", 
                         expr->token.line, expr->token.length, expr->token.start);
                 show_source_line(expr->token.line);
@@ -2168,6 +2188,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 type_error_undefined_variable(var_name, expr->token.line, 0);
                 
                 had_error = true;
+                }
                 return NULL;
             }
             mark_used(scope, expr->token);
@@ -2803,6 +2824,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     snprintf(func_name, sizeof(func_name), "%.*s", 
                             expr->call.callee->token.length, expr->call.callee->token.start);
                     
+                    // Check if function exists but with wrong arg count
+                    Symbol* _existing = find_symbol(scope, expr->call.callee->token);
+                    if (_existing && _existing->type && _existing->type->kind == TYPE_FUNCTION) {
+                        // Function exists — wrong arg count, not undefined
+                    } else {
                     // Search scope for similar names (typo detection)
                     int min_dist = 999;
                     char closest[256] = {0};
@@ -2837,6 +2863,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     
                     type_error_undefined_function(func_name, expr->call.callee->token.line, 0);
                     had_error = true;
+                    }
                 }
                 
                 free(arg_types);
@@ -3324,7 +3351,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 Type* val_inner = get_inner_type(val_type);
                 if (sym_inner->kind != val_inner->kind &&
                     sym_inner->kind != TYPE_STRUCT) {
-                    fprintf(stderr, "Error: Type mismatch in assignment\n");
+                    fprintf(stderr, "\033[31m\033[1mError:\033[0m Type mismatch in assignment to '%.*s' (line %d)\n",
+                            expr->assign.name.length, expr->assign.name.start, expr->assign.name.line);
+                    fprintf(stderr, "  \033[1mExpected:\033[0m %s\n", type_to_string(sym_inner));
+                    fprintf(stderr, "  \033[1mGot:\033[0m      %s\n", type_to_string(val_inner));
+                    had_error = true;
                     return NULL;
                 }
             }
