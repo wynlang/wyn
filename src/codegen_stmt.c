@@ -5,8 +5,18 @@
 // Conservative: only match patterns known to allocate new strings
 static bool is_fresh_string_temp(Expr* e) {
     if (!e) return false;
-    // String concat always allocates
-    if (e->type == EXPR_BINARY) return true;
+    // String concat (binary + with at least one string operand) always allocates
+    if (e->type == EXPR_BINARY && e->binary.op.type == TOKEN_PLUS) {
+        bool has_str = (e->binary.left->type == EXPR_STRING) ||
+            (e->binary.left->expr_type && e->binary.left->expr_type->kind == TYPE_STRING) ||
+            (e->binary.right->type == EXPR_STRING) ||
+            (e->binary.right->expr_type && e->binary.right->expr_type->kind == TYPE_STRING) ||
+            (e->binary.left->type == EXPR_STRING_INTERP) ||
+            (e->binary.right->type == EXPR_STRING_INTERP) ||
+            is_fresh_string_temp(e->binary.left) ||
+            is_fresh_string_temp(e->binary.right);
+        if (has_str) return true;
+    }
     // String interpolation always allocates
     if (e->type == EXPR_STRING_INTERP) return true;
     // to_string() on non-string types always allocates

@@ -937,11 +937,43 @@ void codegen_expr(Expr* expr) {
                 // Escape analysis: string interp arg to println doesn't escape
                 bool prev_skip = codegen_skip_strdup;
                 if (expr->call.args[0]->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
-                // Release temp strings passed to println (only fresh allocations)
                 Expr* parg = expr->call.args[0];
+                
+                // Auto-convert non-string args: println(42) → println(to_string(42))
+                bool arg_is_string = (parg->type == EXPR_STRING) ||
+                    (parg->type == EXPR_STRING_INTERP) ||
+                    (parg->expr_type && parg->expr_type->kind == TYPE_STRING) ||
+                    (parg->type == EXPR_METHOD_CALL && parg->method_call.method.length == 9 &&
+                     memcmp(parg->method_call.method.start, "to_string", 9) == 0);
+                // String concat: binary + where at least one side is a string
+                if (!arg_is_string && parg->type == EXPR_BINARY && parg->binary.op.type == TOKEN_PLUS) {
+                    if ((parg->binary.left->type == EXPR_STRING) ||
+                        (parg->binary.left->expr_type && parg->binary.left->expr_type->kind == TYPE_STRING) ||
+                        (parg->binary.right->type == EXPR_STRING) ||
+                        (parg->binary.right->expr_type && parg->binary.right->expr_type->kind == TYPE_STRING))
+                        arg_is_string = true;
+                }
+                
+                if (!arg_is_string && (parg->type == EXPR_INT || parg->type == EXPR_FLOAT ||
+                    parg->type == EXPR_BOOL || parg->type == EXPR_IDENT || parg->type == EXPR_CALL ||
+                    parg->type == EXPR_METHOD_CALL || parg->type == EXPR_INDEX ||
+                    parg->type == EXPR_BINARY || parg->type == EXPR_UNARY ||
+                    parg->type == EXPR_FIELD_ACCESS)) {
+                    // Wrap in to_string for auto-conversion
+                    emit("({ const char* __ps = to_string(");
+                    codegen_expr(parg);
+                    emit("); println(__ps); wyn_rc_release(__ps); })");
+                    codegen_skip_strdup = prev_skip;
+                    break;
+                }
+                
+                // Release temp strings passed to println (only fresh allocations)
                 // Only release: concat results, string interpolation, to_string calls
-                bool _println_temp = (parg->type == EXPR_BINARY) ||
-                                     (parg->type == EXPR_STRING_INTERP);
+                bool _println_temp = (parg->type == EXPR_STRING_INTERP);
+                // Binary + with at least one string side is a string concat temp
+                if (!_println_temp && parg->type == EXPR_BINARY && parg->binary.op.type == TOKEN_PLUS && arg_is_string) {
+                    _println_temp = true;
+                }
                 // to_string method call on non-string types
                 if (!_println_temp && parg->type == EXPR_METHOD_CALL &&
                     parg->method_call.method.length == 9 &&
