@@ -1,0 +1,7 @@
+// This should fail to compile — type mismatch
+// EXPECT_ERROR: Type mismatch
+
+fn main() -> int {
+    var x: int = "hello"
+    return 0
+}

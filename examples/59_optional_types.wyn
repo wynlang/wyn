@@ -1,0 +1,14 @@
+// Optional Types — v1.11 feature
+// Use int? to declare optional values.
+
+fn main() -> int {
+    var x: int? = OptionInt_Some(42)
+    var y: int? = OptionInt_None()
+
+    println(OptionInt_unwrap(x).to_string())
+    println(OptionInt_is_some(x).to_string())
+    println(OptionInt_is_some(y).to_string())
+    println(OptionInt_unwrap_or(y, 99).to_string())
+
+    return 0
+}

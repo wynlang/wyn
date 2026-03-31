@@ -379,6 +379,20 @@ void codegen_expr(Expr* expr) {
                 }
                 if (folded) { emit("%lld", result); break; }
             }
+            // String repeat: "ha" * 3 → string_repeat("ha", 3)
+            if (expr->binary.op.type == TOKEN_STAR) {
+                bool left_is_str = (expr->binary.left->type == EXPR_STRING) ||
+                    (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_STRING);
+                if (left_is_str) {
+                    emit("string_repeat(");
+                    codegen_expr(expr->binary.left);
+                    emit(", ");
+                    codegen_expr(expr->binary.right);
+                    emit(")");
+                    break;
+                }
+            }
+
             // Special handling for string concatenation with + operator
             if (expr->binary.op.type == TOKEN_PLUS) {
                 // Check if either operand is actually a string type
@@ -923,11 +937,43 @@ void codegen_expr(Expr* expr) {
                 // Escape analysis: string interp arg to println doesn't escape
                 bool prev_skip = codegen_skip_strdup;
                 if (expr->call.args[0]->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
-                // Release temp strings passed to println (only fresh allocations)
                 Expr* parg = expr->call.args[0];
+                
+                // Auto-convert non-string args: println(42) → println(to_string(42))
+                bool arg_is_string = (parg->type == EXPR_STRING) ||
+                    (parg->type == EXPR_STRING_INTERP) ||
+                    (parg->expr_type && parg->expr_type->kind == TYPE_STRING) ||
+                    (parg->type == EXPR_METHOD_CALL && parg->method_call.method.length == 9 &&
+                     memcmp(parg->method_call.method.start, "to_string", 9) == 0);
+                // String concat: binary + where at least one side is a string
+                if (!arg_is_string && parg->type == EXPR_BINARY && parg->binary.op.type == TOKEN_PLUS) {
+                    if ((parg->binary.left->type == EXPR_STRING) ||
+                        (parg->binary.left->expr_type && parg->binary.left->expr_type->kind == TYPE_STRING) ||
+                        (parg->binary.right->type == EXPR_STRING) ||
+                        (parg->binary.right->expr_type && parg->binary.right->expr_type->kind == TYPE_STRING))
+                        arg_is_string = true;
+                }
+                
+                if (!arg_is_string && (parg->type == EXPR_INT || parg->type == EXPR_FLOAT ||
+                    parg->type == EXPR_BOOL || parg->type == EXPR_IDENT || parg->type == EXPR_CALL ||
+                    parg->type == EXPR_METHOD_CALL || parg->type == EXPR_INDEX ||
+                    parg->type == EXPR_BINARY || parg->type == EXPR_UNARY ||
+                    parg->type == EXPR_FIELD_ACCESS)) {
+                    // Wrap in to_string for auto-conversion
+                    emit("({ const char* __ps = to_string(");
+                    codegen_expr(parg);
+                    emit("); println(__ps); wyn_rc_release(__ps); })");
+                    codegen_skip_strdup = prev_skip;
+                    break;
+                }
+                
+                // Release temp strings passed to println (only fresh allocations)
                 // Only release: concat results, string interpolation, to_string calls
-                bool _println_temp = (parg->type == EXPR_BINARY) ||
-                                     (parg->type == EXPR_STRING_INTERP);
+                bool _println_temp = (parg->type == EXPR_STRING_INTERP);
+                // Binary + with at least one string side is a string concat temp
+                if (!_println_temp && parg->type == EXPR_BINARY && parg->binary.op.type == TOKEN_PLUS && arg_is_string) {
+                    _println_temp = true;
+                }
                 // to_string method call on non-string types
                 if (!_println_temp && parg->type == EXPR_METHOD_CALL &&
                     parg->method_call.method.length == 9 &&
@@ -1541,11 +1587,22 @@ void codegen_expr(Expr* expr) {
                     break;
                 }
                 
+                // Check if this is a static method call (Type.method() vs instance.method())
+                bool is_static_call = false;
+                if (expr->method_call.object->type == EXPR_IDENT) {
+                    char _tn[128]; snprintf(_tn, 128, "%.*s", type_name.length, type_name.start);
+                    char _on[128]; snprintf(_on, 128, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                    if (strcmp(_tn, _on) == 0) is_static_call = true;
+                }
+                
                 emit("%.*s_%.*s(", type_name.length, type_name.start, 
                      method.length, method.start);
-                codegen_expr(expr->method_call.object);
+                if (!is_static_call) {
+                    codegen_expr(expr->method_call.object);
+                    if (expr->method_call.arg_count > 0) emit(", ");
+                }
                 for (int i = 0; i < expr->method_call.arg_count; i++) {
-                    emit(", ");
+                    if (i > 0) emit(", ");
                     codegen_expr(expr->method_call.args[i]);
                 }
                 emit(")");
@@ -1714,6 +1771,25 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
+            // WynIntArray dispatch — typed [int] arrays
+            if (expr->method_call.object->type == EXPR_IDENT) {
+                char _ian[128]; snprintf(_ian, 128, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                extern int is_int_array_var(const char*);
+                if (is_int_array_var(_ian)) {
+                    Token m = expr->method_call.method;
+                    if (m.length == 4 && memcmp(m.start, "push", 4) == 0) {
+                        emit("int_array_push(&("); codegen_expr(expr->method_call.object); emit("), ");
+                        codegen_expr(expr->method_call.args[0]); emit(")"); break;
+                    }
+                    if (m.length == 4 && memcmp(m.start, "sort", 4) == 0) {
+                        emit("int_array_sort(&("); codegen_expr(expr->method_call.object); emit("))"); break;
+                    }
+                    if (m.length == 3 && memcmp(m.start, "len", 3) == 0) {
+                        emit("int_array_len("); codegen_expr(expr->method_call.object); emit(")"); break;
+                    }
+                }
+            }
+
             // Type-aware method dispatch (Phase 4)
             Type* object_type = expr->method_call.object->expr_type;
             
@@ -2004,6 +2080,37 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
+            // Enum .to_string() — route to generated EnumName_toString function
+            if (method.length == 9 && memcmp(method.start, "to_string", 9) == 0 &&
+                expr->method_call.arg_count == 0) {
+                // Case 1: Color.Red.to_string() — object is field access on enum type
+                if (expr->method_call.object->type == EXPR_FIELD_ACCESS) {
+                    Expr* fa_obj = expr->method_call.object->field_access.object;
+                    if (fa_obj->type == EXPR_IDENT) {
+                        char _en[128]; snprintf(_en, 128, "%.*s", fa_obj->token.length, fa_obj->token.start);
+                        extern int is_enum_type(const char*);
+                        if (is_enum_type(_en)) {
+                            emit("%s_toString(", _en);
+                            codegen_expr(expr->method_call.object);
+                            emit(")");
+                            break;
+                        }
+                    }
+                }
+                // Case 2: c.to_string() where c is an enum variable
+                if (expr->method_call.object->type == EXPR_IDENT) {
+                    char _vn[128]; snprintf(_vn, 128, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                    extern const char* get_enum_var_type(const char*);
+                    const char* _et = get_enum_var_type(_vn);
+                    if (_et) {
+                        emit("%s_toString(", _et);
+                        codegen_expr(expr->method_call.object);
+                        emit(")");
+                        break;
+                    }
+                }
+            }
+
             // When .to_string() is called on an expression whose type can't be
             // statically resolved, use _Generic so C dispatches correctly
             if (method.length == 9 && memcmp(method.start, "to_string", 9) == 0 &&
@@ -2529,6 +2636,16 @@ void codegen_expr(Expr* expr) {
                 emit("({ WynIntArray __arr_%d = int_array_new(); __arr_%d; })", arr_id, arr_id);
                 break;
             }
+            if (codegen_emit_int_array && expr->array.count > 0) {
+                emit("({ WynIntArray __arr_%d = int_array_new(); ", arr_id);
+                for (int i = 0; i < expr->array.count; i++) {
+                    emit("int_array_push(&__arr_%d, ", arr_id);
+                    codegen_expr(expr->array.elements[i]);
+                    emit("); ");
+                }
+                emit("__arr_%d; })", arr_id);
+                break;
+            }
             emit("({ WynArray __arr_%d = array_new(); ", arr_id);
             for (int i = 0; i < expr->array.count; i++) {
                 Expr* elem = expr->array.elements[i];
@@ -2680,7 +2797,8 @@ void codegen_expr(Expr* expr) {
                 if (expr->index.array->type == EXPR_IDENT) {
                     char _on[256]; int _ol = expr->index.array->token.length < 255 ? expr->index.array->token.length : 255;
                     memcpy(_on, expr->index.array->token.start, _ol); _on[_ol] = '\0';
-                    if (is_spawn_array(_on)) {
+                    extern int is_int_array_var(const char*);
+                    if (is_spawn_array(_on) || is_int_array_var(_on)) {
                         emit("int_array_get(");
                         codegen_expr(expr->index.array);
                         emit(", ");

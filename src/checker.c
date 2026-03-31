@@ -2133,6 +2133,26 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     return builtin_int;
                 }
                 
+                // Suppress "Undefined variable" for function-like names (will be caught by function checker)
+                // Heuristic: if name starts with lowercase and is short, it's likely a function call
+                bool _suppress_var_err = false;
+                {
+                    char _vn[256]; int _vl = expr->token.length < 255 ? expr->token.length : 255;
+                    memcpy(_vn, expr->token.start, _vl); _vn[_vl] = '\0';
+                    // Check if any function with this name exists (even with wrong args)
+                    SymbolTable* _s = scope;
+                    while (_s && !_suppress_var_err) {
+                        for (int _si = 0; _si < _s->count; _si++) {
+                            if (_s->symbols[_si].type && _s->symbols[_si].type->kind == TYPE_FUNCTION &&
+                                _s->symbols[_si].name.length == expr->token.length &&
+                                memcmp(_s->symbols[_si].name.start, expr->token.start, expr->token.length) == 0) {
+                                _suppress_var_err = true; break;
+                            }
+                        }
+                        _s = _s->parent;
+                    }
+                }
+                if (!_suppress_var_err) {
                 fprintf(stderr, "\nError at line %d: Undefined variable '%.*s'\n", 
                         expr->token.line, expr->token.length, expr->token.start);
                 show_source_line(expr->token.line);
@@ -2168,6 +2188,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 type_error_undefined_variable(var_name, expr->token.line, 0);
                 
                 had_error = true;
+                }
                 return NULL;
             }
             mark_used(scope, expr->token);
@@ -2237,6 +2258,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return builtin_int;
             }
             
+            // String repeat: "ha" * 3 → string
+            if (expr->binary.op.type == TOKEN_STAR && left->kind == TYPE_STRING && right->kind == TYPE_INT) {
+                expr->expr_type = builtin_string;
+                return builtin_string;
+            }
+
             // Allow string concatenation with + operator
             if (expr->binary.op.type == TOKEN_PLUS) {
                 // Allow string + string, string + int, int + string
@@ -2797,6 +2824,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     snprintf(func_name, sizeof(func_name), "%.*s", 
                             expr->call.callee->token.length, expr->call.callee->token.start);
                     
+                    // Check if function exists but with wrong arg count
+                    Symbol* _existing = find_symbol(scope, expr->call.callee->token);
+                    if (_existing && _existing->type && _existing->type->kind == TYPE_FUNCTION) {
+                        // Function exists — wrong arg count, not undefined
+                    } else {
                     // Search scope for similar names (typo detection)
                     int min_dist = 999;
                     char closest[256] = {0};
@@ -2831,6 +2863,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     
                     type_error_undefined_function(func_name, expr->call.callee->token.line, 0);
                     had_error = true;
+                    }
                 }
                 
                 free(arg_types);
@@ -3318,7 +3351,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 Type* val_inner = get_inner_type(val_type);
                 if (sym_inner->kind != val_inner->kind &&
                     sym_inner->kind != TYPE_STRUCT) {
-                    fprintf(stderr, "Error: Type mismatch in assignment\n");
+                    fprintf(stderr, "\033[31m\033[1mError:\033[0m Type mismatch in assignment to '%.*s' (line %d)\n",
+                            expr->assign.name.length, expr->assign.name.start, expr->assign.name.line);
+                    fprintf(stderr, "  \033[1mExpected:\033[0m %s\n", type_to_string(sym_inner));
+                    fprintf(stderr, "  \033[1mGot:\033[0m      %s\n", type_to_string(val_inner));
+                    had_error = true;
                     return NULL;
                 }
             }
@@ -3594,11 +3631,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
         }
         case EXPR_OPTIONAL_TYPE: {
-            // T2.5.1: Optional Type Implementation - Type System Agent addition
+            // T2.5.1: Optional Type Implementation
             Type* inner_type = check_expr(expr->optional_type.inner_type, scope);
             if (!inner_type) return NULL;
             
-            // Create optional type
+            // Map int? → OptionInt, string? → OptionString (concrete struct types)
+            if (inner_type->kind == TYPE_INT) {
+                Token oi_name = {TOKEN_IDENT, "OptionInt", 9, 0};
+                Symbol* sym = find_symbol(scope, oi_name);
+                if (sym) { expr->expr_type = sym->type; return sym->type; }
+            } else if (inner_type->kind == TYPE_STRING) {
+                Token os_name = {TOKEN_IDENT, "OptionString", 12, 0};
+                Symbol* sym = find_symbol(scope, os_name);
+                if (sym) { expr->expr_type = sym->type; return sym->type; }
+            }
+            
+            // Fallback: generic optional type
             Type* optional_type = make_type(TYPE_OPTIONAL);
             optional_type->optional_type.inner_type = inner_type;
             expr->expr_type = optional_type;
@@ -3982,12 +4030,17 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     Type* actual_type = check_expr(stmt->var.init, scope);
                     // Task 1.1: Check type mismatch between declared and actual type
                     if (init_type && actual_type && !types_equal(init_type, actual_type)) {
-                        char expected_str[128], actual_str[128];
-                        snprintf(expected_str, sizeof(expected_str), "%s", type_to_string(init_type));
-                        snprintf(actual_str, sizeof(actual_str), "%s", type_to_string(actual_type));
-                        type_error_mismatch(expected_str, actual_str, "variable declaration",
-                            stmt->var.name.line, 0);
-                        had_error = true;
+                        // Allow optional types to accept struct values (OptionInt_Some returns struct)
+                        if (init_type->kind == TYPE_OPTIONAL && actual_type->kind == TYPE_STRUCT) {
+                            // Compatible — OptionInt is a struct
+                        } else {
+                            char expected_str[128], actual_str[128];
+                            snprintf(expected_str, sizeof(expected_str), "%s", type_to_string(init_type));
+                            snprintf(actual_str, sizeof(actual_str), "%s", type_to_string(actual_type));
+                            type_error_mismatch(expected_str, actual_str, "variable declaration",
+                                stmt->var.name.line, 0);
+                            had_error = true;
+                        }
                     }
                 }
             } else if (stmt->var.init) {
@@ -4110,6 +4163,10 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     elem_type = array_type->array_type.element_type;
                 }
                 add_symbol(scope, stmt->for_stmt.loop_var, elem_type, false);
+                // Add index variable for indexed iteration: for i, v in arr
+                if (stmt->for_stmt.has_index) {
+                    add_symbol(scope, stmt->for_stmt.index_var, builtin_int, false);
+                }
             }
             
             check_stmt(stmt->for_stmt.body, scope);
@@ -5397,7 +5454,7 @@ void check_program(Program* prog) {
                 // Symbols are already registered by check_all_modules
                 merge_module_exports(module, prog, import);
             } else {
-                fprintf(stderr, "Warning: Could not load module '%s'\n", module_name);
+                // Error already printed by module loader — suppress duplicate
             }
         }
     }
@@ -5852,7 +5909,7 @@ void check_program(Program* prog) {
             
             check_stmt(fn->body, &local_scope);
             
-            // Warn about missing return in non-void functions
+            // Error on missing return in non-void functions
             if (current_function_return_type && current_function_return_type->kind != TYPE_VOID &&
                 !(fn->name.length == 4 && memcmp(fn->name.start, "main", 4) == 0)) {
                 bool has_return = false;
@@ -5860,6 +5917,11 @@ void check_program(Program* prog) {
                     for (int j = 0; j < fn->body->block.count; j++) {
                         if (fn->body->block.stmts[j] && fn->body->block.stmts[j]->type == STMT_RETURN)
                             has_return = true;
+                    }
+                    // Implicit return: last statement is an expression
+                    if (!has_return && fn->body->block.count > 0) {
+                        Stmt* last = fn->body->block.stmts[fn->body->block.count - 1];
+                        if (last && last->type == STMT_EXPR) has_return = true;
                     }
                 }
                 if (!has_return) {
@@ -5884,9 +5946,11 @@ void check_program(Program* prog) {
                             }
                         }
                     }
-                    if (!_has_yield)
-                    fprintf(stderr, "\033[33mWarning:\033[0m function '%.*s' may not return a value (line %d)\n",
-                        fn->name.length, fn->name.start, fn->name.line);
+                    if (!_has_yield) {
+                        fprintf(stderr, "\033[31m\033[1mError:\033[0m function '%.*s' may not return a value (line %d)\n",
+                            fn->name.length, fn->name.start, fn->name.line);
+                        had_error = true;
+                    }
                 }
             }
             

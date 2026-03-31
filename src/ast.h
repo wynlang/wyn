@@ -494,6 +494,8 @@ typedef struct {
     // For array iteration: for item in array
     Expr* array_expr;  // The array being iterated
     Token loop_var;    // The loop variable name
+    Token index_var;   // For indexed iteration: for i, v in arr
+    bool has_index;    // Whether this is indexed iteration
 } ForStmt;
 
 typedef struct {

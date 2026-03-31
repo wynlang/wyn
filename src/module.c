@@ -329,7 +329,24 @@ Program* load_module(const char* module_name) {
     
     char* path = resolve_module_path(resolved_name);
     if (!path) {
-        fprintf(stderr, "Error: Module '%s' not found\n", resolved_name);
+        // Deduplicate: only print error once per module name
+        static char _reported[32][64];
+        static int _reported_count = 0;
+        int _already = 0;
+        for (int i = 0; i < _reported_count; i++) { if (strcmp(_reported[i], resolved_name) == 0) { _already = 1; break; } }
+        if (!_already) {
+            if (_reported_count < 32) { strncpy(_reported[_reported_count], resolved_name, 63); _reported_count++; }
+            // Check if it's a known package name
+            static const char* known_pkgs[] = {"redis","sqlite","pg","mysql","bcrypt","jwt","smtp","yaml","xml","csv","markdown","websocket","http-client","https","image","audio","gui","log","cache","cron","dotenv","retry","validate","web","tar","zip","table","color","args","base64","opengl","sdl","wgpu","raylib",NULL};
+            int is_pkg = 0;
+            for (int i = 0; known_pkgs[i]; i++) { if (strcmp(known_pkgs[i], resolved_name) == 0) { is_pkg = 1; break; } }
+            if (is_pkg) {
+                fprintf(stderr, "\033[31mError:\033[0m Package '%s' not installed\n", resolved_name);
+                fprintf(stderr, "  Run: \033[1mwyn pkg install %s\033[0m\n", resolved_name);
+            } else {
+                fprintf(stderr, "\033[31mError:\033[0m Module '%s' not found\n", resolved_name);
+            }
+        }
         pop_loading_stack();
         free(resolved_name);
         return NULL;

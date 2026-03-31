@@ -1,0 +1,17 @@
+// EXPECT: 42
+// EXPECT: 3.14
+// EXPECT: true
+// EXPECT: hello
+// EXPECT: 100
+// EXPECT: 101
+
+fn main() -> int {
+    println(42)
+    println(3.14)
+    println(true)
+    println("hello")
+    var x = 100
+    println(x)
+    println(x + 1)
+    return 0
+}

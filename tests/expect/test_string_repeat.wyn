@@ -1,0 +1,10 @@
+// EXPECT: hahaha
+// EXPECT: -----
+// EXPECT: 
+
+fn main() -> int {
+    println("ha" * 3)
+    println("-" * 5)
+    println("x" * 0)
+    return 0
+}

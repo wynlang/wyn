@@ -1,0 +1,24 @@
+// EXPECT: (3, 4)
+// EXPECT: (10, 20)
+
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Point {
+    fn new(x: int, y: int) -> Point {
+        return Point { x: x, y: y }
+    }
+    fn to_string(self) -> string {
+        return "(" + self.x.to_string() + ", " + self.y.to_string() + ")"
+    }
+}
+
+fn main() -> int {
+    var p1 = Point.new(3, 4)
+    var p2 = Point.new(10, 20)
+    println(p1.to_string())
+    println(p2.to_string())
+    return 0
+}

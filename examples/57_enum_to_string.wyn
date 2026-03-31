@@ -1,0 +1,16 @@
+// Enum to_string() — v1.11 feature
+// Enums now have a .to_string() method that returns the variant name.
+
+enum Color { Red, Green, Blue }
+enum Direction { North, South, East, West }
+
+fn main() -> int {
+    println(Color.Red.to_string())
+    println(Color.Green.to_string())
+    println(Color.Blue.to_string())
+
+    var d = Direction.West
+    println(d.to_string())
+
+    return 0
+}

@@ -13,7 +13,7 @@ fn fib(n: int) -> int {
 }
 
 fn increment(counter: int) -> int {
-    Shared.add(counter, 1)
+    return Shared.add(counter, 1)
 }
 
 fn main() {

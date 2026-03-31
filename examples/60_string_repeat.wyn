@@ -1,0 +1,26 @@
+// String Repeat Operator — v1.11 feature
+// Use "str" * n to repeat a string n times.
+
+fn main() -> int {
+    println("ha" * 3);          // hahaha
+    println("=-" * 10);         // =-=-=-=-=-=-=-=-=-=-
+
+    // Useful for formatting
+    var sep = "-" * 30;
+    println(sep);
+    println("  Report Title");
+    println(sep);
+
+    // Works with variables
+    var star = "*";
+    for i in 1..6 {
+        println(star * i);
+    }
+    // *
+    // **
+    // ***
+    // ****
+    // *****
+
+    return 0;
+}

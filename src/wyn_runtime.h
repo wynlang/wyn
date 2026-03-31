@@ -697,6 +697,8 @@ long long int_array_get(WynIntArray a, int i) {
     return a.data[i];
 }
 int int_array_len(WynIntArray a) { return a.count; }
+static int _int_array_cmp(const void* a, const void* b) { long long x = *(const long long*)a, y = *(const long long*)b; return (x > y) - (x < y); }
+void int_array_sort(WynIntArray* a) { if (a->count > 1) qsort(a->data, a->count, sizeof(long long), _int_array_cmp); }
 
 void array_push(WynArray* arr, long long value) {
     if (arr->count >= arr->capacity) {
@@ -1929,11 +1931,11 @@ void print_int_no_nl(long long x) { printf("%lld", x); }
 void print_float_no_nl(double x) { printf("%g", x); }
 void print_str_no_nl(const char* s) { printf("%s", s); }
 void print_bool_no_nl(bool b) { printf("%s", b ? "true" : "false"); }
-void print_array(WynArray arr) { printf("["); for(int i = 0; i < arr.count; i++) { if(i > 0) printf(", "); printf("%d", array_get_int(arr, i)); } printf("]\n"); }
-void print_array_no_nl(WynArray arr) { printf("["); for(int i = 0; i < arr.count; i++) { if(i > 0) printf(", "); printf("%d", array_get_int(arr, i)); } printf("]"); }
+void print_array(WynArray arr) { printf("["); for(int i = 0; i < arr.count; i++) { if(i > 0) printf(", "); printf("%lld", array_get_int(arr, i)); } printf("]\n"); }
+void print_array_no_nl(WynArray arr) { printf("["); for(int i = 0; i < arr.count; i++) { if(i > 0) printf(", "); printf("%lld", array_get_int(arr, i)); } printf("]"); }
 void print_value(WynValue v) {
     switch(v.type) {
-        case WYN_TYPE_INT: printf("%d\n", v.data.int_val); break;
+        case WYN_TYPE_INT: printf("%lld\n", v.data.int_val); break;
         case WYN_TYPE_FLOAT: printf("%g\n", v.data.float_val); break;
         case WYN_TYPE_STRING: printf("%s\n", v.data.string_val); break;
         default: printf("<value>\n"); break;
@@ -2020,20 +2022,22 @@ bool bool_not(bool x) { return !x; }
 bool bool_and(bool x, bool y) { return x && y; }
 bool bool_or(bool x, bool y) { return x || y; }
 bool bool_xor(bool x, bool y) { return x != y; }
-long long wyn_safe_div(long long a, long long b) {
+long long wyn_safe_div_impl(long long a, long long b, const char* file, int line) {
     if (b == 0) {
-        fprintf(stderr, "panic: division by zero\n");
+        fprintf(stderr, "panic at %s:%d: division by zero\n", file, line);
         exit(1);
     }
     return a / b;
 }
-long long wyn_safe_mod(long long a, long long b) {
+#define wyn_safe_div(a, b) wyn_safe_div_impl(a, b, __FILE__, __LINE__)
+long long wyn_safe_mod_impl(long long a, long long b, const char* file, int line) {
     if (b == 0) {
-        fprintf(stderr, "panic: modulo by zero\n");
+        fprintf(stderr, "panic at %s:%d: modulo by zero\n", file, line);
         exit(1);
     }
     return a % b;
 }
+#define wyn_safe_mod(a, b) wyn_safe_mod_impl(a, b, __FILE__, __LINE__)
 char* char_to_string(char x) { char* r = wyn_str_alloc(2); r[0] = x; r[1] = 0; return r; }
 int char_to_int(char x) { return (int)x; }
 char char_from_int(int x) { return (char)x; }

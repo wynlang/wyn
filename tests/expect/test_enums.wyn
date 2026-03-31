@@ -1,5 +1,5 @@
 // EXPECT: red
-// EXPECT: 2
+// EXPECT: Blue
 // EXPECT: green
 
 enum Color {

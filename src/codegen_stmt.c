@@ -5,8 +5,18 @@
 // Conservative: only match patterns known to allocate new strings
 static bool is_fresh_string_temp(Expr* e) {
     if (!e) return false;
-    // String concat always allocates
-    if (e->type == EXPR_BINARY) return true;
+    // String concat (binary + with at least one string operand) always allocates
+    if (e->type == EXPR_BINARY && e->binary.op.type == TOKEN_PLUS) {
+        bool has_str = (e->binary.left->type == EXPR_STRING) ||
+            (e->binary.left->expr_type && e->binary.left->expr_type->kind == TYPE_STRING) ||
+            (e->binary.right->type == EXPR_STRING) ||
+            (e->binary.right->expr_type && e->binary.right->expr_type->kind == TYPE_STRING) ||
+            (e->binary.left->type == EXPR_STRING_INTERP) ||
+            (e->binary.right->type == EXPR_STRING_INTERP) ||
+            is_fresh_string_temp(e->binary.left) ||
+            is_fresh_string_temp(e->binary.right);
+        if (has_str) return true;
+    }
     // String interpolation always allocates
     if (e->type == EXPR_STRING_INTERP) return true;
     // to_string() on non-string types always allocates
@@ -279,12 +289,33 @@ void codegen_stmt(Stmt* stmt) {
             // Check for explicit type annotation first
             if (stmt->var.type) {
                 if (stmt->var.type->type == EXPR_OPTIONAL_TYPE) {
-                    // Handle optional type annotation like int?
-                    c_type = "WynOptional*";
-                    needs_arc_management = true;
+                    // Handle optional type annotation like int?, string?
+                    Expr* inner = stmt->var.type->optional_type.inner_type;
+                    if (inner && inner->type == EXPR_IDENT && inner->token.length == 3 && memcmp(inner->token.start, "int", 3) == 0) {
+                        c_type = "OptionInt";
+                    } else if (inner && inner->type == EXPR_IDENT && inner->token.length == 6 && memcmp(inner->token.start, "string", 6) == 0) {
+                        c_type = "OptionString";
+                    } else {
+                        c_type = "WynOptional*";
+                        needs_arc_management = true;
+                    }
                 } else if (stmt->var.type->type == EXPR_ARRAY) {
-                    // Handle typed array annotation like [TokenType]
-                    c_type = "WynArray";
+                    // Handle typed array annotation like [int], [TokenType]
+                    // Use WynIntArray for [int] for performance (only when not returned from function)
+                    bool is_int_array = false;
+                    extern bool codegen_fn_returns_array;
+                    if (!codegen_fn_returns_array && stmt->var.type->array.count > 0 && stmt->var.type->array.elements[0]->type == EXPR_IDENT) {
+                        Token et = stmt->var.type->array.elements[0]->token;
+                        if (et.length == 3 && memcmp(et.start, "int", 3) == 0) is_int_array = true;
+                    }
+                    if (is_int_array) {
+                        c_type = "WynIntArray";
+                        char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                        extern void register_int_array_var(const char*);
+                        register_int_array_var(_vn);
+                    } else {
+                        c_type = "WynArray";
+                    }
                     needs_arc_management = false;
                 } else if (stmt->var.type->type == EXPR_CALL) {
                     // Handle generic type instantiation: Array<T>, HashMap<K,V>, Option<T>, etc.
@@ -325,6 +356,13 @@ void codegen_stmt(Stmt* stmt) {
                         memcpy(custom_type_buf, type_name.start, len);
                         custom_type_buf[len] = '\0';
                         c_type = custom_type_buf;
+                        // Register enum var if this is an enum type
+                        extern int is_enum_type(const char*);
+                        if (is_enum_type(custom_type_buf)) {
+                            char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                            extern void register_enum_var(const char*, const char*);
+                            register_enum_var(_vn, custom_type_buf);
+                        }
                     }
                 }
             } else if (stmt->var.init) {
@@ -452,6 +490,11 @@ void codegen_stmt(Stmt* stmt) {
                             char _vn3[64]; snprintf(_vn3, 64, "%.*s", _obj->token.length, _obj->token.start);
                             extern const char* get_struct_var_type(const char*);
                             _stype = get_struct_var_type(_vn3);
+                            // Static constructor: Type.new() — object is the type name itself
+                            if (!_stype) {
+                                extern int is_known_struct(const char*);
+                                if (is_known_struct(_vn3)) _stype = _vn3;
+                            }
                         }
                         // Chained method on struct
                         if (!_stype && _obj->type == EXPR_METHOD_CALL && _obj->method_call.object->type == EXPR_IDENT) {
@@ -1165,6 +1208,8 @@ void codegen_stmt(Stmt* stmt) {
                                 Token type_name = stmt->var.init->expr_type->name;
                                 snprintf(enum_type_buf, 128, "%.*s", type_name.length, type_name.start);
                                 c_type = enum_type_buf;
+                                // Register enum var for to_string dispatch
+                                { char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start); extern void register_enum_var(const char*, const char*); register_enum_var(_vn, enum_type_buf); }
                                 break;
                             }
                             case TYPE_ARRAY:
@@ -1172,6 +1217,17 @@ void codegen_stmt(Stmt* stmt) {
                                 break;
                             default:
                                 c_type = "long long";
+                        }
+                    }
+                    // Fallback: detect enum field access (Color.Red) when expr_type not set
+                    if (strcmp(c_type, "long long") == 0 && stmt->var.init->type == EXPR_FIELD_ACCESS &&
+                        stmt->var.init->field_access.object->type == EXPR_IDENT) {
+                        char _en[128]; snprintf(_en, 128, "%.*s", stmt->var.init->field_access.object->token.length, stmt->var.init->field_access.object->token.start);
+                        extern int is_enum_type(const char*);
+                        if (is_enum_type(_en)) {
+                            char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                            extern void register_enum_var(const char*, const char*);
+                            register_enum_var(_vn, _en);
                         }
                     }
                 }
@@ -1347,10 +1403,11 @@ void codegen_stmt(Stmt* stmt) {
             if (needs_arc_management) {
                 codegen_expr(stmt->var.init);
             } else {
-                // Set spawn array flag for WynIntArray emission
+                // Set spawn/int array flag for WynIntArray emission
                 bool _was_int_array = codegen_emit_int_array;
                 { char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
-                  if (is_spawn_array(_vn)) codegen_emit_int_array = true; }
+                  extern int is_int_array_var(const char*);
+                  if (is_spawn_array(_vn) || is_int_array_var(_vn)) codegen_emit_int_array = true; }
                 codegen_expr(stmt->var.init);
                 codegen_emit_int_array = _was_int_array;
             }
@@ -1597,6 +1654,9 @@ void codegen_stmt(Stmt* stmt) {
         case STMT_FN: {
             // Determine return type
             { extern void reset_defers(); reset_defers(); }
+            extern bool codegen_fn_returns_array;
+            bool _prev_fn_returns_array = codegen_fn_returns_array;
+            codegen_fn_returns_array = (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_ARRAY);
             const char* return_type = stmt->fn.return_type ? "long long" : "void"; // default
             char return_type_buf[256] = {0};  // Buffer for custom return types
             bool is_async = stmt->fn.is_async;
@@ -1669,7 +1729,16 @@ void codegen_stmt(Stmt* stmt) {
                         return_type = return_type_buf;
                     }
                 } else if (stmt->fn.return_type->type == EXPR_OPTIONAL_TYPE) {
-                    return_type = "WynOptional*";
+                    // Map TYPE? to the concrete optional type
+                    Expr* inner = stmt->fn.return_type->optional_type.inner_type;
+                    if (inner && inner->type == EXPR_IDENT) {
+                        Token t = inner->token;
+                        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return_type = "OptionInt";
+                        else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return_type = "OptionString";
+                        else return_type = "WynOptional*";
+                    } else {
+                        return_type = "WynOptional*";
+                    }
                 } else if (stmt->fn.return_type->type == EXPR_FN_TYPE) {
                     return_type = "WynClosure";
                 }
@@ -1783,8 +1852,9 @@ void codegen_stmt(Stmt* stmt) {
                         
                         // Build parameter types
                         char params_buf[256] = "";
+                        int pb_len = 0;
                         for (int j = 0; j < fn_type->param_count; j++) {
-                            if (j > 0) strcat(params_buf, ", ");
+                            if (j > 0) { memcpy(params_buf + pb_len, ", ", 2); pb_len += 2; }
                             const char* pt = "long long";
                             if (fn_type->param_types[j] && fn_type->param_types[j]->type == EXPR_IDENT) {
                                 Token pt_tok = fn_type->param_types[j]->token;
@@ -1793,7 +1863,9 @@ void codegen_stmt(Stmt* stmt) {
                                 else if (pt_tok.length == 5 && memcmp(pt_tok.start, "float", 5) == 0) pt = "double";
                                 else if (pt_tok.length == 4 && memcmp(pt_tok.start, "bool", 4) == 0) pt = "bool";
                             }
-                            strcat(params_buf, pt);
+                            int ptl = strlen(pt);
+                            memcpy(params_buf + pb_len, pt, ptl); pb_len += ptl;
+                            params_buf[pb_len] = '\0';
                         }
                         
                         // Generate function pointer type: ret_type (*param_name)(params)
@@ -2014,6 +2086,7 @@ void codegen_stmt(Stmt* stmt) {
             
             pop_scope();   // Auto-cleanup before function end
             current_fn_return_kind = prev_fn_return_kind;
+            codegen_fn_returns_array = _prev_fn_returns_array;
             emit("}\n\n");
             break;
         }
@@ -2779,6 +2852,24 @@ void codegen_stmt(Stmt* stmt) {
                         break;
                     }
                 }
+                // Check if iterating over a WynIntArray
+                if (stmt->for_stmt.array_expr->type == EXPR_IDENT) {
+                    char _ian[128]; snprintf(_ian, 128, "%.*s", stmt->for_stmt.array_expr->token.length, stmt->for_stmt.array_expr->token.start);
+                    extern int is_int_array_var(const char*);
+                    if (is_int_array_var(_ian)) {
+                        emit("{\n"); push_scope();
+                        emit("    WynIntArray __iter_iarr = "); codegen_expr(stmt->for_stmt.array_expr); emit(";\n");
+                        emit("    for (long long __i = 0; __i < __iter_iarr.count; __i++) {\n");
+                        emit("        long long %.*s = __iter_iarr.data[__i];\n", stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
+                        if (stmt->for_stmt.has_index) {
+                            emit("        long long %.*s = __i;\n", stmt->for_stmt.index_var.length, stmt->for_stmt.index_var.start);
+                        }
+                        codegen_stmt(stmt->for_stmt.body);
+                        emit("    }\n");
+                        pop_scope(); emit("}\n");
+                        break;
+                    }
+                }
                 // Generate for-in loop: for item in array
                 emit("{\n");
                 push_scope();
@@ -2840,6 +2931,11 @@ void codegen_stmt(Stmt* stmt) {
                 } else {
                     emit("long long %.*s = (__elem.type == WYN_TYPE_INT) ? __elem.data.int_val : 0;\n",
                          stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
+                }
+                // Emit index variable for indexed iteration: for i, v in arr
+                if (stmt->for_stmt.has_index) {
+                    emit("        long long %.*s = __i;\n",
+                         stmt->for_stmt.index_var.length, stmt->for_stmt.index_var.start);
                 }
                 codegen_stmt(stmt->for_stmt.body);
                 emit("    }\n");
