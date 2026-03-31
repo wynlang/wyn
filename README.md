@@ -2,7 +2,7 @@
 
 **1 language for everything — CLI, web, desktop, mobile, games.**
 
-48 tests. 28 packages. 5 platforms. Zero dependencies.
+147 tests. 36 packages. 5 platforms. Zero dependencies.
 
 ## Install
 
@@ -90,11 +90,11 @@ fn divide(a: int, b: int) -> ResultInt {
     return Ok(a / b)
 }
 
-// Template engine for web
-var html = Template.render("page.html", ctx)
-
-// Deploy in one command
-// wyn deploy prod
+// v1.11: enum.to_string(), indexed for, string repeat, int?
+println(Shape.Circle.to_string())  // "Circle"
+for i, v in ["a", "b", "c"] { println(i.to_string() + ":" + v) }
+println("=" * 40)
+var x: int? = OptionInt_Some(42)
 ```
 
 ## Standard Library — 27 Modules
