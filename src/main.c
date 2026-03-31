@@ -2928,11 +2928,20 @@ int create_new_project(const char* project_name) {
         fclose(readme_file);
     }
     
+    // Create .gitignore
+    snprintf(path, sizeof(path), "%s/.gitignore", project_name);
+    FILE* gi_file = fopen(path, "w");
+    if (gi_file) {
+        fprintf(gi_file, "# Build artifacts\n*.o\n*.out\n*.c\n!src/**/*.c\npackages/\n\n# OS\n.DS_Store\nThumbs.db\n");
+        fclose(gi_file);
+    }
+    
     printf("Created new Wyn project: %s\n", project_name);
     printf("  %s/wyn.toml\n", project_name);
     printf("  %s/src/main.wyn\n", project_name);
     printf("  %s/tests/test_main.wyn\n", project_name);
     printf("  %s/README.md\n", project_name);
+    printf("  %s/.gitignore\n", project_name);
     printf("\nTo build and run:\n  cd %s\n  wyn run\n", project_name);
     printf("\nTo run tests:\n  wyn test\n");
     
