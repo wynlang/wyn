@@ -1177,6 +1177,7 @@ int main(int argc, char** argv) {
             if (strcmp(argv[i], "--shared") == 0) build_flag = " --shared";
             else if (strcmp(argv[i], "--python") == 0) build_flag = " --python";
             else if (strcmp(argv[i], "--release") == 0) build_release = 1;
+            else if (strcmp(argv[i], "--fast") == 0) { /* skip optimizations — default behavior */ }
             else if (strcmp(argv[i], "--pgo") == 0) build_pgo = 1;
             else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) { output_name = argv[++i]; }
             else if (strcmp(argv[i], "--target") == 0 && i + 1 < argc) { build_target = argv[++i]; }
@@ -1265,6 +1266,8 @@ int main(int argc, char** argv) {
         }
         
         printf("\033[1mBuilding\033[0m %s%s...\n", entry, build_flag);
+        struct timespec _build_t0;
+        clock_gettime(CLOCK_MONOTONIC, &_build_t0);
         
         // Compile only — don't run
         char* source = read_file(entry);
@@ -1476,7 +1479,20 @@ int main(int argc, char** argv) {
                 printf("\033[32m✓\033[0m Built with PGO: %s\n", bin_path);
             }
         } else if (result == 0) {
-            printf("\033[32m✓\033[0m Built: %s\n", bin_path);
+            struct timespec _build_t1;
+            clock_gettime(CLOCK_MONOTONIC, &_build_t1);
+            long _build_ms = (_build_t1.tv_sec - _build_t0.tv_sec) * 1000 + (_build_t1.tv_nsec - _build_t0.tv_nsec) / 1000000;
+            // Show binary size
+            struct stat _bs;
+            if (stat(bin_path, &_bs) == 0) {
+                long kb = _bs.st_size / 1024;
+                if (kb > 0)
+                    printf("\033[32m✓\033[0m Built: %s (%ldKB, %ldms)\n", bin_path, kb, _build_ms);
+                else
+                    printf("\033[32m✓\033[0m Built: %s (%ldms)\n", bin_path, _build_ms);
+            } else {
+                printf("\033[32m✓\033[0m Built: %s (%ldms)\n", bin_path, _build_ms);
+            }
         } else {
             fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
             // Show compiler errors if available

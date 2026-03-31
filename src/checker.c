@@ -5423,7 +5423,7 @@ void check_program(Program* prog) {
                 // Symbols are already registered by check_all_modules
                 merge_module_exports(module, prog, import);
             } else {
-                fprintf(stderr, "Warning: Could not load module '%s'\n", module_name);
+                // Error already printed by module loader — suppress duplicate
             }
         }
     }

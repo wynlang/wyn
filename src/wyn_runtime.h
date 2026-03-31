@@ -1931,11 +1931,11 @@ void print_int_no_nl(long long x) { printf("%lld", x); }
 void print_float_no_nl(double x) { printf("%g", x); }
 void print_str_no_nl(const char* s) { printf("%s", s); }
 void print_bool_no_nl(bool b) { printf("%s", b ? "true" : "false"); }
-void print_array(WynArray arr) { printf("["); for(int i = 0; i < arr.count; i++) { if(i > 0) printf(", "); printf("%d", array_get_int(arr, i)); } printf("]\n"); }
-void print_array_no_nl(WynArray arr) { printf("["); for(int i = 0; i < arr.count; i++) { if(i > 0) printf(", "); printf("%d", array_get_int(arr, i)); } printf("]"); }
+void print_array(WynArray arr) { printf("["); for(int i = 0; i < arr.count; i++) { if(i > 0) printf(", "); printf("%lld", array_get_int(arr, i)); } printf("]\n"); }
+void print_array_no_nl(WynArray arr) { printf("["); for(int i = 0; i < arr.count; i++) { if(i > 0) printf(", "); printf("%lld", array_get_int(arr, i)); } printf("]"); }
 void print_value(WynValue v) {
     switch(v.type) {
-        case WYN_TYPE_INT: printf("%d\n", v.data.int_val); break;
+        case WYN_TYPE_INT: printf("%lld\n", v.data.int_val); break;
         case WYN_TYPE_FLOAT: printf("%g\n", v.data.float_val); break;
         case WYN_TYPE_STRING: printf("%s\n", v.data.string_val); break;
         default: printf("<value>\n"); break;
