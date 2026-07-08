@@ -1,0 +1,43 @@
+// EXPECT: low
+// EXPECT: mid
+// EXPECT: high
+// EXPECT: prime-ish
+// EXPECT: other
+// EXPECT: pos
+// EXPECT: neg
+// Regression: range patterns (0..N / 0..=N), or-patterns (a | b | c), and
+// guards on binding patterns (n if cond) previously produced malformed C
+// (empty condition / dangling else / dropped guard) -> internal codegen error.
+fn bucket(n: int) -> string {
+    return match n {
+        0..10 => "low"
+        10..100 => "mid"
+        _ => "high"
+    }
+}
+
+fn label(n: int) -> string {
+    return match n {
+        2 | 3 | 5 | 7 => "prime-ish"
+        _ => "other"
+    }
+}
+
+fn sign(n: int) -> string {
+    return match n {
+        x if x > 0 => "pos"
+        x if x < 0 => "neg"
+        _ => "zero"
+    }
+}
+
+fn main() -> int {
+    println(bucket(5))
+    println(bucket(50))
+    println(bucket(500))
+    println(label(3))
+    println(label(4))
+    println(sign(7))
+    println(sign(-2))
+    return 0
+}

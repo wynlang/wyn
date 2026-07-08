@@ -3225,6 +3225,12 @@ void codegen_expr(Expr* expr) {
                 } else if (match_type && match_type->kind == TYPE_STRING) {
                     type_name = "const char*";
                     type_name_len = 12;
+                } else if (match_type && match_type->kind == TYPE_STRUCT &&
+                           match_type->struct_type.name.length > 0) {
+                    // Matching a struct value: declare __match_val with the
+                    // struct's C type, not the default `int`.
+                    type_name = match_type->struct_type.name.start;
+                    type_name_len = match_type->struct_type.name.length;
                 }
             }
             // Check bare identifiers against known enum variants
@@ -3362,12 +3368,29 @@ void codegen_expr(Expr* expr) {
                             }
                         }
                     } else {
-                        // Variable binding - always matches, bind variable
-                        emit("{ %.*s %.*s = __match_val_%d; ",
-                             type_name_len, type_name,
-                             pat->ident.name.length,
-                             pat->ident.name.start,
-                             match_id);
+                        // Variable binding. Binds the whole matched value, so it
+                        // always matches — unless there's a guard, in which case
+                        // the binding must be visible to the guard. Emit the guard
+                        // as a statement-expression that binds the name first, so
+                        // the arm stays a proper `if`/`else if` link in the chain.
+                        if (guard_expr) {
+                            emit("if (({ %.*s %.*s = __match_val_%d; (",
+                                 type_name_len, type_name,
+                                 pat->ident.name.length, pat->ident.name.start,
+                                 match_id);
+                            codegen_expr(guard_expr);
+                            emit("); })) { %.*s %.*s = __match_val_%d; ",
+                                 type_name_len, type_name,
+                                 pat->ident.name.length, pat->ident.name.start,
+                                 match_id);
+                            guard_expr = NULL; // consumed
+                        } else {
+                            emit("{ %.*s %.*s = __match_val_%d; ",
+                                 type_name_len, type_name,
+                                 pat->ident.name.length,
+                                 pat->ident.name.start,
+                                 match_id);
+                        }
                     }
                 } else if (pat->type == PATTERN_OPTION && !pat->option.is_some) {
                     // Simple enum variant: Color.Red or Shape.Point
@@ -3505,6 +3528,41 @@ void codegen_expr(Expr* expr) {
                         }
                     }
                     } // close legacy else
+                } else if (pat->type == PATTERN_RANGE) {
+                    // Range pattern: 0..10 (exclusive) or 0..=10 (inclusive).
+                    emit("if (__match_val_%d >= ", match_id);
+                    codegen_expr(pat->range.start);
+                    emit(" && __match_val_%d %s ", match_id, pat->range.inclusive ? "<=" : "<");
+                    codegen_expr(pat->range.end);
+                    emit(") { ");
+                } else if (pat->type == PATTERN_OR) {
+                    // Or pattern: 1 | 2 | 3. Matches if the value equals any
+                    // sub-pattern's literal.
+                    bool is_string_match = (match_type && match_type->kind == TYPE_STRING);
+                    emit("if (");
+                    for (int oi = 0; oi < pat->or_pat.pattern_count; oi++) {
+                        Pattern* sub = pat->or_pat.patterns[oi];
+                        if (oi > 0) emit(" || ");
+                        if (sub->type == PATTERN_LITERAL) {
+                            if (is_string_match || sub->literal.value.start[0] == '"') {
+                                emit("strcmp(__match_val_%d, %.*s) == 0",
+                                     match_id, sub->literal.value.length, sub->literal.value.start);
+                            } else {
+                                emit("__match_val_%d == %.*s",
+                                     match_id, sub->literal.value.length, sub->literal.value.start);
+                            }
+                        } else if (sub->type == PATTERN_RANGE) {
+                            emit("(__match_val_%d >= ", match_id);
+                            codegen_expr(sub->range.start);
+                            emit(" && __match_val_%d %s ", match_id, sub->range.inclusive ? "<=" : "<");
+                            codegen_expr(sub->range.end);
+                            emit(")");
+                        } else {
+                            // Unknown sub-pattern: be conservative, never match it.
+                            emit("0");
+                        }
+                    }
+                    emit(") { ");
                 } else {
                     // Unsupported pattern - treat as wildcard
                     emit("{ ");
