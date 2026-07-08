@@ -4141,10 +4141,31 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             }
             break;
         }
-        case STMT_EXPR:
-        case STMT_YIELD: if (stmt->yield_stmt.value) check_expr(stmt->yield_stmt.value, scope); break;
+        case STMT_EXPR: {
+            // Bare assignment: `x = expr` where `x` is not yet declared is a
+            // declaration (Python-style), coexisting with `var`/`const`. Rewrite
+            // the statement in place into a STMT_VAR so all existing declaration
+            // type-inference and codegen apply. An assignment to an *existing*
+            // variable stays a normal assignment (checked below).
+            if (stmt->expr && stmt->expr->type == EXPR_ASSIGN &&
+                !find_symbol(scope, stmt->expr->assign.name)) {
+                Expr* init = stmt->expr->assign.value;
+                Token name = stmt->expr->assign.name;
+                stmt->type = STMT_VAR;
+                stmt->var.name = name;
+                stmt->var.pattern = NULL;
+                stmt->var.type = NULL;         // inferred from init
+                stmt->var.init = init;
+                stmt->var.is_const = false;    // bare bindings are mutable
+                stmt->var.is_mutable = true;
+                stmt->var.uses_pattern = false;
+                check_stmt(stmt, scope);       // re-check as a var declaration
+                break;
+            }
             check_expr(stmt->expr, scope);
             break;
+        }
+        case STMT_YIELD: if (stmt->yield_stmt.value) check_expr(stmt->yield_stmt.value, scope); break;
         case STMT_RETURN:
             if (stmt->ret.value) {
                 Type* return_expr_type = check_expr(stmt->ret.value, scope);
