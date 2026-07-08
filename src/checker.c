@@ -2931,17 +2931,42 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int;
         }
         case EXPR_METHOD_CALL: {
+            // Enum constructor with payload written as a method call, e.g.
+            // `Shape.Circle(5.0)`. The parser produces EXPR_METHOD_CALL here
+            // (object = enum name, method = variant). Type it as the enum so
+            // downstream (var decls, match) sees TYPE_ENUM instead of int.
+            if (expr->method_call.object->type == EXPR_IDENT) {
+                EnumStmt* enum_def = find_enum_definition(expr->method_call.object->token);
+                if (enum_def) {
+                    Token variant = expr->method_call.method;
+                    for (int vi = 0; vi < enum_def->variant_count; vi++) {
+                        if (enum_def->variants[vi].length == variant.length &&
+                            memcmp(enum_def->variants[vi].start, variant.start, variant.length) == 0) {
+                            for (int ai = 0; ai < expr->method_call.arg_count; ai++) {
+                                check_expr(expr->method_call.args[ai], scope);
+                            }
+                            Type* et = make_type(TYPE_ENUM);
+                            et->name = expr->method_call.object->token;
+                            et->enum_type.variants = enum_def->variants;
+                            et->enum_type.variant_count = enum_def->variant_count;
+                            expr->expr_type = et;
+                            return et;
+                        }
+                    }
+                }
+            }
+
             Type* object_type = check_expr(expr->method_call.object, scope);
             for (int i = 0; i < expr->method_call.arg_count; i++) {
                 check_expr(expr->method_call.args[i], scope);
             }
-            
+
             Token method = expr->method_call.method;
             char method_name[256];
             int len = method.length < 255 ? method.length : 255;
             memcpy(method_name, method.start, len);
             method_name[len] = '\0';
-            
+
             // Check for namespace method calls: File.read() -> File_read
             // Only for known namespaces, not regular variables
             if (expr->method_call.object->type == EXPR_IDENT) {
@@ -3213,6 +3238,42 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             
             expr->expr_type = builtin_array;
             return builtin_array;
+        }
+        case EXPR_LIST_COMP: {
+            // List comprehension: [body for x in iter (if cond)].
+            // Result is an array whose element type is the type of `body`,
+            // evaluated with the loop variable bound in a child scope.
+            SymbolTable comp_scope = {0};
+            comp_scope.parent = scope;
+
+            // Determine the loop variable's type from the iterable.
+            Type* loop_var_type = builtin_int; // range yields ints
+            if (expr->list_comp.iter_start) {
+                Type* iter_type = check_expr(expr->list_comp.iter_start, &comp_scope);
+                if (expr->list_comp.iter_end) {
+                    // Range `start..end` / `start..=end` — element is int.
+                    check_expr(expr->list_comp.iter_end, &comp_scope);
+                    loop_var_type = builtin_int;
+                } else if (iter_type && iter_type->kind == TYPE_ARRAY &&
+                           iter_type->array_type.element_type) {
+                    // Iterating an array — element type is the array's element.
+                    loop_var_type = iter_type->array_type.element_type;
+                }
+            }
+            add_symbol(&comp_scope, expr->list_comp.var_name, loop_var_type, false);
+
+            if (expr->list_comp.condition) {
+                check_expr(expr->list_comp.condition, &comp_scope);
+            }
+
+            Type* element_type = expr->list_comp.body
+                ? check_expr(expr->list_comp.body, &comp_scope)
+                : builtin_int;
+
+            Type* array_type = make_type(TYPE_ARRAY);
+            array_type->array_type.element_type = element_type ? element_type : builtin_int;
+            expr->expr_type = array_type;
+            return array_type;
         }
         case EXPR_HASHMAP_LITERAL: {
             // v1.3.0: {} creates a hashmap with proper type

@@ -1084,6 +1084,10 @@ static const char* c_type_from_expr(Expr* type_expr) {
 }
 
 
+// Forward decls for helpers defined later in this file but used by the
+// included codegen_*.c translation units above.
+const char* codegen_c_type_from_type(Type* t);
+
 // Expression code generation
 #include "codegen_expr.c"
 
@@ -1262,6 +1266,59 @@ const char* get_enum_var_type(const char* var) {
         if (strcmp(enum_var_map[i].var_name, var) == 0) return enum_var_map[i].enum_name;
     }
     return NULL;
+}
+
+// Map a checker-assigned Type* to its C type spelling for a variable declaration.
+// Returns NULL when the type is unknown/unmapped so callers can keep their own
+// default (typically "long long"). Mirrors the per-statement logic in
+// codegen_stmt.c so top-level (script-mode) var decls infer the same C types as
+// declarations inside a function body.
+const char* codegen_c_type_from_type(Type* t) {
+    if (!t) return NULL;
+    switch (t->kind) {
+        case TYPE_INT:    return "long long";
+        case TYPE_FLOAT:  return "double";
+        case TYPE_BOOL:   return "bool";
+        case TYPE_STRING: return "const char*";
+        case TYPE_ARRAY:  return "WynArray";
+        case TYPE_MAP:    return "WynHashMap*";
+        case TYPE_SET:    return "WynHashSet*";
+        case TYPE_RESULT: {
+            // Hand-specialized Result types are keyed on the ok type (int/string).
+            if (t->result_type.ok_type && t->result_type.ok_type->kind == TYPE_STRING)
+                return "ResultString";
+            return "ResultInt";
+        }
+        case TYPE_OPTIONAL: {
+            if (t->optional_type.inner_type && t->optional_type.inner_type->kind == TYPE_STRING)
+                return "OptionString";
+            return "OptionInt";
+        }
+        case TYPE_ENUM: {
+            static char enum_buf[128];
+            if (t->name.length > 0) {
+                int len = t->name.length < 127 ? t->name.length : 127;
+                memcpy(enum_buf, t->name.start, len);
+                enum_buf[len] = '\0';
+                return enum_buf;
+            }
+            return NULL;
+        }
+        case TYPE_STRUCT: {
+            static char struct_buf[128];
+            Token n = t->struct_type.name;
+            // Single upper-case letter is an un-monomorphized type param -> long long.
+            if (n.length == 1 && n.start[0] >= 'A' && n.start[0] <= 'Z') return "long long";
+            if (n.length > 0) {
+                int len = n.length < 127 ? n.length : 127;
+                memcpy(struct_buf, n.start, len);
+                struct_buf[len] = '\0';
+                return struct_buf;
+            }
+            return NULL;
+        }
+        default: return NULL;
+    }
 }
 
 // Function default parameter registry
