@@ -21,6 +21,10 @@ void save_lexer_state() {
 void restore_lexer_state() {
     if (lexer_stack_depth > 0) lexer = lexer_stack[--lexer_stack_depth];
 }
+// Discard the most recent saved snapshot without rewinding.
+void discard_lexer_state() {
+    if (lexer_stack_depth > 0) lexer_stack_depth--;
+}
 
 void init_lexer(const char* source) {
     lexer.start = source;

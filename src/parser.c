@@ -64,6 +64,13 @@ void restore_parser_state() {
     }
 }
 
+// Discard the most recent saved snapshot without rewinding (commit the
+// speculative parse). Keeps the save/discard/restore stacks balanced so
+// speculative lookahead never leaks stack slots.
+void discard_parser_state() {
+    if (parser_stack_depth > 0) parser_stack_depth--;
+}
+
 void set_parser_filename(const char* filename) {
     current_source_file = filename;
     parser.filename = filename;
@@ -328,7 +335,12 @@ static Expr* primary() {
 
     if (match(TOKEN_IDENT)) {
         Token name = parser.previous;
-        
+
+        // Note: no paren-less single-param lambda (`x => expr`). It is
+        // ambiguous with match-arm guards (`pat if cond => result`), where a
+        // bare identifier is legitimately followed by `=>`. Lambdas always
+        // parenthesize their params: `(x) => expr`.
+
         // Check for struct initialization: TypeName { field: value, ... }
         // Only parse as struct init if identifier starts with uppercase AND next is {
         if (is_struct_init_pattern() && name.start[0] >= 'A' && name.start[0] <= 'Z') {
@@ -961,6 +973,76 @@ static Expr* primary() {
         lambda_expr->lambda.capture_by_move = NULL;
         
         return lambda_expr;
+    }
+
+    if (check(TOKEN_LPAREN)) {
+        // Arrow lambda with parenthesized params: `(x) => expr`,
+        // `(a, b) => a + b`, `() => 0`, `(x: int) => x * 2`.
+        // Disambiguate from grouping/tuples/calls by trying to parse a bare
+        // parameter list followed by `=>`; backtrack if that fails.
+        extern void save_lexer_state(void);
+        extern void restore_lexer_state(void);
+        extern void discard_lexer_state(void);
+        extern void discard_parser_state(void);
+        save_lexer_state();
+        save_parser_state();
+        bool is_arrow_lambda = false;
+        Token lam_params[16];
+        int lam_param_count = 0;
+        advance(); // consume '('
+        bool params_ok = true;
+        if (!check(TOKEN_RPAREN)) {
+            do {
+                if (!check(TOKEN_IDENT) || lam_param_count >= 16) { params_ok = false; break; }
+                advance();
+                lam_params[lam_param_count++] = parser.previous;
+                if (match(TOKEN_COLON)) {          // optional type annotation
+                    parse_type();
+                }
+            } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
+        }
+        if (params_ok && match(TOKEN_RPAREN)) {
+            if (match(TOKEN_ARROW)) { parse_type(); }  // optional return type
+            if (check(TOKEN_FATARROW)) { is_arrow_lambda = true; }
+        }
+        if (is_arrow_lambda) {
+            discard_lexer_state();   // commit the speculative parse (balance the stacks)
+            discard_parser_state();
+            advance(); // consume '=>'
+            Expr* lambda_expr = alloc_expr();
+            lambda_expr->type = EXPR_LAMBDA;
+            lambda_expr->lambda.param_count = lam_param_count;
+            lambda_expr->lambda.params = malloc(sizeof(Token) * (lam_param_count > 0 ? lam_param_count : 1));
+            for (int i = 0; i < lam_param_count; i++) lambda_expr->lambda.params[i] = lam_params[i];
+            lambda_expr->lambda.body_stmts = NULL;
+            lambda_expr->lambda.body_stmt_count = 0;
+            lambda_expr->lambda.captured_count = 0;
+            lambda_expr->lambda.capture_by_move = NULL;
+            if (check(TOKEN_LBRACE)) {
+                // Block body: (x) => { ... return e }
+                advance();
+                lambda_expr->lambda.body_stmts = malloc(sizeof(Stmt*) * 32);
+                lambda_expr->lambda.body_stmt_count = 0;
+                lambda_expr->lambda.body = NULL;
+                while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                    if (match(TOKEN_RETURN)) {
+                        lambda_expr->lambda.body = expression();
+                        match(TOKEN_SEMI);
+                        break;
+                    }
+                    Stmt* s = statement();
+                    if (s && lambda_expr->lambda.body_stmt_count < 32)
+                        lambda_expr->lambda.body_stmts[lambda_expr->lambda.body_stmt_count++] = s;
+                }
+                expect(TOKEN_RBRACE, "Expected '}' after lambda block body");
+            } else {
+                lambda_expr->lambda.body = expression();
+            }
+            return lambda_expr;
+        }
+        // Not an arrow lambda — rewind and parse as grouping/tuple.
+        restore_parser_state();
+        restore_lexer_state();
     }
 
     if (match(TOKEN_LPAREN)) {
