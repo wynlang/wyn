@@ -162,6 +162,9 @@ void free_stmt(Stmt* stmt) {
         case STMT_UNSAFE:
             free_block_stmt(&stmt->block);
             break;
+        case STMT_PARALLEL:
+            free_block_stmt(&stmt->block);
+            break;
         case STMT_FN:
             free_fn_stmt(&stmt->fn);
             break;

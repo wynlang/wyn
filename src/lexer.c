@@ -189,7 +189,10 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 6 && memcmp(start, "object", 6) == 0) return TOKEN_OBJECT;
             // Removed TOKEN_OK - let ok be a regular identifier
             break;
-        case 'p': if (length == 3 && memcmp(start, "pub", 3) == 0) return TOKEN_PUB; break;
+        case 'p':
+            if (length == 3 && memcmp(start, "pub", 3) == 0) return TOKEN_PUB;
+            if (length == 8 && memcmp(start, "parallel", 8) == 0) return TOKEN_PARALLEL;
+            break;
         case 'r': 
             if (length == 6 && memcmp(start, "return", 6) == 0) return TOKEN_RETURN;
             if (length == 4 && memcmp(start, "root", 4) == 0) return TOKEN_ROOT;

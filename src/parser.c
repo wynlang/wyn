@@ -81,7 +81,6 @@ static Expr* assignment();
 static Expr* call();  // Forward declaration for await
 Stmt* statement();
 static Stmt* parse_test_statement(); // T1.6.2: Testing Framework Agent addition
-static Stmt* parse_while_statement(); // T1.4.1: Control Flow Agent addition
 static Stmt* parse_break_statement(); // T1.4.2: Control Flow Agent addition
 static Stmt* parse_continue_statement(); // T1.4.2: Control Flow Agent addition
 static Stmt* parse_match_statement(); // T1.4.3: Control Flow Agent addition
@@ -1934,6 +1933,22 @@ Stmt* statement() {
         expect(TOKEN_RBRACE, "Expected '}' after unsafe block");
         return stmt;
     }
+
+    // Structured concurrency: parallel { ... }. Every `spawn` inside runs
+    // concurrently, and all spawned tasks are joined at the closing brace —
+    // no task can outlive the block.
+    if (match(TOKEN_PARALLEL)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_PARALLEL;
+        expect(TOKEN_LBRACE, "Expected '{' after 'parallel'");
+        stmt->block.stmts = malloc(sizeof(Stmt*) * 256);
+        stmt->block.count = 0;
+        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+            stmt->block.stmts[stmt->block.count++] = statement();
+        }
+        expect(TOKEN_RBRACE, "Expected '}' after parallel block");
+        return stmt;
+    }
     
     if (match(TOKEN_IF) || match(TOKEN_ELSEIF)) {
         Stmt* stmt = alloc_stmt();
@@ -3567,22 +3582,8 @@ bool parser_had_error() {
 }
 
 // T1.4.1: While Loop AST Extension - Control Flow Agent addition
-static Stmt* parse_while_statement() {
-    advance(); // consume 'while' token
-    
-    Stmt* stmt = safe_malloc(sizeof(Stmt));
-    if (!stmt) return NULL;
-    
-    stmt->type = STMT_WHILE;
-    
-    expect(TOKEN_LPAREN, "Expected '(' after 'while'");
-    stmt->while_stmt.condition = expression();
-    expect(TOKEN_RPAREN, "Expected ')' after while condition");
-    
-    stmt->while_stmt.body = statement();
-    
-    return stmt;
-}
+// (parse_while_statement removed — top-level `while` now routes through
+// statement(), which parses the condition with optional parens like `if`.)
 
 // T1.4.2: Break/Continue Implementation - Control Flow Agent addition
 static Stmt* parse_break_statement() {

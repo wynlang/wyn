@@ -368,6 +368,7 @@ typedef enum {
     STMT_RETURN, STMT_DEFER,
     STMT_BLOCK,
     STMT_UNSAFE,
+    STMT_PARALLEL,   // structured concurrency: parallel { ... } auto-joins spawns
     STMT_FN,
     STMT_EXTERN,
     STMT_STRUCT,

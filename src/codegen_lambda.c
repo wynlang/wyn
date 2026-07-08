@@ -42,6 +42,11 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
             scan_expr_for_lambdas(stmt->expr);
             break;
         case STMT_BLOCK:
+        case STMT_UNSAFE:
+        case STMT_PARALLEL:
+            // All three share the block struct; recurse so spawns/lambdas
+            // inside (notably parallel's spawn-bound vars) get their wrappers
+            // collected.
             for (int i = 0; i < stmt->block.count; i++) {
                 scan_stmt_for_lambdas(stmt->block.stmts[i]);
             }

@@ -1651,6 +1651,76 @@ void codegen_stmt(Stmt* stmt) {
             }
             emit("}\n");
             break;
+        case STMT_PARALLEL: {
+            // Structured concurrency. Every `x = spawn f(...)` inside runs
+            // concurrently; all spawned tasks are joined at the end of the
+            // block, so none can outlive it. `x` holds the VALUE after the
+            // block (not a Future) and stays visible in the enclosing scope.
+            //
+            // Lowering: each spawn-bound var is declared with its value type,
+            // its Future captured in a hidden temp, and joined via future_get
+            // after every statement in the block has run.
+            extern const char* get_function_return_type(const char*);
+            static int parallel_block_counter = 0;
+            int par_id = parallel_block_counter++;
+            emit("/* parallel */\n");
+
+            // First pass: for spawn-bound vars, declare the value variable and
+            // spawn into a hidden future temp.
+            char joined_names[64][128];
+            char joined_futs[64][160];
+            const char* joined_ctypes[64];
+            int joined_count = 0;
+
+            for (int i = 0; i < stmt->block.count; i++) {
+                Stmt* s = stmt->block.stmts[i];
+                bool is_spawn_var = (s->type == STMT_VAR && s->var.init &&
+                                     s->var.init->type == EXPR_SPAWN);
+                if (is_spawn_var && joined_count < 64) {
+                    // Resolve the value C type from the spawned fn's return type.
+                    const char* vctype = "long long";
+                    Expr* call = s->var.init->spawn.call;
+                    if (call && call->type == EXPR_CALL &&
+                        call->call.callee->type == EXPR_IDENT) {
+                        char fn[256]; int fl = call->call.callee->token.length;
+                        if (fl > 255) fl = 255;
+                        memcpy(fn, call->call.callee->token.start, fl); fn[fl] = '\0';
+                        const char* rt = get_function_return_type(fn);
+                        if (rt) {
+                            if (strcmp(rt, "string") == 0) vctype = "const char*";
+                            else if (strcmp(rt, "float") == 0) vctype = "double";
+                            else if (strcmp(rt, "bool") == 0) vctype = "bool";
+                            else if (strcmp(rt, "int") == 0) vctype = "long long";
+                        }
+                    }
+                    char vn[128]; int vl = s->var.name.length < 127 ? s->var.name.length : 127;
+                    memcpy(vn, s->var.name.start, vl); vn[vl] = '\0';
+                    snprintf(joined_names[joined_count], 128, "%s", vn);
+                    snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
+                    joined_ctypes[joined_count] = vctype;
+                    // Declare value var + spawn into hidden future.
+                    emit("    %s %s;\n", vctype, vn);
+                    emit("    Future* %s = ", joined_futs[joined_count]);
+                    codegen_expr(s->var.init);   // emits wyn_spawn_*(...)
+                    emit(";\n");
+                    joined_count++;
+                } else {
+                    emit("    ");
+                    codegen_stmt(s);
+                }
+            }
+
+            // Join all spawned tasks before leaving the block.
+            for (int j = 0; j < joined_count; j++) {
+                if (strcmp(joined_ctypes[j], "const char*") == 0)
+                    emit("    %s = (const char*)(intptr_t)future_get(%s);\n", joined_names[j], joined_futs[j]);
+                else if (strcmp(joined_ctypes[j], "double") == 0)
+                    emit("    { long long __r = (long long)(intptr_t)future_get(%s); %s = *(double*)&__r; }\n", joined_futs[j], joined_names[j]);
+                else
+                    emit("    %s = (%s)(intptr_t)future_get(%s);\n", joined_names[j], joined_ctypes[j], joined_futs[j]);
+            }
+            break;
+        }
         case STMT_FN: {
             // Determine return type
             { extern void reset_defers(); reset_defers(); }

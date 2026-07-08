@@ -4213,6 +4213,15 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 }
             }
             break;
+        case STMT_UNSAFE:
+        case STMT_PARALLEL:
+            // Check body statements in the SAME scope so bindings (including
+            // parallel's spawn-bound vars) escape to the enclosing scope, as
+            // the codegen emits them there.
+            for (int i = 0; i < stmt->block.count; i++) {
+                check_stmt(stmt->block.stmts[i], scope);
+            }
+            break;
         case STMT_IF:
             // Warn about assignment in condition (= vs ==)
             if (stmt->if_stmt.condition && stmt->if_stmt.condition->type == EXPR_ASSIGN) {
