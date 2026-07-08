@@ -1439,6 +1439,33 @@ void codegen_expr(Expr* expr) {
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
 
+            // Channel methods: ch.send(v) / ch.recv() / ch.close() lower to the
+            // Task_* runtime. The channel value is a long long handle.
+            if (expr->method_call.object->expr_type &&
+                expr->method_call.object->expr_type->kind == TYPE_CHANNEL) {
+                if (method.length == 4 && memcmp(method.start, "send", 4) == 0) {
+                    emit("Task_send(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    if (expr->method_call.arg_count > 0) codegen_expr(expr->method_call.args[0]);
+                    else emit("0");
+                    emit(")");
+                    break;
+                }
+                if (method.length == 4 && memcmp(method.start, "recv", 4) == 0) {
+                    emit("Task_recv(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                    break;
+                }
+                if (method.length == 5 && memcmp(method.start, "close", 5) == 0) {
+                    emit("Task_close(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                    break;
+                }
+            }
+
             // Release intermediate string temps from chained method calls
             // e.g. "hello".upper().trim() — upper() result leaked without this
             Expr* _mc_obj = expr->method_call.object;
@@ -3880,6 +3907,15 @@ void codegen_expr(Expr* expr) {
                 codegen_expr(expr->list_comp.body);
                 emit(")); } __lc_%d; })", id);
             }
+            break;
+        }
+        case EXPR_CHANNEL: {
+            // channel() / channel(cap) -> Task_channel(cap). Default cap = 0
+            // (unbuffered/rendezvous-ish; runtime treats <=0 sensibly).
+            emit("Task_channel(");
+            if (expr->channel.capacity) codegen_expr(expr->channel.capacity);
+            else emit("0");
+            emit(")");
             break;
         }
         case EXPR_SPAWN: {

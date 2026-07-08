@@ -398,7 +398,14 @@ static bool wyn_is_type_compatible(Type* expected, Type* actual) {
         (expected->kind == TYPE_INT && actual->kind == TYPE_ENUM)) {
         return true;
     }
-    
+
+    // Allow channel <-> int (channels are int handles, so they can pass
+    // through int-typed function params — e.g. fn produce(ch: int, ...)).
+    if ((expected->kind == TYPE_CHANNEL && actual->kind == TYPE_INT) ||
+        (expected->kind == TYPE_INT && actual->kind == TYPE_CHANNEL)) {
+        return true;
+    }
+
     return false;
 }
 
@@ -2931,6 +2938,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int;
         }
         case EXPR_METHOD_CALL: {
+            // Channel methods: ch.send(v) / ch.recv() / ch.close() where ch is
+            // a channel value. send/close return nothing (int), recv returns int.
+            {
+                Type* obj_t = check_expr(expr->method_call.object, scope);
+                if (obj_t && obj_t->kind == TYPE_CHANNEL) {
+                    Token m = expr->method_call.method;
+                    for (int i = 0; i < expr->method_call.arg_count; i++)
+                        check_expr(expr->method_call.args[i], scope);
+                    expr->expr_type = builtin_int; // recv() -> int; send/close -> int (unused)
+                    return builtin_int;
+                }
+            }
             // Enum constructor with payload written as a method call, e.g.
             // `Shape.Circle(5.0)`. The parser produces EXPR_METHOD_CALL here
             // (object = enum name, method = variant). Type it as the enum so
@@ -3480,6 +3499,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 if (call_type) { expr->expr_type = call_type; return call_type; }
             }
             return builtin_int;
+        case EXPR_CHANNEL: {
+            if (expr->channel.capacity) check_expr(expr->channel.capacity, scope);
+            Type* ch = make_type(TYPE_CHANNEL);
+            expr->expr_type = ch;
+            return ch;
+        }
         case EXPR_RANGE:
             return builtin_int; // Range type
         case EXPR_LAMBDA: {
@@ -4220,6 +4245,18 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             // the codegen emits them there.
             for (int i = 0; i < stmt->block.count; i++) {
                 check_stmt(stmt->block.stmts[i], scope);
+            }
+            break;
+        case STMT_SELECT:
+            for (int i = 0; i < stmt->select_stmt.arm_count; i++) {
+                if (stmt->select_stmt.channels[i])
+                    check_expr(stmt->select_stmt.channels[i], scope);
+                // Each arm binds the received value (int) in its own scope.
+                SymbolTable arm_scope = {0};
+                arm_scope.parent = scope;
+                add_symbol(&arm_scope, stmt->select_stmt.bind_names[i], builtin_int, false);
+                if (stmt->select_stmt.bodies[i])
+                    check_stmt(stmt->select_stmt.bodies[i], &arm_scope);
             }
             break;
         case STMT_IF:

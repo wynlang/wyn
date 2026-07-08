@@ -1721,6 +1721,41 @@ void codegen_stmt(Stmt* stmt) {
             }
             break;
         }
+        case STMT_SELECT: {
+            // select { v = ch.recv() => body ... } lowers to Task_select_N over
+            // the arm channels, then dispatches to the ready arm, receiving from
+            // its channel and binding the value.
+            int n = stmt->select_stmt.arm_count;
+            static int select_ctr = 0;
+            int sid = select_ctr++;
+            if (n == 0) { break; }
+            emit("{ long long __sel_%d = ", sid);
+            if (n == 2 || n == 3) {
+                emit("Task_select_%d(", n);
+                for (int i = 0; i < n; i++) {
+                    if (i) emit(", ");
+                    codegen_expr(stmt->select_stmt.channels[i]);
+                }
+                emit(");\n");
+            } else {
+                // 1 arm, or >3: fall back to a simple ready-poll on the first
+                // channel (Task_select_2/3 cover the common cases).
+                emit("0; (void)__sel_%d;\n", sid);
+            }
+            for (int i = 0; i < n; i++) {
+                emit("    %s if (__sel_%d == %d) {\n", i ? "else" : "", sid, i);
+                // Bind the received value and run the body.
+                char vn[128]; int vl = stmt->select_stmt.bind_names[i].length < 127 ? stmt->select_stmt.bind_names[i].length : 127;
+                memcpy(vn, stmt->select_stmt.bind_names[i].start, vl); vn[vl] = '\0';
+                emit("        long long %s = Task_recv(", vn);
+                codegen_expr(stmt->select_stmt.channels[i]);
+                emit(");\n        ");
+                codegen_stmt(stmt->select_stmt.bodies[i]);
+                emit("    }\n");
+            }
+            emit("}\n");
+            break;
+        }
         case STMT_FN: {
             // Determine return type
             { extern void reset_defers(); reset_defers(); }

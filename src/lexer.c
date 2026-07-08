@@ -197,10 +197,11 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 6 && memcmp(start, "return", 6) == 0) return TOKEN_RETURN;
             if (length == 4 && memcmp(start, "root", 4) == 0) return TOKEN_ROOT;
             break;
-        case 's': 
+        case 's':
             if (length == 6 && memcmp(start, "struct", 6) == 0) return TOKEN_STRUCT;
             if (length == 5 && memcmp(start, "spawn", 5) == 0) return TOKEN_SPAWN;
             if (length == 4 && memcmp(start, "self", 4) == 0) return TOKEN_SELF;
+            if (length == 6 && memcmp(start, "select", 6) == 0) return TOKEN_SELECT;
             break;
         case 'S':
             if (length == 4 && memcmp(start, "Some", 4) == 0) return TOKEN_SOME;

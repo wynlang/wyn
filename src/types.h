@@ -64,6 +64,7 @@ typedef enum {
     TYPE_RESULT,    // TASK-026: Result<T,E> Type Implementation
     TYPE_GENERIC,   // T3.1.2: Generic type parameter
     TYPE_JSON,      // JSON object type for method syntax
+    TYPE_CHANNEL,   // Channel handle for message passing (channel())
 } TypeKind;
 
 // Type already forward declared above

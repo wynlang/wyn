@@ -1,0 +1,46 @@
+// EXPECT: 30
+// EXPECT: 100
+// EXPECT: from b
+// First-class channels: channel(cap), ch.send(v), ch.recv(), ch.close();
+// producer/consumer across spawn; and select { } multiplexing.
+fn produce(ch: int, n: int) -> int {
+    i = 0
+    while i < n {
+        Task.send(ch, i * 10)
+        i = i + 1
+    }
+    return 0
+}
+
+fn main() -> int {
+    // Basic send/recv.
+    c = channel(4)
+    c.send(10)
+    c.send(20)
+    x = c.recv()
+    y = c.recv()
+    c.close()
+    println((x + y).to_string())
+
+    // Producer on another task, consumer here.
+    ch = channel(16)
+    f = spawn produce(ch, 5)
+    total = 0
+    i = 0
+    while i < 5 {
+        total = total + ch.recv()
+        i = i + 1
+    }
+    done = await f
+    println(total.to_string())
+
+    // select picks the ready channel.
+    a = channel(4)
+    b = channel(4)
+    b.send(1)
+    select {
+        v = a.recv() => println("from a")
+        v = b.recv() => println("from b")
+    }
+    return 0
+}

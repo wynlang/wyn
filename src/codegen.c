@@ -1277,6 +1277,7 @@ const char* codegen_c_type_from_type(Type* t) {
     if (!t) return NULL;
     switch (t->kind) {
         case TYPE_INT:    return "long long";
+        case TYPE_CHANNEL: return "long long"; // channel handle
         case TYPE_FLOAT:  return "double";
         case TYPE_BOOL:   return "bool";
         case TYPE_STRING: return "const char*";

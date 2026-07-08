@@ -183,6 +183,19 @@ static Expr* primary() {
         expr->spawn.call = call();  // Parse call expression
         return expr;
     }
+
+    // Channel constructor: channel() or channel(capacity)
+    if (match(TOKEN_CHANNEL)) {
+        Expr* expr = alloc_expr();
+        expr->type = EXPR_CHANNEL;
+        expr->channel.capacity = NULL;
+        expect(TOKEN_LPAREN, "Expected '(' after 'channel'");
+        if (!check(TOKEN_RPAREN)) {
+            expr->channel.capacity = expression();
+        }
+        expect(TOKEN_RPAREN, "Expected ')' after channel capacity");
+        return expr;
+    }
     
     if (match(TOKEN_NOT) || match(TOKEN_MINUS) || match(TOKEN_BANG) || match(TOKEN_TILDE) || match(TOKEN_AMP)) {
         Token op = parser.previous;
@@ -1931,6 +1944,34 @@ Stmt* statement() {
             stmt->block.stmts[stmt->block.count++] = statement();
         }
         expect(TOKEN_RBRACE, "Expected '}' after unsafe block");
+        return stmt;
+    }
+
+    // Channel multiplexing: select { v = ch.recv() => body  ... }
+    // Waits until one channel has data, receives from it, binds v, runs body.
+    if (match(TOKEN_SELECT)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_SELECT;
+        stmt->select_stmt.arm_count = 0;
+        expect(TOKEN_LBRACE, "Expected '{' after 'select'");
+        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF) && stmt->select_stmt.arm_count < 16) {
+            int a = stmt->select_stmt.arm_count;
+            // Arm: <name> = <channel>.recv() => <body>
+            expect(TOKEN_IDENT, "Expected variable name in select arm");
+            stmt->select_stmt.bind_names[a] = parser.previous;
+            expect(TOKEN_EQ, "Expected '=' in select arm");
+            // Parse the channel expression up to '.recv'. We accept `ch.recv()`
+            // and capture the channel (the object of the .recv method call).
+            Expr* recv_expr = expression();
+            Expr* chan = recv_expr;
+            if (recv_expr && recv_expr->type == EXPR_METHOD_CALL)
+                chan = recv_expr->method_call.object; // the channel itself
+            stmt->select_stmt.channels[a] = chan;
+            expect(TOKEN_FATARROW, "Expected '=>' after select arm channel");
+            stmt->select_stmt.bodies[a] = statement();
+            stmt->select_stmt.arm_count++;
+        }
+        expect(TOKEN_RBRACE, "Expected '}' after select block");
         return stmt;
     }
 
