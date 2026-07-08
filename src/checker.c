@@ -3899,7 +3899,8 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             Token field_name = pat->struct_pat.field_names[j];
                             // Get field type from struct
                             Type* field_type = builtin_int; // Default to int
-                            if (match_value_type->kind == TYPE_STRUCT) {
+                            if (match_value_type->kind == TYPE_STRUCT &&
+                                match_value_type->struct_type.field_names) {
                                 for (int k = 0; k < match_value_type->struct_type.field_count; k++) {
                                     if (match_value_type->struct_type.field_names[k].length == field_name.length &&
                                         memcmp(match_value_type->struct_type.field_names[k].start, field_name.start, field_name.length) == 0) {
@@ -4866,6 +4867,25 @@ void check_program(Program* prog) {
             Type* struct_type = make_type(TYPE_STRUCT);
             struct_type->struct_type.name = struct_decl->name;
             struct_type->struct_type.field_count = struct_decl->field_count;
+            // Populate field_names so consumers that iterate fields (struct
+            // pattern destructuring, field access) don't deref a NULL array.
+            // field_types is resolved lazily below; names come straight from
+            // the declaration. Without this, field_count is set but the arrays
+            // are NULL, crashing any field iteration.
+            if (struct_decl->field_count > 0) {
+                struct_type->struct_type.field_names =
+                    malloc(sizeof(Token) * struct_decl->field_count);
+                struct_type->struct_type.field_types =
+                    malloc(sizeof(Type*) * struct_decl->field_count);
+                for (int _fi = 0; _fi < struct_decl->field_count; _fi++) {
+                    struct_type->struct_type.field_names[_fi] = struct_decl->fields[_fi];
+                    // Best-effort field type; may reference a not-yet-registered
+                    // type, in which case default to int (resolved fully when the
+                    // struct body is checked).
+                    Type* ft = get_struct_field_type(struct_decl, struct_decl->fields[_fi]);
+                    struct_type->struct_type.field_types[_fi] = ft ? ft : builtin_int;
+                }
+            }
             add_symbol(global_scope, struct_decl->name, struct_type, false);
         } else if (pass0_stmt->type == STMT_ENUM) {
             // Register enum type and variants early so functions can use them

@@ -3563,11 +3563,54 @@ void codegen_expr(Expr* expr) {
                         }
                     }
                     emit(") { ");
+                } else if (pat->type == PATTERN_STRUCT) {
+                    // Struct destructuring: Point { x, y } => ...
+                    // The matched value is already this struct type, so the
+                    // pattern always matches structurally; bind each named field
+                    // to the corresponding member of __match_val. An optional
+                    // guard gates the arm.
+                    // A struct pattern always matches structurally (the value is
+                    // already this struct type). When there's a guard, gate the
+                    // arm on it via a statement-expression that binds the fields
+                    // first so the guard can reference them; otherwise use
+                    // `if (1)` so a following `else` arm has an `if` to attach to.
+                    // The per-field binding string is emitted twice (once for the
+                    // guard test, once inside the taken branch), so build it once.
+                    char bind_buf[1024]; bind_buf[0] = '\0'; int bind_off = 0;
+                    for (int fi = 0; fi < pat->struct_pat.field_count; fi++) {
+                        Token fname = pat->struct_pat.field_names[fi];
+                        const char* fctype = "long long";
+                        if (match_type && match_type->kind == TYPE_STRUCT) {
+                            for (int sfi = 0; sfi < match_type->struct_type.field_count; sfi++) {
+                                Token sf = match_type->struct_type.field_names[sfi];
+                                if (sf.length == fname.length &&
+                                    memcmp(sf.start, fname.start, fname.length) == 0) {
+                                    const char* m = codegen_c_type_from_type(
+                                        match_type->struct_type.field_types[sfi]);
+                                    if (m) fctype = m;
+                                    break;
+                                }
+                            }
+                        }
+                        bind_off += snprintf(bind_buf + bind_off, sizeof(bind_buf) - bind_off,
+                             "%s %.*s = __match_val_%d.%.*s; ",
+                             fctype, fname.length, fname.start,
+                             match_id, fname.length, fname.start);
+                        if (bind_off >= (int)sizeof(bind_buf)) { bind_off = sizeof(bind_buf) - 1; break; }
+                    }
+                    if (guard_expr) {
+                        emit("if (({ %s(", bind_buf);
+                        codegen_expr(guard_expr);
+                        emit("); })) { %s", bind_buf);
+                        guard_expr = NULL; // consumed
+                    } else {
+                        emit("if (1) { %s", bind_buf);
+                    }
                 } else {
                     // Unsupported pattern - treat as wildcard
                     emit("{ ");
                 }
-                
+
                 // Generate result
                 emit("__match_result_%d = ", match_id);
                 codegen_expr(expr->match.arms[i].result);
