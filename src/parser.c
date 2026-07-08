@@ -2425,14 +2425,31 @@ Stmt* function() {
     } else {
         stmt->fn.return_type = NULL;
     }
-    
-    expect(TOKEN_LBRACE, "Expected '{' before function body");
+
+    // Expression-body function: `fn f(x: int) -> int => x * 2`.
+    // Desugars to a single-statement block that returns the expression.
+    if (match(TOKEN_FATARROW)) {
+        Stmt* ret = alloc_stmt();
+        ret->type = STMT_RETURN;
+        ret->ret.value = expression();
+        match(TOKEN_SEMI); // optional trailing semicolon
+
+        Stmt* body = alloc_stmt();
+        body->type = STMT_BLOCK;
+        body->block.count = 1;
+        body->block.stmts = malloc(sizeof(Stmt*));
+        body->block.stmts[0] = ret;
+        stmt->fn.body = body;
+        return stmt;
+    }
+
+    expect(TOKEN_LBRACE, "Expected '{' or '=>' before function body");
     Stmt* body = alloc_stmt();
     body->type = STMT_BLOCK;
     body->block.count = 0;
     int block_capacity = 1024;
     body->block.stmts = malloc(sizeof(Stmt*) * block_capacity);
-    
+
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
         if (body->block.count >= block_capacity) {
             block_capacity *= 2;
@@ -2440,18 +2457,18 @@ Stmt* function() {
         }
         body->block.stmts[body->block.count++] = statement();
     }
-    
+
     expect(TOKEN_RBRACE, "Expected '}' after function body");
-    
+
     // Mark last expression as implicit return if function has return type
     // Skip for main() — it auto-inserts return 0
     bool is_main = (stmt->fn.name.length == 4 && memcmp(stmt->fn.name.start, "main", 4) == 0);
     if (stmt->fn.return_type && !is_main) {
         mark_implicit_return(body);
     }
-    
+
     stmt->fn.body = body;
-    
+
     return stmt;
 }
 

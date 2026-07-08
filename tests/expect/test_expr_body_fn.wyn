@@ -1,0 +1,17 @@
+// EXPECT: 42
+// EXPECT: yes
+// EXPECT: 18
+// Expression-body functions: `fn f(...) -> T => expr` desugars to a single
+// return of the expression. Covers typed value, bool predicate, and an
+// expression body that calls other expression-body functions.
+fn double(x: int) -> int => x * 2
+fn even(x: int) -> bool => x % 2 == 0
+fn sq(x: int) -> int => x * x
+fn quad(x: int) -> int => sq(x) + sq(x)
+
+fn main() -> int {
+    println(double(21).to_string())
+    if even(4) { println("yes") }
+    println(quad(3).to_string())
+    return 0
+}
