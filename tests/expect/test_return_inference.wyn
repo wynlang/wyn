@@ -1,0 +1,20 @@
+// EXPECT: hi Wyn
+// EXPECT: 42
+// EXPECT: yes
+// EXPECT: 7
+// Return-type inference: functions without -> T get their return type from
+// the body, so expression-body one-liners need no annotation.
+fn greet(n: string) => "hi " + n
+fn double(x: int) => x * 2
+fn even(x: int) => x % 2 == 0
+struct P { x: int, y: int }
+fn origin_plus(a: int, b: int) => P { x: a, y: b }
+
+fn main() -> int {
+    println(greet("Wyn"))
+    println(double(21).to_string())
+    if even(4) { println("yes") }
+    p = origin_plus(3, 4)
+    println((p.x + p.y).to_string())
+    return 0
+}

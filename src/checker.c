@@ -6039,6 +6039,35 @@ void check_program(Program* prog) {
                 Type* inferred_return = wyn_infer_function_return_type(fn->body, &local_scope);
                 if (inferred_return) {
                     current_function_return_type = inferred_return;
+                    // Also synthesize an AST return-type node so codegen (which
+                    // reads fn->return_type) emits the right C signature — this
+                    // is what makes `fn f(x: int) => x * 2` work without `-> T`.
+                    const char* tn = NULL;
+                    switch (inferred_return->kind) {
+                        case TYPE_INT:    tn = "int"; break;
+                        case TYPE_FLOAT:  tn = "float"; break;
+                        case TYPE_BOOL:   tn = "bool"; break;
+                        case TYPE_STRING: tn = "string"; break;
+                        case TYPE_STRUCT:
+                            if (inferred_return->struct_type.name.length > 0) {
+                                Expr* rt = calloc(1, sizeof(Expr));
+                                rt->type = EXPR_IDENT;
+                                rt->token = inferred_return->struct_type.name;
+                                rt->expr_type = inferred_return;
+                                fn->return_type = rt;
+                            }
+                            break;
+                        default: break;
+                    }
+                    if (tn) {
+                        Expr* rt = calloc(1, sizeof(Expr));
+                        rt->type = EXPR_IDENT;
+                        Token t; t.type = TOKEN_IDENT; t.start = tn;
+                        t.length = (int)strlen(tn); t.line = fn->name.line;
+                        rt->token = t;
+                        rt->expr_type = inferred_return;
+                        fn->return_type = rt;
+                    }
                 }
             }
             
