@@ -1,5 +1,5 @@
 // Hello World - The simplest Wyn program
 fn main() -> int {
-    print("Hello, World!");
-    return 0;
+    print("Hello, World!")
+    return 0
 }

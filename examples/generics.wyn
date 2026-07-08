@@ -1,19 +1,19 @@
 // Generics Example - Demonstrates generic functions
 
 fn identity<T>(x: T) -> T {
-    return x;
+    return x
 }
 
 fn max<T>(a: T, b: T) -> T {
     if a > b {
-        return a;
+        return a
     }
-    return b;
+    return b
 }
 
 fn main() -> int {
-    var x = identity(42);
-    var y = max(10, 20);
-    var z = max(5, 3);
-    return x + y + z;
+    var x = identity(42)
+    var y = max(10, 20)
+    var z = max(5, 3)
+    return x + y + z
 }

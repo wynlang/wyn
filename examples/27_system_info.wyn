@@ -1,79 +1,79 @@
 // System Information Tool - Demonstrates env vars and time
 
 fn main() -> int {
-    print("=== System Information Tool ===\n\n");
+    print("=== System Information Tool ===\n\n")
     
     // Environment variables
-    print("Environment Variables:\n");
-    var path = System::env("PATH");
-    print("  PATH length: ");
-    print(path.len());
-    print(" characters\n");
+    print("Environment Variables:\n")
+    var path = System::env("PATH")
+    print("  PATH length: ")
+    print(path.len())
+    print(" characters\n")
     
-    var home = System::env("HOME");
+    var home = System::env("HOME")
     if home.len() > 0 {
-        print("  HOME: ");
-        print(home);
-        print("\n");
+        print("  HOME: ")
+        print(home)
+        print("\n")
     }
     
-    var user = System::env("USER");
+    var user = System::env("USER")
     if user.len() > 0 {
-        print("  USER: ");
-        print(user);
-        print("\n");
+        print("  USER: ")
+        print(user)
+        print("\n")
     }
     
     // Set custom environment variable
-    print("\nSetting custom variable...\n");
-    var set_result = System::set_env("WYN_VERSION", "1.4.0");
+    print("\nSetting custom variable...\n")
+    var set_result = System::set_env("WYN_VERSION", "1.4.0")
     if set_result == 1 {
-        var version = System::env("WYN_VERSION");
-        print("  WYN_VERSION = ");
-        print(version);
-        print("\n");
+        var version = System::env("WYN_VERSION")
+        print("  WYN_VERSION = ")
+        print(version)
+        print("\n")
     }
     
     // Time operations
-    print("\nTime Information:\n");
-    var now = Time::now();
-    print("  Current timestamp: ");
-    print(now);
-    print("\n");
+    print("\nTime Information:\n")
+    var now = Time::now()
+    print("  Current timestamp: ")
+    print(now)
+    print("\n")
     
-    var formatted = Time::format(now);
-    print("  Formatted time: ");
-    print(formatted);
-    print("\n");
+    var formatted = Time::format(now)
+    print("  Formatted time: ")
+    print(formatted)
+    print("\n")
     
     // Command line arguments
-    print("\nCommand Line Arguments:\n");
-    var args = System::args();
-    print("  Argument count: ");
-    print(args.len());
-    print("\n");
+    print("\nCommand Line Arguments:\n")
+    var args = System::args()
+    print("  Argument count: ")
+    print(args.len())
+    print("\n")
     
-    var i = 0;
+    var i = 0
     while i < args.len() {
-        print("  [");
-        print(i);
-        print("] ");
-        print(args[i]);
-        print("\n");
-        i = i + 1;
+        print("  [")
+        print(i)
+        print("] ")
+        print(args[i])
+        print("\n")
+        i = i + 1
     }
     
     // Current directory
-    print("\nFile System:\n");
-    var cwd = File::get_cwd();
-    print("  Current directory: ");
-    print(cwd);
-    print("\n");
+    print("\nFile System:\n")
+    var cwd = File::get_cwd()
+    print("  Current directory: ")
+    print(cwd)
+    print("\n")
     
-    var basename = File::basename(cwd);
-    print("  Directory name: ");
-    print(basename);
-    print("\n");
+    var basename = File::basename(cwd)
+    print("  Directory name: ")
+    print(basename)
+    print("\n")
     
-    return 0;
+    return 0
 }

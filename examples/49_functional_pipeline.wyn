@@ -2,47 +2,47 @@
 // Demonstrates map, filter, reduce together
 
 fn is_positive(x: int) -> int {
-    return x > 0;
+    return x > 0
 }
 
 fn triple(x: int) -> int {
-    return x * 3;
+    return x * 3
 }
 
 fn sum(acc: int, x: int) -> int {
-    return acc + x;
+    return acc + x
 }
 
 fn main() -> int {
-    print("=== Functional Programming Pipeline ===");
+    print("=== Functional Programming Pipeline ===")
     
     // Start with mixed numbers
-    var numbers = [-2, -1, 0, 1, 2, 3, 4, 5];
-    print("Original:");
+    var numbers = [-2, -1, 0, 1, 2, 3, 4, 5]
+    print("Original:")
     print(numbers.len());  // 8
     
     // Step 1: Filter positive numbers
-    var positives = numbers.filter(is_positive);
-    print("After filter (positive only):");
+    var positives = numbers.filter(is_positive)
+    print("After filter (positive only):")
     print(positives.len());  // 5
     
     // Step 2: Triple each number
-    var tripled = positives.map(triple);
-    print("After map (tripled):");
-    var first_tripled = tripled.get(0);
+    var tripled = positives.map(triple)
+    print("After map (tripled):")
+    var first_tripled = tripled.get(0)
     print(first_tripled);  // 3 (1 * 3)
     
     // Step 3: Sum all numbers
-    var total = tripled.reduce(sum, 0);
-    print("After reduce (sum):");
+    var total = tripled.reduce(sum, 0)
+    print("After reduce (sum):")
     print(total);  // 45 (3+6+9+12+15)
     
     // Verify result
     if total == 45 {
-        print("✓ Functional pipeline works!");
-        return 0;
+        print("✓ Functional pipeline works!")
+        return 0
     } else {
-        print("✗ Pipeline failed");
-        return 1;
+        print("✗ Pipeline failed")
+        return 1
     }
 }

@@ -1,32 +1,32 @@
 // TDD Test for array.filter() - functional programming
 fn check_even(x: int) -> int {
-    return x % 2 == 0;
+    return x % 2 == 0
 }
 
 fn check_positive(x: int) -> int {
-    return x > 0;
+    return x > 0
 }
 
 fn main() -> int {
-    var numbers = [1, 2, 3, 4, 5, 6];
+    var numbers = [1, 2, 3, 4, 5, 6]
     
     // Test filter with check_even
-    var evens = numbers.filter(check_even);
-    print("Original count:");
-    print(numbers.len());
-    print("Even count:");
+    var evens = numbers.filter(check_even)
+    print("Original count:")
+    print(numbers.len())
+    print("Even count:")
     print(evens.len());  // Should be 3 (2, 4, 6)
     
     // Verify first even
-    var first = evens.get(0);
-    print("First even:");
+    var first = evens.get(0)
+    print("First even:")
     print(first);  // Should be 2
     
     if first == 2 {
-        print("✓ array.filter() works!");
-        return 0;
+        print("✓ array.filter() works!")
+        return 0
     } else {
-        print("✗ array.filter() failed");
-        return 1;
+        print("✗ array.filter() failed")
+        return 1
     }
 }

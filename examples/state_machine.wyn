@@ -13,7 +13,7 @@ fn next_state(current: State) -> State {
         RUNNING => State::PAUSED,
         PAUSED => State::RUNNING,
         STOPPED => State::IDLE
-    };
+    }
 }
 
 fn state_to_int(s: State) -> int {
@@ -22,14 +22,14 @@ fn state_to_int(s: State) -> int {
         RUNNING => 1,
         PAUSED => 2,
         STOPPED => 3
-    };
+    }
 }
 
 fn main() -> int {
-    var s1 = State::IDLE;
-    var s2 = next_state(s1);
-    var s3 = next_state(s2);
-    var s4 = next_state(s3);
+    var s1 = State::IDLE
+    var s2 = next_state(s1)
+    var s3 = next_state(s2)
+    var s4 = next_state(s3)
     
-    return state_to_int(s2) + state_to_int(s3) + state_to_int(s4);
+    return state_to_int(s2) + state_to_int(s3) + state_to_int(s4)
 }

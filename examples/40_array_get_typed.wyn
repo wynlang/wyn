@@ -1,29 +1,29 @@
 // Test array.get() with proper type returns
 fn main() -> int {
     // Test 1: String array
-    var names = ["Alice", "Bob", "Charlie"];
-    var first = names.get(0);
-    var second = names.get(1);
+    var names = ["Alice", "Bob", "Charlie"]
+    var first = names.get(0)
+    var second = names.get(1)
     
-    print("First: " + first);
-    print("Second: " + second);
+    print("First: " + first)
+    print("Second: " + second)
     
     // Test 2: Int array
-    var numbers = [10, 20, 30];
-    var num1 = numbers.get(0);
-    var num2 = numbers.get(2);
+    var numbers = [10, 20, 30]
+    var num1 = numbers.get(0)
+    var num2 = numbers.get(2)
     
-    print("Num1: " + num1);
-    print("Num2: " + num2);
+    print("Num1: " + num1)
+    print("Num2: " + num2)
     
     // Test 3: Use in expressions
-    var sum = numbers.get(0) + numbers.get(1);
-    print("Sum: " + sum);
+    var sum = numbers.get(0) + numbers.get(1)
+    print("Sum: " + sum)
     
     // Test 4: String comparison
     if first == "Alice" {
-        print("Name match works!");
+        print("Name match works!")
     }
     
-    return 0;
+    return 0
 }

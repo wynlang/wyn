@@ -1,48 +1,48 @@
 // File Operations - Advanced file system operations
 fn main() -> int {
-    print("=== FILE OPERATIONS ===");
-    print("");
+    print("=== FILE OPERATIONS ===")
+    print("")
     
     // Create a test file
-    var content = "Hello, Wyn!\nThis is a test file.";
-    File::write("test_source.txt", content);
-    print("✓ Created test file");
+    var content = "Hello, Wyn!\nThis is a test file."
+    File::write("test_source.txt", content)
+    print("✓ Created test file")
     
     // Test File::copy
-    File::copy("test_source.txt", "test_copy.txt");
-    var copied = File::read("test_copy.txt");
-    print("✓ File::copy - copied file successfully");
+    File::copy("test_source.txt", "test_copy.txt")
+    var copied = File::read("test_copy.txt")
+    print("✓ File::copy - copied file successfully")
     
     // Test File::size
-    var size = File::size("test_source.txt");
-    print("✓ File::size - file is", size, "bytes");
+    var size = File::size("test_source.txt")
+    print("✓ File::size - file is", size, "bytes")
     
     // Test File::is_file
     if File::is_file("test_source.txt") {
-        print("✓ File::is_file - correctly identified file");
+        print("✓ File::is_file - correctly identified file")
     }
     
     // Test File::is_dir
     if !File::is_dir("test_source.txt") {
-        print("✓ File::is_dir - correctly identified not a directory");
+        print("✓ File::is_dir - correctly identified not a directory")
     }
     
     // Test File::move
-    File::move("test_copy.txt", "test_renamed.txt");
+    File::move("test_copy.txt", "test_renamed.txt")
     if File::exists("test_renamed.txt") {
-        print("✓ File::move - file renamed successfully");
+        print("✓ File::move - file renamed successfully")
     }
     
     // Test with actual directory
     if File::is_dir(".") {
-        print("✓ File::is_dir - correctly identified current directory");
+        print("✓ File::is_dir - correctly identified current directory")
     }
     
     // Cleanup
-    File::delete("test_source.txt");
-    File::delete("test_renamed.txt");
-    print("");
-    print("=== All File operations work! ===");
+    File::delete("test_source.txt")
+    File::delete("test_renamed.txt")
+    print("")
+    print("=== All File operations work! ===")
     
-    return 0;
+    return 0
 }

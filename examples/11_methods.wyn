@@ -2,50 +2,50 @@
 // Demonstrates the "everything is an object" philosophy
 
 fn main() -> int {
-    print("Wyn Object-Oriented Methods Demo\n");
-    print("=================================\n\n");
+    print("Wyn Object-Oriented Methods Demo\n")
+    print("=================================\n\n")
     
     // String Methods
-    print("=== String Methods ===\n");
-    var text = "hello world";
-    var upper = text.upper();
-    var len = text.len();
-    print("Text: hello world\n");
-    print("Length: ");
-    print(len);
-    print("\n\n");
+    print("=== String Methods ===\n")
+    var text = "hello world"
+    var upper = text.upper()
+    var len = text.len()
+    print("Text: hello world\n")
+    print("Length: ")
+    print(len)
+    print("\n\n")
     
     // Number Methods
-    print("=== Number Methods ===\n");
-    var num = 42;
-    var abs_val = (-42).abs();
-    print("Absolute of -42: ");
-    print(abs_val);
-    print("\n\n");
+    print("=== Number Methods ===\n")
+    var num = 42
+    var abs_val = (-42).abs()
+    print("Absolute of -42: ")
+    print(abs_val)
+    print("\n\n")
     
     // Array Methods
-    print("=== Array Methods ===\n");
-    var arr = [3, 1, 4, 2];
-    var arr_len = arr.len();
-    var has_three = arr.contains(3);
-    print("Array length: ");
-    print(arr_len);
-    print("\n");
-    print("Contains 3: true\n\n");
+    print("=== Array Methods ===\n")
+    var arr = [3, 1, 4, 2]
+    var arr_len = arr.len()
+    var has_three = arr.contains(3)
+    print("Array length: ")
+    print(arr_len)
+    print("\n")
+    print("Contains 3: true\n\n")
     
     // HashMap with literal syntax
-    print("=== HashMap ===\n");
-    var scores = {"alice": 95, "bob": 87};
-    print("HashMap created with literal syntax\n");
-    print("Scores: {alice: 95, bob: 87}\n\n");
+    print("=== HashMap ===\n")
+    var scores = {"alice": 95, "bob": 87}
+    print("HashMap created with literal syntax\n")
+    print("Scores: {alice: 95, bob: 87}\n\n")
     
     // HashSet with initialization
-    print("=== HashSet ===\n");
-    var tags = {:"urgent", "important"};
-    var has_urgent = tags.contains("urgent");
-    print("HashSet: {urgent, important}\n");
-    print("Has urgent: true\n\n");
+    print("=== HashSet ===\n")
+    var tags = {:"urgent", "important"}
+    var has_urgent = tags.contains("urgent")
+    print("HashSet: {urgent, important}\n")
+    print("Has urgent: true\n\n")
     
-    print("Everything is an object in Wyn!\n");
-    return 0;
+    print("Everything is an object in Wyn!\n")
+    return 0
 }

@@ -38,20 +38,27 @@ wyn run -e 'println("or inline")'
 ## Features
 
 ```wyn
-// Variables and types
-var name = "Wyn"
-const version = 2
-var pi = 3.14
+// Variables — bare assignment just works (declares on first use)
+name = "Wyn"
+count = 0
+count = count + 1
+
+// ...or be explicit when you want to be
+const version = 2              // immutable
+var pi = 3.14                  // mutable
 
 // Full string interpolation
-var arr = [10, 20, 30]
+arr = [10, 20, 30]
 println("${name} v${version}")
 println("${arr[1]}")           // 20
 println("${name.upper()}")     // WYN
 
+// Functions — braces or a one-line => body
+fn double(x: int) -> int => x * 2
+fn even(x: int) -> bool => x % 2 == 0
+
 // Pipe operator
-fn double(x: int) -> int { return x * 2 }
-var result = 5 |> double       // 10
+result = 5 |> double           // 10
 
 // Enums with data + destructuring match
 enum Shape { Circle(float), Point }
@@ -67,10 +74,11 @@ struct User {
     fn greet(self) -> string { return "Hi ${self.name}" }
 }
 
-// Closures and higher-order functions
-var nums = [1, 2, 3, 4, 5]
-var doubled = nums.map(fn(x) => x * 2)
-var squares = [x * x for x in 1..=5]
+// Closures and higher-order functions — (x) => expr arrow lambdas
+nums = [1, 2, 3, 4, 5]
+doubled = nums.map((x) => x * 2)
+total = nums.reduce((a, b) => a + b, 0)
+squares = [x * x for x in 1..=5]
 
 // Spawn/await concurrency
 var f1 = spawn compute(1000)

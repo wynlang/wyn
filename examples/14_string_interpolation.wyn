@@ -1,70 +1,70 @@
 // String Interpolation - Complete demonstration
 fn main() -> int {
-    print("=== STRING INTERPOLATION ===");
-    print("");
+    print("=== STRING INTERPOLATION ===")
+    print("")
     
     // 1. Basic interpolation
-    var name = "Alice";
-    var age = 25;
-    print("Basic: ${name} is ${age} years old");
-    print("");
+    var name = "Alice"
+    var age = 25
+    print("Basic: ${name} is ${age} years old")
+    print("")
     
     // 2. Multiple variables
-    var x = 10;
-    var y = 20;
-    var sum = x + y;
-    print("Math: ${x} + ${y} = ${sum}");
-    print("");
+    var x = 10
+    var y = 20
+    var sum = x + y
+    print("Math: ${x} + ${y} = ${sum}")
+    print("")
     
     // 3. Method calls
-    var text = "hello";
-    var upper_text = text.upper();
-    print("Methods: '${text}' becomes '${upper_text}'");
-    print("");
+    var text = "hello"
+    var upper_text = text.upper()
+    print("Methods: '${text}' becomes '${upper_text}'")
+    print("")
     
     // 4. Calculations
-    var price = 100;
-    var quantity = 3;
-    var total = price * quantity;
-    print("Total: ${quantity} items at $${price} = $${total}");
-    print("");
+    var price = 100
+    var quantity = 3
+    var total = price * quantity
+    print("Total: ${quantity} items at $${price} = $${total}")
+    print("")
     
     // 5. Boolean values
-    var is_valid = true;
-    var is_ready = false;
-    print("Status: valid=${is_valid}, ready=${is_ready}");
-    print("");
+    var is_valid = true
+    var is_ready = false
+    print("Status: valid=${is_valid}, ready=${is_ready}")
+    print("")
     
     // 6. Array methods
-    var numbers = [1, 2, 3, 4, 5];
-    var len = numbers.len();
-    var total_sum = numbers.sum();
-    print("Array: length=${len}, sum=${total_sum}");
-    print("");
+    var numbers = [1, 2, 3, 4, 5]
+    var len = numbers.len()
+    var total_sum = numbers.sum()
+    print("Array: length=${len}, sum=${total_sum}")
+    print("")
     
     // 7. String methods
-    var email = "  USER@EXAMPLE.COM  ";
-    var cleaned = email.trim().lower();
-    print("Email: '${email}' -> '${cleaned}'");
-    print("");
+    var email = "  USER@EXAMPLE.COM  "
+    var cleaned = email.trim().lower()
+    print("Email: '${email}' -> '${cleaned}'")
+    print("")
     
     // 8. File operations
-    var test_file = "/tmp/test.txt";
-    File::write(test_file, "Hello, Wyn!");
+    var test_file = "/tmp/test.txt"
+    File::write(test_file, "Hello, Wyn!")
     if File::exists(test_file) {
-        var size = File::file_size(test_file);
-        print("File: ${test_file} (${size} bytes)");
+        var size = File::file_size(test_file)
+        print("File: ${test_file} (${size} bytes)")
     }
-    print("");
+    print("")
     
     // 9. System info
-    var cwd = File::get_cwd();
-    var timestamp = Time::now();
-    print("System: cwd=${cwd}");
-    print("        time=${timestamp}");
-    print("");
+    var cwd = File::get_cwd()
+    var timestamp = Time::now()
+    print("System: cwd=${cwd}")
+    print("        time=${timestamp}")
+    print("")
     
-    print("=== All interpolation patterns work! ===");
+    print("=== All interpolation patterns work! ===")
     
-    return 0;
+    return 0
 }

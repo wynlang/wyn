@@ -1,31 +1,31 @@
 // Binary Search - Demonstrates algorithms
 
 fn binary_search(arr: [int], len: int, target: int) -> int {
-    var left = 0;
-    var right = len - 1;
+    var left = 0
+    var right = len - 1
     
     while left <= right {
-        var mid = (left + right) / 2;
+        var mid = (left + right) / 2
         
         if arr[mid] == target {
-            return mid;
+            return mid
         }
         
         if arr[mid] < target {
-            left = mid + 1;
+            left = mid + 1
         } else {
-            right = mid - 1;
+            right = mid - 1
         }
     }
     
-    return -1;
+    return -1
 }
 
 fn main() -> int {
-    var sorted = [1, 3, 5, 7, 9, 11, 13, 15];
-    var idx1 = binary_search(sorted, 8, 7);
-    var idx2 = binary_search(sorted, 8, 13);
-    var idx3 = binary_search(sorted, 8, 99);
+    var sorted = [1, 3, 5, 7, 9, 11, 13, 15]
+    var idx1 = binary_search(sorted, 8, 7)
+    var idx2 = binary_search(sorted, 8, 13)
+    var idx3 = binary_search(sorted, 8, 99)
     
-    return idx1 + idx2 + idx3;
+    return idx1 + idx2 + idx3
 }

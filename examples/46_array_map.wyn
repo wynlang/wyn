@@ -1,32 +1,32 @@
 // TDD Test for array.map() - functional programming
 fn double_it(x: int) -> int {
-    return x * 2;
+    return x * 2
 }
 
 fn square(x: int) -> int {
-    return x * x;
+    return x * x
 }
 
 fn main() -> int {
-    var numbers = [1, 2, 3, 4, 5];
+    var numbers = [1, 2, 3, 4, 5]
     
     // Test map with double_it
-    var doubled = numbers.map(double_it);
-    print("Original:");
-    print(numbers.len());
-    print("Doubled:");
-    print(doubled.len());
+    var doubled = numbers.map(double_it)
+    print("Original:")
+    print(numbers.len())
+    print("Doubled:")
+    print(doubled.len())
     
     // Verify first element
-    var first = doubled.get(0);
-    print("First doubled:");
+    var first = doubled.get(0)
+    print("First doubled:")
     print(first);  // Should be 2
     
     if first == 2 {
-        print("✓ array.map() works!");
-        return 0;
+        print("✓ array.map() works!")
+        return 0
     } else {
-        print("✗ array.map() failed");
-        return 1;
+        print("✗ array.map() failed")
+        return 1
     }
 }

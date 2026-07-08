@@ -1,15 +1,15 @@
 // TDD Test for starts_with and ends_with
 fn main() -> int {
-    var text = "Hello World";
+    var text = "Hello World"
     
     // Test starts_with
-    var result1 = text.starts_with("Hello");
-    print(result1);
+    var result1 = text.starts_with("Hello")
+    print(result1)
     
     // Test ends_with
-    var result2 = text.ends_with("World");
-    print(result2);
+    var result2 = text.ends_with("World")
+    print(result2)
     
-    print("Tests complete");
-    return 0;
+    print("Tests complete")
+    return 0
 }

@@ -1,32 +1,32 @@
 // HashSet - Using hash sets for unique collections
 fn main() -> int {
     // Create hash set with initialization syntax
-    var set = {:"apple", "banana", "cherry"};
+    var set = {:"apple", "banana", "cherry"}
     
     // Add element
-    set.add("date");
+    set.add("date")
     
     // Try to add duplicate (no effect)
-    set.add("apple");
+    set.add("apple")
     
     // Check membership
     if (set.contains("apple")) {
-        print("Set contains apple\n");
+        print("Set contains apple\n")
     }
     
-    var has_grape = set.contains("grape");
+    var has_grape = set.contains("grape")
     if (has_grape == 0) {
-        print("Set does not contain grape\n");
+        print("Set does not contain grape\n")
     }
     
     // Remove element
-    set.remove("banana");
+    set.remove("banana")
     
-    var has_banana = set.contains("banana");
+    var has_banana = set.contains("banana")
     if (has_banana == 0) {
-        print("Banana removed successfully\n");
+        print("Banana removed successfully\n")
     }
     
-    print("HashSet operations complete!\n");
-    return 0;
+    print("HashSet operations complete!\n")
+    return 0
 }

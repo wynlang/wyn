@@ -1,115 +1,115 @@
 // CLI Argument Parsing - Simple command-line argument handling
 
 fn main() -> int {
-    var args = System::args();
+    var args = System::args()
     
-    print("=== CLI ARGUMENT PARSING ===");
-    print("");
+    print("=== CLI ARGUMENT PARSING ===")
+    print("")
     
     // Show all arguments
-    print("All arguments:");
-    var i = 0;
+    print("All arguments:")
+    var i = 0
     while i < args.len() {
-        print("  " + args[i]);
-        i = i + 1;
+        print("  " + args[i])
+        i = i + 1
     }
-    print("");
+    print("")
     
     // Check for flags
-    print("Checking flags:");
-    var found_verbose = false;
-    var found_help = false;
-    i = 1;
+    print("Checking flags:")
+    var found_verbose = false
+    var found_help = false
+    i = 1
     while i < args.len() {
         if args[i] == "--verbose" || args[i] == "-v" {
-            found_verbose = true;
+            found_verbose = true
         }
         if args[i] == "--help" || args[i] == "-h" {
-            found_help = true;
+            found_help = true
         }
-        i = i + 1;
+        i = i + 1
     }
     
     if found_verbose {
-        print("  ✓ Verbose mode enabled");
+        print("  ✓ Verbose mode enabled")
     }
     if found_help {
-        print("  ✓ Help requested");
+        print("  ✓ Help requested")
     }
     if !found_verbose && !found_help {
-        print("  (no flags detected)");
+        print("  (no flags detected)")
     }
-    print("");
+    print("")
     
     // Get option values
-    print("Checking options:");
-    var output_file = "";
-    var config_file = "";
-    i = 1;
+    print("Checking options:")
+    var output_file = ""
+    var config_file = ""
+    i = 1
     while i < args.len() {
-        var arg = args[i];
+        var arg = args[i]
         
         // Check --output=value format
         if arg.starts_with("--output=") {
-            output_file = arg.substring(9, arg.len());
+            output_file = arg.substring(9, arg.len())
         }
         // Check --output value format
         if arg == "--output" && i + 1 < args.len() {
-            output_file = args[i + 1];
+            output_file = args[i + 1]
         }
         
         // Check --config=value format
         if arg.starts_with("--config=") {
-            config_file = arg.substring(9, arg.len());
+            config_file = arg.substring(9, arg.len())
         }
         // Check --config value format
         if arg == "--config" && i + 1 < args.len() {
-            config_file = args[i + 1];
+            config_file = args[i + 1]
         }
         
-        i = i + 1;
+        i = i + 1
     }
     
     if output_file.len() > 0 {
-        print("  --output: " + output_file);
+        print("  --output: " + output_file)
     }
     if config_file.len() > 0 {
-        print("  --config: " + config_file);
+        print("  --config: " + config_file)
     }
     if output_file.len() == 0 && config_file.len() == 0 {
-        print("  (no options detected)");
+        print("  (no options detected)")
     }
-    print("");
+    print("")
     
     // Get positional arguments (non-flags)
-    print("Positional arguments:");
-    var pos_count = 0;
-    i = 1;
+    print("Positional arguments:")
+    var pos_count = 0
+    i = 1
     while i < args.len() {
-        var arg = args[i];
-        var is_flag = arg.starts_with("-");
+        var arg = args[i]
+        var is_flag = arg.starts_with("-")
         if is_flag {
             // Skip flags
         } else {
-            print("  " + arg);
-            pos_count = pos_count + 1;
+            print("  " + arg)
+            pos_count = pos_count + 1
         }
-        i = i + 1;
+        i = i + 1
     }
     
     if pos_count == 0 {
-        print("  (none)");
+        print("  (none)")
     }
-    print("");
+    print("")
     
-    print("=== Example Usage ===");
-    print("Try running with:");
-    print("  ./program --verbose file1.txt file2.txt");
-    print("  ./program -v --output=result.txt input.txt");
-    print("  ./program --config config.json --help");
-    print("");
-    print("This example shows how to parse command-line arguments.");
-    print("You can adapt this code for your own CLI programs!");
+    print("=== Example Usage ===")
+    print("Try running with:")
+    print("  ./program --verbose file1.txt file2.txt")
+    print("  ./program -v --output=result.txt input.txt")
+    print("  ./program --config config.json --help")
+    print("")
+    print("This example shows how to parse command-line arguments.")
+    print("You can adapt this code for your own CLI programs!")
     
-    return 0;
+    return 0
 }
