@@ -4,12 +4,12 @@ import math
 fn main() {
     print("=== Map Index Assignment ===")
     var users = map[string, int] { "alice": 25 }
-        users["bob"] = 30        // New assignment syntax
-        users["alice"].print()   // 25
-        users["bob"].print()     // 30
+    users["bob"] = 30        // New assignment syntax
+    users["alice"].print()   // 25
+    users["bob"].print()     // 30
 
-        print("=== Qualified Module Access ===")
-        math.add(5, 3).print()   // 8
+    print("=== Qualified Module Access ===")
+    math.add(5, 3).print()   // 8
 
-        print("=== Core v1.7.0 features working! ===")
-    }
+    print("=== Core v1.7.0 features working! ===")
+}

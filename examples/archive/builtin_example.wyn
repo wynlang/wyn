@@ -15,5 +15,5 @@ fn main() {
 
     // MAPS - Built-in type, no import needed:
     var users = map[string, int] { "alice": 25 }
-        users.get("alice").print()  // Map methods are built-in
-    }
+    users.get("alice").print()  // Map methods are built-in
+}

@@ -10,10 +10,10 @@ struct Point {
 
 fn main() -> int {
     var p1 = Point { x: 3, y: 4 }
-        var p2 = Point { x: 5, y: 12 }
+    var p2 = Point { x: 5, y: 12 }
 
-            println("Distance² from origin: " + p1.distance_sq().to_string())
-            println("Distance² from origin: " + p2.distance_sq().to_string())
+    println("Distance² from origin: " + p1.distance_sq().to_string())
+    println("Distance² from origin: " + p2.distance_sq().to_string())
 
-            return 0
-        }
+    return 0
+}

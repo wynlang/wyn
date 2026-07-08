@@ -39,8 +39,8 @@ fn main() -> int {
     // If expressions with new methods
     print("If expressions with new methods:")
     var conditional = if "hello".length() > 3 { 1 } else { 0 }
-            conditional.print()  // 1
+    conditional.print()  // 1
 
-            print("=== All extended features working! ===")
-            return 0
-        }
+    print("=== All extended features working! ===")
+    return 0
+}

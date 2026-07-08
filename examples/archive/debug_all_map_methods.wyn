@@ -2,13 +2,13 @@
 fn main() {
     var scores = map[string, int] { "alice": 95 }
 
-        print("Testing map methods:")
-        print("has alice:")
-        scores.has("alice").print()  // This works
+    print("Testing map methods:")
+    print("has alice:")
+    scores.has("alice").print()  // This works
 
-        print("get alice:")
-        scores.get("alice").print()  // This should work
+    print("get alice:")
+    scores.get("alice").print()  // This should work
 
-        print("size:")
-        scores.size().print()  // This doesn't work
-    }
+    print("size:")
+    scores.size().print()  // This doesn't work
+}

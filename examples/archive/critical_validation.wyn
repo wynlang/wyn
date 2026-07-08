@@ -19,15 +19,15 @@ fn main() {
     print("Test 3: For-in loops")
     var items = [1, 2, 3]
     // This should work: for item in items { item.print() }
-        // But for-in syntax doesn't exist
+    // But for-in syntax doesn't exist
 
-        // Test 4: Match expressions - BROKEN
-        print("Test 4: Match expressions")
-        // This crashes the compiler
+    // Test 4: Match expressions - BROKEN
+    print("Test 4: Match expressions")
+    // This crashes the compiler
 
-        // Test 5: Struct literals - DISABLED
-        print("Test 5: Struct literals")
-        // This was disabled due to parser conflicts
+    // Test 5: Struct literals - DISABLED
+    print("Test 5: Struct literals")
+    // This was disabled due to parser conflicts
 
-        print("REALITY CHECK: Many features are missing or broken")
-    }
+    print("REALITY CHECK: Many features are missing or broken")
+}

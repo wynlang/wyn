@@ -29,110 +29,110 @@ fn create_table(capacity: int) -> HashTable {
 
     for i in 0..capacity {
         let entry = Entry { key: "", value: 0, occupied: false }
-            table.entries.push(entry)
-        }
-
-        return table
+        table.entries.push(entry)
     }
 
-    fn insert(table: &HashTable, key: string, value: int) -> bool {
-        if table.size >= table.capacity * 3 / 4 {
-            return false  # Table too full
-        }
+    return table
+}
 
-        let index = hash(key, table.capacity)
-        let original_index = index
-
-        # Linear probing
-        while table.entries[index].occupied {
-            if table.entries[index].key == key {
-                table.entries[index].value = value  # Update existing
-                return true
-            }
-            index = (index + 1) % table.capacity
-            if index == original_index {
-                return false  # Table full
-            }
-        }
-
-        table.entries[index].key = key
-        table.entries[index].value = value
-        table.entries[index].occupied = true
-        table.size = table.size + 1
-        return true
+fn insert(table: &HashTable, key: string, value: int) -> bool {
+    if table.size >= table.capacity * 3 / 4 {
+        return false  # Table too full
     }
 
-    fn get(table: &HashTable, key: string) -> int {
-        let index = hash(key, table.capacity)
-        let original_index = index
+    let index = hash(key, table.capacity)
+    let original_index = index
 
-        while table.entries[index].occupied {
-            if table.entries[index].key == key {
-                return table.entries[index].value
-            }
-            index = (index + 1) % table.capacity
-            if index == original_index {
-                break
-            }
+    # Linear probing
+    while table.entries[index].occupied {
+        if table.entries[index].key == key {
+            table.entries[index].value = value  # Update existing
+            return true
         }
-
-        return -1  # Not found
+        index = (index + 1) % table.capacity
+        if index == original_index {
+            return false  # Table full
+        }
     }
 
-    fn remove(table: &HashTable, key: string) -> bool {
-        let index = hash(key, table.capacity)
-        let original_index = index
+    table.entries[index].key = key
+    table.entries[index].value = value
+    table.entries[index].occupied = true
+    table.size = table.size + 1
+    return true
+}
 
-        while table.entries[index].occupied {
-            if table.entries[index].key == key {
-                table.entries[index].occupied = false
+fn get(table: &HashTable, key: string) -> int {
+    let index = hash(key, table.capacity)
+    let original_index = index
+
+    while table.entries[index].occupied {
+        if table.entries[index].key == key {
+            return table.entries[index].value
+        }
+        index = (index + 1) % table.capacity
+        if index == original_index {
+            break
+        }
+    }
+
+    return -1  # Not found
+}
+
+fn remove(table: &HashTable, key: string) -> bool {
+    let index = hash(key, table.capacity)
+    let original_index = index
+
+    while table.entries[index].occupied {
+        if table.entries[index].key == key {
+            table.entries[index].occupied = false
+            table.size = table.size - 1
+
+            # Rehash following entries
+            let next_index = (index + 1) % table.capacity
+            while table.entries[next_index].occupied {
+                let rehash_key = table.entries[next_index].key
+                let rehash_value = table.entries[next_index].value
+                table.entries[next_index].occupied = false
                 table.size = table.size - 1
-
-                # Rehash following entries
-                let next_index = (index + 1) % table.capacity
-                while table.entries[next_index].occupied {
-                    let rehash_key = table.entries[next_index].key
-                    let rehash_value = table.entries[next_index].value
-                    table.entries[next_index].occupied = false
-                    table.size = table.size - 1
-                    insert(table, rehash_key, rehash_value)
-                    next_index = (next_index + 1) % table.capacity
-                }
-
-                return true
+                insert(table, rehash_key, rehash_value)
+                next_index = (next_index + 1) % table.capacity
             }
-            index = (index + 1) % table.capacity
-            if index == original_index {
-                break
-            }
+
+            return true
         }
-
-        return false
-    }
-
-    fn print_table(table: &HashTable) {
-        print("Hash Table (size:", table.size, "):")
-        for i in 0..table.capacity {
-            if table.entries[i].occupied {
-                print("  ", table.entries[i].key, " -> ", table.entries[i].value)
-            }
+        index = (index + 1) % table.capacity
+        if index == original_index {
+            break
         }
     }
 
-    fn main() {
-        let table = create_table(7)
+    return false
+}
 
-        insert(&table, "apple", 100)
-        insert(&table, "banana", 200)
-        insert(&table, "cherry", 300)
-        insert(&table, "date", 400)
-
-        print_table(&table)
-
-        print("Get apple:", get(&table, "apple"))
-        print("Get grape:", get(&table, "grape"))
-
-        remove(&table, "banana")
-        print("After removing banana:")
-        print_table(&table)
+fn print_table(table: &HashTable) {
+    print("Hash Table (size:", table.size, "):")
+    for i in 0..table.capacity {
+        if table.entries[i].occupied {
+            print("  ", table.entries[i].key, " -> ", table.entries[i].value)
+        }
     }
+}
+
+fn main() {
+    let table = create_table(7)
+
+    insert(&table, "apple", 100)
+    insert(&table, "banana", 200)
+    insert(&table, "cherry", 300)
+    insert(&table, "date", 400)
+
+    print_table(&table)
+
+    print("Get apple:", get(&table, "apple"))
+    print("Get grape:", get(&table, "grape"))
+
+    remove(&table, "banana")
+    print("After removing banana:")
+    print_table(&table)
+}

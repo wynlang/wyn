@@ -107,6 +107,31 @@ int cmd_fmt(const char* file, int argc, char** argv) {
                     if (i < len) out[oi++] = start[i++];
                     continue;
                 }
+                // Once a line comment starts, copy the rest verbatim.
+                if (start[i] == '/' && i + 1 < len && start[i+1] == '/') {
+                    while (i < len) out[oi++] = start[i++];
+                    continue;
+                }
+                // Space around unambiguously-binary two-char operators
+                // (==, !=, <=, >=, &&, ||). These never appear as unary or in
+                // generics, so spacing them is always safe. Single-char -, *,
+                // /, <, >, & are left alone (unary / generic / pointer
+                // ambiguity needs the AST to resolve).
+                {
+                    static const char* binops[] = {"==","!=","<=",">=","&&","||", NULL};
+                    int matched = -1;
+                    for (int b = 0; binops[b]; b++) {
+                        if (start[i] == binops[b][0] && i + 1 < len && start[i+1] == binops[b][1]) { matched = b; break; }
+                    }
+                    if (matched >= 0) {
+                        if (oi > 0 && out[oi-1] != ' ') out[oi++] = ' ';
+                        out[oi++] = binops[matched][0];
+                        out[oi++] = binops[matched][1];
+                        i += 2;
+                        if (i < len && start[i] != ' ') out[oi++] = ' ';
+                        continue;
+                    }
+                }
                 // Space after ',' (not before).
                 if (start[i] == ',') {
                     if (oi > 0 && out[oi-1] == ' ') oi--; // no space before
@@ -167,11 +192,24 @@ int cmd_fmt(const char* file, int argc, char** argv) {
 
         // Adjust indent for braces (skip braces inside strings)
         in_string = 0;
-        for (int i = 0; i < len; i++) {
-            if (start[i] == '"' && (i == 0 || start[i-1] != '\\')) in_string = !in_string;
-            if (!in_string && start[i] == '{') indent++;
+        // Net brace delta for the NEXT line's indent = opens - closes, counting
+        // both { and } (skipping strings and line comments). A leading } was
+        // already pre-dedented above, so add it back here to avoid double-count.
+        {
+            int opens = 0, closes = 0;
+            for (int i = 0; i < len; i++) {
+                if (start[i] == '"' && (i == 0 || start[i-1] != '\\')) { in_string = !in_string; continue; }
+                if (!in_string && start[i] == '/' && i + 1 < len && start[i+1] == '/') break; // comment
+                if (in_string) continue;
+                if (start[i] == '{') opens++;
+                else if (start[i] == '}') closes++;
+            }
+            in_string = 0;
+            int net = opens - closes;
+            if (start[0] == '}') net += 1; // leading } already dedented above
+            indent += net;
+            if (indent < 0) indent = 0;
         }
-        // Note: closing brace at start of line was already handled above
     }
 
     // Remove trailing blank lines

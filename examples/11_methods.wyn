@@ -36,16 +36,16 @@ fn main() -> int {
     // HashMap with literal syntax
     print("=== HashMap ===\n")
     var scores = { "alice": 95, "bob": 87 }
-        print("HashMap created with literal syntax\n")
-        print("Scores: {alice: 95, bob: 87}\n\n")
+    print("HashMap created with literal syntax\n")
+    print("Scores: {alice: 95, bob: 87}\n\n")
 
-        // HashSet with initialization
-        print("=== HashSet ===\n")
-        var tags = {: "urgent", "important" }
-            var has_urgent = tags.contains("urgent")
-            print("HashSet: {urgent, important}\n")
-            print("Has urgent: true\n\n")
+    // HashSet with initialization
+    print("=== HashSet ===\n")
+    var tags = {: "urgent", "important" }
+    var has_urgent = tags.contains("urgent")
+    print("HashSet: {urgent, important}\n")
+    print("Has urgent: true\n\n")
 
-            print("Everything is an object in Wyn!\n")
-            return 0
-        }
+    print("Everything is an object in Wyn!\n")
+    return 0
+}

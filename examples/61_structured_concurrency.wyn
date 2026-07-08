@@ -1,19 +1,19 @@
 // Structured concurrency with parallel { }
-    // Every spawn inside runs concurrently, and all tasks are guaranteed to
-    // finish before the block exits — no leaked tasks, no manual join.
+// Every spawn inside runs concurrently, and all tasks are guaranteed to
+// finish before the block exits — no leaked tasks, no manual join.
 
-    fn fetch(id: int) -> string => "result-" + id.to_string()
+fn fetch(id: int) -> string => "result-" + id.to_string()
 
-    fn main() -> int {
-        // Fan out three tasks; they run at the same time.
-        parallel {
-            a = spawn fetch(1)
-            b = spawn fetch(2)
-            c = spawn fetch(3)
-        }
-        // Here, all three are done and a/b/c hold their values.
-        println(a)
-        println(b)
-        println(c)
-        return 0
+fn main() -> int {
+    // Fan out three tasks; they run at the same time.
+    parallel {
+        a = spawn fetch(1)
+        b = spawn fetch(2)
+        c = spawn fetch(3)
     }
+    // Here, all three are done and a/b/c hold their values.
+    println(a)
+    println(b)
+    println(c)
+    return 0
+}
