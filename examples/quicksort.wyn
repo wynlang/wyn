@@ -3,7 +3,7 @@
 fn partition(arr: [int], low: int, high: int) -> int {
     var pivot = arr[high]
     var i = low - 1
-    
+
     var j = low
     while j < high {
         if arr[j] < pivot {
@@ -14,11 +14,11 @@ fn partition(arr: [int], low: int, high: int) -> int {
         }
         j = j + 1
     }
-    
+
     var temp = arr[i + 1]
     arr[i + 1] = arr[high]
     arr[high] = temp
-    
+
     return i + 1
 }
 
@@ -34,9 +34,9 @@ fn quicksort(arr: [int], low: int, high: int) -> int {
 fn main() -> int {
     var arr = [64, 34, 25, 12, 22, 11, 90]
     var n = 7
-    
+
     var dummy = quicksort(arr, 0, n - 1)
-    
+
     // Return first element to verify sorting
     return arr[0];  // Should be 11
 }

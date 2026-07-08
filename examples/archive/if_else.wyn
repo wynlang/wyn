@@ -1,13 +1,13 @@
 fn main() -> int {
     var x = 10
-    
+
     if x > 5 {
         print(100)
     } else {
         print(0)
     }
-    
+
     print(42)
-    
+
     return 0
 }

@@ -1,39 +1,39 @@
 // Option Types - Safe handling of optional values
 fn main() -> int {
-    print("=== OPTION TYPES ===");
-    print("");
-    
+    print("=== OPTION TYPES ===")
+    print("")
+
     // 1. Creating Some values
-    var some_num = Some(42);
-    print("Created Some(42)");
-    
+    var some_num = Some(42)
+    print("Created Some(42)")
+
     // 2. Checking if value exists
     if some_num.is_some() {
-        print("✓ Value exists (is_some)");
+        print("✓ Value exists (is_some)")
     }
-    print("");
-    
+    print("")
+
     // 3. Creating None values
-    var none_val = None();
+    var none_val = None()
     if none_val.is_none() {
-        print("✓ None value created (is_none)");
+        print("✓ None value created (is_none)")
     }
-    print("");
-    
+    print("")
+
     // 4. Multiple Some values
-    var val1 = Some(10);
-    var val2 = Some(20);
-    var val3 = Some(30);
-    
+    var val1 = Some(10)
+    var val2 = Some(20)
+    var val3 = Some(30)
+
     if val1.is_some() {
         if val2.is_some() {
             if val3.is_some() {
-                print("✓ Multiple Option values work");
+                print("✓ Multiple Option values work")
             }
         }
     }
-    print("");
-    
-    print("=== All Option tests passed! ===");
-    return 0;
+    print("")
+
+    print("=== All Option tests passed! ===")
+    return 0
 }

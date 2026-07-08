@@ -4,7 +4,7 @@ fn fib_iterative(n: int) -> int {
     }
     var a = 0
     var b = 1
-    for var i = 2; i <= n; i += 1 {
+    for var i = 2; i <= n; i + = 1 {
         var temp = a + b
         a = b
         b = temp
@@ -14,13 +14,13 @@ fn fib_iterative(n: int) -> int {
 
 fn main() -> int {
     var start = time_now()
-    
-    for var i = 0; i < 1000; i += 1 {
+
+    for var i = 0; i < 1000; i + = 1 {
         var result = fib_iterative(20)
     }
-    
+
     var end = time_now()
     print(end - start)
-    
+
     return 0
 }

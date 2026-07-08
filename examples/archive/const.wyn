@@ -1,15 +1,15 @@
 fn main() -> int {
     const PI = 314
     const MAX = 100
-    
+
     var x = 10
-    
+
     print(PI)
     print(MAX)
     print(x)
-    
+
     x = 20
     print(x)
-    
+
     return 0
 }

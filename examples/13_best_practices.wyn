@@ -3,7 +3,7 @@
 
 fn main() -> int {
     print("=== Wyn v1.4.0 Best Practices ===\n\n")
-    
+
     // 1. Use polymorphic print() for all types
     print("1. Polymorphic Print:\n")
     print(42);              // int
@@ -12,81 +12,81 @@ fn main() -> int {
     print(true);            // bool
     print([1, 2, 3]);       // array
     print("\n")
-    
+
     // 2. Use method syntax for clean code
     print("2. Method Chaining:\n")
     var text = "  hello world  "
     var result = text.trim().upper()
     print(result)
     print("\n\n")
-    
+
     // 3. Use HashMap for key-value storage
     print("3. HashMap Usage:\n")
-    var config = {"host": 1, "port": 2, "timeout": 3}
-    if (config.has("host")) {
-        print("Host configured\n")
-    }
-    config["retries"] = 5
-    print("Config size: ")
-    print(config.len())
-    print("\n\n")
-    
-    // 4. Use HashSet for unique collections
-    print("4. HashSet Usage:\n")
-    var visited = {:"page1", "page2"}
-    var page = "page3"
-    if (visited.contains(page) == 0) {
-        visited.add(page)
-        print("Visiting new page\n")
-    }
-    print("\n")
-    
-    // 5. Use split_get() for parsing
-    print("5. String Parsing:\n")
-    var csv = "name,age,city"
-    var field1 = split_get(csv, ",", 0)
-    var field2 = split_get(csv, ",", 1)
-    var field3 = split_get(csv, ",", 2)
-    print("Fields: ")
-    print(field1)
-    print(", ")
-    print(field2)
-    print(", ")
-    print(field3)
-    print("\n\n")
-    
-    // 6. Use arrays for ordered collections
-    print("6. Array Usage:\n")
-    var items = []
-    items.push(1)
-    items.push(2)
-    items.push(3)
-    if (items.contains(2)) {
-        print("Found item 2\n")
-    }
-    print("\n")
-    
-    // 7. Check before accessing
-    print("7. Safe Access:\n")
-    var data = {"key": 100}
-    if (data.has("key")) {
-        var value = data["key"]
-        print("Value: ")
-        print(value)
-        print("\n")
-    }
-    print("\n")
-    
-    // 8. Use string methods for text processing
-    print("8. Text Processing:\n")
-    var input = "Hello World"
-    if (input.contains("World")) {
-        var replaced = input.replace("World", "Wyn")
-        print(replaced)
-        print("\n")
-    }
-    print("\n")
-    
-    print("=== Best practices demonstrated! ===\n")
-    return 0
-}
+    var config = { "host": 1, "port": 2, "timeout": 3 }
+        if (config.has("host")) {
+            print("Host configured\n")
+        }
+        config["retries"] = 5
+        print("Config size: ")
+        print(config.len())
+        print("\n\n")
+
+        // 4. Use HashSet for unique collections
+        print("4. HashSet Usage:\n")
+        var visited = {: "page1", "page2" }
+            var page = "page3"
+            if (visited.contains(page) == 0) {
+                visited.add(page)
+                print("Visiting new page\n")
+            }
+            print("\n")
+
+            // 5. Use split_get() for parsing
+            print("5. String Parsing:\n")
+            var csv = "name,age,city"
+            var field1 = split_get(csv, ",", 0)
+            var field2 = split_get(csv, ",", 1)
+            var field3 = split_get(csv, ",", 2)
+            print("Fields: ")
+            print(field1)
+            print(", ")
+            print(field2)
+            print(", ")
+            print(field3)
+            print("\n\n")
+
+            // 6. Use arrays for ordered collections
+            print("6. Array Usage:\n")
+            var items = []
+            items.push(1)
+            items.push(2)
+            items.push(3)
+            if (items.contains(2)) {
+                print("Found item 2\n")
+            }
+            print("\n")
+
+            // 7. Check before accessing
+            print("7. Safe Access:\n")
+            var data = { "key": 100 }
+                if (data.has("key")) {
+                    var value = data["key"]
+                    print("Value: ")
+                    print(value)
+                    print("\n")
+                }
+                print("\n")
+
+                // 8. Use string methods for text processing
+                print("8. Text Processing:\n")
+                var input = "Hello World"
+                if (input.contains("World")) {
+                    var replaced = input.replace("World", "Wyn")
+                    print(replaced)
+                    print("\n")
+                }
+                print("\n")
+
+                print("=== Best practices demonstrated! ===\n")
+                return 0
+            }

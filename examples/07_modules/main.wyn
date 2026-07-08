@@ -1,16 +1,16 @@
 // Modules - Using the module system
-import math;
+import math
 
 fn main() -> int {
-    var sum = math::add(10, 20);
-    var product = math::multiply(5, 6);
-    
-    print("Sum: ");
-    print(sum);
-    print("\n");
-    print("Product: ");
-    print(product);
-    print("\n");
-    
-    return 0;
+    var sum = math::add(10, 20)
+    var product = math::multiply(5, 6)
+
+    print("Sum: ")
+    print(sum)
+    print("\n")
+    print("Product: ")
+    print(product)
+    print("\n")
+
+    return 0
 }

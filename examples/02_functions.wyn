@@ -10,11 +10,11 @@ fn multiply(a: int, b: int) -> int {
 fn main() -> int {
     var sum = add(5, 3)
     var product = multiply(4, 7)
-    
+
     print("Sum: ")
     print(sum)
     print("Product: ")
     print(product)
-    
+
     return 0
 }

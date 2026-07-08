@@ -1,21 +1,21 @@
 fn main() -> int {
     var x = 10
     var y = 20
-    
+
     if x > 5 and y < 30 {
         print(1)
     }
-    
+
     if x < 5 or y > 15 {
         print(2)
     }
-    
+
     var flag = true
     if not flag {
         print(0)
     } else {
         print(3)
     }
-    
+
     return 0
 }

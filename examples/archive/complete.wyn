@@ -4,67 +4,67 @@ type UserId = int
 
 enum Status { IDLE, ACTIVE, DONE }
 
-fn fibonacci[T](n: int) -> int {
-    if n <= 1 { return n }
-    return fibonacci(n - 1) + fibonacci(n - 2)
-}
+    fn fibonacci[T](n: int) -> int {
+        if n <= 1 { return n }
+            return fibonacci(n - 1) + fibonacci(n - 2)
+        }
 
-pub fn factorial(n: int) -> int {
-    var result = 1
-    for var i = 1; i <= n; i += 1 {
-        result *= i
-    }
-    return result
-}
+        pub fn factorial(n: int) -> int {
+            var result = 1
+            for var i = 1; i <= n; i + = 1 {
+                result * = i
+            }
+            return result
+        }
 
-fn main() -> int {
-    const MAX = 100
-    var count = 0
-    
-    // Booleans and logic
-    var flag = true
-    if flag and not false {
-        count += 1
-    }
-    
-    // Enums and pattern matching
-    var state = ACTIVE
-    var code = match state {
-        IDLE => 0,
-        ACTIVE => 1,
-        DONE => 2
-    }
-    
-    // Arrays
-    var nums = [1, 2, 3, 4, 5]
-    print(arr_sum(nums, 5))
-    print(arr_contains(nums, 5, 3))
-    
-    // Control flow
-    for var i = 0; i < 5; i += 1 {
-        if i == 3 { continue }
-        count += 1
-    }
-    
-    // Math functions
-    print(gcd(48, 18))
-    print(lcm(12, 18))
-    print(pow_int(2, 10))
-    
-    // Recursion
-    print(fibonacci(10))
-    print(factorial(5))
-    
-    // Compound assignments
-    var x = 10
-    x += 5
-    x *= 2
-    print(x)
-    
-    // Type aliases
-    var user = 42
-    print(user)
-    
-    print(count)
-    return 0
-}
+        fn main() -> int {
+            const MAX = 100
+            var count = 0
+
+            // Booleans and logic
+            var flag = true
+            if flag and not false {
+                count + = 1
+            }
+
+            // Enums and pattern matching
+            var state = ACTIVE
+            var code = match state {
+                IDLE => 0,
+                ACTIVE => 1,
+                DONE => 2
+            }
+
+            // Arrays
+            var nums = [1, 2, 3, 4, 5]
+            print(arr_sum(nums, 5))
+            print(arr_contains(nums, 5, 3))
+
+            // Control flow
+            for var i = 0; i < 5; i + = 1 {
+                if i == 3 { continue }
+                    count + = 1
+                }
+
+                // Math functions
+                print(gcd(48, 18))
+                print(lcm(12, 18))
+                print(pow_int(2, 10))
+
+                // Recursion
+                print(fibonacci(10))
+                print(factorial(5))
+
+                // Compound assignments
+                var x = 10
+                x + = 5
+                x * = 2
+                print(x)
+
+                // Type aliases
+                var user = 42
+                print(user)
+
+                print(count)
+                return 0
+            }

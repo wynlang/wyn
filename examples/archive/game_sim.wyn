@@ -20,27 +20,27 @@ fn simulate_game() -> int {
     var health = 100
     var score = 0
     var round = 1
-    
+
     while is_alive(health) {
         print(round)
         print(health)
-        
+
         var damage = random_int(30) + 10
         health = take_damage(health, damage)
-        
-        score += 10
-        round += 1
-        
+
+        score + = 10
+        round + = 1
+
         if round > 5 {
             break
         }
     }
-    
+
     var state = DEAD
     if is_alive(health) {
         state = ALIVE
     }
-    
+
     print(score)
     return score
 }

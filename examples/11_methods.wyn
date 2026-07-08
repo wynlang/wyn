@@ -4,7 +4,7 @@
 fn main() -> int {
     print("Wyn Object-Oriented Methods Demo\n")
     print("=================================\n\n")
-    
+
     // String Methods
     print("=== String Methods ===\n")
     var text = "hello world"
@@ -14,7 +14,7 @@ fn main() -> int {
     print("Length: ")
     print(len)
     print("\n\n")
-    
+
     // Number Methods
     print("=== Number Methods ===\n")
     var num = 42
@@ -22,7 +22,7 @@ fn main() -> int {
     print("Absolute of -42: ")
     print(abs_val)
     print("\n\n")
-    
+
     // Array Methods
     print("=== Array Methods ===\n")
     var arr = [3, 1, 4, 2]
@@ -32,20 +32,20 @@ fn main() -> int {
     print(arr_len)
     print("\n")
     print("Contains 3: true\n\n")
-    
+
     // HashMap with literal syntax
     print("=== HashMap ===\n")
-    var scores = {"alice": 95, "bob": 87}
-    print("HashMap created with literal syntax\n")
-    print("Scores: {alice: 95, bob: 87}\n\n")
-    
-    // HashSet with initialization
-    print("=== HashSet ===\n")
-    var tags = {:"urgent", "important"}
-    var has_urgent = tags.contains("urgent")
-    print("HashSet: {urgent, important}\n")
-    print("Has urgent: true\n\n")
-    
-    print("Everything is an object in Wyn!\n")
-    return 0
-}
+    var scores = { "alice": 95, "bob": 87 }
+        print("HashMap created with literal syntax\n")
+        print("Scores: {alice: 95, bob: 87}\n\n")
+
+        // HashSet with initialization
+        print("=== HashSet ===\n")
+        var tags = {: "urgent", "important" }
+            var has_urgent = tags.contains("urgent")
+            print("HashSet: {urgent, important}\n")
+            print("Has urgent: true\n\n")
+
+            print("Everything is an object in Wyn!\n")
+            return 0
+        }

@@ -2,13 +2,13 @@
 // String utility functions
 
 pub fn uppercase(s: string) -> string {
-    return s.upper();
+    return s.upper()
 }
 
 pub fn lowercase(s: string) -> string {
-    return s.lower();
+    return s.lower()
 }
 
 pub fn length(s: string) -> int {
-    return s.len();
+    return s.len()
 }

@@ -3,7 +3,7 @@
 
 fn main() -> int {
     println("ha" * 3);          // hahaha
-    println("=-" * 10);         // =-=-=-=-=-=-=-=-=-=-
+    println("=-" * 10);         // = - = - = - = - = - = - = - = - = - = -
 
     // Useful for formatting
     var sep = "-" * 30

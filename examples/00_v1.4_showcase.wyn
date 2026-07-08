@@ -4,20 +4,20 @@
 fn main() -> int {
     print("=== WYN v1.4.0 FEATURE SHOWCASE ===")
     print("")
-    
+
     // 1. String Interpolation - Beautiful output
     var name = "Wyn"
     var version = "1.4.0"
     print("Language: ${name} v${version}")
     print("")
-    
+
     // 2. Modern Iteration - Clean syntax
     print("Modern For-In Loops:")
     for i in 0..5 {
         print("  Iteration ${i}")
     }
     print("")
-    
+
     // 3. Rich String Methods
     print("String Processing:")
     var text = "  hello world  "
@@ -25,7 +25,7 @@ fn main() -> int {
     print("  Original: '${text}'")
     print("  Processed: '${processed}'")
     print("")
-    
+
     // 4. Powerful Array Methods
     print("Array Operations:")
     var numbers = [5, 2, 8, 1, 9, 3]
@@ -36,13 +36,13 @@ fn main() -> int {
     print("  Min: ${min_val}, Max: ${max_val}")
     print("  Sum: ${sum_val}, Avg: ${avg_val}")
     print("")
-    
+
     // 5. File System Operations
     print("File Operations:")
     var test_file = "/tmp/wyn_showcase.txt"
     var content = "Wyn v1.4.0 is amazing!"
     File::write(test_file, content)
-    
+
     if File::exists(test_file) {
         var read_back = File::read(test_file)
         var size = File::file_size(test_file)
@@ -51,7 +51,7 @@ fn main() -> int {
         print("  File size: ${size} bytes")
     }
     print("")
-    
+
     // 6. System Integration
     print("System Info:")
     var cwd = File::get_cwd()
@@ -59,7 +59,7 @@ fn main() -> int {
     print("  Working dir: ${cwd}")
     print("  Timestamp: ${timestamp}")
     print("")
-    
+
     // 7. Clean Conditionals (no parens needed)
     print("Smart Conditionals:")
     var score = 95
@@ -71,25 +71,25 @@ fn main() -> int {
         print("  Grade: C (Keep trying!)")
     }
     print("")
-    
+
     // 8. String Building
     print("String Building:")
     var parts = ["Wyn", "is", "fast", "and", "elegant"]
     var sentence = parts.join(" ")
     print("  ${sentence}")
     print("")
-    
+
     // 9. Real-world example: Email validation
     print("Real-World Example:")
     var email = "  USER@EXAMPLE.COM  "
     var cleaned = email.trim().lower()
-    
+
     if cleaned.contains("@") && cleaned.ends_with(".com") {
         print("  Valid email: ${cleaned}")
     }
     print("")
-    
+
     print("=== All features working perfectly! ===")
-    
+
     return 0
 }

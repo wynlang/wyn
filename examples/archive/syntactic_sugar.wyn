@@ -4,7 +4,7 @@
 fn main() -> int {
     "=== Wyn v1.5.0 - Pure Elegance ===".print()
     "".print()
-    
+
     // 1. Unified print - works on everything
     "1. Unified Print:".print()
     42.print()
@@ -12,7 +12,7 @@ fn main() -> int {
     "text".print()
     true.print()
     "".print()
-    
+
     // 2. String methods - all elegant
     "2. String Methods:".print()
     "hello".upper().print()
@@ -21,12 +21,12 @@ fn main() -> int {
     "hello".len().print()
     "hello".size().print()
     "".print()
-    
+
     // 3. Method chaining - beautiful
     "3. Method Chaining:".print()
     "  hello world  ".trim().upper().print()
     "".print()
-    
+
     // 4. Array methods - consistent
     "4. Array Methods:".print()
     var arr = [1, 2, 3, 4, 5]
@@ -36,7 +36,7 @@ fn main() -> int {
     arr.count().print()
     arr.size().print()
     "".print()
-    
+
     // 5. Number methods - Ruby-style
     "5. Number Methods:".print()
     var num = -42
@@ -44,14 +44,14 @@ fn main() -> int {
     num.isEven().print()
     42.toString().print()
     "".print()
-    
+
     // 6. Range methods - elegant iteration
     "6. Range Methods:".print()
     5.times().print()
     1.upto(3).print()
     10.downto(8).print()
     "".print()
-    
+
     // 7. Everything auto-freed
     "7. Automatic Memory:".print()
     var i = 0
@@ -63,8 +63,8 @@ fn main() -> int {
     }
     "✓ Zero memory leaks".print()
     "".print()
-    
+
     "=== Wyn: Python Elegance + C Power ===".print()
-    
+
     return 0
 }

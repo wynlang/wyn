@@ -9,19 +9,19 @@ fn square(x: int) -> int {
 
 fn main() -> int {
     var numbers = [1, 2, 3, 4, 5]
-    
+
     // Test map with double_it
     var doubled = numbers.map(double_it)
     print("Original:")
     print(numbers.len())
     print("Doubled:")
     print(doubled.len())
-    
+
     // Verify first element
     var first = doubled.get(0)
     print("First doubled:")
     print(first);  // Should be 2
-    
+
     if first == 2 {
         print("✓ array.map() works!")
         return 0

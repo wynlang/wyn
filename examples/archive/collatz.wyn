@@ -6,13 +6,13 @@ fn collatz(n: int) -> int {
         } else {
             n = 3 * n + 1
         }
-        steps += 1
+        steps + = 1
     }
     return steps
 }
 
 fn main() -> int {
-    for var i = 1; i <= 10; i += 1 {
+    for var i = 1; i <= 10; i + = 1 {
         print(collatz(i))
     }
     return 0

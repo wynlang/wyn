@@ -15,82 +15,82 @@ enum Status {
 
 // 2. Generic types in function signatures
 fn create_map() -> HashMap<string, int> {
-    var m: HashMap<string, int> = {}
-    return m
-}
+    var m: HashMap<string, int> = { }
+        return m
+    }
 
-// 3. Higher-order functions
-fn times_two(x: int) -> int {
-    return x * 2
-}
+    // 3. Higher-order functions
+    fn times_two(x: int) -> int {
+        return x * 2
+    }
 
-fn add(a: int, b: int) -> int {
-    return a + b
-}
+    fn add(a: int, b: int) -> int {
+        return a + b
+    }
 
-fn main() -> int {
-    print("=== Wyn v1.5.0 Feature Showcase ===")
-    print("")
-    
-    // Feature 1: Enums with constructors
-    print("1. Enums with Data:")
-    var success = Result_Ok(42)
-    var failure = Result_Err("something failed")
-    print("   Success: " + Result_toString(success))
-    print("   Failure: " + Result_toString(failure))
-    print("")
-    
-    // Feature 2: Simple enums
-    print("2. Simple Enums:")
-    var status = Active
-    print("   Status: " + Status_toString(status))
-    print("")
-    
-    // Feature 3: HashMap with generic syntax
-    print("3. HashMap<K,V>:")
-    var map: HashMap<string, int> = {}
-    map.insert("key1", 100)
-    map.insert("key2", 200)
-    var val1 = map.get("key1")
-    var val2 = map.get("key2")
-    print("   key1: " + val1.to_string())
-    print("   key2: " + val2.to_string())
-    print("   size: " + map.len().to_string())
-    print("")
-    
-    // Feature 4: String methods
-    print("4. String Methods:")
-    var text = "hello,world,test"
-    var parts = text.split(",")
-    print("   Split result: " + parts.len().to_string() + " parts")
-    print("")
-    
-    // Feature 5: Array methods
-    print("5. Array Methods:")
-    var nums = [1, 2, 3, 4, 5]
-    var doubled = nums.map(times_two)
-    var sum = nums.reduce(add, 0)
-    print("   Original: [1,2,3,4,5]")
-    print("   Doubled length: " + doubled.len().to_string())
-    print("   Sum: " + sum.to_string())
-    print("")
-    
-    // Feature 6: Variable keys
-    print("6. Variable Keys:")
-    var key_name = "dynamic"
-    map.insert(key_name, 777)
-    var dynamic_val = map.get(key_name)
-    print("   Dynamic key value: " + dynamic_val.to_string())
-    print("")
-    
-    // Feature 7: Bool methods
-    print("7. Bool Methods:")
-    var has_key = map.contains("key1")
-    print("   Has key1: " + has_key.to_string())
-    var as_int = has_key.to_int()
-    print("   As int: " + as_int.to_string())
-    print("")
-    
-    print("=== All Features Working! ===")
-    return 0
-}
+    fn main() -> int {
+        print("=== Wyn v1.5.0 Feature Showcase ===")
+        print("")
+
+        // Feature 1: Enums with constructors
+        print("1. Enums with Data:")
+        var success = Result_Ok(42)
+        var failure = Result_Err("something failed")
+        print("   Success: " + Result_toString(success))
+        print("   Failure: " + Result_toString(failure))
+        print("")
+
+        // Feature 2: Simple enums
+        print("2. Simple Enums:")
+        var status = Active
+        print("   Status: " + Status_toString(status))
+        print("")
+
+        // Feature 3: HashMap with generic syntax
+        print("3. HashMap<K,V>:")
+        var map: HashMap<string, int> = { }
+            map.insert("key1", 100)
+            map.insert("key2", 200)
+            var val1 = map.get("key1")
+            var val2 = map.get("key2")
+            print("   key1: " + val1.to_string())
+            print("   key2: " + val2.to_string())
+            print("   size: " + map.len().to_string())
+            print("")
+
+            // Feature 4: String methods
+            print("4. String Methods:")
+            var text = "hello,world,test"
+            var parts = text.split(",")
+            print("   Split result: " + parts.len().to_string() + " parts")
+            print("")
+
+            // Feature 5: Array methods
+            print("5. Array Methods:")
+            var nums = [1, 2, 3, 4, 5]
+            var doubled = nums.map(times_two)
+            var sum = nums.reduce(add, 0)
+            print("   Original: [1,2,3,4,5]")
+            print("   Doubled length: " + doubled.len().to_string())
+            print("   Sum: " + sum.to_string())
+            print("")
+
+            // Feature 6: Variable keys
+            print("6. Variable Keys:")
+            var key_name = "dynamic"
+            map.insert(key_name, 777)
+            var dynamic_val = map.get(key_name)
+            print("   Dynamic key value: " + dynamic_val.to_string())
+            print("")
+
+            // Feature 7: Bool methods
+            print("7. Bool Methods:")
+            var has_key = map.contains("key1")
+            print("   Has key1: " + has_key.to_string())
+            var as_int = has_key.to_int()
+            print("   As int: " + as_int.to_string())
+            print("")
+
+            print("=== All Features Working! ===")
+            return 0
+        }

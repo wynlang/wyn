@@ -4,7 +4,7 @@
 fn main() -> int {
     print("=== ADVANCED FILE OPERATIONS ===")
     print("")
-    
+
     // Test 1: Create nested directories
     print("1. Creating nested directories...")
     var test_dir = "test_output/level1/level2/level3"
@@ -15,7 +15,7 @@ fn main() -> int {
         print("   ✗ Failed to create directories")
     }
     print("")
-    
+
     // Test 2: Create a test file
     print("2. Creating test file...")
     var test_file = "test_output/level1/test.txt"
@@ -23,7 +23,7 @@ fn main() -> int {
     File::write(test_file, content)
     print("   ✓ Created test file")
     print("")
-    
+
     // Test 3: Get file modification time
     print("3. Getting file modification time...")
     var mtime = File::modified_time(test_file)
@@ -34,7 +34,7 @@ fn main() -> int {
         print("   ✗ Failed to get modification time")
     }
     print("")
-    
+
     // Test 4: Check what we created
     print("4. Verifying created files...")
     if File::is_dir("test_output") {
@@ -50,7 +50,7 @@ fn main() -> int {
         print("   ✓ test.txt exists")
     }
     print("")
-    
+
     // Test 5: Remove everything recursively
     print("5. Cleaning up (recursive delete)...")
     var removed = File::remove_dir_all("test_output")
@@ -60,7 +60,7 @@ fn main() -> int {
         print("   ✗ Failed to remove directory")
     }
     print("")
-    
+
     // Test 6: Verify cleanup
     print("6. Verifying cleanup...")
     if File::is_dir("test_output") {
@@ -69,7 +69,7 @@ fn main() -> int {
         print("   ✓ test_output/ successfully removed")
     }
     print("")
-    
+
     print("=== USAGE EXAMPLES ===")
     print("Get modification time:")
     print("  var mtime = File::modified_time(\"file.txt\");")
@@ -80,12 +80,12 @@ fn main() -> int {
     print("Remove directory tree:")
     print("  File::remove_dir_all(\"path/to/dir\");")
     print("")
-    
+
     print("Useful for:")
     print("  - Build tools (create output directories)")
     print("  - File synchronization (check modification times)")
     print("  - Cleanup operations (remove temp directories)")
     print("  - Project scaffolding (create directory structures)")
-    
+
     return 0
 }

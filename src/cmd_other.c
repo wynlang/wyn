@@ -58,6 +58,25 @@ int cmd_fmt(const char* file, int argc, char** argv) {
         int len = strlen(start);
         while (len > 0 && (start[len-1] == ' ' || start[len-1] == '\t')) start[--len] = '\0';
 
+        // Strip an optional trailing semicolon (semicolons are optional in Wyn).
+        // Only when it's genuinely line-final and not the whole line ("};" -> "}"
+        // is fine; a lone ";" line collapses to blank). Skip if the line looks
+        // like it ends inside a string or is a comment.
+        if (len > 0 && start[len-1] == ';') {
+            // Count unescaped double-quotes; if even, the ';' is outside a string.
+            int quotes = 0;
+            for (int k = 0; k < len; k++) {
+                if (start[k] == '"' && (k == 0 || start[k-1] != '\\')) quotes++;
+                // stop scanning at a line comment
+                if (start[k] == '/' && k + 1 < len && start[k+1] == '/') break;
+            }
+            int is_comment = (len >= 2 && start[0] == '/' && start[1] == '/') || start[0] == '#';
+            if ((quotes % 2) == 0 && !is_comment) {
+                start[--len] = '\0';
+                while (len > 0 && (start[len-1] == ' ' || start[len-1] == '\t')) start[--len] = '\0';
+            }
+        }
+
         // Collapse multiple blank lines
         if (len == 0) {
             if (prev_blank) continue;
@@ -88,6 +107,35 @@ int cmd_fmt(const char* file, int argc, char** argv) {
                     if (i < len) out[oi++] = start[i++];
                     continue;
                 }
+                // Space after ',' (not before).
+                if (start[i] == ',') {
+                    if (oi > 0 && out[oi-1] == ' ') oi--; // no space before
+                    out[oi++] = ',';
+                    i++;
+                    if (i < len && start[i] != ' ') out[oi++] = ' ';
+                    continue;
+                }
+                // Spaces around '->' (return type arrow).
+                if (start[i] == '-' && i + 1 < len && start[i+1] == '>') {
+                    if (oi > 0 && out[oi-1] != ' ') out[oi++] = ' ';
+                    out[oi++] = '-'; out[oi++] = '>';
+                    i += 2;
+                    if (i < len && start[i] != ' ') out[oi++] = ' ';
+                    continue;
+                }
+                // Space after ':' in annotations (not before, and not for '::').
+                if (start[i] == ':' && (i + 1 >= len || start[i+1] != ':') &&
+                    (i == 0 || start[i-1] != ':')) {
+                    if (oi > 0 && out[oi-1] == ' ') oi--; // no space before
+                    out[oi++] = ':';
+                    i++;
+                    if (i < len && start[i] != ' ') out[oi++] = ' ';
+                    continue;
+                }
+                // Skip '::' verbatim (namespace) so the ':' rule doesn't split it.
+                if (start[i] == ':' && i + 1 < len && start[i+1] == ':') {
+                    out[oi++] = ':'; out[oi++] = ':'; i += 2; continue;
+                }
                 // Normalize spacing around = (but not ==, !=, <=, >=, =>)
                 if (start[i] == '=' && (i == 0 || (start[i-1] != '!' && start[i-1] != '<' && start[i-1] != '>' && start[i-1] != '=')) && (i + 1 >= len || start[i+1] != '=') && (i + 1 >= len || start[i+1] != '>')) {
                     if (oi > 0 && out[oi-1] != ' ') out[oi++] = ' ';
@@ -95,6 +143,12 @@ int cmd_fmt(const char* file, int argc, char** argv) {
                     i++;
                     if (i < len && start[i] != ' ') out[oi++] = ' ';
                     continue;
+                }
+                // Ensure space before '{' (e.g. `int{` -> `int {`), except at
+                // line start or right after another space/open-delimiter.
+                if (start[i] == '{' && oi > 0 && out[oi-1] != ' ' && out[oi-1] != '{' &&
+                    out[oi-1] != '(' && out[oi-1] != '[') {
+                    out[oi++] = ' ';
                 }
                 // Ensure space after { if not end of line
                 if (start[i] == '{' && i + 1 < len && start[i+1] != ' ' && start[i+1] != '\0') {

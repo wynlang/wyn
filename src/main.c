@@ -2167,20 +2167,27 @@ int main(int argc, char** argv) {
             fprintf(stderr, "Usage: wyn fmt <file.wyn|directory> [--check]\n");
             return 1;
         }
-        // Check for --check flag
+        // Check for --check flag and find the path argument (flags may come
+        // in any order: `wyn fmt --check foo.wyn` or `wyn fmt foo.wyn --check`).
         int check_only = 0;
-        for (int i = 3; i < argc; i++) {
+        const char* fmt_path = NULL;
+        for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--check") == 0) check_only = 1;
+            else if (argv[i][0] != '-' && !fmt_path) fmt_path = argv[i];
+        }
+        if (!fmt_path) {
+            fprintf(stderr, "Usage: wyn fmt <file.wyn|directory> [--check]\n");
+            return 1;
         }
         // If argument is a directory, format all .wyn files recursively
         struct stat fmt_st;
-        if (stat(argv[2], &fmt_st) == 0 && S_ISDIR(fmt_st.st_mode)) {
+        if (stat(fmt_path, &fmt_st) == 0 && S_ISDIR(fmt_st.st_mode)) {
             // Use cmd_fmt directly on each file (no shell exec)
             extern int cmd_fmt(const char*, int, char**);
             int fmt_fail = 0, fmt_count = 0;
             // Simple recursive scan using find via popen (cross-platform enough)
             char find_cmd[512];
-            snprintf(find_cmd, sizeof(find_cmd), "find %s -name '*.wyn' -not -path '*/.archive/*'", argv[2]);
+            snprintf(find_cmd, sizeof(find_cmd), "find %s -name '*.wyn' -not -path '*/.archive/*'", fmt_path);
             FILE* fp = popen(find_cmd, "r");
             if (fp) {
                 char fpath[512];
@@ -2197,7 +2204,7 @@ int main(int argc, char** argv) {
             printf("✓ Formatted %d files\n", fmt_count);
             return 0;
         }
-        return cmd_fmt(argv[2], argc, argv);
+        return cmd_fmt(fmt_path, argc, argv);
     }
     
     if (strcmp(command, "debug") == 0) {

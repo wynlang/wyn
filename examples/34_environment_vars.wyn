@@ -3,46 +3,46 @@
 fn main() -> int {
     print("=== ENVIRONMENT VARIABLES ===")
     print("")
-    
+
     // Get common environment variables
     print("Common Environment Variables:")
-    
+
     var home = Env::get("HOME")
     print("HOME:")
     print(home)
     print("")
-    
+
     var user = Env::get("USER")
     print("USER:")
     print(user)
     print("")
-    
+
     var shell = Env::get("SHELL")
     print("SHELL:")
     print(shell)
     print("")
-    
+
     // Set custom environment variables
     print("Setting custom variables:")
     Env::set("MY_APP_CONFIG", "production")
     Env::set("MY_APP_PORT", "8080")
-    
+
     var config = Env::get("MY_APP_CONFIG")
     print("MY_APP_CONFIG:")
     print(config)
     print("")
-    
+
     var port = Env::get("MY_APP_PORT")
     print("MY_APP_PORT:")
     print(port)
     print("")
-    
+
     // Get all environment variables
     print("Getting all environment variables:")
     var all_env = Env::all()
     print("(All environment variables loaded successfully)")
     print("")
-    
+
     print("=== Usage Examples ===")
     print("Get variable:  var value = Env::get(\"NAME\");")
     print("Set variable:  Env::set(\"NAME\", \"value\");")
@@ -53,6 +53,6 @@ fn main() -> int {
     print("  - 12-factor apps")
     print("  - CI/CD pipelines")
     print("  - User preferences")
-    
+
     return 0
 }

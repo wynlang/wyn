@@ -4,7 +4,7 @@
 fn main() -> int {
     print_str("=== Automatic Memory Management ===")
     print_str("")
-    
+
     // Strings are automatically freed
     var i = 0
     while i < 5 {
@@ -13,30 +13,30 @@ fn main() -> int {
         // No str_free needed - automatic!
         i = i + 1
     }
-    
+
     print_str("")
     print_str("✓ No memory leaks - all strings auto-freed!")
     print_str("")
-    
+
     // Works in if blocks too
     if 1 == 1 {
         var greeting = "Hello".concat(" Wyn")
         print_str(greeting)
         // Automatically freed at end of if block
     }
-    
+
     print_str("✓ If block strings auto-freed!")
     print_str("")
-    
+
     // Multiple allocations
     var s1 = "Part".concat(" ")
     var s2 = s1.concat("One")
     print_str(s2)
     // Both s1 and s2 auto-freed at function end
-    
+
     print_str("")
     print_str("=== Memory Management is Automatic! ===")
     print_str("Just like Python or JavaScript")
-    
+
     return 0
 }

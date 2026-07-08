@@ -30,15 +30,15 @@ fn main() -> int {
     // Constants and variables
     const MAX_SCORE = 1000
     var score = 0
-    
+
     // Boolean logic
     var is_active = true
     var is_paused = false
-    
+
     if is_active and not is_paused {
         print(1)
     }
-    
+
     // Enums and pattern matching
     var state = PLAYING
     var status_code = match state {
@@ -48,12 +48,12 @@ fn main() -> int {
         GAMEOVER => 3
     }
     print(status_code)
-    
+
     // Arrays
     var scores = [100, 200, 300, 400, 500]
     print(scores[0])
     print(scores[4])
-    
+
     // For loops with break
     for var i = 0; i < 10; i = i + 1 {
         if i == 5 {
@@ -62,7 +62,7 @@ fn main() -> int {
         score = score + 10
     }
     print(score)
-    
+
     // While loops with continue
     var count = 0
     while count < 5 {
@@ -72,26 +72,26 @@ fn main() -> int {
         }
         print(count + 100)
     }
-    
+
     // Recursive functions
     var fib = fibonacci(10)
     print(fib)
-    
+
     var fact = factorial(5)
     print(fact)
-    
+
     // Type aliases
     var user = 42
     print(user)
-    
+
     // Unary operators
     var negative = -50
     print(negative)
-    
+
     // Logical operators
     if score > 0 or state == MENU {
         print(999)
     }
-    
+
     return 0
 }

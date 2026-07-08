@@ -23,7 +23,7 @@ fn main() -> int {
         }
     }
 
-    // sum of (i+1) for i=0..9999 = 50005000
+    // sum of (i+1) for i = 0..9999 = 50005000
     println("  10K spawns (10 × 1K batches): total = ${total}")
     if total == 50005000 {
         println("  ✓ Correct!")

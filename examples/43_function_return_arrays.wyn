@@ -11,10 +11,10 @@ fn get_names() -> [string] {
 fn main() -> int {
     var nums = get_numbers()
     print("Numbers count: " + nums.len())
-    
+
     var names = get_names()
     var first = names.get(0)
     print("First name: " + first)
-    
+
     return 0
 }

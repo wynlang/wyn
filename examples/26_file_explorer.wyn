@@ -2,24 +2,24 @@
 
 fn main() -> int {
     print("=== File System Explorer ===\n\n")
-    
+
     // Get current directory
     var cwd = File::get_cwd()
     print("Current directory: ")
     print(cwd)
     print("\n\n")
-    
+
     // List files in current directory
     print("Files in current directory:\n")
     var entries = File::list_dir(".")
     var i = 0
     while i < entries.len() {
         var entry = entries[i]
-        
+
         // Get file info
         var is_file = File::is_file(entry)
         var is_dir = File::is_dir(entry)
-        
+
         // Show type
         if is_dir == 1 {
             print("  [DIR]  ")
@@ -27,10 +27,10 @@ fn main() -> int {
         if is_file == 1 {
             print("  [FILE] ")
         }
-        
+
         // Show name
         print(entry)
-        
+
         // Show extension for files
         if is_file == 1 {
             var ext = File::extension(entry)
@@ -39,20 +39,20 @@ fn main() -> int {
                 print(ext)
                 print(")")
             }
-            
+
             // Show size
             var size = File::file_size(entry)
             print(" - ")
             print(size)
             print(" bytes")
         }
-        
+
         print("\n")
         i = i + 1
     }
-    
+
     print("\n=== String Character Analysis ===\n\n")
-    
+
     // Test alphabetic string
     var alpha_str = "hello"
     print("Testing: ")
@@ -61,7 +61,7 @@ fn main() -> int {
     if alpha_str.is_alpha() == 1 {
         print("  Result: All alphabetic\n")
     }
-    
+
     // Test numeric string
     var digit_str = "12345"
     print("Testing: ")
@@ -70,7 +70,7 @@ fn main() -> int {
     if digit_str.is_digit() == 1 {
         print("  Result: All digits\n")
     }
-    
+
     // Test alphanumeric
     var alnum_str = "hello123"
     print("Testing: ")
@@ -79,19 +79,19 @@ fn main() -> int {
     if alnum_str.is_alnum() == 1 {
         print("  Result: All alphanumeric\n")
     }
-    
+
     // Test char_at
     print("\nFirst character of 'hello': ")
     print(alpha_str.char_at(0))
     print("\n")
-    
+
     print("\n=== Path Manipulation ===\n\n")
-    
+
     // Test path operations
     var dir = "/home/user"
     var file = "document.txt"
     var full_path = File::path_join(dir, file)
-    
+
     print("Directory: ")
     print(dir)
     print("\n")
@@ -101,12 +101,12 @@ fn main() -> int {
     print("Full path: ")
     print(full_path)
     print("\n\n")
-    
+
     // Extract components
     var basename = File::basename(full_path)
     var dirname = File::dirname(full_path)
     var extension = File::extension(full_path)
-    
+
     print("Basename: ")
     print(basename)
     print("\n")
@@ -116,6 +116,6 @@ fn main() -> int {
     print("Extension: ")
     print(extension)
     print("\n")
-    
+
     return 0
 }

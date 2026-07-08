@@ -12,78 +12,78 @@ struct BinaryTree {
 }
 
 fn create_tree() -> BinaryTree {
-    return BinaryTree{nodes: [], size: 0}
-}
-
-fn add_node(tree: &BinaryTree, value: int) -> int {
-    let node = Node{value: value, left: -1, right: -1}
-    tree.nodes.push(node)
-    let index = tree.size
-    tree.size = tree.size + 1
-    return index
-}
-
-fn insert(tree: &BinaryTree, root: int, value: int) -> int {
-    if root == -1 {
-        return add_node(tree, value)
+    return BinaryTree { nodes: [], size: 0 }
     }
-    
-    if value < tree.nodes[root].value {
-        if tree.nodes[root].left == -1 {
-            tree.nodes[root].left = add_node(tree, value)
-        } else {
-            insert(tree, tree.nodes[root].left, value)
+
+    fn add_node(tree: &BinaryTree, value: int) -> int {
+        let node = Node { value: value, left: -1, right: -1 }
+            tree.nodes.push(node)
+            let index = tree.size
+            tree.size = tree.size + 1
+            return index
         }
-    } else {
-        if tree.nodes[root].right == -1 {
-            tree.nodes[root].right = add_node(tree, value)
-        } else {
-            insert(tree, tree.nodes[root].right, value)
+
+        fn insert(tree: &BinaryTree, root: int, value: int) -> int {
+            if root == -1 {
+                return add_node(tree, value)
+            }
+
+            if value < tree.nodes[root].value {
+                if tree.nodes[root].left == -1 {
+                    tree.nodes[root].left = add_node(tree, value)
+                } else {
+                    insert(tree, tree.nodes[root].left, value)
+                }
+            } else {
+                if tree.nodes[root].right == -1 {
+                    tree.nodes[root].right = add_node(tree, value)
+                } else {
+                    insert(tree, tree.nodes[root].right, value)
+                }
+            }
+            return root
         }
-    }
-    return root
-}
 
-fn search(tree: &BinaryTree, root: int, value: int) -> bool {
-    if root == -1 {
-        return false
-    }
-    
-    if tree.nodes[root].value == value {
-        return true
-    }
-    
-    if value < tree.nodes[root].value {
-        return search(tree, tree.nodes[root].left, value)
-    } else {
-        return search(tree, tree.nodes[root].right, value)
-    }
-}
+        fn search(tree: &BinaryTree, root: int, value: int) -> bool {
+            if root == -1 {
+                return false
+            }
 
-fn inorder(tree: &BinaryTree, root: int) {
-    if root != -1 {
-        inorder(tree, tree.nodes[root].left)
-        print(tree.nodes[root].value)
-        inorder(tree, tree.nodes[root].right)
-    }
-}
+            if tree.nodes[root].value == value {
+                return true
+            }
 
-fn main() {
-    let tree = create_tree()
-    let root = -1
-    
-    # Build tree
-    root = insert(&tree, root, 50)
-    insert(&tree, root, 30)
-    insert(&tree, root, 70)
-    insert(&tree, root, 20)
-    insert(&tree, root, 40)
-    insert(&tree, root, 60)
-    insert(&tree, root, 80)
-    
-    print("Inorder traversal:")
-    inorder(&tree, root)
-    
-    print("Search 40:", search(&tree, root, 40))
-    print("Search 90:", search(&tree, root, 90))
-}
+            if value < tree.nodes[root].value {
+                return search(tree, tree.nodes[root].left, value)
+            } else {
+                return search(tree, tree.nodes[root].right, value)
+            }
+        }
+
+        fn inorder(tree: &BinaryTree, root: int) {
+            if root != -1 {
+                inorder(tree, tree.nodes[root].left)
+                print(tree.nodes[root].value)
+                inorder(tree, tree.nodes[root].right)
+            }
+        }
+
+        fn main() {
+            let tree = create_tree()
+            let root = -1
+
+            # Build tree
+            root = insert(&tree, root, 50)
+            insert(&tree, root, 30)
+            insert(&tree, root, 70)
+            insert(&tree, root, 20)
+            insert(&tree, root, 40)
+            insert(&tree, root, 60)
+            insert(&tree, root, 80)
+
+            print("Inorder traversal:")
+            inorder(&tree, root)
+
+            print("Search 40:", search(&tree, root, 40))
+            print("Search 90:", search(&tree, root, 90))
+        }

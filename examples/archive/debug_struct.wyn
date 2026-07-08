@@ -5,8 +5,8 @@ struct Person {
 
 fn main() -> int {
     var person = Person { name: "Alice", age: 25 }
-    print("Name: ")
-    print(person.name)
-    print("\n")
-    return 0
-}
+        print("Name: ")
+        print(person.name)
+        print("\n")
+        return 0
+    }

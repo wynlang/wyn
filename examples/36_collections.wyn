@@ -4,28 +4,28 @@
 fn main() -> int {
     print("=== COLLECTIONS: QUEUE AND STACK ===")
     print("")
-    
+
     // ===== QUEUE (FIFO - First In, First Out) =====
     print("=== QUEUE (FIFO) ===")
     var q = Queue::new()
-    
+
     print("1. Pushing values: 10, 20, 30")
     Queue::push(q, 10)
     Queue::push(q, 20)
     Queue::push(q, 30)
-    
+
     print("2. Queue length:")
     var q_len = Queue::len(q)
     if q_len == 3 {
         print("   ✓ Length is 3")
     }
-    
+
     print("3. Peek at front (without removing):")
     var front = Queue::peek(q)
     if front == 10 {
         print("   ✓ Front is 10")
     }
-    
+
     print("4. Popping values (FIFO order):")
     var val1 = Queue::pop(q)
     var val2 = Queue::pop(q)
@@ -39,35 +39,35 @@ fn main() -> int {
     if val3 == 30 {
         print("   ✓ Third out: 30")
     }
-    
+
     print("5. Check if empty:")
     var q_empty = Queue::is_empty(q)
     if q_empty {
         print("   ✓ Queue is empty")
     }
     print("")
-    
+
     // ===== STACK (LIFO - Last In, First Out) =====
     print("=== STACK (LIFO) ===")
     var s = Stack::new()
-    
+
     print("1. Pushing values: 10, 20, 30")
     Stack::push(s, 10)
     Stack::push(s, 20)
     Stack::push(s, 30)
-    
+
     print("2. Stack length:")
     var s_len = Stack::len(s)
     if s_len == 3 {
         print("   ✓ Length is 3")
     }
-    
+
     print("3. Peek at top (without removing):")
     var top = Stack::peek(s)
     if top == 30 {
         print("   ✓ Top is 30")
     }
-    
+
     print("4. Popping values (LIFO order):")
     var sval1 = Stack::pop(s)
     var sval2 = Stack::pop(s)
@@ -81,25 +81,25 @@ fn main() -> int {
     if sval3 == 10 {
         print("   ✓ Third out: 10 (first in)")
     }
-    
+
     print("5. Check if empty:")
     var s_empty = Stack::is_empty(s)
     if s_empty {
         print("   ✓ Stack is empty")
     }
     print("")
-    
+
     // ===== PRACTICAL EXAMPLES =====
     print("=== PRACTICAL EXAMPLES ===")
     print("")
-    
+
     print("Queue use cases:")
     print("  - Task scheduling (process jobs in order)")
     print("  - Breadth-first search (BFS)")
     print("  - Message queues")
     print("  - Print job spooling")
     print("")
-    
+
     print("Stack use cases:")
     print("  - Function call stack")
     print("  - Undo/redo operations")
@@ -107,7 +107,7 @@ fn main() -> int {
     print("  - Expression evaluation")
     print("  - Backtracking algorithms")
     print("")
-    
+
     print("=== USAGE ===")
     print("Queue (FIFO):")
     print("  var q = Queue::new();")
@@ -124,6 +124,6 @@ fn main() -> int {
     print("  var top = Stack::peek(s);")
     print("  var len = Stack::len(s);")
     print("  var empty = Stack::is_empty(s);")
-    
+
     return 0
 }

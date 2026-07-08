@@ -3,12 +3,12 @@ fn main() -> int {
     // Parse JSON string
     var json_text = "{\"name\":\"Alice\",\"age\":30,\"score\":95}"
     var json = json_parse(json_text)
-    
+
     if (json == 0) {
         print("Failed to parse JSON\n")
         return 1
     }
-    
+
     // Get string value
     var name = json_get_string(json, "name")
     if (name != 0) {
@@ -16,18 +16,18 @@ fn main() -> int {
         print(name)
         print("\n")
     }
-    
+
     // Get integer values
     var age = json_get_int(json, "age")
     var score = json_get_int(json, "score")
-    
+
     print("Age: ")
     print(age)
     print("\n")
     print("Score: ")
     print(score)
     print("\n")
-    
+
     json_free(json)
     return 0
 }

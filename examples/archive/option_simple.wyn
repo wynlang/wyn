@@ -3,11 +3,11 @@ fn main() -> int {
     var y = none()
     var z = ok(100)
     var w = err(1)
-    
+
     print(x)
     print(y)
     print(z)
     print(w)
-    
+
     return 0
 }

@@ -4,7 +4,7 @@
 fn main() -> int {
     print("=== TIME API ===")
     print("")
-    
+
     // Test 1: Get current timestamp
     print("1. Getting current timestamp:")
     var now = Time::now()
@@ -12,14 +12,14 @@ fn main() -> int {
         print("   ✓ Got timestamp (Unix time)")
     }
     print("")
-    
+
     // Test 2: Format timestamp
     print("2. Formatting timestamp:")
     var formatted = Time::format(now)
     print("   Current time:")
     print(formatted)
     print("")
-    
+
     // Test 3: Sleep
     print("3. Testing sleep (500ms)...")
     var before = Time::now()
@@ -29,7 +29,7 @@ fn main() -> int {
         print("   ✓ Sleep completed")
     }
     print("")
-    
+
     print("=== USAGE EXAMPLES ===")
     print("Get current timestamp:")
     print("  var now = Time::now();")
@@ -40,13 +40,13 @@ fn main() -> int {
     print("Sleep (milliseconds):")
     print("  Time::sleep(1000);  // Sleep 1 second")
     print("")
-    
+
     print("Useful for:")
     print("  - Build timestamps")
     print("  - Profiling and benchmarking")
     print("  - Rate limiting")
     print("  - Timeouts")
     print("  - Logging with timestamps")
-    
+
     return 0
 }

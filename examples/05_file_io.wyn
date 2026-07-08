@@ -6,18 +6,18 @@ fn main() -> int {
         print("Failed to write file\n")
         return 1
     }
-    
+
     // Read from file
     var content = File::read("/tmp/wyn_example.txt")
     print("File content: ")
     print(content)
     print("\n")
-    
+
     // Check if file exists
     var exists = File::exists("/tmp/wyn_example.txt")
     if (exists == 1) {
         print("File exists!\n")
     }
-    
+
     return 0
 }

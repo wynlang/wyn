@@ -4,23 +4,23 @@
 fn main() {
     print("=== wyn watch Example ===")
     print("")
-    
+
     print("Auto-rebuild on file changes:")
     print("  wyn watch main.wyn")
     print("")
-    
+
     print("What it does:")
     print("  1. Compiles your code")
     print("  2. Watches for file changes")
     print("  3. Auto-rebuilds when you save")
     print("  4. Shows build status")
     print("")
-    
+
     print("Perfect for development!")
     print("Edit your code, save, and see results instantly.")
     print("")
-    
+
     print("Stop with Ctrl+C")
-    
+
     return 0
 }

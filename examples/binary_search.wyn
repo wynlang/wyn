@@ -3,21 +3,21 @@
 fn binary_search(arr: [int], len: int, target: int) -> int {
     var left = 0
     var right = len - 1
-    
+
     while left <= right {
         var mid = (left + right) / 2
-        
+
         if arr[mid] == target {
             return mid
         }
-        
+
         if arr[mid] < target {
             left = mid + 1
         } else {
             right = mid - 1
         }
     }
-    
+
     return -1
 }
 
@@ -26,6 +26,6 @@ fn main() -> int {
     var idx1 = binary_search(sorted, 8, 7)
     var idx2 = binary_search(sorted, 8, 13)
     var idx3 = binary_search(sorted, 8, 99)
-    
+
     return idx1 + idx2 + idx3
 }

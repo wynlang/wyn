@@ -1,35 +1,35 @@
 // HashMap - Using hash maps for key-value storage
 fn main() -> int {
     // Create hash maps with literal syntax
-    var ages = {"alice": 25, "bob": 30, "charlie": 35}
-    
-    print("=== HashMap Example ===\n")
-    
-    // Access with indexing syntax (v1.4.0)
-    print("Alice's age: ")
-    print(ages["alice"])
-    print("\n")
-    
-    // Add new entry
-    ages["diana"] = 28
-    print("Added Diana\n")
-    
-    // Check if key exists with method
-    if (ages.has("bob")) {
-        print("Bob is in the map\n")
+    var ages = { "alice": 25, "bob": 30, "charlie": 35 }
+
+        print("=== HashMap Example ===\n")
+
+        // Access with indexing syntax (v1.4.0)
+        print("Alice's age: ")
+        print(ages["alice"])
+        print("\n")
+
+        // Add new entry
+        ages["diana"] = 28
+        print("Added Diana\n")
+
+        // Check if key exists with method
+        if (ages.has("bob")) {
+            print("Bob is in the map\n")
+        }
+
+        // Get map size
+        print("Total entries: ")
+        print(ages.len())
+        print("\n")
+
+        // Remove entry
+        ages.remove("charlie")
+        print("Removed Charlie\n")
+        print("New size: ")
+        print(ages.len())
+        print("\n")
+
+        return 0
     }
-    
-    // Get map size
-    print("Total entries: ")
-    print(ages.len())
-    print("\n")
-    
-    // Remove entry
-    ages.remove("charlie")
-    print("Removed Charlie\n")
-    print("New size: ")
-    print(ages.len())
-    print("\n")
-    
-    return 0
-}

@@ -1,16 +1,16 @@
 fn main() -> int {
     var flag = true
     var other = false
-    
+
     if flag {
         print(1)
     }
-    
+
     if other {
         print(0)
     } else {
         print(2)
     }
-    
+
     return 0
 }

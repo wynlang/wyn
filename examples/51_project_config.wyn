@@ -4,11 +4,11 @@
 fn main() {
     print("=== wyn.toml Example ===")
     print("")
-    
+
     print("Create a new project:")
     print("  wyn init my-project")
     print("")
-    
+
     print("Example wyn.toml:")
     print("[project]")
     print("name = \"my-app\"")
@@ -16,7 +16,7 @@ fn main() {
     print("entry = \"main.wyn\"")
     print("author = \"Your Name\"")
     print("")
-    
+
     print("[dependencies]")
     print("# Git URL")
     print("http-lib = \"https://github.com/user/http-lib\"")
@@ -24,13 +24,13 @@ fn main() {
     print("# Local path")
     print("utils = \"../shared/utils\"")
     print("")
-    
+
     print("Install dependencies:")
     print("  wyn install")
     print("")
-    
+
     print("List installed packages:")
     print("  wyn pkg list")
-    
+
     return 0
 }

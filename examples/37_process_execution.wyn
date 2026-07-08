@@ -4,12 +4,12 @@
 fn main() -> int {
     print("=== PROCESS EXECUTION ===")
     print("")
-    
+
     // Test 1: Execute command and get output
     print("1. Running 'echo Hello from shell':")
     var output = System::exec("echo Hello from shell")
     print(output)
-    
+
     // Test 2: Execute command and get exit code
     print("2. Running 'true' (should return 0):")
     var code1 = System::exec_code("true")
@@ -17,14 +17,14 @@ fn main() -> int {
         print("   ✓ Exit code: 0 (success)")
     }
     print("")
-    
+
     print("3. Running 'false' (should return non-zero):")
     var code2 = System::exec_code("false")
     if code2 != 0 {
         print("   ✓ Exit code: non-zero (failure)")
     }
     print("")
-    
+
     // Test 3: Get command line arguments
     print("4. Command line arguments:")
     var args = System::args()
@@ -34,12 +34,12 @@ fn main() -> int {
         print("   ✓ Has arguments")
     }
     print("")
-    
+
     // Test 4: List files
     print("5. Listing current directory:")
     var files = System::exec("ls -1 | head -5")
     print(files)
-    
+
     print("=== USAGE EXAMPLES ===")
     print("Execute and get output:")
     print("  var output = System::exec(\"ls -la\");")
@@ -54,12 +54,12 @@ fn main() -> int {
     print("Exit program:")
     print("  System::exit(0);")
     print("")
-    
+
     print("Useful for:")
     print("  - Build tools (run compilers, linkers)")
     print("  - Shell scripts (automate tasks)")
     print("  - Testing (run test commands)")
     print("  - Integration (call external tools)")
-    
+
     return 0
 }

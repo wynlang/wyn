@@ -13,11 +13,11 @@ fn max<T>(a: T, b: T) -> T {
 fn main() -> int {
     var num = identity(42)
     var larger = max(10, 20)
-    
+
     print("Identity: ")
     print(num)
     print("Max: ")
     print(larger)
-    
+
     return 0
 }

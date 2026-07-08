@@ -4,31 +4,31 @@
 fn main() -> int {
     print_str("=== Memory Management Demo ===")
     print_str("")
-    
+
     // String operations allocate memory
     var upper = "hello world".upper()
     print_str("Uppercase:")
     print_str(upper)
-    
+
     // Manually free when done
     str_free(upper)
     print_str("✓ String freed")
-    
+
     print_str("")
-    
+
     // Multiple operations
     var s1 = "Hello".concat(" ")
     var s2 = s1.concat("World")
     print_str("Concatenated:")
     print_str(s2)
-    
+
     // Free in reverse order
     str_free(s2)
     str_free(s1)
     print_str("✓ All strings freed")
-    
+
     print_str("")
     print_str("=== Demo Complete ===")
-    
+
     return 0
 }

@@ -6,23 +6,23 @@ enum Status {
 
 fn main() -> int {
     var status = RUNNING
-    
+
     var result = match status {
         PENDING => 0,
         RUNNING => 1,
         COMPLETE => 2
     }
-    
+
     print(result)
-    
+
     status = COMPLETE
     var result2 = match status {
         PENDING => 10,
         RUNNING => 20,
         COMPLETE => 30
     }
-    
+
     print(result2)
-    
+
     return 0
 }

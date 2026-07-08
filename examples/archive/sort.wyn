@@ -1,6 +1,6 @@
 fn bubble_sort(arr: int, n: int) -> int {
-    for var i = 0; i < n - 1; i += 1 {
-        for var j = 0; j < n - i - 1; j += 1 {
+    for var i = 0; i < n - 1; i + = 1 {
+        for var j = 0; j < n - i - 1; j + = 1 {
             var current = j
             var next = j + 1
             if current > next {
@@ -15,10 +15,10 @@ fn bubble_sort(arr: int, n: int) -> int {
 
 fn main() -> int {
     var numbers = [64, 34, 25, 12, 22, 11, 90]
-    
-    for var i = 0; i < 7; i += 1 {
+
+    for var i = 0; i < 7; i + = 1 {
         print(numbers[i])
     }
-    
+
     return 0
 }

@@ -22,7 +22,7 @@ pub fn is_prime(n: int) -> int {
     if n < 2 {
         return 0
     }
-    for var i = 2; i * i <= n; i += 1 {
+    for var i = 2; i * i <= n; i + = 1 {
         if n % i == 0 {
             return 0
         }
@@ -34,17 +34,17 @@ fn main() -> int {
     // Constants and variables
     const MAX_PLAYERS = 4
     var player_count = 0
-    
+
     print(MAX_PLAYERS)
-    
+
     // Boolean logic
     var is_active = true
     var is_paused = false
-    
+
     if is_active and not is_paused {
         print(1)
     }
-    
+
     // Enums and pattern matching
     var state = PLAYING
     var status = match state {
@@ -54,57 +54,57 @@ fn main() -> int {
         GAMEOVER => 3
     }
     print(status)
-    
+
     // Arrays and loops
     var scores = [100, 200, 300, 400, 500]
-    for var i = 0; i < 5; i += 1 {
+    for var i = 0; i < 5; i + = 1 {
         if i == 3 {
             continue
         }
         print(scores[i])
     }
-    
+
     // Compound assignments
     var total = 0
-    total += 10
-    total *= 2
-    total -= 5
+    total + = 10
+    total * = 2
+    total - = 5
     print(total)
-    
+
     // Math functions
     print(abs_val(-42))
     print(min(10, 20))
     print(max(10, 20))
     print(pow_int(2, 8))
-    
+
     // Recursive functions
     print(fibonacci(10))
-    
+
     // Prime checking
-    for var n = 2; n < 10; n += 1 {
+    for var n = 2; n < 10; n + = 1 {
         if is_prime(n) {
             print(n)
         }
     }
-    
+
     // While with break
     var counter = 0
     while counter < 100 {
-        counter += 1
+        counter + = 1
         if counter == 10 {
             break
         }
     }
     print(counter)
-    
+
     // Type aliases
     var player = 42
     print(player)
-    
+
     // Logical operators
     if 5 > 3 and 10 < 20 or false {
         print(999)
     }
-    
+
     return 0
 }
