@@ -416,6 +416,7 @@ typedef struct {
 typedef struct {
     Stmt** stmts;
     int count;
+    Expr* timeout;   // optional timeout (ms) for `parallel(timeout: N) { }`; NULL otherwise
 } BlockStmt;
 
 typedef struct {

@@ -1981,6 +1981,17 @@ Stmt* statement() {
     if (match(TOKEN_PARALLEL)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_PARALLEL;
+        stmt->block.timeout = NULL;
+        // Optional: parallel(timeout: <ms>) { ... }
+        if (match(TOKEN_LPAREN)) {
+            // Accept `timeout: expr` (the label is optional/ignored).
+            if (check(TOKEN_IDENT)) {
+                advance();
+                match(TOKEN_COLON);
+            }
+            stmt->block.timeout = expression();
+            expect(TOKEN_RPAREN, "Expected ')' after parallel timeout");
+        }
         expect(TOKEN_LBRACE, "Expected '{' after 'parallel'");
         stmt->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->block.count = 0;

@@ -1710,14 +1710,27 @@ void codegen_stmt(Stmt* stmt) {
                 }
             }
 
-            // Join all spawned tasks before leaving the block.
+            // Join all spawned tasks before leaving the block. With a timeout,
+            // each join waits at most N ms (future_get_timeout returns NULL/0
+            // past the deadline), so a stuck task can't hang the block.
+            int has_timeout = (stmt->block.timeout != NULL);
+            if (has_timeout) {
+                emit("    int __par_to_%d = (int)(", par_id);
+                codegen_expr(stmt->block.timeout);
+                emit(");\n");
+            }
             for (int j = 0; j < joined_count; j++) {
-                if (strcmp(joined_ctypes[j], "const char*") == 0)
-                    emit("    %s = (const char*)(intptr_t)future_get(%s);\n", joined_names[j], joined_futs[j]);
-                else if (strcmp(joined_ctypes[j], "double") == 0)
-                    emit("    { long long __r = (long long)(intptr_t)future_get(%s); %s = *(double*)&__r; }\n", joined_futs[j], joined_names[j]);
+                char getcall[192];
+                if (has_timeout)
+                    snprintf(getcall, sizeof(getcall), "future_get_timeout(%s, __par_to_%d)", joined_futs[j], par_id);
                 else
-                    emit("    %s = (%s)(intptr_t)future_get(%s);\n", joined_names[j], joined_ctypes[j], joined_futs[j]);
+                    snprintf(getcall, sizeof(getcall), "future_get(%s)", joined_futs[j]);
+                if (strcmp(joined_ctypes[j], "const char*") == 0)
+                    emit("    %s = (const char*)(intptr_t)%s;\n", joined_names[j], getcall);
+                else if (strcmp(joined_ctypes[j], "double") == 0)
+                    emit("    { long long __r = (long long)(intptr_t)%s; %s = *(double*)&__r; }\n", getcall, joined_names[j]);
+                else
+                    emit("    %s = (%s)(intptr_t)%s;\n", joined_names[j], joined_ctypes[j], getcall);
             }
             break;
         }
