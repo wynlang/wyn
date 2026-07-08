@@ -3169,12 +3169,18 @@ void codegen_expr(Expr* expr) {
             int type_name_len = 3;
             int is_data_enum = 0;
             
-            // Check if match value is a data-carrying enum variable
+            // Check if match value is an enum variable. Only mark it a data
+            // enum if it actually carries payloads — a plain (dataless) enum is
+            // a bare C enum and must be matched with `==`, not `.tag ==`.
             if (expr->match.value->type == EXPR_IDENT) {
                 char _mv[128]; snprintf(_mv, 128, "%.*s", expr->match.value->token.length, expr->match.value->token.start);
                 extern const char* get_enum_var_type(const char*);
                 const char* _et = get_enum_var_type(_mv);
-                if (_et) { type_name = _et; type_name_len = strlen(_et); is_data_enum = 1; }
+                if (_et) {
+                    type_name = _et; type_name_len = strlen(_et);
+                    extern int is_data_enum_type(const char*);
+                    if (is_data_enum_type(_et)) is_data_enum = 1;
+                }
             }
             
             // Also check match arms — if any arm uses Shape.Variant pattern, detect data enum

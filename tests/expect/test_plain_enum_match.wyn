@@ -1,0 +1,27 @@
+// EXPECT: 2
+// EXPECT: 3
+// EXPECT: 99
+// Regression: matching on a plain (dataless) enum must compare with `==`, not
+// `.tag ==` (which only exists for data-carrying enums). Covers a registered
+// enum var inside a function, and a wildcard arm.
+enum Color { Red, Green, Blue }
+
+fn classify(c: Color) -> int {
+    return match c {
+        Color.Red => 1
+        Color.Green => 2
+        Color.Blue => 3
+    }
+}
+
+fn main() -> int {
+    println(classify(Color.Green).to_string())
+    println(classify(Color.Blue).to_string())
+    var e = Color.Red
+    var n = match e {
+        Color.Green => 10
+        _ => 99
+    }
+    println(n.to_string())
+    return 0
+}
