@@ -46,8 +46,14 @@ platform-info:
 # C-based compiler
 CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/modules.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c src/closures.c src/scope.c src/toml.c src/file_watch.c src/package.c src/lsp.c src/spawn.c src/registry.c src/semver.c src/tcc_backend.c src/wyn_arena.c src/wyn_rc.c src/coroutine.c
 
-wyn$(EXE_EXT): $(CORE_SRCS)
-	$(CC) $(CFLAGS) -I src -I vendor/tcc/include -I vendor/minicoro -o $@ $^ vendor/tcc/lib/libtcc.a $(PLATFORM_LIBS)
+# codegen.c #includes these .c files directly (single translation unit), so they
+# are NOT in CORE_SRCS (compiling them standalone would duplicate symbols). List
+# them here as prerequisites so editing one triggers a rebuild — otherwise make
+# sees no changed prerequisite and silently keeps a stale binary.
+CODEGEN_INCLUDED_SRCS = src/codegen_expr.c src/codegen_stmt.c src/codegen_lambda.c src/codegen_program.c
+
+wyn$(EXE_EXT): $(CORE_SRCS) $(CODEGEN_INCLUDED_SRCS)
+	$(CC) $(CFLAGS) -I src -I vendor/tcc/include -I vendor/minicoro -o $@ $(CORE_SRCS) vendor/tcc/lib/libtcc.a $(PLATFORM_LIBS)
 
 # Platform-specific targets
 wyn-windows: PLATFORM_CFLAGS += -DWYN_PLATFORM_WINDOWS
@@ -171,25 +177,19 @@ debug-memory: CFLAGS += -DDEBUG_MEMORY -fsanitize=address -g
 debug-memory: wyn
 	@echo "Built with memory debugging enabled"
 
-test: wyn test_unit test_integration test_stdlib test_errors test_control_flow
+# Run the test suite: the assertion-backed runner CI uses (run_bdd.sh),
+# covering tests/expect/ + tests/regression/ with `// EXPECT:` checks.
+# (The old test_unit/test_integration/test_stdlib/... targets referenced C unit
+# sources and shell scripts that no longer exist; they are gone. The separate
+# run_tests_parallel.sh needs a tests/test_list.txt that isn't in the tree, so
+# it's not wired into the default target — run it manually if you regenerate
+# the list.)
+test: wyn
+	@echo "=== Running assertion tests (run_bdd.sh) ==="
+	@WYN=./wyn bash tests/run_bdd.sh
 
-test_unit: test_lexer test_parser test_checker test_codegen test_operators test_default_parameters test_function_overloading test_generic_functions test_parameter_validation test_function_integration test_syntax_design test_system_integration test_wasm_support test_documentation_system
-
-test_integration:
-	@echo "=== Running Integration Tests ==="
-	@./tests/integration_tests.sh
-
-test_stdlib:
-	@echo "=== Running Stdlib Tests ==="
-	@./tests/test_stdlib.sh
-
-test_errors:
-	@echo "=== Running Error Tests ==="
-	@./tests/test_errors.sh
-
-test_control_flow:
-	@echo "=== Running Control Flow Tests ==="
-	@./tests/test_control_flow.sh
+# Alias kept for muscle memory.
+test_bdd: test
 
 # ARC Runtime Tests (T2.3.1)
 test_arc_runtime: tests/test_arc_runtime
@@ -479,7 +479,7 @@ clean:
 	rm -f wyn wyn.exe wyn-windows.exe wyn-linux wyn-macos tests/test_lexer tests/test_parser tests/test_checker tests/test_codegen tests/test_operators tests/test_default_parameters tests/test_function_overloading tests/test_generic_functions tests/test_parameter_validation tests/test_function_integration tests/test_syntax_design tests/test_system_integration tests/phase2_integration tests/phase2_integration_simple tests/test_wasm_support tests/test_self_compilation tests/test_documentation_system tests/test_container_support tests/test_lexer_rewrite tests/test_coroutine tools/formatter.wyn.out
 	rm -rf temp runtime/obj runtime/libwyn_rt.a
 
-.PHONY: all test test_lexer test_parser test_checker test_codegen test_operators clean test_phase2_integration phase2-monitor phase2-gates phase2-status container-build container-test container-deploy container-all fmt-tool platform-info wyn-windows wyn-linux wyn-macos
+.PHONY: all test test_bdd clean container-build container-test container-deploy container-all fmt-tool platform-info wyn-windows wyn-linux wyn-macos
 
 # valgrind-test defined earlier in file (line ~125)
 

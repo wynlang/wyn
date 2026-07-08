@@ -50,10 +50,13 @@ for f in tests/expect/*.wyn tests/regression/*.wyn; do
 done
 
 # Launch all tests in parallel
-for f in "${FILES[@]}"; do
-    run_test "$f" &
-done
-wait
+# Guard empty-array expansion for bash 3.2 (macOS) under `set -u`.
+if [ "${#FILES[@]}" -gt 0 ]; then
+    for f in "${FILES[@]}"; do
+        run_test "$f" &
+    done
+    wait
+fi
 
 # Collect results
 echo "=== Expect Tests ==="
