@@ -191,9 +191,13 @@ void codegen_expr(Expr* expr) {
                     break;
                 }
                 
-                // Special handling for Time:: module - map to time_ prefix
+                // Special handling for Time:: module - map to Time_ prefix.
+                // The runtime exposes capitalized Time_* functions with the
+                // arities the checker registers (Time_format(ts), Time_sleep(ms),
+                // Time_now()); the lowercase time_* set is incomplete/mismatched
+                // (e.g. time_format takes 2 args, time_sleep doesn't exist).
                 if (strcmp(temp_ident, "Time") == 0) {
-                    snprintf(temp_ident, sizeof(temp_ident), "time_%s", function_part);
+                    snprintf(temp_ident, sizeof(temp_ident), "Time_%s", function_part);
                     strcpy(ident + offset, temp_ident);
                     emit("%s", ident);
                     free(ident);

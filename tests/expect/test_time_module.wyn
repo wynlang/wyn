@@ -1,0 +1,12 @@
+// EXPECT: ok
+// Regression: `Time::` methods were codegen'd with a lowercase `time_` prefix,
+// which mismatched the runtime (time_format takes 2 args; time_sleep is not
+// defined). They now map to the capitalized Time_* functions. This exercises
+// Time::now (0 args) and Time::format (1 arg) so an arity/link regression fails
+// to compile.
+fn main() -> int {
+    var now = Time::now()
+    var formatted = Time::format(now)
+    if formatted.len() > 0 { println("ok") }
+    return 0
+}
