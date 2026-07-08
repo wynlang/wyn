@@ -3489,8 +3489,10 @@ Program* parse_program() {
             expect(TOKEN_RBRACE, "Expected '}' after after_each body");
             prog->stmts[prog->count++] = stmt;
         } else if (check(TOKEN_WHILE)) {
-            // T1.4.1: Control Flow Agent addition
-            prog->stmts[prog->count++] = parse_while_statement();
+            // Route top-level while through statement() so it uses the same
+            // optional-parens condition parsing and block body as while inside
+            // a function (parens are optional for both if and while).
+            prog->stmts[prog->count++] = statement();
         } else if (check(TOKEN_BREAK)) {
             // T1.4.2: Control Flow Agent addition
             prog->stmts[prog->count++] = parse_break_statement();
