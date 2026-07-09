@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.12.0 — "The Hardening Release" (2026-07-09)
+
+Memory-safety fixes, deeper concurrency, and a warning-clean build. Three of the
+fixes below are genuine bugs that shipped in v1.11.0 — upgrading is recommended.
+All memory fixes were verified under AddressSanitizer.
+
+### Memory safety
+
+- **String concat use-after-free fixed.** `a + b` where the result was reused as a
+  later operand (`j = a+b; m = j+c`) could corrupt the live string and double-free
+  it. `wyn_string_concat_safe` now always returns a distinct allocation.
+- **print/println double-free fixed.** Printing a fresh interpolated/temp string
+  (`println("x=${x}")`) could release it twice.
+- **Database/JSON query heap overflow fixed.** `Db.query` / `Db.query_params` /
+  `Json.keys` wrote unbounded results into fixed 64KB/4KB buffers — any larger
+  result overflowed the heap. They now grow as needed (verified on a ~168KB result).
+- **String interpolation no longer truncates at 512 bytes.** Interpolated strings of
+  any length now round-trip intact (previously silently cut to 511 bytes).
+- **Reference-count heap detection hardened** with a dual sentinel, and two compiler
+  buffers made bounds-safe against overly long identifiers.
+
+### Concurrency
+
+- **Cooperative `Time::sleep`.** Inside the coroutine scheduler (fire-and-forget
+  `spawn`), sleeping now yields to other tasks instead of blocking the worker
+  thread. In one benchmark, 50 concurrent 200ms sleeps finished in ~0.21s instead of
+  ~1.03s. (Awaited/`parallel` spawns run on the thread pool and still block — see
+  the roadmap.)
+
+### Build & tooling
+
+- **Warning-clean build** under `-Wall -Wextra`.
+- **Runtime library rebuild fixed** — `make` now rebuilds `libwyn_rt.a` when a
+  runtime source or header changes, so programs no longer link a stale runtime.
+
 ## v1.11.0 — "The Developer Experience Release" (2026-03-30)
 
 Make developers productive in their first hour. Every change improves error messages, tooling, or language ergonomics.
