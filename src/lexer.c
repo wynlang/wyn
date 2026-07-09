@@ -127,7 +127,7 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 2 && memcmp(start, "as", 2) == 0) return TOKEN_AS;
             // 'assert' is a regular function, not a keyword
             // if (length == 6 && memcmp(start, "assert", 6) == 0) return TOKEN_ASSERT;
-            if (length == 5 && memcmp(start, "async", 5) == 0) return TOKEN_ASYNC;
+            // 'async' removed — spawn/await work on plain fns (async was a deprecated no-op)
             if (length == 5 && memcmp(start, "await", 5) == 0) return TOKEN_AWAIT;
             break;
         case 'b': if (length == 5 && memcmp(start, "break", 5) == 0) return TOKEN_BREAK; break;
@@ -136,8 +136,7 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 5 && memcmp(start, "const", 5) == 0) return TOKEN_CONST;
             if (length == 8 && memcmp(start, "continue", 8) == 0) return TOKEN_CONTINUE;
             if (length == 7 && memcmp(start, "channel", 7) == 0) return TOKEN_CHANNEL;
-            if (length == 5 && memcmp(start, "catch", 5) == 0) return TOKEN_CATCH;
-            if (length == 5 && memcmp(start, "catch", 5) == 0) return TOKEN_CATCH;
+            // 'catch' removed — use Result/Ok/Err + match/? for error handling
             break;
         case 'E':
             // Err is a regular identifier (can be enum variant)
@@ -186,7 +185,7 @@ static WynTokenType keyword_type(const char* start, int length) {
             break;
         case 'o': 
             if (length == 2 && memcmp(start, "or", 2) == 0) return TOKEN_OR;
-            if (length == 6 && memcmp(start, "object", 6) == 0) return TOKEN_OBJECT;
+            // 'object' removed — identical to 'struct' (use struct)
             // Removed TOKEN_OK - let ok be a regular identifier
             break;
         case 'p':
@@ -212,8 +211,8 @@ static WynTokenType keyword_type(const char* start, int length) {
             // 'test' is context-sensitive — only a keyword at top level
             // Allow it as identifier for function names, variables, etc.
             if (length == 4 && memcmp(start, "test", 4) == 0) return TOKEN_IDENT;
-            if (length == 3 && memcmp(start, "try", 3) == 0) return TOKEN_TRY;
-            if (length == 5 && memcmp(start, "throw", 5) == 0) return TOKEN_THROW;
+            // 'try'/'throw' removed — use Result/Ok/Err + match/? for error handling
+
             if (length == 5 && memcmp(start, "trait", 5) == 0) return TOKEN_TRAIT;
             break;
         case 'u':
