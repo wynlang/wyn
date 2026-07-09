@@ -1,6 +1,39 @@
 // codegen_expr.c - Expression code generation
 // Included from codegen.c - shares all statics
 
+// A string pushed into an array transfers ownership: array_push_str stores the
+// pointer without retaining, and array_free releases it. So a local string var
+// pushed into an array must NOT also be released at scope exit — that would
+// double-free the live element (UAF on read, or empty-string reads after free).
+// Mirror the return/assignment move idiom: if the pushed value is a tracked
+// string variable, MOVE it (unregister so scope exit skips it) when it's dead
+// after this statement, otherwise RETAIN it (the array now co-owns a reference).
+// Fresh temporaries (literals, concat results) are not tracked vars, so nothing
+// is emitted for them. Call this AFTER the push expression has been emitted.
+static void codegen_string_push_transfer(Expr* value) {
+    if (!value || value->type != EXPR_IDENT) return;
+    char _pvn[256]; token_to_cstr(_pvn, sizeof(_pvn), value->token);
+    extern int is_string_var(const char*);
+    if (!is_string_var(_pvn)) return;
+    extern int string_var_releasable_count; extern char* string_var_releasable[];
+    extern int var_is_live_after(Stmt**, int, int, const char*);
+    extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
+    // A releasable (top-level/outer) var is co-owned: retain so the scope-exit
+    // release and array_free each balance an owner.
+    bool _is_releasable = false;
+    for (int i = 0; i < string_var_releasable_count; i++)
+        if (strcmp(string_var_releasable[i], _pvn) == 0) { _is_releasable = true; break; }
+    if (!_is_releasable && current_block_stmts &&
+        !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _pvn)) {
+        // Move: local var is dead after this push — array takes sole ownership.
+        extern void unregister_string_var(const char*);
+        unregister_string_var(_pvn);
+    } else {
+        // Copy: var is still live (or outer-scope releasable) — array co-owns.
+        emit("; wyn_rc_retain((void*)(intptr_t)%s)", _pvn);
+    }
+}
+
 void codegen_expr(Expr* expr) {
     if (!expr) return;
     // If this expr was pre-evaluated to a temp, emit the temp name
@@ -1433,6 +1466,10 @@ void codegen_expr(Expr* expr) {
                     }
                 }
                 emit(")");
+                // array_push_str transfers string ownership to the array — move
+                // or retain the pushed local so scope exit doesn't double-free it.
+                if (is_array_push_str && expr->call.arg_count >= 2)
+                    codegen_string_push_transfer(expr->call.args[1]);
             }
             break;
         case EXPR_METHOD_CALL: {
@@ -1830,6 +1867,9 @@ void codegen_expr(Expr* expr) {
                         emit("), ");
                         codegen_expr(expr->method_call.args[0]);
                         emit(")");
+                        // Ownership transfers to the array — suppress the scope-exit
+                        // release (move) or retain a shared reference (copy).
+                        codegen_string_push_transfer(expr->method_call.args[0]);
                         break;
                     }
                     if (elem_type && elem_type->kind == TYPE_STRUCT) {
