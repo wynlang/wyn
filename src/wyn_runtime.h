@@ -167,33 +167,23 @@ bool wyn_file_exists(const char* path);
 const char* wyn_string_concat_safe(const char* left, const char* right) {
     if (!left) left = "";
     if (!right) right = "";
-    size_t l2 = strlen(right);
-    if (l2 == 0) return left;
-    // Use cached length for left if available
+    // INVARIANT: this function ALWAYS returns a distinct, freshly heap-allocated
+    // string — never an alias of `left` or `right`. Callers (see codegen) rely on
+    // pointer identity to decide ownership: a returned pointer equal to an operand
+    // would be released twice (use-after-free) and, for the old in-place grow path,
+    // would also mutate a live caller-owned string. Do not reintroduce aliasing
+    // "optimizations" here; they were the source of a heap-use-after-free.
     extern int wyn_rc_is_heap(const void*);
+    size_t l2 = strlen(right);
     size_t l1;
-    typedef struct { unsigned int magic; _Atomic int refcount; unsigned int capacity; unsigned int length; } RcHdr;
-    RcHdr* left_hdr = NULL;
+    // Mirror of WynRcHeaderFull (wyn_rc.c) — must stay byte-identical. magic2 is
+    // the complement sentinel appended last so the leading fields keep their offsets.
+    typedef struct { unsigned int magic; _Atomic int refcount; unsigned int capacity; unsigned int length; unsigned int magic2; } RcHdr;
     if (wyn_rc_is_heap(left)) {
-        left_hdr = (RcHdr*)((char*)left - sizeof(RcHdr));
+        RcHdr* left_hdr = (RcHdr*)((char*)left - sizeof(RcHdr));
         l1 = left_hdr->length ? left_hdr->length : strlen(left);
     } else {
         l1 = strlen(left);
-    }
-    if (l1 == 0) { const char* d = wyn_strdup(right); return d; }
-    // Optimization: if left has refcount 1, grow in place
-    if (left_hdr && atomic_load(&left_hdr->refcount) == 1) {
-        size_t needed = l1 + l2 + 1;
-        if (needed <= left_hdr->capacity) {
-            // Fast path: just append in place, no allocation
-            char* s = (char*)left;
-            memcpy(s + l1, right, l2);
-            s[l1 + l2] = 0;
-            left_hdr->length = (unsigned int)(l1 + l2);
-            return s;
-        }
-        // Need more space: allocate new, copy, DON'T realloc
-        // (realloc frees old ptr, but caller may still reference it for comparison)
     }
     // Allocate new buffer with power-of-2 over-allocation
     size_t alloc_size = l1 + l2 + 1;

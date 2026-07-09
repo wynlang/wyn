@@ -6,14 +6,20 @@
 #include <stdatomic.h>
 
 // Reference counting header — placed before heap-allocated objects.
-// Layout: [_Atomic int32_t refcount][user data...]
+// Layout: [magic(4)][refcount(4)][capacity(4)][length(4)][magic2(4)][user data...]
 // The pointer returned to user code points to user data, not the header.
+// This MUST stay byte-identical to WynRcHeaderFull (wyn_rc.c) and the RcHdr
+// mirror in wyn_runtime.h. magic2 = ~magic is the complement sentinel.
 
 // Sentinel refcount for immortal objects (string literals, stack values)
 #define WYN_RC_IMMORTAL INT32_MAX
 
 typedef struct {
+    uint32_t magic;
     _Atomic int32_t refcount;
+    uint32_t capacity;
+    uint32_t length;
+    uint32_t magic2;
 } WynRcHeader;
 
 // Get header from user pointer
