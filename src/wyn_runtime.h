@@ -3067,12 +3067,25 @@ char* DateTime_format(int timestamp, const char* fmt) {
 }
 void DateTime_sleep(int seconds) { sleep(seconds); }
 
-// Time.sleep(ms) — sleep for milliseconds
+// Time.sleep(ms) — sleep for milliseconds.
+// Inside a coroutine, sleep COOPERATIVELY: arm a one-shot timer, park, and
+// yield so the worker thread runs other tasks meanwhile; the scheduler resumes
+// this task when the timer fires (via wyn_io_poll). Outside a coroutine — or if
+// the timer can't be armed (TCC/fallback stub) — fall back to a blocking sleep.
 void Time_sleep(long long ms) {
-#ifdef _WIN32
-    Sleep((DWORD)ms);
-#else
+    if (ms < 0) ms = 0;
+#ifndef _WIN32
+    if (wyn_coro_current()) {
+        void* task = wyn_current_task();
+        if (task && wyn_io_wait_timer(task, ms)) {
+            wyn_io_park();
+            wyn_coro_yield();
+            return;
+        }
+    }
     usleep((useconds_t)(ms * 1000));
+#else
+    Sleep((DWORD)ms);
 #endif
 }
 

@@ -10,6 +10,13 @@ void wyn_io_wait_readable(int fd, void* task_ptr);
 // Register fd for write readiness.
 void wyn_io_wait_writable(int fd, void* task_ptr);
 
+// Register a one-shot timer. After `ms` milliseconds elapse, task_ptr is
+// re-enqueued to the scheduler (like an fd becoming ready), letting a
+// coroutine sleep cooperatively instead of blocking its worker thread.
+// Returns 1 if the timer was armed, 0 on the TCC/fallback stub paths (caller
+// then falls back to a blocking sleep).
+int wyn_io_wait_timer(void* task_ptr, long long ms);
+
 // Poll for ready events and re-enqueue tasks. Non-blocking.
 int wyn_io_poll(void);
 
