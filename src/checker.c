@@ -4218,7 +4218,6 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 }
             }
             break;
-        case STMT_UNSAFE:
         case STMT_PARALLEL:
             // Check body statements in the SAME scope so bindings (including
             // parallel's spawn-bound vars) escape to the enclosing scope, as
@@ -4391,29 +4390,6 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
         case STMT_EXPORT:
             // Check the exported statement
             check_stmt(stmt->export.stmt, scope);
-            break;
-        case STMT_TRY:
-            // Check try block
-            check_stmt(stmt->try_stmt.try_block, scope);
-            // Check catch blocks with exception variables in scope
-            for (int i = 0; i < stmt->try_stmt.catch_count; i++) {
-                SymbolTable catch_scope = {0};
-                catch_scope.parent = scope;
-                // Add exception variable to catch scope
-                add_symbol(&catch_scope, stmt->try_stmt.exception_vars[i], builtin_string, false);
-                check_stmt(stmt->try_stmt.catch_blocks[i], &catch_scope);
-            }
-            
-            // Check finally block if present
-            if (stmt->try_stmt.finally_block) {
-                check_stmt(stmt->try_stmt.finally_block, scope);
-            }
-            break;
-        case STMT_THROW:
-            // Check the thrown expression
-            if (stmt->throw_stmt.value) {
-                check_expr(stmt->throw_stmt.value, scope);
-            }
             break;
         case STMT_STRUCT:
             // T3.1.2: Register generic structs
