@@ -1,0 +1,15 @@
+// EXPECT: 42
+// EXPECT: 99
+// A long (120-char) identifier exercises the compiler's temp_ident /
+// target_name buffers (codegen_expr.c). These were fixed char[512] filled by
+// an unchecked memcpy(dst, tok.start, tok.length); now clamped via
+// token_to_cstr (common.h). Guards against buffer overflow on long names.
+// (NOTE: a separate pre-existing checker limit rejects identifiers >~128 chars;
+// tracked in internal-docs ROADMAP. 120 stays safely under it.)
+fn main() -> int {
+    var aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = 42
+    println(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = 99
+    println(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+    return 0
+}

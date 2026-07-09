@@ -38,6 +38,21 @@ typedef struct {
     int line;
 } Token;
 
+// Copy a token's lexeme into a fixed C buffer, clamped to bufsz-1 and always
+// NUL-terminated. Guards against buffer overflow when a token (e.g. a very long
+// identifier) exceeds a fixed compiler-side buffer. Returns the number of bytes
+// copied (excluding the terminator).
+#include <string.h>
+static inline int token_to_cstr(char* buf, size_t bufsz, Token tok) {
+    if (bufsz == 0) return 0;
+    int len = tok.length;
+    if (len < 0) len = 0;
+    if ((size_t)len > bufsz - 1) len = (int)(bufsz - 1);
+    memcpy(buf, tok.start, (size_t)len);
+    buf[len] = '\0';
+    return len;
+}
+
 // Parser functions
 void set_parser_filename(const char* filename);
 

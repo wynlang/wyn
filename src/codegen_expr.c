@@ -85,8 +85,7 @@ void codegen_expr(Expr* expr) {
             
             // Check if this is a module.function call and resolve alias
             char temp_ident[512];
-            memcpy(temp_ident, expr->token.start, expr->token.length);
-            temp_ident[expr->token.length] = '\0';
+            token_to_cstr(temp_ident, sizeof temp_ident, expr->token);
             
             // If we're inside a module function, check if this identifier needs module prefix
             if (current_module_prefix && !strchr(temp_ident, ':') && !strchr(temp_ident, '.')) {
@@ -3013,8 +3012,7 @@ void codegen_expr(Expr* expr) {
             // RC: release old string value AFTER evaluating new value
             // (old value might be referenced in the RHS expression)
             char target_name[512];
-            memcpy(target_name, expr->assign.name.start, expr->assign.name.length);
-            target_name[expr->assign.name.length] = '\0';
+            token_to_cstr(target_name, sizeof target_name, expr->assign.name);
             bool _rc_string_assign = false;
             {
                 extern int is_string_var(const char*);
