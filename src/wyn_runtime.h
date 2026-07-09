@@ -4,6 +4,8 @@
 #define _DEFAULT_SOURCE 1
 
 // Reference counting (wyn_rc.c)
+#include <stddef.h>
+void* wyn_rc_alloc(size_t size);
 void wyn_rc_retain(const void* ptr);
 void wyn_rc_release(const void* ptr);
 void wyn_rc_set_length(const void* ptr, unsigned int len);

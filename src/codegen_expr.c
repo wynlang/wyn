@@ -3998,8 +3998,13 @@ void codegen_expr(Expr* expr) {
             for (int i = 0; i < lambda_count; i++) {
                 if (lambda_functions[i].id == lid && lambda_functions[i].is_closure) {
                     is_closure_lambda = true;
-                    // Emit closure construction: allocate env, fill captured vars, return WynClosure
-                    emit("({ __closure_env_%d* __env = malloc(sizeof(__closure_env_%d)); ", lid, lid);
+                    // Emit closure construction: allocate env, fill captured vars, return WynClosure.
+                    // The env is RC-allocated (not plain malloc) so its lifetime can be
+                    // managed by wyn_rc_retain/release on WynClosure.env — see the scope-exit
+                    // release for non-escaping closure vars in codegen.c pop_scope. wyn_rc_release
+                    // is a no-op on non-RC/NULL pointers, so this stays safe even where a closure
+                    // env isn't (yet) tracked.
+                    emit("({ __closure_env_%d* __env = wyn_rc_alloc(sizeof(__closure_env_%d)); ", lid, lid);
                     for (int j = 0; j < lambda_functions[i].capture_count; j++) {
                         emit("__env->%s = %s; ", 
                             lambda_functions[i].captured_vars[j],
