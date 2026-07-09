@@ -2002,7 +2002,7 @@ Stmt* statement() {
         return stmt;
     }
     
-    if (match(TOKEN_IF) || match(TOKEN_ELSEIF)) {
+    if (match(TOKEN_IF)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_IF;
         
@@ -2045,8 +2045,6 @@ Stmt* statement() {
                 }
                 expect(TOKEN_RBRACE, "Expected '}' after else body");
             }
-        } else if (check(TOKEN_ELSEIF)) {
-            stmt->if_stmt.else_branch = statement();
         } else {
             stmt->if_stmt.else_branch = NULL;
         }

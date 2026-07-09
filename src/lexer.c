@@ -144,7 +144,7 @@ static WynTokenType keyword_type(const char* start, int length) {
             break;
         case 'e':
             if (length == 4 && memcmp(start, "else", 4) == 0) return TOKEN_ELSE;
-            if (length == 6 && memcmp(start, "elseif", 6) == 0) return TOKEN_ELSEIF;
+            // 'elseif' removed — use 'else if' (works via else → statement → if)
             if (length == 4 && memcmp(start, "enum", 4) == 0) return TOKEN_ENUM;
             if (length == 6 && memcmp(start, "export", 6) == 0) return TOKEN_EXPORT;
             // Removed TOKEN_ERR - let err be a regular identifier
@@ -155,7 +155,7 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 2 && memcmp(start, "fn", 2) == 0) return TOKEN_FN;
             if (length == 3 && memcmp(start, "for", 3) == 0) return TOKEN_FOR;
             if (length == 4 && memcmp(start, "from", 4) == 0) return TOKEN_FROM;
-            if (length == 7 && memcmp(start, "finally", 7) == 0) return TOKEN_FINALLY;
+            // 'finally' removed — unused (try/catch is not fully implemented)
             break;
         case 'i':
             if (length == 2 && memcmp(start, "if", 2) == 0) return TOKEN_IF;
@@ -171,12 +171,12 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 3 && memcmp(start, "mut", 3) == 0) return TOKEN_MUT;
             // "map" is not a keyword - use {} for hashmaps
             // if (length == 3 && memcmp(start, "map", 3) == 0) return TOKEN_MAP;
-            if (length == 6 && memcmp(start, "module", 6) == 0) return TOKEN_MODULE;
-            if (length == 5 && memcmp(start, "macro", 5) == 0) return TOKEN_MACRO;
+            // 'module' removed — was never consumed by the parser (use import/from)
+            // 'macro' removed — unimplemented, unused
             break;
         case 'n': 
             if (length == 3 && memcmp(start, "not", 3) == 0) return TOKEN_NOT;
-            if (length == 4 && memcmp(start, "null", 4) == 0) return TOKEN_NULL;
+            // 'null' removed — use 'None' for optionals (null never worked as a value)
             break;
         case 'N':
             if (length == 4 && memcmp(start, "None", 4) == 0) return TOKEN_NONE;
@@ -217,7 +217,7 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 5 && memcmp(start, "trait", 5) == 0) return TOKEN_TRAIT;
             break;
         case 'u':
-            if (length == 6 && memcmp(start, "unsafe", 6) == 0) return TOKEN_UNSAFE;
+            // 'unsafe' removed — unimplemented, unused
             break;
         case 'v': if (length == 3 && memcmp(start, "var", 3) == 0) return TOKEN_VAR; break;
         case 'w': if (length == 5 && memcmp(start, "while", 5) == 0) return TOKEN_WHILE; break;
