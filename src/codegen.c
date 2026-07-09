@@ -489,6 +489,66 @@ void register_hashmap_scope_var(const char* name) {
     if (hashmap_scope_count < 256) hashmap_scope_names[hashmap_scope_count++] = strdup(name);
 }
 void reset_hashmap_scope(void) { hashmap_scope_count = 0; hashmap_scope_top = 0; }
+
+// Closure scope tracking — parallel to array/string scope. A closure-holding
+// local (WynClosure by value) owns an RC-allocated env (see codegen_expr.c
+// EXPR_LAMBDA). Releasing <var>.env when the var leaves scope reclaims the env.
+// wyn_rc_release is a no-op on non-RC/NULL, so a released-but-not-owned closure
+// (e.g. one that was moved out via return) is harmless. Escape is handled by
+// unregistering a closure var before its scope pops when it is returned.
+static char* closure_scope_names[256];
+static int closure_scope_count = 0;
+static int closure_scope_stack[SCOPE_STACK_MAX];
+static int closure_scope_top = 0;
+
+void push_closure_scope(void) {
+    if (closure_scope_top < SCOPE_STACK_MAX)
+        closure_scope_stack[closure_scope_top++] = closure_scope_count;
+}
+void pop_closure_scope_and_release(void) {
+    if (closure_scope_top <= 0) return;
+    int saved = closure_scope_stack[--closure_scope_top];
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (out) {
+        for (int i = saved; i < closure_scope_count; i++)
+            fprintf(out, "wyn_rc_release(%s.env); ", closure_scope_names[i]);
+    }
+    for (int i = saved; i < closure_scope_count; i++) free(closure_scope_names[i]);
+    closure_scope_count = saved;
+}
+// Emit releases for current block's closure vars (for break/continue/return).
+void emit_block_closure_releases(void) {
+    if (closure_scope_top <= 0) return;
+    int saved = closure_scope_stack[closure_scope_top - 1];
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (out) {
+        for (int i = saved; i < closure_scope_count; i++)
+            fprintf(out, "wyn_rc_release(%s.env); ", closure_scope_names[i]);
+    }
+}
+void register_closure_scope_var(const char* name) {
+    for (int i = 0; i < closure_scope_count; i++)
+        if (strcmp(closure_scope_names[i], name) == 0) return;
+    if (closure_scope_count < 256) closure_scope_names[closure_scope_count++] = strdup(name);
+}
+// Remove a closure var from tracking so it is NOT released at scope exit
+// (used when the closure escapes, e.g. it is the return value → ownership moves
+// to the caller).
+void unregister_closure_scope_var(const char* name) {
+    for (int i = 0; i < closure_scope_count; i++) {
+        if (strcmp(closure_scope_names[i], name) == 0) {
+            free(closure_scope_names[i]);
+            closure_scope_names[i] = closure_scope_names[--closure_scope_count];
+            return;
+        }
+    }
+}
+void reset_closure_scope(void) {
+    for (int i = 0; i < closure_scope_count; i++) free(closure_scope_names[i]);
+    closure_scope_count = 0; closure_scope_top = 0;
+}
 // Only top-level string vars are released at scope exit
 static char* string_var_releasable[256];
 static int string_var_releasable_count = 0;

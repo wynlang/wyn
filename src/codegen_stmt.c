@@ -55,7 +55,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     clear_local_variables();
     { extern void reset_shadow_vars(void); reset_shadow_vars(); }
     { extern void reset_string_vars(void); reset_string_vars(); }
-    { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); }
+    { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
         char param_name[256];
         snprintf(param_name, 256, "%.*s", fn_stmt->fn.params[i].length, fn_stmt->fn.params[i].start);
@@ -1128,6 +1128,14 @@ void codegen_stmt(Stmt* stmt) {
                                     lambda_var_info[lambda_var_count].is_closure = true;
                                     lambda_var_info[lambda_var_count].capture_count = 0;
                                     lambda_var_count++;
+                                    // Track for scope-exit env release (RC). Only functions
+                                    // returning a closure reach here, so the var holds a
+                                    // WynClosure with an RC-allocated env to reclaim.
+                                    {
+                                        extern void register_closure_scope_var(const char*);
+                                        char _cvn[512]; token_to_cstr(_cvn, sizeof(_cvn), stmt->var.name);
+                                        register_closure_scope_var(_cvn);
+                                    }
                                     break;
                                 }
                             }
@@ -1493,6 +1501,17 @@ void codegen_stmt(Stmt* stmt) {
                     emit_string_releases(_except_buf[0] ? _except_buf : NULL);
                 }
             }
+            // RC: release closure-env-owning locals before return, EXCEPT a
+            // returned closure var (its env ownership moves to the caller).
+            {
+                extern void unregister_closure_scope_var(const char*);
+                extern void emit_block_closure_releases(void);
+                if (stmt->ret.value && stmt->ret.value->type == EXPR_IDENT) {
+                    char _cret[512]; token_to_cstr(_cret, sizeof(_cret), stmt->ret.value->token);
+                    unregister_closure_scope_var(_cret);  // move: don't free what we return
+                }
+                emit_block_closure_releases();
+            }
             if (in_async_function) {
                 emit("*temp = ");
                 codegen_expr(stmt->ret.value);
@@ -1590,7 +1609,9 @@ void codegen_stmt(Stmt* stmt) {
                 extern void pop_array_scope_and_release(void);
                 extern void push_hashmap_scope(void);
                 extern void pop_hashmap_scope_and_release(void);
-                if (_is_inner_block) { push_string_scope(); push_array_scope(); push_hashmap_scope(); }
+                extern void push_closure_scope(void);
+                extern void pop_closure_scope_and_release(void);
+                if (_is_inner_block) { push_string_scope(); push_array_scope(); push_hashmap_scope(); push_closure_scope(); }
                 
                 // Save shadow state for vars declared in inner blocks
                 extern int get_current_shadow(const char*);
@@ -1622,7 +1643,7 @@ void codegen_stmt(Stmt* stmt) {
                 current_block_stmts = _saved_stmts; current_block_count = _saved_count; current_stmt_idx = _saved_idx;
                 
                 // String cleanup first (needs macros still defined)
-                if (_is_inner_block) { pop_string_scope_and_release(); pop_array_scope_and_release(); pop_hashmap_scope_and_release(); }
+                if (_is_inner_block) { pop_string_scope_and_release(); pop_array_scope_and_release(); pop_hashmap_scope_and_release(); pop_closure_scope_and_release(); }
                 
                 // Then restore shadow state for shadowed variables
                 if (_is_inner_block) {
@@ -2046,7 +2067,7 @@ void codegen_stmt(Stmt* stmt) {
             clear_local_variables();
             { extern void reset_shadow_vars(void); reset_shadow_vars(); }
             { extern void reset_string_vars(void); reset_string_vars(); }
-            { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); }
+            { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
             for (int i = 0; i < stmt->fn.param_count; i++) {
                 char pname[256];
                 snprintf(pname, 256, "%.*s", stmt->fn.params[i].length, stmt->fn.params[i].start);
