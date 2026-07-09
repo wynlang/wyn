@@ -301,17 +301,13 @@ void codegen_expr(Expr* expr) {
                 inner->spawn.call->type == EXPR_CALL &&
                 inner->spawn.call->call.callee->type == EXPR_IDENT) {
                 char fn_name[256];
-                int fnl = inner->spawn.call->call.callee->token.length;
-                if (fnl > 255) fnl = 255;
-                memcpy(fn_name, inner->spawn.call->call.callee->token.start, fnl);
-                fn_name[fnl] = '\0';
+                token_to_cstr(fn_name, sizeof(fn_name), inner->spawn.call->call.callee->token);
                 extern const char* get_function_return_type(const char* name);
                 const char* rt = get_function_return_type(fn_name);
                 if (rt && strcmp(rt, "string") == 0) is_string_return = true;
             }
             if (!is_string_return && inner && inner->type == EXPR_IDENT) {
-                char vn[256]; int vl = inner->token.length < 255 ? inner->token.length : 255;
-                memcpy(vn, inner->token.start, vl); vn[vl] = '\0';
+                char vn[256]; token_to_cstr(vn, sizeof(vn), inner->token);
                 extern int is_string_future(const char*);
                 if (is_string_future(vn)) is_string_return = true;
             }
@@ -321,9 +317,7 @@ void codegen_expr(Expr* expr) {
                 if (inner && inner->type == EXPR_SPAWN && inner->spawn.call &&
                     inner->spawn.call->type == EXPR_CALL &&
                     inner->spawn.call->call.callee->type == EXPR_IDENT) {
-                    char fn2[256]; int fl2 = inner->spawn.call->call.callee->token.length;
-                    if (fl2 > 255) fl2 = 255;
-                    memcpy(fn2, inner->spawn.call->call.callee->token.start, fl2); fn2[fl2] = '\0';
+                    char fn2[256]; token_to_cstr(fn2, sizeof(fn2), inner->spawn.call->call.callee->token);
                     extern const char* get_function_return_type(const char*);
                     const char* rt2 = get_function_return_type(fn2);
                     if (rt2 && strcmp(rt2, "int") != 0 && strcmp(rt2, "string") != 0 &&
@@ -331,8 +325,7 @@ void codegen_expr(Expr* expr) {
                         struct_return_type = rt2;
                 }
                 if (!struct_return_type && inner && inner->type == EXPR_IDENT) {
-                    char vn2[256]; int vl2 = inner->token.length < 255 ? inner->token.length : 255;
-                    memcpy(vn2, inner->token.start, vl2); vn2[vl2] = '\0';
+                    char vn2[256]; token_to_cstr(vn2, sizeof(vn2), inner->token);
                     extern const char* get_struct_future_type(const char*);
                     struct_return_type = get_struct_future_type(vn2);
                 }
@@ -429,8 +422,7 @@ void codegen_expr(Expr* expr) {
                     }
                     // Also check codegen's string var tracking
                     if (!left_is_string) {
-                        char _ln[256]; int _ll = expr->binary.left->token.length < 255 ? expr->binary.left->token.length : 255;
-                        memcpy(_ln, expr->binary.left->token.start, _ll); _ln[_ll] = '\0';
+                        char _ln[256]; token_to_cstr(_ln, sizeof(_ln), expr->binary.left->token);
                         extern int is_string_var(const char*);
                         if (is_string_var(_ln)) { left_is_string = true; left_is_int = false; }
                     }
@@ -441,8 +433,7 @@ void codegen_expr(Expr* expr) {
                         right_is_int = false;
                     }
                     if (!right_is_string) {
-                        char _rn[256]; int _rl = expr->binary.right->token.length < 255 ? expr->binary.right->token.length : 255;
-                        memcpy(_rn, expr->binary.right->token.start, _rl); _rn[_rl] = '\0';
+                        char _rn[256]; token_to_cstr(_rn, sizeof(_rn), expr->binary.right->token);
                         extern int is_string_var(const char*);
                         if (is_string_var(_rn)) { right_is_string = true; right_is_int = false; }
                     }
@@ -450,15 +441,13 @@ void codegen_expr(Expr* expr) {
                 // Check EXPR_INDEX on string arrays
                 if (!left_is_string && expr->binary.left->type == EXPR_INDEX &&
                     expr->binary.left->index.array->type == EXPR_IDENT) {
-                    char _an[256]; int _al = expr->binary.left->index.array->token.length < 255 ? expr->binary.left->index.array->token.length : 255;
-                    memcpy(_an, expr->binary.left->index.array->token.start, _al); _an[_al] = '\0';
+                    char _an[256]; token_to_cstr(_an, sizeof(_an), expr->binary.left->index.array->token);
                     extern int is_str_array_var(const char*);
                     if (is_str_array_var(_an)) { left_is_string = true; left_is_int = false; }
                 }
                 if (!right_is_string && expr->binary.right->type == EXPR_INDEX &&
                     expr->binary.right->index.array->type == EXPR_IDENT) {
-                    char _an[256]; int _al = expr->binary.right->index.array->token.length < 255 ? expr->binary.right->index.array->token.length : 255;
-                    memcpy(_an, expr->binary.right->index.array->token.start, _al); _an[_al] = '\0';
+                    char _an[256]; token_to_cstr(_an, sizeof(_an), expr->binary.right->index.array->token);
                     extern int is_str_array_var(const char*);
                     if (is_str_array_var(_an)) { right_is_string = true; right_is_int = false; }
                 }
@@ -483,11 +472,11 @@ void codegen_expr(Expr* expr) {
                             { *_is_str = true; *_is_int = false; }
                         // Check struct method return type
                         if (!*_is_str && _e->method_call.object->type == EXPR_IDENT) {
-                            char _on[64]; snprintf(_on, 64, "%.*s", _e->method_call.object->token.length, _e->method_call.object->token.start);
+                            char _on[64]; token_to_cstr(_on, sizeof(_on), _e->method_call.object->token);
                             extern const char* get_struct_var_type(const char*);
                             const char* _st = get_struct_var_type(_on);
                             if (_st) {
-                                char _mn[64]; snprintf(_mn, 64, "%.*s", _m.length, _m.start);
+                                char _mn[64]; token_to_cstr(_mn, sizeof(_mn), _m);
                                 extern const char* lookup_struct_method_return_type(const char*, const char*);
                                 const char* _rt = lookup_struct_method_return_type(_st, _mn);
                                 if (_rt && strcmp(_rt, "string") == 0) { *_is_str = true; *_is_int = false; }
@@ -496,7 +485,7 @@ void codegen_expr(Expr* expr) {
                         // Check function return type for fn().method() chains
                         if (!*_is_str && _e->method_call.object->type == EXPR_CALL &&
                             _e->method_call.object->call.callee->type == EXPR_IDENT) {
-                            char _fn[64]; snprintf(_fn, 64, "%.*s", _e->method_call.object->call.callee->token.length, _e->method_call.object->call.callee->token.start);
+                            char _fn[64]; token_to_cstr(_fn, sizeof(_fn), _e->method_call.object->call.callee->token);
                             extern const char* get_function_return_type(const char*);
                             const char* _frt = get_function_return_type(_fn);
                             if (_frt && strcmp(_frt, "string") == 0) { *_is_str = true; *_is_int = false; }
@@ -726,8 +715,7 @@ void codegen_expr(Expr* expr) {
                     // Check if the futures array holds string-returning spawns
                     bool _is_str_arr = false;
                     if (expr->call.args[0]->type == EXPR_IDENT) {
-                        char _aan[256]; int _aal = expr->call.args[0]->token.length < 255 ? expr->call.args[0]->token.length : 255;
-                        memcpy(_aan, expr->call.args[0]->token.start, _aal); _aan[_aal] = '\0';
+                        char _aan[256]; token_to_cstr(_aan, sizeof(_aan), expr->call.args[0]->token);
                         extern int is_string_spawn_array(const char*);
                         _is_str_arr = is_string_spawn_array(_aan);
                     }
@@ -1283,7 +1271,7 @@ void codegen_expr(Expr* expr) {
                                 bool is_internal_call = false;
                                 if (current_module_prefix && !is_module_qualified && expr->call.callee->type == EXPR_IDENT) {
                                     char func_name[256];
-                                    snprintf(func_name, 256, "%.*s", expr->call.callee->token.length, expr->call.callee->token.start);
+                                    token_to_cstr(func_name, sizeof(func_name), expr->call.callee->token);
                                     is_internal_call = is_module_function(func_name);
                                 }
                                 
@@ -1315,7 +1303,7 @@ void codegen_expr(Expr* expr) {
                             bool is_internal_call = false;
                             if (current_module_prefix && !is_module_qualified && expr->call.callee->type == EXPR_IDENT) {
                                 char func_name[256];
-                                snprintf(func_name, 256, "%.*s", expr->call.callee->token.length, expr->call.callee->token.start);
+                                token_to_cstr(func_name, sizeof(func_name), expr->call.callee->token);
                                 is_internal_call = is_module_function(func_name);
                             }
                             
@@ -1342,8 +1330,7 @@ void codegen_expr(Expr* expr) {
                 int lambda_var_idx = -1;
                 if (expr->call.callee->type == EXPR_IDENT) {
                     char callee_name[64];
-                    snprintf(callee_name, 64, "%.*s", 
-                            expr->call.callee->token.length, expr->call.callee->token.start);
+                    token_to_cstr(callee_name, sizeof(callee_name), expr->call.callee->token);
                     for (int i = 0; i < lambda_var_count; i++) {
                         if (strcmp(lambda_var_info[i].var_name, callee_name) == 0) {
                             is_lambda_call = true;
@@ -1364,7 +1351,7 @@ void codegen_expr(Expr* expr) {
                     for (int i = 0; i < expr->call.arg_count; i++)
                         if (expr->call.arg_names[i].length > 0) { _has_named = true; break; }
                     if (_has_named && expr->call.callee->type == EXPR_IDENT) {
-                        char _cfn2[128]; snprintf(_cfn2, 128, "%.*s", expr->call.callee->token.length, expr->call.callee->token.start);
+                        char _cfn2[128]; token_to_cstr(_cfn2, sizeof(_cfn2), expr->call.callee->token);
                         extern int get_fn_param_count(const char*);
                         extern Expr* get_fn_default(const char*, int);
                         extern int get_fn_param_index(const char*, const char*);
@@ -1373,8 +1360,7 @@ void codegen_expr(Expr* expr) {
                             Expr** _ra = calloc(_total, sizeof(Expr*));
                             for (int i = 0; i < expr->call.arg_count; i++) {
                                 if (expr->call.arg_names[i].length > 0) {
-                                    char pn[64]; int pl = expr->call.arg_names[i].length < 63 ? expr->call.arg_names[i].length : 63;
-                                    memcpy(pn, expr->call.arg_names[i].start, pl); pn[pl] = '\0';
+                                    char pn[64]; token_to_cstr(pn, sizeof(pn), expr->call.arg_names[i]);
                                     int idx = get_fn_param_index(_cfn2, pn);
                                     if (idx >= 0 && idx < _total) _ra[idx] = expr->call.args[i];
                                 } else {
@@ -1406,13 +1392,13 @@ void codegen_expr(Expr* expr) {
                     // Check if this argument needs trait object wrapping
                     if (expr->call.callee->type == EXPR_IDENT) {
                         char callee_buf[64];
-                        snprintf(callee_buf, 64, "%.*s", expr->call.callee->token.length, expr->call.callee->token.start);
+                        token_to_cstr(callee_buf, sizeof(callee_buf), expr->call.callee->token);
                         const char* trait = get_fn_trait_param(callee_buf, i);
                         if (trait && expr->call.args[i]->type == EXPR_IDENT && expr->call.args[i]->expr_type &&
                             expr->call.args[i]->expr_type->kind == TYPE_STRUCT) {
                             Token sname = expr->call.args[i]->expr_type->struct_type.name;
                             char sbuf[64];
-                            snprintf(sbuf, 64, "%.*s", sname.length, sname.start);
+                            token_to_cstr(sbuf, sizeof(sbuf), sname);
                             const char* impl_trait = find_trait_for_struct(sbuf);
                             if (impl_trait && strcmp(impl_trait, trait) == 0) {
                                 emit("(%s){&", trait);
@@ -1431,7 +1417,7 @@ void codegen_expr(Expr* expr) {
                     expr->call.args = _orig_args;
                     expr->call.arg_count = _orig_count;
                 } else if (expr->call.callee->type == EXPR_IDENT) {
-                    char _cfn[128]; snprintf(_cfn, 128, "%.*s", expr->call.callee->token.length, expr->call.callee->token.start);
+                    char _cfn[128]; token_to_cstr(_cfn, sizeof(_cfn), expr->call.callee->token);
                     extern int get_fn_param_count(const char*);
                     extern Expr* get_fn_default(const char*, int);
                     int total_params = get_fn_param_count(_cfn);
@@ -1561,8 +1547,7 @@ void codegen_expr(Expr* expr) {
             if (expr->method_call.object->type == EXPR_IDENT &&
                 method.length == 4 && memcmp(method.start, "push", 4) == 0 &&
                 expr->method_call.arg_count == 1) {
-                char _on[256]; int _ol = expr->method_call.object->token.length < 255 ? expr->method_call.object->token.length : 255;
-                memcpy(_on, expr->method_call.object->token.start, _ol); _on[_ol] = '\0';
+                char _on[256]; token_to_cstr(_on, sizeof(_on), expr->method_call.object->token);
                 if (is_spawn_array(_on)) {
                     emit("int_array_push(&(");
                     codegen_expr(expr->method_call.object);
@@ -1575,7 +1560,7 @@ void codegen_expr(Expr* expr) {
             
             // Check if this is an enum constructor: Shape.Circle(5.0)
             if (expr->method_call.object->type == EXPR_IDENT) {
-                char _obj[128]; snprintf(_obj, 128, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                char _obj[128]; token_to_cstr(_obj, sizeof(_obj), expr->method_call.object->token);
                 extern int is_enum_type(const char*);
                 if (is_enum_type(_obj)) {
                     emit("%s_%.*s(", _obj, method.length, method.start);
@@ -1598,7 +1583,7 @@ void codegen_expr(Expr* expr) {
                     goto skip_struct_dispatch;
             } else if (expr->method_call.object->type == EXPR_IDENT) {
                 // Fallback: check codegen's struct var registry
-                char _svn[64]; snprintf(_svn, 64, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                char _svn[64]; token_to_cstr(_svn, sizeof(_svn), expr->method_call.object->token);
                 extern const char* get_struct_var_type(const char*);
                 const char* _svt = get_struct_var_type(_svn);
                 if (_svt) {
@@ -1634,8 +1619,8 @@ void codegen_expr(Expr* expr) {
                 // Check if this is a static method call (Type.method() vs instance.method())
                 bool is_static_call = false;
                 if (expr->method_call.object->type == EXPR_IDENT) {
-                    char _tn[128]; snprintf(_tn, 128, "%.*s", type_name.length, type_name.start);
-                    char _on[128]; snprintf(_on, 128, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                    char _tn[128]; token_to_cstr(_tn, sizeof(_tn), type_name);
+                    char _on[128]; token_to_cstr(_on, sizeof(_on), expr->method_call.object->token);
                     if (strcmp(_tn, _on) == 0) is_static_call = true;
                 }
                 
@@ -1686,10 +1671,7 @@ void codegen_expr(Expr* expr) {
             if (expr->method_call.object->type == EXPR_IDENT) {
                 Token obj_name = expr->method_call.object->token;
                 // Check if this is actually a module (not a variable)
-                char module_name[256];
-                int len = obj_name.length < 255 ? obj_name.length : 255;
-                memcpy(module_name, obj_name.start, len);
-                module_name[len] = '\0';
+                char module_name[256]; token_to_cstr(module_name, sizeof(module_name), obj_name);
                 
                 // Treat as module if it's loaded OR if it's a built-in
                 // BUT NOT if it's a local variable or parameter
@@ -1817,7 +1799,7 @@ void codegen_expr(Expr* expr) {
             
             // WynIntArray dispatch — typed [int] arrays
             if (expr->method_call.object->type == EXPR_IDENT) {
-                char _ian[128]; snprintf(_ian, 128, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                char _ian[128]; token_to_cstr(_ian, sizeof(_ian), expr->method_call.object->token);
                 extern int is_int_array_var(const char*);
                 if (is_int_array_var(_ian)) {
                     Token m = expr->method_call.method;
@@ -1888,8 +1870,7 @@ void codegen_expr(Expr* expr) {
                     // Default: int/pointer push with cast
                     // Check if this is a spawn array (WynIntArray)
                     if (expr->method_call.object->type == EXPR_IDENT) {
-                        char _on[256]; int _ol = expr->method_call.object->token.length < 255 ? expr->method_call.object->token.length : 255;
-                        memcpy(_on, expr->method_call.object->token.start, _ol); _on[_ol] = '\0';
+                        char _on[256]; token_to_cstr(_on, sizeof(_on), expr->method_call.object->token);
                         if (is_spawn_array(_on)) {
                             emit("int_array_push(&(");
                             codegen_expr(expr->method_call.object);
@@ -1954,7 +1935,7 @@ void codegen_expr(Expr* expr) {
                     // Also check if it's a known string array variable
                     if (!_is_str_arr && _sobj->type == EXPR_IDENT) {
                         extern int is_str_array_var(const char*);
-                        char _vn[256]; snprintf(_vn, 256, "%.*s", _sobj->token.length, _sobj->token.start);
+                        char _vn[256]; token_to_cstr(_vn, sizeof(_vn), _sobj->token);
                         if (is_str_array_var(_vn)) _is_str_arr = true;
                     }
                     emit(_is_str_arr ? "array_sort_str(&(" : "array_sort(&(");
@@ -2131,7 +2112,7 @@ void codegen_expr(Expr* expr) {
                 if (expr->method_call.object->type == EXPR_FIELD_ACCESS) {
                     Expr* fa_obj = expr->method_call.object->field_access.object;
                     if (fa_obj->type == EXPR_IDENT) {
-                        char _en[128]; snprintf(_en, 128, "%.*s", fa_obj->token.length, fa_obj->token.start);
+                        char _en[128]; token_to_cstr(_en, sizeof(_en), fa_obj->token);
                         extern int is_enum_type(const char*);
                         if (is_enum_type(_en)) {
                             emit("%s_toString(", _en);
@@ -2143,7 +2124,7 @@ void codegen_expr(Expr* expr) {
                 }
                 // Case 2: c.to_string() where c is an enum variable
                 if (expr->method_call.object->type == EXPR_IDENT) {
-                    char _vn[128]; snprintf(_vn, 128, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                    char _vn[128]; token_to_cstr(_vn, sizeof(_vn), expr->method_call.object->token);
                     extern const char* get_enum_var_type(const char*);
                     const char* _et = get_enum_var_type(_vn);
                     if (_et) {
@@ -2178,7 +2159,7 @@ void codegen_expr(Expr* expr) {
             // Check if variable is a known array (from list comp or array literal)
             if (expr->method_call.object->type == EXPR_IDENT) {
                 char vn[64];
-                snprintf(vn, 64, "%.*s", expr->method_call.object->token.length, expr->method_call.object->token.start);
+                token_to_cstr(vn, sizeof(vn), expr->method_call.object->token);
                 extern int is_known_array_var(const char*);
                 if (is_known_array_var(vn)) receiver_type = "array";
                 extern int is_known_sb_var(const char*);
@@ -2235,18 +2216,18 @@ void codegen_expr(Expr* expr) {
                 while (cur && cur->type == EXPR_METHOD_CALL) {
                     Expr* obj = cur->method_call.object;
                     if (obj->type == EXPR_IDENT) {
-                        char _vn[64]; snprintf(_vn, 64, "%.*s", obj->token.length, obj->token.start);
+                        char _vn[64]; token_to_cstr(_vn, sizeof(_vn), obj->token);
                         extern const char* get_struct_var_type(const char*);
                         chain_struct = get_struct_var_type(_vn);
                         if (!chain_struct && obj->expr_type && obj->expr_type->kind == TYPE_STRUCT) {
-                            static char _csn[64]; snprintf(_csn, 64, "%.*s", obj->expr_type->struct_type.name.length, obj->expr_type->struct_type.name.start);
+                            static char _csn[64]; token_to_cstr(_csn, sizeof(_csn), obj->expr_type->struct_type.name);
                             chain_struct = _csn;
                         }
                         break;
                     }
                     if (obj->type == EXPR_CALL && obj->call.callee->type == EXPR_IDENT) {
                         // Function call — look up return type
-                        char _fn[64]; snprintf(_fn, 64, "%.*s", obj->call.callee->token.length, obj->call.callee->token.start);
+                        char _fn[64]; token_to_cstr(_fn, sizeof(_fn), obj->call.callee->token);
                         extern const char* get_function_return_type(const char*);
                         const char* _rt = get_function_return_type(_fn);
                         if (_rt) {
@@ -2270,7 +2251,7 @@ void codegen_expr(Expr* expr) {
                     // Resolve from root to tip
                     const char* cur_type = chain_struct;
                     for (int ci = chain_len - 1; ci >= 0; ci--) {
-                        char _cm[64]; snprintf(_cm, 64, "%.*s", chain_methods[ci].length, chain_methods[ci].start);
+                        char _cm[64]; token_to_cstr(_cm, sizeof(_cm), chain_methods[ci]);
                         extern const char* lookup_struct_method_return_type(const char*, const char*);
                         const char* ret = lookup_struct_method_return_type(cur_type, _cm);
                         if (ret) cur_type = ret; else break;
@@ -2294,10 +2275,7 @@ void codegen_expr(Expr* expr) {
             
             // Fallback: if no type info, try to infer from expression
             if (!receiver_type && expr->method_call.object->type == EXPR_IDENT) {
-                char mname[64];
-                int mlen = method.length < 63 ? method.length : 63;
-                memcpy(mname, method.start, mlen);
-                mname[mlen] = '\0';
+                char mname[64]; token_to_cstr(mname, sizeof(mname), method);
                 // Only assume string if the object's type is actually string (or unknown)
                 bool _obj_is_int = expr->method_call.object->expr_type &&
                     expr->method_call.object->expr_type->kind == TYPE_INT;
@@ -2319,10 +2297,7 @@ void codegen_expr(Expr* expr) {
             }
             // Also override int type when method is clearly a string method
             if (receiver_type && strcmp(receiver_type, "int") == 0) {
-                char mname[64];
-                int mlen = method.length < 63 ? method.length : 63;
-                memcpy(mname, method.start, mlen);
-                mname[mlen] = '\0';
+                char mname[64]; token_to_cstr(mname, sizeof(mname), method);
                 // Only override to string for methods that make sense on both types
                 // (to_int, to_float are valid on strings; upper/lower/trim are NOT valid on int)
                 if (strcmp(mname, "to_int") == 0 || strcmp(mname, "to_float") == 0 ||
@@ -2341,10 +2316,7 @@ void codegen_expr(Expr* expr) {
             
             // Special handling for map.set() - need to determine insert function from value type
             if (receiver_type && strcmp(receiver_type, "map") == 0) {
-                char method_name[256];
-                int len = method.length < 255 ? method.length : 255;
-                memcpy(method_name, method.start, len);
-                method_name[len] = '\0';
+                char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
                 
                 if ((strcmp(method_name, "set") == 0 || strcmp(method_name, "insert") == 0) && 
                     expr->method_call.arg_count == 2) {
@@ -2481,10 +2453,7 @@ void codegen_expr(Expr* expr) {
             }
             
             if (receiver_type) {
-                char method_name[256];
-                int len = method.length < 255 ? method.length : 255;
-                memcpy(method_name, method.start, len);
-                method_name[len] = '\0';
+                char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
                 
                 MethodDispatch dispatch;
                 // Resolve type parameters (T, K, V) to concrete types
@@ -2562,10 +2531,7 @@ void codegen_expr(Expr* expr) {
                 }
             }
             if (receiver_type) {
-                char method_name[256];
-                int len = method.length < 255 ? method.length : 255;
-                memcpy(method_name, method.start, len);
-                method_name[len] = '\0';
+                char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
                 
                 // HashMap instance methods
                 if (strcmp(receiver_type, "map") == 0) {
@@ -2611,7 +2577,7 @@ void codegen_expr(Expr* expr) {
                 
                 // StringBuilder dispatch
                 if (strcmp(receiver_type, "stringbuilder") == 0) {
-                    char mname[64]; snprintf(mname, 64, "%.*s", method.length, method.start);
+                    char mname[64]; token_to_cstr(mname, sizeof(mname), method);
                     emit("StringBuilder_%s(", mname);
                     codegen_expr(expr->method_call.object);
                     for (int ai = 0; ai < expr->method_call.arg_count; ai++) {
@@ -2631,7 +2597,7 @@ void codegen_expr(Expr* expr) {
                     fprintf(stderr, "Hint: Available HashSet methods: .add(item), .contains(item), .remove(item), .len()\n");
                 } else if (strcmp(receiver_type, "array") == 0) {
                     char mname[64];
-                    snprintf(mname, 64, "%.*s", method.length, method.start);
+                    token_to_cstr(mname, sizeof(mname), method);
                     if (strcmp(mname, "len") == 0) {
                         emit("("); codegen_expr(expr->method_call.object); emit(").count"); break;
                     } else if (strcmp(mname, "join") == 0 && expr->method_call.arg_count == 1) {
@@ -2643,8 +2609,7 @@ void codegen_expr(Expr* expr) {
                     } else if (strcmp(mname, "push") == 0) {
                         // Check if this is a spawn array (WynIntArray)
                         if (expr->method_call.object->type == EXPR_IDENT) {
-                            char _on[256]; int _ol = expr->method_call.object->token.length < 255 ? expr->method_call.object->token.length : 255;
-                            memcpy(_on, expr->method_call.object->token.start, _ol); _on[_ol] = '\0';
+                            char _on[256]; token_to_cstr(_on, sizeof(_on), expr->method_call.object->token);
                             if (is_spawn_array(_on)) {
                                 emit("int_array_push(&("); codegen_expr(expr->method_call.object); emit("), (long long)("); codegen_expr(expr->method_call.args[0]); emit("))"); break;
                             }
@@ -2839,8 +2804,7 @@ void codegen_expr(Expr* expr) {
             } else {
                 // Check if this is a spawn array (WynIntArray)
                 if (expr->index.array->type == EXPR_IDENT) {
-                    char _on[256]; int _ol = expr->index.array->token.length < 255 ? expr->index.array->token.length : 255;
-                    memcpy(_on, expr->index.array->token.start, _ol); _on[_ol] = '\0';
+                    char _on[256]; token_to_cstr(_on, sizeof(_on), expr->index.array->token);
                     extern int is_int_array_var(const char*);
                     if (is_spawn_array(_on) || is_int_array_var(_on)) {
                         emit("int_array_get(");
@@ -2884,8 +2848,7 @@ void codegen_expr(Expr* expr) {
                 if (expr->index.array->type == EXPR_IDENT) {
                     Token var_name = expr->index.array->token;
                     // Check tracked string content arrays
-                    char _van[256]; int _val = var_name.length < 255 ? var_name.length : 255;
-                    memcpy(_van, var_name.start, _val); _van[_val] = '\0';
+                    char _van[256]; token_to_cstr(_van, sizeof(_van), var_name);
                     extern int is_str_array_var(const char*);
                     if (is_str_array_var(_van)) is_string_array = true;
                     // Common variable names for string arrays
@@ -3101,7 +3064,7 @@ void codegen_expr(Expr* expr) {
                 // Check if type_name contains a module prefix (from member expression)
                 // e.g., point.Point should become point_Point
                 char temp_name[128];
-                snprintf(temp_name, 128, "%.*s", type_name.length, type_name.start);
+                token_to_cstr(temp_name, sizeof(temp_name), type_name);
                 
                 // Check if there's a dot in the name (module.Type)
                 char* dot = strchr(temp_name, '.');
@@ -3150,7 +3113,7 @@ void codegen_expr(Expr* expr) {
                 // For data enums, zero-arg variants are constructor functions needing ()
                 extern int is_data_enum_type(const char*);
                 char _obj_name[128];
-                snprintf(_obj_name, 128, "%.*s", obj_name.length, obj_name.start);
+                token_to_cstr(_obj_name, sizeof(_obj_name), obj_name);
                 emit("%.*s_%.*s",
                      obj_name.length, obj_name.start,
                      field_name.length, field_name.start);
@@ -3158,7 +3121,7 @@ void codegen_expr(Expr* expr) {
                     // Check if this variant has no data (zero-arg constructor)
                     extern const char* get_enum_variant_c_type(const char*, const char*);
                     char _field[128];
-                    snprintf(_field, 128, "%.*s", field_name.length, field_name.start);
+                    token_to_cstr(_field, sizeof(_field), field_name);
                     const char* vtype = get_enum_variant_c_type(_obj_name, _field);
                     if (strcmp(vtype, "void") == 0) {
                         emit("()");
@@ -3170,7 +3133,7 @@ void codegen_expr(Expr* expr) {
             // Handle module.function calls
             // Check if this is a module call (resolve aliases)
             char module_name[256];
-            snprintf(module_name, sizeof(module_name), "%.*s", obj_name.length, obj_name.start);
+            token_to_cstr(module_name, sizeof(module_name), obj_name);
             const char* resolved_module = resolve_module_alias(module_name);
             
             // Check if it's a known module
@@ -3209,7 +3172,7 @@ void codegen_expr(Expr* expr) {
             // enum if it actually carries payloads — a plain (dataless) enum is
             // a bare C enum and must be matched with `==`, not `.tag ==`.
             if (expr->match.value->type == EXPR_IDENT) {
-                char _mv[128]; snprintf(_mv, 128, "%.*s", expr->match.value->token.length, expr->match.value->token.start);
+                char _mv[128]; token_to_cstr(_mv, sizeof(_mv), expr->match.value->token);
                 extern const char* get_enum_var_type(const char*);
                 const char* _et = get_enum_var_type(_mv);
                 if (_et) {
@@ -3225,7 +3188,7 @@ void codegen_expr(Expr* expr) {
                     Pattern* _p = expr->match.arms[_a].pattern;
                     if (_p && _p->type == PATTERN_OPTION) {
                         if (_p->option.enum_name.length > 0) {
-                            char _en[128]; snprintf(_en, 128, "%.*s", _p->option.enum_name.length, _p->option.enum_name.start);
+                            char _en[128]; token_to_cstr(_en, sizeof(_en), _p->option.enum_name);
                             extern int is_data_enum_type(const char*);
                             if (is_data_enum_type(_en)) {
                                 type_name = _p->option.enum_name.start;
@@ -3235,7 +3198,7 @@ void codegen_expr(Expr* expr) {
                             }
                         } else {
                             // No prefix — look up variant name in all enums
-                            char _vn[128]; snprintf(_vn, 128, "%.*s", _p->option.variant_name.length, _p->option.variant_name.start);
+                            char _vn[128]; token_to_cstr(_vn, sizeof(_vn), _p->option.variant_name);
                             extern const char* find_enum_for_variant(const char*);
                             const char* _found = find_enum_for_variant(_vn);
                             if (_found) {
@@ -3275,7 +3238,7 @@ void codegen_expr(Expr* expr) {
                 for (int _a = 0; _a < expr->match.arm_count; _a++) {
                     Pattern* _p = expr->match.arms[_a].pattern;
                     if (_p && _p->type == PATTERN_IDENT) {
-                        char _vn[128]; snprintf(_vn, 128, "%.*s", _p->ident.name.length, _p->ident.name.start);
+                        char _vn[128]; token_to_cstr(_vn, sizeof(_vn), _p->ident.name);
                         const char* found = find_enum_for_variant(_vn);
                         if (found) {
                             type_name = found;
@@ -3368,7 +3331,7 @@ void codegen_expr(Expr* expr) {
                     if (!is_enum_variant && type_name_len > 0) {
                         extern const char* find_enum_for_variant(const char* variant);
                         char _vn[128];
-                        snprintf(_vn, 128, "%.*s", pat->ident.name.length, pat->ident.name.start);
+                        token_to_cstr(_vn, sizeof(_vn), pat->ident.name);
                         const char* found = find_enum_for_variant(_vn);
                         if (found) is_enum_variant = true;
                     }
@@ -3479,8 +3442,8 @@ void codegen_expr(Expr* expr) {
                         } else if (pat->option.inner && pat->option.inner->type == PATTERN_IDENT) {
                             extern const char* get_enum_variant_c_type(const char*, const char*);
                             char _en[128], _vn[128];
-                            snprintf(_en, 128, "%.*s", pat->option.enum_name.length, pat->option.enum_name.start);
-                            snprintf(_vn, 128, "%.*s", pat->option.variant_name.length, pat->option.variant_name.start);
+                            token_to_cstr(_en, sizeof(_en), pat->option.enum_name);
+                            token_to_cstr(_vn, sizeof(_vn), pat->option.variant_name);
                             const char* vtype = get_enum_variant_c_type(_en, _vn);
                             emit("%s %.*s = __match_val_%d.data.%.*s_value; ",
                                  vtype,
@@ -3498,7 +3461,7 @@ void codegen_expr(Expr* expr) {
                             extern const char* get_enum_variant_c_type(const char*, const char*);
                             char _en[128], _vn[128];
                             snprintf(_en, 128, "%.*s", type_name_len, type_name);
-                            snprintf(_vn, 128, "%.*s", pat->option.variant_name.length, pat->option.variant_name.start);
+                            token_to_cstr(_vn, sizeof(_vn), pat->option.variant_name);
                             const char* vtype = get_enum_variant_c_type(_en, _vn);
                             if (!vtype) vtype = "double";
                             emit("%s %.*s = __match_val_%d.data.%.*s_value; ",
@@ -3761,7 +3724,7 @@ void codegen_expr(Expr* expr) {
                 // Original nested call approach for non-lambda pipes
                 for (int i = expr->pipeline.stage_count - 1; i >= 1; i--) {
                     if (expr->pipeline.stages[i]->type == EXPR_IDENT) {
-                        char _pn[128]; snprintf(_pn, sizeof(_pn), "%.*s", expr->pipeline.stages[i]->token.length, expr->pipeline.stages[i]->token.start);
+                        char _pn[128]; token_to_cstr(_pn, sizeof(_pn), expr->pipeline.stages[i]->token);
                         const char* _pfx = "";
                         extern int is_user_collision(const char*);
                         if (is_user_collision(_pn)) _pfx = "_";
@@ -3934,10 +3897,7 @@ void codegen_expr(Expr* expr) {
                 expr->spawn.call->call.callee->type == EXPR_IDENT) {
                 Expr* call = expr->spawn.call;
                 Expr* callee = call->call.callee;
-                char func_name[256];
-                int len = callee->token.length < 255 ? callee->token.length : 255;
-                memcpy(func_name, callee->token.start, len);
-                func_name[len] = '\0';
+                char func_name[256]; token_to_cstr(func_name, sizeof(func_name), callee->token);
                 
                 int arg_count = call->call.arg_count;
                 

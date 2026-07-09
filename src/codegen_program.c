@@ -24,10 +24,8 @@ void codegen_program(Program* prog) {
         if (prog->stmts[i]->type == STMT_FN) {
             Stmt* fn_stmt = prog->stmts[i];
             if (fn_stmt->fn.return_type && fn_stmt->fn.return_type->type == EXPR_IDENT) {
-                char _fn[128]; int _fl = fn_stmt->fn.name.length < 127 ? fn_stmt->fn.name.length : 127;
-                memcpy(_fn, fn_stmt->fn.name.start, _fl); _fn[_fl] = '\0';
-                char _rt[32]; int _rl = fn_stmt->fn.return_type->token.length < 31 ? fn_stmt->fn.return_type->token.length : 31;
-                memcpy(_rt, fn_stmt->fn.return_type->token.start, _rl); _rt[_rl] = '\0';
+                char _fn[128]; token_to_cstr(_fn, sizeof(_fn), fn_stmt->fn.name);
+                char _rt[32]; token_to_cstr(_rt, sizeof(_rt), fn_stmt->fn.return_type->token);
                 register_fn_return_type(_fn, _rt);
             }
         }
@@ -80,12 +78,11 @@ void codegen_program(Program* prog) {
     // Pre-register module aliases from imports (needed for struct/enum typedef generation)
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_IMPORT && prog->stmts[i]->import.item_count > 0) {
-            char mod_name[256];
-            snprintf(mod_name, sizeof(mod_name), "%.*s", prog->stmts[i]->import.module.length, prog->stmts[i]->import.module.start);
+            char mod_name[256]; token_to_cstr(mod_name, sizeof(mod_name), prog->stmts[i]->import.module);
             const char* c_mod = module_to_c_ident(mod_name);
             for (int j = 0; j < prog->stmts[i]->import.item_count; j++) {
                 char item[256], full[512];
-                snprintf(item, sizeof(item), "%.*s", prog->stmts[i]->import.items[j].length, prog->stmts[i]->import.items[j].start);
+                token_to_cstr(item, sizeof(item), prog->stmts[i]->import.items[j]);
                 snprintf(full, sizeof(full), "%s_%s", c_mod, item);
                 register_module_alias(item, full);
             }
@@ -109,8 +106,7 @@ void codegen_program(Program* prog) {
             codegen_stmt(s);
             // For imported enums, emit module-prefixed typedef and constructor aliases
             if (s->type == STMT_ENUM && prog->stmts[i]->type == STMT_EXPORT) {
-                char ename[128];
-                snprintf(ename, 128, "%.*s", s->enum_decl.name.length, s->enum_decl.name.start);
+                char ename[128]; token_to_cstr(ename, sizeof(ename), s->enum_decl.name);
                 const char* resolved = resolve_module_alias(ename);
                 if (resolved != ename && strcmp(resolved, ename) != 0) {
                     // resolved is "module_EnumName", ename is "EnumName"
@@ -223,9 +219,7 @@ void codegen_program(Program* prog) {
                         c_type = inferred;
                         // Register enum vars so `.to_string()` dispatches correctly.
                         if (var_stmt->var.init->expr_type->kind == TYPE_ENUM) {
-                            char _vn[128];
-                            snprintf(_vn, sizeof(_vn), "%.*s",
-                                     var_stmt->var.name.length, var_stmt->var.name.start);
+                            char _vn[128]; token_to_cstr(_vn, sizeof(_vn), var_stmt->var.name);
                             extern void register_enum_var(const char*, const char*);
                             register_enum_var(_vn, c_type);
                         }
@@ -365,10 +359,7 @@ void codegen_program(Program* prog) {
             // Emit #define aliases for selectively imported functions
             if (prog->stmts[i]->import.item_count > 0) {
                 for (int j = 0; j < prog->stmts[i]->import.item_count; j++) {
-                    char item_name[256];
-                    snprintf(item_name, sizeof(item_name), "%.*s",
-                            prog->stmts[i]->import.items[j].length,
-                            prog->stmts[i]->import.items[j].start);
+                    char item_name[256]; token_to_cstr(item_name, sizeof(item_name), prog->stmts[i]->import.items[j]);
                     const char* resolved = resolve_module_alias(item_name);
                     if (resolved != item_name && strcmp(resolved, item_name) != 0) {
                         // Skip enum types — they use typedef, not #define
@@ -411,8 +402,7 @@ void codegen_program(Program* prog) {
             
             // Skip imported functions (handled by module codegen + #define alias)
             {
-                char fn_name_check[256];
-                snprintf(fn_name_check, sizeof(fn_name_check), "%.*s", fn->name.length, fn->name.start);
+                char fn_name_check[256]; token_to_cstr(fn_name_check, sizeof(fn_name_check), fn->name);
                 const char* resolved_check = resolve_module_alias(fn_name_check);
                 if (resolved_check != fn_name_check && strcmp(resolved_check, fn_name_check) != 0) {
                     continue;
@@ -501,8 +491,7 @@ void codegen_program(Program* prog) {
                         return_type = "WynHashSet*";
                     } else {
                         // Assume it's a custom struct type
-                        snprintf(return_type_buf, sizeof(return_type_buf), "%.*s", 
-                               type_name.length, type_name.start);
+                        token_to_cstr(return_type_buf, sizeof(return_type_buf), type_name);
                         return_type = return_type_buf;
                     }
                 } else if (fn->return_type->type == EXPR_OPTIONAL_TYPE) {
@@ -535,7 +524,7 @@ void codegen_program(Program* prog) {
             
             // Register default parameters
             if (fn->param_defaults) {
-                char _fn[128]; snprintf(_fn, 128, "%.*s", fn->name.length, fn->name.start);
+                char _fn[128]; token_to_cstr(_fn, sizeof(_fn), fn->name);
                 extern void register_fn_defaults(const char*, Expr**, int);
                 register_fn_defaults(_fn, fn->param_defaults, fn->param_count);
                 extern void register_fn_param_names(const char*, Token*, int);
@@ -544,9 +533,8 @@ void codegen_program(Program* prog) {
             
             // Register return type for spawn/await type dispatch
             if (fn->return_type && fn->return_type->type == EXPR_IDENT) {
-                char _fn2[128]; snprintf(_fn2, 128, "%.*s", fn->name.length, fn->name.start);
-                char _rt[32]; int _rtl = fn->return_type->token.length < 31 ? fn->return_type->token.length : 31;
-                memcpy(_rt, fn->return_type->token.start, _rtl); _rt[_rtl] = '\0';
+                char _fn2[128]; token_to_cstr(_fn2, sizeof(_fn2), fn->name);
+                char _rt[32]; token_to_cstr(_rt, sizeof(_rt), fn->return_type->token);
                 extern void register_fn_return_type(const char*, const char*);
                 register_fn_return_type(_fn2, _rt);
             }
@@ -557,8 +545,7 @@ void codegen_program(Program* prog) {
             int _body_stmt_count = 0;
             if (fn->body && fn->body->type == STMT_BLOCK) _body_stmt_count = fn->body->block.count;
             bool _is_spawned_fn = false;
-            { char _fnm[256]; int _fnl = fn->name.length < 255 ? fn->name.length : 255;
-              memcpy(_fnm, fn->name.start, _fnl); _fnm[_fnl] = '\0';
+            { char _fnm[256]; token_to_cstr(_fnm, sizeof(_fnm), fn->name);
               for (int _si = 0; _si < spawn_wrapper_count; _si++) {
                   if (strcmp(spawn_wrappers[_si].func_name, _fnm) == 0) { _is_spawned_fn = true; break; }
               }
@@ -595,7 +582,7 @@ void codegen_program(Program* prog) {
                      fn->receiver_type.length, fn->receiver_type.start,
                      fn->name.length, fn->name.start);
             } else {
-                char _fn_name[256]; snprintf(_fn_name, sizeof(_fn_name), "%.*s", fn->name.length, fn->name.start);
+                char _fn_name[256]; token_to_cstr(_fn_name, sizeof(_fn_name), fn->name);
                 extern int is_c_name_collision(const char*);
                 extern void register_user_collision(const char*);
                 bool _is_ckw = is_c_name_collision(_fn_name);
@@ -613,8 +600,7 @@ void codegen_program(Program* prog) {
                 
                 // Extension method self parameter: use receiver type
                 if (fn->is_extension && j == 0 && !fn->param_types[j]) {
-                    snprintf(struct_type_name, sizeof(struct_type_name), "%.*s",
-                            fn->receiver_type.length, fn->receiver_type.start);
+                    token_to_cstr(struct_type_name, sizeof(struct_type_name), fn->receiver_type);
                     param_type = struct_type_name;
                     is_struct_type = true;
                 } else if (fn->param_types[j]) {
@@ -674,8 +660,7 @@ void codegen_program(Program* prog) {
                             param_type = "WynHashSet*";
                         } else {
                             // Assume it's a struct type
-                            snprintf(struct_type_name, sizeof(struct_type_name), "%.*s", 
-                                    type_name.length, type_name.start);
+                            token_to_cstr(struct_type_name, sizeof(struct_type_name), type_name);
                             param_type = struct_type_name;
                             is_struct_type = true;
                         }
@@ -691,7 +676,7 @@ void codegen_program(Program* prog) {
                 // Emit with pointer for mut params
                 bool is_mut_param = fn->param_mutable && fn->param_mutable[j];
                 // Check if param name is a C keyword
-                char _pname[256]; snprintf(_pname, sizeof(_pname), "%.*s", fn->params[j].length, fn->params[j].start);
+                char _pname[256]; token_to_cstr(_pname, sizeof(_pname), fn->params[j]);
                 static const char* _c_kw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
                 bool _is_pkw = false; for (int _k = 0; _c_kw[_k]; _k++) { if (strcmp(_pname, _c_kw[_k]) == 0) { _is_pkw = true; break; } }
                 if (is_mut_param) {
@@ -729,8 +714,7 @@ void codegen_program(Program* prog) {
                     } else if (ret_type.length == 6 && memcmp(ret_type.start, "string", 6) == 0) {
                         return_type = "const char*";
                     } else {
-                        static char impl_fwd_ret[128];
-                        snprintf(impl_fwd_ret, 128, "%.*s", ret_type.length, ret_type.start);
+                        static char impl_fwd_ret[128]; token_to_cstr(impl_fwd_ret, sizeof(impl_fwd_ret), ret_type);
                         return_type = impl_fwd_ret;
                     }
                 }
@@ -758,8 +742,7 @@ void codegen_program(Program* prog) {
                             param_type = "bool";
                         } else {
                             // Custom struct type
-                            snprintf(custom_type_buf, sizeof(custom_type_buf), "%.*s", 
-                                   type_name.length, type_name.start);
+                            token_to_cstr(custom_type_buf, sizeof(custom_type_buf), type_name);
                             param_type = custom_type_buf;
                         }
                     }
@@ -964,8 +947,7 @@ void codegen_program(Program* prog) {
             // Skip functions that are imported from modules
             // Emit a #define alias to the prefixed version
             {
-                char fn_name[256];
-                snprintf(fn_name, sizeof(fn_name), "%.*s", fn->name.length, fn->name.start);
+                char fn_name[256]; token_to_cstr(fn_name, sizeof(fn_name), fn->name);
                 const char* resolved = resolve_module_alias(fn_name);
                 if (resolved != fn_name && strcmp(resolved, fn_name) != 0) {
                     emit("#define %s %s\n", fn_name, resolved);
@@ -1178,7 +1160,7 @@ void codegen_match_statement(Stmt* stmt) {
         // First check if match value is a known enum variable
         bool is_data_enum_match = false;
         if (stmt->match_stmt.value->type == EXPR_IDENT) {
-            char _mv[128]; snprintf(_mv, 128, "%.*s", stmt->match_stmt.value->token.length, stmt->match_stmt.value->token.start);
+            char _mv[128]; token_to_cstr(_mv, sizeof(_mv), stmt->match_stmt.value->token);
             extern const char* get_enum_var_type(const char*);
             const char* _et = get_enum_var_type(_mv);
             if (_et) {
@@ -1208,7 +1190,7 @@ void codegen_match_statement(Stmt* stmt) {
             for (int i = 0; i < stmt->match_stmt.case_count; i++) {
                 MatchCase* match_case = &stmt->match_stmt.cases[i];
                 if (match_case->pattern->type == PATTERN_IDENT) {
-                    char _vn[128]; snprintf(_vn, 128, "%.*s", match_case->pattern->ident.name.length, match_case->pattern->ident.name.start);
+                    char _vn[128]; token_to_cstr(_vn, sizeof(_vn), match_case->pattern->ident.name);
                     const char* found = find_enum_for_variant(_vn);
                     if (found) {
                         is_enum_match = true;
