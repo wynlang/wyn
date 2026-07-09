@@ -3807,12 +3807,6 @@ void codegen_expr(Expr* expr) {
             break;
         case EXPR_STRING_INTERP: {
             // String interpolation: "Hello ${name}" -> sprintf format
-            // Count expression parts for temp variable allocation
-            int _interp_expr_count = 0;
-            for (int i = 0; i < expr->string_interp.count; i++) {
-                if (expr->string_interp.expressions[i]) _interp_expr_count++;
-            }
-            
             emit("({ ");
             // Capture temporaries
             int _ti = 0;
@@ -3831,31 +3825,39 @@ void codegen_expr(Expr* expr) {
                     _ti++;
                 }
             }
-            
-            emit("char __buf[512]; snprintf(__buf, 512, \"");
-            for (int i = 0; i < expr->string_interp.count; i++) {
-                if (expr->string_interp.parts[i]) {
-                    const char* part = expr->string_interp.parts[i];
-                    while (*part) {
-                        if (*part == '%') emit("%%%%");
-                        else if (*part == '\n') emit("\\n");
-                        else if (*part == '\\' && *(part+1) == '"') { emit("\\\""); part++; }
-                        else if (*part == '"') emit("\\\"");
-                        else emit("%c", *part);
-                        part++;
+
+            // Size-probe then heap-allocate so interpolation is NOT truncated at
+            // a fixed buffer (was char __buf[512]). __buf is RC-allocated via
+            // wyn_str_alloc so the existing release / skip-strdup ownership holds.
+            // The format string + args are emitted twice: once for the probe
+            // (snprintf into NULL,0) and once for the real write.
+            for (int pass = 0; pass < 2; pass++) {
+                if (pass == 0) emit("int __n = snprintf(NULL, 0, \"");
+                else           emit("char* __buf = wyn_str_alloc(__n + 1); snprintf(__buf, __n + 1, \"");
+                for (int i = 0; i < expr->string_interp.count; i++) {
+                    if (expr->string_interp.parts[i]) {
+                        const char* part = expr->string_interp.parts[i];
+                        while (*part) {
+                            if (*part == '%') emit("%%%%");
+                            else if (*part == '\n') emit("\\n");
+                            else if (*part == '\\' && *(part+1) == '"') { emit("\\\""); part++; }
+                            else if (*part == '"') emit("\\\"");
+                            else emit("%c", *part);
+                            part++;
+                        }
+                    } else {
+                        emit("%%s");
                     }
-                } else {
-                    emit("%%s");
                 }
-            }
-            emit("\"");
-            _ti = 0;
-            for (int i = 0; i < expr->string_interp.count; i++) {
-                if (expr->string_interp.expressions[i]) {
-                    emit(", __si%d", _ti++);
+                emit("\"");
+                _ti = 0;
+                for (int i = 0; i < expr->string_interp.count; i++) {
+                    if (expr->string_interp.expressions[i]) {
+                        emit(", __si%d", _ti++);
+                    }
                 }
+                emit("); ");
             }
-            emit("); ");
             // Release temporaries (only non-string expressions that created new strings)
             _ti = 0;
             for (int i = 0; i < expr->string_interp.count; i++) {
@@ -3872,7 +3874,10 @@ void codegen_expr(Expr* expr) {
                     _ti++;
                 }
             }
-            emit("%s; })", codegen_skip_strdup ? "__buf" : "wyn_strdup(__buf)");
+            // __buf is already an owned heap RC string (wyn_str_alloc), so both
+            // the skip and non-skip cases just yield it — no extra wyn_strdup copy
+            // (which would leak __buf and double-allocate).
+            emit("__buf; })");
             break;
         }
         case EXPR_RANGE:
