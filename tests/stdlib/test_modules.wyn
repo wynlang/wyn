@@ -54,7 +54,7 @@ fn main() -> int {
     // === URL ===
     Test.init("Url Module")
     var enc = Url.encode("hello world")
-    Test.assert(enc.contains("%20") || enc.contains("+"), "encode spaces")
+    Test.assert(enc.contains("%20") or enc.contains("+"), "encode spaces")
     Test.assert_eq_str(Url.decode("hello%20world"), "hello world", "decode")
     Test.summary()
     

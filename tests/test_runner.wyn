@@ -23,7 +23,7 @@ fn run_single_test(test_file: string) -> TestResult {
     result.exit_code = proc.exit_code;
     result.output = proc.stdout_str;
     
-    if proc.exit_code == 0 && proc.timeout == 0 {
+    if proc.exit_code == 0 and proc.timeout == 0 {
         result.passed = 1;
     }
     

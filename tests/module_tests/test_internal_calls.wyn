@@ -12,7 +12,7 @@ fn main() -> int {
     print(result2);
     print("\n");
     
-    if (result == 10 && result2 == 15) {
+    if (result == 10 and result2 == 15) {
         print("PASS: Internal calls work!\n");
         return 0;
     } else {

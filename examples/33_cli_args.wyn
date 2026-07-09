@@ -21,10 +21,10 @@ fn main() -> int {
     var found_help = false
     i = 1
     while i < args.len() {
-        if args[i] == "--verbose" || args[i] == "-v" {
+        if args[i] == "--verbose" or args[i] == "-v" {
             found_verbose = true
         }
-        if args[i] == "--help" || args[i] == "-h" {
+        if args[i] == "--help" or args[i] == "-h" {
             found_help = true
         }
         i = i + 1
@@ -36,7 +36,7 @@ fn main() -> int {
     if found_help {
         print("  ✓ Help requested")
     }
-    if !found_verbose && !found_help {
+    if not found_verbose and not found_help {
         print("  (no flags detected)")
     }
     print("")
@@ -54,7 +54,7 @@ fn main() -> int {
             output_file = arg.substring(9, arg.len())
         }
         // Check --output value format
-        if arg == "--output" && i + 1 < args.len() {
+        if arg == "--output" and i + 1 < args.len() {
             output_file = args[i + 1]
         }
 
@@ -63,7 +63,7 @@ fn main() -> int {
             config_file = arg.substring(9, arg.len())
         }
         // Check --config value format
-        if arg == "--config" && i + 1 < args.len() {
+        if arg == "--config" and i + 1 < args.len() {
             config_file = args[i + 1]
         }
 
@@ -76,7 +76,7 @@ fn main() -> int {
     if config_file.len() > 0 {
         print("  --config: " + config_file)
     }
-    if output_file.len() == 0 && config_file.len() == 0 {
+    if output_file.len() == 0 and config_file.len() == 0 {
         print("  (no options detected)")
     }
     print("")

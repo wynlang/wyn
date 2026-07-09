@@ -30,7 +30,7 @@ fn main() {
 
     // Tuple destructuring + function
     var (q, r) = divmod(17, 5)
-    Test.assert(q == 3 && r == 2, "tuple destruct combo")
+    Test.assert(q == 3 and r == 2, "tuple destruct combo")
 
     // Array destructuring
     var [first, ...rest] = [10, 20, 30, 40]

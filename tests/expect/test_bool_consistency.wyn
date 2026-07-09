@@ -11,9 +11,9 @@ fn main() -> int {
     var b = false
     println((a == b).to_string())
     println((a != b).to_string())
-    println((!a).to_string())
-    println((a && b).to_string())
-    println((a || b).to_string())
+    println((not a).to_string())
+    println((a and b).to_string())
+    println((a or b).to_string())
     println((5 > 3).to_string())
     return 0
 }

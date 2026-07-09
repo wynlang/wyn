@@ -75,8 +75,8 @@ fn test_encoding_edge() {
 }
 
 fn test_control_edge() {
-    Test.assert(1 == 1 || 0 == 1, "or")
-    Test.assert(!(1 == 2), "not")
+    Test.assert(1 == 1 or 0 == 1, "or")
+    Test.assert(not (1 == 2), "not")
     var odds = 0
     for i in 0..10 { if i % 2 == 0 { continue } odds = odds + 1 }
     Test.assert_eq_int(odds, 5, "continue")

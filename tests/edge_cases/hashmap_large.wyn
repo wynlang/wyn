@@ -46,19 +46,19 @@ fn main() -> int {
     
     // Verify all keys exist
     var all_exist = 1;
-    if (!wyn_hashmap_has(map, "key1")) {
+    if (not wyn_hashmap_has(map, "key1")) {
         all_exist = 0;
     }
-    if (!wyn_hashmap_has(map, "key2")) {
+    if (not wyn_hashmap_has(map, "key2")) {
         all_exist = 0;
     }
-    if (!wyn_hashmap_has(map, "key3")) {
+    if (not wyn_hashmap_has(map, "key3")) {
         all_exist = 0;
     }
-    if (!wyn_hashmap_has(map, "key4")) {
+    if (not wyn_hashmap_has(map, "key4")) {
         all_exist = 0;
     }
-    if (!wyn_hashmap_has(map, "key5")) {
+    if (not wyn_hashmap_has(map, "key5")) {
         all_exist = 0;
     }
     

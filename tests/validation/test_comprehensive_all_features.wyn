@@ -14,12 +14,12 @@ fn test_arithmetic() -> int {
 fn test_strings() -> int {
     var s = "hello";
     if s.len() != 5 { return 1; }
-    if !s.contains("ell") { return 2; }
-    if !s.starts_with("hel") { return 3; }
-    if !s.ends_with("llo") { return 4; }
+    if not s.contains("ell") { return 2; }
+    if not s.starts_with("hel") { return 3; }
+    if not s.ends_with("llo") { return 4; }
     
     var upper = s.upper();
-    if !upper.contains("HELLO") { return 5; }
+    if not upper.contains("HELLO") { return 5; }
     
     var concat = "hello".concat(" world");
     if concat.len() != 11 { return 6; }
@@ -154,20 +154,20 @@ fn divide(a: int, b: int) -> ResultInt {
 fn test_result() -> int {
     // Test Ok case
     var result1 = divide(10, 2);
-    if !ResultInt_is_ok(result1) { return 1; }
+    if not ResultInt_is_ok(result1) { return 1; }
     var value1 = ResultInt_unwrap(result1);
     if value1 != 5 { return 2; }
     
     // Test Err case
     var result2 = divide(10, 0);
-    if !ResultInt_is_err(result2) { return 3; }
+    if not ResultInt_is_err(result2) { return 3; }
     
     // Test ResultString
     var result3 = ResultString_Ok("success");
-    if !ResultString_is_ok(result3) { return 4; }
+    if not ResultString_is_ok(result3) { return 4; }
     
     var result4 = ResultString_Err("error");
-    if !ResultString_is_err(result4) { return 5; }
+    if not ResultString_is_err(result4) { return 5; }
     
     return 0;
 }
@@ -195,11 +195,11 @@ fn test_file_io() -> int {
     file_write(path, "test content");
     
     // Check exists
-    if !file_exists(path) { return 1; }
+    if not file_exists(path) { return 1; }
     
     // Read
     var content = file_read(path);
-    if !content.contains("test") { return 2; }
+    if not content.contains("test") { return 2; }
     
     // Delete
     file_delete(path);

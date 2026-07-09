@@ -62,7 +62,7 @@ fn main() {
     Test.assert_eq_int(m.len(), 100, "100 map entries")
     Test.assert_eq_str(m.get("k99"), "v99", "map get last")
     m.remove("k50")
-    Test.assert(!m.has("k50"), "map remove")
+    Test.assert(not m.has("k50"), "map remove")
 
     // String methods chain
     var chain = "  Hello World  ".trim().upper()

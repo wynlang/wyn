@@ -17,7 +17,7 @@ fn spawnable(n: int) -> int { return n * n }
 fn inc_ref(mut x: int) { x = x + 1 }
 
 fn test_core() {
-    Test.assert(1 == 1 && 2 > 1 && 3 >= 3 && 0 <= 1 && 1 != 2, "comparisons")
+    Test.assert(1 == 1 and 2 > 1 and 3 >= 3 and 0 <= 1 and 1 != 2, "comparisons")
     var p = Point{x: 3, y: 4}
     Test.assert_eq_int(p.mag_sq(), 25, "struct method")
     var d = Dog{tag: "Rex"}

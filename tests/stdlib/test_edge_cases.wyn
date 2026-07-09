@@ -75,7 +75,7 @@ fn main() -> int {
     // Boolean comparisons
     Test.assert(1 == 1, "1 == 1")
     Test.assert(1 != 2, "1 != 2")
-    Test.assert(!(1 == 2), "!(1==2)")
+    Test.assert(not (1 == 2), "!(1==2)")
     
     // String comparison
     Test.assert("abc" == "abc", "string equality")

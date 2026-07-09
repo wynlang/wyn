@@ -42,7 +42,7 @@ fn main() -> int {
 
     // Edge 3: ? with defaults
     var r = chain_with_defaults()
-    if !ResultInt_is_ok(r) { println("FAIL: ? with defaults"); return 5 }
+    if not ResultInt_is_ok(r) { println("FAIL: ? with defaults"); return 5 }
 
     // Edge 4: spawn with mixed params
     var f1 = spawn mixed(50)

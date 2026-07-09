@@ -19,7 +19,7 @@ fn main() {
 
     // Block with return (map)
     var doubled = nums.map(|x| { return x * 2 })
-    Test.assert(doubled[0] == 2 && doubled[4] == 10, "block return")
+    Test.assert(doubled[0] == 2 and doubled[4] == 10, "block return")
 
     // Expression body still works
     var tripled = nums.map(|x| x * 3)
