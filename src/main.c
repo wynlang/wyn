@@ -1844,11 +1844,12 @@ int main(int argc, char** argv) {
                     "%s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c "
                     "%s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c "
                     "%s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c",
+                    // 35 %s specifiers ↔ 35 wyn_root args (one per runtime source).
                     wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
                     wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
                     wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
                     wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
-                    wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
+                    wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
             }
             
             // Try cross-compilers: zig preferred on macOS, gcc on Linux

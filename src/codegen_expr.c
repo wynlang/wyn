@@ -3087,8 +3087,6 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_STRUCT_INIT: {
-            // Check if type needs ARC management
-            bool needs_arc = false;
             Token type_name = expr->struct_init.type_name;
             
             // Use monomorphic name if available (for generic structs)
@@ -3122,11 +3120,6 @@ void codegen_expr(Expr* expr) {
                     actual_type_name = type_name.start;
                     actual_type_name_len = type_name.length;
                 }
-            }
-            
-            // Simple heuristic: types starting with uppercase likely need ARC
-            if (actual_type_name_len > 0 && actual_type_name[0] >= 'A' && actual_type_name[0] <= 'Z') {
-                needs_arc = true;
             }
             
             // Simple struct initialization — stack allocated

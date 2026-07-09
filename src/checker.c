@@ -2943,7 +2943,6 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             {
                 Type* obj_t = check_expr(expr->method_call.object, scope);
                 if (obj_t && obj_t->kind == TYPE_CHANNEL) {
-                    Token m = expr->method_call.method;
                     for (int i = 0; i < expr->method_call.arg_count; i++)
                         check_expr(expr->method_call.args[i], scope);
                     expr->expr_type = builtin_int; // recv() -> int; send/close -> int (unused)
