@@ -1851,7 +1851,7 @@ static void add_function_overload(SymbolTable* scope, Token name, Type* type, bo
         // Check for exact signature match (error)
         if (signatures_match(existing->type, type)) {
             char func_name[256];
-            snprintf(func_name, sizeof(func_name), "%.*s", name.length, name.start);
+            token_to_cstr(func_name, sizeof(func_name), name);
             type_error_mismatch("unique function signature", "duplicate signature", func_name, name.line, 0);
             return;
         }
@@ -1861,7 +1861,7 @@ static void add_function_overload(SymbolTable* scope, Token name, Type* type, bo
         while (current->next_overload) {
             if (signatures_match(current->next_overload->type, type)) {
                 char func_name[256];
-                snprintf(func_name, sizeof(func_name), "%.*s", name.length, name.start);
+                token_to_cstr(func_name, sizeof(func_name), name);
                 type_error_mismatch("unique function signature", "duplicate signature", func_name, name.line, 0);
                 return;
             }
@@ -2125,10 +2125,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // This is a heuristic - assume short names might be module aliases
                 extern const char* resolve_parser_module_alias(const char* name);
                 if (!is_qualified) {
-                    char name_buf[256];
-                    int len = expr->token.length < 255 ? expr->token.length : 255;
-                    memcpy(name_buf, expr->token.start, len);
-                    name_buf[len] = '\0';
+                    char name_buf[256]; token_to_cstr(name_buf, sizeof(name_buf), expr->token);
                     if (resolve_parser_module_alias(name_buf) != NULL) {
                         is_qualified = true;
                     }
@@ -2144,8 +2141,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // Heuristic: if name starts with lowercase and is short, it's likely a function call
                 bool _suppress_var_err = false;
                 {
-                    char _vn[256]; int _vl = expr->token.length < 255 ? expr->token.length : 255;
-                    memcpy(_vn, expr->token.start, _vl); _vn[_vl] = '\0';
+                    char _vn[256]; token_to_cstr(_vn, sizeof(_vn), expr->token);
                     // Check if any function with this name exists (even with wrong args)
                     SymbolTable* _s = scope;
                     while (_s && !_suppress_var_err) {
@@ -2166,15 +2162,14 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 
                 // Find similar variable name using Levenshtein distance
                 char var_name[256];
-                snprintf(var_name, sizeof(var_name), "%.*s", expr->token.length, expr->token.start);
+                token_to_cstr(var_name, sizeof(var_name), expr->token);
                 
                 extern int levenshtein_distance(const char*, const char*);
                 char best_name[256] = "";
                 int best_dist = 999;
                 for (int i = 0; i < scope->count; i++) {
                     char sym_name[256];
-                    snprintf(sym_name, sizeof(sym_name), "%.*s",
-                             scope->symbols[i].name.length, scope->symbols[i].name.start);
+                    token_to_cstr(sym_name, sizeof(sym_name), scope->symbols[i].name);
                     int d = levenshtein_distance(var_name, sym_name);
                     if (d < best_dist && d <= 2) { best_dist = d; strncpy(best_name, sym_name, 255); }
                 }
@@ -2182,8 +2177,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 if (!best_name[0] && global_scope) {
                     for (int i = 0; i < global_scope->count; i++) {
                         char sym_name[256];
-                        snprintf(sym_name, sizeof(sym_name), "%.*s",
-                                 global_scope->symbols[i].name.length, global_scope->symbols[i].name.start);
+                        token_to_cstr(sym_name, sizeof(sym_name), global_scope->symbols[i].name);
                         int d = levenshtein_distance(var_name, sym_name);
                         if (d < best_dist && d <= 2) { best_dist = d; strncpy(best_name, sym_name, 255); }
                     }
@@ -2814,8 +2808,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     
                     if (validation != VALIDATION_SUCCESS) {
                         char func_name[256];
-                        snprintf(func_name, sizeof(func_name), "%.*s", 
-                                expr->call.callee->token.length, expr->call.callee->token.start);
+                        token_to_cstr(func_name, sizeof(func_name), expr->call.callee->token);
                         fprintf(stderr, "Error: Function call validation failed for '%s': %s\n",
                                 func_name, wyn_validation_error_message(validation));
                         had_error = true;
@@ -2828,8 +2821,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     return best_match->type->fn_type.return_type;
                 } else if (!best_match) {
                     char func_name[256];
-                    snprintf(func_name, sizeof(func_name), "%.*s", 
-                            expr->call.callee->token.length, expr->call.callee->token.start);
+                    token_to_cstr(func_name, sizeof(func_name), expr->call.callee->token);
                     
                     // Check if function exists but with wrong arg count
                     Symbol* _existing = find_symbol(scope, expr->call.callee->token);
@@ -2842,10 +2834,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     SymbolTable* s = scope;
                     while (s) {
                         for (int si = 0; si < s->count; si++) {
-                            char sn[256];
-                            int sl = s->symbols[si].name.length < 255 ? s->symbols[si].name.length : 255;
-                            memcpy(sn, s->symbols[si].name.start, sl);
-                            sn[sl] = '\0';
+                            char sn[256]; int sl = token_to_cstr(sn, sizeof(sn), s->symbols[si].name);
                             // Simple distance: count differing chars
                             int fl = strlen(func_name);
                             int diff = abs(fl - sl);
@@ -2886,8 +2875,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 if (callee_type->fn_type.is_variadic) {
                     if (expr->call.arg_count < callee_type->fn_type.param_count) {
                         char func_name[256];
-                        snprintf(func_name, sizeof(func_name), "%.*s", 
-                                expr->call.callee->token.length, expr->call.callee->token.start);
+                        token_to_cstr(func_name, sizeof(func_name), expr->call.callee->token);
                         type_error_wrong_arg_count(func_name, callee_type->fn_type.param_count, 
                                                   expr->call.arg_count, expr->call.callee->token.line, 0);
                         had_error = true;
@@ -2898,8 +2886,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     if (expr->call.arg_count < min_p ||
                         expr->call.arg_count > callee_type->fn_type.param_count) {
                         char func_name[256];
-                        snprintf(func_name, sizeof(func_name), "%.*s", 
-                                expr->call.callee->token.length, expr->call.callee->token.start);
+                        token_to_cstr(func_name, sizeof(func_name), expr->call.callee->token);
                         type_error_wrong_arg_count(func_name, callee_type->fn_type.param_count, 
                                                   expr->call.arg_count, expr->call.callee->token.line, 0);
                         had_error = true;
@@ -2980,18 +2967,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
 
             Token method = expr->method_call.method;
-            char method_name[256];
-            int len = method.length < 255 ? method.length : 255;
-            memcpy(method_name, method.start, len);
-            method_name[len] = '\0';
+            char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
 
             // Check for namespace method calls: File.read() -> File_read
             // Only for known namespaces, not regular variables
             if (expr->method_call.object->type == EXPR_IDENT) {
                 char obj_name[256];
-                snprintf(obj_name, sizeof(obj_name), "%.*s",
-                    expr->method_call.object->token.length,
-                    expr->method_call.object->token.start);
+                token_to_cstr(obj_name, sizeof(obj_name), expr->method_call.object->token);
                 // Only treat as namespace if it's a known builtin module
                 extern bool is_builtin_module(const char* name);
                 extern bool is_module_loaded(const char* name);
@@ -3156,8 +3138,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // Use method signature table for type inference (Phase 1)
             const char* receiver_type = get_receiver_type_string(object_type);
             if (receiver_type) {
-                memcpy(method_name, method.start, len);
-                method_name[len] = '\0';
+                token_to_cstr(method_name, sizeof(method_name), method);
                 
                 const char* return_type_str = lookup_method_return_type(receiver_type, method_name);
                 if (return_type_str) {
@@ -4913,7 +4894,7 @@ void check_program(Program* prog) {
         if (prog->stmts[i]->type == STMT_IMPORT) {
             ImportStmt* import = &prog->stmts[i]->import;
             char module_name[256];
-            snprintf(module_name, sizeof(module_name), "%.*s", import->module.length, import->module.start);
+            token_to_cstr(module_name, sizeof(module_name), import->module);
             extern Program* load_module(const char* name);
             extern void merge_module_exports(Program* module, Program* target, ImportStmt* import);
             Program* module = load_module(module_name);
@@ -5554,7 +5535,7 @@ void check_program(Program* prog) {
             
             // Build module name
             char module_name[256];
-            snprintf(module_name, sizeof(module_name), "%.*s", import->module.length, import->module.start);
+            token_to_cstr(module_name, sizeof(module_name), import->module);
             
             // Load module from same directory as current file
             Program* module = load_module(module_name);
@@ -5564,7 +5545,7 @@ void check_program(Program* prog) {
                 if (import->item_count == 0) {
                     // Whole module import - register functions with module prefix
                     char module_name_str[256];
-                    snprintf(module_name_str, sizeof(module_name_str), "%.*s", import->module.length, import->module.start);
+                    token_to_cstr(module_name_str, sizeof(module_name_str), import->module);
                     
                     // Register all exported functions with qualified names
                     for (int j = 0; j < module->count; j++) {
@@ -6021,8 +6002,7 @@ void check_program(Program* prog) {
                     Type* default_type = check_expr(fn->param_defaults[j], &local_scope);
                     if (default_type && !types_equal(param_type, default_type)) {
                         char param_name[256];
-                        snprintf(param_name, sizeof(param_name), "%.*s", 
-                                fn->params[j].length, fn->params[j].start);
+                        token_to_cstr(param_name, sizeof(param_name), fn->params[j]);
                         type_error_mismatch(type_to_string(param_type), 
                                           type_to_string(default_type),
                                           param_name, 
@@ -6075,7 +6055,7 @@ void check_program(Program* prog) {
             // Register function visibility if in a module
             if (current_module_name[0] != '\0') {
                 char func_name[128];
-                snprintf(func_name, 128, "%.*s", fn->name.length, fn->name.start);
+                token_to_cstr(func_name, sizeof(func_name), fn->name);
                 register_function_visibility(current_module_name, func_name, fn->is_public);
             }
             

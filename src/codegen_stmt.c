@@ -57,8 +57,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     { extern void reset_string_vars(void); reset_string_vars(); }
     { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
-        char param_name[256];
-        snprintf(param_name, 256, "%.*s", fn_stmt->fn.params[i].length, fn_stmt->fn.params[i].start);
+        char param_name[256]; token_to_cstr(param_name, sizeof(param_name), fn_stmt->fn.params[i]);
         bool is_mut = fn_stmt->fn.param_mutable && fn_stmt->fn.param_mutable[i];
         register_parameter_mut(param_name, is_mut);
     }
@@ -94,7 +93,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                 if (current_module_prefix) {
                     snprintf(custom_return_type, 128, "%s_%.*s", current_module_prefix, rt.length, rt.start);
                 } else {
-                    snprintf(custom_return_type, 128, "%.*s", rt.length, rt.start);
+                    token_to_cstr(custom_return_type, sizeof(custom_return_type), rt);
                 }
                 return_type = custom_return_type;
             }
@@ -310,7 +309,7 @@ void codegen_stmt(Stmt* stmt) {
                     }
                     if (is_int_array) {
                         c_type = "WynIntArray";
-                        char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                        char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                         extern void register_int_array_var(const char*);
                         register_int_array_var(_vn);
                     } else {
@@ -351,15 +350,12 @@ void codegen_stmt(Stmt* stmt) {
                         c_type = "char";
                     } else {
                         // Custom struct/enum type - use the type name as-is
-                        static char custom_type_buf[256];
-                        int len = type_name.length < 255 ? type_name.length : 255;
-                        memcpy(custom_type_buf, type_name.start, len);
-                        custom_type_buf[len] = '\0';
+                        static char custom_type_buf[256]; token_to_cstr(custom_type_buf, sizeof(custom_type_buf), type_name);
                         c_type = custom_type_buf;
                         // Register enum var if this is an enum type
                         extern int is_enum_type(const char*);
                         if (is_enum_type(custom_type_buf)) {
-                            char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                            char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                             extern void register_enum_var(const char*, const char*);
                             register_enum_var(_vn, custom_type_buf);
                         }
@@ -372,8 +368,7 @@ void codegen_stmt(Stmt* stmt) {
                     is_already_const = true;
                 } else if (stmt->var.init->type == EXPR_IDENT) {
                     // Check if init is a known string variable
-                    char _idn[256]; int _idl = stmt->var.init->token.length < 255 ? stmt->var.init->token.length : 255;
-                    memcpy(_idn, stmt->var.init->token.start, _idl); _idn[_idl] = '\0';
+                    char _idn[256]; token_to_cstr(_idn, sizeof(_idn), stmt->var.init->token);
                     extern int is_string_var(const char*);
                     if (is_string_var(_idn)) {
                         c_type = "const char*";
@@ -382,7 +377,7 @@ void codegen_stmt(Stmt* stmt) {
                     extern int is_known_array_var(const char*);
                     if (is_known_array_var(_idn)) {
                         c_type = "WynArray";
-                        char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                        char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                         extern void register_array_var(const char*); register_array_var(_vn);
                     }
                 } else if (stmt->var.init->type == EXPR_STRING_INTERP) {
@@ -390,8 +385,7 @@ void codegen_stmt(Stmt* stmt) {
                     needs_arc_management = true;
                 } else if (stmt->var.init->type == EXPR_INDEX &&
                            stmt->var.init->index.array->type == EXPR_IDENT) {
-                    char _ixn[256]; int _ixl = stmt->var.init->index.array->token.length < 255 ? stmt->var.init->index.array->token.length : 255;
-                    memcpy(_ixn, stmt->var.init->index.array->token.start, _ixl); _ixn[_ixl] = '\0';
+                    char _ixn[256]; token_to_cstr(_ixn, sizeof(_ixn), stmt->var.init->index.array->token);
                     extern int is_str_array_var(const char*);
                     if (is_str_array_var(_ixn)) { c_type = "const char*"; is_already_const = true; }
                 } else if (stmt->var.init->type == EXPR_FLOAT) {
@@ -407,7 +401,7 @@ void codegen_stmt(Stmt* stmt) {
                     }
                 } else if (stmt->var.init->type == EXPR_ARRAY || stmt->var.init->type == EXPR_LIST_COMP) {
                     // Check if this array holds spawn futures (detected in pre-scan)
-                    char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                    char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                     if (is_spawn_array(_vn)) {
                         c_type = "WynIntArray";
                     } else {
@@ -428,17 +422,17 @@ void codegen_stmt(Stmt* stmt) {
                         if (stmt->var.init->method_call.object->expr_type &&
                             stmt->var.init->method_call.object->expr_type->kind == TYPE_STRUCT) {
                             Token sn = stmt->var.init->method_call.object->expr_type->struct_type.name;
-                            static char _sn_buf[64]; snprintf(_sn_buf, 64, "%.*s", sn.length, sn.start);
+                            static char _sn_buf[64]; token_to_cstr(_sn_buf, sizeof(_sn_buf), sn);
                             _struct_name = _sn_buf;
                         }
                         // Fallback: look up variable's struct type from registry
                         if (!_struct_name) {
-                            char _vn[64]; snprintf(_vn, 64, "%.*s", stmt->var.init->method_call.object->token.length, stmt->var.init->method_call.object->token.start);
+                            char _vn[64]; token_to_cstr(_vn, sizeof(_vn), stmt->var.init->method_call.object->token);
                             extern const char* get_struct_var_type(const char*);
                             _struct_name = get_struct_var_type(_vn);
                         }
                         if (_struct_name) {
-                            char _mn[64]; snprintf(_mn, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                            char _mn[64]; token_to_cstr(_mn, sizeof(_mn), stmt->var.init->method_call.method);
                             extern const char* lookup_struct_method_return_type(const char*, const char*);
                             const char* rt = lookup_struct_method_return_type(_struct_name, _mn);
                             if (rt) {
@@ -449,7 +443,7 @@ void codegen_stmt(Stmt* stmt) {
                                 else {
                                     static char _srt[128]; snprintf(_srt, 128, "%s", rt); c_type = _srt; _found_method_rt = true;
                                     // Register the result variable as a struct var too
-                                    char _rvn[128]; snprintf(_rvn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                                    char _rvn[128]; token_to_cstr(_rvn, sizeof(_rvn), stmt->var.name);
                                     extern void register_struct_var(const char*, const char*);
                                     register_struct_var(_rvn, rt);
                                 }
@@ -459,7 +453,7 @@ void codegen_stmt(Stmt* stmt) {
                     }
                     // Methods that return arrays → WynArray (only when object is array, not string)
                     if (!_found_method_rt) {
-                        char _mn2[64]; snprintf(_mn2, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                        char _mn2[64]; token_to_cstr(_mn2, sizeof(_mn2), stmt->var.init->method_call.method);
                         // Check if object is a string — these methods return string, not array
                         bool _obj_is_string = stmt->var.init->method_call.object->expr_type &&
                             stmt->var.init->method_call.object->expr_type->kind == TYPE_STRING;
@@ -468,7 +462,7 @@ void codegen_stmt(Stmt* stmt) {
                             strcmp(_mn2, "unique") == 0 || strcmp(_mn2, "slice") == 0 ||
                             strcmp(_mn2, "flat_map") == 0 || strcmp(_mn2, "collect") == 0)) {
                             c_type = "WynArray";
-                            char _vn2[256]; snprintf(_vn2, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                            char _vn2[256]; token_to_cstr(_vn2, sizeof(_vn2), stmt->var.name);
                             extern void register_array_var(const char*); register_array_var(_vn2);
                             goto var_type_done;
                         }
@@ -487,7 +481,7 @@ void codegen_stmt(Stmt* stmt) {
                         const char* _stype = NULL;
                         // Direct struct var
                         if (_obj->type == EXPR_IDENT) {
-                            char _vn3[64]; snprintf(_vn3, 64, "%.*s", _obj->token.length, _obj->token.start);
+                            char _vn3[64]; token_to_cstr(_vn3, sizeof(_vn3), _obj->token);
                             extern const char* get_struct_var_type(const char*);
                             _stype = get_struct_var_type(_vn3);
                             // Static constructor: Type.new() — object is the type name itself
@@ -498,11 +492,11 @@ void codegen_stmt(Stmt* stmt) {
                         }
                         // Chained method on struct
                         if (!_stype && _obj->type == EXPR_METHOD_CALL && _obj->method_call.object->type == EXPR_IDENT) {
-                            char _vn3[64]; snprintf(_vn3, 64, "%.*s", _obj->method_call.object->token.length, _obj->method_call.object->token.start);
+                            char _vn3[64]; token_to_cstr(_vn3, sizeof(_vn3), _obj->method_call.object->token);
                             extern const char* get_struct_var_type(const char*);
                             _stype = get_struct_var_type(_vn3);
                             if (_stype) {
-                                char _mn3[64]; snprintf(_mn3, 64, "%.*s", _obj->method_call.method.length, _obj->method_call.method.start);
+                                char _mn3[64]; token_to_cstr(_mn3, sizeof(_mn3), _obj->method_call.method);
                                 extern const char* lookup_struct_method_return_type(const char*, const char*);
                                 const char* _ret = lookup_struct_method_return_type(_stype, _mn3);
                                 if (_ret) _stype = _ret;
@@ -510,7 +504,7 @@ void codegen_stmt(Stmt* stmt) {
                         }
                         // Function call root: from_table("x").where_clause(...)
                         if (!_stype && _obj->type == EXPR_CALL && _obj->call.callee->type == EXPR_IDENT) {
-                            char _fn[64]; snprintf(_fn, 64, "%.*s", _obj->call.callee->token.length, _obj->call.callee->token.start);
+                            char _fn[64]; token_to_cstr(_fn, sizeof(_fn), _obj->call.callee->token);
                             extern const char* get_function_return_type(const char*);
                             const char* _frt = get_function_return_type(_fn);
                             if (_frt) { extern int is_known_struct(const char*); if (is_known_struct(_frt)) _stype = _frt; }
@@ -520,21 +514,21 @@ void codegen_stmt(Stmt* stmt) {
                             Expr* _walk = _obj;
                             while (_walk && _walk->type == EXPR_METHOD_CALL) _walk = _walk->method_call.object;
                             if (_walk && _walk->type == EXPR_CALL && _walk->call.callee->type == EXPR_IDENT) {
-                                char _fn[64]; snprintf(_fn, 64, "%.*s", _walk->call.callee->token.length, _walk->call.callee->token.start);
+                                char _fn[64]; token_to_cstr(_fn, sizeof(_fn), _walk->call.callee->token);
                                 extern const char* get_function_return_type(const char*);
                                 const char* _frt = get_function_return_type(_fn);
                                 if (_frt) { extern int is_known_struct(const char*); if (is_known_struct(_frt)) _stype = _frt; }
                             }
                         }
                         if (_stype) {
-                            char _mn3[64]; snprintf(_mn3, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                            char _mn3[64]; token_to_cstr(_mn3, sizeof(_mn3), stmt->var.init->method_call.method);
                             extern const char* lookup_struct_method_return_type(const char*, const char*);
                             const char* _ret = lookup_struct_method_return_type(_stype, _mn3);
                             if (_ret) {
                                 extern int is_known_struct(const char*);
                                 if (is_known_struct(_ret)) {
                                     c_type = _ret;
-                                    char _vn4[256]; snprintf(_vn4, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                                    char _vn4[256]; token_to_cstr(_vn4, sizeof(_vn4), stmt->var.name);
                                     extern void register_struct_var(const char*, const char*);
                                     register_struct_var(_vn4, _ret);
                                     goto var_type_done;
@@ -547,18 +541,18 @@ void codegen_stmt(Stmt* stmt) {
                     }
                     // Check for module constructor: StringBuilder.new(), etc.
                     if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
-                        char _on[64]; snprintf(_on, 64, "%.*s", stmt->var.init->method_call.object->token.length, stmt->var.init->method_call.object->token.start);
-                        char _mn[64]; snprintf(_mn, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                        char _on[64]; token_to_cstr(_on, sizeof(_on), stmt->var.init->method_call.object->token);
+                        char _mn[64]; token_to_cstr(_mn, sizeof(_mn), stmt->var.init->method_call.method);
                         if (strcmp(_on, "StringBuilder") == 0 && strcmp(_mn, "new") == 0) {
                             c_type = "long long";
-                            { char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start); extern void register_sb_var(const char*); register_sb_var(_vn); }
+                            { char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name); extern void register_sb_var(const char*); register_sb_var(_vn); }
                             goto var_type_done;
                         }
                         // Check if it's an enum constructor: Shape.Circle(5.0)
                         extern int is_enum_type(const char*);
                         if (is_enum_type(_on)) {
                             c_type = _on;
-                            { char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start); extern void register_enum_var(const char*, const char*); register_enum_var(_vn, _on); }
+                            { char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name); extern void register_enum_var(const char*, const char*); register_enum_var(_vn, _on); }
                             goto var_type_done;
                         }
                         // Check module function return type: Template.render -> string
@@ -576,7 +570,7 @@ void codegen_stmt(Stmt* stmt) {
                     }
                     // Check if object is a trait — look up method return type from trait decl
                     if (!_found_method_rt && stmt->var.init->method_call.object->type == EXPR_IDENT && current_program) {
-                        char _on2[64]; snprintf(_on2, 64, "%.*s", stmt->var.init->method_call.object->token.length, stmt->var.init->method_call.object->token.start);
+                        char _on2[64]; token_to_cstr(_on2, sizeof(_on2), stmt->var.init->method_call.object->token);
                         extern const char* get_struct_var_type(const char*);
                         const char* _vtype = get_struct_var_type(_on2);
                         if (!_vtype) {
@@ -584,7 +578,7 @@ void codegen_stmt(Stmt* stmt) {
                             // The param type might be a trait name
                         }
                         // Search trait declarations for this method
-                        char _mn2[64]; snprintf(_mn2, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                        char _mn2[64]; token_to_cstr(_mn2, sizeof(_mn2), stmt->var.init->method_call.method);
                         for (int _ti = 0; _ti < current_program->count && !_found_method_rt; _ti++) {
                             if (current_program->stmts[_ti]->type == STMT_TRAIT) {
                                 Stmt* _ts = current_program->stmts[_ti];
@@ -611,14 +605,14 @@ void codegen_stmt(Stmt* stmt) {
                     }
                     // Quick check: if object is a known array and method returns array, type as WynArray
                     if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
-                        char _vn[64]; snprintf(_vn, 64, "%.*s", stmt->var.init->method_call.object->token.length, stmt->var.init->method_call.object->token.start);
+                        char _vn[64]; token_to_cstr(_vn, sizeof(_vn), stmt->var.init->method_call.object->token);
                         extern int is_known_array_var(const char*);
                         if (is_known_array_var(_vn)) {
-                            char _mn[64]; snprintf(_mn, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                            char _mn[64]; token_to_cstr(_mn, sizeof(_mn), stmt->var.init->method_call.method);
                             if (strcmp(_mn, "slice") == 0 || strcmp(_mn, "reverse") == 0 || strcmp(_mn, "filter") == 0 || strcmp(_mn, "map") == 0 || strcmp(_mn, "concat") == 0 || strcmp(_mn, "unique") == 0 || strcmp(_mn, "sort") == 0 || strcmp(_mn, "sort_by") == 0) {
                                 c_type = "WynArray";
                                 needs_arc_management = false;
-                                { char vn2[256]; snprintf(vn2, 256, "%.*s", stmt->var.name.length, stmt->var.name.start); register_array_var(vn2); }
+                                { char vn2[256]; token_to_cstr(vn2, sizeof(vn2), stmt->var.name); register_array_var(vn2); }
                                 goto var_type_done;
                             }
                         }
@@ -655,7 +649,7 @@ void codegen_stmt(Stmt* stmt) {
                             case TYPE_STRUCT: {
                                 static char method_struct_buf[256];
                                 Token sn = stmt->var.init->expr_type->struct_type.name;
-                                snprintf(method_struct_buf, sizeof(method_struct_buf), "%.*s", sn.length, sn.start);
+                                token_to_cstr(method_struct_buf, sizeof(method_struct_buf), sn);
                                 c_type = method_struct_buf;
                                 break;
                             }
@@ -716,16 +710,14 @@ void codegen_stmt(Stmt* stmt) {
                         
                         // Check if object is a known array variable
                         if (obj->type == EXPR_IDENT) {
-                            char vn[64];
-                            snprintf(vn, 64, "%.*s", obj->token.length, obj->token.start);
+                            char vn[64]; token_to_cstr(vn, sizeof(vn), obj->token);
                             extern int is_known_array_var(const char*);
                             if (is_known_array_var(vn)) receiver_type = "array";
                         }
                         
                         // Look up method return type
                         Token method = stmt->var.init->method_call.method;
-                        char method_name[64];
-                        snprintf(method_name, sizeof(method_name), "%.*s", method.length, method.start);
+                        char method_name[64]; token_to_cstr(method_name, sizeof(method_name), method);
                         
                         const char* return_type = lookup_method_return_type(receiver_type, method_name);
                         if (!return_type && stmt->var.init->method_call.object->type == EXPR_IDENT) {
@@ -746,7 +738,7 @@ void codegen_stmt(Stmt* stmt) {
                                 c_type = "bool";
                             } else if (strcmp(return_type, "array") == 0) {
                                 c_type = "WynArray";
-                                { char vn[256]; snprintf(vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start); register_array_var(vn); }
+                                { char vn[256]; token_to_cstr(vn, sizeof(vn), stmt->var.name); register_array_var(vn); }
                             } else if (strcmp(return_type, "optional") == 0) {
                                 c_type = "WynOptional*";
                                 needs_arc_management = true;
@@ -782,19 +774,15 @@ void codegen_stmt(Stmt* stmt) {
                     // Track if this future holds a string result
                     if (stmt->var.init->spawn.call && stmt->var.init->spawn.call->type == EXPR_CALL &&
                         stmt->var.init->spawn.call->call.callee->type == EXPR_IDENT) {
-                        char _sfn[256]; int _sfl = stmt->var.init->spawn.call->call.callee->token.length;
-                        if (_sfl > 255) _sfl = 255;
-                        memcpy(_sfn, stmt->var.init->spawn.call->call.callee->token.start, _sfl); _sfn[_sfl] = '\0';
+                        char _sfn[256]; token_to_cstr(_sfn, sizeof(_sfn), stmt->var.init->spawn.call->call.callee->token);
                         extern const char* get_function_return_type(const char*);
                         const char* _srt = get_function_return_type(_sfn);
                         if (_srt && strcmp(_srt, "string") == 0) {
-                            char _vn2[256]; int _vl2 = stmt->var.name.length < 255 ? stmt->var.name.length : 255;
-                            memcpy(_vn2, stmt->var.name.start, _vl2); _vn2[_vl2] = '\0';
+                            char _vn2[256]; token_to_cstr(_vn2, sizeof(_vn2), stmt->var.name);
                             extern void register_string_future(const char*);
                             register_string_future(_vn2);
                         } else if (_srt && strcmp(_srt, "int") != 0 && strcmp(_srt, "float") != 0 && strcmp(_srt, "bool") != 0) {
-                            char _vn2[256]; int _vl2 = stmt->var.name.length < 255 ? stmt->var.name.length : 255;
-                            memcpy(_vn2, stmt->var.name.start, _vl2); _vn2[_vl2] = '\0';
+                            char _vn2[256]; token_to_cstr(_vn2, sizeof(_vn2), stmt->var.name);
                             extern void register_struct_future(const char*, const char*);
                             register_struct_future(_vn2, _srt);
                         }
@@ -804,17 +792,14 @@ void codegen_stmt(Stmt* stmt) {
                     Expr* await_inner = stmt->var.init->await.expr;
                     bool _is_str_await = false;
                     if (await_inner && await_inner->type == EXPR_IDENT) {
-                        char _avn[256]; int _avl = await_inner->token.length < 255 ? await_inner->token.length : 255;
-                        memcpy(_avn, await_inner->token.start, _avl); _avn[_avl] = '\0';
+                        char _avn[256]; token_to_cstr(_avn, sizeof(_avn), await_inner->token);
                         extern int is_string_future(const char*);
                         if (is_string_future(_avn)) _is_str_await = true;
                     }
                     if (await_inner && await_inner->type == EXPR_SPAWN && await_inner->spawn.call &&
                         await_inner->spawn.call->type == EXPR_CALL &&
                         await_inner->spawn.call->call.callee->type == EXPR_IDENT) {
-                        char _afn[256]; int _afl = await_inner->spawn.call->call.callee->token.length;
-                        if (_afl > 255) _afl = 255;
-                        memcpy(_afn, await_inner->spawn.call->call.callee->token.start, _afl); _afn[_afl] = '\0';
+                        char _afn[256]; token_to_cstr(_afn, sizeof(_afn), await_inner->spawn.call->call.callee->token);
                         extern const char* get_function_return_type(const char*);
                         const char* _art = get_function_return_type(_afn);
                         if (_art && strcmp(_art, "string") == 0) _is_str_await = true;
@@ -824,17 +809,14 @@ void codegen_stmt(Stmt* stmt) {
                     if (!_is_str_await) {
                         const char* _struct_type = NULL;
                         if (await_inner && await_inner->type == EXPR_IDENT) {
-                            char _avn2[256]; int _avl2 = await_inner->token.length < 255 ? await_inner->token.length : 255;
-                            memcpy(_avn2, await_inner->token.start, _avl2); _avn2[_avl2] = '\0';
+                            char _avn2[256]; token_to_cstr(_avn2, sizeof(_avn2), await_inner->token);
                             extern const char* get_struct_future_type(const char*);
                             _struct_type = get_struct_future_type(_avn2);
                         }
                         if (!_struct_type && await_inner && await_inner->type == EXPR_SPAWN && await_inner->spawn.call &&
                             await_inner->spawn.call->type == EXPR_CALL &&
                             await_inner->spawn.call->call.callee->type == EXPR_IDENT) {
-                            char _afn2[256]; int _afl2 = await_inner->spawn.call->call.callee->token.length;
-                            if (_afl2 > 255) _afl2 = 255;
-                            memcpy(_afn2, await_inner->spawn.call->call.callee->token.start, _afl2); _afn2[_afl2] = '\0';
+                            char _afn2[256]; token_to_cstr(_afn2, sizeof(_afn2), await_inner->spawn.call->call.callee->token);
                             extern const char* get_function_return_type(const char*);
                             const char* _art2 = get_function_return_type(_afn2);
                             if (_art2 && strcmp(_art2, "int") != 0 && strcmp(_art2, "string") != 0 &&
@@ -857,8 +839,7 @@ void codegen_stmt(Stmt* stmt) {
                         // e.g., point.Point should become point_Point
                         Token type_name = stmt->var.init->struct_init.type_name;
                         
-                        char temp_name[128];
-                        snprintf(temp_name, 128, "%.*s", type_name.length, type_name.start);
+                        char temp_name[128]; token_to_cstr(temp_name, sizeof(temp_name), type_name);
                         
                         // Check if there's a dot in the name (module.Type)
                         char* dot = strchr(temp_name, '.');
@@ -870,12 +851,12 @@ void codegen_stmt(Stmt* stmt) {
                             // Add module prefix if in module context
                             snprintf(struct_type, 128, "%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                         } else {
-                            snprintf(struct_type, 128, "%.*s", type_name.length, type_name.start);
+                            token_to_cstr(struct_type, sizeof(struct_type), type_name);
                         }
                     }
                     c_type = struct_type;
                     // Register this variable as a struct var for method return type inference
-                    { char _svn[128]; snprintf(_svn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                    { char _svn[128]; token_to_cstr(_svn, sizeof(_svn), stmt->var.name);
                       extern void register_struct_var(const char*, const char*);
                       register_struct_var(_svn, struct_type); }
                     needs_arc_management = false;
@@ -930,11 +911,7 @@ void codegen_stmt(Stmt* stmt) {
                                 break;
                             case TYPE_STRUCT: {
                                 // Use the struct type name
-                                static char struct_type_buf[256];
-                                int len = stmt->var.init->expr_type->struct_type.name.length < 255 ? 
-                                         stmt->var.init->expr_type->struct_type.name.length : 255;
-                                memcpy(struct_type_buf, stmt->var.init->expr_type->struct_type.name.start, len);
-                                struct_type_buf[len] = '\0';
+                                static char struct_type_buf[256]; token_to_cstr(struct_type_buf, sizeof(struct_type_buf), stmt->var.init->expr_type->struct_type.name);
                                 c_type = struct_type_buf;
                                 break;
                             }
@@ -999,7 +976,7 @@ void codegen_stmt(Stmt* stmt) {
                         if (meth.length == 3 && memcmp(meth.start, "new", 3) == 0) {
                             if (mod.length == 13 && memcmp(mod.start, "StringBuilder", 13) == 0) {
                                 c_type = "long long"; detected = true;
-                                { char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start); extern void register_sb_var(const char*); register_sb_var(_vn); }
+                                { char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name); extern void register_sb_var(const char*); register_sb_var(_vn); }
                             } else if (mod.length == 7 && memcmp(mod.start, "HashMap", 7) == 0) {
                                 c_type = "WynHashMap*"; detected = true;
                             }
@@ -1026,12 +1003,10 @@ void codegen_stmt(Stmt* stmt) {
                                 // Use the enum type name
                                 static char enum_ret_buf2[256];
                                 if (stmt->var.init->expr_type->name.length > 0) {
-                                    int len = stmt->var.init->expr_type->name.length < 255 ? stmt->var.init->expr_type->name.length : 255;
-                                    memcpy(enum_ret_buf2, stmt->var.init->expr_type->name.start, len);
-                                    enum_ret_buf2[len] = '\0';
+                                    token_to_cstr(enum_ret_buf2, sizeof(enum_ret_buf2), stmt->var.init->expr_type->name);
                                     c_type = enum_ret_buf2;
                                     // Register as enum var
-                                    char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                                    char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                                     extern void register_enum_var(const char*, const char*);
                                     register_enum_var(_vn, enum_ret_buf2);
                                 }
@@ -1090,13 +1065,13 @@ void codegen_stmt(Stmt* stmt) {
                                     } else {
                                         // Check if it's an enum type
                                         extern int is_enum_type(const char*);
-                                        char _rtn[128]; snprintf(_rtn, 128, "%.*s", rt.length, rt.start);
+                                        char _rtn[128]; token_to_cstr(_rtn, sizeof(_rtn), rt);
                                         if (is_enum_type(_rtn)) {
                                             static char _enum_var_buf[128];
                                             snprintf(_enum_var_buf, 128, "%s", _rtn);
                                             c_type = _enum_var_buf;
                                             // Register this variable as holding an enum
-                                            char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                                            char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                                             extern void register_enum_var(const char*, const char*);
                                             register_enum_var(_vn, _rtn);
                                         }
@@ -1120,10 +1095,8 @@ void codegen_stmt(Stmt* stmt) {
                                     memcmp(fs->fn.name.start, call_name.start, call_name.length) == 0 &&
                                     fs->fn.return_type && fs->fn.return_type->type == EXPR_FN_TYPE) {
                                     // This function returns a closure!
-                                    snprintf(lambda_var_info[lambda_var_count].var_name, 64, "%.*s",
-                                            stmt->var.name.length, stmt->var.name.start);
-                                    snprintf(lambda_var_info[lambda_var_count].name, 64, "%.*s",
-                                            stmt->var.name.length, stmt->var.name.start);
+                                    token_to_cstr(lambda_var_info[lambda_var_count].var_name, sizeof(lambda_var_info[lambda_var_count].var_name), stmt->var.name);
+                                    token_to_cstr(lambda_var_info[lambda_var_count].name, sizeof(lambda_var_info[lambda_var_count].name), stmt->var.name);
                                     lambda_var_info[lambda_var_count].name_len = stmt->var.name.length;
                                     lambda_var_info[lambda_var_count].is_closure = true;
                                     lambda_var_info[lambda_var_count].capture_count = 0;
@@ -1203,7 +1176,7 @@ void codegen_stmt(Stmt* stmt) {
                                 // Use struct type name (resolve type params to long long)
                                 static char struct_type_buf[128];
                                 Token type_name = stmt->var.init->expr_type->struct_type.name;
-                                snprintf(struct_type_buf, 128, "%.*s", type_name.length, type_name.start);
+                                token_to_cstr(struct_type_buf, sizeof(struct_type_buf), type_name);
                                 if (type_name.length == 1 && type_name.start[0] >= 'A' && type_name.start[0] <= 'Z')
                                     c_type = "long long";
                                 else
@@ -1214,10 +1187,10 @@ void codegen_stmt(Stmt* stmt) {
                                 // Use enum type name
                                 static char enum_type_buf[128];
                                 Token type_name = stmt->var.init->expr_type->name;
-                                snprintf(enum_type_buf, 128, "%.*s", type_name.length, type_name.start);
+                                token_to_cstr(enum_type_buf, sizeof(enum_type_buf), type_name);
                                 c_type = enum_type_buf;
                                 // Register enum var for to_string dispatch
-                                { char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start); extern void register_enum_var(const char*, const char*); register_enum_var(_vn, enum_type_buf); }
+                                { char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name); extern void register_enum_var(const char*, const char*); register_enum_var(_vn, enum_type_buf); }
                                 break;
                             }
                             case TYPE_ARRAY:
@@ -1230,10 +1203,10 @@ void codegen_stmt(Stmt* stmt) {
                     // Fallback: detect enum field access (Color.Red) when expr_type not set
                     if (strcmp(c_type, "long long") == 0 && stmt->var.init->type == EXPR_FIELD_ACCESS &&
                         stmt->var.init->field_access.object->type == EXPR_IDENT) {
-                        char _en[128]; snprintf(_en, 128, "%.*s", stmt->var.init->field_access.object->token.length, stmt->var.init->field_access.object->token.start);
+                        char _en[128]; token_to_cstr(_en, sizeof(_en), stmt->var.init->field_access.object->token);
                         extern int is_enum_type(const char*);
                         if (is_enum_type(_en)) {
-                            char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                            char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                             extern void register_enum_var(const char*, const char*);
                             register_enum_var(_vn, _en);
                         }
@@ -1254,11 +1227,11 @@ void codegen_stmt(Stmt* stmt) {
             // look up the method return type from impl blocks
             if (strcmp(c_type, "long long") == 0 && stmt->var.init && stmt->var.init->type == EXPR_METHOD_CALL &&
                 stmt->var.init->method_call.object->type == EXPR_IDENT) {
-                char _pvn[64]; snprintf(_pvn, 64, "%.*s", stmt->var.init->method_call.object->token.length, stmt->var.init->method_call.object->token.start);
+                char _pvn[64]; token_to_cstr(_pvn, sizeof(_pvn), stmt->var.init->method_call.object->token);
                 extern const char* get_struct_var_type(const char*);
                 const char* _psn = get_struct_var_type(_pvn);
                 if (_psn) {
-                    char _pmn[64]; snprintf(_pmn, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                    char _pmn[64]; token_to_cstr(_pmn, sizeof(_pmn), stmt->var.init->method_call.method);
                     extern const char* lookup_struct_method_return_type(const char*, const char*);
                     const char* _prt = lookup_struct_method_return_type(_psn, _pmn);
                     if (_prt) {
@@ -1267,7 +1240,7 @@ void codegen_stmt(Stmt* stmt) {
                         else if (strcmp(_prt, "bool") == 0) c_type = "bool";
                         else if (strcmp(_prt, "int") != 0) {
                             static char _post_rt[128]; snprintf(_post_rt, 128, "%s", _prt); c_type = _post_rt;
-                            char _rvn2[128]; snprintf(_rvn2, 128, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                            char _rvn2[128]; token_to_cstr(_rvn2, sizeof(_rvn2), stmt->var.name);
                             extern void register_struct_var(const char*, const char*);
                             register_struct_var(_rvn2, _prt);
                         }
@@ -1275,7 +1248,7 @@ void codegen_stmt(Stmt* stmt) {
                 }
                 // If still long long, search trait declarations for method return type
                 if (strcmp(c_type, "long long") == 0 && current_program) {
-                    char _tmn[64]; snprintf(_tmn, 64, "%.*s", stmt->var.init->method_call.method.length, stmt->var.init->method_call.method.start);
+                    char _tmn[64]; token_to_cstr(_tmn, sizeof(_tmn), stmt->var.init->method_call.method);
                     for (int _ti = 0; _ti < current_program->count; _ti++) {
                         if (current_program->stmts[_ti]->type == STMT_TRAIT) {
                             Stmt* _ts = current_program->stmts[_ti];
@@ -1303,8 +1276,7 @@ void codegen_stmt(Stmt* stmt) {
             // Emit variable declaration - avoid double const
             // Register string variables for RC tracking
             if (strcmp(c_type, "char*") == 0 || strcmp(c_type, "const char*") == 0) {
-                char _svn[256]; int _svl = stmt->var.name.length < 255 ? stmt->var.name.length : 255;
-                memcpy(_svn, stmt->var.name.start, _svl); _svn[_svl] = '\0';
+                char _svn[256]; token_to_cstr(_svn, sizeof(_svn), stmt->var.name);
                 extern void register_string_var(const char*);
                 extern void register_releasable_string_var(const char*);
                 register_string_var(_svn);
@@ -1316,12 +1288,10 @@ void codegen_stmt(Stmt* stmt) {
                 stmt->var.init->call.callee->token.length == 9 &&
                 memcmp(stmt->var.init->call.callee->token.start, "await_all", 9) == 0 &&
                 stmt->var.init->call.arg_count == 1 && stmt->var.init->call.args[0]->type == EXPR_IDENT) {
-                char _aav[256]; int _aal = stmt->var.init->call.args[0]->token.length < 255 ? stmt->var.init->call.args[0]->token.length : 255;
-                memcpy(_aav, stmt->var.init->call.args[0]->token.start, _aal); _aav[_aal] = '\0';
+                char _aav[256]; token_to_cstr(_aav, sizeof(_aav), stmt->var.init->call.args[0]->token);
                 extern int is_string_spawn_array(const char*);
                 if (is_string_spawn_array(_aav)) {
-                    char _rv[256]; int _rl = stmt->var.name.length < 255 ? stmt->var.name.length : 255;
-                    memcpy(_rv, stmt->var.name.start, _rl); _rv[_rl] = '\0';
+                    char _rv[256]; token_to_cstr(_rv, sizeof(_rv), stmt->var.name);
                     extern void register_str_array_var(const char*);
                     register_str_array_var(_rv);
                 }
@@ -1333,8 +1303,7 @@ void codegen_stmt(Stmt* stmt) {
                 // Check if name is a C keyword or runtime collision
                 extern int is_c_name_collision(const char*);
                 extern void register_user_collision(const char*);
-                char _vn[256]; int _vnl = stmt->var.name.length < 255 ? stmt->var.name.length : 255;
-                memcpy(_vn, stmt->var.name.start, _vnl); _vn[_vnl] = '\0';
+                char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                 bool is_c_keyword = is_c_name_collision(_vn);
                 if (is_c_keyword) register_user_collision(_vn);
                 
@@ -1353,8 +1322,7 @@ void codegen_stmt(Stmt* stmt) {
                 
                 // Store lambda variable info for call site injection
                 if (lambda_idx >= 0 && lambda_var_count < 256) {
-                    snprintf(lambda_var_info[lambda_var_count].var_name, 64, "%.*s", 
-                            stmt->var.name.length, stmt->var.name.start);
+                    token_to_cstr(lambda_var_info[lambda_var_count].var_name, sizeof(lambda_var_info[lambda_var_count].var_name), stmt->var.name);
                     lambda_var_info[lambda_var_count].capture_count = lambda_functions[lambda_idx].capture_count;
                     for (int i = 0; i < lambda_functions[lambda_idx].capture_count; i++) {
                         strcpy(lambda_var_info[lambda_var_count].captured_vars[i], 
@@ -1394,8 +1362,7 @@ void codegen_stmt(Stmt* stmt) {
             
             // Register local variable for scope tracking
             {
-                char var_name[256];
-                snprintf(var_name, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                char var_name[256]; token_to_cstr(var_name, sizeof(var_name), stmt->var.name);
                 register_local_variable(var_name);
                 // Track arrays for scope-based cleanup
                 if (strcmp(c_type, "WynArray") == 0) {
@@ -1413,7 +1380,7 @@ void codegen_stmt(Stmt* stmt) {
             } else {
                 // Set spawn/int array flag for WynIntArray emission
                 bool _was_int_array = codegen_emit_int_array;
-                { char _vn[256]; snprintf(_vn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                { char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                   extern int is_int_array_var(const char*);
                   if (is_spawn_array(_vn) || is_int_array_var(_vn)) codegen_emit_int_array = true; }
                 codegen_expr(stmt->var.init);
@@ -1423,8 +1390,7 @@ void codegen_stmt(Stmt* stmt) {
             // RC: retain when copying a string variable (unless source is last-use → move)
             if ((strcmp(c_type, "const char*") == 0 || strcmp(c_type, "char*") == 0) &&
                 stmt->var.init && stmt->var.init->type == EXPR_IDENT) {
-                char _ivn[256]; int _ivl = stmt->var.init->token.length < 255 ? stmt->var.init->token.length : 255;
-                memcpy(_ivn, stmt->var.init->token.start, _ivl); _ivn[_ivl] = '\0';
+                char _ivn[256]; token_to_cstr(_ivn, sizeof(_ivn), stmt->var.init->token);
                 extern int is_string_var(const char*);
                 if (is_string_var(_ivn)) {
                     // Check if source var is used after this statement
@@ -1450,7 +1416,7 @@ void codegen_stmt(Stmt* stmt) {
             }
             // Shadow define: redirect original name to suffixed version
             {
-                char _svn[128]; snprintf(_svn, sizeof(_svn), "%.*s", stmt->var.name.length, stmt->var.name.start);
+                char _svn[128]; token_to_cstr(_svn, sizeof(_svn), stmt->var.name);
                 extern int get_current_shadow(const char*);
                 int _sc = get_current_shadow(_svn);
                 if (_sc > 0) {
@@ -1464,7 +1430,7 @@ void codegen_stmt(Stmt* stmt) {
             }
             // Track float variables for method dispatch
             if (strcmp(c_type, "double") == 0) {
-                char _fvn[256]; snprintf(_fvn, 256, "%.*s", stmt->var.name.length, stmt->var.name.start);
+                char _fvn[256]; token_to_cstr(_fvn, sizeof(_fvn), stmt->var.name);
                 extern void register_float_var(const char*); register_float_var(_fvn);
             }
             break;
@@ -1487,8 +1453,7 @@ void codegen_stmt(Stmt* stmt) {
                     // If returning a string variable, don't release it
                     const char* except = NULL;
                     if (stmt->ret.value && stmt->ret.value->type == EXPR_IDENT) {
-                        char _rv[256]; int _rl = stmt->ret.value->token.length < 255 ? stmt->ret.value->token.length : 255;
-                        memcpy(_rv, stmt->ret.value->token.start, _rl); _rv[_rl] = '\0';
+                        char _rv[256]; token_to_cstr(_rv, sizeof(_rv), stmt->ret.value->token);
                         extern int is_string_var(const char*);
                         if (is_string_var(_rv)) except = stmt->ret.value->token.start;
                     }
@@ -1541,10 +1506,7 @@ void codegen_stmt(Stmt* stmt) {
                 
                 Expr* call = stmt->spawn.call;
                 Expr* callee = call->call.callee;
-                char func_name[256];
-                int len = callee->token.length < 255 ? callee->token.length : 255;
-                memcpy(func_name, callee->token.start, len);
-                func_name[len] = '\0';
+                char func_name[256]; token_to_cstr(func_name, sizeof(func_name), callee->token);
                 
                 int arg_count = call->call.arg_count;
                 
@@ -1623,9 +1585,7 @@ void codegen_stmt(Stmt* stmt) {
                 if (_is_inner_block) {
                     for (int _i = 0; _i < stmt->block.count && _shcount < 64; _i++) {
                         if (stmt->block.stmts[_i]->type == STMT_VAR) {
-                            int nl = stmt->block.stmts[_i]->var.name.length < 63 ? stmt->block.stmts[_i]->var.name.length : 63;
-                            memcpy(_shsaves[_shcount].name, stmt->block.stmts[_i]->var.name.start, nl);
-                            _shsaves[_shcount].name[nl] = 0;
+                            token_to_cstr(_shsaves[_shcount].name, sizeof(_shsaves[_shcount].name), stmt->block.stmts[_i]->var.name);
                             _shsaves[_shcount].prev = get_current_shadow(_shsaves[_shcount].name);
                             _shcount++;
                         }
@@ -1703,9 +1663,7 @@ void codegen_stmt(Stmt* stmt) {
                     Expr* call = s->var.init->spawn.call;
                     if (call && call->type == EXPR_CALL &&
                         call->call.callee->type == EXPR_IDENT) {
-                        char fn[256]; int fl = call->call.callee->token.length;
-                        if (fl > 255) fl = 255;
-                        memcpy(fn, call->call.callee->token.start, fl); fn[fl] = '\0';
+                        char fn[256]; token_to_cstr(fn, sizeof(fn), call->call.callee->token);
                         const char* rt = get_function_return_type(fn);
                         if (rt) {
                             if (strcmp(rt, "string") == 0) vctype = "const char*";
@@ -1714,8 +1672,7 @@ void codegen_stmt(Stmt* stmt) {
                             else if (strcmp(rt, "int") == 0) vctype = "long long";
                         }
                     }
-                    char vn[128]; int vl = s->var.name.length < 127 ? s->var.name.length : 127;
-                    memcpy(vn, s->var.name.start, vl); vn[vl] = '\0';
+                    char vn[128]; token_to_cstr(vn, sizeof(vn), s->var.name);
                     snprintf(joined_names[joined_count], 128, "%s", vn);
                     snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
                     joined_ctypes[joined_count] = vctype;
@@ -1779,8 +1736,7 @@ void codegen_stmt(Stmt* stmt) {
             for (int i = 0; i < n; i++) {
                 emit("    %s if (__sel_%d == %d) {\n", i ? "else" : "", sid, i);
                 // Bind the received value and run the body.
-                char vn[128]; int vl = stmt->select_stmt.bind_names[i].length < 127 ? stmt->select_stmt.bind_names[i].length : 127;
-                memcpy(vn, stmt->select_stmt.bind_names[i].start, vl); vn[vl] = '\0';
+                char vn[128]; token_to_cstr(vn, sizeof(vn), stmt->select_stmt.bind_names[i]);
                 emit("        long long %s = Task_recv(", vn);
                 codegen_expr(stmt->select_stmt.channels[i]);
                 emit(");\n        ");
@@ -1863,8 +1819,7 @@ void codegen_stmt(Stmt* stmt) {
                         return_type = "WynHashSet*";
                     } else {
                         // Assume it's a custom struct type
-                        snprintf(return_type_buf, sizeof(return_type_buf), "%.*s", 
-                               type_name.length, type_name.start);
+                        token_to_cstr(return_type_buf, sizeof(return_type_buf), type_name);
                         return_type = return_type_buf;
                     }
                 } else if (stmt->fn.return_type->type == EXPR_OPTIONAL_TYPE) {
@@ -1889,7 +1844,7 @@ void codegen_stmt(Stmt* stmt) {
             static int _gen_emitting = 0; // prevent re-entry
             if (is_generator && !_gen_emitting) {
                 return_type = "WynIter*";
-                char gn[256]; snprintf(gn, sizeof(gn), "%.*s", stmt->fn.name.length, stmt->fn.name.start);
+                char gn[256]; token_to_cstr(gn, sizeof(gn), stmt->fn.name);
                 // Emit coroutine body function BEFORE the wrapper
                 _gen_emitting = 1;
                 emit("static void _gen_body_%s(void* _arg) {\n", gn);
@@ -1936,8 +1891,7 @@ void codegen_stmt(Stmt* stmt) {
                 int _bsc = 0;
                 if (stmt->fn.body && stmt->fn.body->type == STMT_BLOCK) _bsc = stmt->fn.body->block.count;
                 bool _is_spawned = false;
-                char _fn[256]; int _fl = stmt->fn.name.length < 255 ? stmt->fn.name.length : 255;
-                memcpy(_fn, stmt->fn.name.start, _fl); _fn[_fl] = '\0';
+                char _fn[256]; token_to_cstr(_fn, sizeof(_fn), stmt->fn.name);
                 for (int _si = 0; _si < spawn_wrapper_count; _si++) {
                     if (strcmp(spawn_wrappers[_si].func_name, _fn) == 0) { _is_spawned = true; break; }
                 }
@@ -1954,8 +1908,7 @@ void codegen_stmt(Stmt* stmt) {
                      stmt->fn.name.length, stmt->fn.name.start);
             } else {
                 // Check for C keyword collision
-                char _fn_name[256];
-                snprintf(_fn_name, sizeof(_fn_name), "%.*s", stmt->fn.name.length, stmt->fn.name.start);
+                char _fn_name[256]; token_to_cstr(_fn_name, sizeof(_fn_name), stmt->fn.name);
                 extern int is_c_name_collision(const char*);
                 extern void register_user_collision(const char*);
                 bool _is_ckw = is_c_name_collision(_fn_name);
@@ -1971,8 +1924,7 @@ void codegen_stmt(Stmt* stmt) {
                 
                 // FIX: For extension methods, first parameter (self) gets receiver type
                 if (stmt->fn.is_extension && i == 0) {
-                    snprintf(custom_type_buf, sizeof(custom_type_buf), "%.*s", 
-                           stmt->fn.receiver_type.length, stmt->fn.receiver_type.start);
+                    token_to_cstr(custom_type_buf, sizeof(custom_type_buf), stmt->fn.receiver_type);
                     param_type = custom_type_buf;
                 } else if (stmt->fn.param_types[i]) {
                     if (stmt->fn.param_types[i]->type == EXPR_FN_TYPE) {
@@ -2035,8 +1987,7 @@ void codegen_stmt(Stmt* stmt) {
                             param_type = "WynHashSet*";
                         } else {
                             // Assume it's a custom struct type
-                            snprintf(custom_type_buf, sizeof(custom_type_buf), "%.*s", 
-                                   type_name.length, type_name.start);
+                            token_to_cstr(custom_type_buf, sizeof(custom_type_buf), type_name);
                             param_type = custom_type_buf;
                         }
                     } else if (stmt->fn.param_types[i]->type == EXPR_ARRAY) {
@@ -2050,7 +2001,7 @@ void codegen_stmt(Stmt* stmt) {
                 
                 // Emit with pointer for mut params
                 bool is_mut_p = stmt->fn.param_mutable && stmt->fn.param_mutable[i];
-                char _pn[256]; snprintf(_pn, sizeof(_pn), "%.*s", stmt->fn.params[i].length, stmt->fn.params[i].start);
+                char _pn[256]; token_to_cstr(_pn, sizeof(_pn), stmt->fn.params[i]);
                 static const char* _c_kw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
                 bool _ipk = false; for (int _k = 0; _c_kw[_k]; _k++) { if (strcmp(_pn, _c_kw[_k]) == 0) { _ipk = true; break; } }
                 if (is_mut_p) {
@@ -2069,21 +2020,19 @@ void codegen_stmt(Stmt* stmt) {
             { extern void reset_string_vars(void); reset_string_vars(); }
             { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
             for (int i = 0; i < stmt->fn.param_count; i++) {
-                char pname[256];
-                snprintf(pname, 256, "%.*s", stmt->fn.params[i].length, stmt->fn.params[i].start);
+                char pname[256]; token_to_cstr(pname, sizeof(pname), stmt->fn.params[i]);
                 bool is_mut_p = stmt->fn.param_mutable && stmt->fn.param_mutable[i];
                 // Extract type name for trait dispatch
                 const char* ptype = NULL;
                 char ptbuf[64] = {0};
                 if (stmt->fn.param_types[i] && stmt->fn.param_types[i]->type == EXPR_IDENT) {
-                    snprintf(ptbuf, 64, "%.*s", stmt->fn.param_types[i]->token.length, stmt->fn.param_types[i]->token.start);
+                    token_to_cstr(ptbuf, sizeof(ptbuf), stmt->fn.param_types[i]->token);
                     ptype = ptbuf;
                 }
                 register_parameter_typed(pname, ptype, is_mut_p);
                 // Track trait-typed params for call-site wrapping
                 if (ptype && is_trait_type(ptype, strlen(ptype))) {
-                    char fn_name_buf[128];
-                    snprintf(fn_name_buf, 128, "%.*s", stmt->fn.name.length, stmt->fn.name.start);
+                    char fn_name_buf[128]; token_to_cstr(fn_name_buf, sizeof(fn_name_buf), stmt->fn.name);
                     register_fn_trait_param(fn_name_buf, ptype, i);
                 }
             }
@@ -2133,7 +2082,7 @@ void codegen_stmt(Stmt* stmt) {
             // Function body
             if (is_generator) {
                 // L3: Generator wrapper — allocate args, create iterator, return
-                char gn[256]; snprintf(gn, sizeof(gn), "%.*s", stmt->fn.name.length, stmt->fn.name.start);
+                char gn[256]; token_to_cstr(gn, sizeof(gn), stmt->fn.name);
                 if (stmt->fn.param_count > 0) {
                     emit("    typedef struct { ");
                     for (int i = 0; i < stmt->fn.param_count; i++) {
@@ -2170,7 +2119,7 @@ void codegen_stmt(Stmt* stmt) {
                     if (callee.length == stmt->fn.name.length &&
                         memcmp(callee.start, stmt->fn.name.start, callee.length) == 0) {
                         _is_tco = true;
-                        snprintf(_tco_fn_name, sizeof(_tco_fn_name), "%.*s", (int)stmt->fn.name.length, stmt->fn.name.start);
+                        token_to_cstr(_tco_fn_name, sizeof(_tco_fn_name), stmt->fn.name);
                     }
                 }
                 // Also check: last stmt is if/else where both branches return self
@@ -2348,8 +2297,7 @@ void codegen_stmt(Stmt* stmt) {
                             c_type = "bool";
                         } else {
                             // Custom struct type - use the type name as-is
-                            static char custom_type[64];
-                            snprintf(custom_type, 64, "%.*s", type_name.length, type_name.start);
+                            static char custom_type[64]; token_to_cstr(custom_type, sizeof(custom_type), type_name);
                             c_type = custom_type;
                         }
                     } else if (stmt->struct_decl.field_types[i]->type == EXPR_ARRAY) {
@@ -2474,7 +2422,7 @@ void codegen_stmt(Stmt* stmt) {
             
             break;
         case STMT_ENUM:
-            { extern void register_enum_type(const char*); char _en[128]; snprintf(_en, 128, "%.*s", stmt->enum_decl.name.length, stmt->enum_decl.name.start); register_enum_type(_en); }
+            { extern void register_enum_type(const char*); char _en[128]; token_to_cstr(_en, sizeof(_en), stmt->enum_decl.name); register_enum_type(_en); }
             // Check if any variant has data
             bool has_data = false;
             for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
@@ -2486,9 +2434,9 @@ void codegen_stmt(Stmt* stmt) {
             {
                 // Register all enum variants (simple and data)
                 extern void register_enum_variant_type(const char*, const char*, const char*);
-                char _den[128]; snprintf(_den, 128, "%.*s", stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+                char _den[128]; token_to_cstr(_den, sizeof(_den), stmt->enum_decl.name);
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
-                    char _vn[128]; snprintf(_vn, 128, "%.*s", stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
+                    char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->enum_decl.variants[i]);
                     if (stmt->enum_decl.variant_type_counts[i] == 1) {
                         register_enum_variant_type(_den, _vn, c_type_from_expr(stmt->enum_decl.variant_types[i][0]));
                     } else {
@@ -2498,7 +2446,7 @@ void codegen_stmt(Stmt* stmt) {
             }
             if (has_data) {
                 extern void register_data_enum_type(const char*);
-                char _den[128]; snprintf(_den, 128, "%.*s", stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+                char _den[128]; token_to_cstr(_den, sizeof(_den), stmt->enum_decl.name);
                 register_data_enum_type(_den);
             }
             
@@ -2748,7 +2696,7 @@ void codegen_stmt(Stmt* stmt) {
             else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) ct = "double";
             else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) ct = "bool";
             else if (t.length == 3 && memcmp(t.start, "int", 3) == 0) ct = "long long";
-            else { static char _tb[128]; snprintf(_tb, sizeof(_tb), "%.*s", t.length, t.start); ct = _tb; }
+            else { static char _tb[128]; token_to_cstr(_tb, sizeof(_tb), t); ct = _tb; }
             emit("typedef %s %.*s;\n\n", ct, stmt->type_alias.name.length, stmt->type_alias.name.start);
             break;
         }
@@ -2775,8 +2723,7 @@ void codegen_stmt(Stmt* stmt) {
                         return_type = "const char*";
                     } else {
                         // Custom struct/enum return type
-                        static char impl_ret_buf[128];
-                        snprintf(impl_ret_buf, 128, "%.*s", ret_type.length, ret_type.start);
+                        static char impl_ret_buf[128]; token_to_cstr(impl_ret_buf, sizeof(impl_ret_buf), ret_type);
                         return_type = impl_ret_buf;
                     }
                 }
@@ -2803,8 +2750,7 @@ void codegen_stmt(Stmt* stmt) {
                             param_type = "const char*";
                         } else {
                             // Custom struct type
-                            snprintf(custom_type_buf, sizeof(custom_type_buf), "%.*s",
-                                   type_name.length, type_name.start);
+                            token_to_cstr(custom_type_buf, sizeof(custom_type_buf), type_name);
                             param_type = custom_type_buf;
                         }
                     }
@@ -2993,7 +2939,7 @@ void codegen_stmt(Stmt* stmt) {
                 }
                 // Check if iterating over a WynIntArray
                 if (stmt->for_stmt.array_expr->type == EXPR_IDENT) {
-                    char _ian[128]; snprintf(_ian, 128, "%.*s", stmt->for_stmt.array_expr->token.length, stmt->for_stmt.array_expr->token.start);
+                    char _ian[128]; token_to_cstr(_ian, sizeof(_ian), stmt->for_stmt.array_expr->token);
                     extern int is_int_array_var(const char*);
                     if (is_int_array_var(_ian)) {
                         emit("{\n"); push_scope();
@@ -3104,17 +3050,13 @@ void codegen_stmt(Stmt* stmt) {
             break;
         case STMT_IMPORT: {
             // Extract module name
-            char module_name[256];
-            snprintf(module_name, sizeof(module_name), "%.*s", 
-                    stmt->import.module.length, stmt->import.module.start);
+            char module_name[256]; token_to_cstr(module_name, sizeof(module_name), stmt->import.module);
             
             // Handle selective imports: import { get, post } from module
             if (stmt->import.item_count > 0) {
                 // Register each imported item with module prefix
                 for (int i = 0; i < stmt->import.item_count; i++) {
-                    char item_name[256];
-                    snprintf(item_name, sizeof(item_name), "%.*s",
-                            stmt->import.items[i].length, stmt->import.items[i].start);
+                    char item_name[256]; token_to_cstr(item_name, sizeof(item_name), stmt->import.items[i]);
                     
                     // Map item_name -> module_name::item_name
                     char full_name[512];
@@ -3126,9 +3068,7 @@ void codegen_stmt(Stmt* stmt) {
             
             // Register alias if present
             if (stmt->import.alias.start != NULL) {
-                char alias_name[256];
-                snprintf(alias_name, sizeof(alias_name), "%.*s",
-                        stmt->import.alias.length, stmt->import.alias.start);
+                char alias_name[256]; token_to_cstr(alias_name, sizeof(alias_name), stmt->import.alias);
                 register_module_alias(alias_name, module_name);
             }
             
@@ -3167,8 +3107,7 @@ void codegen_stmt(Stmt* stmt) {
                                 s = s->export.stmt;
                             }
                             if (s->type == STMT_FN) {
-                                char func_name[256];
-                                snprintf(func_name, 256, "%.*s", s->fn.name.length, s->fn.name.start);
+                                char func_name[256]; token_to_cstr(func_name, sizeof(func_name), s->fn.name);
                                 register_module_function(func_name);
                             }
                         }
