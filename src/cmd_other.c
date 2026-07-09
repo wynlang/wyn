@@ -113,12 +113,16 @@ int cmd_fmt(const char* file, int argc, char** argv) {
                     continue;
                 }
                 // Space around unambiguously-binary two-char operators
-                // (==, !=, <=, >=, &&, ||). These never appear as unary or in
-                // generics, so spacing them is always safe. Single-char -, *,
-                // /, <, >, & are left alone (unary / generic / pointer
-                // ambiguity needs the AST to resolve).
+                // (==, !=, <=, >=, &&, ||) and compound-assignment operators
+                // (+=, -=, *=, /=, %=). These never appear as unary or in
+                // generics, so spacing them is always safe. The compound
+                // assignments MUST be handled here (before the lone-'=' rule
+                // below) so e.g. "x += 1" is not split into "x + = 1".
+                // Single-char -, *, /, <, >, & are left alone (unary / generic
+                // / pointer ambiguity needs the AST to resolve).
                 {
-                    static const char* binops[] = {"==","!=","<=",">=","&&","||", NULL};
+                    static const char* binops[] = {"==","!=","<=",">=","&&","||",
+                                                   "+=","-=","*=","/=","%=", NULL};
                     int matched = -1;
                     for (int b = 0; binops[b]; b++) {
                         if (start[i] == binops[b][0] && i + 1 < len && start[i+1] == binops[b][1]) { matched = b; break; }

@@ -1,0 +1,13 @@
+// EXPECT: 13
+// Compound-assignment operators. Also guards `wyn fmt`: it previously split
+// `x += 1` into `x + = 1` (uncompilable). See fix in cmd_other.c.
+fn main() -> int {
+    var x = 10
+    x += 5
+    x -= 2
+    x *= 2
+    x /= 2
+    x %= 100
+    println("${x}")
+    return 0
+}
