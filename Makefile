@@ -454,12 +454,17 @@ RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/wyn_wrapper.c \
           src/net.c src/net_runtime.c src/net_advanced.c \
           src/test_runtime.c src/file_io_simple.c src/stdlib_enhanced.c
 
-runtime: wyn$(EXE_EXT)
+# The runtime library must be rebuilt whenever any runtime source (or a header
+# they include, notably wyn_runtime.h/io_loop.h) changes — otherwise compiled
+# programs silently link a stale libwyn_rt.a. Depend on the sources + headers so
+# `make` detects the change instead of reporting "Nothing to be done".
+runtime: runtime/libwyn_rt.a
+runtime/libwyn_rt.a: $(RT_SRCS) $(wildcard src/*.h) | wyn$(EXE_EXT)
 	@echo "Building runtime library..."
 	@mkdir -p runtime/obj
-	@for f in $(RT_SRCS); do \
+	@set -e; for f in $(RT_SRCS); do \
 		$(CC) -std=c11 -O2 -w -D_GNU_SOURCE -I src -I vendor/minicoro \
-		-c $$f -o runtime/obj/$$(basename $$f .c).o 2>/dev/null || true; \
+		-c $$f -o runtime/obj/$$(basename $$f .c).o; \
 	done
 	@ar rcs runtime/libwyn_rt.a runtime/obj/*.o
 	@echo "Built runtime/libwyn_rt.a ($$(du -h runtime/libwyn_rt.a | cut -f1))"
