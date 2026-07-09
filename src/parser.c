@@ -90,7 +90,6 @@ static Expr* parse_result_type(); // TASK-026: Result type parsing
 static Stmt* impl_block(); // T2.5.3: Enhanced Struct System
 static Stmt* trait_decl(); // T3.2.1: Trait Definitions
 static Pattern* parse_pattern(); // T3.3.1: Pattern parsing for destructuring
-__attribute__((unused)) static Stmt* parse_try_statement(); // TASK-026: Try statement parsing
 __attribute__((unused)) static Stmt* parse_catch_statement(); // TASK-026: Catch statement parsing
 __attribute__((unused)) static Expr* parse_try_expression(); // TASK-026: ? operator parsing
 void check_stmt(Stmt* stmt, SymbolTable* scope);
@@ -466,14 +465,6 @@ static Expr* primary() {
         Expr* expr = alloc_expr();
         expr->type = EXPR_BOOL;
         expr->token = parser.previous;
-        return expr;
-    }
-    
-    if (match(TOKEN_NULL)) {
-        Expr* expr = alloc_expr();
-        expr->type = EXPR_INT;
-        Token zero = {TOKEN_INT, "0", 1, 0};
-        expr->token = zero;
         return expr;
     }
     
@@ -1574,57 +1565,6 @@ Expr* expression() {
 Stmt* statement();
 
 Stmt* statement() {
-    if (match(TOKEN_TRY)) {
-        Stmt* stmt = alloc_stmt();
-        stmt->type = STMT_TRY;
-        
-        // Parse try block
-        expect(TOKEN_LBRACE, "Expected '{' after 'try'");
-        stmt->try_stmt.try_block = alloc_stmt();
-        stmt->try_stmt.try_block->type = STMT_BLOCK;
-        stmt->try_stmt.try_block->block.count = 0;
-        stmt->try_stmt.try_block->block.stmts = malloc(sizeof(Stmt*) * 256);
-        
-        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            stmt->try_stmt.try_block->block.stmts[stmt->try_stmt.try_block->block.count++] = statement();
-        }
-        expect(TOKEN_RBRACE, "Expected '}' after try block");
-        
-        // Parse catch blocks using new structure
-        stmt->try_stmt.catch_count = 0;
-        stmt->try_stmt.catch_blocks = malloc(sizeof(Stmt*) * 8);
-        stmt->try_stmt.exception_types = malloc(sizeof(Token) * 8);
-        stmt->try_stmt.exception_vars = malloc(sizeof(Token) * 8);
-        
-        while (match(TOKEN_CATCH)) {
-            expect(TOKEN_LPAREN, "Expected '(' after catch");
-            
-            // Parse exception type
-            expect(TOKEN_IDENT, "Expected exception type");
-            stmt->try_stmt.exception_types[stmt->try_stmt.catch_count] = parser.previous;
-            
-            // Parse exception variable
-            expect(TOKEN_IDENT, "Expected exception variable");
-            stmt->try_stmt.exception_vars[stmt->try_stmt.catch_count] = parser.previous;
-            
-            expect(TOKEN_RPAREN, "Expected ')' after catch parameters");
-            expect(TOKEN_LBRACE, "Expected '{' after catch");
-            
-            stmt->try_stmt.catch_blocks[stmt->try_stmt.catch_count] = statement();
-            stmt->try_stmt.catch_count++;
-        }
-        
-        // Optional finally block
-        if (match(TOKEN_FINALLY)) {
-            expect(TOKEN_LBRACE, "Expected '{' after finally");
-            stmt->try_stmt.finally_block = statement();
-        } else {
-            stmt->try_stmt.finally_block = NULL;
-        }
-        
-        return stmt;
-    }
-    
     if (check(TOKEN_FN)) {
         fprintf(stderr, "Error at line %d: Nested functions are not supported. Functions can only be defined at the top level.\n", parser.current.line);
         parser.had_error = true;
@@ -1664,14 +1604,6 @@ Stmt* statement() {
         }
         
         return NULL;
-    }
-    
-    if (match(TOKEN_THROW)) {
-        Stmt* stmt = alloc_stmt();
-        stmt->type = STMT_THROW;
-        stmt->throw_stmt.value = expression();
-        match(TOKEN_SEMI);  // Optional semicolon
-        return stmt;
     }
     
     if (match(TOKEN_RETURN)) {
@@ -1937,19 +1869,6 @@ Stmt* statement() {
         return stmt;
     }
     
-    if (match(TOKEN_UNSAFE)) {
-        Stmt* stmt = alloc_stmt();
-        stmt->type = STMT_UNSAFE;
-        expect(TOKEN_LBRACE, "Expected '{' after 'unsafe'");
-        stmt->block.stmts = malloc(sizeof(Stmt*) * 256);
-        stmt->block.count = 0;
-        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            stmt->block.stmts[stmt->block.count++] = statement();
-        }
-        expect(TOKEN_RBRACE, "Expected '}' after unsafe block");
-        return stmt;
-    }
-
     // Channel multiplexing: select { v = ch.recv() => body  ... }
     // Waits until one channel has data, receives from it, binds v, runs body.
     if (match(TOKEN_SELECT)) {
@@ -2801,98 +2720,6 @@ Stmt* struct_decl() {
     return stmt;
 }
 
-Stmt* object_decl() {
-    expect(TOKEN_OBJECT, "Expected 'object'");
-    Stmt* stmt = alloc_stmt();
-    stmt->type = STMT_STRUCT;  // Reuse STMT_STRUCT
-    stmt->struct_decl.name = parser.current;
-    expect(TOKEN_IDENT, "Expected object name");
-    
-    stmt->struct_decl.type_param_count = 0;
-    stmt->struct_decl.type_params = NULL;
-    
-    expect(TOKEN_LBRACE, "Expected '{' after object name");
-    
-    stmt->struct_decl.field_count = 0;
-    stmt->struct_decl.fields = malloc(sizeof(Token) * 32);
-    stmt->struct_decl.field_types = malloc(sizeof(Expr*) * 32);
-    stmt->struct_decl.field_arc_managed = malloc(sizeof(bool) * 32);
-    stmt->struct_decl.method_count = 0;
-    stmt->struct_decl.methods = malloc(sizeof(FnStmt*) * 32);
-    
-    while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-        Token field_or_method_name = parser.current;
-        expect(TOKEN_IDENT, "Expected field or method name");
-        expect(TOKEN_COLON, "Expected ':' after name");
-        
-        // Check if this is a method (fn keyword) or a field (type)
-        bool is_method = (parser.current.type == TOKEN_FN) || 
-                        (parser.current.length == 2 && memcmp(parser.current.start, "fn", 2) == 0);
-        
-        if (is_method) {
-            if (parser.current.type == TOKEN_FN) {
-                advance(); // consume 'fn'
-            } else {
-                // It's an identifier that looks like "fn" - treat as method
-                advance();
-            }
-            // Parse method: name: fn(params) -> return_type { body }
-            FnStmt* method = malloc(sizeof(FnStmt));
-            method->name = field_or_method_name;
-            
-            expect(TOKEN_LPAREN, "Expected '(' after 'fn'");
-            method->param_count = 0;
-            method->params = malloc(sizeof(Token) * 16);
-            method->param_types = malloc(sizeof(Expr*) * 16);
-            
-            if (!check(TOKEN_RPAREN)) {
-                do {
-                    method->params[method->param_count] = parser.current;
-                    expect(TOKEN_IDENT, "Expected parameter name");
-                    expect(TOKEN_COLON, "Expected ':' after parameter");
-                    method->param_types[method->param_count] = parse_type();
-                    method->param_count++;
-                } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
-            }
-            expect(TOKEN_RPAREN, "Expected ')' after parameters");
-            
-            // Return type
-            if (match(TOKEN_ARROW)) {
-                method->return_type = parse_type();
-            } else {
-                method->return_type = NULL;
-            }
-            
-            // Method body
-            expect(TOKEN_LBRACE, "Expected '{' before method body");
-            Stmt* body = alloc_stmt();
-            body->type = STMT_BLOCK;
-            body->block.count = 0;
-            body->block.stmts = malloc(sizeof(Stmt*) * 256);
-            
-            while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-                body->block.stmts[body->block.count++] = statement();
-            }
-            expect(TOKEN_RBRACE, "Expected '}' after method body");
-            
-            method->body = body;
-            method->is_async = false;
-            method->is_extension = false;
-            
-            stmt->struct_decl.methods[stmt->struct_decl.method_count++] = method;
-        } else {
-            // Parse field: name: type
-            stmt->struct_decl.fields[stmt->struct_decl.field_count] = field_or_method_name;
-            stmt->struct_decl.field_types[stmt->struct_decl.field_count] = parse_type();
-            stmt->struct_decl.field_arc_managed[stmt->struct_decl.field_count] = false;
-            stmt->struct_decl.field_count++;
-        }
-    }
-    
-    expect(TOKEN_RBRACE, "Expected '}' after object body");
-    return stmt;
-}
-
 // T2.5.3: Enhanced Struct System - Type System Agent addition
 Stmt* impl_block() {
     expect(TOKEN_IMPL, "Expected 'impl'");
@@ -3366,49 +3193,6 @@ Program* parse_program() {
             
             stmt->import.items = NULL;
             stmt->import.item_count = 0;
-            prog->stmts[prog->count++] = stmt;
-            continue;
-        }
-        
-        // Handle macro definitions
-        if (match(TOKEN_MACRO)) {
-            Stmt* stmt = malloc(sizeof(Stmt));
-            stmt->type = STMT_MACRO;
-            stmt->macro.name = parser.current;
-            expect(TOKEN_IDENT, "Expected macro name");
-            
-            // Parse parameters
-            expect(TOKEN_LPAREN, "Expected '(' after macro name");
-            stmt->macro.params = NULL;
-            stmt->macro.param_count = 0;
-            
-            if (!check(TOKEN_RPAREN)) {
-                int capacity = 8;
-                stmt->macro.params = malloc(sizeof(Token) * capacity);
-                do {
-                    if (stmt->macro.param_count >= capacity) {
-                        capacity *= 2;
-                        stmt->macro.params = realloc(stmt->macro.params, sizeof(Token) * capacity);
-                    }
-                    stmt->macro.params[stmt->macro.param_count] = parser.current;
-                    expect(TOKEN_IDENT, "Expected parameter name");
-                    stmt->macro.param_count++;
-                } while (match(TOKEN_COMMA));
-            }
-            expect(TOKEN_RPAREN, "Expected ')' after parameters");
-            
-            // Parse body as token sequence (simple text substitution)
-            expect(TOKEN_LBRACE, "Expected '{' before macro body");
-            stmt->macro.body.start = parser.current.start;
-            int brace_count = 1;
-            while (!check(TOKEN_EOF) && brace_count > 0) {
-                if (check(TOKEN_LBRACE)) brace_count++;
-                else if (check(TOKEN_RBRACE)) brace_count--;
-                if (brace_count > 0) advance();
-            }
-            stmt->macro.body.length = parser.current.start - stmt->macro.body.start;
-            expect(TOKEN_RBRACE, "Expected '}' after macro body");
-            
             prog->stmts[prog->count++] = stmt;
             continue;
         }
@@ -4358,49 +4142,6 @@ static Expr* parse_result_type() {
     result_expr->result_type.err_type = err_type;
     
     return result_expr;
-}
-
-__attribute__((unused)) static Stmt* parse_try_statement() {
-    // Parse try { ... } catch (Type var) { ... }
-    Stmt* try_stmt = alloc_stmt();
-    try_stmt->type = STMT_TRY;
-    
-    expect(TOKEN_LBRACE, "Expected '{' after try");
-    try_stmt->try_stmt.try_block = statement();
-    
-    // Parse multiple catch blocks
-    try_stmt->try_stmt.catch_count = 0;
-    try_stmt->try_stmt.catch_blocks = malloc(sizeof(Stmt*) * 8);
-    try_stmt->try_stmt.exception_types = malloc(sizeof(Token) * 8);
-    try_stmt->try_stmt.exception_vars = malloc(sizeof(Token) * 8);
-    
-    while (match(TOKEN_CATCH)) {
-        expect(TOKEN_LPAREN, "Expected '(' after catch");
-        
-        // Parse exception type
-        expect(TOKEN_IDENT, "Expected exception type");
-        try_stmt->try_stmt.exception_types[try_stmt->try_stmt.catch_count] = parser.previous;
-        
-        // Parse exception variable
-        expect(TOKEN_IDENT, "Expected exception variable");
-        try_stmt->try_stmt.exception_vars[try_stmt->try_stmt.catch_count] = parser.previous;
-        
-        expect(TOKEN_RPAREN, "Expected ')' after catch parameters");
-        expect(TOKEN_LBRACE, "Expected '{' after catch");
-        
-        try_stmt->try_stmt.catch_blocks[try_stmt->try_stmt.catch_count] = statement();
-        try_stmt->try_stmt.catch_count++;
-    }
-    
-    // Optional finally block
-    if (match(TOKEN_FINALLY)) {
-        expect(TOKEN_LBRACE, "Expected '{' after finally");
-        try_stmt->try_stmt.finally_block = statement();
-    } else {
-        try_stmt->try_stmt.finally_block = NULL;
-    }
-    
-    return try_stmt;
 }
 
 __attribute__((unused)) static Stmt* parse_catch_statement() {

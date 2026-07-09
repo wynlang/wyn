@@ -1623,15 +1623,6 @@ void codegen_stmt(Stmt* stmt) {
             }
             { extern int string_var_scope_depth; string_var_scope_depth--; }
             break;
-        case STMT_UNSAFE:
-            // Unsafe blocks are just regular blocks in C
-            emit("/* unsafe */ {\n");
-            for (int i = 0; i < stmt->block.count; i++) {
-                emit("    ");
-                codegen_stmt(stmt->block.stmts[i]);
-            }
-            emit("}\n");
-            break;
         case STMT_PARALLEL: {
             // Structured concurrency. Every `x = spawn f(...)` inside runs
             // concurrently; all spawned tasks are joined at the end of the
@@ -2215,16 +2206,6 @@ void codegen_stmt(Stmt* stmt) {
             }
             
             emit(");\n");
-            break;
-        }
-        case STMT_MACRO: {
-            // Generate C macro
-            emit("#define %.*s(", stmt->macro.name.length, stmt->macro.name.start);
-            for (int i = 0; i < stmt->macro.param_count; i++) {
-                if (i > 0) emit(", ");
-                emit("%.*s", stmt->macro.params[i].length, stmt->macro.params[i].start);
-            }
-            emit(") %.*s\n", stmt->macro.body.length, stmt->macro.body.start);
             break;
         }
         case STMT_STRUCT:
@@ -3347,45 +3328,6 @@ void codegen_stmt(Stmt* stmt) {
             // Generate the exported statement normally (comment already generated)
             codegen_stmt(stmt->export.stmt);
             break;
-        case STMT_TRY: {
-            // TASK-026: Enhanced try/catch implementation with multiple catch blocks
-            emit("{\n");
-            emit("    jmp_buf exception_buf;\n");
-            emit("    const char* exception_msg = NULL;\n");
-            emit("    int exception_type = 0;\n");
-            emit("    if (setjmp(exception_buf) == 0) {\n");
-            emit("        // Try block\n");
-            emit("        current_exception_buf = &exception_buf;\n");
-            emit("        current_exception_msg = &exception_msg;\n");
-            codegen_stmt(stmt->try_stmt.try_block);
-            emit("    } else {\n");
-            emit("        // Catch blocks\n");
-            
-            // Generate multiple catch blocks
-            for (int i = 0; i < stmt->try_stmt.catch_count; i++) {
-                if (i > 0) emit("        } else ");
-                emit("        if (exception_type == %d) {\n", i);
-                emit("            const char* %.*s = exception_msg;\n", 
-                     stmt->try_stmt.exception_vars[i].length, 
-                     stmt->try_stmt.exception_vars[i].start);
-                codegen_stmt(stmt->try_stmt.catch_blocks[i]);
-            }
-            
-            if (stmt->try_stmt.catch_count > 0) {
-                emit("        }\n");
-            }
-            
-            emit("    }\n");
-            
-            // Finally block
-            if (stmt->try_stmt.finally_block) {
-                emit("    // Finally block\n");
-                codegen_stmt(stmt->try_stmt.finally_block);
-            }
-            
-            emit("}\n");
-            break;
-        }
         case STMT_CATCH: {
             // TASK-026: Standalone catch statement
             emit("// Catch block for %.*s %.*s\n",
@@ -3394,20 +3336,6 @@ void codegen_stmt(Stmt* stmt) {
             codegen_stmt(stmt->catch_stmt.body);
             break;
         }
-        case STMT_THROW:
-            // Proper throw implementation
-            emit("if (current_exception_buf && current_exception_msg) {\n");
-            emit("    *current_exception_msg = ");
-            codegen_expr(stmt->throw_stmt.value);
-            emit(";\n");
-            emit("    longjmp(*current_exception_buf, 1);\n");
-            emit("} else {\n");
-            emit("    printf(\"Uncaught exception: %%s\\n\", ");
-            codegen_expr(stmt->throw_stmt.value);
-            emit(");\n");
-            emit("    exit(1);\n");
-            emit("}\n");
-            break;
         case STMT_MATCH:  // T1.4.4: Control Flow Agent addition
             codegen_match_statement(stmt);
             break;
