@@ -197,7 +197,10 @@ static Expr* primary() {
         return expr;
     }
     
-    if (match(TOKEN_NOT) || match(TOKEN_MINUS) || match(TOKEN_BANG) || match(TOKEN_TILDE) || match(TOKEN_AMP)) {
+    // Logical negation is `not` (canonical). `!` is no longer a prefix operator
+    // (kept only in `!=`). TOKEN_MINUS/TILDE/AMP remain: arithmetic negate,
+    // bitwise-not, address-of.
+    if (match(TOKEN_NOT) || match(TOKEN_MINUS) || match(TOKEN_TILDE) || match(TOKEN_AMP)) {
         Token op = parser.previous;
         Expr* operand = call();
         Expr* unary = alloc_expr();
@@ -1378,7 +1381,7 @@ static Expr* comparison() {
 static Expr* logical_and() {
     Expr* expr = comparison();
     
-    while (match(TOKEN_AND) || match(TOKEN_AMPAMP)) {
+    while (match(TOKEN_AND)) {  // `and` is canonical; `&&` removed
         Token op = parser.previous;
         Expr* right = comparison();
         Expr* binary = alloc_expr();
@@ -1395,7 +1398,7 @@ static Expr* logical_and() {
 static Expr* logical_or() {
     Expr* expr = logical_and();
     
-    while (match(TOKEN_OR) || match(TOKEN_PIPEPIPE)) {
+    while (match(TOKEN_OR)) {  // `or` is canonical; `||` removed
         Token op = parser.previous;
         Expr* right = logical_and();
         Expr* binary = alloc_expr();
