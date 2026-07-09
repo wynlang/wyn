@@ -833,7 +833,11 @@ void codegen_expr(Expr* expr) {
                         !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
                         _print_temp = true;
                     }
-                    if (_print_temp) {
+                    // Self-release the fresh temp ONLY when no statement-level
+                    // wrapper already owns it (temp_id >= 0 means codegen_stmt
+                    // hoisted it into __saN and will release it — releasing here
+                    // too would double-free).
+                    if (_print_temp && parg->_codegen_temp_id < 0) {
                         emit("({ const char* __ps = ");
                         codegen_expr(parg);
                         emit("; print(__ps); wyn_rc_release(__ps); })");
@@ -963,10 +967,18 @@ void codegen_expr(Expr* expr) {
                     parg->type == EXPR_METHOD_CALL || parg->type == EXPR_INDEX ||
                     parg->type == EXPR_BINARY || parg->type == EXPR_UNARY ||
                     parg->type == EXPR_FIELD_ACCESS)) {
-                    // Wrap in to_string for auto-conversion
-                    emit("({ const char* __ps = to_string(");
-                    codegen_expr(parg);
-                    emit("); println(__ps); wyn_rc_release(__ps); })");
+                    // Wrap in to_string for auto-conversion. Skip the self-release
+                    // when a statement-level wrapper already owns this temp (see note
+                    // at the print() site) to avoid a double free.
+                    if (parg->_codegen_temp_id < 0) {
+                        emit("({ const char* __ps = to_string(");
+                        codegen_expr(parg);
+                        emit("); println(__ps); wyn_rc_release(__ps); })");
+                    } else {
+                        emit("println(to_string(");
+                        codegen_expr(parg);
+                        emit("))");
+                    }
                     codegen_skip_strdup = prev_skip;
                     break;
                 }
@@ -985,7 +997,9 @@ void codegen_expr(Expr* expr) {
                     !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
                     _println_temp = true;
                 }
-                if (_println_temp) {
+                // Skip the self-release when a statement-level wrapper already owns
+                // this temp (see note at the print() site) to avoid a double free.
+                if (_println_temp && parg->_codegen_temp_id < 0) {
                     emit("({ const char* __ps = ");
                     codegen_expr(parg);
                     emit("; println(__ps); wyn_rc_release(__ps); })");
