@@ -82,9 +82,15 @@ Future* future_new(void) {
 
 void future_set(Future* f, void* result) {
     f->result = result;
+    // Take the waiter BEFORE publishing READY. Once a getter can observe READY
+    // it may immediately future_recycle() this future (and future_new() may then
+    // hand the slot to someone else), so any access to *f after the READY store
+    // is a use-after-recycle. By claiming the waiter first, future_set is fully
+    // done touching *f before READY becomes visible; only the extracted waiter
+    // (a separate Task*) is used afterward, which recycling never affects.
+    void* waiter = atomic_exchange_explicit(&f->waiter, NULL, memory_order_acq_rel);
     atomic_store_explicit(&f->state, FUTURE_READY, memory_order_release);
     // Wake the waiting coroutine if any
-    void* waiter = atomic_exchange_explicit(&f->waiter, NULL, memory_order_acq_rel);
     if (waiter) {
         wyn_sched_enqueue(waiter);
     }
