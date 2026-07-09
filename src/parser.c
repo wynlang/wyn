@@ -2465,10 +2465,6 @@ static void mark_implicit_return(Stmt* body) {
 }
 
 Stmt* function() {
-    if (check(TOKEN_ASYNC)) {
-        advance();
-        fprintf(stderr, "Warning: 'async' is deprecated. Use 'spawn' for concurrency.\n");
-    }
     bool is_public = match(TOKEN_PUB);
     expect(TOKEN_FN, "Expected 'fn'");
     Stmt* stmt = alloc_stmt();
@@ -3479,7 +3475,7 @@ Program* parse_program() {
             continue;
         }
         
-        if (check(TOKEN_FN) || check(TOKEN_ASYNC)) {
+        if (check(TOKEN_FN)) {
             prog->stmts[prog->count++] = function();
         } else if (check(TOKEN_PUB)) {
             // Save current token, advance to see what's after pub
@@ -3505,8 +3501,6 @@ Program* parse_program() {
             prog->stmts[prog->count++] = extern_decl();
         } else if (check(TOKEN_STRUCT)) {
             prog->stmts[prog->count++] = struct_decl();
-        } else if (check(TOKEN_OBJECT)) {
-            prog->stmts[prog->count++] = object_decl();
         } else if (check(TOKEN_ENUM)) {
             prog->stmts[prog->count++] = enum_decl();
         } else if (check(TOKEN_TYPEDEF)) {

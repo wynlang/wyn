@@ -2,11 +2,11 @@
 
 // async functions work like regular functions
 // Use spawn to make them concurrent
-async fn compute(n: int) -> int {
+fn compute(n: int) -> int {
     return n * n
 }
 
-async fn fetch_data(id: int) -> int {
+fn fetch_data(id: int) -> int {
     return id * 10
 }
 
