@@ -1291,7 +1291,11 @@ int main(int argc, char** argv) {
         
         Program* prog = parse_program();
         if (!prog) { fprintf(stderr, "Error: Failed to parse\n"); free(source); return 1; }
-        
+        // A parse error can still yield a non-NULL but malformed AST; running
+        // codegen on it crashes. Bail on any parse error (the parser already
+        // printed the diagnostic), matching `wyn check`.
+        if (parser_had_error()) { wynter_encourage(); free(source); return 1; }
+
         { extern void set_checker_source(const char*, const char*); set_checker_source(source, entry); }
         check_program(prog);
         if (checker_had_error()) { fprintf(stderr, "Compilation failed\n"); wynter_encourage(); free(source); return 1; }
@@ -1802,14 +1806,16 @@ int main(int argc, char** argv) {
             free(source);
             return 1;
         }
-        
+        // Parse error with a non-NULL (malformed) AST: bail before codegen.
+        if (parser_had_error()) { wynter_encourage(); free(source); return 1; }
+
         { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         if (checker_had_error()) {
             fprintf(stderr, "Compilation failed due to errors\n"); wynter_encourage();
             free(source);
             return 1;
         }
-        
+
         char out_path[256];
         snprintf(out_path, 256, "%s.c", file);
         FILE* out = fopen(out_path, "w");
@@ -2155,6 +2161,9 @@ int main(int argc, char** argv) {
         check_all_modules();
         Program* prog = parse_program();
         if (!prog) { fprintf(stderr, "Parse error\n"); free(source); return 1; }
+        // A parse error yields a malformed AST; report failure (nonzero exit)
+        // rather than printing "no errors" for broken input.
+        if (parser_had_error()) { free(source); return 1; }
         { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
         if (checker_had_error()) { free(source); return 1; }
         printf("✓ %s: no errors\n", file);
@@ -2353,9 +2362,11 @@ int main(int argc, char** argv) {
             return 1;
         }
         
+        // Parse error with a non-NULL (malformed) AST: bail before codegen.
+        if (parser_had_error()) { wynter_encourage(); free(source); return 1; }
         // Type check
         { extern void set_checker_source(const char*, const char*); set_checker_source(source, file); } check_program(prog);
-        
+
         if (checker_had_error()) {
             fprintf(stderr, "Compilation failed due to errors\n"); wynter_encourage();
             free(source);
@@ -2868,9 +2879,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     
+    // Parse error with a non-NULL (malformed) AST: bail before codegen.
+    if (parser_had_error()) { wynter_encourage(); free(source); return 1; }
     // Type check
     { extern void set_checker_source(const char*, const char*); set_checker_source(source, argv[3]); } check_program(prog);
-    
+
     if (checker_had_error()) {
         fprintf(stderr, "Compilation failed due to errors\n"); wynter_encourage();
         free(source);
