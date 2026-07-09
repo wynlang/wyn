@@ -15,15 +15,15 @@ fn find(arr: int, target: int) -> int {
 fn main() -> int {
     var result = divide(10, 2)
     print(result)
-    
+
     var error = divide(10, 0)
     print(error)
-    
+
     var found = find(0, 42)
     print(found)
-    
+
     var not_found = find(0, 99)
     print(not_found)
-    
+
     return 0
 }

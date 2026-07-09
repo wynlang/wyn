@@ -25,13 +25,13 @@ fn safe_divide(a: int, b: int) -> int {
 fn main() {
     print("=== WYN LANGUAGE - ULTIMATE COMPLETE SHOWCASE ===")
     print("Demonstrating every aspect of a complete programming language")
-    
+
     print("1. MODULE SYSTEM & QUALIFIED ACCESS:")
     print("   math.add(500, 250) =")
     math.add(500, 250).print()
     print("   math.PI =")
     math.PI.print()
-    
+
     print("2. ADVANCED RECURSIVE FUNCTIONS:")
     print("   Fibonacci sequence:")
     print("   fib(10) =")
@@ -43,7 +43,7 @@ fn main() {
     factorial(8).print()
     print("   6! =")
     factorial(6).print()
-    
+
     print("3. ADVANCED CONTROL FLOW:")
     print("   Enhanced for loop with break/continue:")
     for var i = 0; i < 8; i = i + 1 {
@@ -57,7 +57,7 @@ fn main() {
         counter.print()
         counter = counter + 1
     }
-    
+
     print("4. COMPLETE STRING PROCESSING (10+ methods):")
     var text = "  Ultimate Wyn Programming Language  "
     print("   Original:")
@@ -80,10 +80,10 @@ fn main() {
     text.replace(" ", "_").print()
     print("   Reverse:")
     "Programming".reverse().print()
-    
+
     print("5. ADVANCED MAP DATA STRUCTURES:")
-    var database = map[string, int]{"users": 10000, "posts": 50000, "comments": 150000}
-    var permissions = map[string, int]{"admin": 7, "user": 3, "guest": 1}
+    var database = map[string, int] { "users": 10000, "posts": 50000, "comments": 150000 }
+    var permissions = map[string, int] { "admin": 7, "user": 3, "guest": 1 }
     print("   Database metrics:")
     print("   Users:")
     database["users"].print()
@@ -96,7 +96,7 @@ fn main() {
     permissions["admin"].print()
     print("   User level:")
     permissions["user"].print()
-    
+
     print("6. DYNAMIC MAP OPERATIONS:")
     database["sessions"] = 25000
     database["uploads"] = 8000
@@ -112,7 +112,7 @@ fn main() {
     database.size().print()
     print("   Permissions size:")
     permissions.size().print()
-    
+
     print("7. ENHANCED FILE OPERATIONS:")
     var content = "Ultimate Wyn Language\nComplete Programming Environment\nEnterprise Ready\nProduction Deployment"
     file_write("ultimate.txt", content)
@@ -126,7 +126,7 @@ fn main() {
     var read_data = file_read("ultimate.txt")
     print("   File content length:")
     read_data.length().print()
-    
+
     print("8. ADVANCED HTTP WITH HEADERS:")
     http_set_header("User-Agent", "Wyn-Ultimate/3.0")
     http_set_header("Accept", "application/json")
@@ -137,7 +137,7 @@ fn main() {
     http_status().print()
     http_clear_headers()
     print("   Headers cleared")
-    
+
     print("9. URL & ENCODING OPERATIONS:")
     var complex_data = "Special chars: @#$%^&*()_+{}|:<>?[]\\;'\",./"
     print("   Original data:")
@@ -148,7 +148,7 @@ fn main() {
     base64_encode(complex_data).print()
     print("   Hash value:")
     hash_string(complex_data).print()
-    
+
     print("10. COMPREHENSIVE MATHEMATICS:")
     print("   Basic operations:")
     print("   abs_val(-12345):")
@@ -168,7 +168,7 @@ fn main() {
     lcm(24, 36).print()
     print("   clamp(150, 50, 100):")
     clamp(150, 50, 100).print()
-    
+
     print("11. STRING CONVERSIONS & PARSING:")
     print("   String to int:")
     "54321".to_int().print()
@@ -178,7 +178,7 @@ fn main() {
     "2.71828".to_float().print()
     print("   String repeat:")
     "*=*".repeat(4).print()
-    
+
     print("12. TIME & SYSTEM OPERATIONS:")
     var timestamp = time_now()
     print("   Current timestamp:")
@@ -190,7 +190,7 @@ fn main() {
     print("   Sleep 25ms:")
     sleep_ms(25)
     print("   Sleep completed")
-    
+
     print("13. RANDOM OPERATIONS:")
     seed_random(99999)
     print("   Seeded random numbers:")
@@ -198,7 +198,7 @@ fn main() {
     random_int(10000).print()
     print("   Random float:")
     random_float().print()
-    
+
     print("14. COMPLETE BITWISE OPERATIONS:")
     print("   Bit manipulation:")
     print("   bit_set(50, 4):")
@@ -209,7 +209,7 @@ fn main() {
     bit_toggle(25, 2).print()
     print("   bit_count(511):")
     bit_count(511).print()
-    
+
     print("15. ARRAY OPERATIONS:")
     var data_array = [100, 200, 300, 400, 500, 600]
     print("   Array operations:")
@@ -219,7 +219,7 @@ fn main() {
     data_array.last().print()
     print("   Middle element:")
     data_array[3].print()
-    
+
     print("16. ERROR HANDLING & VALIDATION:")
     print("   Safe division:")
     print("   20 / 4 =")
@@ -229,7 +229,7 @@ fn main() {
     assert_true(50 > 25)
     assert_false(10 > 100)
     print("   All validations passed!")
-    
+
     print("=== ULTIMATE COMPLETE PROGRAMMING LANGUAGE ===")
     print("✓ Module system with qualified access")
     print("✓ Advanced recursive functions")
@@ -251,7 +251,7 @@ fn main() {
     print("✓ Memory management")
     print("✓ Type system integration")
     print("✓ 112+ built-in functions")
-    
+
     print("WYN IS THE ULTIMATE COMPLETE PROGRAMMING LANGUAGE!")
     print("Suitable for ANY programming task:")
     print("• Enterprise web applications")
@@ -264,6 +264,6 @@ fn main() {
     print("• Multi-file projects")
     print("• Real-time systems")
     print("• Scientific computing")
-    
+
     print("ULTIMATE LANGUAGE COMPLETENESS ACHIEVED! 🏆")
 }

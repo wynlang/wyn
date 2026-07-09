@@ -1,17 +1,17 @@
 fn main() -> int {
     var a = [1, 2, 3, 4]
     var b = [5, 6, 7, 8]
-    
+
     var result = 0
-    for var i = 0; i < 2; i += 1 {
-        for var j = 0; j < 2; j += 1 {
+    for var i = 0; i < 2; i + = 1 {
+        for var j = 0; j < 2; j + = 1 {
             var sum = 0
-            for var k = 0; k < 2; k += 1 {
-                sum += a[i * 2 + k] * b[k * 2 + j]
+            for var k = 0; k < 2; k + = 1 {
+                sum + = a[i * 2 + k] * b[k * 2 + j]
             }
             print(sum)
         }
     }
-    
+
     return 0
 }

@@ -19,13 +19,13 @@ fn main() -> int {
     // Constants and variables
     const MAX = 100
     var count = 0
-    
+
     // Booleans and logical operators
     var flag = true
     if flag and count < MAX {
         print(1)
     }
-    
+
     // Enums and match expressions
     var status = ACTIVE
     var code = match status {
@@ -34,11 +34,11 @@ fn main() -> int {
         DONE => 2
     }
     print(code)
-    
+
     // Arrays
     var numbers = [10, 20, 30, 40, 50]
     print(numbers[2])
-    
+
     // For loops with break
     for var i = 0; i < 10; i = i + 1 {
         if i == 5 {
@@ -47,7 +47,7 @@ fn main() -> int {
         count = count + 1
     }
     print(count)
-    
+
     // While loops with continue
     var j = 0
     while j < 5 {
@@ -57,18 +57,18 @@ fn main() -> int {
         }
         print(j + 100)
     }
-    
+
     // Functions
     var fact = factorial(5)
     print(fact)
-    
+
     // Type aliases
     var user = 42
     print(user)
-    
+
     // Unary operators
     var neg = -10
     print(neg)
-    
+
     return 0
 }

@@ -58,6 +58,25 @@ int cmd_fmt(const char* file, int argc, char** argv) {
         int len = strlen(start);
         while (len > 0 && (start[len-1] == ' ' || start[len-1] == '\t')) start[--len] = '\0';
 
+        // Strip an optional trailing semicolon (semicolons are optional in Wyn).
+        // Only when it's genuinely line-final and not the whole line ("};" -> "}"
+        // is fine; a lone ";" line collapses to blank). Skip if the line looks
+        // like it ends inside a string or is a comment.
+        if (len > 0 && start[len-1] == ';') {
+            // Count unescaped double-quotes; if even, the ';' is outside a string.
+            int quotes = 0;
+            for (int k = 0; k < len; k++) {
+                if (start[k] == '"' && (k == 0 || start[k-1] != '\\')) quotes++;
+                // stop scanning at a line comment
+                if (start[k] == '/' && k + 1 < len && start[k+1] == '/') break;
+            }
+            int is_comment = (len >= 2 && start[0] == '/' && start[1] == '/') || start[0] == '#';
+            if ((quotes % 2) == 0 && !is_comment) {
+                start[--len] = '\0';
+                while (len > 0 && (start[len-1] == ' ' || start[len-1] == '\t')) start[--len] = '\0';
+            }
+        }
+
         // Collapse multiple blank lines
         if (len == 0) {
             if (prev_blank) continue;
@@ -88,6 +107,60 @@ int cmd_fmt(const char* file, int argc, char** argv) {
                     if (i < len) out[oi++] = start[i++];
                     continue;
                 }
+                // Once a line comment starts, copy the rest verbatim.
+                if (start[i] == '/' && i + 1 < len && start[i+1] == '/') {
+                    while (i < len) out[oi++] = start[i++];
+                    continue;
+                }
+                // Space around unambiguously-binary two-char operators
+                // (==, !=, <=, >=, &&, ||). These never appear as unary or in
+                // generics, so spacing them is always safe. Single-char -, *,
+                // /, <, >, & are left alone (unary / generic / pointer
+                // ambiguity needs the AST to resolve).
+                {
+                    static const char* binops[] = {"==","!=","<=",">=","&&","||", NULL};
+                    int matched = -1;
+                    for (int b = 0; binops[b]; b++) {
+                        if (start[i] == binops[b][0] && i + 1 < len && start[i+1] == binops[b][1]) { matched = b; break; }
+                    }
+                    if (matched >= 0) {
+                        if (oi > 0 && out[oi-1] != ' ') out[oi++] = ' ';
+                        out[oi++] = binops[matched][0];
+                        out[oi++] = binops[matched][1];
+                        i += 2;
+                        if (i < len && start[i] != ' ') out[oi++] = ' ';
+                        continue;
+                    }
+                }
+                // Space after ',' (not before).
+                if (start[i] == ',') {
+                    if (oi > 0 && out[oi-1] == ' ') oi--; // no space before
+                    out[oi++] = ',';
+                    i++;
+                    if (i < len && start[i] != ' ') out[oi++] = ' ';
+                    continue;
+                }
+                // Spaces around '->' (return type arrow).
+                if (start[i] == '-' && i + 1 < len && start[i+1] == '>') {
+                    if (oi > 0 && out[oi-1] != ' ') out[oi++] = ' ';
+                    out[oi++] = '-'; out[oi++] = '>';
+                    i += 2;
+                    if (i < len && start[i] != ' ') out[oi++] = ' ';
+                    continue;
+                }
+                // Space after ':' in annotations (not before, and not for '::').
+                if (start[i] == ':' && (i + 1 >= len || start[i+1] != ':') &&
+                    (i == 0 || start[i-1] != ':')) {
+                    if (oi > 0 && out[oi-1] == ' ') oi--; // no space before
+                    out[oi++] = ':';
+                    i++;
+                    if (i < len && start[i] != ' ') out[oi++] = ' ';
+                    continue;
+                }
+                // Skip '::' verbatim (namespace) so the ':' rule doesn't split it.
+                if (start[i] == ':' && i + 1 < len && start[i+1] == ':') {
+                    out[oi++] = ':'; out[oi++] = ':'; i += 2; continue;
+                }
                 // Normalize spacing around = (but not ==, !=, <=, >=, =>)
                 if (start[i] == '=' && (i == 0 || (start[i-1] != '!' && start[i-1] != '<' && start[i-1] != '>' && start[i-1] != '=')) && (i + 1 >= len || start[i+1] != '=') && (i + 1 >= len || start[i+1] != '>')) {
                     if (oi > 0 && out[oi-1] != ' ') out[oi++] = ' ';
@@ -95,6 +168,12 @@ int cmd_fmt(const char* file, int argc, char** argv) {
                     i++;
                     if (i < len && start[i] != ' ') out[oi++] = ' ';
                     continue;
+                }
+                // Ensure space before '{' (e.g. `int{` -> `int {`), except at
+                // line start or right after another space/open-delimiter.
+                if (start[i] == '{' && oi > 0 && out[oi-1] != ' ' && out[oi-1] != '{' &&
+                    out[oi-1] != '(' && out[oi-1] != '[') {
+                    out[oi++] = ' ';
                 }
                 // Ensure space after { if not end of line
                 if (start[i] == '{' && i + 1 < len && start[i+1] != ' ' && start[i+1] != '\0') {
@@ -113,11 +192,24 @@ int cmd_fmt(const char* file, int argc, char** argv) {
 
         // Adjust indent for braces (skip braces inside strings)
         in_string = 0;
-        for (int i = 0; i < len; i++) {
-            if (start[i] == '"' && (i == 0 || start[i-1] != '\\')) in_string = !in_string;
-            if (!in_string && start[i] == '{') indent++;
+        // Net brace delta for the NEXT line's indent = opens - closes, counting
+        // both { and } (skipping strings and line comments). A leading } was
+        // already pre-dedented above, so add it back here to avoid double-count.
+        {
+            int opens = 0, closes = 0;
+            for (int i = 0; i < len; i++) {
+                if (start[i] == '"' && (i == 0 || start[i-1] != '\\')) { in_string = !in_string; continue; }
+                if (!in_string && start[i] == '/' && i + 1 < len && start[i+1] == '/') break; // comment
+                if (in_string) continue;
+                if (start[i] == '{') opens++;
+                else if (start[i] == '}') closes++;
+            }
+            in_string = 0;
+            int net = opens - closes;
+            if (start[0] == '}') net += 1; // leading } already dedented above
+            indent += net;
+            if (indent < 0) indent = 0;
         }
-        // Note: closing brace at start of line was already handled above
     }
 
     // Remove trailing blank lines

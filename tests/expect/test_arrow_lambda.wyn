@@ -1,0 +1,30 @@
+// EXPECT: 3
+// EXPECT: 10
+// EXPECT: 9
+// EXPECT: diagonal
+// Arrow-function lambdas: (x) => expr and (a, b) => expr, plus the |x| alias.
+// Also guards a struct-pattern match in the same file — the paren-less `x =>`
+// form was dropped precisely because it collided with `pat if cond => result`,
+// so this pins that both coexist.
+struct Point { x: int, y: int }
+
+fn classify(p: Point) -> string {
+    return match p {
+        Point { x, y } if x == y => "diagonal"
+        Point { x, y } => "other"
+    }
+}
+
+fn main() -> int {
+    doubled = [1, 2, 3].map((x) => x * 2)
+    println(doubled.len().to_string())
+
+    sum = [1, 2, 3, 4].reduce((a, b) => a + b, 0)
+    println(sum.to_string())
+
+    plusone = [1, 2, 3].map(|x| x + 1)
+    println(plusone.reduce((a, b) => a + b, 0).to_string())
+
+    println(classify(Point { x: 5, y: 5 }))
+    return 0
+}

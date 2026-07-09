@@ -1,0 +1,36 @@
+// Channels and select — Go-style message passing
+// channel(cap) creates a channel; .send/.recv/.close operate on it;
+// select { } waits for whichever channel is ready first.
+
+fn worker(jobs: int, results: int) -> int {
+    // Pull jobs until we've done 3, push squared results back.
+    i = 0
+    while i < 3 {
+        n = Task.recv(jobs)
+        Task.send(results, n * n)
+        i = i + 1
+    }
+    return 0
+}
+
+fn main() -> int {
+    jobs = channel(8)
+    results = channel(8)
+
+    w = spawn worker(jobs, results)
+
+    jobs.send(2)
+    jobs.send(3)
+    jobs.send(4)
+
+    total = 0
+    i = 0
+    while i < 3 {
+        total = total + results.recv()
+        i = i + 1
+    }
+    done = await w
+
+    println("sum of squares: " + total.to_string())
+    return 0
+}

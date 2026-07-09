@@ -1,0 +1,29 @@
+// EXPECT: 30
+// EXPECT: diagonal
+// EXPECT: below
+// EXPECT: above
+// Regression: struct field destructuring in match arms. The matched struct's
+// type carried field_count but NULL field_names, so binding fields crashed the
+// checker (NULL deref). Fields are now populated; destructuring binds x/y and
+// works with guards.
+struct Point { x: int, y: int }
+
+fn classify(p: Point) -> string {
+    return match p {
+        Point { x, y } if x == y => "diagonal"
+        Point { x, y } if x > y => "below"
+        Point { x, y } => "above"
+    }
+}
+
+fn main() -> int {
+    var p = Point { x: 10, y: 20 }
+    var sum = match p {
+        Point { x, y } => x + y
+    }
+    println(sum.to_string())
+    println(classify(Point { x: 4, y: 4 }))
+    println(classify(Point { x: 7, y: 2 }))
+    println(classify(Point { x: 1, y: 9 }))
+    return 0
+}

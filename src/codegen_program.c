@@ -204,6 +204,33 @@ void codegen_program(Program* prog) {
                     if (tn.length == 6 && memcmp(tn.start, "string", 6) == 0) c_type = "const char*";
                     else if (tn.length == 5 && memcmp(tn.start, "float", 5) == 0) c_type = "double";
                 }
+                // Explicit optional annotation (e.g. `int?`) -> hand-specialized Option type.
+                if (var_stmt->var.type && var_stmt->var.type->type == EXPR_OPTIONAL_TYPE) {
+                    Expr* inner = var_stmt->var.type->optional_type.inner_type;
+                    if (inner && inner->type == EXPR_IDENT &&
+                        inner->token.length == 6 && memcmp(inner->token.start, "string", 6) == 0)
+                        c_type = "OptionString";
+                    else
+                        c_type = "OptionInt";
+                }
+                // Fallback: if the AST-shape heuristics above left the default and the
+                // checker inferred a concrete type, use it. This lets top-level (script
+                // mode) declarations infer the same C types as ones inside a function
+                // body — enums, comprehensions (arrays), optionals, match results, etc.
+                if (strcmp(c_type, "long long") == 0) {
+                    const char* inferred = codegen_c_type_from_type(var_stmt->var.init->expr_type);
+                    if (inferred && strcmp(inferred, "long long") != 0) {
+                        c_type = inferred;
+                        // Register enum vars so `.to_string()` dispatches correctly.
+                        if (var_stmt->var.init->expr_type->kind == TYPE_ENUM) {
+                            char _vn[128];
+                            snprintf(_vn, sizeof(_vn), "%.*s",
+                                     var_stmt->var.name.length, var_stmt->var.name.start);
+                            extern void register_enum_var(const char*, const char*);
+                            register_enum_var(_vn, c_type);
+                        }
+                    }
+                }
             }
             emit("\n");
             if (is_simple_init) {

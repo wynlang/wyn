@@ -8,6 +8,7 @@
 #else
 #include <sched.h>
 #endif
+#include <time.h>
 #include "coroutine.h"
 #include "io_loop.h"
 
@@ -173,23 +174,25 @@ void* future_get_timeout(Future* f, int timeout_ms) {
         future_recycle(f);
         return r;
     }
-    for (int i = 0; i < timeout_ms * 100; i++) {
+    // Wall-clock deadline so `timeout_ms` means real milliseconds regardless of
+    // how the scheduler is progressing. Yield to let other tasks run; if we're
+    // on a coroutine, yield the coroutine so sibling tasks can make progress.
+    struct timespec start;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (;;) {
         if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
             void* r = f->result;
             future_recycle(f);
             return r;
         }
-        if (i < 256) {
-            #ifdef __x86_64__
-            __asm__ volatile("pause");
-            #elif defined(__aarch64__) && !defined(__TINYC__)
-            __asm__ volatile("isb");
-            #endif
-        } else {
-            sched_yield();
-        }
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long elapsed_ms = (now.tv_sec - start.tv_sec) * 1000
+                        + (now.tv_nsec - start.tv_nsec) / 1000000;
+        if (elapsed_ms >= timeout_ms) return NULL; // deadline passed
+        if (wyn_coro_current()) wyn_coro_yield();
+        else sched_yield();
     }
-    return NULL;
 }
 
 int future_is_ready(Future* f) {

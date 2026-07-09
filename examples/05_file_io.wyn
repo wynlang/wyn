@@ -1,23 +1,23 @@
 // File I/O - Reading and writing files
 fn main() -> int {
     // Write to file
-    var write_result = File::write("/tmp/wyn_example.txt", "Hello from Wyn!");
+    var write_result = File::write("/tmp/wyn_example.txt", "Hello from Wyn!")
     if (write_result != 1) {
-        print("Failed to write file\n");
-        return 1;
+        print("Failed to write file\n")
+        return 1
     }
-    
+
     // Read from file
-    var content = File::read("/tmp/wyn_example.txt");
-    print("File content: ");
-    print(content);
-    print("\n");
-    
+    var content = File::read("/tmp/wyn_example.txt")
+    print("File content: ")
+    print(content)
+    print("\n")
+
     // Check if file exists
-    var exists = File::exists("/tmp/wyn_example.txt");
+    var exists = File::exists("/tmp/wyn_example.txt")
     if (exists == 1) {
-        print("File exists!\n");
+        print("File exists!\n")
     }
-    
-    return 0;
+
+    return 0
 }

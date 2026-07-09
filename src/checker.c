@@ -398,7 +398,14 @@ static bool wyn_is_type_compatible(Type* expected, Type* actual) {
         (expected->kind == TYPE_INT && actual->kind == TYPE_ENUM)) {
         return true;
     }
-    
+
+    // Allow channel <-> int (channels are int handles, so they can pass
+    // through int-typed function params — e.g. fn produce(ch: int, ...)).
+    if ((expected->kind == TYPE_CHANNEL && actual->kind == TYPE_INT) ||
+        (expected->kind == TYPE_INT && actual->kind == TYPE_CHANNEL)) {
+        return true;
+    }
+
     return false;
 }
 
@@ -2931,17 +2938,53 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int;
         }
         case EXPR_METHOD_CALL: {
+            // Channel methods: ch.send(v) / ch.recv() / ch.close() where ch is
+            // a channel value. send/close return nothing (int), recv returns int.
+            {
+                Type* obj_t = check_expr(expr->method_call.object, scope);
+                if (obj_t && obj_t->kind == TYPE_CHANNEL) {
+                    for (int i = 0; i < expr->method_call.arg_count; i++)
+                        check_expr(expr->method_call.args[i], scope);
+                    expr->expr_type = builtin_int; // recv() -> int; send/close -> int (unused)
+                    return builtin_int;
+                }
+            }
+            // Enum constructor with payload written as a method call, e.g.
+            // `Shape.Circle(5.0)`. The parser produces EXPR_METHOD_CALL here
+            // (object = enum name, method = variant). Type it as the enum so
+            // downstream (var decls, match) sees TYPE_ENUM instead of int.
+            if (expr->method_call.object->type == EXPR_IDENT) {
+                EnumStmt* enum_def = find_enum_definition(expr->method_call.object->token);
+                if (enum_def) {
+                    Token variant = expr->method_call.method;
+                    for (int vi = 0; vi < enum_def->variant_count; vi++) {
+                        if (enum_def->variants[vi].length == variant.length &&
+                            memcmp(enum_def->variants[vi].start, variant.start, variant.length) == 0) {
+                            for (int ai = 0; ai < expr->method_call.arg_count; ai++) {
+                                check_expr(expr->method_call.args[ai], scope);
+                            }
+                            Type* et = make_type(TYPE_ENUM);
+                            et->name = expr->method_call.object->token;
+                            et->enum_type.variants = enum_def->variants;
+                            et->enum_type.variant_count = enum_def->variant_count;
+                            expr->expr_type = et;
+                            return et;
+                        }
+                    }
+                }
+            }
+
             Type* object_type = check_expr(expr->method_call.object, scope);
             for (int i = 0; i < expr->method_call.arg_count; i++) {
                 check_expr(expr->method_call.args[i], scope);
             }
-            
+
             Token method = expr->method_call.method;
             char method_name[256];
             int len = method.length < 255 ? method.length : 255;
             memcpy(method_name, method.start, len);
             method_name[len] = '\0';
-            
+
             // Check for namespace method calls: File.read() -> File_read
             // Only for known namespaces, not regular variables
             if (expr->method_call.object->type == EXPR_IDENT) {
@@ -3214,6 +3257,42 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             expr->expr_type = builtin_array;
             return builtin_array;
         }
+        case EXPR_LIST_COMP: {
+            // List comprehension: [body for x in iter (if cond)].
+            // Result is an array whose element type is the type of `body`,
+            // evaluated with the loop variable bound in a child scope.
+            SymbolTable comp_scope = {0};
+            comp_scope.parent = scope;
+
+            // Determine the loop variable's type from the iterable.
+            Type* loop_var_type = builtin_int; // range yields ints
+            if (expr->list_comp.iter_start) {
+                Type* iter_type = check_expr(expr->list_comp.iter_start, &comp_scope);
+                if (expr->list_comp.iter_end) {
+                    // Range `start..end` / `start..=end` — element is int.
+                    check_expr(expr->list_comp.iter_end, &comp_scope);
+                    loop_var_type = builtin_int;
+                } else if (iter_type && iter_type->kind == TYPE_ARRAY &&
+                           iter_type->array_type.element_type) {
+                    // Iterating an array — element type is the array's element.
+                    loop_var_type = iter_type->array_type.element_type;
+                }
+            }
+            add_symbol(&comp_scope, expr->list_comp.var_name, loop_var_type, false);
+
+            if (expr->list_comp.condition) {
+                check_expr(expr->list_comp.condition, &comp_scope);
+            }
+
+            Type* element_type = expr->list_comp.body
+                ? check_expr(expr->list_comp.body, &comp_scope)
+                : builtin_int;
+
+            Type* array_type = make_type(TYPE_ARRAY);
+            array_type->array_type.element_type = element_type ? element_type : builtin_int;
+            expr->expr_type = array_type;
+            return array_type;
+        }
         case EXPR_HASHMAP_LITERAL: {
             // v1.3.0: {} creates a hashmap with proper type
             Type* map_type = make_type(TYPE_MAP);
@@ -3419,6 +3498,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 if (call_type) { expr->expr_type = call_type; return call_type; }
             }
             return builtin_int;
+        case EXPR_CHANNEL: {
+            if (expr->channel.capacity) check_expr(expr->channel.capacity, scope);
+            Type* ch = make_type(TYPE_CHANNEL);
+            expr->expr_type = ch;
+            return ch;
+        }
         case EXPR_RANGE:
             return builtin_int; // Range type
         case EXPR_LAMBDA: {
@@ -3838,7 +3923,8 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             Token field_name = pat->struct_pat.field_names[j];
                             // Get field type from struct
                             Type* field_type = builtin_int; // Default to int
-                            if (match_value_type->kind == TYPE_STRUCT) {
+                            if (match_value_type->kind == TYPE_STRUCT &&
+                                match_value_type->struct_type.field_names) {
                                 for (int k = 0; k < match_value_type->struct_type.field_count; k++) {
                                     if (match_value_type->struct_type.field_names[k].length == field_name.length &&
                                         memcmp(match_value_type->struct_type.field_names[k].start, field_name.start, field_name.length) == 0) {
@@ -4079,10 +4165,31 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             }
             break;
         }
-        case STMT_EXPR:
-        case STMT_YIELD: if (stmt->yield_stmt.value) check_expr(stmt->yield_stmt.value, scope); break;
+        case STMT_EXPR: {
+            // Bare assignment: `x = expr` where `x` is not yet declared is a
+            // declaration (Python-style), coexisting with `var`/`const`. Rewrite
+            // the statement in place into a STMT_VAR so all existing declaration
+            // type-inference and codegen apply. An assignment to an *existing*
+            // variable stays a normal assignment (checked below).
+            if (stmt->expr && stmt->expr->type == EXPR_ASSIGN &&
+                !find_symbol(scope, stmt->expr->assign.name)) {
+                Expr* init = stmt->expr->assign.value;
+                Token name = stmt->expr->assign.name;
+                stmt->type = STMT_VAR;
+                stmt->var.name = name;
+                stmt->var.pattern = NULL;
+                stmt->var.type = NULL;         // inferred from init
+                stmt->var.init = init;
+                stmt->var.is_const = false;    // bare bindings are mutable
+                stmt->var.is_mutable = true;
+                stmt->var.uses_pattern = false;
+                check_stmt(stmt, scope);       // re-check as a var declaration
+                break;
+            }
             check_expr(stmt->expr, scope);
             break;
+        }
+        case STMT_YIELD: if (stmt->yield_stmt.value) check_expr(stmt->yield_stmt.value, scope); break;
         case STMT_RETURN:
             if (stmt->ret.value) {
                 Type* return_expr_type = check_expr(stmt->ret.value, scope);
@@ -4128,6 +4235,29 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         break;
                     }
                 }
+            }
+            break;
+        case STMT_UNSAFE:
+        case STMT_PARALLEL:
+            // Check body statements in the SAME scope so bindings (including
+            // parallel's spawn-bound vars) escape to the enclosing scope, as
+            // the codegen emits them there.
+            if (stmt->type == STMT_PARALLEL && stmt->block.timeout)
+                check_expr(stmt->block.timeout, scope);
+            for (int i = 0; i < stmt->block.count; i++) {
+                check_stmt(stmt->block.stmts[i], scope);
+            }
+            break;
+        case STMT_SELECT:
+            for (int i = 0; i < stmt->select_stmt.arm_count; i++) {
+                if (stmt->select_stmt.channels[i])
+                    check_expr(stmt->select_stmt.channels[i], scope);
+                // Each arm binds the received value (int) in its own scope.
+                SymbolTable arm_scope = {0};
+                arm_scope.parent = scope;
+                add_symbol(&arm_scope, stmt->select_stmt.bind_names[i], builtin_int, false);
+                if (stmt->select_stmt.bodies[i])
+                    check_stmt(stmt->select_stmt.bodies[i], &arm_scope);
             }
             break;
         case STMT_IF:
@@ -4805,6 +4935,25 @@ void check_program(Program* prog) {
             Type* struct_type = make_type(TYPE_STRUCT);
             struct_type->struct_type.name = struct_decl->name;
             struct_type->struct_type.field_count = struct_decl->field_count;
+            // Populate field_names so consumers that iterate fields (struct
+            // pattern destructuring, field access) don't deref a NULL array.
+            // field_types is resolved lazily below; names come straight from
+            // the declaration. Without this, field_count is set but the arrays
+            // are NULL, crashing any field iteration.
+            if (struct_decl->field_count > 0) {
+                struct_type->struct_type.field_names =
+                    malloc(sizeof(Token) * struct_decl->field_count);
+                struct_type->struct_type.field_types =
+                    malloc(sizeof(Type*) * struct_decl->field_count);
+                for (int _fi = 0; _fi < struct_decl->field_count; _fi++) {
+                    struct_type->struct_type.field_names[_fi] = struct_decl->fields[_fi];
+                    // Best-effort field type; may reference a not-yet-registered
+                    // type, in which case default to int (resolved fully when the
+                    // struct body is checked).
+                    Type* ft = get_struct_field_type(struct_decl, struct_decl->fields[_fi]);
+                    struct_type->struct_type.field_types[_fi] = ft ? ft : builtin_int;
+                }
+            }
             add_symbol(global_scope, struct_decl->name, struct_type, false);
         } else if (pass0_stmt->type == STMT_ENUM) {
             // Register enum type and variants early so functions can use them
@@ -5891,6 +6040,35 @@ void check_program(Program* prog) {
                 Type* inferred_return = wyn_infer_function_return_type(fn->body, &local_scope);
                 if (inferred_return) {
                     current_function_return_type = inferred_return;
+                    // Also synthesize an AST return-type node so codegen (which
+                    // reads fn->return_type) emits the right C signature — this
+                    // is what makes `fn f(x: int) => x * 2` work without `-> T`.
+                    const char* tn = NULL;
+                    switch (inferred_return->kind) {
+                        case TYPE_INT:    tn = "int"; break;
+                        case TYPE_FLOAT:  tn = "float"; break;
+                        case TYPE_BOOL:   tn = "bool"; break;
+                        case TYPE_STRING: tn = "string"; break;
+                        case TYPE_STRUCT:
+                            if (inferred_return->struct_type.name.length > 0) {
+                                Expr* rt = calloc(1, sizeof(Expr));
+                                rt->type = EXPR_IDENT;
+                                rt->token = inferred_return->struct_type.name;
+                                rt->expr_type = inferred_return;
+                                fn->return_type = rt;
+                            }
+                            break;
+                        default: break;
+                    }
+                    if (tn) {
+                        Expr* rt = calloc(1, sizeof(Expr));
+                        rt->type = EXPR_IDENT;
+                        Token t; t.type = TOKEN_IDENT; t.start = tn;
+                        t.length = (int)strlen(tn); t.line = fn->name.line;
+                        rt->token = t;
+                        rt->expr_type = inferred_return;
+                        fn->return_type = rt;
+                    }
                 }
             }
             

@@ -1,0 +1,21 @@
+// EXPECT: 10
+// EXPECT: 15
+// while conditions don't need parens (consistent with if), at top level and
+// inside functions.
+fn sum_to(n: int) -> int {
+    i = 0
+    total = 0
+    while i < n {
+        total = total + i
+        i = i + 1
+    }
+    return total
+}
+
+fn main() -> int {
+    i = 0
+    while i < 5 { i = i + 1 }
+    println((i + 5).to_string())
+    println(sum_to(6).to_string())
+    return 0
+}

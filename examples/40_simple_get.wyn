@@ -1,9 +1,9 @@
 // Simpler test for array.get() type tracking
 fn main() -> int {
-    var names = ["Alice", "Bob"];
-    var first = names.get(0);
-    
-    print(first);
-    
-    return 0;
+    var names = ["Alice", "Bob"]
+    var first = names.get(0)
+
+    print(first)
+
+    return 0
 }

@@ -2,42 +2,42 @@
 // Verifies ~4-8 KB per spawn claim
 
 fn worker(id: int) {
-    var local_data = id * 2;
-    var i = 0;
+    var local_data = id * 2
+    var i = 0
     while (i < 10) {
-        local_data = local_data + 1;
-        i = i + 1;
+        local_data = local_data + 1
+        i = i + 1
     }
 }
 
 fn main() {
-    print("=== Memory Efficiency Test ===\n\n");
-    
-    print("Creating 1,000 spawns...\n");
-    print("Expected memory: ~4-8 MB\n");
-    print("(1,000 × 4-8 KB per spawn)\n\n");
-    
-    var i = 0;
+    print("=== Memory Efficiency Test ===\n\n")
+
+    print("Creating 1,000 spawns...\n")
+    print("Expected memory: ~4-8 MB\n")
+    print("(1,000 × 4-8 KB per spawn)\n\n")
+
+    var i = 0
     while (i < 1000) {
-        spawn worker(i);
-        i = i + 1;
+        spawn worker(i)
+        i = i + 1
     }
-    
-    print("✓ 1,000 spawns created\n");
-    print("✓ Check memory with: ps aux | grep wyn\n\n");
-    
-    print("Creating 10,000 spawns...\n");
-    print("Expected memory: ~40-80 MB\n");
-    print("(10,000 × 4-8 KB per spawn)\n\n");
-    
-    i = 0;
+
+    print("✓ 1,000 spawns created\n")
+    print("✓ Check memory with: ps aux | grep wyn\n\n")
+
+    print("Creating 10,000 spawns...\n")
+    print("Expected memory: ~40-80 MB\n")
+    print("(10,000 × 4-8 KB per spawn)\n\n")
+
+    i = 0
     while (i < 10000) {
-        spawn worker(i);
-        i = i + 1;
+        spawn worker(i)
+        i = i + 1
     }
-    
-    print("✓ 10,000 spawns created\n");
-    print("✓ Memory claim verified!\n");
-    
-    return 0;
+
+    print("✓ 10,000 spawns created\n")
+    print("✓ Memory claim verified!\n")
+
+    return 0
 }

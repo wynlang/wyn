@@ -1,16 +1,16 @@
 // Test Queue and Stack with explicit types
 fn main() -> int {
-    var queue = Queue::new();
-    Queue::push(queue, 42);
-    
-    var value: int = Queue::pop(queue);
-    print("Value: " + value);
-    
-    var stack = Stack::new();
-    Stack::push(stack, 99);
-    
-    var top: int = Stack::pop(stack);
-    print("Top: " + top);
-    
-    return 0;
+    var queue = Queue::new()
+    Queue::push(queue, 42)
+
+    var value: int = Queue::pop(queue)
+    print("Value: " + value)
+
+    var stack = Stack::new()
+    Stack::push(stack, 99)
+
+    var top: int = Stack::pop(stack)
+    print("Top: " + top)
+
+    return 0
 }

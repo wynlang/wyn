@@ -1,32 +1,32 @@
 // Test Queue and Stack return types
 fn main() -> int {
     // Test Queue
-    var queue = Queue::new();
-    Queue::push(queue, 10);
-    Queue::push(queue, 20);
-    Queue::push(queue, 30);
-    
-    var first = Queue::pop(queue);
-    var second = Queue::pop(queue);
-    
-    print("Queue first: " + first);
-    print("Queue second: " + second);
-    
+    var queue = Queue::new()
+    Queue::push(queue, 10)
+    Queue::push(queue, 20)
+    Queue::push(queue, 30)
+
+    var first = Queue::pop(queue)
+    var second = Queue::pop(queue)
+
+    print("Queue first: " + first)
+    print("Queue second: " + second)
+
     // Test Stack
-    var stack = Stack::new();
-    Stack::push(stack, 100);
-    Stack::push(stack, 200);
-    Stack::push(stack, 300);
-    
-    var top = Stack::pop(stack);
-    var next = Stack::pop(stack);
-    
-    print("Stack top: " + top);
-    print("Stack next: " + next);
-    
+    var stack = Stack::new()
+    Stack::push(stack, 100)
+    Stack::push(stack, 200)
+    Stack::push(stack, 300)
+
+    var top = Stack::pop(stack)
+    var next = Stack::pop(stack)
+
+    print("Stack top: " + top)
+    print("Stack next: " + next)
+
     // Test arithmetic
-    var sum = first + second;
-    print("Sum: " + sum);
-    
-    return 0;
+    var sum = first + second
+    print("Sum: " + sum)
+
+    return 0
 }

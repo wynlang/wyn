@@ -3,31 +3,31 @@
 
 pub fn abs(x: int) -> int {
     if x < 0 {
-        return -x;
+        return -x
     }
-    return x;
+    return x
 }
 
 pub fn max(a: int, b: int) -> int {
     if a > b {
-        return a;
+        return a
     }
-    return b;
+    return b
 }
 
 pub fn min(a: int, b: int) -> int {
     if a < b {
-        return a;
+        return a
     }
-    return b;
+    return b
 }
 
 pub fn clamp(value: int, min_val: int, max_val: int) -> int {
     if value < min_val {
-        return min_val;
+        return min_val
     }
     if value > max_val {
-        return max_val;
+        return max_val
     }
-    return value;
+    return value
 }

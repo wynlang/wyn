@@ -6,9 +6,9 @@ fn main() -> int {
         }
         print(i)
     }
-    
+
     print(999)
-    
+
     // Test continue
     for var j = 0; j < 5; j = j + 1 {
         if j == 2 {
@@ -16,6 +16,6 @@ fn main() -> int {
         }
         print(j + 100)
     }
-    
+
     return 0
 }

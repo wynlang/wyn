@@ -1,2 +1,2 @@
-print("Before for loop");
-print("After for loop");
+print("Before for loop")
+print("After for loop")

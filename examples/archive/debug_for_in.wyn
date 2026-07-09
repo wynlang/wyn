@@ -1,4 +1,4 @@
 // Minimal for-in test
 for i in 0..2 {
-    print("i =", i);
+    print("i =", i)
 }

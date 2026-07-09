@@ -54,6 +54,7 @@ typedef enum {
     EXPR_BLOCK,          // Block expression: { stmt1; stmt2; expr }
     EXPR_SPAWN,          // Spawn expression: spawn func() -> Future<T>
     EXPR_LIST_COMP,      // List comprehension: [expr for x in range]
+    EXPR_CHANNEL,        // Channel constructor: channel() / channel(cap)
 } ExprType;
 
 // T3.3.1: Pattern types for destructuring
@@ -358,6 +359,7 @@ struct Expr {
         BlockExpr block;                 // Block expression: { stmt1; stmt2; expr }
         SpawnExpr spawn;                 // Spawn expression: spawn func() -> Future<T>
         ListCompExpr list_comp;          // List comprehension: [expr for x in range]
+        struct { Expr* capacity; } channel; // Channel constructor: channel(cap?)
     };
 };
 
@@ -368,6 +370,8 @@ typedef enum {
     STMT_RETURN, STMT_DEFER,
     STMT_BLOCK,
     STMT_UNSAFE,
+    STMT_PARALLEL,   // structured concurrency: parallel { ... } auto-joins spawns
+    STMT_SELECT,     // select { v = ch.recv() => body ... } channel multiplexing
     STMT_FN,
     STMT_EXTERN,
     STMT_STRUCT,
@@ -412,6 +416,7 @@ typedef struct {
 typedef struct {
     Stmt** stmts;
     int count;
+    Expr* timeout;   // optional timeout (ms) for `parallel(timeout: N) { }`; NULL otherwise
 } BlockStmt;
 
 typedef struct {
@@ -618,6 +623,12 @@ struct Stmt {
         struct {  // Spawn statement
             Expr* call;
         } spawn;
+        struct {  // Select statement: multiplex over channel receives
+            Expr* channels[16];   // channel expression per arm
+            Token bind_names[16];  // variable each arm binds the received value to
+            Stmt* bodies[16];      // body per arm
+            int arm_count;
+        } select_stmt;
     };
 };
 

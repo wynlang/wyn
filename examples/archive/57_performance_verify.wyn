@@ -2,38 +2,38 @@
 // Measures actual spawn creation speed
 
 fn empty_worker() {
-    var x = 1;
+    var x = 1
 }
 
 fn main() {
-    print("=== Performance Verification ===\n\n");
-    
-    print("Test 1: 1,000 spawns\n");
-    var i = 0;
+    print("=== Performance Verification ===\n\n")
+
+    print("Test 1: 1,000 spawns\n")
+    var i = 0
     while (i < 1000) {
-        spawn empty_worker();
-        i = i + 1;
+        spawn empty_worker()
+        i = i + 1
     }
-    print("✓ Created 1,000 spawns\n\n");
-    
-    print("Test 2: 5,000 spawns\n");
-    i = 0;
+    print("✓ Created 1,000 spawns\n\n")
+
+    print("Test 2: 5,000 spawns\n")
+    i = 0
     while (i < 5000) {
-        spawn empty_worker();
-        i = i + 1;
+        spawn empty_worker()
+        i = i + 1
     }
-    print("✓ Created 5,000 spawns\n\n");
-    
-    print("Test 3: 10,000 spawns\n");
-    i = 0;
+    print("✓ Created 5,000 spawns\n\n")
+
+    print("Test 3: 10,000 spawns\n")
+    i = 0
     while (i < 10000) {
-        spawn empty_worker();
-        i = i + 1;
+        spawn empty_worker()
+        i = i + 1
     }
-    print("✓ Created 10,000 spawns\n\n");
-    
-    print("All performance tests passed!\n");
-    print("Run with 'time' to measure throughput\n");
-    
-    return 0;
+    print("✓ Created 10,000 spawns\n\n")
+
+    print("All performance tests passed!\n")
+    print("Run with 'time' to measure throughput\n")
+
+    return 0
 }

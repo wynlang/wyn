@@ -1,9 +1,9 @@
 // Prime number sieve
 fn sieve(n: int) -> int {
     var count = 0
-    for var num = 2; num <= n; num += 1 {
+    for var num = 2; num <= n; num + = 1 {
         var is_prime = 1
-        for var i = 2; i * i <= num; i += 1 {
+        for var i = 2; i * i <= num; i + = 1 {
             if num % i == 0 {
                 is_prime = 0
                 break
@@ -11,7 +11,7 @@ fn sieve(n: int) -> int {
         }
         if is_prime {
             print(num)
-            count += 1
+            count + = 1
         }
     }
     return count

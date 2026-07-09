@@ -64,6 +64,13 @@ void restore_parser_state() {
     }
 }
 
+// Discard the most recent saved snapshot without rewinding (commit the
+// speculative parse). Keeps the save/discard/restore stacks balanced so
+// speculative lookahead never leaks stack slots.
+void discard_parser_state() {
+    if (parser_stack_depth > 0) parser_stack_depth--;
+}
+
 void set_parser_filename(const char* filename) {
     current_source_file = filename;
     parser.filename = filename;
@@ -74,7 +81,6 @@ static Expr* assignment();
 static Expr* call();  // Forward declaration for await
 Stmt* statement();
 static Stmt* parse_test_statement(); // T1.6.2: Testing Framework Agent addition
-static Stmt* parse_while_statement(); // T1.4.1: Control Flow Agent addition
 static Stmt* parse_break_statement(); // T1.4.2: Control Flow Agent addition
 static Stmt* parse_continue_statement(); // T1.4.2: Control Flow Agent addition
 static Stmt* parse_match_statement(); // T1.4.3: Control Flow Agent addition
@@ -175,6 +181,19 @@ static Expr* primary() {
         Expr* expr = alloc_expr();
         expr->type = EXPR_SPAWN;
         expr->spawn.call = call();  // Parse call expression
+        return expr;
+    }
+
+    // Channel constructor: channel() or channel(capacity)
+    if (match(TOKEN_CHANNEL)) {
+        Expr* expr = alloc_expr();
+        expr->type = EXPR_CHANNEL;
+        expr->channel.capacity = NULL;
+        expect(TOKEN_LPAREN, "Expected '(' after 'channel'");
+        if (!check(TOKEN_RPAREN)) {
+            expr->channel.capacity = expression();
+        }
+        expect(TOKEN_RPAREN, "Expected ')' after channel capacity");
         return expr;
     }
     
@@ -328,7 +347,12 @@ static Expr* primary() {
 
     if (match(TOKEN_IDENT)) {
         Token name = parser.previous;
-        
+
+        // Note: no paren-less single-param lambda (`x => expr`). It is
+        // ambiguous with match-arm guards (`pat if cond => result`), where a
+        // bare identifier is legitimately followed by `=>`. Lambdas always
+        // parenthesize their params: `(x) => expr`.
+
         // Check for struct initialization: TypeName { field: value, ... }
         // Only parse as struct init if identifier starts with uppercase AND next is {
         if (is_struct_init_pattern() && name.start[0] >= 'A' && name.start[0] <= 'Z') {
@@ -961,6 +985,76 @@ static Expr* primary() {
         lambda_expr->lambda.capture_by_move = NULL;
         
         return lambda_expr;
+    }
+
+    if (check(TOKEN_LPAREN)) {
+        // Arrow lambda with parenthesized params: `(x) => expr`,
+        // `(a, b) => a + b`, `() => 0`, `(x: int) => x * 2`.
+        // Disambiguate from grouping/tuples/calls by trying to parse a bare
+        // parameter list followed by `=>`; backtrack if that fails.
+        extern void save_lexer_state(void);
+        extern void restore_lexer_state(void);
+        extern void discard_lexer_state(void);
+        extern void discard_parser_state(void);
+        save_lexer_state();
+        save_parser_state();
+        bool is_arrow_lambda = false;
+        Token lam_params[16];
+        int lam_param_count = 0;
+        advance(); // consume '('
+        bool params_ok = true;
+        if (!check(TOKEN_RPAREN)) {
+            do {
+                if (!check(TOKEN_IDENT) || lam_param_count >= 16) { params_ok = false; break; }
+                advance();
+                lam_params[lam_param_count++] = parser.previous;
+                if (match(TOKEN_COLON)) {          // optional type annotation
+                    parse_type();
+                }
+            } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
+        }
+        if (params_ok && match(TOKEN_RPAREN)) {
+            if (match(TOKEN_ARROW)) { parse_type(); }  // optional return type
+            if (check(TOKEN_FATARROW)) { is_arrow_lambda = true; }
+        }
+        if (is_arrow_lambda) {
+            discard_lexer_state();   // commit the speculative parse (balance the stacks)
+            discard_parser_state();
+            advance(); // consume '=>'
+            Expr* lambda_expr = alloc_expr();
+            lambda_expr->type = EXPR_LAMBDA;
+            lambda_expr->lambda.param_count = lam_param_count;
+            lambda_expr->lambda.params = malloc(sizeof(Token) * (lam_param_count > 0 ? lam_param_count : 1));
+            for (int i = 0; i < lam_param_count; i++) lambda_expr->lambda.params[i] = lam_params[i];
+            lambda_expr->lambda.body_stmts = NULL;
+            lambda_expr->lambda.body_stmt_count = 0;
+            lambda_expr->lambda.captured_count = 0;
+            lambda_expr->lambda.capture_by_move = NULL;
+            if (check(TOKEN_LBRACE)) {
+                // Block body: (x) => { ... return e }
+                advance();
+                lambda_expr->lambda.body_stmts = malloc(sizeof(Stmt*) * 32);
+                lambda_expr->lambda.body_stmt_count = 0;
+                lambda_expr->lambda.body = NULL;
+                while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                    if (match(TOKEN_RETURN)) {
+                        lambda_expr->lambda.body = expression();
+                        match(TOKEN_SEMI);
+                        break;
+                    }
+                    Stmt* s = statement();
+                    if (s && lambda_expr->lambda.body_stmt_count < 32)
+                        lambda_expr->lambda.body_stmts[lambda_expr->lambda.body_stmt_count++] = s;
+                }
+                expect(TOKEN_RBRACE, "Expected '}' after lambda block body");
+            } else {
+                lambda_expr->lambda.body = expression();
+            }
+            return lambda_expr;
+        }
+        // Not an arrow lambda — rewind and parse as grouping/tuple.
+        restore_parser_state();
+        restore_lexer_state();
     }
 
     if (match(TOKEN_LPAREN)) {
@@ -1852,6 +1946,61 @@ Stmt* statement() {
         expect(TOKEN_RBRACE, "Expected '}' after unsafe block");
         return stmt;
     }
+
+    // Channel multiplexing: select { v = ch.recv() => body  ... }
+    // Waits until one channel has data, receives from it, binds v, runs body.
+    if (match(TOKEN_SELECT)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_SELECT;
+        stmt->select_stmt.arm_count = 0;
+        expect(TOKEN_LBRACE, "Expected '{' after 'select'");
+        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF) && stmt->select_stmt.arm_count < 16) {
+            int a = stmt->select_stmt.arm_count;
+            // Arm: <name> = <channel>.recv() => <body>
+            expect(TOKEN_IDENT, "Expected variable name in select arm");
+            stmt->select_stmt.bind_names[a] = parser.previous;
+            expect(TOKEN_EQ, "Expected '=' in select arm");
+            // Parse the channel expression up to '.recv'. We accept `ch.recv()`
+            // and capture the channel (the object of the .recv method call).
+            Expr* recv_expr = expression();
+            Expr* chan = recv_expr;
+            if (recv_expr && recv_expr->type == EXPR_METHOD_CALL)
+                chan = recv_expr->method_call.object; // the channel itself
+            stmt->select_stmt.channels[a] = chan;
+            expect(TOKEN_FATARROW, "Expected '=>' after select arm channel");
+            stmt->select_stmt.bodies[a] = statement();
+            stmt->select_stmt.arm_count++;
+        }
+        expect(TOKEN_RBRACE, "Expected '}' after select block");
+        return stmt;
+    }
+
+    // Structured concurrency: parallel { ... }. Every `spawn` inside runs
+    // concurrently, and all spawned tasks are joined at the closing brace —
+    // no task can outlive the block.
+    if (match(TOKEN_PARALLEL)) {
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_PARALLEL;
+        stmt->block.timeout = NULL;
+        // Optional: parallel(timeout: <ms>) { ... }
+        if (match(TOKEN_LPAREN)) {
+            // Accept `timeout: expr` (the label is optional/ignored).
+            if (check(TOKEN_IDENT)) {
+                advance();
+                match(TOKEN_COLON);
+            }
+            stmt->block.timeout = expression();
+            expect(TOKEN_RPAREN, "Expected ')' after parallel timeout");
+        }
+        expect(TOKEN_LBRACE, "Expected '{' after 'parallel'");
+        stmt->block.stmts = malloc(sizeof(Stmt*) * 256);
+        stmt->block.count = 0;
+        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+            stmt->block.stmts[stmt->block.count++] = statement();
+        }
+        expect(TOKEN_RBRACE, "Expected '}' after parallel block");
+        return stmt;
+    }
     
     if (match(TOKEN_IF) || match(TOKEN_ELSEIF)) {
         Stmt* stmt = alloc_stmt();
@@ -2425,14 +2574,31 @@ Stmt* function() {
     } else {
         stmt->fn.return_type = NULL;
     }
-    
-    expect(TOKEN_LBRACE, "Expected '{' before function body");
+
+    // Expression-body function: `fn f(x: int) -> int => x * 2`.
+    // Desugars to a single-statement block that returns the expression.
+    if (match(TOKEN_FATARROW)) {
+        Stmt* ret = alloc_stmt();
+        ret->type = STMT_RETURN;
+        ret->ret.value = expression();
+        match(TOKEN_SEMI); // optional trailing semicolon
+
+        Stmt* body = alloc_stmt();
+        body->type = STMT_BLOCK;
+        body->block.count = 1;
+        body->block.stmts = malloc(sizeof(Stmt*));
+        body->block.stmts[0] = ret;
+        stmt->fn.body = body;
+        return stmt;
+    }
+
+    expect(TOKEN_LBRACE, "Expected '{' or '=>' before function body");
     Stmt* body = alloc_stmt();
     body->type = STMT_BLOCK;
     body->block.count = 0;
     int block_capacity = 1024;
     body->block.stmts = malloc(sizeof(Stmt*) * block_capacity);
-    
+
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
         if (body->block.count >= block_capacity) {
             block_capacity *= 2;
@@ -2440,18 +2606,18 @@ Stmt* function() {
         }
         body->block.stmts[body->block.count++] = statement();
     }
-    
+
     expect(TOKEN_RBRACE, "Expected '}' after function body");
-    
+
     // Mark last expression as implicit return if function has return type
     // Skip for main() — it auto-inserts return 0
     bool is_main = (stmt->fn.name.length == 4 && memcmp(stmt->fn.name.start, "main", 4) == 0);
     if (stmt->fn.return_type && !is_main) {
         mark_implicit_return(body);
     }
-    
+
     stmt->fn.body = body;
-    
+
     return stmt;
 }
 
@@ -3390,8 +3556,10 @@ Program* parse_program() {
             expect(TOKEN_RBRACE, "Expected '}' after after_each body");
             prog->stmts[prog->count++] = stmt;
         } else if (check(TOKEN_WHILE)) {
-            // T1.4.1: Control Flow Agent addition
-            prog->stmts[prog->count++] = parse_while_statement();
+            // Route top-level while through statement() so it uses the same
+            // optional-parens condition parsing and block body as while inside
+            // a function (parens are optional for both if and while).
+            prog->stmts[prog->count++] = statement();
         } else if (check(TOKEN_BREAK)) {
             // T1.4.2: Control Flow Agent addition
             prog->stmts[prog->count++] = parse_break_statement();
@@ -3466,22 +3634,8 @@ bool parser_had_error() {
 }
 
 // T1.4.1: While Loop AST Extension - Control Flow Agent addition
-static Stmt* parse_while_statement() {
-    advance(); // consume 'while' token
-    
-    Stmt* stmt = safe_malloc(sizeof(Stmt));
-    if (!stmt) return NULL;
-    
-    stmt->type = STMT_WHILE;
-    
-    expect(TOKEN_LPAREN, "Expected '(' after 'while'");
-    stmt->while_stmt.condition = expression();
-    expect(TOKEN_RPAREN, "Expected ')' after while condition");
-    
-    stmt->while_stmt.body = statement();
-    
-    return stmt;
-}
+// (parse_while_statement removed — top-level `while` now routes through
+// statement(), which parses the condition with optional parens like `if`.)
 
 // T1.4.2: Break/Continue Implementation - Control Flow Agent addition
 static Stmt* parse_break_statement() {

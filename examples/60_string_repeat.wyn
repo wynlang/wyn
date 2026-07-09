@@ -3,18 +3,18 @@
 
 fn main() -> int {
     println("ha" * 3);          // hahaha
-    println("=-" * 10);         // =-=-=-=-=-=-=-=-=-=-
+    println("=-" * 10);         // = - = - = - = - = - = - = - = - = - = -
 
     // Useful for formatting
-    var sep = "-" * 30;
-    println(sep);
-    println("  Report Title");
-    println(sep);
+    var sep = "-" * 30
+    println(sep)
+    println("  Report Title")
+    println(sep)
 
     // Works with variables
-    var star = "*";
+    var star = "*"
     for i in 1..6 {
-        println(star * i);
+        println(star * i)
     }
     // *
     // **
@@ -22,5 +22,5 @@ fn main() -> int {
     // ****
     // *****
 
-    return 0;
+    return 0
 }

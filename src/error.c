@@ -37,53 +37,39 @@ void report_error_with_suggestion(ErrorCode code, const char* filename, int line
     error->suggestion = suggestion ? strdup(suggestion) : NULL;
 }
 
-// Wynter the Wyvern — friendly tips on errors
-static const char* wynter_tips_type[] = {
-    "Wyn is strongly typed — that keeps your code safe at runtime.",
-    "Use .to_string() or .to_int() to convert between types.",
-    "Type annotations help: fn add(a: int, b: int) -> int",
-    "var x: int = 5  — explicit types catch bugs early.",
-    NULL
-};
-static const char* wynter_tips_syntax[] = {
-    "Wyn doesn't need semicolons — just remove it!",
-    "Blocks use { } and conditions don't need parentheses.",
-    "Check for matching braces — every { needs a }.",
-    "Strings use double quotes. Interpolation: \"${expr}\"",
-    NULL
-};
-static const char* wynter_tips_undefined[] = {
-    "Functions must be defined before they're called.",
-    "Did you forget an import? Try: import \"module_name\"",
-    "Check spelling — Wyn is case-sensitive.",
-    "Stdlib functions use Module.method() style: Math.sqrt(x)",
-    NULL
-};
-static const char* wynter_tips_general[] = {
-    "Run 'wyn check' to type-check without compiling.",
-    "Run 'wyn doctor' to verify your setup.",
-    "Need help? Check the docs: wyn doc",
-    "Use 'wyn fmt' to auto-format your code.",
-    NULL
-};
+// Wynter the Wyvern — hints derived from the ACTUAL error message.
+// Returns a hint only when we can say something true about this specific
+// error; returns NULL otherwise (better silent than confidently wrong).
+static const char* wynter_hint_for_message(const char* msg) {
+    if (!msg) return NULL;
 
-static int wynter_tip_counter = 0;
+    // What was expected tells us what's likely missing/wrong.
+    if (strstr(msg, "'{'"))
+        return "Blocks open with { — add one to start the body.";
+    if (strstr(msg, "'}'"))
+        return "Every { needs a matching } — check for an unclosed block.";
+    if (strstr(msg, "')'") || strstr(msg, "'('"))
+        return "Check your parentheses — every ( needs a matching ).";
+    if (strstr(msg, "']'") || strstr(msg, "'['"))
+        return "Check your brackets — every [ needs a matching ].";
+    if (strstr(msg, "parameter name") || strstr(msg, "type name") || strstr(msg, "type after"))
+        return "Parameters need a type: fn add(a: int, b: int) -> int";
+    if (strstr(msg, "Undefined variable"))
+        return "Declare it first (x = 0), or check the spelling.";
+    if (strstr(msg, "Undefined function") || strstr(msg, "Unknown function"))
+        return "Define the function before calling it, or check the spelling.";
+    if (strstr(msg, "Unknown method"))
+        return "That method doesn't exist for this type — check the docs with 'wyn doc'.";
+    if (strstr(msg, "Cannot assign to constant"))
+        return "Use 'var' instead of 'const' if you need to reassign.";
+    if (strstr(msg, "Type mismatch") || strstr(msg, "incompatible"))
+        return "Convert with .to_string() / .to_int(), or fix the annotation.";
+    if (strstr(msg, "may not return a value") || strstr(msg, "return type"))
+        return "Make sure every path returns, and the value matches the -> type.";
+    if (strstr(msg, "semicolon") || strstr(msg, "';'"))
+        return "Wyn doesn't use semicolons — just remove it.";
 
-static const char* wynter_tip_for(ErrorCode code) {
-    const char** tips;
-    if (code >= 3000 && code < 4000) {
-        if (code == ERR_UNDEFINED_VARIABLE || code == ERR_UNDEFINED_FUNCTION)
-            tips = wynter_tips_undefined;
-        else
-            tips = wynter_tips_type;
-    } else if (code >= 2000 && code < 3000) {
-        tips = wynter_tips_syntax;
-    } else {
-        tips = wynter_tips_general;
-    }
-    int count = 0;
-    while (tips[count]) count++;
-    return tips[wynter_tip_counter++ % count];
+    return NULL; // Nothing specific to say — stay quiet.
 }
 
 // Source line cache — read file once, reuse for all errors
@@ -537,7 +523,10 @@ void show_error_context(const char* filename, int line, int column, const char* 
     if (suggestion) {
         printf("help: %s\n", suggestion);
     }
-    printf("  \033[36m🐉 Wynter:\033[0m %s\n", wynter_tip_for(ERR_UNEXPECTED_TOKEN));
+    const char* hint = wynter_hint_for_message(message);
+    if (hint) {
+        printf("  \033[36m🐉 Wynter:\033[0m %s\n", hint);
+    }
     printf("\n");
     
     // Free lines

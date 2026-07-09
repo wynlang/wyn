@@ -1,30 +1,30 @@
 // TDD Test for array.reduce() - functional programming
 fn add(acc: int, x: int) -> int {
-    return acc + x;
+    return acc + x
 }
 
 fn multiply(acc: int, x: int) -> int {
-    return acc * x;
+    return acc * x
 }
 
 fn main() -> int {
-    var numbers = [1, 2, 3, 4, 5];
-    
+    var numbers = [1, 2, 3, 4, 5]
+
     // Test reduce with add (sum)
-    var sum = numbers.reduce(add, 0);
-    print("Sum:");
+    var sum = numbers.reduce(add, 0)
+    print("Sum:")
     print(sum);  // Should be 15
-    
+
     // Test reduce with multiply (product)
-    var product = numbers.reduce(multiply, 1);
-    print("Product:");
+    var product = numbers.reduce(multiply, 1)
+    print("Product:")
     print(product);  // Should be 120
-    
+
     if sum == 15 {
-        print("✓ array.reduce() works!");
-        return 0;
+        print("✓ array.reduce() works!")
+        return 0
     } else {
-        print("✗ array.reduce() failed");
-        return 1;
+        print("✗ array.reduce() failed")
+        return 1
     }
 }

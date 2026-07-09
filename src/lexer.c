@@ -21,6 +21,10 @@ void save_lexer_state() {
 void restore_lexer_state() {
     if (lexer_stack_depth > 0) lexer = lexer_stack[--lexer_stack_depth];
 }
+// Discard the most recent saved snapshot without rewinding.
+void discard_lexer_state() {
+    if (lexer_stack_depth > 0) lexer_stack_depth--;
+}
 
 void init_lexer(const char* source) {
     lexer.start = source;
@@ -185,15 +189,19 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 6 && memcmp(start, "object", 6) == 0) return TOKEN_OBJECT;
             // Removed TOKEN_OK - let ok be a regular identifier
             break;
-        case 'p': if (length == 3 && memcmp(start, "pub", 3) == 0) return TOKEN_PUB; break;
+        case 'p':
+            if (length == 3 && memcmp(start, "pub", 3) == 0) return TOKEN_PUB;
+            if (length == 8 && memcmp(start, "parallel", 8) == 0) return TOKEN_PARALLEL;
+            break;
         case 'r': 
             if (length == 6 && memcmp(start, "return", 6) == 0) return TOKEN_RETURN;
             if (length == 4 && memcmp(start, "root", 4) == 0) return TOKEN_ROOT;
             break;
-        case 's': 
+        case 's':
             if (length == 6 && memcmp(start, "struct", 6) == 0) return TOKEN_STRUCT;
             if (length == 5 && memcmp(start, "spawn", 5) == 0) return TOKEN_SPAWN;
             if (length == 4 && memcmp(start, "self", 4) == 0) return TOKEN_SELF;
+            if (length == 6 && memcmp(start, "select", 6) == 0) return TOKEN_SELECT;
             break;
         case 'S':
             if (length == 4 && memcmp(start, "Some", 4) == 0) return TOKEN_SOME;

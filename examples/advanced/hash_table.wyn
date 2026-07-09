@@ -21,17 +21,17 @@ fn hash(key: string, capacity: int) -> int {
 }
 
 fn create_table(capacity: int) -> HashTable {
-    let table = HashTable{
+    let table = HashTable {
         entries: [],
         size: 0,
         capacity: capacity
     }
-    
+
     for i in 0..capacity {
-        let entry = Entry{key: "", value: 0, occupied: false}
+        let entry = Entry { key: "", value: 0, occupied: false }
         table.entries.push(entry)
     }
-    
+
     return table
 }
 
@@ -39,10 +39,10 @@ fn insert(table: &HashTable, key: string, value: int) -> bool {
     if table.size >= table.capacity * 3 / 4 {
         return false  # Table too full
     }
-    
+
     let index = hash(key, table.capacity)
     let original_index = index
-    
+
     # Linear probing
     while table.entries[index].occupied {
         if table.entries[index].key == key {
@@ -54,7 +54,7 @@ fn insert(table: &HashTable, key: string, value: int) -> bool {
             return false  # Table full
         }
     }
-    
+
     table.entries[index].key = key
     table.entries[index].value = value
     table.entries[index].occupied = true
@@ -65,7 +65,7 @@ fn insert(table: &HashTable, key: string, value: int) -> bool {
 fn get(table: &HashTable, key: string) -> int {
     let index = hash(key, table.capacity)
     let original_index = index
-    
+
     while table.entries[index].occupied {
         if table.entries[index].key == key {
             return table.entries[index].value
@@ -75,19 +75,19 @@ fn get(table: &HashTable, key: string) -> int {
             break
         }
     }
-    
+
     return -1  # Not found
 }
 
 fn remove(table: &HashTable, key: string) -> bool {
     let index = hash(key, table.capacity)
     let original_index = index
-    
+
     while table.entries[index].occupied {
         if table.entries[index].key == key {
             table.entries[index].occupied = false
             table.size = table.size - 1
-            
+
             # Rehash following entries
             let next_index = (index + 1) % table.capacity
             while table.entries[next_index].occupied {
@@ -98,7 +98,7 @@ fn remove(table: &HashTable, key: string) -> bool {
                 insert(table, rehash_key, rehash_value)
                 next_index = (next_index + 1) % table.capacity
             }
-            
+
             return true
         }
         index = (index + 1) % table.capacity
@@ -106,7 +106,7 @@ fn remove(table: &HashTable, key: string) -> bool {
             break
         }
     }
-    
+
     return false
 }
 
@@ -121,17 +121,17 @@ fn print_table(table: &HashTable) {
 
 fn main() {
     let table = create_table(7)
-    
+
     insert(&table, "apple", 100)
     insert(&table, "banana", 200)
     insert(&table, "cherry", 300)
     insert(&table, "date", 400)
-    
+
     print_table(&table)
-    
+
     print("Get apple:", get(&table, "apple"))
     print("Get grape:", get(&table, "grape"))
-    
+
     remove(&table, "banana")
     print("After removing banana:")
     print_table(&table)

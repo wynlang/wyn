@@ -2,30 +2,30 @@
 // Demonstrates dependency management
 
 fn main() {
-    print("=== Package Management ===");
-    print("");
-    
-    print("1. Add dependency to wyn.toml:");
-    print("   [dependencies]");
-    print("   mylib = \"https://github.com/user/mylib\"");
-    print("");
-    
-    print("2. Install packages:");
-    print("   wyn install");
-    print("");
-    
-    print("3. Packages installed to:");
-    print("   ~/.wyn/packages/");
-    print("");
-    
-    print("4. List installed packages:");
-    print("   wyn pkg list");
-    print("");
-    
-    print("Supported sources:");
-    print("  - Git URLs: https://github.com/user/repo");
-    print("  - Local paths: /path/to/package");
-    print("  - Future: Package registry");
-    
-    return 0;
+    print("=== Package Management ===")
+    print("")
+
+    print("1. Add dependency to wyn.toml:")
+    print("   [dependencies]")
+    print("   mylib = \"https://github.com/user/mylib\"")
+    print("")
+
+    print("2. Install packages:")
+    print("   wyn install")
+    print("")
+
+    print("3. Packages installed to:")
+    print("   ~/.wyn/packages/")
+    print("")
+
+    print("4. List installed packages:")
+    print("   wyn pkg list")
+    print("")
+
+    print("Supported sources:")
+    print("  - Git URLs: https://github.com/user/repo")
+    print("  - Local paths: /path/to/package")
+    print("  - Future: Package registry")
+
+    return 0
 }

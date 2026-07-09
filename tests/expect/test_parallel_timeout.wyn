@@ -1,0 +1,14 @@
+// EXPECT: 63
+// parallel(timeout: ms) joins each task with a deadline: fast tasks return
+// their values; the block never blocks past the timeout. Here both finish
+// well within budget.
+fn quick(n: int) -> int => n * 3
+
+fn main() -> int {
+    parallel(timeout: 2000) {
+        a = spawn quick(7)
+        b = spawn quick(14)
+    }
+    println((a + b).to_string())
+    return 0
+}

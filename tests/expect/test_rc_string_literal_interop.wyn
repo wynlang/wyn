@@ -1,0 +1,26 @@
+// EXPECT: hello world
+// EXPECT: len=11
+// EXPECT: hello world!!
+// EXPECT: literal-first heap-second
+
+// Exercises wyn_rc_is_heap on both a string literal (not heap RC) and a
+// heap-allocated concat result, through the shared concat/length path.
+// Guards the dual-sentinel magic/magic2 layout: if the three hand-mirrored
+// RC headers ever drift, concat length caching or heap detection corrupts here.
+fn main() -> int {
+    var a = "hello"        // literal — must NOT be treated as heap RC
+    var b = "world"        // literal
+    var joined = a + " " + b   // heap RC result routed through concat
+    println(joined)
+    println("len=${joined.len()}")
+
+    // Append to the heap string again (grow-in-place / realloc path uses length cache)
+    var more = joined + "!!"
+    println(more)
+
+    // Mix literal and heap operands both directions
+    var lit = "literal-first "
+    var mixed = lit + "heap-second"
+    println(mixed)
+    return 0
+}

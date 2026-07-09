@@ -1,10 +1,10 @@
 fn main() -> int {
     var arr = [5, 2, 8, 1, 9]
-    
+
     print(arr_contains(arr, 5, 8))
     print(arr_contains(arr, 5, 99))
     print(arr_find(arr, 5, 8))
     print(arr_find(arr, 5, 99))
-    
+
     return 0
 }

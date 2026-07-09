@@ -2,35 +2,35 @@
 // Demonstrates project configuration
 
 fn main() {
-    print("=== wyn.toml Example ===");
-    print("");
-    
-    print("Create a new project:");
-    print("  wyn init my-project");
-    print("");
-    
-    print("Example wyn.toml:");
-    print("[project]");
-    print("name = \"my-app\"");
-    print("version = \"1.0.0\"");
-    print("entry = \"main.wyn\"");
-    print("author = \"Your Name\"");
-    print("");
-    
-    print("[dependencies]");
-    print("# Git URL");
-    print("http-lib = \"https://github.com/user/http-lib\"");
-    print("");
-    print("# Local path");
-    print("utils = \"../shared/utils\"");
-    print("");
-    
-    print("Install dependencies:");
-    print("  wyn install");
-    print("");
-    
-    print("List installed packages:");
-    print("  wyn pkg list");
-    
-    return 0;
+    print("=== wyn.toml Example ===")
+    print("")
+
+    print("Create a new project:")
+    print("  wyn init my-project")
+    print("")
+
+    print("Example wyn.toml:")
+    print("[project]")
+    print("name = \"my-app\"")
+    print("version = \"1.0.0\"")
+    print("entry = \"main.wyn\"")
+    print("author = \"Your Name\"")
+    print("")
+
+    print("[dependencies]")
+    print("# Git URL")
+    print("http-lib = \"https://github.com/user/http-lib\"")
+    print("")
+    print("# Local path")
+    print("utils = \"../shared/utils\"")
+    print("")
+
+    print("Install dependencies:")
+    print("  wyn install")
+    print("")
+
+    print("List installed packages:")
+    print("  wyn pkg list")
+
+    return 0
 }

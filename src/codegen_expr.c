@@ -85,8 +85,7 @@ void codegen_expr(Expr* expr) {
             
             // Check if this is a module.function call and resolve alias
             char temp_ident[512];
-            memcpy(temp_ident, expr->token.start, expr->token.length);
-            temp_ident[expr->token.length] = '\0';
+            token_to_cstr(temp_ident, sizeof temp_ident, expr->token);
             
             // If we're inside a module function, check if this identifier needs module prefix
             if (current_module_prefix && !strchr(temp_ident, ':') && !strchr(temp_ident, '.')) {
@@ -191,9 +190,13 @@ void codegen_expr(Expr* expr) {
                     break;
                 }
                 
-                // Special handling for Time:: module - map to time_ prefix
+                // Special handling for Time:: module - map to Time_ prefix.
+                // The runtime exposes capitalized Time_* functions with the
+                // arities the checker registers (Time_format(ts), Time_sleep(ms),
+                // Time_now()); the lowercase time_* set is incomplete/mismatched
+                // (e.g. time_format takes 2 args, time_sleep doesn't exist).
                 if (strcmp(temp_ident, "Time") == 0) {
-                    snprintf(temp_ident, sizeof(temp_ident), "time_%s", function_part);
+                    snprintf(temp_ident, sizeof(temp_ident), "Time_%s", function_part);
                     strcpy(ident + offset, temp_ident);
                     emit("%s", ident);
                     free(ident);
@@ -829,7 +832,11 @@ void codegen_expr(Expr* expr) {
                         !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
                         _print_temp = true;
                     }
-                    if (_print_temp) {
+                    // Self-release the fresh temp ONLY when no statement-level
+                    // wrapper already owns it (temp_id >= 0 means codegen_stmt
+                    // hoisted it into __saN and will release it — releasing here
+                    // too would double-free).
+                    if (_print_temp && parg->_codegen_temp_id < 0) {
                         emit("({ const char* __ps = ");
                         codegen_expr(parg);
                         emit("; print(__ps); wyn_rc_release(__ps); })");
@@ -959,10 +966,18 @@ void codegen_expr(Expr* expr) {
                     parg->type == EXPR_METHOD_CALL || parg->type == EXPR_INDEX ||
                     parg->type == EXPR_BINARY || parg->type == EXPR_UNARY ||
                     parg->type == EXPR_FIELD_ACCESS)) {
-                    // Wrap in to_string for auto-conversion
-                    emit("({ const char* __ps = to_string(");
-                    codegen_expr(parg);
-                    emit("); println(__ps); wyn_rc_release(__ps); })");
+                    // Wrap in to_string for auto-conversion. Skip the self-release
+                    // when a statement-level wrapper already owns this temp (see note
+                    // at the print() site) to avoid a double free.
+                    if (parg->_codegen_temp_id < 0) {
+                        emit("({ const char* __ps = to_string(");
+                        codegen_expr(parg);
+                        emit("); println(__ps); wyn_rc_release(__ps); })");
+                    } else {
+                        emit("println(to_string(");
+                        codegen_expr(parg);
+                        emit("))");
+                    }
                     codegen_skip_strdup = prev_skip;
                     break;
                 }
@@ -981,7 +996,9 @@ void codegen_expr(Expr* expr) {
                     !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
                     _println_temp = true;
                 }
-                if (_println_temp) {
+                // Skip the self-release when a statement-level wrapper already owns
+                // this temp (see note at the print() site) to avoid a double free.
+                if (_println_temp && parg->_codegen_temp_id < 0) {
                     emit("({ const char* __ps = ");
                     codegen_expr(parg);
                     emit("; println(__ps); wyn_rc_release(__ps); })");
@@ -1434,6 +1451,33 @@ void codegen_expr(Expr* expr) {
             break;
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
+
+            // Channel methods: ch.send(v) / ch.recv() / ch.close() lower to the
+            // Task_* runtime. The channel value is a long long handle.
+            if (expr->method_call.object->expr_type &&
+                expr->method_call.object->expr_type->kind == TYPE_CHANNEL) {
+                if (method.length == 4 && memcmp(method.start, "send", 4) == 0) {
+                    emit("Task_send(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    if (expr->method_call.arg_count > 0) codegen_expr(expr->method_call.args[0]);
+                    else emit("0");
+                    emit(")");
+                    break;
+                }
+                if (method.length == 4 && memcmp(method.start, "recv", 4) == 0) {
+                    emit("Task_recv(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                    break;
+                }
+                if (method.length == 5 && memcmp(method.start, "close", 5) == 0) {
+                    emit("Task_close(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                    break;
+                }
+            }
 
             // Release intermediate string temps from chained method calls
             // e.g. "hello".upper().trim() — upper() result leaked without this
@@ -2968,8 +3012,7 @@ void codegen_expr(Expr* expr) {
             // RC: release old string value AFTER evaluating new value
             // (old value might be referenced in the RHS expression)
             char target_name[512];
-            memcpy(target_name, expr->assign.name.start, expr->assign.name.length);
-            target_name[expr->assign.name.length] = '\0';
+            token_to_cstr(target_name, sizeof target_name, expr->assign.name);
             bool _rc_string_assign = false;
             {
                 extern int is_string_var(const char*);
@@ -3044,8 +3087,6 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_STRUCT_INIT: {
-            // Check if type needs ARC management
-            bool needs_arc = false;
             Token type_name = expr->struct_init.type_name;
             
             // Use monomorphic name if available (for generic structs)
@@ -3079,11 +3120,6 @@ void codegen_expr(Expr* expr) {
                     actual_type_name = type_name.start;
                     actual_type_name_len = type_name.length;
                 }
-            }
-            
-            // Simple heuristic: types starting with uppercase likely need ARC
-            if (actual_type_name_len > 0 && actual_type_name[0] >= 'A' && actual_type_name[0] <= 'Z') {
-                needs_arc = true;
             }
             
             // Simple struct initialization — stack allocated
@@ -3169,12 +3205,18 @@ void codegen_expr(Expr* expr) {
             int type_name_len = 3;
             int is_data_enum = 0;
             
-            // Check if match value is a data-carrying enum variable
+            // Check if match value is an enum variable. Only mark it a data
+            // enum if it actually carries payloads — a plain (dataless) enum is
+            // a bare C enum and must be matched with `==`, not `.tag ==`.
             if (expr->match.value->type == EXPR_IDENT) {
                 char _mv[128]; snprintf(_mv, 128, "%.*s", expr->match.value->token.length, expr->match.value->token.start);
                 extern const char* get_enum_var_type(const char*);
                 const char* _et = get_enum_var_type(_mv);
-                if (_et) { type_name = _et; type_name_len = strlen(_et); is_data_enum = 1; }
+                if (_et) {
+                    type_name = _et; type_name_len = strlen(_et);
+                    extern int is_data_enum_type(const char*);
+                    if (is_data_enum_type(_et)) is_data_enum = 1;
+                }
             }
             
             // Also check match arms — if any arm uses Shape.Variant pattern, detect data enum
@@ -3219,6 +3261,12 @@ void codegen_expr(Expr* expr) {
                 } else if (match_type && match_type->kind == TYPE_STRING) {
                     type_name = "const char*";
                     type_name_len = 12;
+                } else if (match_type && match_type->kind == TYPE_STRUCT &&
+                           match_type->struct_type.name.length > 0) {
+                    // Matching a struct value: declare __match_val with the
+                    // struct's C type, not the default `int`.
+                    type_name = match_type->struct_type.name.start;
+                    type_name_len = match_type->struct_type.name.length;
                 }
             }
             // Check bare identifiers against known enum variants
@@ -3356,12 +3404,29 @@ void codegen_expr(Expr* expr) {
                             }
                         }
                     } else {
-                        // Variable binding - always matches, bind variable
-                        emit("{ %.*s %.*s = __match_val_%d; ",
-                             type_name_len, type_name,
-                             pat->ident.name.length,
-                             pat->ident.name.start,
-                             match_id);
+                        // Variable binding. Binds the whole matched value, so it
+                        // always matches — unless there's a guard, in which case
+                        // the binding must be visible to the guard. Emit the guard
+                        // as a statement-expression that binds the name first, so
+                        // the arm stays a proper `if`/`else if` link in the chain.
+                        if (guard_expr) {
+                            emit("if (({ %.*s %.*s = __match_val_%d; (",
+                                 type_name_len, type_name,
+                                 pat->ident.name.length, pat->ident.name.start,
+                                 match_id);
+                            codegen_expr(guard_expr);
+                            emit("); })) { %.*s %.*s = __match_val_%d; ",
+                                 type_name_len, type_name,
+                                 pat->ident.name.length, pat->ident.name.start,
+                                 match_id);
+                            guard_expr = NULL; // consumed
+                        } else {
+                            emit("{ %.*s %.*s = __match_val_%d; ",
+                                 type_name_len, type_name,
+                                 pat->ident.name.length,
+                                 pat->ident.name.start,
+                                 match_id);
+                        }
                     }
                 } else if (pat->type == PATTERN_OPTION && !pat->option.is_some) {
                     // Simple enum variant: Color.Red or Shape.Point
@@ -3499,11 +3564,89 @@ void codegen_expr(Expr* expr) {
                         }
                     }
                     } // close legacy else
+                } else if (pat->type == PATTERN_RANGE) {
+                    // Range pattern: 0..10 (exclusive) or 0..=10 (inclusive).
+                    emit("if (__match_val_%d >= ", match_id);
+                    codegen_expr(pat->range.start);
+                    emit(" && __match_val_%d %s ", match_id, pat->range.inclusive ? "<=" : "<");
+                    codegen_expr(pat->range.end);
+                    emit(") { ");
+                } else if (pat->type == PATTERN_OR) {
+                    // Or pattern: 1 | 2 | 3. Matches if the value equals any
+                    // sub-pattern's literal.
+                    bool is_string_match = (match_type && match_type->kind == TYPE_STRING);
+                    emit("if (");
+                    for (int oi = 0; oi < pat->or_pat.pattern_count; oi++) {
+                        Pattern* sub = pat->or_pat.patterns[oi];
+                        if (oi > 0) emit(" || ");
+                        if (sub->type == PATTERN_LITERAL) {
+                            if (is_string_match || sub->literal.value.start[0] == '"') {
+                                emit("strcmp(__match_val_%d, %.*s) == 0",
+                                     match_id, sub->literal.value.length, sub->literal.value.start);
+                            } else {
+                                emit("__match_val_%d == %.*s",
+                                     match_id, sub->literal.value.length, sub->literal.value.start);
+                            }
+                        } else if (sub->type == PATTERN_RANGE) {
+                            emit("(__match_val_%d >= ", match_id);
+                            codegen_expr(sub->range.start);
+                            emit(" && __match_val_%d %s ", match_id, sub->range.inclusive ? "<=" : "<");
+                            codegen_expr(sub->range.end);
+                            emit(")");
+                        } else {
+                            // Unknown sub-pattern: be conservative, never match it.
+                            emit("0");
+                        }
+                    }
+                    emit(") { ");
+                } else if (pat->type == PATTERN_STRUCT) {
+                    // Struct destructuring: Point { x, y } => ...
+                    // The matched value is already this struct type, so the
+                    // pattern always matches structurally; bind each named field
+                    // to the corresponding member of __match_val. An optional
+                    // guard gates the arm.
+                    // A struct pattern always matches structurally (the value is
+                    // already this struct type). When there's a guard, gate the
+                    // arm on it via a statement-expression that binds the fields
+                    // first so the guard can reference them; otherwise use
+                    // `if (1)` so a following `else` arm has an `if` to attach to.
+                    // The per-field binding string is emitted twice (once for the
+                    // guard test, once inside the taken branch), so build it once.
+                    char bind_buf[1024]; bind_buf[0] = '\0'; int bind_off = 0;
+                    for (int fi = 0; fi < pat->struct_pat.field_count; fi++) {
+                        Token fname = pat->struct_pat.field_names[fi];
+                        const char* fctype = "long long";
+                        if (match_type && match_type->kind == TYPE_STRUCT) {
+                            for (int sfi = 0; sfi < match_type->struct_type.field_count; sfi++) {
+                                Token sf = match_type->struct_type.field_names[sfi];
+                                if (sf.length == fname.length &&
+                                    memcmp(sf.start, fname.start, fname.length) == 0) {
+                                    const char* m = codegen_c_type_from_type(
+                                        match_type->struct_type.field_types[sfi]);
+                                    if (m) fctype = m;
+                                    break;
+                                }
+                            }
+                        }
+                        bind_off += snprintf(bind_buf + bind_off, sizeof(bind_buf) - bind_off,
+                             "%s %.*s = __match_val_%d.%.*s; ",
+                             fctype, fname.length, fname.start,
+                             match_id, fname.length, fname.start);
+                        if (bind_off >= (int)sizeof(bind_buf)) { bind_off = sizeof(bind_buf) - 1; break; }
+                    }
+                    if (guard_expr) {
+                        emit("if (({ %s(", bind_buf);
+                        codegen_expr(guard_expr);
+                        emit("); })) { %s", bind_buf);
+                        guard_expr = NULL; // consumed
+                    } else {
+                        emit("if (1) { %s", bind_buf);
+                    }
                 } else {
                     // Unsupported pattern - treat as wildcard
                     emit("{ ");
                 }
-                
+
                 // Generate result
                 emit("__match_result_%d = ", match_id);
                 codegen_expr(expr->match.arms[i].result);
@@ -3657,12 +3800,6 @@ void codegen_expr(Expr* expr) {
             break;
         case EXPR_STRING_INTERP: {
             // String interpolation: "Hello ${name}" -> sprintf format
-            // Count expression parts for temp variable allocation
-            int _interp_expr_count = 0;
-            for (int i = 0; i < expr->string_interp.count; i++) {
-                if (expr->string_interp.expressions[i]) _interp_expr_count++;
-            }
-            
             emit("({ ");
             // Capture temporaries
             int _ti = 0;
@@ -3681,31 +3818,39 @@ void codegen_expr(Expr* expr) {
                     _ti++;
                 }
             }
-            
-            emit("char __buf[512]; snprintf(__buf, 512, \"");
-            for (int i = 0; i < expr->string_interp.count; i++) {
-                if (expr->string_interp.parts[i]) {
-                    const char* part = expr->string_interp.parts[i];
-                    while (*part) {
-                        if (*part == '%') emit("%%%%");
-                        else if (*part == '\n') emit("\\n");
-                        else if (*part == '\\' && *(part+1) == '"') { emit("\\\""); part++; }
-                        else if (*part == '"') emit("\\\"");
-                        else emit("%c", *part);
-                        part++;
+
+            // Size-probe then heap-allocate so interpolation is NOT truncated at
+            // a fixed buffer (was char __buf[512]). __buf is RC-allocated via
+            // wyn_str_alloc so the existing release / skip-strdup ownership holds.
+            // The format string + args are emitted twice: once for the probe
+            // (snprintf into NULL,0) and once for the real write.
+            for (int pass = 0; pass < 2; pass++) {
+                if (pass == 0) emit("int __n = snprintf(NULL, 0, \"");
+                else           emit("char* __buf = wyn_str_alloc(__n + 1); snprintf(__buf, __n + 1, \"");
+                for (int i = 0; i < expr->string_interp.count; i++) {
+                    if (expr->string_interp.parts[i]) {
+                        const char* part = expr->string_interp.parts[i];
+                        while (*part) {
+                            if (*part == '%') emit("%%%%");
+                            else if (*part == '\n') emit("\\n");
+                            else if (*part == '\\' && *(part+1) == '"') { emit("\\\""); part++; }
+                            else if (*part == '"') emit("\\\"");
+                            else emit("%c", *part);
+                            part++;
+                        }
+                    } else {
+                        emit("%%s");
                     }
-                } else {
-                    emit("%%s");
                 }
-            }
-            emit("\"");
-            _ti = 0;
-            for (int i = 0; i < expr->string_interp.count; i++) {
-                if (expr->string_interp.expressions[i]) {
-                    emit(", __si%d", _ti++);
+                emit("\"");
+                _ti = 0;
+                for (int i = 0; i < expr->string_interp.count; i++) {
+                    if (expr->string_interp.expressions[i]) {
+                        emit(", __si%d", _ti++);
+                    }
                 }
+                emit("); ");
             }
-            emit("); ");
             // Release temporaries (only non-string expressions that created new strings)
             _ti = 0;
             for (int i = 0; i < expr->string_interp.count; i++) {
@@ -3722,7 +3867,10 @@ void codegen_expr(Expr* expr) {
                     _ti++;
                 }
             }
-            emit("%s; })", codegen_skip_strdup ? "__buf" : "wyn_strdup(__buf)");
+            // __buf is already an owned heap RC string (wyn_str_alloc), so both
+            // the skip and non-skip cases just yield it — no extra wyn_strdup copy
+            // (which would leak __buf and double-allocate).
+            emit("__buf; })");
             break;
         }
         case EXPR_RANGE:
@@ -3769,6 +3917,15 @@ void codegen_expr(Expr* expr) {
                 codegen_expr(expr->list_comp.body);
                 emit(")); } __lc_%d; })", id);
             }
+            break;
+        }
+        case EXPR_CHANNEL: {
+            // channel() / channel(cap) -> Task_channel(cap). Default cap = 0
+            // (unbuffered/rendezvous-ish; runtime treats <=0 sensibly).
+            emit("Task_channel(");
+            if (expr->channel.capacity) codegen_expr(expr->channel.capacity);
+            else emit("0");
+            emit(")");
             break;
         }
         case EXPR_SPAWN: {

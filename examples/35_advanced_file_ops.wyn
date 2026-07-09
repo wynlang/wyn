@@ -2,90 +2,90 @@
 // Demonstrates: modified_time, create_dir_all, remove_dir_all
 
 fn main() -> int {
-    print("=== ADVANCED FILE OPERATIONS ===");
-    print("");
-    
+    print("=== ADVANCED FILE OPERATIONS ===")
+    print("")
+
     // Test 1: Create nested directories
-    print("1. Creating nested directories...");
-    var test_dir = "test_output/level1/level2/level3";
-    var created = File::create_dir_all(test_dir);
+    print("1. Creating nested directories...")
+    var test_dir = "test_output/level1/level2/level3"
+    var created = File::create_dir_all(test_dir)
     if created {
-        print("   ✓ Created nested directory structure");
+        print("   ✓ Created nested directory structure")
     } else {
-        print("   ✗ Failed to create directories");
+        print("   ✗ Failed to create directories")
     }
-    print("");
-    
+    print("")
+
     // Test 2: Create a test file
-    print("2. Creating test file...");
-    var test_file = "test_output/level1/test.txt";
-    var content = "Hello from Wyn!\nThis is a test file.\n";
-    File::write(test_file, content);
-    print("   ✓ Created test file");
-    print("");
-    
+    print("2. Creating test file...")
+    var test_file = "test_output/level1/test.txt"
+    var content = "Hello from Wyn!\nThis is a test file.\n"
+    File::write(test_file, content)
+    print("   ✓ Created test file")
+    print("")
+
     // Test 3: Get file modification time
-    print("3. Getting file modification time...");
-    var mtime = File::modified_time(test_file);
+    print("3. Getting file modification time...")
+    var mtime = File::modified_time(test_file)
     if mtime > 0 {
-        print("   ✓ File was modified recently");
-        print("   (Unix timestamp available)");
+        print("   ✓ File was modified recently")
+        print("   (Unix timestamp available)")
     } else {
-        print("   ✗ Failed to get modification time");
+        print("   ✗ Failed to get modification time")
     }
-    print("");
-    
+    print("")
+
     // Test 4: Check what we created
-    print("4. Verifying created files...");
+    print("4. Verifying created files...")
     if File::is_dir("test_output") {
-        print("   ✓ test_output/ exists");
+        print("   ✓ test_output/ exists")
     }
     if File::is_dir("test_output/level1") {
-        print("   ✓ test_output/level1/ exists");
+        print("   ✓ test_output/level1/ exists")
     }
     if File::is_dir("test_output/level1/level2") {
-        print("   ✓ test_output/level1/level2/ exists");
+        print("   ✓ test_output/level1/level2/ exists")
     }
     if File::is_file(test_file) {
-        print("   ✓ test.txt exists");
+        print("   ✓ test.txt exists")
     }
-    print("");
-    
+    print("")
+
     // Test 5: Remove everything recursively
-    print("5. Cleaning up (recursive delete)...");
-    var removed = File::remove_dir_all("test_output");
+    print("5. Cleaning up (recursive delete)...")
+    var removed = File::remove_dir_all("test_output")
     if removed {
-        print("   ✓ Removed test_output/ and all contents");
+        print("   ✓ Removed test_output/ and all contents")
     } else {
-        print("   ✗ Failed to remove directory");
+        print("   ✗ Failed to remove directory")
     }
-    print("");
-    
+    print("")
+
     // Test 6: Verify cleanup
-    print("6. Verifying cleanup...");
+    print("6. Verifying cleanup...")
     if File::is_dir("test_output") {
-        print("   ✗ test_output/ still exists");
+        print("   ✗ test_output/ still exists")
     } else {
-        print("   ✓ test_output/ successfully removed");
+        print("   ✓ test_output/ successfully removed")
     }
-    print("");
-    
-    print("=== USAGE EXAMPLES ===");
-    print("Get modification time:");
-    print("  var mtime = File::modified_time(\"file.txt\");");
-    print("");
-    print("Create nested directories:");
-    print("  File::create_dir_all(\"path/to/deep/dir\");");
-    print("");
-    print("Remove directory tree:");
-    print("  File::remove_dir_all(\"path/to/dir\");");
-    print("");
-    
-    print("Useful for:");
-    print("  - Build tools (create output directories)");
-    print("  - File synchronization (check modification times)");
-    print("  - Cleanup operations (remove temp directories)");
-    print("  - Project scaffolding (create directory structures)");
-    
-    return 0;
+    print("")
+
+    print("=== USAGE EXAMPLES ===")
+    print("Get modification time:")
+    print("  var mtime = File::modified_time(\"file.txt\");")
+    print("")
+    print("Create nested directories:")
+    print("  File::create_dir_all(\"path/to/deep/dir\");")
+    print("")
+    print("Remove directory tree:")
+    print("  File::remove_dir_all(\"path/to/dir\");")
+    print("")
+
+    print("Useful for:")
+    print("  - Build tools (create output directories)")
+    print("  - File synchronization (check modification times)")
+    print("  - Cleanup operations (remove temp directories)")
+    print("  - Project scaffolding (create directory structures)")
+
+    return 0
 }

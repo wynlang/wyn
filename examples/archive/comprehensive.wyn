@@ -18,43 +18,43 @@ fn sum_array(arr: int, size: int) -> int {
 
 fn main() -> int {
     print(42)
-    
+
     // Variables and arithmetic
     var x = 10
     var y = 20
     print(x + y)
-    
+
     // Assignment
     x = 15
     print(x)
-    
+
     // Arrays
     var numbers = [1, 2, 3, 4, 5]
     print(numbers[0])
     print(numbers[4])
-    
+
     // For loops
     for var i = 0; i < 3; i = i + 1 {
         print(i * 10)
     }
-    
+
     // While loops
     var count = 0
     while count < 3 {
         print(count + 100)
         count = count + 1
     }
-    
+
     // If/else
     if x > 10 {
         print(999)
     } else {
         print(0)
     }
-    
+
     // Functions
     var fact = factorial(5)
     print(fact)
-    
+
     return 0
 }

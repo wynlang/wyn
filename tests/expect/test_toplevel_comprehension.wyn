@@ -1,0 +1,9 @@
+// EXPECT: 5
+// EXPECT: 55
+// Regression: a top-level (script-mode) list comprehension must be typed as an
+// array (WynArray), so `.len()` and iteration work outside of `fn main()`.
+var sq = [x * x for x in 1..=5]
+println(sq.len().to_string())
+var total = 0
+for v in sq { total = total + v }
+println(total.to_string())

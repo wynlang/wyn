@@ -1,0 +1,31 @@
+// EXPECT: 60
+// EXPECT: task-1 task-2
+// EXPECT: 29
+// Structured concurrency: parallel { } runs each spawn concurrently and
+// joins them all at the closing brace. Spawn-bound vars hold the VALUE
+// (not a Future) and are visible after the block.
+fn compute(n: int) -> int => n * 2
+fn label(n: int) -> string => "task-" + n.to_string()
+fn sq(n: int) -> int => n * n
+
+fn main() -> int {
+    parallel {
+        a = spawn compute(10)
+        b = spawn compute(20)
+    }
+    println((a + b).to_string())
+
+    parallel {
+        x = spawn label(1)
+        y = spawn label(2)
+    }
+    println(x + " " + y)
+
+    parallel {
+        p = spawn sq(2)
+        q = spawn sq(3)
+        r = spawn sq(4)
+    }
+    println((p + q + r).to_string())
+    return 0
+}

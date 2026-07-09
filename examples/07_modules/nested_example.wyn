@@ -5,50 +5,50 @@ import utils.string
 import utils.math
 
 fn main() -> int {
-    print("=== Nested Module Example ===\n\n");
-    
+    print("=== Nested Module Example ===\n\n")
+
     // Use short names (last part of path)
-    var text = "hello world";
-    var upper = string::uppercase(text);
-    var lower = string::lowercase(text);
-    var len = string::length(text);
-    
-    print("Original: ");
-    print(text);
-    print("\n");
-    
-    print("Uppercase: ");
-    print(upper);
-    print("\n");
-    
-    print("Lowercase: ");
-    print(lower);
-    print("\n");
-    
-    print("Length: ");
-    print(len);
-    print("\n\n");
-    
+    var text = "hello world"
+    var upper = string::uppercase(text)
+    var lower = string::lowercase(text)
+    var len = string::length(text)
+
+    print("Original: ")
+    print(text)
+    print("\n")
+
+    print("Uppercase: ")
+    print(upper)
+    print("\n")
+
+    print("Lowercase: ")
+    print(lower)
+    print("\n")
+
+    print("Length: ")
+    print(len)
+    print("\n\n")
+
     // Math utilities
-    var a = -42;
-    var b = 10;
-    var c = 30;
-    
-    print("abs(-42) = ");
-    print(math::abs(a));
-    print("\n");
-    
-    print("max(10, 30) = ");
-    print(math::max(b, c));
-    print("\n");
-    
-    print("min(10, 30) = ");
-    print(math::min(b, c));
-    print("\n");
-    
-    print("clamp(50, 10, 30) = ");
-    print(math::clamp(50, b, c));
-    print("\n");
-    
-    return 0;
+    var a = -42
+    var b = 10
+    var c = 30
+
+    print("abs(-42) = ")
+    print(math::abs(a))
+    print("\n")
+
+    print("max(10, 30) = ")
+    print(math::max(b, c))
+    print("\n")
+
+    print("min(10, 30) = ")
+    print(math::min(b, c))
+    print("\n")
+
+    print("clamp(50, 10, 30) = ")
+    print(math::clamp(50, b, c))
+    print("\n")
+
+    return 0
 }

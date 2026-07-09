@@ -1,15 +1,15 @@
 fn sum_range(start: int, end: int) -> int {
     var total = 0
-    for var i = start; i <= end; i += 1 {
-        total += i
+    for var i = start; i <= end; i + = 1 {
+        total + = i
     }
     return total
 }
 
 fn product_range(start: int, end: int) -> int {
     var total = 1
-    for var i = start; i <= end; i += 1 {
-        total *= i
+    for var i = start; i <= end; i + = 1 {
+        total * = i
     }
     return total
 }

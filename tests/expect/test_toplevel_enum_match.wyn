@@ -1,0 +1,10 @@
+// EXPECT: 5.0
+// Regression: top-level (script-mode) `var` bound to an enum constructor and a
+// match expression must infer the enum / arm types, not default to `long long`.
+enum Shape { Circle(float), Point }
+var s = Shape.Circle(5.0)
+var r = match s {
+    Shape.Circle(radius) => radius
+    Shape.Point => 0.0
+}
+println(r.to_string())

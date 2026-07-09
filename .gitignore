@@ -35,6 +35,9 @@ tests/test_codegen
 *.log
 *_backup.*
 *.bak
+*.bak[0-9]
+*.backup
+*.orig
 
 # OS
 .DS_Store
@@ -45,6 +48,9 @@ runtime/obj/
 wyn_cc_err.txt
 runtime/libwyn_runtime.a
 wyn_runtime.h.gch
+# Precompiled header (regenerated; not linked or referenced by the build)
+runtime/wyn_runtime.h.pch
+*.pch
 
 # Database files
 *.db
@@ -61,3 +67,7 @@ tests/stdlib/test_*
 tests/test_*
 !tests/test_*.wyn
 !tests/test_*.c
+# Compiled test-runner binary (source is run_tests.sh / .wyn, not this binary)
+tests/run_tests
+!tests/run_tests.sh
+!tests/run_tests*.sh

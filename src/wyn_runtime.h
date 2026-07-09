@@ -40,6 +40,7 @@ struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
 static inline void* wyn_malloc(size_t n) { void* p = malloc(n); if (!p && n) { fprintf(stderr, "wyn: out of memory (%zu bytes)\n", n); abort(); } return p; }
 static inline void* wyn_calloc(size_t c, size_t n) { void* p = calloc(c, n); if (!p && c && n) { fprintf(stderr, "wyn: out of memory\n"); abort(); } return p; }
 static inline void* wyn_realloc(void* p, size_t n) { void* q = realloc(p, n); if (!q && n) { fprintf(stderr, "wyn: out of memory\n"); abort(); } return q; }
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -47,6 +48,40 @@ static inline void* wyn_realloc(void* p, size_t n) { void* q = realloc(p, n); if
 #include <math.h>
 #include <time.h>
 #include <ctype.h>
+
+// Minimal growable string builder for accumulators whose final size is not
+// known up front (e.g. DB query result rows, JSON key lists). Replaces
+// fixed-capacity buffers + unbounded strcat, which overflow on large inputs.
+// Placed after <string.h> so memcpy/strlen are declared.
+typedef struct { char* buf; size_t len; size_t cap; } WynStrBuf;
+static inline void wyn_sb_init(WynStrBuf* sb) {
+    sb->cap = 256; sb->len = 0; sb->buf = wyn_malloc(sb->cap); sb->buf[0] = 0;
+}
+static inline void wyn_sb_append_n(WynStrBuf* sb, const char* s, size_t n) {
+    if (!s || n == 0) return;
+    if (sb->len + n + 1 > sb->cap) {
+        while (sb->len + n + 1 > sb->cap) sb->cap *= 2;
+        sb->buf = wyn_realloc(sb->buf, sb->cap);
+    }
+    memcpy(sb->buf + sb->len, s, n);
+    sb->len += n;
+    sb->buf[sb->len] = 0;
+}
+static inline void wyn_sb_append(WynStrBuf* sb, const char* s) {
+    if (s) wyn_sb_append_n(sb, s, strlen(s));
+}
+// Finish: copy into an exact-size RC-managed string (matching wyn_str_alloc
+// ownership expected by callers) and free the builder's scratch buffer.
+// wyn_rc_set_length is declared above; wyn_str_alloc comes from wyn_arena.c.
+char* wyn_str_alloc(size_t n);
+static inline char* wyn_sb_finish(WynStrBuf* sb) {
+    char* r = wyn_str_alloc(sb->len + 1);
+    memcpy(r, sb->buf, sb->len);
+    r[sb->len] = 0;
+    wyn_rc_set_length(r, (unsigned int)sb->len);
+    free(sb->buf);
+    return r;
+}
 #include <stdarg.h>
 #ifndef __wasi__
 #include <setjmp.h>
@@ -167,33 +202,23 @@ bool wyn_file_exists(const char* path);
 const char* wyn_string_concat_safe(const char* left, const char* right) {
     if (!left) left = "";
     if (!right) right = "";
-    size_t l2 = strlen(right);
-    if (l2 == 0) return left;
-    // Use cached length for left if available
+    // INVARIANT: this function ALWAYS returns a distinct, freshly heap-allocated
+    // string — never an alias of `left` or `right`. Callers (see codegen) rely on
+    // pointer identity to decide ownership: a returned pointer equal to an operand
+    // would be released twice (use-after-free) and, for the old in-place grow path,
+    // would also mutate a live caller-owned string. Do not reintroduce aliasing
+    // "optimizations" here; they were the source of a heap-use-after-free.
     extern int wyn_rc_is_heap(const void*);
+    size_t l2 = strlen(right);
     size_t l1;
-    typedef struct { unsigned int magic; _Atomic int refcount; unsigned int capacity; unsigned int length; } RcHdr;
-    RcHdr* left_hdr = NULL;
+    // Mirror of WynRcHeaderFull (wyn_rc.c) — must stay byte-identical. magic2 is
+    // the complement sentinel appended last so the leading fields keep their offsets.
+    typedef struct { unsigned int magic; _Atomic int refcount; unsigned int capacity; unsigned int length; unsigned int magic2; } RcHdr;
     if (wyn_rc_is_heap(left)) {
-        left_hdr = (RcHdr*)((char*)left - sizeof(RcHdr));
+        RcHdr* left_hdr = (RcHdr*)((char*)left - sizeof(RcHdr));
         l1 = left_hdr->length ? left_hdr->length : strlen(left);
     } else {
         l1 = strlen(left);
-    }
-    if (l1 == 0) { const char* d = wyn_strdup(right); return d; }
-    // Optimization: if left has refcount 1, grow in place
-    if (left_hdr && atomic_load(&left_hdr->refcount) == 1) {
-        size_t needed = l1 + l2 + 1;
-        if (needed <= left_hdr->capacity) {
-            // Fast path: just append in place, no allocation
-            char* s = (char*)left;
-            memcpy(s + l1, right, l2);
-            s[l1 + l2] = 0;
-            left_hdr->length = (unsigned int)(l1 + l2);
-            return s;
-        }
-        // Need more space: allocate new, copy, DON'T realloc
-        // (realloc frees old ptr, but caller may still reference it for comparison)
     }
     // Allocate new buffer with power-of-2 over-allocation
     size_t alloc_size = l1 + l2 + 1;
@@ -3042,12 +3067,25 @@ char* DateTime_format(int timestamp, const char* fmt) {
 }
 void DateTime_sleep(int seconds) { sleep(seconds); }
 
-// Time.sleep(ms) — sleep for milliseconds
+// Time.sleep(ms) — sleep for milliseconds.
+// Inside a coroutine, sleep COOPERATIVELY: arm a one-shot timer, park, and
+// yield so the worker thread runs other tasks meanwhile; the scheduler resumes
+// this task when the timer fires (via wyn_io_poll). Outside a coroutine — or if
+// the timer can't be armed (TCC/fallback stub) — fall back to a blocking sleep.
 void Time_sleep(long long ms) {
-#ifdef _WIN32
-    Sleep((DWORD)ms);
-#else
+    if (ms < 0) ms = 0;
+#ifndef _WIN32
+    if (wyn_coro_current()) {
+        void* task = wyn_current_task();
+        if (task && wyn_io_wait_timer(task, ms)) {
+            wyn_io_park();
+            wyn_coro_yield();
+            return;
+        }
+    }
     usleep((useconds_t)(ms * 1000));
+#else
+    Sleep((DWORD)ms);
 #endif
 }
 
@@ -3648,22 +3686,21 @@ char* Db_query(long long handle, const char* sql) {
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db_handles[handle], sql, -1, &stmt, NULL) != SQLITE_OK) return "";
     
-    char* result = wyn_str_alloc(65536);
-    result[0] = 0;
+    WynStrBuf sb; wyn_sb_init(&sb);
     int first_row = 1;
-    
+
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        if (!first_row) strcat(result, "\n");
+        if (!first_row) wyn_sb_append(&sb, "\n");
         first_row = 0;
         int cols = sqlite3_column_count(stmt);
         for (int i = 0; i < cols; i++) {
-            if (i > 0) strcat(result, "|");
+            if (i > 0) wyn_sb_append(&sb, "|");
             const char* val = (const char*)sqlite3_column_text(stmt, i);
-            if (val) strcat(result, val);
+            if (val) wyn_sb_append(&sb, val);
         }
     }
     sqlite3_finalize(stmt);
-    return result;
+    return wyn_sb_finish(&sb);
 }
 
 char* Db_query_one(long long handle, const char* sql) {
@@ -3705,19 +3742,19 @@ char* Db_query_p(long long handle, const char* sql, WynArray params) {
         else
             sqlite3_bind_int64(stmt, i+1, params.data[i].data.int_val);
     }
-    char* result = wyn_str_alloc(65536); result[0] = 0;
+    WynStrBuf sb; wyn_sb_init(&sb);
     int first_row = 1;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        if (!first_row) strcat(result, "\n"); first_row = 0;
+        if (!first_row) wyn_sb_append(&sb, "\n"); first_row = 0;
         int cols = sqlite3_column_count(stmt);
         for (int c = 0; c < cols; c++) {
-            if (c > 0) strcat(result, "|");
+            if (c > 0) wyn_sb_append(&sb, "|");
             const char* val = (const char*)sqlite3_column_text(stmt, c);
-            if (val) strcat(result, val);
+            if (val) wyn_sb_append(&sb, val);
         }
     }
     sqlite3_finalize(stmt);
-    return result;
+    return wyn_sb_finish(&sb);
 }
 
 long long Db_last_insert_id(long long handle) {
@@ -3947,13 +3984,13 @@ char* Json_node_str(long long node) {
 }
 
 char* Json_keys(long long root) {
-    char* result = wyn_str_alloc(4096); result[0] = 0;
+    WynStrBuf sb; wyn_sb_init(&sb);
     int c = json_nodes[(int)root].first_child;
     while (c >= 0) {
-        if (json_nodes[c].key) { strcat(result, json_nodes[c].key); strcat(result, "\n"); }
+        if (json_nodes[c].key) { wyn_sb_append(&sb, json_nodes[c].key); wyn_sb_append(&sb, "\n"); }
         c = json_nodes[c].next_sibling;
     }
-    return result;
+    return wyn_sb_finish(&sb);
 }
 
 // === Base64 ===

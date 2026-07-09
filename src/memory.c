@@ -132,6 +132,7 @@ void free_expr(Expr* expr) {
         case EXPR_FN_TYPE:
         case EXPR_SPAWN:
         case EXPR_LIST_COMP:
+        case EXPR_CHANNEL:
             // No additional cleanup needed for these types
             break;
     }
@@ -161,6 +162,15 @@ void free_stmt(Stmt* stmt) {
             break;
         case STMT_UNSAFE:
             free_block_stmt(&stmt->block);
+            break;
+        case STMT_PARALLEL:
+            free_block_stmt(&stmt->block);
+            break;
+        case STMT_SELECT:
+            for (int _i = 0; _i < stmt->select_stmt.arm_count; _i++) {
+                if (stmt->select_stmt.channels[_i]) free_expr(stmt->select_stmt.channels[_i]);
+                if (stmt->select_stmt.bodies[_i]) free_stmt(stmt->select_stmt.bodies[_i]);
+            }
             break;
         case STMT_FN:
             free_fn_stmt(&stmt->fn);

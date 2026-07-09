@@ -9,13 +9,13 @@ fn main() -> int {
     assert_eq(sign(-5), -1)
     assert_eq(sign(5), 1)
     assert_eq(sign(0), 0)
-    
+
     // Array functions
     var arr = [1, 2, 3, 4, 5]
     assert_eq(arr_sum(arr, 5), 15)
     assert_eq(arr_max(arr, 5), 5)
     assert_eq(arr_min(arr, 5), 1)
-    
+
     print(999)
     return 0
 }

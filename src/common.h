@@ -18,7 +18,7 @@ typedef enum {
     TOKEN_TRUE, TOKEN_FALSE, TOKEN_NULL,
     TOKEN_TEST, TOKEN_ASSERT,
     TOKEN_SOME, TOKEN_NONE, TOKEN_OK, TOKEN_ERR,
-    TOKEN_SPAWN, TOKEN_CHANNEL, TOKEN_ASYNC, TOKEN_AWAIT,
+    TOKEN_SPAWN, TOKEN_CHANNEL, TOKEN_ASYNC, TOKEN_AWAIT, TOKEN_PARALLEL, TOKEN_SELECT,
     TOKEN_AND, TOKEN_OR, TOKEN_NOT,
     TOKEN_AMPAMP, TOKEN_PIPEPIPE,
     TOKEN_PLUS, TOKEN_MINUS, TOKEN_STAR, TOKEN_SLASH, TOKEN_PERCENT,
@@ -37,6 +37,21 @@ typedef struct {
     int length;
     int line;
 } Token;
+
+// Copy a token's lexeme into a fixed C buffer, clamped to bufsz-1 and always
+// NUL-terminated. Guards against buffer overflow when a token (e.g. a very long
+// identifier) exceeds a fixed compiler-side buffer. Returns the number of bytes
+// copied (excluding the terminator).
+#include <string.h>
+static inline int token_to_cstr(char* buf, size_t bufsz, Token tok) {
+    if (bufsz == 0) return 0;
+    int len = tok.length;
+    if (len < 0) len = 0;
+    if ((size_t)len > bufsz - 1) len = (int)(bufsz - 1);
+    memcpy(buf, tok.start, (size_t)len);
+    buf[len] = '\0';
+    return len;
+}
 
 // Parser functions
 void set_parser_filename(const char* filename);

@@ -2,166 +2,166 @@
 // Showcases all major stdlib features in v1.4.0
 
 fn main() -> int {
-    print("=== Wyn v1.4.0 Standard Library Demo ===\n\n");
-    
+    print("=== Wyn v1.4.0 Standard Library Demo ===\n\n")
+
     // 1. String Operations
-    print("1. STRING OPERATIONS\n");
-    var text = "  Hello, Wyn!  ";
-    print("Original: '");
-    print(text);
-    print("'\n");
-    
-    var trimmed = text.trim();
-    print("Trimmed: '");
-    print(trimmed);
-    print("'\n");
-    
-    var upper = trimmed.upper();
-    print("Uppercase: ");
-    print(upper);
-    print("\n");
-    
-    var len = upper.len();
-    print("Length: ");
-    print(len);
-    print("\n\n");
-    
+    print("1. STRING OPERATIONS\n")
+    var text = "  Hello, Wyn!  "
+    print("Original: '")
+    print(text)
+    print("'\n")
+
+    var trimmed = text.trim()
+    print("Trimmed: '")
+    print(trimmed)
+    print("'\n")
+
+    var upper = trimmed.upper()
+    print("Uppercase: ")
+    print(upper)
+    print("\n")
+
+    var len = upper.len()
+    print("Length: ")
+    print(len)
+    print("\n\n")
+
     // 2. Array Operations
-    print("2. ARRAY OPERATIONS\n");
-    var nums = [1, 2, 3];
-    print("Initial array: [1, 2, 3]\n");
-    
-    nums.push(4);
-    nums.push(5);
-    print("After push(4), push(5): length = ");
-    print(nums.len());
-    print("\n");
-    
-    var has_three = nums.contains(3);
-    print("Contains 3: ");
-    print(has_three);
-    print("\n\n");
-    
+    print("2. ARRAY OPERATIONS\n")
+    var nums = [1, 2, 3]
+    print("Initial array: [1, 2, 3]\n")
+
+    nums.push(4)
+    nums.push(5)
+    print("After push(4), push(5): length = ")
+    print(nums.len())
+    print("\n")
+
+    var has_three = nums.contains(3)
+    print("Contains 3: ")
+    print(has_three)
+    print("\n\n")
+
     // 3. HashMap Operations
-    print("3. HASHMAP OPERATIONS\n");
-    var scores = {"alice": 95, "bob": 87};
-    print("Initial scores: alice=95, bob=87\n");
-    
-    scores["charlie"] = 92;
-    print("Added charlie=92\n");
-    
-    var alice_score = scores["alice"];
-    print("Alice's score: ");
-    print(alice_score);
-    print("\n");
-    
-    var has_bob = scores.has("bob");
-    print("Has bob: ");
-    print(has_bob);
-    print("\n");
-    
-    print("Total entries: ");
-    print(scores.len());
-    print("\n\n");
-    
+    print("3. HASHMAP OPERATIONS\n")
+    var scores = { "alice": 95, "bob": 87 }
+    print("Initial scores: alice=95, bob=87\n")
+
+    scores["charlie"] = 92
+    print("Added charlie=92\n")
+
+    var alice_score = scores["alice"]
+    print("Alice's score: ")
+    print(alice_score)
+    print("\n")
+
+    var has_bob = scores.has("bob")
+    print("Has bob: ")
+    print(has_bob)
+    print("\n")
+
+    print("Total entries: ")
+    print(scores.len())
+    print("\n\n")
+
     // 4. HashSet Operations
-    print("4. HASHSET OPERATIONS\n");
-    var tags = {:"urgent", "important"};
-    print("Initial tags: urgent, important\n");
-    
-    tags.add("review");
-    print("Added 'review'\n");
-    
-    var has_urgent = tags.contains("urgent");
-    print("Has urgent: ");
-    print(has_urgent);
-    print("\n");
-    
-    print("Total tags: ");
-    print(tags.len());
-    print("\n\n");
-    
+    print("4. HASHSET OPERATIONS\n")
+    var tags = {: "urgent", "important" }
+    print("Initial tags: urgent, important\n")
+
+    tags.add("review")
+    print("Added 'review'\n")
+
+    var has_urgent = tags.contains("urgent")
+    print("Has urgent: ")
+    print(has_urgent)
+    print("\n")
+
+    print("Total tags: ")
+    print(tags.len())
+    print("\n\n")
+
     // 5. Type Conversions
-    print("5. TYPE CONVERSIONS\n");
-    var num_str = "42";
-    var num = num_str.parse_int();
-    print("Parsed '42' to int: ");
-    print(num);
-    print("\n");
-    
-    var str = 123.to_string();
-    print("Converted 123 to string: ");
-    print(str);
-    print("\n\n");
-    
+    print("5. TYPE CONVERSIONS\n")
+    var num_str = "42"
+    var num = num_str.parse_int()
+    print("Parsed '42' to int: ")
+    print(num)
+    print("\n")
+
+    var str = 123.to_string()
+    print("Converted 123 to string: ")
+    print(str)
+    print("\n\n")
+
     // 6. String Splitting
-    print("6. STRING SPLITTING\n");
-    var csv = "apple,banana,cherry";
-    var first_fruit = split_get(csv, ",", 0);
-    print("First fruit: ");
-    print(first_fruit);
-    print("\n");
-    
-    var fruit_count = split_count(csv, ",");
-    print("Total fruits: ");
-    print(fruit_count);
-    print("\n\n");
-    
+    print("6. STRING SPLITTING\n")
+    var csv = "apple,banana,cherry"
+    var first_fruit = split_get(csv, ",", 0)
+    print("First fruit: ")
+    print(first_fruit)
+    print("\n")
+
+    var fruit_count = split_count(csv, ",")
+    print("Total fruits: ")
+    print(fruit_count)
+    print("\n\n")
+
     // 7. String Slicing
-    print("7. STRING SLICING & CHAR ACCESS\n");
-    var email = "user@example.com";
-    var at_pos = email.index_of("@");
-    var username = email.slice(0, at_pos);
-    print("Username: ");
-    print(username);
-    print("\n");
-    
-    var first_char = char_at(email, 0);
-    print("First char: ");
-    print(first_char);
-    print("\n\n");
-    
+    print("7. STRING SLICING & CHAR ACCESS\n")
+    var email = "user@example.com"
+    var at_pos = email.index_of("@")
+    var username = email.slice(0, at_pos)
+    print("Username: ")
+    print(username)
+    print("\n")
+
+    var first_char = char_at(email, 0)
+    print("First char: ")
+    print(first_char)
+    print("\n\n")
+
     // 8. Array Advanced
-    print("8. ARRAY ADVANCED\n");
-    var data = [5, 10, 15, 20];
-    print("First: ");
-    print(data.first());
-    print(", Last: ");
-    print(data.last());
-    print("\n");
-    data.clear();
-    print("After clear: ");
-    print(data.len());
-    print("\n\n");
-    
+    print("8. ARRAY ADVANCED\n")
+    var data = [5, 10, 15, 20]
+    print("First: ")
+    print(data.first())
+    print(", Last: ")
+    print(data.last())
+    print("\n")
+    data.clear()
+    print("After clear: ")
+    print(data.len())
+    print("\n\n")
+
     // 9. Number Validation
-    print("9. NUMBER VALIDATION\n");
-    var input = "42";
+    print("9. NUMBER VALIDATION\n")
+    var input = "42"
     if (is_numeric(input)) {
-        var num = input.parse_int();
-        print("Parsed: ");
-        print(num);
-        print("\n");
+        var num = input.parse_int()
+        print("Parsed: ")
+        print(num)
+        print("\n")
     }
-    print("\n");
-    
+    print("\n")
+
     // 10. Integer Methods
-    print("10. INTEGER METHODS\n");
-    var abs_val = (-42).abs();
-    print("(-42).abs() = ");
-    print(abs_val);
-    print("\n");
-    
-    var max_val = (10).max(20);
-    print("(10).max(20) = ");
-    print(max_val);
-    print("\n");
-    
-    var min_val = (10).min(20);
-    print("(10).min(20) = ");
-    print(min_val);
-    print("\n\n");
-    
-    print("=== All stdlib features demonstrated! ===\n");
-    return 0;
+    print("10. INTEGER METHODS\n")
+    var abs_val = (-42).abs()
+    print("(-42).abs() = ")
+    print(abs_val)
+    print("\n")
+
+    var max_val = (10).max(20)
+    print("(10).max(20) = ")
+    print(max_val)
+    print("\n")
+
+    var min_val = (10).min(20)
+    print("(10).min(20) = ")
+    print(min_val)
+    print("\n\n")
+
+    print("=== All stdlib features demonstrated! ===\n")
+    return 0
 }

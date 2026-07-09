@@ -1,7 +1,7 @@
 // HONEST ASSESSMENT OF WYN LANGUAGE
 fn main() {
     print("=== HONEST WYN LANGUAGE ASSESSMENT ===")
-    
+
     print("WHAT ACTUALLY WORKS:")
     print("✓ Basic arithmetic and variables")
     print("✓ Functions with type annotations")
@@ -16,7 +16,7 @@ fn main() {
     print("✓ Basic control flow (if, while, for with break/continue)")
     print("✓ Module system with qualified access")
     print("✓ Error handling (assert functions)")
-    
+
     print("WHAT'S MISSING OR BROKEN:")
     print("✗ String concatenation with + operator")
     print("✗ Dynamic arrays (array_new returns wrong type)")
@@ -31,7 +31,7 @@ fn main() {
     print("✗ String interpolation (basic implementation)")
     print("✗ Proper type inference")
     print("✗ JSON parsing (functions crash)")
-    
+
     print("VERDICT: Wyn is a FUNCTIONAL but INCOMPLETE language")
     print("Good for: Basic scripting, file processing, HTTP requests")
     print("Not ready for: Complex applications, modern programming patterns")

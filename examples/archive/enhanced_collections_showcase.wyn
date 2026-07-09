@@ -3,7 +3,7 @@ import math
 
 fn main() {
     print("=== Wyn Enhanced Collections Showcase ===")
-    
+
     print("1. String Operations:")
     var message = "Hello World"
     print("message:")
@@ -14,9 +14,9 @@ fn main() {
     message.contains("World").print()
     print("substring 0,5:")
     message.substring(0, 5).print()
-    
+
     print("2. Map Operations:")
-    var scores = map[string, int]{"alice": 95, "bob": 87}
+    var scores = map[string, int] { "alice": 95, "bob": 87 }
     print("initial scores:")
     print("alice:")
     scores["alice"].print()
@@ -24,7 +24,7 @@ fn main() {
     scores["bob"].print()
     print("size:")
     scores.size().print()
-    
+
     print("3. Map Methods:")
     print("has charlie:")
     scores.has("charlie").print()
@@ -35,10 +35,10 @@ fn main() {
     scores.has("charlie").print()
     print("charlie score:")
     scores.get("charlie").print()
-    
+
     print("4. Module System:")
     print("math.add(10, 5):")
     math.add(10, 5).print()
-    
+
     print("=== All Enhanced Features Working! ===")
 }

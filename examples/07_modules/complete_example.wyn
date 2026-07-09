@@ -5,45 +5,45 @@ import utils.string
 import utils.math
 
 fn main() -> int {
-    print("=== Wyn v1.4.0 Module System ===\n\n");
-    
+    print("=== Wyn v1.4.0 Module System ===\n\n")
+
     // 1. Nested Modules (Java/TypeScript style)
-    print("1. Nested Modules:\n");
+    print("1. Nested Modules:\n")
     print("   import utils.string  // File: utils/string.wyn\n");
     print("   import utils.math    // File: utils/math.wyn\n\n");
-    
+
     // 2. Short Name Resolution
-    print("2. Short Names:\n");
-    var text = "hello";
-    var upper = string::uppercase(text);
-    print("   string::uppercase(\"hello\") = ");
-    print(upper);
-    print("\n\n");
-    
+    print("2. Short Names:\n")
+    var text = "hello"
+    var upper = string::uppercase(text)
+    print("   string::uppercase(\"hello\") = ")
+    print(upper)
+    print("\n\n")
+
     // 3. Math utilities
-    print("3. Math Functions:\n");
-    var a = -42;
-    var b = 10;
-    var abs_val = math::abs(a);
-    var max_val = math::max(b, 30);
-    print("   math::abs(-42) = ");
-    print(abs_val);
-    print("\n");
-    print("   math::max(10, 30) = ");
-    print(max_val);
-    print("\n\n");
-    
+    print("3. Math Functions:\n")
+    var a = -42
+    var b = 10
+    var abs_val = math::abs(a)
+    var max_val = math::max(b, 30)
+    print("   math::abs(-42) = ")
+    print(abs_val)
+    print("\n")
+    print("   math::max(10, 30) = ")
+    print(max_val)
+    print("\n\n")
+
     // 4. Visibility Control
-    print("4. Visibility Control:\n");
+    print("4. Visibility Control:\n")
     print("   pub fn public_api()  // Accessible\n");
     print("   fn private_helper()  // Private (default)\n\n");
-    
+
     // 5. Relative Imports (shown in code)
-    print("5. Relative Imports:\n");
+    print("5. Relative Imports:\n")
     print("   import root::parent     // Parent module\n");
     print("   import root::root       // Project root\n");
     print("   import self::sibling     // Same directory\n\n");
-    
-    print("✓ All module features working!\n");
-    return 0;
+
+    print("✓ All module features working!\n")
+    return 0
 }

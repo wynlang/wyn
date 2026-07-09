@@ -1,30 +1,30 @@
 // Array Example - Demonstrates arrays and loops
 
 fn sum_array(arr: [int], len: int) -> int {
-    var total = 0;
-    var i = 0;
+    var total = 0
+    var i = 0
     while i < len {
-        total = total + arr[i];
-        i = i + 1;
+        total = total + arr[i]
+        i = i + 1
     }
-    return total;
+    return total
 }
 
 fn max_array(arr: [int], len: int) -> int {
-    var maximum = arr[0];
-    var i = 1;
+    var maximum = arr[0]
+    var i = 1
     while i < len {
         if arr[i] > maximum {
-            maximum = arr[i];
+            maximum = arr[i]
         }
-        i = i + 1;
+        i = i + 1
     }
-    return maximum;
+    return maximum
 }
 
 fn main() -> int {
-    var numbers = [5, 2, 8, 1, 9, 3];
-    var sum = sum_array(numbers, 6);
-    var max = max_array(numbers, 6);
-    return sum + max;
+    var numbers = [5, 2, 8, 1, 9, 3]
+    var sum = sum_array(numbers, 6)
+    var max = max_array(numbers, 6)
+    return sum + max
 }

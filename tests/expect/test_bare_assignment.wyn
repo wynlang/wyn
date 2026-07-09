@@ -1,0 +1,31 @@
+// EXPECT: 5
+// EXPECT: 6
+// EXPECT: hello Wyn
+// EXPECT: 6
+// EXPECT: 42
+// Bare assignment: `x = expr` on a not-yet-declared name declares it
+// (Python-style), and reassigns after. Coexists with var/const. Fields
+// exercised: declare+use, reassign, string, accumulate in a for loop, and
+// function-local bare bindings.
+fn compute() -> int {
+    acc = 0
+    acc = acc + 42
+    return acc
+}
+
+fn main() -> int {
+    x = 5
+    println(x.to_string())
+    x = 6
+    println(x.to_string())
+
+    name = "Wyn"
+    println("hello ${name}")
+
+    total = 0
+    for v in [1, 2, 3] { total = total + v }
+    println(total.to_string())
+
+    println(compute().to_string())
+    return 0
+}

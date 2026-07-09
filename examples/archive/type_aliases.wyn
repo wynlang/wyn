@@ -12,9 +12,9 @@ fn calculate_distance() -> Distance {
 fn main() -> int {
     var user = get_user()
     var dist = calculate_distance()
-    
+
     print(user)
     print(dist)
-    
+
     return 0
 }

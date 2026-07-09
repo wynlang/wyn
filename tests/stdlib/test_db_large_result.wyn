@@ -1,0 +1,27 @@
+// EXPECT: len=168892
+// EXPECT: has-last=true
+//
+// Regression test for a heap-buffer-overflow in Db_query / Db_query_params
+// (wyn_runtime.h). Those functions accumulated all result rows into a FIXED
+// 65536-byte buffer with unbounded strcat — any query returning more than 64KB
+// of text overflowed the heap (confirmed under AddressSanitizer at the old
+// wyn_runtime.h:3652). They now use a growable WynStrBuf, so results of any
+// size are safe. This query returns ~168KB, 2.5x the old buffer.
+//
+// Requires sqlite (packages/sqlite/src/sqlite3.c or -lsqlite3); run with `wyn`.
+fn main() -> int {
+    var db = Db.open(":memory:")
+    Db.exec(db, "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+    var i = 0
+    while i < 5000 {
+        Db.exec(db, "INSERT INTO t (v) VALUES ('row-value-padding-xxxxxxxxxx')")
+        i = i + 1
+    }
+    var rows = Db.query(db, "SELECT id, v FROM t")
+    var n = rows.len()
+    println("len=${n}")
+    var target = "5000|row-value-padding-xxxxxxxxxx"
+    var has_last = rows.contains(target)
+    println("has-last=${has_last}")
+    return 0
+}

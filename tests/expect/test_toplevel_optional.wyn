@@ -1,0 +1,6 @@
+// EXPECT: ok
+// Regression: the `int?` optional annotation on a top-level (script-mode) `var`
+// must lower to OptionInt, not `long long`.
+var x: int? = OptionInt_Some(42)
+var y: string? = OptionString_Some("hi")
+println("ok")

@@ -1,20 +1,20 @@
 fn get_numbers() -> [int] {
-    var result = [1, 2, 3, 4, 5];
-    return result;
+    var result = [1, 2, 3, 4, 5]
+    return result
 }
 
 fn get_names() -> [string] {
-    var names = ["Alice", "Bob", "Charlie"];
-    return names;
+    var names = ["Alice", "Bob", "Charlie"]
+    return names
 }
 
 fn main() -> int {
-    var nums = get_numbers();
-    print("Numbers count: " + nums.len());
-    
-    var names = get_names();
-    var first = names.get(0);
-    print("First name: " + first);
-    
-    return 0;
+    var nums = get_numbers()
+    print("Numbers count: " + nums.len())
+
+    var names = get_names()
+    var first = names.get(0)
+    print("First name: " + first)
+
+    return 0
 }

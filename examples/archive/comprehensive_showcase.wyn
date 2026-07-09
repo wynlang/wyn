@@ -4,13 +4,13 @@ import math
 
 fn main() {
     print("=== WYN LANGUAGE COMPREHENSIVE SHOWCASE ===")
-    
+
     print("1. MODULE SYSTEM:")
     print("   Qualified access - math.add(15, 25):")
     math.add(15, 25).print()
     print("   Math constants - math.PI:")
     math.PI.print()
-    
+
     print("2. STRING OPERATIONS:")
     var message = "Hello Beautiful World"
     print("   Original message:")
@@ -21,9 +21,9 @@ fn main() {
     message.contains("Beautiful").print()
     print("   Substring 6,15:")
     message.substring(6, 15).print()
-    
+
     print("3. MAP OPERATIONS:")
-    var users = map[string, int]{"alice": 95, "bob": 87, "charlie": 92}
+    var users = map[string, int] { "alice": 95, "bob": 87, "charlie": 92 }
     print("   Initial users:")
     print("   alice:")
     users["alice"].print()
@@ -33,7 +33,7 @@ fn main() {
     users["charlie"].print()
     print("   Map size:")
     users.size().print()
-    
+
     print("4. MAP METHODS:")
     print("   Has 'diana':")
     users.has("diana").print()
@@ -45,7 +45,7 @@ fn main() {
     users.get("diana").print()
     print("   New map size:")
     users.size().print()
-    
+
     print("5. MAP INDEX ASSIGNMENT:")
     users["eve"] = 89
     print("   Added eve with score 89:")
@@ -53,15 +53,15 @@ fn main() {
     users["alice"] = 100  // Update existing
     print("   Updated alice to 100:")
     users["alice"].print()
-    
+
     print("6. MAP CLEAR:")
-    var temp_map = map[string, int]{"test": 1, "data": 2}
+    var temp_map = map[string, int] { "test": 1, "data": 2 }
     print("   Temp map size before clear:")
     temp_map.size().print()
     temp_map.clear()
     print("   Temp map size after clear:")
     temp_map.size().print()
-    
+
     print("7. FILE I/O:")
     file_write("showcase.txt", "Wyn Language Showcase Data")
     print("   File written successfully")
@@ -70,7 +70,7 @@ fn main() {
     file_content.print()
     print("   File exists:")
     file_exists("showcase.txt").print()
-    
+
     print("8. MATHEMATICAL OPERATIONS:")
     print("   abs_val(-42):")
     abs_val(-42).print()
@@ -78,7 +78,7 @@ fn main() {
     max(10, 25).print()
     print("   min(10, 25):")
     min(10, 25).print()
-    
+
     print("=== ALL FEATURES WORKING PERFECTLY! ===")
     print("Wyn v1.7+ is ready for real-world applications!")
 }
