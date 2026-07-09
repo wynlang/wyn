@@ -6,30 +6,30 @@ fn main() -> int {
     if c.to_int() != 65 { return 1; }
     
     // Test is_alpha
-    if !c.is_alpha() { return 2; }
+    if not c.is_alpha() { return 2; }
     
     // Test is_uppercase
-    if !c.is_uppercase() { return 3; }
+    if not c.is_uppercase() { return 3; }
     
     // Test to_lower
     if 'A'.to_lower() != 'a' { return 4; }
     
     // Test is_lowercase
-    if !'a'.is_lowercase() { return 5; }
+    if not 'a'.is_lowercase() { return 5; }
     
     // Test to_upper
     if 'a'.to_upper() != 'A' { return 6; }
     
     // Test is_numeric
-    if !'5'.is_numeric() { return 7; }
+    if not '5'.is_numeric() { return 7; }
     if 'A'.is_numeric() { return 8; }
     
     // Test is_alphanumeric
-    if !'A'.is_alphanumeric() { return 9; }
-    if !'5'.is_alphanumeric() { return 10; }
+    if not 'A'.is_alphanumeric() { return 9; }
+    if not '5'.is_alphanumeric() { return 10; }
     
     // Test is_whitespace
-    if !' '.is_whitespace() { return 11; }
+    if not ' '.is_whitespace() { return 11; }
     if 'A'.is_whitespace() { return 12; }
     
     return 0  // All tests passed

@@ -29,7 +29,7 @@ fn main() {
     var f3 = spawn multiply(30)
     var first = await_any([f1, f2, f3])
     // Result should be one of 20, 40, 60
-    Test.assert(first == 20 || first == 40 || first == 60, "await_any returns valid result")
+    Test.assert(first == 20 or first == 40 or first == 60, "await_any returns valid result")
 
     // Test 3: await_all with single future
     var single = [spawn multiply(42)]

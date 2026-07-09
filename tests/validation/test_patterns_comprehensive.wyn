@@ -68,7 +68,7 @@ fn main() -> int {
     var v6b = 0
     match r6a { Ok(v) => { v6a = v }, Err(e) => { v6a = -1 } }
     match r6b { Ok(v) => { v6b = v }, Err(e) => { v6b = -1 } }
-    if v6a == 10 && v6b == -1 { pass += 1 } else { fail += 1; println("FAIL: multiple matches") }
+    if v6a == 10 and v6b == -1 { pass += 1 } else { fail += 1; println("FAIL: multiple matches") }
 
     println("Pattern tests: ${pass} pass, ${fail} fail")
     if fail > 0 { return 1 }

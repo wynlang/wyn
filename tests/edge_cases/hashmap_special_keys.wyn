@@ -47,29 +47,29 @@ fn main() -> int {
     
     // Test empty string
     total_tests = total_tests + 1;
-    if (wyn_hashmap_has(map, "") && wyn_hashmap_get_int(map, "") == 42) {
+    if (wyn_hashmap_has(map, "") and wyn_hashmap_get_int(map, "") == 42) {
         tests_passed = tests_passed + 1;
     }
     
     // Test spaces
     total_tests = total_tests + 1;
-    if (wyn_hashmap_has(map, "key with spaces") && wyn_hashmap_get_int(map, "key with spaces") == 100) {
+    if (wyn_hashmap_has(map, "key with spaces") and wyn_hashmap_get_int(map, "key with spaces") == 100) {
         tests_passed = tests_passed + 1;
     }
     
     // Test special characters
     total_tests = total_tests + 1;
-    if (wyn_hashmap_has(map, "key!@#$%^&*()") && wyn_hashmap_get_int(map, "key!@#$%^&*()") == 500) {
+    if (wyn_hashmap_has(map, "key!@#$%^&*()") and wyn_hashmap_get_int(map, "key!@#$%^&*()") == 500) {
         tests_passed = tests_passed + 1;
     }
     
     total_tests = total_tests + 1;
-    if (wyn_hashmap_has(map, "key-with-dashes") && wyn_hashmap_get_int(map, "key-with-dashes") == 2400) {
+    if (wyn_hashmap_has(map, "key-with-dashes") and wyn_hashmap_get_int(map, "key-with-dashes") == 2400) {
         tests_passed = tests_passed + 1;
     }
     
     total_tests = total_tests + 1;
-    if (wyn_hashmap_has(map, "123") && wyn_hashmap_get_int(map, "123") == 5000) {
+    if (wyn_hashmap_has(map, "123") and wyn_hashmap_get_int(map, "123") == 5000) {
         tests_passed = tests_passed + 1;
     }
     
@@ -84,8 +84,8 @@ fn main() -> int {
     wyn_hashmap_insert_int(map, "collision2", 9002);
     wyn_hashmap_insert_int(map, "collision3", 9003);
     
-    if (wyn_hashmap_get_int(map, "collision1") == 9001 && 
-        wyn_hashmap_get_int(map, "collision2") == 9002 && 
+    if (wyn_hashmap_get_int(map, "collision1") == 9001 and 
+        wyn_hashmap_get_int(map, "collision2") == 9002 and 
         wyn_hashmap_get_int(map, "collision3") == 9003) {
         print("Collision handling test: PASSED\n");
     } else {

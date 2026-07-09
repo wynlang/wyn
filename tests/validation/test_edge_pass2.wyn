@@ -48,11 +48,11 @@ fn inc(x: int, by: int = 1) -> int { return x + by }
 fn main() -> int {
     // Edge 1: deep ? chain
     var r1 = deep_chain()
-    if !ResultInt_is_ok(r1) { println("FAIL: deep chain"); return 1 }
+    if not ResultInt_is_ok(r1) { println("FAIL: deep chain"); return 1 }
 
     // Edge 2: ? fails mid-chain
     var r2 = chain_fails_mid()
-    if !ResultInt_is_err(r2) { println("FAIL: mid-chain should err"); return 2 }
+    if not ResultInt_is_err(r2) { println("FAIL: mid-chain should err"); return 2 }
 
     // Edge 3: empty string interp
     if empty_interp() != "beforeafter" { println("FAIL: empty interp"); return 3 }

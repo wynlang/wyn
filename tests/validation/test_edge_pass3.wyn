@@ -48,7 +48,7 @@ fn main() -> int {
 
     // Edge 5: instant error
     var r5 = instant_err()
-    if !ResultInt_is_err(r5) { println("FAIL: instant err"); return 8 }
+    if not ResultInt_is_err(r5) { println("FAIL: instant err"); return 8 }
 
     // Edge 6: string default with space
     if with_special() != "hello world" { println("FAIL: special default"); return 9 }

@@ -48,10 +48,10 @@ fn main() -> int {
 
     // ? operator
     var r1 = chain_three()
-    if !ResultInt_is_ok(r1) { println("FAIL: chain_three"); return 12 }
+    if not ResultInt_is_ok(r1) { println("FAIL: chain_three"); return 12 }
 
     var r2 = early_exit()
-    if !ResultInt_is_err(r2) { println("FAIL: early_exit should err"); return 13 }
+    if not ResultInt_is_err(r2) { println("FAIL: early_exit should err"); return 13 }
 
     // Spawn edge cases
     var f1 = spawn no_args()

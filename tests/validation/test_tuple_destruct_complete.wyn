@@ -5,11 +5,11 @@ fn swap_pair(a: int, b: int) -> (int, int) { return (b, a) }
 fn main() {
     // From function call
     var (q, r) = divmod(17, 5)
-    Test.assert(q == 3 && r == 2, "fn call destruct")
+    Test.assert(q == 3 and r == 2, "fn call destruct")
 
     // From tuple literal
     var (a, b) = (100, 200)
-    Test.assert(a == 100 && b == 200, "literal destruct")
+    Test.assert(a == 100 and b == 200, "literal destruct")
 
     // Wildcard
     var (x, _) = divmod(100, 7)
@@ -17,11 +17,11 @@ fn main() {
 
     // Chained
     var (lo, hi) = swap_pair(9, 3)
-    Test.assert(lo == 3 && hi == 9, "swap")
+    Test.assert(lo == 3 and hi == 9, "swap")
 
     // Three elements
     var (p, q2, r2) = (10, 20, 30)
-    Test.assert(p == 10 && q2 == 20 && r2 == 30, "triple")
+    Test.assert(p == 10 and q2 == 20 and r2 == 30, "triple")
 
     println("PASS: tuple destructuring complete")
 }

@@ -9,7 +9,7 @@ fn parse(token_count: int) -> int {
     var estimated_nodes = token_count * 6
     estimated_nodes = estimated_nodes / 10
     
-    if estimated_nodes < 1 && token_count > 0 {
+    if estimated_nodes < 1 and token_count > 0 {
         estimated_nodes = 1
     }
     

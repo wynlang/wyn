@@ -25,7 +25,7 @@ fn main() -> int {
 
     // Shadow in while block
     var done = false
-    while !done {
+    while not done {
         var x = 30
         println(x.to_string())
         done = true

@@ -27,7 +27,7 @@ fn test_control_flow() {
     
     // while &&
     var i = 0
-    while i < 10 && i != 7 { i = i + 1 }
+    while i < 10 and i != 7 { i = i + 1 }
     Test.assert_eq_int(i, 7, "while &&")
     
     // match

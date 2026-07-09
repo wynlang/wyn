@@ -20,7 +20,7 @@ fn main() -> int {
     print(product);
     print("\n");
     
-    if (sum == 30 && doubled == 30 && product == 30) {
+    if (sum == 30 and doubled == 30 and product == 30) {
         print("All tests passed!\n");
         return 0;
     } else {

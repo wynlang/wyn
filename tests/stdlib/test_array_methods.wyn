@@ -18,7 +18,7 @@ fn main() -> int {
     if l != 3 { return 4; }
     
     // Test 5: contains
-    if !arr.contains(2) { return 5; }
+    if not arr.contains(2) { return 5; }
     if arr.contains(99) { return 6; }
     
     return 0

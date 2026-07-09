@@ -28,7 +28,7 @@ fn dfs_util(graph: &Graph, vertex: int, visited: &[bool]) {
     print(vertex, " ", end = "")
 
     for i in 0..graph.vertices {
-        if graph.adj_matrix[vertex][i] != 0 && !visited[i] {
+        if graph.adj_matrix[vertex][i] != 0 and not visited[i] {
             dfs_util(graph, i, visited)
         }
     }
@@ -64,7 +64,7 @@ fn bfs(graph: &Graph, start: int) {
         print(vertex, " ", end = "")
 
         for i in 0..graph.vertices {
-            if graph.adj_matrix[vertex][i] != 0 && !visited[i] {
+            if graph.adj_matrix[vertex][i] != 0 and not visited[i] {
                 visited[i] = true
                 queue.push(i)
             }
@@ -90,7 +90,7 @@ fn dijkstra(graph: &Graph, start: int) {
 
         # Find minimum distance vertex
         for v in 0..graph.vertices {
-            if !visited[v] && dist[v] < min_dist {
+            if not visited[v] and dist[v] < min_dist {
                 min_dist = dist[v]
                 min_vertex = v
             }
@@ -104,7 +104,7 @@ fn dijkstra(graph: &Graph, start: int) {
 
         # Update distances
         for v in 0..graph.vertices {
-            if !visited[v] && graph.adj_matrix[min_vertex][v] != 0 {
+            if not visited[v] and graph.adj_matrix[min_vertex][v] != 0 {
                 let new_dist = dist[min_vertex] + graph.adj_matrix[min_vertex][v]
                 if new_dist < dist[v] {
                     dist[v] = new_dist

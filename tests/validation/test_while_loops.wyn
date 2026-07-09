@@ -17,7 +17,7 @@ fn main() {
     // While with complex condition
     i = 0
     var product = 1
-    while i < 10 && product < 100 {
+    while i < 10 and product < 100 {
         i += 1
         product = product * 2
     }

@@ -30,7 +30,7 @@ fn main() -> int {
         Low => priority_code = 30
     }
     
-    if status_code == 1 && priority_code == 10 {
+    if status_code == 1 and priority_code == 10 {
         print_str("Match statements work correctly")
         return 0
     } else {

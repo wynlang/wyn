@@ -23,7 +23,7 @@ fn main() -> int {
     }
 
     // Test File::is_dir
-    if !File::is_dir("test_source.txt") {
+    if not File::is_dir("test_source.txt") {
         print("✓ File::is_dir - correctly identified not a directory")
     }
 

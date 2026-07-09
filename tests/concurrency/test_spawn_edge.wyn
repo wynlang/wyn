@@ -52,7 +52,7 @@ fn main() {
 
     // 7: await_any
     var first = await_any([spawn identity(99), spawn identity(88)])
-    Test.assert(first == 99 || first == 88, "await_any valid")
+    Test.assert(first == 99 or first == 88, "await_any valid")
 
     // 8: Shared with concurrent reads and writes
     var c = Shared.new(0)

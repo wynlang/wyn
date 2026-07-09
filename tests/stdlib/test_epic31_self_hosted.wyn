@@ -1,9 +1,9 @@
 // Epic 31: Self-Hosted Compiler — Full TDD
 // Tests lexer, parser (AST), codegen, and bootstrap
 
-fn is_alpha(c: string) -> bool { return c >= "a" && c <= "z" || c >= "A" && c <= "Z" || c == "_" }
-fn is_digit(c: string) -> bool { return c >= "0" && c <= "9" }
-fn is_alnum(c: string) -> bool { return is_alpha(c) || is_digit(c) }
+fn is_alpha(c: string) -> bool { return c >= "a" and c <= "z" or c >= "A" and c <= "Z" or c == "_" }
+fn is_digit(c: string) -> bool { return c >= "0" and c <= "9" }
+fn is_alnum(c: string) -> bool { return is_alpha(c) or is_digit(c) }
 fn kw(w: string) -> int {
     if w == "fn" { return 5 }
     if w == "var" { return 8 }
@@ -24,22 +24,22 @@ fn main() -> int {
     var slen = src.len()
     while li < slen {
         var c = src[li]
-        if c == " " || c == "\t" || c == "\r" || c == "\n" { li += 1; continue }
+        if c == " " or c == "\t" or c == "\r" or c == "\n" { li += 1; continue }
         if is_digit(c) {
             var start = li
-            while li < slen && is_digit(src[li]) { li += 1 }
+            while li < slen and is_digit(src[li]) { li += 1 }
             array_push(tk, 1); array_push(tt, src.substring(start, li)); tc += 1; continue
         }
         if c == "\"" {
             li += 1; var start = li
-            while li < slen && src[li] != "\"" {
+            while li < slen and src[li] != "\"" {
                 if src[li] == "\\" { li += 1 }; li += 1
             }
             array_push(tk, 3); array_push(tt, src.substring(start, li)); tc += 1; li += 1; continue
         }
         if is_alpha(c) {
             var start = li
-            while li < slen && is_alnum(src[li]) { li += 1 }
+            while li < slen and is_alnum(src[li]) { li += 1 }
             var w = src.substring(start, li)
             array_push(tk, kw(w)); array_push(tt, w); tc += 1; continue
         }
@@ -81,7 +81,7 @@ fn main() -> int {
     // Parse body statements
     var first_stmt = -1
     var prev_stmt = -1
-    while pos < tc && tk[pos] != 43 && tk[pos] != 0 {
+    while pos < tc and tk[pos] != 43 and tk[pos] != 0 {
         var stmt_id = -1
         if tk[pos] == 16 {
             // return
@@ -146,7 +146,7 @@ fn main() -> int {
             var eid = nl[sid]
             if nk[eid] == 4 {
                 var cn = "" + nv[eid]
-                if cn == "println" && nl[eid] != -1 && nk[nl[eid]] == 2 {
+                if cn == "println" and nl[eid] != -1 and nk[nl[eid]] == 2 {
                     out = out + "    printf(\"" + nv[nl[eid]] + "\\n\");\n"
                 }
             }

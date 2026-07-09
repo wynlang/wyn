@@ -84,7 +84,7 @@ fn main() -> int {
     var email = "  USER@EXAMPLE.COM  "
     var cleaned = email.trim().lower()
 
-    if cleaned.contains("@") && cleaned.ends_with(".com") {
+    if cleaned.contains("@") and cleaned.ends_with(".com") {
         print("  Valid email: ${cleaned}")
     }
     print("")

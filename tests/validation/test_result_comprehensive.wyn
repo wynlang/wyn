@@ -19,7 +19,7 @@ fn main() -> int {
 
     // Test 1: Ok unwrap
     var r1 = safe_div(10, 2)
-    if r1.is_ok() && r1.unwrap() == 5 { pass += 1 } else { fail += 1; println("FAIL: Ok unwrap") }
+    if r1.is_ok() and r1.unwrap() == 5 { pass += 1 } else { fail += 1; println("FAIL: Ok unwrap") }
 
     // Test 2: Err detection
     var r2 = safe_div(10, 0)
@@ -50,11 +50,11 @@ fn main() -> int {
     // Test 6: Multiple Results
     var r6a = safe_div(100, 10)
     var r6b = safe_div(100, 0)
-    if r6a.is_ok() && r6b.is_err() { pass += 1 } else { fail += 1; println("FAIL: Multiple Results") }
+    if r6a.is_ok() and r6b.is_err() { pass += 1 } else { fail += 1; println("FAIL: Multiple Results") }
 
     // Test 7: Result from different function
     var r7 = parse_int("42")
-    if r7.is_ok() && r7.unwrap() == 42 { pass += 1 } else { fail += 1; println("FAIL: parse_int Ok") }
+    if r7.is_ok() and r7.unwrap() == 42 { pass += 1 } else { fail += 1; println("FAIL: parse_int Ok") }
 
     // Test 8: Result error from different function
     var r8 = parse_int("abc")
