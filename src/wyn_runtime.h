@@ -40,6 +40,7 @@ struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
 static inline void* wyn_malloc(size_t n) { void* p = malloc(n); if (!p && n) { fprintf(stderr, "wyn: out of memory (%zu bytes)\n", n); abort(); } return p; }
 static inline void* wyn_calloc(size_t c, size_t n) { void* p = calloc(c, n); if (!p && c && n) { fprintf(stderr, "wyn: out of memory\n"); abort(); } return p; }
 static inline void* wyn_realloc(void* p, size_t n) { void* q = realloc(p, n); if (!q && n) { fprintf(stderr, "wyn: out of memory\n"); abort(); } return q; }
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -47,6 +48,40 @@ static inline void* wyn_realloc(void* p, size_t n) { void* q = realloc(p, n); if
 #include <math.h>
 #include <time.h>
 #include <ctype.h>
+
+// Minimal growable string builder for accumulators whose final size is not
+// known up front (e.g. DB query result rows, JSON key lists). Replaces
+// fixed-capacity buffers + unbounded strcat, which overflow on large inputs.
+// Placed after <string.h> so memcpy/strlen are declared.
+typedef struct { char* buf; size_t len; size_t cap; } WynStrBuf;
+static inline void wyn_sb_init(WynStrBuf* sb) {
+    sb->cap = 256; sb->len = 0; sb->buf = wyn_malloc(sb->cap); sb->buf[0] = 0;
+}
+static inline void wyn_sb_append_n(WynStrBuf* sb, const char* s, size_t n) {
+    if (!s || n == 0) return;
+    if (sb->len + n + 1 > sb->cap) {
+        while (sb->len + n + 1 > sb->cap) sb->cap *= 2;
+        sb->buf = wyn_realloc(sb->buf, sb->cap);
+    }
+    memcpy(sb->buf + sb->len, s, n);
+    sb->len += n;
+    sb->buf[sb->len] = 0;
+}
+static inline void wyn_sb_append(WynStrBuf* sb, const char* s) {
+    if (s) wyn_sb_append_n(sb, s, strlen(s));
+}
+// Finish: copy into an exact-size RC-managed string (matching wyn_str_alloc
+// ownership expected by callers) and free the builder's scratch buffer.
+// wyn_rc_set_length is declared above; wyn_str_alloc comes from wyn_arena.c.
+char* wyn_str_alloc(size_t n);
+static inline char* wyn_sb_finish(WynStrBuf* sb) {
+    char* r = wyn_str_alloc(sb->len + 1);
+    memcpy(r, sb->buf, sb->len);
+    r[sb->len] = 0;
+    wyn_rc_set_length(r, (unsigned int)sb->len);
+    free(sb->buf);
+    return r;
+}
 #include <stdarg.h>
 #ifndef __wasi__
 #include <setjmp.h>
@@ -3638,22 +3673,21 @@ char* Db_query(long long handle, const char* sql) {
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db_handles[handle], sql, -1, &stmt, NULL) != SQLITE_OK) return "";
     
-    char* result = wyn_str_alloc(65536);
-    result[0] = 0;
+    WynStrBuf sb; wyn_sb_init(&sb);
     int first_row = 1;
-    
+
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        if (!first_row) strcat(result, "\n");
+        if (!first_row) wyn_sb_append(&sb, "\n");
         first_row = 0;
         int cols = sqlite3_column_count(stmt);
         for (int i = 0; i < cols; i++) {
-            if (i > 0) strcat(result, "|");
+            if (i > 0) wyn_sb_append(&sb, "|");
             const char* val = (const char*)sqlite3_column_text(stmt, i);
-            if (val) strcat(result, val);
+            if (val) wyn_sb_append(&sb, val);
         }
     }
     sqlite3_finalize(stmt);
-    return result;
+    return wyn_sb_finish(&sb);
 }
 
 char* Db_query_one(long long handle, const char* sql) {
@@ -3695,19 +3729,19 @@ char* Db_query_p(long long handle, const char* sql, WynArray params) {
         else
             sqlite3_bind_int64(stmt, i+1, params.data[i].data.int_val);
     }
-    char* result = wyn_str_alloc(65536); result[0] = 0;
+    WynStrBuf sb; wyn_sb_init(&sb);
     int first_row = 1;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        if (!first_row) strcat(result, "\n"); first_row = 0;
+        if (!first_row) wyn_sb_append(&sb, "\n"); first_row = 0;
         int cols = sqlite3_column_count(stmt);
         for (int c = 0; c < cols; c++) {
-            if (c > 0) strcat(result, "|");
+            if (c > 0) wyn_sb_append(&sb, "|");
             const char* val = (const char*)sqlite3_column_text(stmt, c);
-            if (val) strcat(result, val);
+            if (val) wyn_sb_append(&sb, val);
         }
     }
     sqlite3_finalize(stmt);
-    return result;
+    return wyn_sb_finish(&sb);
 }
 
 long long Db_last_insert_id(long long handle) {
@@ -3937,13 +3971,13 @@ char* Json_node_str(long long node) {
 }
 
 char* Json_keys(long long root) {
-    char* result = wyn_str_alloc(4096); result[0] = 0;
+    WynStrBuf sb; wyn_sb_init(&sb);
     int c = json_nodes[(int)root].first_child;
     while (c >= 0) {
-        if (json_nodes[c].key) { strcat(result, json_nodes[c].key); strcat(result, "\n"); }
+        if (json_nodes[c].key) { wyn_sb_append(&sb, json_nodes[c].key); wyn_sb_append(&sb, "\n"); }
         c = json_nodes[c].next_sibling;
     }
-    return result;
+    return wyn_sb_finish(&sb);
 }
 
 // === Base64 ===
