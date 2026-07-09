@@ -1362,7 +1362,7 @@ void codegen_stmt(Stmt* stmt) {
                 }
                 emit(") = ");
             } else if (stmt->var.is_const && !stmt->var.is_mutable && !is_already_const) {
-                char _vn[128]; snprintf(_vn, sizeof(_vn), "%.*s", stmt->var.name.length, stmt->var.name.start);
+                char _vn[512]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                 extern int get_shadow_suffix(const char*);
                 int _ss = get_shadow_suffix(_vn);
                 if (_ss > 0) {
@@ -1373,7 +1373,7 @@ void codegen_stmt(Stmt* stmt) {
                     emit("const %s %s = ", c_type, _vn);
                 }
             } else {
-                char _vn[128]; snprintf(_vn, sizeof(_vn), "%.*s", stmt->var.name.length, stmt->var.name.start);
+                char _vn[512]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                 extern int get_shadow_suffix(const char*);
                 int _ss = get_shadow_suffix(_vn);
                 if (_ss > 0) {
