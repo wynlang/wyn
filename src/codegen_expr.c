@@ -2864,8 +2864,18 @@ void codegen_expr(Expr* expr) {
             }
             
             if (is_map_index) {
-                // Map indexing: map["key"] -> hashmap_get_string(map, "key")
-                emit("hashmap_get_string(");
+                // Map indexing: pick the getter matching the element type the
+                // checker resolved for this index (from the map's value_type),
+                // so int/float/bool maps don't read through hashmap_get_string.
+                const char* _getter = "hashmap_get_string";
+                if (expr->expr_type) {
+                    switch (expr->expr_type->kind) {
+                        case TYPE_INT:   case TYPE_BOOL: _getter = (expr->expr_type->kind == TYPE_BOOL) ? "hashmap_get_bool" : "hashmap_get_int"; break;
+                        case TYPE_FLOAT: _getter = "hashmap_get_float"; break;
+                        case TYPE_STRING: default: _getter = "hashmap_get_string"; break;
+                    }
+                }
+                emit("%s(", _getter);
                 codegen_expr(expr->index.array);
                 emit(", ");
                 codegen_expr(expr->index.index);

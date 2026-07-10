@@ -3275,8 +3275,21 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return array_type;
         }
         case EXPR_HASHMAP_LITERAL: {
-            // v1.3.0: {} creates a hashmap with proper type
+            // v1.3.0: {} creates a hashmap. Infer the value type from the first
+            // value so index m[k] carries the right element type (int/string/
+            // float/bool) — a literal has homogeneous value types. Without this
+            // every map value typed as int and non-int maps miscompiled.
             Type* map_type = make_type(TYPE_MAP);
+            map_type->map_type.key_type = builtin_string;
+            map_type->map_type.value_type = builtin_int;
+            // elements are [key0, value0, key1, value1, ...]
+            if (expr->array.count >= 2) {
+                Type* vt = check_expr(expr->array.elements[1], scope);
+                if (vt) map_type->map_type.value_type = vt;
+                // still type-check the remaining entries
+                for (int _i = 0; _i < expr->array.count; _i++)
+                    if (_i != 1) check_expr(expr->array.elements[_i], scope);
+            }
             expr->expr_type = map_type;
             return map_type;
         }
@@ -3307,8 +3320,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     fprintf(stderr, "Error: Map index must be string\n");
                     return NULL;
                 }
-                expr->expr_type = builtin_int; // Map value type (simplified)
-                return builtin_int;
+                // Return the map's value type so downstream codegen (getter
+                // selection, var-decl type, comparisons, print) all agree.
+                Type* vt = array_type->map_type.value_type;
+                if (!vt) vt = builtin_int;
+                expr->expr_type = vt;
+                return vt;
             } else {
                 // Array indexing - require int indices
                 if (idx_type && idx_type->kind != TYPE_INT) {

@@ -1,0 +1,27 @@
+// Regression: HashMap index m[k] must select the getter matching the map's
+// VALUE type, not always hashmap_get_string. Before, int/float/bool maps
+// returned garbage/empty (broke shipped examples/06_hashmap.wyn — "Alice's age:"
+// printed blank). Covers int/string/float/bool via [] and a typed local.
+// (m.get(k) value-typing needs checker-level map value modeling — separate
+// follow-up; use m[k] for non-string maps.)
+// EXPECT: PASS: hashmap value types
+
+fn main() -> int {
+    var ages = { "alice": 30, "bob": 25 }
+    var ai = ages["alice"]
+    if ai != 30 { println("FAIL: int index"); return 1 }
+    if ages["bob"] != 25 { println("FAIL: int index inline"); return 1 }
+
+    var names = { "a": "apple", "b": "banana" }
+    if names["a"] != "apple" { println("FAIL: string index"); return 1 }
+
+    var prices = { "x": 1.5 }
+    var px = prices["x"]
+    if px < 1.4 { println("FAIL: float index"); return 1 }
+
+    var flags = { "on": true, "off": false }
+    if flags["on"] != true { println("FAIL: bool index"); return 1 }
+
+    println("PASS: hashmap value types")
+    return 0
+}
