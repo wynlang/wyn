@@ -1202,8 +1202,12 @@ void codegen_match_statement(Stmt* stmt) {
             }
         }
         
-        // Check if this is a Result match (Ok/Err patterns)
+        // Check if this is a Result match (Ok/Err patterns). A user data enum
+        // (is_data_enum_match) is NEVER an Option/Result — the parser marks any
+        // prefixed data-carrying variant with option.is_some, which otherwise
+        // misroutes `match e { A(n) => ... }` into the hardcoded OptionInt shape.
         bool is_result_match = false;
+        if (!is_data_enum_match)
         for (int i = 0; i < stmt->match_stmt.case_count; i++) {
             MatchCase* mc = &stmt->match_stmt.cases[i];
             if (mc->pattern->type == PATTERN_OPTION && mc->pattern->option.variant_name.length > 0) {
@@ -1215,8 +1219,10 @@ void codegen_match_statement(Stmt* stmt) {
             }
         }
         
-        // Check if this is an Option match (Some/None patterns)
+        // Check if this is an Option match (Some/None patterns). Same guard as
+        // above: a user data enum is not an Option.
         bool is_option_match = false;
+        if (!is_data_enum_match)
         for (int i = 0; i < stmt->match_stmt.case_count; i++) {
             MatchCase* mc = &stmt->match_stmt.cases[i];
             if (mc->pattern->type == PATTERN_OPTION) {

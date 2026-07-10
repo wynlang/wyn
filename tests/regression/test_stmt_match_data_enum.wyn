@@ -1,0 +1,31 @@
+// Regression: statement-form `match` (no value produced) on a user enum with
+// payload variants must lower via the data-enum path, not the hardcoded
+// OptionInt/ResultInt shapes. The parser marks any prefixed data-carrying
+// variant with option.is_some, which previously misrouted `match e { A(n)=>.. }`
+// into `OptionInt __match_opt = e;` -> internal codegen error. Real Option/Result
+// statement matches must still work.
+// EXPECT: 7
+// EXPECT: code-42
+// EXPECT: txt-hi
+// EXPECT: opt-5
+// EXPECT: res-9
+
+enum Msg { Text(string), Code(int) }
+
+fn main() {
+    var a = Msg.Code(7)
+    match a { Text(s) => println(s), Code(n) => println(n.to_string()) }
+
+    var b = Msg.Code(42)
+    match b { Text(s) => println(s), Code(n) => println("code-" + n.to_string()) }
+
+    var c = Msg.Text("hi")
+    match c { Text(s) => println("txt-" + s), Code(n) => println(n.to_string()) }
+
+    // Real Option / Result statement matches must be unaffected
+    var o: int? = Some(5)
+    match o { Some(v) => println("opt-" + v.to_string()), None => println("opt-none") }
+
+    var r: ResultInt = Ok(9)
+    match r { Ok(v) => println("res-" + v.to_string()), Err(e) => println("res-err") }
+}
