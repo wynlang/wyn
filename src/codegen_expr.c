@@ -2772,6 +2772,14 @@ void codegen_expr(Expr* expr) {
                     emit("array_push_str(&__arr_%d, ", arr_id);
                     codegen_expr(elem);
                     emit("); ");
+                } else if (elem->type == EXPR_FLOAT) {
+                    emit("array_push_float(&__arr_%d, ", arr_id);
+                    codegen_expr(elem);
+                    emit("); ");
+                } else if (elem->type == EXPR_BOOL) {
+                    emit("array_push_bool(&__arr_%d, ", arr_id);
+                    codegen_expr(elem);
+                    emit("); ");
                 } else if (elem->type == EXPR_STRUCT_INIT) {
                     // Struct literal
                     Token type_name = elem->struct_init.type_name;
@@ -2814,7 +2822,9 @@ void codegen_expr(Expr* expr) {
                     if (etype && etype->kind == TYPE_STRING) {
                         emit("array_push_str(&__arr_%d, ", arr_id);
                     } else if (etype && etype->kind == TYPE_FLOAT) {
-                        emit("array_push_int(&__arr_%d, (long long)", arr_id);
+                        emit("array_push_float(&__arr_%d, ", arr_id);
+                    } else if (etype && etype->kind == TYPE_BOOL) {
+                        emit("array_push_bool(&__arr_%d, ", arr_id);
                     } else {
                         emit("array_push_int(&__arr_%d, ", arr_id);
                     }
@@ -3022,6 +3032,7 @@ void codegen_expr(Expr* expr) {
                     // Single indexing: arr[i]
                     // Check element type from type annotation
                     bool is_struct_array = false;
+                    bool is_float_array = false;
                     Type* elem_type = NULL;
                     if (expr->index.array->expr_type && 
                         expr->index.array->expr_type->kind == TYPE_ARRAY) {
@@ -3031,8 +3042,18 @@ void codegen_expr(Expr* expr) {
                                 is_struct_array = true;
                             } else if (elem_type->kind == TYPE_STRING) {
                                 is_string_array = true;
+                            } else if (elem_type->kind == TYPE_FLOAT) {
+                                is_float_array = true;
                             }
                         }
+                    }
+                    // Array literal with a float first element -> float array.
+                    if (!is_float_array && expr->index.array->type == EXPR_ARRAY &&
+                        expr->index.array->array.count > 0) {
+                        Expr* f0 = expr->index.array->array.elements[0];
+                        if (f0->type == EXPR_FLOAT ||
+                            (f0->expr_type && f0->expr_type->kind == TYPE_FLOAT))
+                            is_float_array = true;
                     }
                     
                     // Map array: cast result to WynHashMap*
@@ -3072,6 +3093,12 @@ void codegen_expr(Expr* expr) {
                         emit(", ");
                         Token type_name = elem_type->struct_type.name;
                         emit("%.*s", type_name.length, type_name.start);
+                        emit(")");
+                    } else if (is_float_array) {
+                        emit("array_get_float(");
+                        codegen_expr(expr->index.array);
+                        emit(", ");
+                        codegen_expr(expr->index.index);
                         emit(")");
                     } else if (is_string_array) {
                         emit("array_get_str(");

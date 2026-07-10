@@ -590,6 +590,7 @@ void array_free(WynArray* arr) {
     free(arr->data);
     arr->data = NULL; arr->count = 0; arr->capacity = 0;
 }
+static inline void wyn_oob_panic(int index, int count, const char* file, int line);
 void array_push_int(WynArray* restrict arr, long long value) {
     if (arr->count >= arr->capacity) {
         int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
@@ -599,6 +600,35 @@ void array_push_int(WynArray* restrict arr, long long value) {
     arr->data[arr->count].type = WYN_TYPE_INT;
     arr->data[arr->count].data.int_val = value;
     arr->count++;
+}
+void array_push_float(WynArray* restrict arr, double value) {
+    if (arr->count >= arr->capacity) {
+        int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
+        arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
+        arr->capacity = new_cap;
+    }
+    arr->data[arr->count].type = WYN_TYPE_FLOAT;
+    arr->data[arr->count].data.float_val = value;
+    arr->count++;
+}
+void array_push_bool(WynArray* restrict arr, int value) {
+    if (arr->count >= arr->capacity) {
+        int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
+        arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
+        arr->capacity = new_cap;
+    }
+    arr->data[arr->count].type = WYN_TYPE_BOOL;
+    arr->data[arr->count].data.int_val = value ? 1 : 0;
+    arr->count++;
+}
+// Float/bool element getters (mirror array_get_int/str with negative-index support).
+#define array_get_float(arr, idx) array_get_float_impl(arr, idx, __FILE__, __LINE__)
+static inline double array_get_float_impl(WynArray arr, int index, const char* file, int line) {
+    if (index < 0) index += arr.count;
+    if (index < 0 || index >= arr.count) { wyn_oob_panic(index, arr.count, file, line); return 0.0; }
+    if (arr.data[index].type == WYN_TYPE_FLOAT) return arr.data[index].data.float_val;
+    if (arr.data[index].type == WYN_TYPE_INT) return (double)arr.data[index].data.int_val;
+    return 0.0;
 }
 void array_push_str(WynArray* restrict arr, const char* value) {
     if (arr->count >= arr->capacity) {
@@ -639,7 +669,9 @@ static inline long long array_get_int_impl(WynArray arr, int index, const char* 
         wyn_oob_panic(index, arr.count, file, line);
         return 0;
     }
-    if (arr.data[index].type == WYN_TYPE_INT) return arr.data[index].data.int_val;
+    if (arr.data[index].type == WYN_TYPE_INT || arr.data[index].type == WYN_TYPE_BOOL)
+        return arr.data[index].data.int_val;   // bool is stored in int_val
+    if (arr.data[index].type == WYN_TYPE_FLOAT) return (long long)arr.data[index].data.float_val;
     return 0;
 }
 #define array_get_str(arr, idx) array_get_str_impl(arr, idx, __FILE__, __LINE__)
