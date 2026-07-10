@@ -3143,6 +3143,7 @@ void codegen_stmt(Stmt* stmt) {
                 // Determine variable type based on array expression type
                 bool is_string_array = false;
                 bool is_struct_array = false;
+                bool is_float_array = false;
                 Type* elem_type = NULL;
                 
                 // Check if array expression has type info
@@ -3154,7 +3155,16 @@ void codegen_stmt(Stmt* stmt) {
                         is_string_array = true;
                     } else if (elem_type->kind == TYPE_STRUCT) {
                         is_struct_array = true;
+                    } else if (elem_type->kind == TYPE_FLOAT) {
+                        is_float_array = true;
                     }
+                }
+                // Array literal with a float first element -> float array.
+                if (!is_string_array && !is_struct_array && !is_float_array &&
+                    stmt->for_stmt.array_expr->type == EXPR_ARRAY &&
+                    stmt->for_stmt.array_expr->array.count > 0 &&
+                    stmt->for_stmt.array_expr->array.elements[0]->type == EXPR_FLOAT) {
+                    is_float_array = true;
                 }
                 
                 // Check if it's a method call that returns string array
@@ -3186,6 +3196,9 @@ void codegen_stmt(Stmt* stmt) {
                          type_name.length, type_name.start);
                 } else if (is_string_array) {
                     emit("const char* %.*s = (__elem.type == WYN_TYPE_STRING) ? __elem.data.string_val : \"\";\n",
+                         stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
+                } else if (is_float_array) {
+                    emit("double %.*s = (__elem.type == WYN_TYPE_FLOAT) ? __elem.data.float_val : (double)__elem.data.int_val;\n",
                          stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
                 } else {
                     emit("long long %.*s = (__elem.type == WYN_TYPE_INT) ? __elem.data.int_val : 0;\n",

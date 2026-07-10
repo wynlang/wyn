@@ -1,0 +1,25 @@
+// Regression: float and bool array literals were built with array_push_int and a
+// (long long) cast, truncating floats (1.5 -> 1) and tagging elements INT. Now
+// they use array_push_float/bool; index, negative index, iteration, and print
+// all preserve the real values.
+// EXPECT: PASS: float/bool arrays
+// EXPECT: [1.5, 2.5, 3.5]
+// EXPECT: [true, false, true]
+
+fn main() -> int {
+    var f = [1.5, 2.5, 3.5]
+    if f[0] < 1.4 or f[0] > 1.6 { println("FAIL: f[0]"); return 1 }
+    if f[-1] < 3.4 or f[-1] > 3.6 { println("FAIL: f[-1]"); return 1 }
+    var total = 0.0
+    for x in f { total = total + x }
+    if total < 7.4 or total > 7.6 { println("FAIL: sum"); return 1 }
+
+    var b = [true, false, true]
+    if not b[0] { println("FAIL: b[0]"); return 1 }
+    if b[1] { println("FAIL: b[1]"); return 1 }
+
+    println("PASS: float/bool arrays")
+    print(f)
+    print(b)
+    return 0
+}
