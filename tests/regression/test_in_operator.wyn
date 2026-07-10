@@ -1,0 +1,32 @@
+// Pythonic `in` / `not in` membership operator at comparison precedence.
+// Dispatches on the container: array (int/string), string (substring), map (key).
+// The for-loop's own `in` is consumed before expression parsing, so it's
+// unaffected. EXPECT lines below.
+// EXPECT: PASS: in operator
+
+fn main() -> int {
+    var nums = [1, 2, 3]
+    if not (2 in nums) { println("FAIL: 2 in nums"); return 1 }
+    if 5 in nums { println("FAIL: 5 not in nums"); return 1 }
+    if not (5 not in nums) { println("FAIL: 5 not in nums (neg)"); return 1 }
+
+    var words = ["apple", "pear"]
+    if not ("pear" in words) { println("FAIL: pear in words"); return 1 }
+    if "banana" in words { println("FAIL: banana not in words"); return 1 }
+
+    var s = "hello world"
+    if not ("world" in s) { println("FAIL: substring"); return 1 }
+    if "xyz" in s { println("FAIL: substring neg"); return 1 }
+
+    var m = {"a": 1, "b": 2}
+    if not ("a" in m) { println("FAIL: key a"); return 1 }
+    if "z" in m { println("FAIL: key z"); return 1 }
+
+    // for-in must still work
+    var total = 0
+    for n in [10, 20, 30] { total = total + n }
+    if total != 60 { println("FAIL: for-in"); return 1 }
+
+    println("PASS: in operator")
+    return 0
+}

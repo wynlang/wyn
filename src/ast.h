@@ -75,6 +75,7 @@ typedef struct {
     Expr* left;
     Token op;
     Expr* right;
+    bool is_not_in;  // op==TOKEN_IN: true means `not in` (negated membership)
 } BinaryExpr;
 
 typedef struct {
