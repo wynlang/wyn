@@ -1,0 +1,38 @@
+// Regression: a local string moved into a user enum variant constructor
+// (E.A(s)) is stored raw in the enum payload and escapes with the enum, so it
+// must NOT also be released at scope/return exit — that double-frees the live
+// payload (use-after-free under ASan, empty reads otherwise). Covers both the
+// direct-return form (return E.A(s)) and the intermediate-var form
+// (var e = E.A(s); return e). A still-live local must be left untouched.
+// EXPECT: PASS: enum string payload
+
+enum Msg { Text(string), Code(int) }
+
+fn direct(x: int) -> Msg {
+    var s = "text-" + x.to_string()
+    return Msg.Text(s)              // move into returned enum
+}
+
+fn via_var(x: int) -> Msg {
+    var s = "var-" + x.to_string()
+    var m = Msg.Text(s)            // move into enum bound to a local, then returned
+    return m
+}
+
+fn keeps_live(x: int) -> string {
+    var s = "live-" + x.to_string()
+    var m = Msg.Text(s)            // s is used again below -> must NOT be moved
+    return s
+}
+
+fn unwrap(m: Msg) -> string {
+    return match m { Text(v) => v, Code(n) => n.to_string() }
+}
+
+fn main() -> int {
+    if unwrap(direct(1)) != "text-1" { println("FAIL: direct=${unwrap(direct(1))}"); return 1 }
+    if unwrap(via_var(2)) != "var-2" { println("FAIL: via_var=${unwrap(via_var(2))}"); return 1 }
+    if keeps_live(3) != "live-3" { println("FAIL: keeps_live=${keeps_live(3)}"); return 1 }
+    println("PASS: enum string payload")
+    return 0
+}

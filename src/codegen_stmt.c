@@ -1487,16 +1487,20 @@ void codegen_stmt(Stmt* stmt) {
             // the returned pointer) still alias it → use-after-free. MOVE a dead
             // local string argument (drop its scope-exit release). Move-only, so
             // it can only remove a UAF-causing release, never add a double-free.
-            // The payload expression carrying a potentially-moved local string:
-            // surface constructors Some(s)/Ok(s)/Err(s) (EXPR_SOME/OK/ERR, payload
-            // in .option.value) OR the already-lowered mangled call form
-            // OptionString_Some(s)/ResultString_Ok/_Err(s).
+            // A local string moved into a constructor that stores it raw — an
+            // Option/Result (Some/Ok/Err, surface or mangled) or a user enum
+            // variant (E.A(s)) — is aliased by the wrapper and released with it;
+            // also releasing the local at scope exit would leave the payload
+            // dangling (use-after-free / empty reads). Collect every string-var
+            // payload argument and MOVE the dead ones (drop scope-exit release).
+            // Move-only, so it can never introduce a double-free; still-live locals
+            // are left untouched.
             {
                 Expr* _init = stmt->var.init;
-                Expr* _payload = NULL;
+                Expr* _payloads[8]; int _np = 0;
                 if (_init && (_init->type == EXPR_SOME || _init->type == EXPR_OK ||
                               _init->type == EXPR_ERR)) {
-                    _payload = _init->option.value;
+                    if (_init->option.value) _payloads[_np++] = _init->option.value;
                 } else if (_init && _init->type == EXPR_CALL &&
                            _init->call.callee->type == EXPR_IDENT &&
                            _init->call.arg_count == 1) {
@@ -1504,14 +1508,24 @@ void codegen_stmt(Stmt* stmt) {
                     if (strcmp(_cn, "OptionString_Some") == 0 ||
                         strcmp(_cn, "ResultString_Ok") == 0 ||
                         strcmp(_cn, "ResultString_Err") == 0)
-                        _payload = _init->call.args[0];
+                        _payloads[_np++] = _init->call.args[0];
+                } else if (_init && _init->type == EXPR_METHOD_CALL &&
+                           _init->method_call.object->type == EXPR_IDENT) {
+                    // User enum variant constructor: E.A(s), E.Pair(s, t)
+                    char _en[128]; token_to_cstr(_en, sizeof(_en), _init->method_call.object->token);
+                    extern int is_enum_type(const char*);
+                    if (is_enum_type(_en))
+                        for (int _ai = 0; _ai < _init->method_call.arg_count && _np < 8; _ai++)
+                            _payloads[_np++] = _init->method_call.args[_ai];
                 }
-                if (_payload && _payload->type == EXPR_IDENT &&
-                    _payload->expr_type && _payload->expr_type->kind == TYPE_STRING) {
-                    extern int is_string_var(const char*);
-                    extern int var_is_live_after(Stmt**, int, int, const char*);
-                    extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
-                    extern void unregister_string_var(const char*);
+                extern int is_string_var(const char*);
+                extern int var_is_live_after(Stmt**, int, int, const char*);
+                extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
+                extern void unregister_string_var(const char*);
+                for (int _pi = 0; _pi < _np; _pi++) {
+                    Expr* _payload = _payloads[_pi];
+                    if (!_payload || _payload->type != EXPR_IDENT) continue;
+                    if (!_payload->expr_type || _payload->expr_type->kind != TYPE_STRING) continue;
                     char _avn[256]; token_to_cstr(_avn, sizeof(_avn), _payload->token);
                     if (is_string_var(_avn) && current_block_stmts &&
                         !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _avn))
@@ -1547,6 +1561,33 @@ void codegen_stmt(Stmt* stmt) {
                 extern int get_defer_count(); extern Expr* get_defer(int);
                 for (int _d = get_defer_count() - 1; _d >= 0; _d--) {
                     codegen_expr(get_defer(_d)); emit(";\n");
+                }
+            }
+            // RC: a local string moved into a RETURNED enum-variant constructor
+            // (e.g. `return E.A(local)`) is stored raw in the enum payload and
+            // escapes with it; releasing it before the return would leave the
+            // payload dangling (use-after-free / empty reads) — same class as the
+            // struct-field / Some-Ok-Err ownership transfer. Unregister such a
+            // dead string arg so the release below skips it (MOVE). Move-only, so
+            // it can never introduce a double-free.
+            if (stmt->ret.value && stmt->ret.value->type == EXPR_METHOD_CALL &&
+                stmt->ret.value->method_call.object->type == EXPR_IDENT) {
+                char _en[128]; token_to_cstr(_en, sizeof(_en), stmt->ret.value->method_call.object->token);
+                extern int is_enum_type(const char*);
+                if (is_enum_type(_en)) {
+                    extern int is_string_var(const char*);
+                    extern int var_is_live_after(Stmt**, int, int, const char*);
+                    extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
+                    extern void unregister_string_var(const char*);
+                    for (int _ai = 0; _ai < stmt->ret.value->method_call.arg_count; _ai++) {
+                        Expr* _arg = stmt->ret.value->method_call.args[_ai];
+                        if (!_arg || _arg->type != EXPR_IDENT) continue;
+                        if (!_arg->expr_type || _arg->expr_type->kind != TYPE_STRING) continue;
+                        char _an[256]; token_to_cstr(_an, sizeof(_an), _arg->token);
+                        if (is_string_var(_an) && current_block_stmts &&
+                            !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _an))
+                            unregister_string_var(_an);
+                    }
                 }
             }
             // RC: release local string variables before return
