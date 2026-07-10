@@ -2417,10 +2417,20 @@ void codegen_expr(Expr* expr) {
                     break;
                 }
                 
-                // For map.get(), we need to use hashmap_get_string if the result is used as string
-                // For now, use a generic approach that returns the value
+                // map.get(k): pick the getter matching the value type the checker
+                // resolved onto this node (from the map's value_type). Mirrors the
+                // index m[k] path so getter/var-decl/comparison all agree.
                 if (strcmp(method_name, "get") == 0 && expr->method_call.arg_count == 1) {
-                    emit("hashmap_get_string(");
+                    const char* _getter = "hashmap_get_string";
+                    if (expr->expr_type) {
+                        switch (expr->expr_type->kind) {
+                            case TYPE_INT:   _getter = "hashmap_get_int"; break;
+                            case TYPE_BOOL:  _getter = "hashmap_get_bool"; break;
+                            case TYPE_FLOAT: _getter = "hashmap_get_float"; break;
+                            case TYPE_STRING: default: _getter = "hashmap_get_string"; break;
+                        }
+                    }
+                    emit("%s(", _getter);
                     codegen_expr(expr->method_call.object);
                     emit(", ");
                     codegen_expr(expr->method_call.args[0]);

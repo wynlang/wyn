@@ -3108,6 +3108,21 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
             }
             
+            // map.get(k) returns the map's value type — same source-of-truth
+            // approach as index m[k] (see EXPR_INDEX). Without this the getter,
+            // var-decl type, and comparisons all defaulted to string and
+            // miscompiled (garbage for int/float/bool; strcmp on an int crashed).
+            if (object_type && object_type->kind == TYPE_MAP &&
+                method.length == 3 && memcmp(method.start, "get", 3) == 0) {
+                // Default to string when the value type is unknown (e.g.
+                // HashMap.new() maps set no value_type): string is the historical
+                // default and the non-crashing choice. Only a literal {k: v} whose
+                // value type we inferred narrows it to int/float/bool.
+                Type* vt = object_type->map_type.value_type;
+                if (!vt) vt = builtin_string;
+                expr->expr_type = vt;
+                return vt;
+            }
             // Special handling for array.get() - return element type
             if (object_type && object_type->kind == TYPE_ARRAY) {
                 if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
@@ -3322,8 +3337,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
                 // Return the map's value type so downstream codegen (getter
                 // selection, var-decl type, comparisons, print) all agree.
+                // Default to string when unknown (HashMap.new() maps) — the
+                // historical, non-crashing default; literals narrow it.
                 Type* vt = array_type->map_type.value_type;
-                if (!vt) vt = builtin_int;
+                if (!vt) vt = builtin_string;
                 expr->expr_type = vt;
                 return vt;
             } else {
