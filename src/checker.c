@@ -2202,6 +2202,20 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             
             if (!left || !right) return NULL;
             
+            // Membership `x in c` / `x not in c` — always yields bool. The right
+            // side must be a container (array/map/set/string); the element type
+            // isn't constrained here (runtime dispatch handles it).
+            if (expr->binary.op.type == TOKEN_IN) {
+                if (right->kind != TYPE_ARRAY && right->kind != TYPE_MAP &&
+                    right->kind != TYPE_SET && right->kind != TYPE_STRING) {
+                    fprintf(stderr, "Error at line %d: 'in' requires an array, map, set, or string on the right\n",
+                            expr->binary.op.line);
+                    had_error = true;
+                }
+                expr->expr_type = builtin_bool;
+                return builtin_bool;
+            }
+            
             // Nil coalescing operator ??
             if (expr->binary.op.type == TOKEN_QUESTION_QUESTION) {
                 // Left should be Option<T>, right should be T

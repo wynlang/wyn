@@ -408,6 +408,37 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_BINARY: {
+            // Membership: `x in c` / `x not in c`. Dispatch on the container type:
+            //   [T] array   -> array_contains / array_contains_str
+            //   map          -> hashmap_has (key membership)
+            //   set          -> hashset_contains
+            //   string       -> wyn_string_contains (substring)
+            if (expr->binary.op.type == TOKEN_IN) {
+                Expr* elem = expr->binary.left;
+                Expr* cont = expr->binary.right;
+                Type* ct = cont->expr_type;
+                bool neg = expr->binary.is_not_in;
+                emit("(bool)(");
+                if (neg) emit("!(");
+                if (ct && ct->kind == TYPE_MAP) {
+                    emit("hashmap_has("); codegen_expr(cont); emit(", "); codegen_expr(elem); emit(")");
+                } else if (ct && ct->kind == TYPE_SET) {
+                    emit("hashset_contains("); codegen_expr(cont); emit(", "); codegen_expr(elem); emit(")");
+                } else if (ct && ct->kind == TYPE_STRING) {
+                    emit("wyn_string_contains("); codegen_expr(cont); emit(", "); codegen_expr(elem); emit(")");
+                } else {
+                    // Array (default). Pick str vs int element form.
+                    bool elem_is_str = (elem->type == EXPR_STRING) ||
+                        (elem->expr_type && elem->expr_type->kind == TYPE_STRING) ||
+                        (ct && ct->kind == TYPE_ARRAY && ct->array_type.element_type &&
+                         ct->array_type.element_type->kind == TYPE_STRING);
+                    emit(elem_is_str ? "array_contains_str(" : "array_contains(");
+                    codegen_expr(cont); emit(", "); codegen_expr(elem); emit(")");
+                }
+                if (neg) emit(")");
+                emit(")");
+                break;
+            }
             // Check if this is a boolean-producing operator
             bool _is_bool_op = (expr->binary.op.type == TOKEN_EQEQ || expr->binary.op.type == TOKEN_BANGEQ ||
                 expr->binary.op.type == TOKEN_LT || expr->binary.op.type == TOKEN_GT ||

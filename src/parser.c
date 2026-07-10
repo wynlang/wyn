@@ -1371,8 +1371,38 @@ static Expr* comparison() {
     Expr* expr = addition();
     bool prev_was_relational = false;  // last op was < > <= >= ?
 
-    while (match(TOKEN_LT) || match(TOKEN_GT) || match(TOKEN_LTEQ) || match(TOKEN_GTEQ) ||
-           match(TOKEN_EQEQ) || match(TOKEN_BANGEQ)) {
+    while (check(TOKEN_LT) || check(TOKEN_GT) || check(TOKEN_LTEQ) || check(TOKEN_GTEQ) ||
+           check(TOKEN_EQEQ) || check(TOKEN_BANGEQ) || check(TOKEN_IN) ||
+           (check(TOKEN_NOT) && /* 'not in' */ 1)) {
+        // Membership: `x in c` / `x not in c`. Parsed at comparison precedence
+        // (Python treats `in` as a comparison operator). The for-loop's own `in`
+        // is consumed earlier, so it never reaches here.
+        bool negate_in = false;
+        if (check(TOKEN_NOT)) {
+            // Only treat as membership if followed by `in`; otherwise leave it
+            // (unary `not` is handled at unary()). Peek: consume NOT, require IN.
+            advance();  // consume 'not'
+            if (!check(TOKEN_IN)) {
+                fprintf(stderr, "Error at line %d: expected 'in' after 'not' in a comparison\n", parser.previous.line);
+                parser.had_error = true;
+                break;
+            }
+            negate_in = true;
+        }
+        if (check(TOKEN_IN)) {
+            advance();  // consume 'in'
+            Expr* container = addition();
+            Expr* membership = alloc_expr();
+            membership->type = EXPR_BINARY;
+            membership->binary.left = expr;
+            membership->binary.op = (Token){TOKEN_IN, "in", 2, parser.previous.line};
+            membership->binary.right = container;
+            membership->binary.is_not_in = negate_in;
+            expr = membership;
+            prev_was_relational = false;
+            continue;
+        }
+        advance();  // consume the relational/equality operator
         Token op = parser.previous;
         bool is_relational = (op.type == TOKEN_LT || op.type == TOKEN_GT ||
                               op.type == TOKEN_LTEQ || op.type == TOKEN_GTEQ);
