@@ -229,6 +229,26 @@ void codegen_stmt(Stmt* stmt) {
                 for (int ai = 0; ai < _nargs && _fc < 16; ai++) {
                     if (is_fresh_string_temp(_args[ai])) _fresh[_fc++] = ai;
                 }
+                // A fresh string pushed into a string array transfers ownership to
+                // the array (array_push_str stores it raw; array_free releases it).
+                // Such an argument must NOT be released after the call, or the live
+                // array element is double-freed. Identify the transferring arg index
+                // (-1 = none): method `arr.push(x)` on a [string] → arg 0;
+                // free call `array_push_str(&arr, x)` → arg 1.
+                int _push_move_arg = -1;
+                if (_se->type == EXPR_METHOD_CALL &&
+                    _se->method_call.method.length == 4 &&
+                    memcmp(_se->method_call.method.start, "push", 4) == 0 &&
+                    _se->method_call.object->expr_type &&
+                    _se->method_call.object->expr_type->kind == TYPE_ARRAY &&
+                    _se->method_call.object->expr_type->array_type.element_type &&
+                    _se->method_call.object->expr_type->array_type.element_type->kind == TYPE_STRING) {
+                    _push_move_arg = 0;
+                } else if (_se->type == EXPR_CALL && _se->call.callee->type == EXPR_IDENT &&
+                    _se->call.callee->token.length == 14 &&
+                    memcmp(_se->call.callee->token.start, "array_push_str", 14) == 0) {
+                    _push_move_arg = 1;
+                }
                 if (_fc > 0 && !_is_str_call) {
                     emit("{ ");
                     // Evaluate fresh args to temps
@@ -241,9 +261,11 @@ void codegen_stmt(Stmt* stmt) {
                     // Emit call (args with temp IDs emit __sa{id} instead)
                     codegen_expr(_se);
                     emit("; ");
-                    // Release temps
+                    // Release temps — except one whose ownership transferred to
+                    // an array via push (releasing it would double-free the element).
                     for (int si = 0; si < _fc; si++) {
-                        emit("wyn_rc_release(__sa%d); ", si);
+                        if (_fresh[si] != _push_move_arg)
+                            emit("wyn_rc_release(__sa%d); ", si);
                         _args[_fresh[si]]->_codegen_temp_id = -1;
                     }
                     emit("}\n");
@@ -1411,6 +1433,66 @@ void codegen_stmt(Stmt* stmt) {
                     } else {
                         // Copy: source is still live or from outer scope — retain
                         emit("wyn_rc_retain(%.*s);\n", stmt->var.name.length, stmt->var.name.start);
+                    }
+                }
+            }
+            // RC: a local string stored into a struct field is aliased by that
+            // field, but the field holds the pointer raw (no retain) and struct
+            // _cleanup does not release string fields — so structs do not own
+            // their string fields. If we ALSO release the local at scope/return
+            // exit and the struct (or a field of it) escapes the local's scope
+            // (e.g. `var p = P{name: s}; return p.name`), the field is left
+            // dangling → use-after-free (empty/garbage reads). Fix: MOVE any
+            // dead local string stored into a field — drop it from the string
+            // release/tracking lists so scope exit skips its release. This only
+            // ever REMOVES a release, so it can never cause a double-free or
+            // UAF; a still-live local (used after the struct-init in the same
+            // block) is left untouched — its read happens before scope exit, so
+            // it is already safe.
+            if (stmt->var.init && stmt->var.init->type == EXPR_STRUCT_INIT) {
+                extern int is_string_var(const char*);
+                extern int var_is_live_after(Stmt**, int, int, const char*);
+                extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
+                extern void unregister_string_var(const char*);
+                Expr* _si = stmt->var.init;
+                for (int _fi = 0; _fi < _si->struct_init.field_count; _fi++) {
+                    Expr* _fv = _si->struct_init.field_values[_fi];
+                    if (!_fv || _fv->type != EXPR_IDENT) continue;
+                    if (!_fv->expr_type || _fv->expr_type->kind != TYPE_STRING) continue;
+                    char _sfn[256]; token_to_cstr(_sfn, sizeof(_sfn), _fv->token);
+                    if (!is_string_var(_sfn)) continue;
+                    // Move only when the local is provably dead after this
+                    // statement in the current block (no later textual use).
+                    if (current_block_stmts &&
+                        !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _sfn))
+                        unregister_string_var(_sfn);
+                }
+            }
+            // RC: the same raw-store ownership issue applies to the string
+            // Option/Result constructors — OptionString_Some / ResultString_Ok /
+            // ResultString_Err store the pointer without retaining, and the
+            // wrapper never releases it. `var o = OptionString_Some(s); return
+            // OptionString_unwrap(o)` releases s at scope exit while o.value (and
+            // the returned pointer) still alias it → use-after-free. MOVE a dead
+            // local string argument (drop its scope-exit release). Move-only, so
+            // it can only remove a UAF-causing release, never add a double-free.
+            if (stmt->var.init && stmt->var.init->type == EXPR_CALL &&
+                stmt->var.init->call.callee->type == EXPR_IDENT &&
+                stmt->var.init->call.arg_count == 1) {
+                char _cn[64]; token_to_cstr(_cn, sizeof(_cn), stmt->var.init->call.callee->token);
+                if (strcmp(_cn, "OptionString_Some") == 0 ||
+                    strcmp(_cn, "ResultString_Ok") == 0 ||
+                    strcmp(_cn, "ResultString_Err") == 0) {
+                    Expr* _av = stmt->var.init->call.args[0];
+                    if (_av && _av->type == EXPR_IDENT) {
+                        extern int is_string_var(const char*);
+                        extern int var_is_live_after(Stmt**, int, int, const char*);
+                        extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
+                        extern void unregister_string_var(const char*);
+                        char _avn[256]; token_to_cstr(_avn, sizeof(_avn), _av->token);
+                        if (is_string_var(_avn) && current_block_stmts &&
+                            !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _avn))
+                            unregister_string_var(_avn);
                     }
                 }
             }
