@@ -272,6 +272,13 @@ static int current_local_count = 0;
 // Values: "ResultInt", "ResultString", "OptionInt", "OptionString", or NULL
 static const char* current_fn_return_kind = NULL;
 
+// Track the Option/Result family of the current assignment target (the declared
+// type of a `var x: T? = Some(..)` / `var r: ResultString = Ok(..)`), so a
+// Some/None/Ok/Err initializer lowers to the exact family the annotation names —
+// even with no enclosing function-return context. Same value domain as
+// current_fn_return_kind; NULL when the target is not an Option/Result.
+static const char* current_assign_target_kind = NULL;
+
 static void register_module_function(const char* name) {
     if (module_function_count < 256) {
         module_functions[module_function_count++] = strdup(name);

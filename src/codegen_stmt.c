@@ -1397,6 +1397,16 @@ void codegen_stmt(Stmt* stmt) {
                 }
             }
             
+            // Tell Some/None/Ok/Err codegen the declared target family so the
+            // initializer lowers to the exact Option*/Result* type the
+            // annotation names (e.g. `var o: string? = None()` -> OptionString).
+            extern const char* current_assign_target_kind;
+            const char* _prev_assign_kind = current_assign_target_kind;
+            if (strcmp(c_type, "OptionInt") == 0 || strcmp(c_type, "OptionString") == 0 ||
+                strcmp(c_type, "ResultInt") == 0 || strcmp(c_type, "ResultString") == 0)
+                current_assign_target_kind = c_type;
+            else
+                current_assign_target_kind = NULL;
             if (needs_arc_management) {
                 codegen_expr(stmt->var.init);
             } else {
@@ -1408,6 +1418,7 @@ void codegen_stmt(Stmt* stmt) {
                 codegen_expr(stmt->var.init);
                 codegen_emit_int_array = _was_int_array;
             }
+            current_assign_target_kind = _prev_assign_kind;
             emit(";\n");
             // RC: retain when copying a string variable (unless source is last-use → move)
             if ((strcmp(c_type, "const char*") == 0 || strcmp(c_type, "char*") == 0) &&
@@ -1476,24 +1487,35 @@ void codegen_stmt(Stmt* stmt) {
             // the returned pointer) still alias it → use-after-free. MOVE a dead
             // local string argument (drop its scope-exit release). Move-only, so
             // it can only remove a UAF-causing release, never add a double-free.
-            if (stmt->var.init && stmt->var.init->type == EXPR_CALL &&
-                stmt->var.init->call.callee->type == EXPR_IDENT &&
-                stmt->var.init->call.arg_count == 1) {
-                char _cn[64]; token_to_cstr(_cn, sizeof(_cn), stmt->var.init->call.callee->token);
-                if (strcmp(_cn, "OptionString_Some") == 0 ||
-                    strcmp(_cn, "ResultString_Ok") == 0 ||
-                    strcmp(_cn, "ResultString_Err") == 0) {
-                    Expr* _av = stmt->var.init->call.args[0];
-                    if (_av && _av->type == EXPR_IDENT) {
-                        extern int is_string_var(const char*);
-                        extern int var_is_live_after(Stmt**, int, int, const char*);
-                        extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
-                        extern void unregister_string_var(const char*);
-                        char _avn[256]; token_to_cstr(_avn, sizeof(_avn), _av->token);
-                        if (is_string_var(_avn) && current_block_stmts &&
-                            !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _avn))
-                            unregister_string_var(_avn);
-                    }
+            // The payload expression carrying a potentially-moved local string:
+            // surface constructors Some(s)/Ok(s)/Err(s) (EXPR_SOME/OK/ERR, payload
+            // in .option.value) OR the already-lowered mangled call form
+            // OptionString_Some(s)/ResultString_Ok/_Err(s).
+            {
+                Expr* _init = stmt->var.init;
+                Expr* _payload = NULL;
+                if (_init && (_init->type == EXPR_SOME || _init->type == EXPR_OK ||
+                              _init->type == EXPR_ERR)) {
+                    _payload = _init->option.value;
+                } else if (_init && _init->type == EXPR_CALL &&
+                           _init->call.callee->type == EXPR_IDENT &&
+                           _init->call.arg_count == 1) {
+                    char _cn[64]; token_to_cstr(_cn, sizeof(_cn), _init->call.callee->token);
+                    if (strcmp(_cn, "OptionString_Some") == 0 ||
+                        strcmp(_cn, "ResultString_Ok") == 0 ||
+                        strcmp(_cn, "ResultString_Err") == 0)
+                        _payload = _init->call.args[0];
+                }
+                if (_payload && _payload->type == EXPR_IDENT &&
+                    _payload->expr_type && _payload->expr_type->kind == TYPE_STRING) {
+                    extern int is_string_var(const char*);
+                    extern int var_is_live_after(Stmt**, int, int, const char*);
+                    extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
+                    extern void unregister_string_var(const char*);
+                    char _avn[256]; token_to_cstr(_avn, sizeof(_avn), _payload->token);
+                    if (is_string_var(_avn) && current_block_stmts &&
+                        !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _avn))
+                        unregister_string_var(_avn);
                 }
             }
             // Shadow define: redirect original name to suffixed version

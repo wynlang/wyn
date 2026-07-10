@@ -34,6 +34,35 @@ static void codegen_string_push_transfer(Expr* value) {
     }
 }
 
+// Map an Option/Result constructor's PAYLOAD type to the concrete monomorphic
+// family name used by the runtime: string payload -> "OptionString"/"ResultString",
+// everything else -> "OptionInt"/"ResultInt" (the int family is the catch-all the
+// runtime uses for int/bool/float/struct payloads today). `kind` is "Option" or
+// "Result". Keying off the payload's own type — rather than the node's resolved
+// type — is what makes bare `Some(x)`/`Ok(x)`/`Err(x)` lower correctly outside a
+// function-return context (e.g. `var o: string? = Some(s)`). Returns a static
+// string constant; NULL only if payload type is unknown.
+static const char* wyn_ctor_family(Type* payload, const char* kind) {
+    bool is_str = payload && payload->kind == TYPE_STRING;
+    if (strcmp(kind, "Option") == 0) return is_str ? "OptionString" : "OptionInt";
+    return is_str ? "ResultString" : "ResultInt";
+}
+
+// Resolve the concrete Option/Result family for a Some/None/Ok/Err node.
+// Precedence: (1) the assignment-target annotation, (2) the enclosing function
+// return kind — both name the exact declared family and must win over inference;
+// (3) the payload's own type (so bare `Some(x)`/`Ok(x)`/`Err(x)` work anywhere);
+// (4) the int family as the catch-all default. `kind` is "Option" or "Result".
+static const char* wyn_option_ctor_kind(Expr* e, const char* kind) {
+    extern const char* current_assign_target_kind;
+    extern const char* current_fn_return_kind;
+    if (current_assign_target_kind && strncmp(current_assign_target_kind, kind, strlen(kind)) == 0)
+        return current_assign_target_kind;
+    if (current_fn_return_kind && strncmp(current_fn_return_kind, kind, strlen(kind)) == 0)
+        return current_fn_return_kind;
+    return wyn_ctor_family(e->option.value ? e->option.value->expr_type : NULL, kind);
+}
+
 void codegen_expr(Expr* expr) {
     if (!expr) return;
     // If this expr was pre-evaluated to a temp, emit the temp name
@@ -3672,39 +3701,30 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_SOME: {
-            if (current_fn_return_kind && strncmp(current_fn_return_kind, "Option", 6) == 0) {
-                emit("%s_Some(", current_fn_return_kind);
-            } else {
-                emit("OptionInt_Some(");
-            }
+            // Resolve the concrete Option family. Precedence: an explicit
+            // assignment-target annotation (`var o: string? = Some(..)`) or an
+            // enclosing function-return kind wins (they name the exact declared
+            // family); otherwise infer from the payload's own type so bare
+            // `Some(x)` lowers correctly for any payload, not just int.
+            emit("%s_Some(", wyn_option_ctor_kind(expr, "Option"));
             if (expr->option.value) codegen_expr(expr->option.value);
             emit(")");
             break;
         }
         case EXPR_NONE: {
-            if (current_fn_return_kind && strncmp(current_fn_return_kind, "Option", 6) == 0) {
-                emit("%s_None()", current_fn_return_kind);
-            } else {
-                emit("OptionInt_None()");
-            }
+            // No payload to infer from — rely on the target/return annotation,
+            // defaulting to OptionInt.
+            emit("%s_None()", wyn_option_ctor_kind(expr, "Option"));
             break;
         }
         case EXPR_OK: {
-            if (current_fn_return_kind && strncmp(current_fn_return_kind, "Result", 6) == 0) {
-                emit("%s_Ok(", current_fn_return_kind);
-            } else {
-                emit("ResultInt_Ok(");
-            }
+            emit("%s_Ok(", wyn_option_ctor_kind(expr, "Result"));
             if (expr->option.value) codegen_expr(expr->option.value);
             emit(")");
             break;
         }
         case EXPR_ERR: {
-            if (current_fn_return_kind && strncmp(current_fn_return_kind, "Result", 6) == 0) {
-                emit("%s_Err(", current_fn_return_kind);
-            } else {
-                emit("ResultInt_Err(");
-            }
+            emit("%s_Err(", wyn_option_ctor_kind(expr, "Result"));
             if (expr->option.value) codegen_expr(expr->option.value);
             emit(")");
             break;
