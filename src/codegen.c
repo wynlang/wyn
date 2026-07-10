@@ -1292,6 +1292,29 @@ const char* get_enum_variant_c_type(const char* enum_name, const char* variant_n
     return "long long"; // default
 }
 
+// Per-field types for multi-field enum variants (e.g. Rect(int, string)).
+// Keyed "Enum.Variant.fN". get_enum_variant_c_type only stores one type per
+// variant; a multi-field match arm needs each field's real C type instead of a
+// hardcoded guess.
+static struct { char key[160]; char c_type[64]; } enum_variant_field_types[512];
+static int enum_variant_field_type_count = 0;
+void register_enum_variant_field_type(const char* enum_name, const char* variant_name, int idx, const char* c_type) {
+    if (enum_variant_field_type_count < 512) {
+        snprintf(enum_variant_field_types[enum_variant_field_type_count].key, 160, "%s.%s.f%d", enum_name, variant_name, idx);
+        strncpy(enum_variant_field_types[enum_variant_field_type_count].c_type, c_type, 63);
+        enum_variant_field_types[enum_variant_field_type_count].c_type[63] = '\0';
+        enum_variant_field_type_count++;
+    }
+}
+// Returns the field's C type, or "long long" if unknown.
+const char* get_enum_variant_field_type(const char* enum_name, const char* variant_name, int idx) {
+    char key[160];
+    snprintf(key, 160, "%s.%s.f%d", enum_name, variant_name, idx);
+    for (int i = 0; i < enum_variant_field_type_count; i++)
+        if (strcmp(enum_variant_field_types[i].key, key) == 0) return enum_variant_field_types[i].c_type;
+    return "long long";
+}
+
 const char* find_enum_for_variant(const char* variant_name) {
     // Search "EnumName.VariantName" keys for matching variant
     

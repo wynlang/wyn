@@ -2603,6 +2603,13 @@ void codegen_stmt(Stmt* stmt) {
                             for (int j = 0; j < stmt->enum_decl.variant_type_counts[i]; j++) {
                                 emit_type_from_expr(stmt->enum_decl.variant_types[i][j]);
                                 emit(" f%d; ", j);
+                                // Record each field's C type so match-arm extraction
+                                // can bind it with the right type (not a guess).
+                                { extern void register_enum_variant_field_type(const char*, const char*, int, const char*);
+                                  char _en[128], _vn[128];
+                                  token_to_cstr(_en, sizeof(_en), stmt->enum_decl.name);
+                                  token_to_cstr(_vn, sizeof(_vn), stmt->enum_decl.variants[i]);
+                                  register_enum_variant_field_type(_en, _vn, j, c_type_from_expr(stmt->enum_decl.variant_types[i][j])); }
                             }
                             emit("} %.*s_value;\n",
                                  stmt->enum_decl.variants[i].length,

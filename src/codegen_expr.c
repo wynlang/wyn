@@ -3366,8 +3366,12 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
-            // Generate result variable with correct type
-            emit("%s __match_result_%d; ", result_type, match_id);
+            // Generate result variable, zero-initialized. A non-exhaustive match
+            // (checker warns, but enum value typing may not always flag it) emits
+            // no default arm; without this the result would be read uninitialized
+            // on an unmatched value. {0} is valid for scalars, pointers, and
+            // structs (NULL / 0 / zeroed).
+            emit("%s __match_result_%d = {0}; ", result_type, match_id);
             
             // Generate if-else chain for each arm
             for (int i = 0; i < expr->match.arm_count; i++) {
@@ -3520,12 +3524,25 @@ void codegen_expr(Expr* expr) {
                              pat->option.variant_name.length, pat->option.variant_name.start);
                         // Bind inner variables
                         if (pat->option.inner_count > 1) {
+                            extern const char* get_enum_variant_field_type(const char*, const char*, int);
+                            char _mfen[128], _mfvn[128];
+                            token_to_cstr(_mfen, sizeof(_mfen), pat->option.enum_name);
+                            token_to_cstr(_mfvn, sizeof(_mfvn), pat->option.variant_name);
                             for (int pi = 0; pi < pat->option.inner_count; pi++) {
                                 if (pat->option.inners[pi] && pat->option.inners[pi]->type == PATTERN_IDENT) {
-                                    emit("double %.*s = __match_val_%d.data.%.*s_value.f%d; ",
+                                    const char* _fty = get_enum_variant_field_type(_mfen, _mfvn, pi);
+                                    emit("%s %.*s = __match_val_%d.data.%.*s_value.f%d; ",
+                                         _fty,
                                          pat->option.inners[pi]->ident.name.length, pat->option.inners[pi]->ident.name.start,
                                          match_id,
                                          pat->option.variant_name.length, pat->option.variant_name.start, pi);
+                                    // Register a string field binding so the arm body
+                                    // concatenates it instead of int_to_string(it).
+                                    if (strcmp(_fty, "const char*") == 0 || strcmp(_fty, "char*") == 0) {
+                                        char _fb[256]; token_to_cstr(_fb, sizeof(_fb), pat->option.inners[pi]->ident.name);
+                                        extern void register_string_var(const char*);
+                                        register_string_var(_fb);
+                                    }
                                 }
                             }
                         } else if (pat->option.inner && pat->option.inner->type == PATTERN_IDENT) {
@@ -3546,7 +3563,29 @@ void codegen_expr(Expr* expr) {
                              match_id,
                              type_name_len, type_name,
                              pat->option.variant_name.length, pat->option.variant_name.start);
-                        if (pat->option.inner && pat->option.inner->type == PATTERN_IDENT) {
+                        if (pat->option.inner_count > 1) {
+                            extern const char* get_enum_variant_field_type(const char*, const char*, int);
+                            char _mfen[128], _mfvn[128];
+                            snprintf(_mfen, sizeof(_mfen), "%.*s", type_name_len, type_name);
+                            token_to_cstr(_mfvn, sizeof(_mfvn), pat->option.variant_name);
+                            for (int pi = 0; pi < pat->option.inner_count; pi++) {
+                                if (pat->option.inners[pi] && pat->option.inners[pi]->type == PATTERN_IDENT) {
+                                    const char* _fty = get_enum_variant_field_type(_mfen, _mfvn, pi);
+                                    emit("%s %.*s = __match_val_%d.data.%.*s_value.f%d; ",
+                                         _fty,
+                                         pat->option.inners[pi]->ident.name.length, pat->option.inners[pi]->ident.name.start,
+                                         match_id,
+                                         pat->option.variant_name.length, pat->option.variant_name.start, pi);
+                                    // Register a string field binding so the arm body
+                                    // concatenates it instead of int_to_string(it).
+                                    if (strcmp(_fty, "const char*") == 0 || strcmp(_fty, "char*") == 0) {
+                                        char _fb[256]; token_to_cstr(_fb, sizeof(_fb), pat->option.inners[pi]->ident.name);
+                                        extern void register_string_var(const char*);
+                                        register_string_var(_fb);
+                                    }
+                                }
+                            }
+                        } else if (pat->option.inner && pat->option.inner->type == PATTERN_IDENT) {
                             extern const char* get_enum_variant_c_type(const char*, const char*);
                             char _en[128], _vn[128];
                             snprintf(_en, 128, "%.*s", type_name_len, type_name);

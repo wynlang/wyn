@@ -1,0 +1,36 @@
+// Regression: multi-field enum variants (Rect(int,int), Pair(int,string)) must
+// bind each payload field with its real type in match arms. Previously the
+// unprefixed pattern emitted `void w = ...Rect_value` and referenced an
+// undeclared second binder -> codegen error; a string field was int_to_string'd.
+// Also: a non-exhaustive match must not read uninitialized memory (result is
+// zero-initialized), so an unmatched value yields a deterministic 0, not garbage.
+// EXPECT: 12
+// EXPECT: 0
+// EXPECT: answer:42
+// EXPECT: empty
+// EXPECT: 0
+
+enum Shape { Rect(int, int), Dot }
+enum Item { Pair(int, string), Empty }
+enum Color { Red, Green, Blue }
+
+fn area(s: Shape) -> int {
+    return match s { Rect(w, h) => w * h, Dot => 0 }
+}
+
+fn describe(it: Item) -> string {
+    return match it { Pair(n, label) => label + ":" + n.to_string(), Empty => "empty" }
+}
+
+fn non_exhaustive(c: Color) -> int {
+    // Only two of three arms; unmatched Blue must be a deterministic 0.
+    return match c { Red => 1, Green => 2 }
+}
+
+fn main() {
+    println(area(Shape.Rect(3, 4)).to_string())   // 12
+    println(area(Shape.Dot).to_string())           // 0
+    println(describe(Item.Pair(42, "answer")))     // answer:42
+    println(describe(Item.Empty))                  // empty
+    println(non_exhaustive(Color.Blue).to_string())// 0 (unmatched -> zero-init)
+}
