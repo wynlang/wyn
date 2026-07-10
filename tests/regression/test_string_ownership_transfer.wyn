@@ -1,0 +1,42 @@
+// Regression: a local string handed to a container/wrapper that stores it raw
+// (no retain) must NOT also be released at scope/return exit — that double-frees
+// the live element (use-after-free / empty reads). Covers struct fields,
+// array push of a call result, and Option/Result string constructors. All were
+// confirmed UAF under AddressSanitizer before the fix.
+// EXPECT: PASS: string ownership transfer
+
+struct Person { name: string, age: int }
+
+fn make_person(n: int) -> string {
+    var s = "person_" + n.to_string()
+    var p = Person { name: s, age: n }   // s moved into the struct field
+    return p.name                         // field escapes s's scope
+}
+
+fn opt_wrap(n: int) -> string {
+    var s = "opt_" + n.to_string()
+    var o: string? = OptionString_Some(s) // s moved into the Option
+    return OptionString_unwrap(o)
+}
+
+fn res_wrap(n: int) -> string {
+    var s = "res_" + n.to_string()
+    var r: ResultString = ResultString_Ok(s) // s moved into the Result
+    return ResultString_unwrap(r)
+}
+
+fn main() -> int {
+    // Struct field, via array push of the call result (double transfer).
+    var names: [string] = []
+    for i in 0..5 {
+        names.push(make_person(i))
+    }
+    if names[0] != "person_0" { println("FAIL: struct/push[0]=${names[0]}"); return 1 }
+    if names[4] != "person_4" { println("FAIL: struct/push[4]=${names[4]}"); return 1 }
+
+    if opt_wrap(3) != "opt_3" { println("FAIL: option=${opt_wrap(3)}"); return 1 }
+    if res_wrap(7) != "res_7" { println("FAIL: result=${res_wrap(7)}"); return 1 }
+
+    println("PASS: string ownership transfer")
+    return 0
+}
