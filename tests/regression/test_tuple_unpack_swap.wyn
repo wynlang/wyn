@@ -1,0 +1,31 @@
+// Pythonic tuple unpacking and multi-target assignment / swap.
+//   var a, b = x, y      (declaration, tuple-literal RHS)
+//   var lo, hi = f()     (declaration, tuple-returning RHS)
+//   a, b = b, a          (assignment / swap — RHS evaluated before writes)
+// EXPECT: PASS: tuple unpack and swap
+
+fn minmax() -> (int, int) { return (3, 9) }
+
+fn main() -> int {
+    // decl from tuple literal
+    var a, b = 10, 20
+    if a != 10 or b != 20 { println("FAIL: decl literal"); return 1 }
+
+    // decl from tuple return
+    var lo, hi = minmax()
+    if lo != 3 or hi != 9 { println("FAIL: decl tuple-return"); return 1 }
+
+    // swap (two-way)
+    a, b = b, a
+    if a != 20 or b != 10 { println("FAIL: swap"); return 1 }
+
+    // rotate (three-way)
+    var x = 1
+    var y = 2
+    var z = 3
+    x, y, z = z, x, y
+    if x != 3 or y != 1 or z != 2 { println("FAIL: rotate"); return 1 }
+
+    println("PASS: tuple unpack and swap")
+    return 0
+}

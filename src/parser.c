@@ -1926,6 +1926,84 @@ Stmt* statement() {
         
         expect(TOKEN_IDENT, "Expected variable name");
         
+        // Bare tuple destructuring: `var a, b = x, y` (and `var a, b, c = f()`).
+        // Same result as `var (a, b) = ...` but without parens. Detect a comma
+        // right after the first name.
+        if (decl_type == TOKEN_VAR && check(TOKEN_COMMA)) {
+            Token names[16]; int name_count = 0;
+            names[name_count++] = parser.previous;  // the first name
+            while (match(TOKEN_COMMA) && name_count < 16) {
+                if (match(TOKEN_UNDERSCORE)) {
+                    static char us[] = "_"; names[name_count].start = us; names[name_count].length = 1; name_count++;
+                } else {
+                    expect(TOKEN_IDENT, "Expected variable name in tuple destructuring");
+                    names[name_count++] = parser.previous;
+                }
+            }
+            expect(TOKEN_EQ, "Expected '=' after tuple destructuring pattern");
+            // Parse the RHS as a comma-separated list of expressions (var a, b =
+            // x, y). If there's a single expression, treat it as a tuple-returning
+            // value to index. Each RHS expression is parsed at assignment level so
+            // a trailing comma continues the list rather than being left dangling.
+            Expr* rhs[16]; int rhs_count = 0;
+            rhs[rhs_count++] = assignment();
+            while (match(TOKEN_COMMA) && rhs_count < 16) {
+                rhs[rhs_count++] = assignment();
+            }
+            stmt->type = STMT_BLOCK;
+            // Fast path: N RHS expressions for N names — bind each directly. Names
+            // are freshly declared, so no aliasing concerns.
+            if (rhs_count == name_count) {
+                stmt->block.stmts = malloc(sizeof(Stmt*) * name_count);
+                stmt->block.count = name_count;
+                for (int i = 0; i < name_count; i++) {
+                    if (names[i].length == 1 && names[i].start[0] == '_') {
+                        Stmt* noop = alloc_stmt(); noop->type = STMT_EXPR;
+                        noop->expr = rhs[i];
+                        stmt->block.stmts[i] = noop; continue;
+                    }
+                    Stmt* vs = alloc_stmt(); vs->type = STMT_VAR;
+                    vs->var.is_const = false; vs->var.is_mutable = true;
+                    vs->var.name = names[i]; vs->var.type = NULL;
+                    vs->var.init = rhs[i];
+                    stmt->block.stmts[i] = vs;
+                }
+                match(TOKEN_SEMI);
+                return stmt;
+            }
+            // General path: a single tuple-returning expression. Bind a temp,
+            // then index it via .0/.1/...
+            Expr* init = rhs[0];
+            stmt->block.stmts = malloc(sizeof(Stmt*) * (name_count + 1));
+            stmt->block.count = name_count + 1;
+            Stmt* tup_stmt = alloc_stmt();
+            tup_stmt->type = STMT_VAR;
+            tup_stmt->var.is_const = false; tup_stmt->var.is_mutable = true;
+            static char tdn[] = "__tdestruct";
+            tup_stmt->var.name.start = tdn; tup_stmt->var.name.length = 11;
+            tup_stmt->var.init = init; tup_stmt->var.type = NULL;
+            stmt->block.stmts[0] = tup_stmt;
+            for (int i = 0; i < name_count; i++) {
+                if (names[i].length == 1 && names[i].start[0] == '_') {
+                    Stmt* noop = alloc_stmt(); noop->type = STMT_EXPR;
+                    Expr* z = alloc_expr(); z->type = EXPR_INT;
+                    static char zs[] = "0"; z->token.start = zs; z->token.length = 1; noop->expr = z;
+                    stmt->block.stmts[i + 1] = noop; continue;
+                }
+                Stmt* vs = alloc_stmt(); vs->type = STMT_VAR;
+                vs->var.is_const = false; vs->var.is_mutable = true;
+                vs->var.name = names[i]; vs->var.type = NULL;
+                Expr* acc = alloc_expr(); acc->type = EXPR_TUPLE_INDEX;
+                Expr* base = alloc_expr(); base->type = EXPR_IDENT;
+                base->token = tup_stmt->var.name;
+                acc->tuple_index.tuple = base; acc->tuple_index.index = i;
+                vs->var.init = acc;
+                stmt->block.stmts[i + 1] = vs;
+            }
+            match(TOKEN_SEMI);
+            return stmt;
+        }
+        
         // Check for type annotation: var name: type = value
         if (match(TOKEN_COLON)) {
             if (decl_type == TOKEN_CONST) {
@@ -2431,6 +2509,66 @@ Stmt* statement() {
             const char* __sp = parser.current.start; stmt->block.stmts[stmt->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
         }
         expect(TOKEN_RBRACE, "Expected '}' after block");
+        return stmt;
+    }
+    
+    // Multi-target assignment / swap: `a, b = b, a` (and `a, b, c = f(), g(), h()`).
+    // Detect a bare identifier followed by a comma at statement start. Evaluate
+    // all RHS values into temps first, then assign each target, so `a, b = b, a`
+    // swaps correctly.
+    if (check(TOKEN_IDENT)) {
+        Token first = parser.current;
+        // Tentatively parse the first target expression.
+        Expr* first_target = assignment();
+        if (first_target->type == EXPR_IDENT && check(TOKEN_COMMA)) {
+            Token targets[16]; int tcount = 0;
+            targets[tcount++] = first_target->token;
+            while (match(TOKEN_COMMA) && tcount < 16) {
+                if (!check(TOKEN_IDENT)) {
+                    fprintf(stderr, "Error at line %d: expected a variable name in multi-assignment\n", parser.current.line);
+                    parser.had_error = true; break;
+                }
+                targets[tcount++] = parser.current; advance();
+            }
+            expect(TOKEN_EQ, "Expected '=' in multi-assignment");
+            Expr* rhs[16]; int rcount = 0;
+            rhs[rcount++] = assignment();
+            while (match(TOKEN_COMMA) && rcount < 16) rhs[rcount++] = assignment();
+            match(TOKEN_SEMI);
+            if (rcount != tcount) {
+                fprintf(stderr, "Error at line %d: multi-assignment has %d targets but %d values\n",
+                        first.line, tcount, rcount);
+                parser.had_error = true;
+            }
+            // Desugar: { T __ma0 = rhs0; ...; a = __ma0; b = __ma1; ... }
+            Stmt* blk = alloc_stmt(); blk->type = STMT_BLOCK;
+            blk->block.stmts = malloc(sizeof(Stmt*) * (tcount * 2));
+            blk->block.count = 0;
+            for (int i = 0; i < tcount && i < rcount; i++) {
+                // var __maI = rhsI  (fresh temp preserves swap semantics)
+                Stmt* tv = alloc_stmt(); tv->type = STMT_VAR;
+                tv->var.is_const = false; tv->var.is_mutable = true;
+                char* nm = malloc(16); snprintf(nm, 16, "__ma%d", i);
+                tv->var.name = (Token){TOKEN_IDENT, nm, (int)strlen(nm), first.line};
+                tv->var.init = rhs[i]; tv->var.type = NULL;
+                blk->block.stmts[blk->block.count++] = tv;
+            }
+            for (int i = 0; i < tcount && i < rcount; i++) {
+                char* nm = malloc(16); snprintf(nm, 16, "__ma%d", i);
+                Expr* rv = alloc_expr(); rv->type = EXPR_IDENT;
+                rv->token = (Token){TOKEN_IDENT, nm, (int)strlen(nm), first.line};
+                Expr* asn = alloc_expr(); asn->type = EXPR_ASSIGN;
+                asn->assign.name = targets[i]; asn->assign.value = rv;
+                Stmt* es = alloc_stmt(); es->type = STMT_EXPR; es->expr = asn;
+                blk->block.stmts[blk->block.count++] = es;
+            }
+            return blk;
+        }
+        // Not a multi-assignment — fall through using the already-parsed expr.
+        Stmt* stmt = alloc_stmt();
+        stmt->type = STMT_EXPR;
+        stmt->expr = first_target;
+        match(TOKEN_SEMI);
         return stmt;
     }
     
