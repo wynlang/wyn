@@ -1,8 +1,9 @@
 // Regression: a local string handed to a container/wrapper that stores it raw
 // (no retain) must NOT also be released at scope/return exit — that double-frees
-// the live element (use-after-free / empty reads). Covers struct fields,
-// array push of a call result, and Option/Result string constructors. All were
-// confirmed UAF under AddressSanitizer before the fix.
+// the live element (use-after-free / empty reads). Covers struct fields, array
+// push of a call result, and Option/Result via the CLEAN surface constructors
+// (Some/Ok/Err — no mangled OptionString_* names). All were confirmed UAF under
+// AddressSanitizer before the fixes.
 // EXPECT: PASS: string ownership transfer
 
 struct Person { name: string, age: int }
@@ -15,21 +16,20 @@ fn make_person(n: int) -> string {
 
 fn opt_wrap(n: int) -> string {
     var s = "opt_" + n.to_string()
-    var o: string? = OptionString_Some(s) // s moved into the Option
-    return OptionString_unwrap(o)
+    var o: string? = Some(s)              // clean surface; s moved into the Option
+    return o.unwrap()
 }
 
 fn res_wrap(n: int) -> string {
     var s = "res_" + n.to_string()
-    var r: ResultString = ResultString_Ok(s) // s moved into the Result
+    var r: ResultString = Ok(s)           // clean surface; s moved into the Result
     return ResultString_unwrap(r)
 }
 
 fn main() -> int {
-    // Struct field, via array push of the call result (double transfer).
     var names: [string] = []
     for i in 0..5 {
-        names.push(make_person(i))
+        names.push(make_person(i))        // struct field via array push of a call result
     }
     if names[0] != "person_0" { println("FAIL: struct/push[0]=${names[0]}"); return 1 }
     if names[4] != "person_4" { println("FAIL: struct/push[4]=${names[4]}"); return 1 }

@@ -1,0 +1,27 @@
+// Regression: the surface constructors Some/None/Ok/Err must lower to the
+// correct Option*/Result* family for ANY payload type (not just int) and in any
+// context — including `var x: string? = Some(s)` with no function-return context.
+// Previously bare Some(string) emitted OptionInt_Some -> C type error.
+// EXPECT: PASS: option/result surface
+
+fn main() -> int {
+    // int Option, method unwrap
+    var oi: int? = Some(42)
+    if oi.unwrap() != 42 { println("FAIL: int Some"); return 1 }
+
+    // string Option (was: internal codegen error)
+    var s = "hello"
+    var os: string? = Some(s)
+    if os.unwrap() != "hello" { println("FAIL: string Some"); return 1 }
+
+    // None with a string annotation (was: OptionInt_None type error)
+    var no: string? = None()
+    if not no.is_none() { println("FAIL: string None"); return 1 }
+
+    // Result string, direct var
+    var rs: ResultString = Ok("data")
+    if ResultString_unwrap(rs) != "data" { println("FAIL: string Ok"); return 1 }
+
+    println("PASS: option/result surface")
+    return 0
+}
