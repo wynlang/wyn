@@ -1,5 +1,56 @@
 # Changelog
 
+## v1.13.0 — "The Pythonic Release" (2026-07-11)
+
+Wyn gets a lot more Python-like, plus a deep batch of codegen correctness and
+memory-safety fixes. All memory fixes verified under AddressSanitizer.
+
+### Language ergonomics ("feels like Python")
+
+- **`in` / `not in` membership.** `x in list`, `key in map`, `sub in string`,
+  and their `not in` negations, at comparison precedence.
+- **Negative indexing.** `a[-1]` is the last element (was a runtime panic).
+- **Open-ended slices.** `a[:2]`, `a[2:]`, `a[:]` (empty start defaults to 0,
+  empty end to the length). `a[i:j]` unchanged.
+- **Dict iteration.** `for k, v in map` binds key + value; `for k in map`
+  iterates keys.
+- **Tuple unpacking & multi-assignment.** `var a, b = 10, 20`,
+  `var lo, hi = minmax()`, and swap/rotate `a, b = b, a` / `x, y, z = z, x, y`
+  (all right-hand values are evaluated before any assignment).
+- **`Some`/`None`/`Ok`/`Err` work for any payload** in any context — you never
+  need to write a mangled `OptionString_Some(...)` form again.
+
+### Correctness (codegen type selection)
+
+- **HashMap values are correctly typed.** `m[k]` and `m.get(k)` on int/float/bool
+  maps returned garbage (always used the string getter) — even the shipped
+  hashmap example printed a blank value. Now typed from the map's value type;
+  also fixed a segfault on `if m.get(k) != n`.
+- **`match` fixes.** Statement-form `match` on a payload enum no longer
+  miscompiles; multi-field variants (`Rect(w, h)`) bind each field with its real
+  type; a `Result<int, string>` `Err(e)` arm treats `e` as a string; a
+  non-exhaustive `match` no longer reads uninitialized memory (result is
+  zero-initialized, and the checker flags uncovered variants).
+- **Float & bool arrays preserve values.** `[1.5, 2.5]` previously truncated to
+  `[1, 2]`; float/bool array literals now store, index, iterate, and print
+  correctly.
+- **Array/collection printing.** `print(["a", "b"])` and `print(map.keys())` show
+  the real values instead of `[0, 0]`.
+
+### Silent-miscompile & hang fixes
+
+- **String ternary** (`cond ? "a" : "b"`) no longer prints a garbage pointer.
+- **Chained comparison** (`0 < x < 10`) is rejected at compile time with a
+  message pointing to `0 < x and x < 10` (was silently evaluated as `(0<x)<10`).
+- **`elif` no longer hangs the compiler** — it errors with "use `else if`". A
+  general no-progress guard now protects every statement-parsing loop from hangs.
+
+### Memory safety
+
+- **Use-after-free fixes** for a local string moved into an array, a struct
+  field, an `Option`/`Result`, or an enum variant, then released at scope exit
+  while the container still aliased it. All ASan-verified with regression tests.
+
 ## v1.12.0 — "The Hardening Release" (2026-07-09)
 
 Memory-safety fixes, deeper concurrency, and a warning-clean build. Three of the
