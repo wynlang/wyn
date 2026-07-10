@@ -1315,6 +1315,11 @@ void codegen_match_statement(Stmt* stmt) {
                             emit("        const char* %.*s = __match_val_%d.data.err_value;\n",
                                 mc->pattern->option.inner->ident.name.length,
                                 mc->pattern->option.inner->ident.name.start, _rmid);
+                            // Err payload is a string; register the binding so the
+                            // arm body treats it as one (else `"..." + e` defaults
+                            // to int and emits int_to_string(e) -> garbage).
+                            { char _ev[256]; token_to_cstr(_ev, sizeof(_ev), mc->pattern->option.inner->ident.name);
+                              extern void register_string_var(const char*); register_string_var(_ev); }
                         }
                     }
                     emit("        ");

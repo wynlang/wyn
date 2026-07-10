@@ -1,0 +1,22 @@
+// Regression: the Err(e) arm of a statement-form match on Result<int, string>
+// binds e as a string, but the arm body concatenation `"..." + e` previously
+// treated e as int (emitting int_to_string(e)) and printed a garbage pointer.
+// Fix registers the Err binding as a string var so the body types it correctly.
+// EXPECT: err: boom
+// EXPECT: ok: 1
+
+fn parse(s: string) -> Result<int, string> {
+    if s == "bad" { return Err("boom") }
+    return Ok(1)
+}
+
+fn main() {
+    match parse("bad") {
+        Ok(v) => println("ok: " + v.to_string()),
+        Err(e) => println("err: " + e)
+    }
+    match parse("good") {
+        Ok(v) => println("ok: " + v.to_string()),
+        Err(e) => println("err: " + e)
+    }
+}
