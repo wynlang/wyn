@@ -3041,6 +3041,47 @@ void codegen_stmt(Stmt* stmt) {
         case STMT_FOR:
             // Check if this is a for-in loop (array iteration)
             if (stmt->for_stmt.array_expr) {
+                // Map iteration: `for k, v in m` (and `for k in m` -> keys).
+                // Iterate the map's keys, binding k to the key (string) and, when
+                // a value var is present, v to m[k] via the value-typed getter.
+                if (stmt->for_stmt.array_expr->expr_type &&
+                    stmt->for_stmt.array_expr->expr_type->kind == TYPE_MAP) {
+                    Type* mvt = stmt->for_stmt.array_expr->expr_type->map_type.value_type;
+                    const char* vget = "hashmap_get_string"; const char* vcty = "const char*";
+                    if (mvt) {
+                        switch (mvt->kind) {
+                            case TYPE_INT:   vget = "hashmap_get_int";    vcty = "long long"; break;
+                            case TYPE_BOOL:  vget = "hashmap_get_bool";   vcty = "bool"; break;
+                            case TYPE_FLOAT: vget = "hashmap_get_float";  vcty = "double"; break;
+                            default: break;
+                        }
+                    }
+                    // With two vars the parser stores key in index_var, value in
+                    // loop_var; with one var, the key is loop_var.
+                    Token kvar = stmt->for_stmt.has_index ? stmt->for_stmt.index_var : stmt->for_stmt.loop_var;
+                    emit("{\n"); push_scope();
+                    emit("    WynHashMap* __for_map = "); codegen_expr(stmt->for_stmt.array_expr); emit(";\n");
+                    emit("    WynArray __for_keys = hashmap_keys(__for_map);\n");
+                    emit("    for (long long __ki = 0; __ki < __for_keys.count; __ki++) {\n");
+                    emit("        const char* %.*s = array_get_str(__for_keys, __ki);\n", kvar.length, kvar.start);
+                    // The key is a string; register it so the body types it right.
+                    { char _kb[256]; token_to_cstr(_kb, sizeof(_kb), kvar);
+                      extern void register_string_var(const char*); register_string_var(_kb); }
+                    if (stmt->for_stmt.has_index) {
+                        emit("        %s %.*s = %s(__for_map, %.*s);\n",
+                             vcty, stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start,
+                             vget, kvar.length, kvar.start);
+                        // Register a string value binding so the body concats it correctly.
+                        if (strcmp(vcty, "const char*") == 0) {
+                            char _vb[256]; token_to_cstr(_vb, sizeof(_vb), stmt->for_stmt.loop_var);
+                            extern void register_string_var(const char*); register_string_var(_vb);
+                        }
+                    }
+                    if (stmt->for_stmt.body) codegen_stmt(stmt->for_stmt.body);
+                    emit("    }\n");
+                    pop_scope(); emit("}\n");
+                    break;
+                }
                 // L3: Iterator-based for-in (generator functions)
                 if (stmt->for_stmt.array_expr->type == EXPR_CALL &&
                     stmt->for_stmt.array_expr->call.callee->type == EXPR_IDENT) {
