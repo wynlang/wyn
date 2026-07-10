@@ -1161,14 +1161,36 @@ static Expr* call() {
             
             expr = call_expr;
         } else if (match(TOKEN_LBRACKET)) {
-            // Check if this is a slice (arr[1..3]) or index (arr[1])
-            Expr* first_expr = expression();
-            
-            if (match(TOKEN_DOTDOT) || match(TOKEN_COLON)) {
-                // It's a slice: arr[start..end]
-                Expr* end_expr = expression();
+            // Slice (arr[start:end], with open ends arr[:end] / arr[start:] /
+            // arr[:]) or index (arr[i]). An empty start defaults to 0; an empty
+            // end defaults to the container length.
+            Expr* obj_for_slice = expr;
+            bool start_empty = check(TOKEN_COLON) || check(TOKEN_DOTDOT);
+            Expr* first_expr = start_empty ? NULL : expression();
+
+            if (start_empty || check(TOKEN_DOTDOT) || check(TOKEN_COLON)) {
+                advance();  // consume ':' or '..'
+                // End bound: empty (]) means "to the end".
+                bool end_empty = check(TOKEN_RBRACKET);
+                Expr* end_expr = end_empty ? NULL : expression();
                 expect(TOKEN_RBRACKET, "Expected ']' after slice");
-                
+
+                // Default start -> 0
+                if (!first_expr) {
+                    first_expr = alloc_expr();
+                    first_expr->type = EXPR_INT;
+                    first_expr->token = (Token){TOKEN_INT, "0", 1, parser.previous.line};
+                }
+                // Default end -> obj.len()
+                if (!end_expr) {
+                    end_expr = alloc_expr();
+                    end_expr->type = EXPR_METHOD_CALL;
+                    end_expr->method_call.object = obj_for_slice;
+                    end_expr->method_call.method = (Token){TOKEN_IDENT, "len", 3, parser.previous.line};
+                    end_expr->method_call.arg_count = 0;
+                    end_expr->method_call.args = NULL;
+                }
+
                 // Convert to method call: arr.slice(start, end)
                 Expr* method_call = alloc_expr();
                 method_call->type = EXPR_METHOD_CALL;
