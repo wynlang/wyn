@@ -3878,6 +3878,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             expr->expr_type = opt_type;
             return opt_type;
         }
+        case EXPR_TERNARY: {
+            // cond ? a : b — type the branches and return their common type so a
+            // ternary bound to a var gets the right C type (e.g. a string ternary
+            // was declared `long long`, storing the char* as an int -> garbage).
+            check_expr(expr->ternary.condition, scope);
+            Type* t_then = check_expr(expr->ternary.then_expr, scope);
+            Type* t_else = check_expr(expr->ternary.else_expr, scope);
+            Type* result = t_then ? t_then : t_else;
+            if (!result) result = builtin_int;
+            expr->expr_type = result;
+            return result;
+        }
         case EXPR_UNARY: {
             // Type-check unary expressions (!, -, etc.)
             Type* operand_type = check_expr(expr->unary.operand, scope);

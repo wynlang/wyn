@@ -104,6 +104,22 @@ static bool check(WynTokenType type) {
     return parser.current.type == type;
 }
 
+// No-progress guard for statement-collecting loops. If statement() returns
+// without consuming any token (e.g. a stray keyword like `elif` that no rule
+// accepts), the enclosing `while (!check(RBRACE) && !check(EOF))` loop would
+// spin forever. Call after each statement() with the token position captured
+// before it; returns true (and reports one error + advances) when stuck, so the
+// caller can break. `before` is the parser.current.start pointer pre-statement().
+static bool stmt_made_no_progress(const char* before) {
+    if (parser.current.start != before) return false;
+    if (check(TOKEN_EOF)) return true;
+    fprintf(stderr, "Error at line %d: unexpected token '%.*s' — expected a statement\n",
+            parser.current.line, parser.current.length, parser.current.start);
+    parser.had_error = true;
+    advance();  // force progress so we surface further errors instead of hanging
+    return true;
+}
+
 // Check if the token after current looks like a value (for ternary ? disambiguation)
 static bool check_next_is_value(void) {
     if (!parser.current.start) return false;
@@ -1353,10 +1369,22 @@ static Expr* addition() {
 
 static Expr* comparison() {
     Expr* expr = addition();
-    
+    bool prev_was_relational = false;  // last op was < > <= >= ?
+
     while (match(TOKEN_LT) || match(TOKEN_GT) || match(TOKEN_LTEQ) || match(TOKEN_GTEQ) ||
            match(TOKEN_EQEQ) || match(TOKEN_BANGEQ)) {
         Token op = parser.previous;
+        bool is_relational = (op.type == TOKEN_LT || op.type == TOKEN_GT ||
+                              op.type == TOKEN_LTEQ || op.type == TOKEN_GTEQ);
+        // Reject chained relational comparisons like `0 < x < 10`. Wyn has no
+        // Python-style chaining; left-associative C evaluation ((0<x)<10) would
+        // silently give the wrong answer. Require explicit `0 < x and x < 10`.
+        if (is_relational && prev_was_relational) {
+            fprintf(stderr, "Error at line %d: chained comparison is not supported — "
+                    "write it as two comparisons joined with 'and' (e.g. `0 < x and x < 10`)\n",
+                    op.line);
+            parser.had_error = true;
+        }
         Expr* right = addition();
         Expr* binary = alloc_expr();
         binary->type = EXPR_BINARY;
@@ -1364,6 +1392,7 @@ static Expr* comparison() {
         binary->binary.op = op;
         binary->binary.right = right;
         expr = binary;
+        prev_was_relational = is_relational;
     }
     
     return expr;
@@ -1918,7 +1947,7 @@ Stmt* statement() {
         stmt->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            stmt->block.stmts[stmt->block.count++] = statement();
+            const char* __sp = parser.current.start; stmt->block.stmts[stmt->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
         }
         expect(TOKEN_RBRACE, "Expected '}' after parallel block");
         return stmt;
@@ -1949,9 +1978,21 @@ Stmt* statement() {
         stmt->if_stmt.then_branch->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->if_stmt.then_branch->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            stmt->if_stmt.then_branch->block.stmts[stmt->if_stmt.then_branch->block.count++] = statement();
+            const char* __sp = parser.current.start; stmt->if_stmt.then_branch->block.stmts[stmt->if_stmt.then_branch->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
         }
         expect(TOKEN_RBRACE, "Expected '}' after if body");
+        
+        // Friendly diagnostic: Python's `elif` (and `elseif`/`elsif`) isn't a Wyn
+        // keyword. Left unhandled it parsed as a stray identifier and the whole
+        // else-chain was silently dropped. Point users at `else if`.
+        if (check(TOKEN_IDENT) &&
+            ((parser.current.length == 4 && memcmp(parser.current.start, "elif", 4) == 0) ||
+             (parser.current.length == 6 && memcmp(parser.current.start, "elseif", 6) == 0) ||
+             (parser.current.length == 5 && memcmp(parser.current.start, "elsif", 5) == 0))) {
+            fprintf(stderr, "Error at line %d: '%.*s' is not valid in Wyn — use 'else if'\n",
+                    parser.current.line, parser.current.length, parser.current.start);
+            parser.had_error = true;
+        }
         
         if (match(TOKEN_ELSE)) {
             if (check(TOKEN_IF)) {
@@ -1963,7 +2004,7 @@ Stmt* statement() {
                 stmt->if_stmt.else_branch->block.stmts = malloc(sizeof(Stmt*) * 256);
                 stmt->if_stmt.else_branch->block.count = 0;
                 while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-                    stmt->if_stmt.else_branch->block.stmts[stmt->if_stmt.else_branch->block.count++] = statement();
+                    const char* __sp = parser.current.start; stmt->if_stmt.else_branch->block.stmts[stmt->if_stmt.else_branch->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
                 }
                 expect(TOKEN_RBRACE, "Expected '}' after else body");
             }
@@ -2126,7 +2167,7 @@ Stmt* statement() {
         stmt->while_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->while_stmt.body->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            stmt->while_stmt.body->block.stmts[stmt->while_stmt.body->block.count++] = statement();
+            const char* __sp = parser.current.start; stmt->while_stmt.body->block.stmts[stmt->while_stmt.body->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
         }
         expect(TOKEN_RBRACE, "Expected '}' after while body");
         return stmt;
@@ -2282,7 +2323,7 @@ Stmt* statement() {
                 stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
                 stmt->for_stmt.body->block.count = 0;
                 while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-                    stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = statement();
+                    const char* __sp = parser.current.start; stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
                 }
                 expect(TOKEN_RBRACE, "Expected '}' after for body");
                 return stmt;
@@ -2319,7 +2360,7 @@ Stmt* statement() {
         stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->for_stmt.body->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = statement();
+            const char* __sp = parser.current.start; stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
         }
         expect(TOKEN_RBRACE, "Expected '}' after for body");
         return stmt;
@@ -2335,7 +2376,7 @@ Stmt* statement() {
         stmt->block.stmts = malloc(sizeof(Stmt*) * 256);
         stmt->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            stmt->block.stmts[stmt->block.count++] = statement();
+            const char* __sp = parser.current.start; stmt->block.stmts[stmt->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
         }
         expect(TOKEN_RBRACE, "Expected '}' after block");
         return stmt;
