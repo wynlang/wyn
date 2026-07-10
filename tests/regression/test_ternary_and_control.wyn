@@ -1,0 +1,20 @@
+// Regression: string-valued ternary must not be typed as int (was printing a
+// garbage pointer); valid `else if` chains and `and`-joined range checks work.
+// Companion negative cases (elif hang, chained comparison) are checked
+// separately — they must produce compile errors, not silent/garbage output.
+// EXPECT: big
+// EXPECT: two
+// EXPECT: in
+// EXPECT: out
+
+fn main() {
+    var x = 5
+    var label = x > 3 ? "big" : "small"   // string ternary -> const char*
+    println(label)
+
+    if x == 1 { println("one") } else if x == 5 { println("two") } else { println("other") }
+
+    if 0 < x and x < 10 { println("in") } else { println("out") }
+    var y = 15
+    if 0 < y and y < 10 { println("in") } else { println("out") }
+}
