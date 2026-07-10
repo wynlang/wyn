@@ -634,6 +634,7 @@ static inline void wyn_oob_panic(int index, int count, const char* file, int lin
 }
 #define array_get_int(arr, idx) array_get_int_impl(arr, idx, __FILE__, __LINE__)
 static inline long long array_get_int_impl(WynArray arr, int index, const char* file, int line) {
+    if (index < 0) index += arr.count;   // Python-style negative index: a[-1] == last
     if (index < 0 || index >= arr.count) {
         wyn_oob_panic(index, arr.count, file, line);
         return 0;
@@ -643,6 +644,7 @@ static inline long long array_get_int_impl(WynArray arr, int index, const char* 
 }
 #define array_get_str(arr, idx) array_get_str_impl(arr, idx, __FILE__, __LINE__)
 static inline const char* array_get_str_impl(WynArray arr, int index, const char* file, int line) {
+    if (index < 0) index += arr.count;   // Python-style negative index
     if (index < 0 || index >= arr.count) {
         wyn_oob_panic(index, arr.count, file, line);
         return "";
@@ -653,12 +655,14 @@ static inline const char* array_get_str_impl(WynArray arr, int index, const char
 #define array_get_struct(arr, idx, T) (*(T*)arr.data[idx].data.struct_val)
 WynValue array_get(WynArray arr, int index) {
     WynValue val = {0};
+    if (index < 0) index += arr.count;   // Python-style negative index
     if (index >= 0 && index < arr.count) val = arr.data[index];
     return val;
 }
 #define ARRAY_GET_STR(arr, idx) (array_get(arr, idx).data.string_val)
 #define ARRAY_GET_INT(arr, idx) (array_get(arr, idx).data.int_val)
 WynArray* array_get_array(WynArray arr, int index) {
+    if (index < 0) index += arr.count;   // Python-style negative index
     if (index < 0 || index >= arr.count) return NULL;
     if (arr.data[index].type == WYN_TYPE_ARRAY) return arr.data[index].data.array_val;
     return NULL;
@@ -717,6 +721,7 @@ void int_array_push(WynIntArray* a, long long v) {
     a->data[a->count++] = v;
 }
 long long int_array_get(WynIntArray a, int i) {
+    if (i < 0) i += a.count;   // Python-style negative index
     if (i < 0 || i >= a.count) {
         fprintf(stderr, "panic: array index out of bounds: index %d, length %d\n", i, a.count);
         exit(1);
