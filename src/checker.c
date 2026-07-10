@@ -4020,9 +4020,31 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             
             // Exhaustiveness for match expressions checked in STMT_MATCH handler
-            // Match expressions with wildcard (_) are always exhaustive
+            // Exhaustiveness: a match expression on an enum without a wildcard
+            // must cover every variant. Otherwise codegen emits no default arm and
+            // an unmatched value reads uninitialized memory (was silent garbage).
             if (match_value_type->kind == TYPE_ENUM && !has_wildcard) {
-                // Simplified: match expressions typically have a fallback
+                EnumStmt* enum_def = find_enum_definition(match_value_type->name);
+                if (enum_def) {
+                    for (int vi = 0; vi < enum_def->variant_count; vi++) {
+                        Token ev = enum_def->variants[vi];
+                        bool covered = false;
+                        for (int ai = 0; ai < expr->match.arm_count && !covered; ai++) {
+                            Pattern* pat = expr->match.arms[ai].pattern;
+                            if (pat && pat->type == PATTERN_GUARD) continue; // guard may not cover
+                            Token vn = {0}; int have = 0;
+                            if (pat && pat->type == PATTERN_OPTION && pat->option.variant_name.length > 0) { vn = pat->option.variant_name; have = 1; }
+                            else if (pat && pat->type == PATTERN_IDENT) { vn = pat->ident.name; have = 1; }
+                            if (have && vn.length == ev.length && memcmp(vn.start, ev.start, ev.length) == 0)
+                                covered = true;
+                        }
+                        if (!covered) {
+                            fprintf(stderr, "Error at line %d: non-exhaustive match — variant '%.*s' is not handled (add it or a wildcard '_ =>' arm)\n",
+                                    expr->match.value->token.line, ev.length, ev.start);
+                            had_error = true;
+                        }
+                    }
+                }
             }
             
             expr->expr_type = result_type ? result_type : builtin_void;
