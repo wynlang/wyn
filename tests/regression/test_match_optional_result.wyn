@@ -1,0 +1,38 @@
+// Regression: expression-form `match` on Option/Result of ANY payload type.
+// Previously match on a string/non-int optional (and even int optional) emitted
+// broken C ("if (__match_val == )"). Now Some/None/Ok/Err lower via the struct
+// tag + payload, with the payload bound at its real type.
+// EXPECT: PASS: match option/result
+
+fn parse(s: string) -> Result<int, string> {
+    if s == "" { return Err("empty") }
+    return Ok(42)
+}
+
+fn main() -> int {
+    var oi: int? = Some(7)
+    var a = match oi { Some(v) => v, None => 0 }
+    if a != 7 { println("FAIL: int Some"); return 1 }
+
+    var ni: int? = None()
+    var b = match ni { Some(v) => v, None => -1 }
+    if b != -1 { println("FAIL: int None"); return 1 }
+
+    var os: string? = Some("hi")
+    var c = match os { Some(v) => v, None => "none" }
+    if c != "hi" { println("FAIL: str Some"); return 1 }
+    var c2 = match os { None => "none", Some(v) => v }
+    if c2 != "hi" { println("FAIL: str Some reordered"); return 1 }
+
+    var es: string? = None()
+    var d = match es { Some(v) => v, None => "empty" }
+    if d != "empty" { println("FAIL: str None"); return 1 }
+
+    var ok = match parse("x") { Ok(v) => v.to_string(), Err(e) => "err:" + e }
+    if ok != "42" { println("FAIL: Ok"); return 1 }
+    var err = match parse("") { Ok(v) => v.to_string(), Err(e) => "err:" + e }
+    if err != "err:empty" { println("FAIL: Err"); return 1 }
+
+    println("PASS: match option/result")
+    return 0
+}
