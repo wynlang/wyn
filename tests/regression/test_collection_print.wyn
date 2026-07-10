@@ -1,0 +1,14 @@
+// Regression: printing an array shows each element by its real type. String
+// arrays and map .keys()/.values() printed as [0, 0, 0] because the element
+// printer always used %lld. Strings are now quoted; ints render normally.
+// (Bool/float array element tags are a separate storage issue — see follow-up.)
+// EXPECT: [1, 2, 3]
+// EXPECT: ["a", "b", "c"]
+// EXPECT: ["x", "y"]
+
+fn main() {
+    print([1, 2, 3])
+    print(["a", "b", "c"])
+    var m = {"x": 1, "y": 2}
+    print(m.keys())
+}
