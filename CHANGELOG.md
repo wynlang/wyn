@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.14.0 — "The Polish Release" (2026-07-11)
+
+Follows the Pythonic release with a batch of ergonomics and correctness fixes
+that smooth over the last rough edges in optionals, results, match, and printing.
+
+### Optionals & Results
+
+- **`int?` / `string?` / `Result<T, E>` work as return types.** You no longer
+  need the mangled `OptionInt` / `ResultInt` names anywhere:
+  `fn find(t: int) -> int? { return Some(t) }` and
+  `fn parse(s: string) -> Result<int, string> { ... }` now type-check and flow
+  through calls, variables, and `match` correctly.
+- **`match` on any Option/Result works in expression position.**
+  `var r = match opt { Some(v) => ..., None => ... }` handles string, float, and
+  bool payloads (previously an internal codegen error, even for int).
+
+### match & control flow
+
+- **Exhaustive `if/else` counts as a return.** A function ending in an
+  `if/else` (or `if/else if/else`) where every branch returns is no longer
+  wrongly rejected with "may not return a value". A genuinely missing return is
+  still an error.
+
+### Printing & indexing
+
+- **`println(array)` works** — arrays and `map.keys()` print their real values
+  with a newline (was a type error; `print(arr)` already worked).
+- **String negative indexing** — `s[-1]` is the last character (matches arrays).
+
+### Functions
+
+- **Default args infer their type.** `fn greet(who = "world")` works — the
+  parameter type comes from the default value's literal, so you don't have to
+  write `who: string = "world"`. Typed defaults are unchanged.
+
 ## v1.13.0 — "The Pythonic Release" (2026-07-11)
 
 Wyn gets a lot more Python-like, plus a deep batch of codegen correctness and
