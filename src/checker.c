@@ -5801,6 +5801,17 @@ void check_program(Program* prog) {
                             fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
                         }
                     }
+                } else if (fn->return_type->type == EXPR_OPTIONAL_TYPE) {
+                    // `-> int?` / `-> string?` sugar → the concrete Option struct,
+                    // registered on the fn signature so callers and match on the
+                    // result see the Option family (not plain int).
+                    Expr* inner = fn->return_type->optional_type.inner_type;
+                    Token concrete = {TOKEN_IDENT, "OptionInt", 9, 0};
+                    if (inner && inner->type == EXPR_IDENT && inner->token.length == 6 &&
+                        memcmp(inner->token.start, "string", 6) == 0)
+                        concrete = (Token){TOKEN_IDENT, "OptionString", 12, 0};
+                    Symbol* sym = find_symbol(global_scope, concrete);
+                    fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
                 } else if (fn->return_type->type == EXPR_ARRAY) {
                     // Array type like [int] or [string]
                     Type* array_type = make_type(TYPE_ARRAY);
@@ -6008,6 +6019,13 @@ void check_program(Program* prog) {
                         }
                     }
                     current_function_return_type = array_type;
+                } else if (fn->return_type->type == EXPR_OPTIONAL_TYPE) {
+                    // `-> int?` / `-> string?` sugar → the concrete Option struct,
+                    // so returning Some(..)/None() type-checks (via the
+                    // TYPE_OPTIONAL/struct allowance below). EXPR_OPTIONAL_TYPE's
+                    // own checker already maps int?→OptionInt, string?→OptionString.
+                    Type* ot = check_expr(fn->return_type, &local_scope);
+                    if (ot) current_function_return_type = ot;
                 } else if (fn->return_type->type == EXPR_IDENT) {
                     Token type_name = fn->return_type->token;
                     if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {

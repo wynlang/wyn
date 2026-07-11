@@ -74,6 +74,31 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     if (fn_stmt->fn.return_type) {
         if (fn_stmt->fn.return_type->type == EXPR_ARRAY) {
             return_type = "WynArray";
+        } else if (fn_stmt->fn.return_type->type == EXPR_OPTIONAL_TYPE) {
+            // `-> int?` / `-> string?` → Option struct C type.
+            Expr* inner = fn_stmt->fn.return_type->optional_type.inner_type;
+            if (inner && inner->type == EXPR_IDENT && inner->token.length == 6 &&
+                memcmp(inner->token.start, "string", 6) == 0)
+                return_type = "OptionString";
+            else
+                return_type = "OptionInt";
+        } else if (fn_stmt->fn.return_type->type == EXPR_CALL &&
+                   fn_stmt->fn.return_type->call.callee->type == EXPR_IDENT) {
+            // Generic return type: Result<T,E> / Option<T> → the monomorphic struct.
+            Token gt = fn_stmt->fn.return_type->call.callee->token;
+            const char* fam = NULL;
+            if (gt.length == 6 && memcmp(gt.start, "Result", 6) == 0) fam = "Result";
+            else if (gt.length == 6 && memcmp(gt.start, "Option", 6) == 0) fam = "Option";
+            if (fam) {
+                int is_str = 0;
+                if (fn_stmt->fn.return_type->call.arg_count > 0 &&
+                    fn_stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
+                    Token in0 = fn_stmt->fn.return_type->call.args[0]->token;
+                    if (in0.length == 6 && memcmp(in0.start, "string", 6) == 0) is_str = 1;
+                }
+                snprintf(custom_return_type, 128, "%s%s", fam, is_str ? "String" : "Int");
+                return_type = custom_return_type;
+            }
         } else if (fn_stmt->fn.return_type->type == EXPR_IDENT) {
             Token rt = fn_stmt->fn.return_type->token;
             if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) {
@@ -1035,24 +1060,23 @@ void codegen_stmt(Stmt* stmt) {
                                 break;
                             }
                             default: {
-                                // Check if called function returns Result<T,E>
+                                // Call returning an Option/Result family — set the
+                                // concrete struct c_type AND register the var so a
+                                // subsequent match detects the family. Consult the
+                                // fn-return registry (covers int?/string?, Option<>,
+                                // Result<>) with a fallback program scan.
                                 bool _found_result = false;
-                                if (stmt->var.init->call.callee->type == EXPR_IDENT && current_program) {
-                                    Token fn_name = stmt->var.init->call.callee->token;
-                                    for (int fi = 0; fi < current_program->count; fi++) {
-                                        Stmt* fs = current_program->stmts[fi];
-                                        if (fs->type == STMT_FN && fs->fn.name.length == fn_name.length &&
-                                            memcmp(fs->fn.name.start, fn_name.start, fn_name.length) == 0 &&
-                                            fs->fn.return_type && fs->fn.return_type->type == EXPR_CALL &&
-                                            fs->fn.return_type->call.callee->type == EXPR_IDENT) {
-                                            Token rt = fs->fn.return_type->call.callee->token;
-                                            if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) {
-                                                c_type = "ResultInt"; _found_result = true; break;
-                                            }
-                                            if (rt.length == 6 && memcmp(rt.start, "Option", 6) == 0) {
-                                                c_type = "OptionInt"; _found_result = true; break;
-                                            }
-                                        }
+                                if (stmt->var.init->call.callee->type == EXPR_IDENT) {
+                                    char _cfn[128]; token_to_cstr(_cfn, sizeof(_cfn), stmt->var.init->call.callee->token);
+                                    extern const char* get_function_return_type(const char*);
+                                    const char* _frt = get_function_return_type(_cfn);
+                                    if (_frt && (strcmp(_frt,"OptionInt")==0 || strcmp(_frt,"OptionString")==0 ||
+                                                 strcmp(_frt,"ResultInt")==0 || strcmp(_frt,"ResultString")==0)) {
+                                        static char _orbuf[32]; snprintf(_orbuf, sizeof(_orbuf), "%s", _frt);
+                                        c_type = _orbuf; _found_result = true;
+                                        char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                                        extern void register_enum_var(const char*, const char*);
+                                        register_enum_var(_vn, _orbuf);
                                     }
                                 }
                                 if (!_found_result) c_type = "__auto_type";
@@ -2209,6 +2233,15 @@ void codegen_stmt(Stmt* stmt) {
                     current_fn_return_kind = "OptionInt";
                 else if (rt.length == 12 && memcmp(rt.start, "OptionString", 12) == 0)
                     current_fn_return_kind = "OptionString";
+            } else if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_OPTIONAL_TYPE) {
+                // `-> int?` / `-> string?` sugar → Option family, so Some/None
+                // in the body resolve and the C return type is the Option struct.
+                Expr* inner = stmt->fn.return_type->optional_type.inner_type;
+                if (inner && inner->type == EXPR_IDENT && inner->token.length == 6 &&
+                    memcmp(inner->token.start, "string", 6) == 0)
+                    current_fn_return_kind = "OptionString";
+                else
+                    current_fn_return_kind = "OptionInt";
             } else if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_TUPLE) {
                 static char _tup_rk[128];
                 snprintf(_tup_rk, sizeof(_tup_rk), "_wyn_tup_%.*s", stmt->fn.name.length, stmt->fn.name.start);
