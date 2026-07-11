@@ -1357,6 +1357,7 @@ WynArray string_split(const char* str, const char* delim) {
 }
 const char* wyn_string_charat(const char* str, int index) {
     int len = strlen(str);
+    if (index < 0) index += len;   // Python-style negative index: s[-1] == last char
     if (index < 0 || index >= len) return "";
     char* result = wyn_str_alloc(1);
     result[0] = str[index];
