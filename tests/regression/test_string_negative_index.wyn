@@ -1,0 +1,14 @@
+// Regression: string negative single-char index s[-1] returned empty (only array
+// negative index worked). Now s[-1] is the last char, s[-n] counts from the end.
+// EXPECT: PASS: string negative index
+
+fn main() -> int {
+    var s = "hello"
+    if s[-1] != "o" { println("FAIL: s[-1]"); return 1 }
+    if s[-2] != "l" { println("FAIL: s[-2]"); return 1 }
+    if s[-5] != "h" { println("FAIL: s[-5]"); return 1 }
+    if s[0] != "h" { println("FAIL: s[0]"); return 1 }
+    if s[4] != "o" { println("FAIL: s[4]"); return 1 }
+    println("PASS: string negative index")
+    return 0
+}
