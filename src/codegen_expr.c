@@ -3396,6 +3396,19 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
+            // Detect a built-in Option/Result match value (OptionInt/OptionString/
+            // ResultInt/ResultString). The checker types these as structs; without
+            // this the Some/None/Ok/Err arms fell through to the bare-enum `==`
+            // path and emitted broken C. `opt_kind`: 1=Option, 2=Result, 0=neither.
+            int opt_kind = 0; int opt_val_is_str = 0;
+            if (match_type && match_type->kind == TYPE_STRUCT && match_type->struct_type.name.length > 0) {
+                char _mtn[64]; token_to_cstr(_mtn, sizeof(_mtn), match_type->struct_type.name);
+                if (strcmp(_mtn, "OptionInt") == 0) { opt_kind = 1; opt_val_is_str = 0; }
+                else if (strcmp(_mtn, "OptionString") == 0) { opt_kind = 1; opt_val_is_str = 1; }
+                else if (strcmp(_mtn, "ResultInt") == 0) { opt_kind = 2; opt_val_is_str = 0; }
+                else if (strcmp(_mtn, "ResultString") == 0) { opt_kind = 2; opt_val_is_str = 1; }
+            }
+
             // Store match value in temp variable
             emit("%.*s __match_val_%d = ", type_name_len, type_name, match_id);
             codegen_expr(expr->match.value);
@@ -3444,6 +3457,78 @@ void codegen_expr(Expr* expr) {
                 
                 if (i > 0) emit("else ");
                 
+                // Built-in Option/Result arms: Some(v)/None, Ok(v)/Err(e).
+                // Uses the struct .tag (Some/Ok = the truthy tag) and the payload
+                // field (.value for Option; .data.ok_value/.err_value for Result),
+                // binding the payload with the family's value type.
+                if (opt_kind && pat->type != PATTERN_WILDCARD) {
+                    // is_some_arm = "the tag-truthy variant" (Some for Option, Ok for
+                    // Result). Some/None are dedicated tokens (PATTERN_OPTION.is_some,
+                    // empty variant_name); Ok/Err arrive as variant_name.
+                    int is_some_arm = 0; Pattern* binder = NULL;
+                    if (pat->type == PATTERN_OPTION) {
+                        binder = pat->option.inner;
+                        char _pv[32] = ""; int _pl = pat->option.variant_name.length;
+                        if (_pl > 0 && _pl < 31) { memcpy(_pv, pat->option.variant_name.start, _pl); _pv[_pl]=0; }
+                        if (_pl > 0) {
+                            // Named variant (Ok/Err, or an explicit Some/None).
+                            if (strcmp(_pv, "Some") == 0 || strcmp(_pv, "Ok") == 0) is_some_arm = 1;
+                            else is_some_arm = 0;   // None / Err
+                        } else {
+                            // Bare Some(..)/None token — trust the is_some flag.
+                            is_some_arm = pat->option.is_some ? 1 : 0;
+                        }
+                    } else if (pat->type == PATTERN_IDENT) {
+                        char _pv[32] = ""; int _pl = pat->ident.name.length;
+                        if (_pl > 0 && _pl < 31) { memcpy(_pv, pat->ident.name.start, _pl); _pv[_pl]=0; }
+                        if (strcmp(_pv, "Some") == 0 || strcmp(_pv, "Ok") == 0) is_some_arm = 1;
+                        else is_some_arm = 0;   // None / Err
+                    }
+                    // Option: Some tag=1, None tag=0. Result: Ok tag=0, Err tag=1.
+                    int want_tag;
+                    if (opt_kind == 1) want_tag = is_some_arm ? 1 : 0;
+                    else want_tag = is_some_arm ? 0 : 1;   // Result Ok=0 / Err=1
+                    if (guard_expr) {
+                        emit("if (__match_val_%d.tag == %d && (", match_id, want_tag);
+                        codegen_expr(guard_expr); emit(")) { ");
+                    } else {
+                        emit("if (__match_val_%d.tag == %d) { ", match_id, want_tag);
+                    }
+                    // Bind the payload if the arm names it.
+                    if (binder && binder->type == PATTERN_IDENT) {
+                        const char* cty = opt_val_is_str ? "const char*" : "long long";
+                        if (opt_kind == 1) {
+                            emit("%s %.*s = __match_val_%d.value; ", cty,
+                                 binder->ident.name.length, binder->ident.name.start, match_id);
+                        } else {
+                            // Result: ok arm uses ok_value, err arm uses err_value.
+                            const char* field = is_some_arm ? "ok_value" : "err_value";
+                            // Err payload is always a string in the builtin Result.
+                            const char* bcty = is_some_arm ? (opt_val_is_str ? "const char*" : "long long") : "const char*";
+                            emit("%s %.*s = __match_val_%d.data.%s; ", bcty,
+                                 binder->ident.name.length, binder->ident.name.start, match_id, field);
+                            if (!is_some_arm) opt_val_is_str = opt_val_is_str; // no-op keep
+                        }
+                        // Register a string binding so the arm body concats correctly.
+                        int binder_is_str = (opt_kind == 1) ? opt_val_is_str : (!is_some_arm ? 1 : opt_val_is_str);
+                        if (binder_is_str) {
+                            char _bb[256]; token_to_cstr(_bb, sizeof(_bb), binder->ident.name);
+                            extern void register_string_var(const char*);
+                            register_string_var(_bb);
+                        }
+                    }
+                    // Emit arm body + result assignment, then close — mirrors the
+                    // generic path's tail. We do it inline and `continue`.
+                    {
+                        extern void register_string_var(const char*);
+                        (void)register_string_var;
+                    }
+                    emit("__match_result_%d = ", match_id);
+                    codegen_expr(expr->match.arms[i].result);
+                    emit("; } ");
+                    continue;
+                }
+
                 // Check pattern type
                 if (pat->type == PATTERN_WILDCARD) {
                     if (guard_expr) {
