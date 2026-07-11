@@ -1042,6 +1042,17 @@ void codegen_expr(Expr* expr) {
                         arg_is_string = true;
                 }
                 
+                // Arrays/maps have no to_string — route to the type-aware
+                // print_array (which prints elements by their real type) plus a
+                // newline, matching print(arr) but with the trailing '\n'.
+                if (!arg_is_string && parg->expr_type &&
+                    (parg->expr_type->kind == TYPE_ARRAY)) {
+                    emit("({ print_array_no_nl(");
+                    codegen_expr(parg);
+                    emit("); printf(\"\\n\"); })");
+                    codegen_skip_strdup = prev_skip;
+                    break;
+                }
                 if (!arg_is_string && (parg->type == EXPR_INT || parg->type == EXPR_FLOAT ||
                     parg->type == EXPR_BOOL || parg->type == EXPR_IDENT || parg->type == EXPR_CALL ||
                     parg->type == EXPR_METHOD_CALL || parg->type == EXPR_INDEX ||

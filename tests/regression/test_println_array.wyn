@@ -1,0 +1,15 @@
+// Regression: println(array) (and println of .keys()) worked via print() but
+// println wrapped the arg in to_string() -> C type error on WynArray. Now routes
+// to the type-aware print_array + newline.
+// EXPECT: [1, 2, 3]
+// EXPECT: ["a", "b", "c"]
+// EXPECT: ["x", "y"]
+// EXPECT: done
+
+fn main() {
+    println([1, 2, 3])
+    println(["a", "b", "c"])
+    var m = {"x": 1, "y": 2}
+    println(m.keys())
+    println("done")
+}
