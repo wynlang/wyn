@@ -1,0 +1,20 @@
+// Regression: a function whose body ends in an exhaustive if/else (every branch
+// returns) was wrongly flagged "may not return a value" — only a top-level
+// trailing return satisfied the check. Now an if/else (with else) where both
+// branches return, and a fully-covered match, count as guaranteed returns.
+// A genuinely missing return (if without else) is still an error.
+// EXPECT: neg
+// EXPECT: zero
+// EXPECT: pos
+
+fn classify(n: int) -> string {
+    if n < 0 { return "neg" }
+    else if n == 0 { return "zero" }
+    else { return "pos" }
+}
+
+fn main() {
+    println(classify(-5))
+    println(classify(0))
+    println(classify(9))
+}

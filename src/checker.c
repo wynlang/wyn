@@ -4097,6 +4097,33 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
     }
 }
 
+// Does this statement guarantee that control leaves the function (return/yield)
+// on every path? Used so a function whose body ends in an exhaustive if/else
+// (each branch returning) isn't wrongly flagged "may not return a value".
+static bool stmt_guarantees_return(Stmt* s) {
+    if (!s) return false;
+    switch (s->type) {
+        case STMT_RETURN: return true;
+        case STMT_BLOCK:
+            for (int i = 0; i < s->block.count; i++)
+                if (stmt_guarantees_return(s->block.stmts[i])) return true;
+            return false;
+        case STMT_IF:
+            // Exhaustive only with an else where BOTH branches return.
+            return s->if_stmt.else_branch &&
+                   stmt_guarantees_return(s->if_stmt.then_branch) &&
+                   stmt_guarantees_return(s->if_stmt.else_branch);
+        case STMT_MATCH:
+            // A match expression/stmt returns iff every arm's body returns.
+            // (Conservative: only when there is at least one arm.)
+            if (s->match_stmt.case_count == 0) return false;
+            for (int i = 0; i < s->match_stmt.case_count; i++)
+                if (!stmt_guarantees_return(s->match_stmt.cases[i].body)) return false;
+            return true;
+        default: return false;
+    }
+}
+
 void check_stmt(Stmt* stmt, SymbolTable* scope) {
     if (!stmt) return;
     
@@ -6131,7 +6158,11 @@ void check_program(Program* prog) {
                 bool has_return = false;
                 if (fn->body && fn->body->type == STMT_BLOCK) {
                     for (int j = 0; j < fn->body->block.count; j++) {
-                        if (fn->body->block.stmts[j] && fn->body->block.stmts[j]->type == STMT_RETURN)
+                        Stmt* st = fn->body->block.stmts[j];
+                        // A top-level return, or any statement that guarantees a
+                        // return on all paths (e.g. an exhaustive if/else or a
+                        // fully-covered match), satisfies the requirement.
+                        if (st && (st->type == STMT_RETURN || stmt_guarantees_return(st)))
                             has_return = true;
                     }
                     // Implicit return: last statement is an expression
