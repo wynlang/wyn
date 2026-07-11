@@ -1,0 +1,23 @@
+// Pythonic default args without an explicit type: the type is inferred from the
+// default value's literal. `fn f(who = "world")` used to require
+// `who: string = "world"`. Typed defaults still work unchanged.
+// EXPECT: PASS: default arg inference
+
+fn greet(who = "world") -> string { return "hi " + who }
+fn config(n = 10, msg = "x", r = 1.5, flag = true) -> string {
+    var f = "n"
+    if flag { f = "y" }
+    return msg + n.to_string() + r.to_string() + f
+}
+fn typed(name: string = "d", k: int = 2) -> string { return name + k.to_string() }
+
+fn main() -> int {
+    if greet() != "hi world" { println("FAIL: inferred string default"); return 1 }
+    if greet("Wyn") != "hi Wyn" { println("FAIL: override"); return 1 }
+    if config() != "x101.5y" { println("FAIL: mixed defaults"); return 1 }
+    if config(5, "yo") != "yo51.5y" { println("FAIL: partial override"); return 1 }
+    if typed() != "d2" { println("FAIL: typed default"); return 1 }
+    if typed("z", 9) != "z9" { println("FAIL: typed override"); return 1 }
+    println("PASS: default arg inference")
+    return 0
+}

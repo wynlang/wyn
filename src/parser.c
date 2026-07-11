@@ -2693,11 +2693,17 @@ Stmt* function() {
             bool is_self = (parser.previous.length == 4 && 
                            memcmp(parser.previous.start, "self", 4) == 0);
             
+            bool _typeless_default = false;
             if (match(TOKEN_COLON)) {
                 stmt->fn.param_types[stmt->fn.param_count] = parse_type();
             } else if (is_self) {
                 // self without type - will be filled in by impl_block
                 stmt->fn.param_types[stmt->fn.param_count] = NULL;
+            } else if (check(TOKEN_EQ)) {
+                // `name = default` with no type — infer the type from the default
+                // value's literal (Pythonic). Filled in after parsing the default.
+                stmt->fn.param_types[stmt->fn.param_count] = NULL;
+                _typeless_default = true;
             } else {
                 expect(TOKEN_COLON, "Expected ':' after parameter name");
                 stmt->fn.param_types[stmt->fn.param_count] = parse_type();
@@ -2705,7 +2711,17 @@ Stmt* function() {
             
             // T1.5.2: Parse default parameter value if present
             if (match(TOKEN_EQ)) {
-                stmt->fn.param_defaults[stmt->fn.param_count] = expression();
+                Expr* _def = expression();
+                stmt->fn.param_defaults[stmt->fn.param_count] = _def;
+                // Infer a type annotation from the default literal when none given.
+                if (_typeless_default && _def) {
+                    Token _tn = {TOKEN_IDENT, "int", 3, parser.previous.line};
+                    if (_def->type == EXPR_STRING || _def->type == EXPR_STRING_INTERP) _tn = (Token){TOKEN_IDENT, "string", 6, parser.previous.line};
+                    else if (_def->type == EXPR_FLOAT) _tn = (Token){TOKEN_IDENT, "float", 5, parser.previous.line};
+                    else if (_def->type == EXPR_BOOL) _tn = (Token){TOKEN_IDENT, "bool", 4, parser.previous.line};
+                    Expr* _te = alloc_expr(); _te->type = EXPR_IDENT; _te->token = _tn;
+                    stmt->fn.param_types[stmt->fn.param_count] = _te;
+                }
             } else {
                 stmt->fn.param_defaults[stmt->fn.param_count] = NULL;
             }
