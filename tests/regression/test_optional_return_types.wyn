@@ -1,0 +1,34 @@
+// Pythonic optional/result return types: fn -> int? / string? / Result<int,string>
+// used to require the mangled OptionInt/ResultInt names and even then match on the
+// result failed. Now the sugar works end-to-end (signature, call, and match).
+// EXPECT: PASS: optional return types
+
+fn find(t: int) -> int? {
+    if t > 0 { return Some(t) }
+    return None()
+}
+fn lookup(k: string) -> string? {
+    if k == "hit" { return Some("found") }
+    return None()
+}
+fn parse(s: string) -> Result<int, string> {
+    if s == "" { return Err("empty") }
+    return Ok(99)
+}
+
+fn main() -> int {
+    var a = match find(5) { Some(v) => v, None => -1 }
+    if a != 5 { println("FAIL: int? Some"); return 1 }
+    var b = match find(-1) { Some(v) => v, None => -1 }
+    if b != -1 { println("FAIL: int? None"); return 1 }
+    var c = match lookup("hit") { Some(v) => v, None => "miss" }
+    if c != "found" { println("FAIL: string? Some"); return 1 }
+    var d = match lookup("x") { Some(v) => v, None => "miss" }
+    if d != "miss" { println("FAIL: string? None"); return 1 }
+    var e = match parse("y") { Ok(v) => v.to_string(), Err(m) => m }
+    if e != "99" { println("FAIL: Result Ok"); return 1 }
+    var f = match parse("") { Ok(v) => v.to_string(), Err(m) => m }
+    if f != "empty" { println("FAIL: Result Err"); return 1 }
+    println("PASS: optional return types")
+    return 0
+}

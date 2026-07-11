@@ -27,6 +27,31 @@ void codegen_program(Program* prog) {
                 char _fn[128]; token_to_cstr(_fn, sizeof(_fn), fn_stmt->fn.name);
                 char _rt[32]; token_to_cstr(_rt, sizeof(_rt), fn_stmt->fn.return_type->token);
                 register_fn_return_type(_fn, _rt);
+            } else if (fn_stmt->fn.return_type && fn_stmt->fn.return_type->type == EXPR_OPTIONAL_TYPE) {
+                // `-> int?` / `-> string?` → OptionInt / OptionString family name,
+                // so callers (var r = find(...)) get the right type and match detects it.
+                char _fn[128]; token_to_cstr(_fn, sizeof(_fn), fn_stmt->fn.name);
+                Expr* inr = fn_stmt->fn.return_type->optional_type.inner_type;
+                const char* fam = (inr && inr->type == EXPR_IDENT && inr->token.length == 6 &&
+                                   memcmp(inr->token.start, "string", 6) == 0) ? "OptionString" : "OptionInt";
+                register_fn_return_type(_fn, fam);
+            } else if (fn_stmt->fn.return_type && fn_stmt->fn.return_type->type == EXPR_CALL &&
+                       fn_stmt->fn.return_type->call.callee->type == EXPR_IDENT) {
+                Token gt = fn_stmt->fn.return_type->call.callee->token;
+                const char* base = NULL;
+                if (gt.length == 6 && memcmp(gt.start, "Option", 6) == 0) base = "Option";
+                else if (gt.length == 6 && memcmp(gt.start, "Result", 6) == 0) base = "Result";
+                if (base) {
+                    char _fn[128]; token_to_cstr(_fn, sizeof(_fn), fn_stmt->fn.name);
+                    int is_str = 0;
+                    if (fn_stmt->fn.return_type->call.arg_count > 0 &&
+                        fn_stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
+                        Token a0 = fn_stmt->fn.return_type->call.args[0]->token;
+                        if (a0.length == 6 && memcmp(a0.start, "string", 6) == 0) is_str = 1;
+                    }
+                    char _rt[32]; snprintf(_rt, sizeof(_rt), "%s%s", base, is_str ? "String" : "Int");
+                    register_fn_return_type(_fn, _rt);
+                }
             }
         }
     }
