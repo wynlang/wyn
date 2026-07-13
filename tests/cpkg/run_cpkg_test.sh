@@ -16,8 +16,10 @@ grep -q 'extern fn sqrt' packages/m/m.wyn 2>/dev/null || { echo "cpkg: FAIL (no 
 grep -q '\[ffi\]' wyn.toml 2>/dev/null || { echo "cpkg: FAIL (no [ffi] in wyn.toml)"; exit 1; }
 grep -q 'libs = "m"' wyn.toml 2>/dev/null || { echo "cpkg: FAIL (libm not linked)"; exit 1; }
 
+# Use `import m` (NOT hand-copied externs) — proves add -> import resolution ->
+# [ffi] link -> build -> run works as a whole.
 cat > app.wyn <<'WYN'
-extern fn sqrt(a0: float) -> float;
+import m
 fn main() { println("${sqrt(169.0)}") }
 WYN
 out="$("$WYN_BIN" build app.wyn >/dev/null 2>&1 && ./app 2>&1)"
