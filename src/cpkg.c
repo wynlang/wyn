@@ -6,6 +6,9 @@
 #include <ctype.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>   // _mkdir
+#endif
 #include "cpkg.h"
 #include "bindgen.h"
 
@@ -135,6 +138,12 @@ int wyn_cpkg_list(const char* wyn_root) {
 // extra include dirs (system headers on the default search path still resolve).
 static int pkgconfig_cflags(const char* name, char* out, size_t sz) {
     out[0] = '\0';
+#ifdef _WIN32
+    // pkg-config isn't standard on Windows; skip it (caller proceeds without the
+    // extra -I dirs — system headers still resolve on the default search path).
+    (void)name; (void)sz;
+    return 0;
+#else
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "pkg-config --cflags-only-I %s 2>/dev/null", name);
     FILE* p = popen(cmd, "r");
@@ -146,6 +155,7 @@ static int pkgconfig_cflags(const char* name, char* out, size_t sz) {
     // strip trailing newline
     char* nl = strchr(out, '\n'); if (nl) *nl = '\0';
     return out[0] ? 1 : 0;
+#endif
 }
 
 // Append " key = \"val\"" style lines into the [ffi] section of ./wyn.toml,

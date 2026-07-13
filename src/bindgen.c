@@ -112,10 +112,13 @@ static char* preprocess(const char* header, const char* cc, const char* iflags) 
     // A system header (e.g. "math.h", "curl/curl.h") isn't a file in the cwd —
     // `cc -E math.h` would look for ./math.h and fail. If `header` isn't an
     // existing path, preprocess a generated stub `#include <header>` instead, so
-    // the compiler resolves it on its system include path.
+    // the compiler resolves it on its system include path. (fopen is portable;
+    // access()/R_OK need <unistd.h> which mingw lacks.)
     char stub[1024] = "";
     const char* to_pp = header;
-    if (access(header, R_OK) != 0) {
+    int header_exists = 0;
+    { FILE* _hf = fopen(header, "r"); if (_hf) { header_exists = 1; fclose(_hf); } }
+    if (!header_exists) {
         snprintf(stub, sizeof(stub), "%s/wyn_bind_stub_%d.h", temp_dir(), counter++);
         FILE* sf = fopen(stub, "w");
         if (sf) { fprintf(sf, "#include <%s>\n", header); fclose(sf); to_pp = stub; }
