@@ -79,15 +79,33 @@ static const char* map_c_type(const char* c, int is_return) {
 
 // ---- preprocess ------------------------------------------------------------
 
+// Portable temp directory: honor TMPDIR/TMP/TEMP (Windows sets TMP/TEMP; `/tmp`
+// does not exist there), falling back to "." (the cwd always exists).
+static const char* temp_dir(void) {
+    const char* d = getenv("TMPDIR");
+    if (!d || !*d) d = getenv("TMP");
+    if (!d || !*d) d = getenv("TEMP");
+    if (!d || !*d) d = ".";
+    return d;
+}
+
 // Run `<cc> -E <iflags> <header>` into a temp file; return the temp path
-// (caller frees + unlinks) or NULL on failure. `dM` selects `-dM` (macro dump).
+// (caller frees + unlinks) or NULL on failure. system() runs the platform shell
+// (cmd.exe on Windows), so avoid shell-specific redirects: quote with '"', use
+// the null device per-OS, and put the temp file in a real temp dir (not /tmp,
+// which is absent on Windows).
 static char* preprocess(const char* header, const char* cc, const char* iflags) {
     static int counter = 0;
-    char* tmp = malloc(512);
-    snprintf(tmp, 512, "/tmp/wyn_bind_%d.i", counter++);
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "%s -E %s '%s' > '%s' 2>/dev/null",
-             cc, iflags ? iflags : "", header, tmp);
+    char* tmp = malloc(1024);
+    snprintf(tmp, 1024, "%s/wyn_bind_%d.i", temp_dir(), counter++);
+#ifdef _WIN32
+    const char* devnull = "NUL";
+#else
+    const char* devnull = "/dev/null";
+#endif
+    char cmd[3072];
+    snprintf(cmd, sizeof(cmd), "%s -E %s \"%s\" > \"%s\" 2>%s",
+             cc, iflags ? iflags : "", header, tmp, devnull);
     if (system(cmd) != 0) { free(tmp); return NULL; }
     return tmp;
 }
