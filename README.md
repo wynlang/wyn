@@ -2,7 +2,8 @@
 
 **1 language for everything — CLI, web, desktop, mobile, games.**
 
-147 tests. 36 packages. 5 platforms. Zero dependencies.
+Compiles to native via C. 5 platforms. Zero dependencies. Now with a C FFI —
+call any C library.
 
 ## Install
 
@@ -93,16 +94,16 @@ fn process() {
 }
 
 // Result/Option types
-fn divide(a: int, b: int) -> ResultInt {
+fn divide(a: int, b: int) -> Result<int, string> {
     if b == 0 { return Err("division by zero") }
     return Ok(a / b)
 }
 
-// v1.11: enum.to_string(), indexed for, string repeat, int?
+// enum.to_string(), indexed for, string repeat, clean int? / Some
 println(Shape.Circle.to_string())  // "Circle"
 for i, v in ["a", "b", "c"] { println(i.to_string() + ":" + v) }
 println("=" * 40)
-var x: int? = OptionInt_Some(42)
+var x: int? = Some(42)
 ```
 
 ## Standard Library — 27 Modules
@@ -205,7 +206,7 @@ wyn cross android app.wyn   # Android arm64 (needs NDK)
 wyn/
 ├── src/            # Compiler source (C)
 ├── runtime/        # Precompiled runtime library
-├── tests/          # Test suite (48 tests, 268+ assertions)
+├── tests/          # Assertion suite (tests/expect + tests/regression) + more
 ├── examples/       # Example programs
 ├── Makefile        # Build system
 ├── README.md       # This file
