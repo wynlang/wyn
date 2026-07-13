@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.15.0 — "The Payloads Release" (2026-07-13)
+
+Two correctness fixes that remove long-standing sharp edges: any scalar can now
+ride inside an `Option`/`Result`, and your function names no longer collide with
+the C standard library.
+
+### Optionals & Results
+
+- **`float?` / `bool?` and `Result<float, _>` / `Result<bool, _>` now compile.**
+  Previously only `int` and `string` payloads worked — a `-> float?` function
+  failed to compile with an internal type mismatch. Now every form works:
+  returning `Some`/`None`/`Ok`/`Err`, statement- and expression-position
+  `match`, and the `.is_some()` / `.unwrap()` / `.unwrap_or(default)` methods.
+
+  ```wyn
+  fn half(x: float) -> float? {
+      if x < 0.0 { return None }
+      return Some(x / 2.0)
+  }
+
+  fn divide(a: float, b: float) -> Result<float, string> {
+      if b == 0.0 { return Err("division by zero") }
+      return Ok(a / b)
+  }
+  ```
+
+### Functions
+
+- **Function names can now shadow C standard-library symbols.** A function
+  called `connect`, `read`, `write`, `open`, `close`, `socket`, `send`, `link`,
+  `index`, and friends used to fail to compile (`static declaration of 'connect'
+  follows non-static declaration`). Those names are now free to use — the
+  generated C is transparently namespaced, so your Wyn code is unaffected.
+
+  ```wyn
+  fn connect(host: string) -> string {
+      return "connected to ${host}"
+  }
+  ```
+
 ## v1.14.0 — "The Polish Release" (2026-07-11)
 
 Follows the Pythonic release with a batch of ergonomics and correctness fixes
