@@ -5,8 +5,35 @@
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include "cpkg.h"
 #include "bindgen.h"
+
+// Portable recursive mkdir (like `mkdir -p`) — no shelling out, so it works the
+// same on every platform (cmd.exe has no `mkdir -p`). Uses '/' separators, which
+// Windows accepts in CRT calls.
+static int make_dirs(const char* path) {
+    char tmp[600]; strncpy(tmp, path, sizeof(tmp) - 1); tmp[sizeof(tmp) - 1] = '\0';
+    for (char* p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+#ifdef _WIN32
+            _mkdir(tmp);
+#else
+            mkdir(tmp, 0755);
+#endif
+            *p = '/';
+        }
+    }
+#ifdef _WIN32
+    _mkdir(tmp);
+#else
+    mkdir(tmp, 0755);
+#endif
+    // Success if the directory now exists (mkdir returns -1/EEXIST if present).
+    struct stat st;
+    return (stat(path, &st) == 0) ? 0 : -1;
+}
 
 // ---- a single recipe from the registry ------------------------------------
 
@@ -187,7 +214,7 @@ int wyn_cpkg_add(const char* name, const char* wyn_root, const char* cc) {
 
     // 2. Create ./packages/<name>/ and generate bindings for each header.
     char pkgdir[512]; snprintf(pkgdir, sizeof(pkgdir), "packages/%s", r.name);
-    { char cmd[600]; snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\"", pkgdir); if (system(cmd) != 0) { fprintf(stderr, "Error: cannot create %s\n", pkgdir); return 1; } }
+    if (make_dirs(pkgdir) != 0) { fprintf(stderr, "Error: cannot create %s\n", pkgdir); return 1; }
 
     char binding_path[600]; snprintf(binding_path, sizeof(binding_path), "%s/%s.wyn", pkgdir, r.name);
     FILE* bf = fopen(binding_path, "w");
