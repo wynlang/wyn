@@ -1498,25 +1498,18 @@ static Expr* logical_or() {
 
 static Expr* pipeline() {
     Expr* expr = logical_or();
-    
-    // Check for pipeline operator
-    if (match(TOKEN_PIPEGT)) {
-        Expr* pipe = alloc_expr();
-        pipe->type = EXPR_PIPELINE;
-        pipe->pipeline.stage_count = 2;
-        pipe->pipeline.stages = malloc(sizeof(Expr*) * 8);
-        pipe->pipeline.stages[0] = expr;
-        pipe->pipeline.stages[1] = logical_or();
-        
-        // Handle multiple pipeline stages
-        while (match(TOKEN_PIPEGT)) {
-            if (pipe->pipeline.stage_count >= 8) break; // Limit to 8 stages
-            pipe->pipeline.stages[pipe->pipeline.stage_count++] = logical_or();
-        }
-        
-        return pipe;
+
+    // The `|>` pipe operator was removed from Wyn — one obvious way to compose is
+    // method chaining (`x.f().g()`) or nested calls (`g(f(x))`). Emit a friendly
+    // error rather than silently misparsing the `|`/`>` that follows.
+    if (check(TOKEN_PIPEGT)) {
+        fprintf(stderr, "Error at line %d: the pipe operator '|>' has been removed — "
+                        "use method chaining `x.f().g()` or nested calls `g(f(x))`\n",
+                parser.current.line);
+        parser.had_error = true;
+        advance(); // consume |> so the no-progress guard doesn't loop
     }
-    
+
     return expr;
 }
 
