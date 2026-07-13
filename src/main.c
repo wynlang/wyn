@@ -1346,7 +1346,21 @@ int main(int argc, char** argv) {
                 sqlite_flags = "-DWYN_USE_SQLITE -lsqlite3";
             }
         }
-        
+
+        // FFI: pull -l/-L/-I from wyn.toml [ffi] so `wyn build` (not just `wyn run`)
+        // links C libraries an `extern fn` calls into. Only read when the source
+        // declares an extern fn. Appended to sqlite_flags so it rides every branch.
+        static char build_ffi_flags[1536]; build_ffi_flags[0] = '\0';
+        static char sqlite_plus_ffi[2048];
+        if (strstr(source, "extern fn")) {
+            WynConfig* _bc = wyn_config_parse("wyn.toml");
+            if (_bc) { wyn_config_ffi_flags(_bc, build_ffi_flags, sizeof(build_ffi_flags)); wyn_config_free(_bc); }
+            if (build_ffi_flags[0]) {
+                snprintf(sqlite_plus_ffi, sizeof(sqlite_plus_ffi), "%s%s", sqlite_flags, build_ffi_flags);
+                sqlite_flags = sqlite_plus_ffi;
+            }
+        }
+
         char cmd[4096];
         int result = -1;
         char rt_lib[512]; snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
@@ -2145,6 +2159,30 @@ int main(int argc, char** argv) {
         return result;
     }
     
+    if (strcmp(command, "add") == 0) {
+        // wyn add [<name>] — add a curated C package: generate bindings + wire
+        // wyn.toml [ffi]. With no name, list the available packages.
+        char add_root[1024] = ".";
+        { char* re = getenv("WYN_ROOT");
+          if (re && re[0]) { strncpy(add_root, re, sizeof(add_root)-1); }
+          else {
+            char ep[1024] = "";
+#ifdef __APPLE__
+            uint32_t _sz = sizeof(ep); if (_NSGetExecutablePath(ep, &_sz) != 0) ep[0]=0;
+#elif !defined(_WIN32)
+            ssize_t _l = readlink("/proc/self/exe", ep, sizeof(ep)-1); if (_l>0) ep[_l]=0; else strncpy(ep, argv[0], sizeof(ep)-1);
+#else
+            strncpy(ep, argv[0], sizeof(ep)-1);
+#endif
+            char* ls = strrchr(ep, '/'); if (ls) { *ls = 0; snprintf(add_root, sizeof(add_root), "%s", ep); }
+          }
+        }
+        extern int wyn_cpkg_add(const char*, const char*, const char*);
+        extern int wyn_cpkg_list(const char*);
+        if (argc < 3) return wyn_cpkg_list(add_root);
+        return wyn_cpkg_add(argv[2], add_root, detect_cc());
+    }
+
     if (strcmp(command, "bind") == 0) {
         // wyn bind <header.h> [-o out.wyn] [-I dir]... — generate Wyn `extern fn`
         // bindings from a C header. Preprocesses with the same C compiler the rest

@@ -1,0 +1,36 @@
+# Curated C-package registry for `wyn add <name>`.
+# Each [<name>] recipe describes how to obtain + link a C library and which
+# headers to generate bindings from. The portable default is a system library
+# (via -l) resolved by name; bundled-source recipes vendor the .c and build a .a
+# at add-time (works identically on every platform). Fields:
+#   description   — one-line summary (shown by `wyn add`)
+#   version       — recipe/library version string (pinned into wyn.lock)
+#   libs          — library names → -l<name> (written into the user's [ffi].libs)
+#   lib_dirs      — extra -L search dirs (optional)
+#   include_dirs  — extra -I search dirs (optional; also used to find headers to bind)
+#   headers       — comma/space list of header names to run `wyn bind` over
+#   system.<mgr>  — per-OS system package name (informational: install hint)
+
+[m]
+description = "C math library (libm) — sqrt, pow, sin, cos, …"
+version = "system"
+libs = "m"
+headers = "math.h"
+
+[z]
+description = "zlib — DEFLATE compression (compress2, uncompress, crc32)"
+version = "system"
+libs = "z"
+headers = "zlib.h"
+system.brew = "zlib"
+system.apt = "zlib1g-dev"
+system.pacman = "zlib"
+
+[curl]
+description = "libcurl — HTTP/URL transfers"
+version = "system"
+libs = "curl"
+headers = "curl/curl.h"
+system.brew = "curl"
+system.apt = "libcurl4-openssl-dev"
+system.pacman = "curl"

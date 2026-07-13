@@ -107,6 +107,24 @@ jobs:
           echo "Windows bindgen smoke: PASS"
         shell: bash
 
+      # `wyn add` also shells out (dir creation, pkg-config, bindgen) and isn't
+      # covered by make test on Windows — prove the curated C-package manager works.
+      - name: wyn add smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          export WYN_ROOT="$(pwd)"
+          mkdir -p addwork && cd addwork
+          "$WYN_ROOT/wyn.exe" add m 2>&1 || (echo "wyn add m failed"; exit 1)
+          grep -q "extern fn sqrt" packages/m/m.wyn || (echo "MISSING sqrt binding"; exit 1)
+          grep -q 'libs = "m"' wyn.toml || (echo "MISSING [ffi] libs"; exit 1)
+          printf 'extern fn sqrt(a0: float) -> float;\nfn main() { println("${sqrt(169.0)}") }\n' > app.wyn
+          "$WYN_ROOT/wyn.exe" build app.wyn
+          if [ -f app.exe ]; then ./app.exe > got.txt; else ./app > got.txt; fi
+          cat got.txt
+          grep -q "13" got.txt || (echo "wrong result"; exit 1)
+          echo "Windows wyn add smoke: PASS"
+        shell: bash
+
   cross-compile-ios:
     name: Cross-compile (iOS)
     runs-on: macos-15
