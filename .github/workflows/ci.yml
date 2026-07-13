@@ -92,6 +92,21 @@ jobs:
           .\wintest.exe
         shell: cmd
 
+      # Bindgen shells out to `cc -E`; the Unix jobs cover it via `make test`, but
+      # the Windows job doesn't run that suite, so exercise `wyn bind` explicitly
+      # here to prove the C-header binding generator works on Windows too.
+      - name: Bindgen smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          printf 'int add_one(int x);\ndouble half(double x);\nvoid* obj_new(int n);\n' > winhdr.h
+          ./wyn.exe bind winhdr.h > winbind.wyn 2>bind_err.txt || (echo "wyn bind failed"; cat bind_err.txt; exit 1)
+          cat winbind.wyn
+          grep -q "extern fn add_one(a0: int) -> int;" winbind.wyn || (echo "MISSING add_one"; exit 1)
+          grep -q "extern fn half(a0: float) -> float;" winbind.wyn || (echo "MISSING half"; exit 1)
+          grep -q "extern fn obj_new(a0: int) -> ptr;" winbind.wyn || (echo "MISSING obj_new"; exit 1)
+          echo "Windows bindgen smoke: PASS"
+        shell: bash
+
   cross-compile-ios:
     name: Cross-compile (iOS)
     runs-on: macos-15
