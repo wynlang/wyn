@@ -1,0 +1,22 @@
+// Feature: functional `extern fn` C FFI. Before, the extern type map was
+// int/string/void-only (everything else -> long long), so a float-taking C
+// function got the wrong prototype and miscompiled. Now int/float/bool/string/
+// void all map correctly. This calls libm (linked by default via -lm), proving
+// the type map end to end. Library linking via wyn.toml [ffi] is tested
+// separately (needs a prebuilt lib, not expressible as a single-file BDD test).
+// EXPECT: sqrt 4.0
+// EXPECT: pow 1024.0
+// EXPECT: floor 3.0
+// EXPECT: PASS: ffi libm
+
+extern fn sqrt(x: float) -> float;
+extern fn pow(base: float, exp: float) -> float;
+extern fn floor(x: float) -> float;
+
+fn main() -> int {
+    println("sqrt ${sqrt(16.0)}")
+    println("pow ${pow(2.0, 10.0)}")
+    println("floor ${floor(3.7)}")
+    println("PASS: ffi libm")
+    return 0
+}

@@ -37,6 +37,25 @@ FILE* codegen_get_output(void) { return out; }
 #define WYN_UFN_PFX "wynfn_"
 #define WYN_UFN_PFX_LEN 6
 
+// Map an `extern fn` C type expression to the C type emitted in the prototype.
+// `is_return` distinguishes a string return (`char*`, caller may own) from a
+// string param (`const char*`). NULL type = void (no `-> T`). A pointer type
+// like `ptr`/`*T` maps to `void*`; anything unrecognized is `long long` (opaque
+// machine word) — matching extern_map_type in checker.c.
+const char* extern_c_type(Expr* type_expr, bool is_return) {
+    if (!type_expr) return "void";
+    if (type_expr->type == EXPR_IDENT) {
+        Token t = type_expr->token;
+        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return "long long";
+        if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return "double";
+        if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return "bool";
+        if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return is_return ? "char*" : "const char*";
+        if (t.length == 4 && memcmp(t.start, "void", 4) == 0) return "void";
+        if (t.length == 3 && memcmp(t.start, "ptr", 3) == 0) return "void*";
+    }
+    return "long long";
+}
+
 // Centralized name collision check: C keywords + runtime function names
 // Returns true if 'name' would collide with a C keyword or wyn_runtime.h symbol
 int is_c_name_collision(const char* name) {

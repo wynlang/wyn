@@ -78,13 +78,48 @@ WynConfig* wyn_config_parse(const char* filename) {
             config->dependencies[config->dependency_count].name = strdup(key);
             config->dependencies[config->dependency_count].version = value;
             config->dependency_count++;
+        } else if (strcmp(current_section, "ffi") == 0) {
+            if (strcmp(key, "libs") == 0) { free(config->ffi.libs); config->ffi.libs = value; }
+            else if (strcmp(key, "lib_dirs") == 0) { free(config->ffi.lib_dirs); config->ffi.lib_dirs = value; }
+            else if (strcmp(key, "include_dirs") == 0) { free(config->ffi.include_dirs); config->ffi.include_dirs = value; }
+            else free(value);
         } else {
             free(value);
         }
     }
-    
+
     fclose(f);
     return config;
+}
+
+// Append `-<flag><token>` for each comma/space-separated token in `list` to buf.
+static void append_flag_list(char* buf, int buf_size, const char* flag, const char* list) {
+    if (!list || !*list) return;
+    char tmp[1024];
+    strncpy(tmp, list, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+    // Reject shell metacharacters — an FFI list should be bare lib/dir names,
+    // never a command. This keeps a malicious wyn.toml from injecting shell.
+    for (char* c = tmp; *c; c++) {
+        if (*c == ';' || *c == '&' || *c == '|' || *c == '`' || *c == '$' ||
+            *c == '(' || *c == ')' || *c == '\n' || *c == '<' || *c == '>') return;
+    }
+    char* tok = strtok(tmp, ", \t");
+    while (tok) {
+        int len = strlen(buf);
+        snprintf(buf + len, buf_size - len, " -%s%s", flag, tok);
+        tok = strtok(NULL, ", \t");
+    }
+}
+
+char* wyn_config_ffi_flags(WynConfig* config, char* out, int out_size) {
+    if (out_size > 0) out[0] = '\0';
+    if (!config) return out;
+    // Include dirs first (compile), then lib dirs and libs (link).
+    append_flag_list(out, out_size, "I", config->ffi.include_dirs);
+    append_flag_list(out, out_size, "L", config->ffi.lib_dirs);
+    append_flag_list(out, out_size, "l", config->ffi.libs);
+    return out;
 }
 
 void wyn_config_free(WynConfig* config) {
@@ -99,6 +134,9 @@ void wyn_config_free(WynConfig* config) {
         free(config->dependencies[i].version);
     }
     free(config->dependencies);
+    free(config->ffi.libs);
+    free(config->ffi.lib_dirs);
+    free(config->ffi.include_dirs);
     free(config);
 }
 

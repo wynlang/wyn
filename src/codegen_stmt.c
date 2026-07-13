@@ -2407,41 +2407,23 @@ void codegen_stmt(Stmt* stmt) {
             break;
         }
         case STMT_EXTERN: {
-            // Generate extern function declaration
-            const char* return_type = "long long"; // default
-            if (stmt->extern_fn.return_type && stmt->extern_fn.return_type->type == EXPR_IDENT) {
-                Token ret_type = stmt->extern_fn.return_type->token;
-                if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
-                    return_type = "long long";
-                } else if (ret_type.length == 6 && memcmp(ret_type.start, "string", 6) == 0) {
-                    return_type = "char*";
-                } else if (ret_type.length == 4 && memcmp(ret_type.start, "void", 4) == 0) {
-                    return_type = "void";
-                }
-            }
-            
-            emit("extern %s %.*s(", return_type, 
+            // Generate the C prototype for an `extern fn`. The type map mirrors the
+            // checker's extern_map_type: int->long long, float->double, bool->bool,
+            // string->const char* (char* for a return), void->void; anything else is
+            // treated as an opaque machine word (long long / void* for pointers).
+            emit("extern %s %.*s(", extern_c_type(stmt->extern_fn.return_type, true),
                  stmt->extern_fn.name.length, stmt->extern_fn.name.start);
-            
+
             for (int i = 0; i < stmt->extern_fn.param_count; i++) {
                 if (i > 0) emit(", ");
-                
-                const char* param_type = "long long"; // default
-                if (stmt->extern_fn.param_types[i] && stmt->extern_fn.param_types[i]->type == EXPR_IDENT) {
-                    Token type_name = stmt->extern_fn.param_types[i]->token;
-                    if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
-                        param_type = "const char*";
-                    }
-                }
-                
-                emit("%s", param_type);
+                emit("%s", extern_c_type(stmt->extern_fn.param_types[i], false));
             }
-            
+
             if (stmt->extern_fn.is_variadic) {
                 if (stmt->extern_fn.param_count > 0) emit(", ");
                 emit("...");
             }
-            
+
             emit(");\n");
             break;
         }

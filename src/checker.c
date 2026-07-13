@@ -52,6 +52,23 @@ static Type* builtin_string = NULL;
 static Type* builtin_bool = NULL;
 static Type* builtin_void = NULL;
 static Type* builtin_array = NULL;
+
+// Map an `extern fn` C type expression (e.g. `int`, `float`, `bool`, `string`,
+// `void`, or a pointer-ish type) to the Wyn builtin used for type-checking calls.
+// NULL (no `-> T`) maps to void. Unknown types default to int (treated as an
+// opaque machine word — the C prototype in codegen mirrors this).
+static Type* extern_map_type(Expr* type_expr) {
+    if (!type_expr) return builtin_void;
+    if (type_expr->type == EXPR_IDENT) {
+        Token t = type_expr->token;
+        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return builtin_int;
+        if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return builtin_float;
+        if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return builtin_bool;
+        if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return builtin_string;
+        if (t.length == 4 && memcmp(t.start, "void", 4) == 0) return builtin_void;
+    }
+    return builtin_int;
+}
 static bool had_error = false;
 static Type* current_function_return_type = NULL;
 static Type* current_self_type = NULL; // receiver type for extension methods
@@ -5343,23 +5360,13 @@ void check_program(Program* prog) {
             Type* fn_type = make_type(TYPE_FUNCTION);
             fn_type->fn_type.param_count = ext->param_count;
             fn_type->fn_type.is_variadic = ext->is_variadic;
-            fn_type->fn_type.param_types = malloc(sizeof(Type*) * ext->param_count);
+            fn_type->fn_type.param_types = malloc(sizeof(Type*) * (ext->param_count > 0 ? ext->param_count : 1));
             for (int j = 0; j < ext->param_count; j++) {
-                // Convert type expression to Type*
-                if (ext->param_types[j] && ext->param_types[j]->type == EXPR_IDENT) {
-                    Token type_name = ext->param_types[j]->token;
-                    if (strncmp(type_name.start, "string", type_name.length) == 0) {
-                        fn_type->fn_type.param_types[j] = builtin_string;
-                    } else if (strncmp(type_name.start, "int", type_name.length) == 0) {
-                        fn_type->fn_type.param_types[j] = builtin_int;
-                    } else {
-                        fn_type->fn_type.param_types[j] = builtin_int; // Default fallback
-                    }
-                } else {
-                    fn_type->fn_type.param_types[j] = builtin_int; // Fallback
-                }
+                // Map the declared C type to a Wyn builtin. Exact-length matches
+                // avoid the old prefix bug (e.g. "int64" matching "int").
+                fn_type->fn_type.param_types[j] = extern_map_type(ext->param_types[j]);
             }
-            fn_type->fn_type.return_type = builtin_int; // Simplified
+            fn_type->fn_type.return_type = extern_map_type(ext->return_type); // void/NULL -> void
             add_function_overload(global_scope, ext->name, fn_type, false);
         } else if (prog->stmts[i]->type == STMT_MACRO) {
             // Register macro as function

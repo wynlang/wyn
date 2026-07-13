@@ -25,6 +25,7 @@
 #include "optimize.h"
 #include "module.h"
 #include "commands.h"
+#include "toml.h"
 
 // Single source of truth for runtime source files
 const char* wyn_runtime_sources[] = {
@@ -2447,7 +2448,21 @@ int main(int argc, char** argv) {
             app_flags = _app_flags_buf;
 #endif
         }
-        
+
+        // FFI: pull -l/-L/-I flags from the project's wyn.toml [ffi] section, so a
+        // program that calls `extern fn`s into a C library links against it. Only
+        // read when the source actually declares an extern fn (avoids a stat on
+        // every build). See wyn_config_ffi_flags for the shell-metachar guard.
+        static char ffi_flags[1536];
+        ffi_flags[0] = '\0';
+        if (strstr(source, "extern fn") || strstr(source, "extern  fn")) {
+            WynConfig* _ffi_cfg = wyn_config_parse("wyn.toml");
+            if (_ffi_cfg) {
+                wyn_config_ffi_flags(_ffi_cfg, ffi_flags, sizeof(ffi_flags));
+                wyn_config_free(_ffi_cfg);
+            }
+        }
+
         // Check for --fast flag (use -O0 for fastest compile)
         const char* opt_level = "-O0";  // Fast dev builds; --release uses -O3
         int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python, 4=--node
@@ -2531,12 +2546,12 @@ int main(int argc, char** argv) {
                      cc, opt_level, wyn_root, wyn_root, file, file, src_list, platform_libs);
         }
         // Append optional flags before the redirect
-        if (sqlite_flags[0] || gui_flags[0] || app_flags[0]) {
+        if (sqlite_flags[0] || gui_flags[0] || app_flags[0] || ffi_flags[0]) {
             char* redirect = strstr(compile_cmd, " 2>wyn_cc_err");
             if (redirect) {
                 char tail[256];
                 strncpy(tail, redirect, sizeof(tail)-1); tail[sizeof(tail)-1] = 0;
-                snprintf(redirect, sizeof(compile_cmd) - (redirect - compile_cmd), "%s%s%s%s", sqlite_flags, gui_flags, app_flags, tail);
+                snprintf(redirect, sizeof(compile_cmd) - (redirect - compile_cmd), "%s%s%s%s%s", sqlite_flags, gui_flags, app_flags, ffi_flags, tail);
             }
         }
         
