@@ -630,7 +630,7 @@ void codegen_program(Program* prog) {
                 extern void register_user_collision(const char*);
                 bool _is_ckw = is_c_name_collision(_fn_name);
                 if (_is_ckw) register_user_collision(_fn_name);
-                emit("%s %s%.*s(", return_type, _is_ckw ? "_" : "", fn->name.length, fn->name.start);
+                emit("%s %s%.*s(", return_type, _is_ckw ? WYN_UFN_PFX : "", fn->name.length, fn->name.start);
             }
             for (int j = 0; j < fn->param_count; j++) {
                 if (j > 0) emit(", ");

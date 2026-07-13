@@ -1406,7 +1406,7 @@ void codegen_stmt(Stmt* stmt) {
                     lambda_var_count++;
                 }
                 
-                emit("long long (*%s%.*s)(", is_c_keyword ? "_" : "", stmt->var.name.length, stmt->var.name.start);
+                emit("long long (*%s%.*s)(", is_c_keyword ? WYN_UFN_PFX : "", stmt->var.name.length, stmt->var.name.start);
                 for (int i = 0; i < total_params; i++) {
                     if (i > 0) emit(", ");
                     emit("long long");
@@ -2110,7 +2110,7 @@ void codegen_stmt(Stmt* stmt) {
                 extern void register_user_collision(const char*);
                 bool _is_ckw = is_c_name_collision(_fn_name);
                 if (_is_ckw) register_user_collision(_fn_name);
-                emit("%s %s%.*s(", return_type, _is_ckw ? "_" : "", stmt->fn.name.length, stmt->fn.name.start);
+                emit("%s %s%.*s(", return_type, _is_ckw ? WYN_UFN_PFX : "", stmt->fn.name.length, stmt->fn.name.start);
             }
             for (int i = 0; i < stmt->fn.param_count; i++) {
                 if (i > 0) emit(", ");

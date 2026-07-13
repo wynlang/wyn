@@ -320,8 +320,8 @@ void codegen_expr(Expr* expr) {
             // Check if this is a user-defined name that collides with C/runtime
             extern int is_user_collision(const char*);
             if (is_user_collision(temp_ident)) {
-                ident[0] = '_';
-                offset = 1;
+                strcpy(ident, WYN_UFN_PFX);
+                offset = WYN_UFN_PFX_LEN;
             }
             
             strcpy(ident + offset, temp_ident);
@@ -4013,7 +4013,7 @@ void codegen_expr(Expr* expr) {
                         char _pn[128]; token_to_cstr(_pn, sizeof(_pn), expr->pipeline.stages[i]->token);
                         const char* _pfx = "";
                         extern int is_user_collision(const char*);
-                        if (is_user_collision(_pn)) _pfx = "_";
+                        if (is_user_collision(_pn)) _pfx = WYN_UFN_PFX;
                         emit("%s%s(", _pfx, _pn);
                     } else if (expr->pipeline.stages[i]->type == EXPR_METHOD_CALL) {
                         emit("%.*s(", 
