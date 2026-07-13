@@ -1,5 +1,67 @@
 # Changelog
 
+## v1.16.0 — "The Batteries Release" (2026-07-13)
+
+Batteries included. This release makes Wyn feel more like Python where it counts
+and — the big one — turns on a real C FFI, so the entire C ecosystem is now
+reachable from Wyn. All backward compatible; no source changes required.
+
+### C interop (FFI)
+
+- **`extern fn` actually works now, with real types and library linking.** You can
+  declare a C function and call it directly. Scalar types (`int`, `float`, `bool`),
+  `string`, and `void` all map correctly (previously only `int`/`string` worked and
+  everything else silently miscompiled).
+
+  ```wyn
+  extern fn sqrt(x: float) -> float;
+
+  fn main() {
+      println("${sqrt(16.0)}")     // 4.0 — links the C math library
+  }
+  ```
+
+- **Link any C library from `wyn.toml`.** A new `[ffi]` section tells the compiler
+  what to link:
+
+  ```toml
+  [ffi]
+  libs = "curl, z"
+  lib_dirs = "/usr/local/lib"
+  include_dirs = "/usr/local/include"
+  ```
+
+  The named libraries are linked into your program automatically. (For safety, the
+  compiler rejects any `[ffi]` value containing shell metacharacters.)
+
+  This is phase one of Wyn's ecosystem story: decades of battle-tested C libraries
+  are now within reach, with automatic binding generation and a package-manager TUI
+  to follow.
+
+### Pythonic sugar
+
+- **`range(a, b)` and `range(a, b, step)`** as a `for`-loop iterator, including
+  descending ranges with a negative step:
+
+  ```wyn
+  for i in range(0, 10, 2)  { … }   // 0 2 4 6 8
+  for i in range(10, 0, -1) { … }   // 10 9 8 … 1
+  ```
+
+- **`if let`** conditional binding — match one case inline without a full `match`:
+
+  ```wyn
+  if let Some(v) = find(key) {
+      println("found ${v}")
+  } else {
+      println("missing")
+  }
+  ```
+
+  Works on any `Option` or `Result`, with or without an `else`.
+
+## v1.15.0 — "The Payloads Release" (2026-07-13)
+
 ## v1.15.0 — "The Payloads Release" (2026-07-13)
 
 Two correctness fixes that remove long-standing sharp edges: any scalar can now
