@@ -1,0 +1,26 @@
+// Feature: `if let <pattern> = <expr> { … } else { … }` conditional binding,
+// desugared to a two-arm match (pattern => then, _ => else) so it reuses the
+// working Option/Result arm lowering. Works with/without else, on Option and
+// Result, and binds the payload in the then-branch.
+// EXPECT: got 50
+// EXPECT: nothing
+// EXPECT: bare 30
+// EXPECT: ok value:a
+// EXPECT: was err
+// EXPECT: PASS: if let
+
+fn find(x: int) -> int? { if x > 0 { return Some(x * 10) } return None }
+fn lookup(k: string) -> Result<string, string> {
+    if k == "" { return Err("empty") }
+    return Ok("value:${k}")
+}
+
+fn main() -> int {
+    if let Some(v) = find(5) { println("got ${v}") } else { println("nothing") }
+    if let Some(v) = find(-1) { println("got ${v}") } else { println("nothing") }
+    if let Some(v) = find(3) { println("bare ${v}") }
+    if let Ok(s) = lookup("a") { println("ok ${s}") } else { println("err") }
+    if let Ok(s) = lookup("") { println("ok ${s}") } else { println("was err") }
+    println("PASS: if let")
+    return 0
+}

@@ -1,0 +1,25 @@
+// Feature: range(a, b) and range(a, b, step) as a Pythonic for-loop iterator,
+// desugared to the same counted loop as `a..b`. A literal-negative step counts
+// down (condition flips to i > end). The `..` operator is unchanged.
+// EXPECT: 0,1,2,3,4,
+// EXPECT: 0,2,4,6,8,
+// EXPECT: 10,8,6,4,2,
+// EXPECT: dotdot 6
+// EXPECT: PASS: range step
+
+fn main() -> int {
+    var a = ""
+    for i in range(0, 5) { a = a + "${i}," }
+    println(a)
+    var b = ""
+    for i in range(0, 10, 2) { b = b + "${i}," }
+    println(b)
+    var c = ""
+    for i in range(10, 0, -2) { c = c + "${i}," }
+    println(c)
+    var d = 0
+    for i in 0..4 { d = d + i }
+    println("dotdot ${d}")
+    println("PASS: range step")
+    return 0
+}
