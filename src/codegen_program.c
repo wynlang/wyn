@@ -32,8 +32,12 @@ void codegen_program(Program* prog) {
                 // so callers (var r = find(...)) get the right type and match detects it.
                 char _fn[128]; token_to_cstr(_fn, sizeof(_fn), fn_stmt->fn.name);
                 Expr* inr = fn_stmt->fn.return_type->optional_type.inner_type;
-                const char* fam = (inr && inr->type == EXPR_IDENT && inr->token.length == 6 &&
-                                   memcmp(inr->token.start, "string", 6) == 0) ? "OptionString" : "OptionInt";
+                const char* fam = "OptionInt";
+                if (inr && inr->type == EXPR_IDENT) {
+                    if (inr->token.length == 6 && memcmp(inr->token.start, "string", 6) == 0) fam = "OptionString";
+                    else if (inr->token.length == 5 && memcmp(inr->token.start, "float", 5) == 0) fam = "OptionFloat";
+                    else if (inr->token.length == 4 && memcmp(inr->token.start, "bool", 4) == 0) fam = "OptionBool";
+                }
                 register_fn_return_type(_fn, fam);
             } else if (fn_stmt->fn.return_type && fn_stmt->fn.return_type->type == EXPR_CALL &&
                        fn_stmt->fn.return_type->call.callee->type == EXPR_IDENT) {
@@ -43,13 +47,15 @@ void codegen_program(Program* prog) {
                 else if (gt.length == 6 && memcmp(gt.start, "Result", 6) == 0) base = "Result";
                 if (base) {
                     char _fn[128]; token_to_cstr(_fn, sizeof(_fn), fn_stmt->fn.name);
-                    int is_str = 0;
+                    const char* suf = "Int";
                     if (fn_stmt->fn.return_type->call.arg_count > 0 &&
                         fn_stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
                         Token a0 = fn_stmt->fn.return_type->call.args[0]->token;
-                        if (a0.length == 6 && memcmp(a0.start, "string", 6) == 0) is_str = 1;
+                        if (a0.length == 6 && memcmp(a0.start, "string", 6) == 0) suf = "String";
+                        else if (a0.length == 5 && memcmp(a0.start, "float", 5) == 0) suf = "Float";
+                        else if (a0.length == 4 && memcmp(a0.start, "bool", 4) == 0) suf = "Bool";
                     }
-                    char _rt[32]; snprintf(_rt, sizeof(_rt), "%s%s", base, is_str ? "String" : "Int");
+                    char _rt[32]; snprintf(_rt, sizeof(_rt), "%s%s", base, suf);
                     register_fn_return_type(_fn, _rt);
                 }
             }
@@ -231,6 +237,12 @@ void codegen_program(Program* prog) {
                     if (inner && inner->type == EXPR_IDENT &&
                         inner->token.length == 6 && memcmp(inner->token.start, "string", 6) == 0)
                         c_type = "OptionString";
+                    else if (inner && inner->type == EXPR_IDENT &&
+                        inner->token.length == 5 && memcmp(inner->token.start, "float", 5) == 0)
+                        c_type = "OptionFloat";
+                    else if (inner && inner->type == EXPR_IDENT &&
+                        inner->token.length == 4 && memcmp(inner->token.start, "bool", 4) == 0)
+                        c_type = "OptionBool";
                     else
                         c_type = "OptionInt";
                 }
@@ -458,10 +470,12 @@ void codegen_program(Program* prog) {
                             if (fn->return_type->call.arg_count > 0 &&
                                 fn->return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = fn->return_type->call.args[0]->token;
-                                if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)
-                                    return_type = "OptionInt";
-                                else if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
                                     return_type = "OptionString";
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                                    return_type = "OptionFloat";
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                                    return_type = "OptionBool";
                                 else return_type = "OptionInt";
                             } else return_type = "OptionInt";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
@@ -469,10 +483,12 @@ void codegen_program(Program* prog) {
                             if (fn->return_type->call.arg_count > 0 &&
                                 fn->return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = fn->return_type->call.args[0]->token;
-                                if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)
-                                    return_type = "ResultInt";
-                                else if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
                                     return_type = "ResultString";
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                                    return_type = "ResultFloat";
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                                    return_type = "ResultBool";
                                 else return_type = "ResultInt";
                             } else return_type = "ResultInt";
                         }
@@ -525,6 +541,8 @@ void codegen_program(Program* prog) {
                         Token t = inner->token;
                         if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return_type = "OptionInt";
                         else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return_type = "OptionString";
+                        else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return_type = "OptionFloat";
+                        else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return_type = "OptionBool";
                         else return_type = "WynOptional*";
                     } else {
                         return_type = "WynOptional*";
@@ -1292,7 +1310,18 @@ void codegen_match_statement(Stmt* stmt) {
             emit("\n");
         } else if (is_option_match) {
             static int _omid = 0; _omid++;
-            emit("    OptionInt __match_opt_%d = ", _omid);
+            // Resolve the concrete Option family from the checker-typed value, so
+            // OptionFloat/OptionBool/OptionString lower with the right temp type
+            // and payload binding (not the hardcoded OptionInt / long long).
+            const char* _ofam = "OptionInt"; const char* _octy = "long long"; int _obind_str = 0;
+            Type* _ovt = stmt->match_stmt.value ? stmt->match_stmt.value->expr_type : NULL;
+            if (_ovt && _ovt->kind == TYPE_STRUCT && _ovt->struct_type.name.length > 0) {
+                char _n[64]; token_to_cstr(_n, sizeof(_n), _ovt->struct_type.name);
+                if (strcmp(_n, "OptionString") == 0) { _ofam = "OptionString"; _octy = "const char*"; _obind_str = 1; }
+                else if (strcmp(_n, "OptionFloat") == 0) { _ofam = "OptionFloat"; _octy = "double"; }
+                else if (strcmp(_n, "OptionBool") == 0) { _ofam = "OptionBool"; _octy = "bool"; }
+            }
+            emit("    %s __match_opt_%d = ", _ofam, _omid);
             codegen_expr(stmt->match_stmt.value);
             emit(";\n");
             for (int i = 0; i < stmt->match_stmt.case_count; i++) {
@@ -1301,9 +1330,11 @@ void codegen_match_statement(Stmt* stmt) {
                 if (mc->pattern->type == PATTERN_OPTION && mc->pattern->option.is_some) {
                     emit("if (__match_opt_%d.tag == 1) {\n", _omid);
                     if (mc->pattern->option.inner) {
-                        emit("        long long %.*s = __match_opt_%d.value;\n",
+                        emit("        %s %.*s = __match_opt_%d.value;\n", _octy,
                             mc->pattern->option.inner->ident.name.length,
                             mc->pattern->option.inner->ident.name.start, _omid);
+                        if (_obind_str) { char _sv[256]; token_to_cstr(_sv, sizeof(_sv), mc->pattern->option.inner->ident.name);
+                            extern void register_string_var(const char*); register_string_var(_sv); }
                     }
                     emit("        ");
                     if (mc->body) codegen_stmt(mc->body);
@@ -1322,7 +1353,18 @@ void codegen_match_statement(Stmt* stmt) {
             emit("\n");
         } else if (is_result_match) {
             static int _rmid = 0; _rmid++;
-            emit("    ResultInt __match_val_%d = ", _rmid);
+            // Resolve the concrete Result family from the checker-typed value, so
+            // ResultFloat/ResultBool/ResultString lower with the right temp type
+            // and Ok-payload binding (Err is always a string).
+            const char* _rfam = "ResultInt"; const char* _rcty = "long long"; int _rok_str = 0;
+            Type* _rvt = stmt->match_stmt.value ? stmt->match_stmt.value->expr_type : NULL;
+            if (_rvt && _rvt->kind == TYPE_STRUCT && _rvt->struct_type.name.length > 0) {
+                char _n[64]; token_to_cstr(_n, sizeof(_n), _rvt->struct_type.name);
+                if (strcmp(_n, "ResultString") == 0) { _rfam = "ResultString"; _rcty = "const char*"; _rok_str = 1; }
+                else if (strcmp(_n, "ResultFloat") == 0) { _rfam = "ResultFloat"; _rcty = "double"; }
+                else if (strcmp(_n, "ResultBool") == 0) { _rfam = "ResultBool"; _rcty = "bool"; }
+            }
+            emit("    %s __match_val_%d = ", _rfam, _rmid);
             codegen_expr(stmt->match_stmt.value);
             emit(";\n");
             for (int i = 0; i < stmt->match_stmt.case_count; i++) {
@@ -1333,9 +1375,11 @@ void codegen_match_statement(Stmt* stmt) {
                     emit("if (__match_val_%d.tag == %d) {\n", _rmid, is_ok ? 0 : 1);
                     if (mc->pattern->option.inner) {
                         if (is_ok) {
-                            emit("        long long %.*s = __match_val_%d.data.ok_value;\n",
+                            emit("        %s %.*s = __match_val_%d.data.ok_value;\n", _rcty,
                                 mc->pattern->option.inner->ident.name.length,
                                 mc->pattern->option.inner->ident.name.start, _rmid);
+                            if (_rok_str) { char _sv[256]; token_to_cstr(_sv, sizeof(_sv), mc->pattern->option.inner->ident.name);
+                                extern void register_string_var(const char*); register_string_var(_sv); }
                         } else {
                             emit("        const char* %.*s = __match_val_%d.data.err_value;\n",
                                 mc->pattern->option.inner->ident.name.length,

@@ -80,6 +80,12 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
             if (inner && inner->type == EXPR_IDENT && inner->token.length == 6 &&
                 memcmp(inner->token.start, "string", 6) == 0)
                 return_type = "OptionString";
+            else if (inner && inner->type == EXPR_IDENT && inner->token.length == 5 &&
+                memcmp(inner->token.start, "float", 5) == 0)
+                return_type = "OptionFloat";
+            else if (inner && inner->type == EXPR_IDENT && inner->token.length == 4 &&
+                memcmp(inner->token.start, "bool", 4) == 0)
+                return_type = "OptionBool";
             else
                 return_type = "OptionInt";
         } else if (fn_stmt->fn.return_type->type == EXPR_CALL &&
@@ -90,13 +96,15 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
             if (gt.length == 6 && memcmp(gt.start, "Result", 6) == 0) fam = "Result";
             else if (gt.length == 6 && memcmp(gt.start, "Option", 6) == 0) fam = "Option";
             if (fam) {
-                int is_str = 0;
+                const char* suf = "Int";
                 if (fn_stmt->fn.return_type->call.arg_count > 0 &&
                     fn_stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
                     Token in0 = fn_stmt->fn.return_type->call.args[0]->token;
-                    if (in0.length == 6 && memcmp(in0.start, "string", 6) == 0) is_str = 1;
+                    if (in0.length == 6 && memcmp(in0.start, "string", 6) == 0) suf = "String";
+                    else if (in0.length == 5 && memcmp(in0.start, "float", 5) == 0) suf = "Float";
+                    else if (in0.length == 4 && memcmp(in0.start, "bool", 4) == 0) suf = "Bool";
                 }
-                snprintf(custom_return_type, 128, "%s%s", fam, is_str ? "String" : "Int");
+                snprintf(custom_return_type, 128, "%s%s", fam, suf);
                 return_type = custom_return_type;
             }
         } else if (fn_stmt->fn.return_type->type == EXPR_IDENT) {
@@ -341,6 +349,10 @@ void codegen_stmt(Stmt* stmt) {
                         c_type = "OptionInt";
                     } else if (inner && inner->type == EXPR_IDENT && inner->token.length == 6 && memcmp(inner->token.start, "string", 6) == 0) {
                         c_type = "OptionString";
+                    } else if (inner && inner->type == EXPR_IDENT && inner->token.length == 5 && memcmp(inner->token.start, "float", 5) == 0) {
+                        c_type = "OptionFloat";
+                    } else if (inner && inner->type == EXPR_IDENT && inner->token.length == 4 && memcmp(inner->token.start, "bool", 4) == 0) {
+                        c_type = "OptionBool";
                     } else {
                         c_type = "WynOptional*";
                         needs_arc_management = true;
@@ -1046,6 +1058,21 @@ void codegen_stmt(Stmt* stmt) {
                             case TYPE_RESULT:
                                 c_type = "ResultInt";
                                 break;
+                            case TYPE_STRUCT: {
+                                // Call resolved by the checker to a concrete struct
+                                // (e.g. an Option/Result family member OptionFloat,
+                                // ResultBool, …). Trust the checker's name and
+                                // register the var so a later match detects the family.
+                                static char call_struct_buf[256];
+                                if (stmt->var.init->expr_type->struct_type.name.length > 0) {
+                                    token_to_cstr(call_struct_buf, sizeof(call_struct_buf), stmt->var.init->expr_type->struct_type.name);
+                                    c_type = call_struct_buf;
+                                    char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                                    extern void register_enum_var(const char*, const char*);
+                                    register_enum_var(_vn, call_struct_buf);
+                                }
+                                break;
+                            }
                             case TYPE_ENUM: {
                                 // Use the enum type name
                                 static char enum_ret_buf2[256];
@@ -1071,7 +1098,9 @@ void codegen_stmt(Stmt* stmt) {
                                     extern const char* get_function_return_type(const char*);
                                     const char* _frt = get_function_return_type(_cfn);
                                     if (_frt && (strcmp(_frt,"OptionInt")==0 || strcmp(_frt,"OptionString")==0 ||
-                                                 strcmp(_frt,"ResultInt")==0 || strcmp(_frt,"ResultString")==0)) {
+                                                 strcmp(_frt,"OptionFloat")==0 || strcmp(_frt,"OptionBool")==0 ||
+                                                 strcmp(_frt,"ResultInt")==0 || strcmp(_frt,"ResultString")==0 ||
+                                                 strcmp(_frt,"ResultFloat")==0 || strcmp(_frt,"ResultBool")==0)) {
                                         static char _orbuf[32]; snprintf(_orbuf, sizeof(_orbuf), "%s", _frt);
                                         c_type = _orbuf; _found_result = true;
                                         char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
@@ -1427,7 +1456,9 @@ void codegen_stmt(Stmt* stmt) {
             extern const char* current_assign_target_kind;
             const char* _prev_assign_kind = current_assign_target_kind;
             if (strcmp(c_type, "OptionInt") == 0 || strcmp(c_type, "OptionString") == 0 ||
-                strcmp(c_type, "ResultInt") == 0 || strcmp(c_type, "ResultString") == 0)
+                strcmp(c_type, "OptionFloat") == 0 || strcmp(c_type, "OptionBool") == 0 ||
+                strcmp(c_type, "ResultInt") == 0 || strcmp(c_type, "ResultString") == 0 ||
+                strcmp(c_type, "ResultFloat") == 0 || strcmp(c_type, "ResultBool") == 0)
                 current_assign_target_kind = c_type;
             else
                 current_assign_target_kind = NULL;
@@ -1934,20 +1965,24 @@ void codegen_stmt(Stmt* stmt) {
                             if (stmt->fn.return_type->call.arg_count > 0 &&
                                 stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = stmt->fn.return_type->call.args[0]->token;
-                                if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)
-                                    return_type = "OptionInt";
-                                else if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
                                     return_type = "OptionString";
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                                    return_type = "OptionFloat";
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                                    return_type = "OptionBool";
                                 else return_type = "OptionInt";
                             } else return_type = "OptionInt";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
                             if (stmt->fn.return_type->call.arg_count > 0 &&
                                 stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = stmt->fn.return_type->call.args[0]->token;
-                                if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)
-                                    return_type = "ResultInt";
-                                else if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
                                     return_type = "ResultString";
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                                    return_type = "ResultFloat";
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                                    return_type = "ResultBool";
                                 else return_type = "ResultInt";
                             } else return_type = "ResultInt";
                         }
@@ -1989,6 +2024,8 @@ void codegen_stmt(Stmt* stmt) {
                         Token t = inner->token;
                         if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return_type = "OptionInt";
                         else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return_type = "OptionString";
+                        else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return_type = "OptionFloat";
+                        else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return_type = "OptionBool";
                         else return_type = "WynOptional*";
                     } else {
                         return_type = "WynOptional*";
@@ -2208,19 +2245,27 @@ void codegen_stmt(Stmt* stmt) {
                     if (stmt->fn.return_type->call.arg_count > 0 &&
                         stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
                         Token inner = stmt->fn.return_type->call.args[0]->token;
-                        if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)
-                            current_fn_return_kind = "ResultInt";
-                        else if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                        if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
                             current_fn_return_kind = "ResultString";
+                        else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                            current_fn_return_kind = "ResultFloat";
+                        else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                            current_fn_return_kind = "ResultBool";
+                        else
+                            current_fn_return_kind = "ResultInt";
                     }
                 } else if (rt.length == 6 && memcmp(rt.start, "Option", 6) == 0) {
                     if (stmt->fn.return_type->call.arg_count > 0 &&
                         stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
                         Token inner = stmt->fn.return_type->call.args[0]->token;
-                        if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)
-                            current_fn_return_kind = "OptionInt";
-                        else if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                        if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
                             current_fn_return_kind = "OptionString";
+                        else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                            current_fn_return_kind = "OptionFloat";
+                        else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                            current_fn_return_kind = "OptionBool";
+                        else
+                            current_fn_return_kind = "OptionInt";
                     }
                 }
             } else if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_IDENT) {
@@ -2229,10 +2274,18 @@ void codegen_stmt(Stmt* stmt) {
                     current_fn_return_kind = "ResultInt";
                 else if (rt.length == 12 && memcmp(rt.start, "ResultString", 12) == 0)
                     current_fn_return_kind = "ResultString";
+                else if (rt.length == 11 && memcmp(rt.start, "ResultFloat", 11) == 0)
+                    current_fn_return_kind = "ResultFloat";
+                else if (rt.length == 10 && memcmp(rt.start, "ResultBool", 10) == 0)
+                    current_fn_return_kind = "ResultBool";
                 else if (rt.length == 9 && memcmp(rt.start, "OptionInt", 9) == 0)
                     current_fn_return_kind = "OptionInt";
                 else if (rt.length == 12 && memcmp(rt.start, "OptionString", 12) == 0)
                     current_fn_return_kind = "OptionString";
+                else if (rt.length == 11 && memcmp(rt.start, "OptionFloat", 11) == 0)
+                    current_fn_return_kind = "OptionFloat";
+                else if (rt.length == 10 && memcmp(rt.start, "OptionBool", 10) == 0)
+                    current_fn_return_kind = "OptionBool";
             } else if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_OPTIONAL_TYPE) {
                 // `-> int?` / `-> string?` sugar → Option family, so Some/None
                 // in the body resolve and the C return type is the Option struct.
@@ -2240,6 +2293,12 @@ void codegen_stmt(Stmt* stmt) {
                 if (inner && inner->type == EXPR_IDENT && inner->token.length == 6 &&
                     memcmp(inner->token.start, "string", 6) == 0)
                     current_fn_return_kind = "OptionString";
+                else if (inner && inner->type == EXPR_IDENT && inner->token.length == 5 &&
+                    memcmp(inner->token.start, "float", 5) == 0)
+                    current_fn_return_kind = "OptionFloat";
+                else if (inner && inner->type == EXPR_IDENT && inner->token.length == 4 &&
+                    memcmp(inner->token.start, "bool", 4) == 0)
+                    current_fn_return_kind = "OptionBool";
                 else
                     current_fn_return_kind = "OptionInt";
             } else if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_TUPLE) {

@@ -987,6 +987,214 @@ void init_checker() {
     Token os_unwrap_or_tok = {TOKEN_IDENT, "OptionString_unwrap_or", 22, 0};
     add_symbol(global_scope, os_unwrap_or_tok, os_unwrap_or_t, false);
 
+    // OptionFloat type and functions
+    Type* optionfloat_type = make_type(TYPE_STRUCT);
+    Token OptionFloat_name = {TOKEN_IDENT, "OptionFloat", 11, 0};
+    optionfloat_type->struct_type.name = OptionFloat_name;
+    add_symbol(global_scope, OptionFloat_name, optionfloat_type, false);
+    Type* optionfloat_Some_t = make_type(TYPE_FUNCTION);
+    optionfloat_Some_t->fn_type.param_count = 1;
+    optionfloat_Some_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    optionfloat_Some_t->fn_type.param_types[0] = builtin_float;
+    optionfloat_Some_t->fn_type.return_type = optionfloat_type;
+    Token optionfloat_Some_tok = {TOKEN_IDENT, "OptionFloat_Some", 16, 0};
+    add_symbol(global_scope, optionfloat_Some_tok, optionfloat_Some_t, false);
+    Type* optionfloat_None_t = make_type(TYPE_FUNCTION);
+    optionfloat_None_t->fn_type.param_count = 0;
+    optionfloat_None_t->fn_type.param_types = NULL;
+    optionfloat_None_t->fn_type.return_type = optionfloat_type;
+    Token optionfloat_None_tok = {TOKEN_IDENT, "OptionFloat_None", 16, 0};
+    add_symbol(global_scope, optionfloat_None_tok, optionfloat_None_t, false);
+    Type* optionfloat_is_some_t = make_type(TYPE_FUNCTION);
+    optionfloat_is_some_t->fn_type.param_count = 1;
+    optionfloat_is_some_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    optionfloat_is_some_t->fn_type.param_types[0] = optionfloat_type;
+    optionfloat_is_some_t->fn_type.return_type = builtin_int;
+    Token optionfloat_is_some_tok = {TOKEN_IDENT, "OptionFloat_is_some", 19, 0};
+    add_symbol(global_scope, optionfloat_is_some_tok, optionfloat_is_some_t, false);
+    Type* optionfloat_is_none_t = make_type(TYPE_FUNCTION);
+    optionfloat_is_none_t->fn_type.param_count = 1;
+    optionfloat_is_none_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    optionfloat_is_none_t->fn_type.param_types[0] = optionfloat_type;
+    optionfloat_is_none_t->fn_type.return_type = builtin_int;
+    Token optionfloat_is_none_tok = {TOKEN_IDENT, "OptionFloat_is_none", 19, 0};
+    add_symbol(global_scope, optionfloat_is_none_tok, optionfloat_is_none_t, false);
+    Type* optionfloat_unwrap_t = make_type(TYPE_FUNCTION);
+    optionfloat_unwrap_t->fn_type.param_count = 1;
+    optionfloat_unwrap_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    optionfloat_unwrap_t->fn_type.param_types[0] = optionfloat_type;
+    optionfloat_unwrap_t->fn_type.return_type = builtin_float;
+    Token optionfloat_unwrap_tok = {TOKEN_IDENT, "OptionFloat_unwrap", 18, 0};
+    add_symbol(global_scope, optionfloat_unwrap_tok, optionfloat_unwrap_t, false);
+    Type* optionfloat_unwrap_or_t = make_type(TYPE_FUNCTION);
+    optionfloat_unwrap_or_t->fn_type.param_count = 2;
+    optionfloat_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
+    optionfloat_unwrap_or_t->fn_type.param_types[0] = optionfloat_type;
+    optionfloat_unwrap_or_t->fn_type.param_types[1] = builtin_float;
+    optionfloat_unwrap_or_t->fn_type.return_type = builtin_float;
+    Token optionfloat_unwrap_or_tok = {TOKEN_IDENT, "OptionFloat_unwrap_or", 21, 0};
+    add_symbol(global_scope, optionfloat_unwrap_or_tok, optionfloat_unwrap_or_t, false);
+
+    // OptionBool type and functions
+    Type* optionbool_type = make_type(TYPE_STRUCT);
+    Token OptionBool_name = {TOKEN_IDENT, "OptionBool", 10, 0};
+    optionbool_type->struct_type.name = OptionBool_name;
+    add_symbol(global_scope, OptionBool_name, optionbool_type, false);
+    Type* optionbool_Some_t = make_type(TYPE_FUNCTION);
+    optionbool_Some_t->fn_type.param_count = 1;
+    optionbool_Some_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    optionbool_Some_t->fn_type.param_types[0] = builtin_bool;
+    optionbool_Some_t->fn_type.return_type = optionbool_type;
+    Token optionbool_Some_tok = {TOKEN_IDENT, "OptionBool_Some", 15, 0};
+    add_symbol(global_scope, optionbool_Some_tok, optionbool_Some_t, false);
+    Type* optionbool_None_t = make_type(TYPE_FUNCTION);
+    optionbool_None_t->fn_type.param_count = 0;
+    optionbool_None_t->fn_type.param_types = NULL;
+    optionbool_None_t->fn_type.return_type = optionbool_type;
+    Token optionbool_None_tok = {TOKEN_IDENT, "OptionBool_None", 15, 0};
+    add_symbol(global_scope, optionbool_None_tok, optionbool_None_t, false);
+    Type* optionbool_is_some_t = make_type(TYPE_FUNCTION);
+    optionbool_is_some_t->fn_type.param_count = 1;
+    optionbool_is_some_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    optionbool_is_some_t->fn_type.param_types[0] = optionbool_type;
+    optionbool_is_some_t->fn_type.return_type = builtin_int;
+    Token optionbool_is_some_tok = {TOKEN_IDENT, "OptionBool_is_some", 18, 0};
+    add_symbol(global_scope, optionbool_is_some_tok, optionbool_is_some_t, false);
+    Type* optionbool_is_none_t = make_type(TYPE_FUNCTION);
+    optionbool_is_none_t->fn_type.param_count = 1;
+    optionbool_is_none_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    optionbool_is_none_t->fn_type.param_types[0] = optionbool_type;
+    optionbool_is_none_t->fn_type.return_type = builtin_int;
+    Token optionbool_is_none_tok = {TOKEN_IDENT, "OptionBool_is_none", 18, 0};
+    add_symbol(global_scope, optionbool_is_none_tok, optionbool_is_none_t, false);
+    Type* optionbool_unwrap_t = make_type(TYPE_FUNCTION);
+    optionbool_unwrap_t->fn_type.param_count = 1;
+    optionbool_unwrap_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    optionbool_unwrap_t->fn_type.param_types[0] = optionbool_type;
+    optionbool_unwrap_t->fn_type.return_type = builtin_bool;
+    Token optionbool_unwrap_tok = {TOKEN_IDENT, "OptionBool_unwrap", 17, 0};
+    add_symbol(global_scope, optionbool_unwrap_tok, optionbool_unwrap_t, false);
+    Type* optionbool_unwrap_or_t = make_type(TYPE_FUNCTION);
+    optionbool_unwrap_or_t->fn_type.param_count = 2;
+    optionbool_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
+    optionbool_unwrap_or_t->fn_type.param_types[0] = optionbool_type;
+    optionbool_unwrap_or_t->fn_type.param_types[1] = builtin_bool;
+    optionbool_unwrap_or_t->fn_type.return_type = builtin_bool;
+    Token optionbool_unwrap_or_tok = {TOKEN_IDENT, "OptionBool_unwrap_or", 20, 0};
+    add_symbol(global_scope, optionbool_unwrap_or_tok, optionbool_unwrap_or_t, false);
+
+    // ResultFloat type and functions
+    Type* resultfloat_type = make_type(TYPE_STRUCT);
+    Token ResultFloat_name = {TOKEN_IDENT, "ResultFloat", 11, 0};
+    resultfloat_type->struct_type.name = ResultFloat_name;
+    add_symbol(global_scope, ResultFloat_name, resultfloat_type, false);
+    Type* resultfloat_Ok_t = make_type(TYPE_FUNCTION);
+    resultfloat_Ok_t->fn_type.param_count = 1;
+    resultfloat_Ok_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    resultfloat_Ok_t->fn_type.param_types[0] = builtin_float;
+    resultfloat_Ok_t->fn_type.return_type = resultfloat_type;
+    Token resultfloat_Ok_tok = {TOKEN_IDENT, "ResultFloat_Ok", 14, 0};
+    add_symbol(global_scope, resultfloat_Ok_tok, resultfloat_Ok_t, false);
+    Type* resultfloat_Err_t = make_type(TYPE_FUNCTION);
+    resultfloat_Err_t->fn_type.param_count = 1;
+    resultfloat_Err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    resultfloat_Err_t->fn_type.param_types[0] = builtin_string;
+    resultfloat_Err_t->fn_type.return_type = resultfloat_type;
+    Token resultfloat_Err_tok = {TOKEN_IDENT, "ResultFloat_Err", 15, 0};
+    add_symbol(global_scope, resultfloat_Err_tok, resultfloat_Err_t, false);
+    Type* resultfloat_is_ok_t = make_type(TYPE_FUNCTION);
+    resultfloat_is_ok_t->fn_type.param_count = 1;
+    resultfloat_is_ok_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    resultfloat_is_ok_t->fn_type.param_types[0] = resultfloat_type;
+    resultfloat_is_ok_t->fn_type.return_type = builtin_int;
+    Token resultfloat_is_ok_tok = {TOKEN_IDENT, "ResultFloat_is_ok", 17, 0};
+    add_symbol(global_scope, resultfloat_is_ok_tok, resultfloat_is_ok_t, false);
+    Type* resultfloat_is_err_t = make_type(TYPE_FUNCTION);
+    resultfloat_is_err_t->fn_type.param_count = 1;
+    resultfloat_is_err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    resultfloat_is_err_t->fn_type.param_types[0] = resultfloat_type;
+    resultfloat_is_err_t->fn_type.return_type = builtin_int;
+    Token resultfloat_is_err_tok = {TOKEN_IDENT, "ResultFloat_is_err", 18, 0};
+    add_symbol(global_scope, resultfloat_is_err_tok, resultfloat_is_err_t, false);
+    Type* resultfloat_unwrap_t = make_type(TYPE_FUNCTION);
+    resultfloat_unwrap_t->fn_type.param_count = 1;
+    resultfloat_unwrap_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    resultfloat_unwrap_t->fn_type.param_types[0] = resultfloat_type;
+    resultfloat_unwrap_t->fn_type.return_type = builtin_float;
+    Token resultfloat_unwrap_tok = {TOKEN_IDENT, "ResultFloat_unwrap", 18, 0};
+    add_symbol(global_scope, resultfloat_unwrap_tok, resultfloat_unwrap_t, false);
+    Type* resultfloat_unwrap_err_t = make_type(TYPE_FUNCTION);
+    resultfloat_unwrap_err_t->fn_type.param_count = 1;
+    resultfloat_unwrap_err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    resultfloat_unwrap_err_t->fn_type.param_types[0] = resultfloat_type;
+    resultfloat_unwrap_err_t->fn_type.return_type = builtin_string;
+    Token resultfloat_unwrap_err_tok = {TOKEN_IDENT, "ResultFloat_unwrap_err", 22, 0};
+    add_symbol(global_scope, resultfloat_unwrap_err_tok, resultfloat_unwrap_err_t, false);
+    Type* resultfloat_unwrap_or_t = make_type(TYPE_FUNCTION);
+    resultfloat_unwrap_or_t->fn_type.param_count = 2;
+    resultfloat_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
+    resultfloat_unwrap_or_t->fn_type.param_types[0] = resultfloat_type;
+    resultfloat_unwrap_or_t->fn_type.param_types[1] = builtin_float;
+    resultfloat_unwrap_or_t->fn_type.return_type = builtin_float;
+    Token resultfloat_unwrap_or_tok = {TOKEN_IDENT, "ResultFloat_unwrap_or", 21, 0};
+    add_symbol(global_scope, resultfloat_unwrap_or_tok, resultfloat_unwrap_or_t, false);
+
+    // ResultBool type and functions
+    Type* resultbool_type = make_type(TYPE_STRUCT);
+    Token ResultBool_name = {TOKEN_IDENT, "ResultBool", 10, 0};
+    resultbool_type->struct_type.name = ResultBool_name;
+    add_symbol(global_scope, ResultBool_name, resultbool_type, false);
+    Type* resultbool_Ok_t = make_type(TYPE_FUNCTION);
+    resultbool_Ok_t->fn_type.param_count = 1;
+    resultbool_Ok_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    resultbool_Ok_t->fn_type.param_types[0] = builtin_bool;
+    resultbool_Ok_t->fn_type.return_type = resultbool_type;
+    Token resultbool_Ok_tok = {TOKEN_IDENT, "ResultBool_Ok", 13, 0};
+    add_symbol(global_scope, resultbool_Ok_tok, resultbool_Ok_t, false);
+    Type* resultbool_Err_t = make_type(TYPE_FUNCTION);
+    resultbool_Err_t->fn_type.param_count = 1;
+    resultbool_Err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    resultbool_Err_t->fn_type.param_types[0] = builtin_string;
+    resultbool_Err_t->fn_type.return_type = resultbool_type;
+    Token resultbool_Err_tok = {TOKEN_IDENT, "ResultBool_Err", 14, 0};
+    add_symbol(global_scope, resultbool_Err_tok, resultbool_Err_t, false);
+    Type* resultbool_is_ok_t = make_type(TYPE_FUNCTION);
+    resultbool_is_ok_t->fn_type.param_count = 1;
+    resultbool_is_ok_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    resultbool_is_ok_t->fn_type.param_types[0] = resultbool_type;
+    resultbool_is_ok_t->fn_type.return_type = builtin_int;
+    Token resultbool_is_ok_tok = {TOKEN_IDENT, "ResultBool_is_ok", 16, 0};
+    add_symbol(global_scope, resultbool_is_ok_tok, resultbool_is_ok_t, false);
+    Type* resultbool_is_err_t = make_type(TYPE_FUNCTION);
+    resultbool_is_err_t->fn_type.param_count = 1;
+    resultbool_is_err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    resultbool_is_err_t->fn_type.param_types[0] = resultbool_type;
+    resultbool_is_err_t->fn_type.return_type = builtin_int;
+    Token resultbool_is_err_tok = {TOKEN_IDENT, "ResultBool_is_err", 17, 0};
+    add_symbol(global_scope, resultbool_is_err_tok, resultbool_is_err_t, false);
+    Type* resultbool_unwrap_t = make_type(TYPE_FUNCTION);
+    resultbool_unwrap_t->fn_type.param_count = 1;
+    resultbool_unwrap_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    resultbool_unwrap_t->fn_type.param_types[0] = resultbool_type;
+    resultbool_unwrap_t->fn_type.return_type = builtin_bool;
+    Token resultbool_unwrap_tok = {TOKEN_IDENT, "ResultBool_unwrap", 17, 0};
+    add_symbol(global_scope, resultbool_unwrap_tok, resultbool_unwrap_t, false);
+    Type* resultbool_unwrap_err_t = make_type(TYPE_FUNCTION);
+    resultbool_unwrap_err_t->fn_type.param_count = 1;
+    resultbool_unwrap_err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
+    resultbool_unwrap_err_t->fn_type.param_types[0] = resultbool_type;
+    resultbool_unwrap_err_t->fn_type.return_type = builtin_string;
+    Token resultbool_unwrap_err_tok = {TOKEN_IDENT, "ResultBool_unwrap_err", 21, 0};
+    add_symbol(global_scope, resultbool_unwrap_err_tok, resultbool_unwrap_err_t, false);
+    Type* resultbool_unwrap_or_t = make_type(TYPE_FUNCTION);
+    resultbool_unwrap_or_t->fn_type.param_count = 2;
+    resultbool_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
+    resultbool_unwrap_or_t->fn_type.param_types[0] = resultbool_type;
+    resultbool_unwrap_or_t->fn_type.param_types[1] = builtin_bool;
+    resultbool_unwrap_or_t->fn_type.return_type = builtin_bool;
+    Token resultbool_unwrap_or_tok = {TOKEN_IDENT, "ResultBool_unwrap_or", 20, 0};
+    add_symbol(global_scope, resultbool_unwrap_or_tok, resultbool_unwrap_or_t, false);
+
     // System functions
     Type* sys_exec_t = make_type(TYPE_FUNCTION);
     sys_exec_t->fn_type.param_count = 1;
@@ -3758,6 +3966,14 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 Token os_name = {TOKEN_IDENT, "OptionString", 12, 0};
                 Symbol* sym = find_symbol(scope, os_name);
                 if (sym) { expr->expr_type = sym->type; return sym->type; }
+            } else if (inner_type->kind == TYPE_FLOAT) {
+                Token of_name = {TOKEN_IDENT, "OptionFloat", 11, 0};
+                Symbol* sym = find_symbol(scope, of_name);
+                if (sym) { expr->expr_type = sym->type; return sym->type; }
+            } else if (inner_type->kind == TYPE_BOOL) {
+                Token ob_name = {TOKEN_IDENT, "OptionBool", 10, 0};
+                Symbol* sym = find_symbol(scope, ob_name);
+                if (sym) { expr->expr_type = sym->type; return sym->type; }
             }
             
             // Fallback: generic optional type
@@ -3799,6 +4015,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Token concrete_name;
             if (value_type == builtin_string) {
                 concrete_name = (Token){TOKEN_IDENT, "ResultString", 12, 0};
+            } else if (value_type == builtin_float) {
+                concrete_name = (Token){TOKEN_IDENT, "ResultFloat", 11, 0};
+            } else if (value_type == builtin_bool) {
+                concrete_name = (Token){TOKEN_IDENT, "ResultBool", 10, 0};
             } else {
                 concrete_name = (Token){TOKEN_IDENT, "ResultInt", 9, 0};
             }
@@ -3876,6 +4096,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Token concrete_name;
             if (inner_type == builtin_string) {
                 concrete_name = (Token){TOKEN_IDENT, "OptionString", 12, 0};
+            } else if (inner_type == builtin_float) {
+                concrete_name = (Token){TOKEN_IDENT, "OptionFloat", 11, 0};
+            } else if (inner_type == builtin_bool) {
+                concrete_name = (Token){TOKEN_IDENT, "OptionBool", 10, 0};
             } else {
                 concrete_name = (Token){TOKEN_IDENT, "OptionInt", 9, 0};
             }
@@ -5781,9 +6005,12 @@ void check_program(Program* prog) {
                             if (fn->return_type->call.arg_count > 0 &&
                                 fn->return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = fn->return_type->call.args[0]->token;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0) {
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
                                     concrete = (Token){TOKEN_IDENT, "OptionString", 12, 0};
-                                }
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                                    concrete = (Token){TOKEN_IDENT, "OptionFloat", 11, 0};
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                                    concrete = (Token){TOKEN_IDENT, "OptionBool", 10, 0};
                             }
                             Symbol* sym = find_symbol(global_scope, concrete);
                             fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
@@ -5793,9 +6020,12 @@ void check_program(Program* prog) {
                             if (fn->return_type->call.arg_count > 0 &&
                                 fn->return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = fn->return_type->call.args[0]->token;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0) {
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
                                     concrete = (Token){TOKEN_IDENT, "ResultString", 12, 0};
-                                }
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                                    concrete = (Token){TOKEN_IDENT, "ResultFloat", 11, 0};
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                                    concrete = (Token){TOKEN_IDENT, "ResultBool", 10, 0};
                             }
                             Symbol* sym = find_symbol(global_scope, concrete);
                             fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
@@ -5807,9 +6037,14 @@ void check_program(Program* prog) {
                     // result see the Option family (not plain int).
                     Expr* inner = fn->return_type->optional_type.inner_type;
                     Token concrete = {TOKEN_IDENT, "OptionInt", 9, 0};
-                    if (inner && inner->type == EXPR_IDENT && inner->token.length == 6 &&
-                        memcmp(inner->token.start, "string", 6) == 0)
-                        concrete = (Token){TOKEN_IDENT, "OptionString", 12, 0};
+                    if (inner && inner->type == EXPR_IDENT) {
+                        if (inner->token.length == 6 && memcmp(inner->token.start, "string", 6) == 0)
+                            concrete = (Token){TOKEN_IDENT, "OptionString", 12, 0};
+                        else if (inner->token.length == 5 && memcmp(inner->token.start, "float", 5) == 0)
+                            concrete = (Token){TOKEN_IDENT, "OptionFloat", 11, 0};
+                        else if (inner->token.length == 4 && memcmp(inner->token.start, "bool", 4) == 0)
+                            concrete = (Token){TOKEN_IDENT, "OptionBool", 10, 0};
+                    }
                     Symbol* sym = find_symbol(global_scope, concrete);
                     fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
                 } else if (fn->return_type->type == EXPR_ARRAY) {
@@ -5980,20 +6215,28 @@ void check_program(Program* prog) {
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
                             Token concrete = {TOKEN_IDENT, "OptionInt", 9, 0};
                             if (fn->return_type->call.arg_count > 0 &&
-                                fn->return_type->call.args[0]->type == EXPR_IDENT &&
-                                fn->return_type->call.args[0]->token.length == 6 &&
-                                memcmp(fn->return_type->call.args[0]->token.start, "string", 6) == 0) {
-                                concrete = (Token){TOKEN_IDENT, "OptionString", 12, 0};
+                                fn->return_type->call.args[0]->type == EXPR_IDENT) {
+                                Token inner = fn->return_type->call.args[0]->token;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                    concrete = (Token){TOKEN_IDENT, "OptionString", 12, 0};
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                                    concrete = (Token){TOKEN_IDENT, "OptionFloat", 11, 0};
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                                    concrete = (Token){TOKEN_IDENT, "OptionBool", 10, 0};
                             }
                             Symbol* sym = find_symbol(global_scope, concrete);
                             current_function_return_type = sym ? sym->type : make_type(TYPE_OPTIONAL);
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
                             Token concrete = {TOKEN_IDENT, "ResultInt", 9, 0};
                             if (fn->return_type->call.arg_count > 0 &&
-                                fn->return_type->call.args[0]->type == EXPR_IDENT &&
-                                fn->return_type->call.args[0]->token.length == 6 &&
-                                memcmp(fn->return_type->call.args[0]->token.start, "string", 6) == 0) {
-                                concrete = (Token){TOKEN_IDENT, "ResultString", 12, 0};
+                                fn->return_type->call.args[0]->type == EXPR_IDENT) {
+                                Token inner = fn->return_type->call.args[0]->token;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                    concrete = (Token){TOKEN_IDENT, "ResultString", 12, 0};
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                                    concrete = (Token){TOKEN_IDENT, "ResultFloat", 11, 0};
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                                    concrete = (Token){TOKEN_IDENT, "ResultBool", 10, 0};
                             }
                             Symbol* sym = find_symbol(global_scope, concrete);
                             current_function_return_type = sym ? sym->type : make_type(TYPE_RESULT);
