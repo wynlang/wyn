@@ -3482,6 +3482,43 @@ int OptionString_is_none(OptionString o) { return o.tag == 0; }
 const char* OptionString_unwrap(OptionString o) { if (o.tag == 0) { fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
 const char* OptionString_unwrap_or(OptionString o, const char* def) { return o.tag == 1 ? o.value : def; }
 
+// Float payload family (mirrors OptionInt with a double value)
+typedef struct { int tag; double value; } OptionFloat;
+OptionFloat OptionFloat_Some(double value) { OptionFloat o; o.tag = 1; o.value = value; return o; }
+OptionFloat OptionFloat_None() { OptionFloat o; o.tag = 0; o.value = 0.0; return o; }
+int OptionFloat_is_some(OptionFloat o) { return o.tag == 1; }
+int OptionFloat_is_none(OptionFloat o) { return o.tag == 0; }
+double OptionFloat_unwrap(OptionFloat o) { if (o.tag == 0) { fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
+double OptionFloat_unwrap_or(OptionFloat o, double def) { return o.tag == 1 ? o.value : def; }
+
+// Bool payload family (mirrors OptionInt with a bool value)
+typedef struct { int tag; bool value; } OptionBool;
+OptionBool OptionBool_Some(bool value) { OptionBool o; o.tag = 1; o.value = value; return o; }
+OptionBool OptionBool_None() { OptionBool o; o.tag = 0; o.value = false; return o; }
+int OptionBool_is_some(OptionBool o) { return o.tag == 1; }
+int OptionBool_is_none(OptionBool o) { return o.tag == 0; }
+bool OptionBool_unwrap(OptionBool o) { if (o.tag == 0) { fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
+bool OptionBool_unwrap_or(OptionBool o, bool def) { return o.tag == 1 ? o.value : def; }
+
+// Result with float / bool Ok payload (Err is always a string, like ResultInt)
+typedef struct { int tag; union { double ok_value; const char* err_value; } data; } ResultFloat;
+ResultFloat ResultFloat_Ok(double value) { ResultFloat r; r.tag = 0; r.data.ok_value = value; return r; }
+ResultFloat ResultFloat_Err(const char* msg) { ResultFloat r; r.tag = 1; r.data.err_value = msg; return r; }
+int ResultFloat_is_ok(ResultFloat r) { return r.tag == 0; }
+int ResultFloat_is_err(ResultFloat r) { return r.tag == 1; }
+double ResultFloat_unwrap(ResultFloat r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
+const char* ResultFloat_unwrap_err(ResultFloat r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
+double ResultFloat_unwrap_or(ResultFloat r, double def) { return r.tag == 0 ? r.data.ok_value : def; }
+
+typedef struct { int tag; union { bool ok_value; const char* err_value; } data; } ResultBool;
+ResultBool ResultBool_Ok(bool value) { ResultBool r; r.tag = 0; r.data.ok_value = value; return r; }
+ResultBool ResultBool_Err(const char* msg) { ResultBool r; r.tag = 1; r.data.err_value = msg; return r; }
+int ResultBool_is_ok(ResultBool r) { return r.tag == 0; }
+int ResultBool_is_err(ResultBool r) { return r.tag == 1; }
+bool ResultBool_unwrap(ResultBool r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
+const char* ResultBool_unwrap_err(ResultBool r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
+bool ResultBool_unwrap_or(ResultBool r, bool def) { return r.tag == 0 ? r.data.ok_value : def; }
+
 // Task — simplified concurrency API
 // Task.all(f1, f2) — wait for multiple spawns
 // Task.race(f1, f2) — first spawn wins

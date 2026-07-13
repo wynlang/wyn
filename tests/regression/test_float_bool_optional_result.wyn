@@ -1,0 +1,69 @@
+// Regression: float?/bool? Option payloads and Result<float,_>/Result<bool,_>
+// did not compile — the checker mapped the return type to WynOptional* while
+// Some/None/Ok/Err and the caller's var-decl lowered to OptionInt/ResultInt, a
+// type mismatch. Fixed by adding OptionFloat/OptionBool/ResultFloat/ResultBool
+// monomorphic families (runtime + checker symbols + codegen family selection at
+// the return, Some/Ok/Err, var-decl, and both match-lowering paths).
+// EXPECT: some 2.5
+// EXPECT: none
+// EXPECT: bound 2.5
+// EXPECT: got true
+// EXPECT: ok 2.5
+// EXPECT: err div by zero
+// EXPECT: method 2.5
+// EXPECT: fallback 1.5
+// EXPECT: PASS: float/bool option/result
+
+fn findf(x: int) -> float? {
+    if x > 0 { return Some(2.5) }
+    return None
+}
+fn findb(x: int) -> bool? {
+    if x > 0 { return Some(true) }
+    return None
+}
+fn divf(a: float, b: float) -> Result<float, string> {
+    if b == 0.0 { return Err("div by zero") }
+    return Ok(a / b)
+}
+
+fn main() -> int {
+    // statement-form match, Some + None arms
+    match findf(1) {
+        Some(v) => println("some ${v}"),
+        None => println("none"),
+    }
+    match findf(-1) {
+        Some(v) => println("some ${v}"),
+        None => println("none"),
+    }
+    // expression-form match bound to a var
+    var r = findf(3)
+    var msg = match r {
+        Some(v) => "bound ${v}",
+        None => "empty",
+    }
+    println(msg)
+    // bool? payload
+    match findb(1) {
+        Some(v) => println("got ${v}"),
+        None => println("none"),
+    }
+    // Result<float,string> Ok + Err
+    match divf(10.0, 4.0) {
+        Ok(v) => println("ok ${v}"),
+        Err(e) => println("err ${e}"),
+    }
+    match divf(1.0, 0.0) {
+        Ok(v) => println("ok ${v}"),
+        Err(e) => println("err ${e}"),
+    }
+    // method API on float?
+    var m = findf(2)
+    if m.is_some() { println("method ${m.unwrap()}") }
+    var m2 = findf(-5)
+    println("fallback ${m2.unwrap_or(1.5)}")
+
+    println("PASS: float/bool option/result")
+    return 0
+}

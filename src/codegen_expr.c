@@ -43,9 +43,17 @@ static void codegen_string_push_transfer(Expr* value) {
 // function-return context (e.g. `var o: string? = Some(s)`). Returns a static
 // string constant; NULL only if payload type is unknown.
 static const char* wyn_ctor_family(Type* payload, const char* kind) {
-    bool is_str = payload && payload->kind == TYPE_STRING;
-    if (strcmp(kind, "Option") == 0) return is_str ? "OptionString" : "OptionInt";
-    return is_str ? "ResultString" : "ResultInt";
+    // Suffix from the payload's own kind: string->String, float->Float,
+    // bool->Bool, everything else (int/struct/…) falls back to the Int family.
+    const char* suf = "Int";
+    if (payload) {
+        if (payload->kind == TYPE_STRING) suf = "String";
+        else if (payload->kind == TYPE_FLOAT) suf = "Float";
+        else if (payload->kind == TYPE_BOOL) suf = "Bool";
+    }
+    static char buf[24];
+    snprintf(buf, sizeof(buf), "%s%s", kind, suf);
+    return buf;
 }
 
 // Resolve the concrete Option/Result family for a Some/None/Ok/Err node.
@@ -3411,13 +3419,19 @@ void codegen_expr(Expr* expr) {
             // ResultInt/ResultString). The checker types these as structs; without
             // this the Some/None/Ok/Err arms fell through to the bare-enum `==`
             // path and emitted broken C. `opt_kind`: 1=Option, 2=Result, 0=neither.
-            int opt_kind = 0; int opt_val_is_str = 0;
+            // opt_val_is_str drives string-var registration; opt_val_cty is the C
+            // type of the Some/Ok payload (long long | const char* | double | bool).
+            int opt_kind = 0; int opt_val_is_str = 0; const char* opt_val_cty = "long long";
             if (match_type && match_type->kind == TYPE_STRUCT && match_type->struct_type.name.length > 0) {
                 char _mtn[64]; token_to_cstr(_mtn, sizeof(_mtn), match_type->struct_type.name);
-                if (strcmp(_mtn, "OptionInt") == 0) { opt_kind = 1; opt_val_is_str = 0; }
-                else if (strcmp(_mtn, "OptionString") == 0) { opt_kind = 1; opt_val_is_str = 1; }
-                else if (strcmp(_mtn, "ResultInt") == 0) { opt_kind = 2; opt_val_is_str = 0; }
-                else if (strcmp(_mtn, "ResultString") == 0) { opt_kind = 2; opt_val_is_str = 1; }
+                if (strcmp(_mtn, "OptionInt") == 0) { opt_kind = 1; opt_val_cty = "long long"; }
+                else if (strcmp(_mtn, "OptionString") == 0) { opt_kind = 1; opt_val_is_str = 1; opt_val_cty = "const char*"; }
+                else if (strcmp(_mtn, "OptionFloat") == 0) { opt_kind = 1; opt_val_cty = "double"; }
+                else if (strcmp(_mtn, "OptionBool") == 0) { opt_kind = 1; opt_val_cty = "bool"; }
+                else if (strcmp(_mtn, "ResultInt") == 0) { opt_kind = 2; opt_val_cty = "long long"; }
+                else if (strcmp(_mtn, "ResultString") == 0) { opt_kind = 2; opt_val_is_str = 1; opt_val_cty = "const char*"; }
+                else if (strcmp(_mtn, "ResultFloat") == 0) { opt_kind = 2; opt_val_cty = "double"; }
+                else if (strcmp(_mtn, "ResultBool") == 0) { opt_kind = 2; opt_val_cty = "bool"; }
             }
 
             // Store match value in temp variable
@@ -3507,7 +3521,7 @@ void codegen_expr(Expr* expr) {
                     }
                     // Bind the payload if the arm names it.
                     if (binder && binder->type == PATTERN_IDENT) {
-                        const char* cty = opt_val_is_str ? "const char*" : "long long";
+                        const char* cty = opt_val_cty;
                         if (opt_kind == 1) {
                             emit("%s %.*s = __match_val_%d.value; ", cty,
                                  binder->ident.name.length, binder->ident.name.start, match_id);
@@ -3515,10 +3529,9 @@ void codegen_expr(Expr* expr) {
                             // Result: ok arm uses ok_value, err arm uses err_value.
                             const char* field = is_some_arm ? "ok_value" : "err_value";
                             // Err payload is always a string in the builtin Result.
-                            const char* bcty = is_some_arm ? (opt_val_is_str ? "const char*" : "long long") : "const char*";
+                            const char* bcty = is_some_arm ? opt_val_cty : "const char*";
                             emit("%s %.*s = __match_val_%d.data.%s; ", bcty,
                                  binder->ident.name.length, binder->ident.name.start, match_id, field);
-                            if (!is_some_arm) opt_val_is_str = opt_val_is_str; // no-op keep
                         }
                         // Register a string binding so the arm body concats correctly.
                         int binder_is_str = (opt_kind == 1) ? opt_val_is_str : (!is_some_arm ? 1 : opt_val_is_str);
