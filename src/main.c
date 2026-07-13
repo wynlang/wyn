@@ -2145,6 +2145,43 @@ int main(int argc, char** argv) {
         return result;
     }
     
+    if (strcmp(command, "bind") == 0) {
+        // wyn bind <header.h> [-o out.wyn] [-I dir]... — generate Wyn `extern fn`
+        // bindings from a C header. Preprocesses with the same C compiler the rest
+        // of the toolchain uses (detect_cc → cc/clang/gcc, portable), NOT the
+        // arm64-only bundled tcc.
+        if (argc < 3) { fprintf(stderr, "Usage: wyn bind <header.h> [-o out.wyn] [-I dir]...\n"); return 1; }
+        const char* header = argv[2];
+        const char* out_path = NULL;
+        char iflags[2048]; iflags[0] = '\0';
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) { out_path = argv[++i]; }
+            else if (strcmp(argv[i], "-I") == 0 && i + 1 < argc) {
+                size_t n = strlen(iflags);
+                snprintf(iflags + n, sizeof(iflags) - n, "%s-I%s", n ? " " : "", argv[++i]);
+            } else if (strncmp(argv[i], "-I", 2) == 0) {
+                size_t n = strlen(iflags);
+                snprintf(iflags + n, sizeof(iflags) - n, "%s%s", n ? " " : "", argv[i]);
+            }
+        }
+        // Also fold in wyn.toml [ffi].include_dirs so bindgen resolves headers the
+        // same way the build will.
+        { WynConfig* _c = wyn_config_parse("wyn.toml");
+          if (_c && _c->ffi.include_dirs && _c->ffi.include_dirs[0]) {
+              // include_dirs is a comma/space list of bare dirs — turn into -I flags.
+              char dirs[1024]; strncpy(dirs, _c->ffi.include_dirs, sizeof(dirs)-1); dirs[sizeof(dirs)-1]=0;
+              char* st=NULL; for (char* d=strtok_r(dirs,", \t",&st); d; d=strtok_r(NULL,", \t",&st)) {
+                  size_t n=strlen(iflags); snprintf(iflags+n, sizeof(iflags)-n, "%s-I%s", n?" ":"", d); }
+          }
+          if (_c) wyn_config_free(_c); }
+        extern int wyn_bindgen(const char*, const char*, const char*, FILE*);
+        FILE* out = stdout;
+        if (out_path) { out = fopen(out_path, "w"); if (!out) { fprintf(stderr, "Error: cannot write %s\n", out_path); return 1; } }
+        int rc = wyn_bindgen(header, detect_cc(), iflags, out);
+        if (out != stdout) fclose(out);
+        return rc;
+    }
+
     if (strcmp(command, "check") == 0) {
         if (argc < 3) { fprintf(stderr, "Usage: wyn check <file.wyn>\n"); return 1; }
         char* file = argv[2];
