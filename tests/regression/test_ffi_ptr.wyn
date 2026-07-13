@@ -1,0 +1,31 @@
+// Feature: FFI `ptr` (opaque C pointer) is a first-class type, consistent across
+// checker and codegen (both -> void*). Before, codegen mapped ptr->void* but the
+// checker mapped ptr->int, so `var p = f()` used __auto_type (wrong under TinyC)
+// and a ptr couldn't be null-checked. Also: an `extern fn` naming a symbol already
+// declared by an included header (libc: malloc/free/memset, via wyn_runtime.h's
+// includes) no longer emits a conflicting prototype — it calls the existing one.
+// Now: ptr vars are `void*` on every backend, not ARC-managed, and compare to the
+// int literal 0 (the C NULL idiom). Uses libc (always linked) — no external lib.
+// EXPECT: allocated
+// EXPECT: memset done
+// EXPECT: freed
+// EXPECT: PASS: ffi ptr
+
+extern fn malloc(size: int) -> ptr;
+extern fn free(p: ptr);
+extern fn memset(dst: ptr, c: int, n: int) -> ptr;
+
+fn main() -> int {
+    var p = malloc(128)
+    if p == 0 {
+        println("alloc failed")
+        return 1
+    }
+    println("allocated")
+    memset(p, 0, 128)
+    println("memset done")
+    free(p)
+    println("freed")
+    println("PASS: ffi ptr")
+    return 0
+}
