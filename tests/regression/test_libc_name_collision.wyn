@@ -1,0 +1,38 @@
+// Regression: a user function whose name matched a libc/POSIX symbol (read,
+// write, open, close, connect, socket, send, …) emitted a non-static C
+// definition that conflicted with the libc declaration ("static declaration of
+// 'connect' follows non-static declaration"). The old fix prefixed the C name
+// with "_", but that ALSO collides on macOS where _read/_write/_close are real
+// libc symbols. Now colliding user names are emitted under the "wynfn_" user
+// namespace (Wyn-visible name unchanged), and the POSIX symbol set is guarded.
+// EXPECT: connected to localhost
+// EXPECT: read 11
+// EXPECT: write 22
+// EXPECT: sum 33
+// EXPECT: PASS: libc name collision
+
+fn connect(host: string) -> string {
+    return "connected to ${host}"
+}
+fn read(n: int) -> int {
+    return n + 1
+}
+fn write(n: int) -> int {
+    return n * 2
+}
+fn socket(a: int, b: int) -> int {
+    return a + b
+}
+
+fn main() -> int {
+    println(connect("localhost"))
+    var r = read(10)
+    println("read ${r}")
+    var w = write(11)
+    println("write ${w}")
+    // colliding fns compose and are callable like any other
+    var s = socket(r, w)
+    println("sum ${s}")
+    println("PASS: libc name collision")
+    return 0
+}

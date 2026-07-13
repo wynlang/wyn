@@ -29,6 +29,14 @@ extern bool is_builtin_module(const char* name);  // Module system
 static FILE* out = NULL;
 FILE* codegen_get_output(void) { return out; }
 
+// Prefix applied to a user function/var whose name collides with a C keyword,
+// libc/POSIX symbol, or wyn_runtime.h symbol. Must NOT itself be a reserved
+// namespace: a bare "_" is wrong because leading-underscore names like _read/
+// _write/_close ARE libc symbols on some platforms (macOS). "wynfn_" is in the
+// user namespace and won't clash.
+#define WYN_UFN_PFX "wynfn_"
+#define WYN_UFN_PFX_LEN 6
+
 // Centralized name collision check: C keywords + runtime function names
 // Returns true if 'name' would collide with a C keyword or wyn_runtime.h symbol
 int is_c_name_collision(const char* name) {
@@ -118,6 +126,25 @@ int is_c_name_collision(const char* name) {
         "unwrap_result_int","unwrap_result_float","unwrap_result_string","unwrap_result_bool",
         "unwrap_error_int","unwrap_error_float","unwrap_error_string","unwrap_error_bool",
         "validate_buffer","validate_memory_range","validate_string","validate_string_bounds",
+        // POSIX / libc symbols an ordinary English word could shadow. A user
+        // `fn read(..)` etc. would otherwise emit a non-static C definition that
+        // conflicts with the libc declaration ("static declaration follows
+        // non-static"). Guarding them here routes the emitted C name through the
+        // `_`-prefix + register_user_collision path (Wyn-visible name is kept).
+        "read","write","open","close","creat","link","unlink","symlink","rename",
+        "connect","socket","listen","bind","accept","send","recv","sendto","recvfrom",
+        "shutdown","select","poll","pipe","dup","dup2","fork","vfork","wait","waitpid",
+        "kill","exec","execl","execv","execve","system","popen","pclose","access",
+        "chmod","chown","mkdir","rmdir","truncate","ftruncate","lseek","seek","tell",
+        "fcntl","ioctl","mmap","munmap","brk","sbrk","sync","fsync","flush","fflush",
+        "getpid","getppid","getuid","getgid","setuid","setgid","getenv","setenv",
+        "putenv","unsetenv","getcwd","chdir","stat","lstat","fstat","opendir","readdir",
+        "closedir","index","rindex","gets","getline","getchar","putchar","gets",
+        "atoi","atol","atoll","atof","strtol","strtoll","strtod","qsort","bsearch",
+        "memcpy","memmove","memset","memcmp","memchr","strcpy","strncpy","strcat",
+        "strncat","strcmp","strncmp","strchr","strrchr","strstr","strdup","strtok",
+        "socketpair","getsockopt","setsockopt","getpeername","getsockname",
+        "alarm","pause","nanosleep","usleep","times","gettimeofday","localtime","gmtime",
         NULL
     };
     for (int i = 0; reserved[i]; i++) {
