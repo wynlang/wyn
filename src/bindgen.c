@@ -35,11 +35,17 @@ static const char* map_c_type(const char* c, int is_return) {
     char* s = bg_trim(t);
     if (!*s) return NULL;
 
-    // strip a leading "const " / "unsigned "/"signed "/"struct "/"enum " qualifiers,
-    // repeatedly, so "const unsigned int" -> "int", "struct Foo *" keeps the *.
+    // Strip leading storage-class / qualifier keywords, repeatedly, so
+    // "extern const unsigned int" -> "int", "static inline double" -> "double",
+    // "struct Foo *" keeps the *. `unsigned`/`signed` also just collapse to the
+    // base integer type.
     for (;;) {
-        if      (strncmp(s, "const ", 6) == 0)    s = bg_trim(s + 6);
+        if      (strncmp(s, "extern ", 7) == 0)   s = bg_trim(s + 7);
+        else if (strncmp(s, "static ", 7) == 0)   s = bg_trim(s + 7);
+        else if (strncmp(s, "inline ", 7) == 0)   s = bg_trim(s + 7);
+        else if (strncmp(s, "const ", 6) == 0)    s = bg_trim(s + 6);
         else if (strncmp(s, "volatile ", 9) == 0) s = bg_trim(s + 9);
+        else if (strncmp(s, "register ", 9) == 0) s = bg_trim(s + 9);
         else if (strncmp(s, "unsigned ", 9) == 0) s = bg_trim(s + 9);
         else if (strncmp(s, "signed ", 7) == 0)   s = bg_trim(s + 7);
         else if (strncmp(s, "struct ", 7) == 0)   s = bg_trim(s + 7);
@@ -103,9 +109,20 @@ static char* preprocess(const char* header, const char* cc, const char* iflags) 
 #else
     const char* devnull = "/dev/null";
 #endif
+    // A system header (e.g. "math.h", "curl/curl.h") isn't a file in the cwd —
+    // `cc -E math.h` would look for ./math.h and fail. If `header` isn't an
+    // existing path, preprocess a generated stub `#include <header>` instead, so
+    // the compiler resolves it on its system include path.
+    char stub[1024] = "";
+    const char* to_pp = header;
+    if (access(header, R_OK) != 0) {
+        snprintf(stub, sizeof(stub), "%s/wyn_bind_stub_%d.h", temp_dir(), counter++);
+        FILE* sf = fopen(stub, "w");
+        if (sf) { fprintf(sf, "#include <%s>\n", header); fclose(sf); to_pp = stub; }
+    }
     char cmd[3072];
     snprintf(cmd, sizeof(cmd), "%s -E %s \"%s\" > \"%s\" 2>%s",
-             cc, iflags ? iflags : "", header, tmp, devnull);
+             cc, iflags ? iflags : "", to_pp, tmp, devnull);
     if (system(cmd) != 0) { free(tmp); return NULL; }
     return tmp;
 }
@@ -177,6 +194,9 @@ static int emit_prototype(char* decl, FILE* out) {
     char name[128]; { size_t n = (size_t)(ne - ns); if (n >= sizeof(name)) n = sizeof(name)-1; memcpy(name, ns, n); name[n] = '\0'; }
     char rettype[256]; { size_t n = (size_t)(ns - head); if (n >= sizeof(rettype)) n = sizeof(rettype)-1; memcpy(rettype, head, n); rettype[n] = '\0'; }
     if (!isalpha((unsigned char)name[0]) && name[0] != '_') return 0;
+    // Skip compiler/library internal symbols (`__foo`, `_Foo`) — they're not part
+    // of a library's public API and clutter the output with TODOs.
+    if (name[0] == '_') return 0;
 
     const char* wyn_ret = map_c_type(rettype, 1);
     if (!wyn_ret) { fprintf(out, "// TODO: %s — unsupported return type '%s'\n", name, bg_trim(rettype)); return 0; }
