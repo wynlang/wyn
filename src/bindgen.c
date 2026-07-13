@@ -43,6 +43,12 @@ static const char* map_c_type(const char* c, int is_return) {
         if      (strncmp(s, "extern ", 7) == 0)   s = bg_trim(s + 7);
         else if (strncmp(s, "static ", 7) == 0)   s = bg_trim(s + 7);
         else if (strncmp(s, "inline ", 7) == 0)   s = bg_trim(s + 7);
+        // Calling-convention keywords (MSVC / mingw declare e.g.
+        // `double __cdecl sqrt(double)`) — strip so the base type parses.
+        else if (strncmp(s, "__cdecl ", 8) == 0)    s = bg_trim(s + 8);
+        else if (strncmp(s, "__stdcall ", 10) == 0) s = bg_trim(s + 10);
+        else if (strncmp(s, "__fastcall ", 11) == 0)s = bg_trim(s + 11);
+        else if (strncmp(s, "__thiscall ", 11) == 0)s = bg_trim(s + 11);
         else if (strncmp(s, "const ", 6) == 0)    s = bg_trim(s + 6);
         else if (strncmp(s, "volatile ", 9) == 0) s = bg_trim(s + 9);
         else if (strncmp(s, "register ", 9) == 0) s = bg_trim(s + 9);
@@ -200,6 +206,18 @@ static int emit_prototype(char* decl, FILE* out) {
     // Skip compiler/library internal symbols (`__foo`, `_Foo`) — they're not part
     // of a library's public API and clutter the output with TODOs.
     if (name[0] == '_') return 0;
+
+    // A calling-convention keyword can sit between the return type and the name
+    // (mingw: `double __cdecl sqrt(double)`), so it lands in `rettype`. Remove any
+    // such token anywhere in the return-type spelling before mapping.
+    { const char* cc_kw[] = {"__cdecl", "__stdcall", "__fastcall", "__thiscall", NULL};
+      for (int k = 0; cc_kw[k]; k++) {
+          char* pos;
+          while ((pos = strstr(rettype, cc_kw[k])) != NULL) {
+              size_t kl = strlen(cc_kw[k]);
+              memmove(pos, pos + kl, strlen(pos + kl) + 1);
+          }
+      } }
 
     const char* wyn_ret = map_c_type(rettype, 1);
     if (!wyn_ret) { fprintf(out, "// TODO: %s — unsupported return type '%s'\n", name, bg_trim(rettype)); return 0; }

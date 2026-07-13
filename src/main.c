@@ -1349,16 +1349,13 @@ int main(int argc, char** argv) {
 
         // FFI: pull -l/-L/-I from wyn.toml [ffi] so `wyn build` (not just `wyn run`)
         // links C libraries an `extern fn` calls into. Only read when the source
-        // declares an extern fn. Appended to sqlite_flags so it rides every branch.
-        static char build_ffi_flags[1536]; build_ffi_flags[0] = '\0';
-        static char sqlite_plus_ffi[2048];
+        // declares an extern fn. IMPORTANT: these go at the END of the link line
+        // (after the .c and runtime) — GNU ld (Linux/mingw) resolves `-l` only
+        // against objects listed BEFORE it, so FFI libs must come last.
+        static char ffi_tail[1536]; ffi_tail[0] = '\0';
         if (strstr(source, "extern fn")) {
             WynConfig* _bc = wyn_config_parse("wyn.toml");
-            if (_bc) { wyn_config_ffi_flags(_bc, build_ffi_flags, sizeof(build_ffi_flags)); wyn_config_free(_bc); }
-            if (build_ffi_flags[0]) {
-                snprintf(sqlite_plus_ffi, sizeof(sqlite_plus_ffi), "%s%s", sqlite_flags, build_ffi_flags);
-                sqlite_flags = sqlite_plus_ffi;
-            }
+            if (_bc) { wyn_config_ffi_flags(_bc, ffi_tail, sizeof(ffi_tail)); wyn_config_free(_bc); }
         }
 
         char cmd[4096];
@@ -1419,6 +1416,17 @@ int main(int argc, char** argv) {
                     , app_link
 #endif
                     );
+                // Splice FFI link flags in at the END of the link line (before any
+                // 2> redirect) so GNU ld resolves -l against the preceding objects.
+                if (ffi_tail[0]) {
+                    char* _redir = strstr(cmd, " 2>");
+                    if (_redir) {
+                        char _saved[128]; strncpy(_saved, _redir, sizeof(_saved)-1); _saved[sizeof(_saved)-1]=0;
+                        snprintf(_redir, sizeof(cmd) - (_redir - cmd), "%s%s", ffi_tail, _saved);
+                    } else {
+                        size_t _n = strlen(cmd); snprintf(cmd + _n, sizeof(cmd) - _n, "%s", ffi_tail);
+                    }
+                }
             } else {
                 // No precompiled runtime — compile from source files
                 int _p = 0;

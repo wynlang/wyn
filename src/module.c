@@ -263,7 +263,14 @@ char* resolve_module_path(const char* module_name) {
     
     // 5. ./wyn_modules/ directory
     TRY_RESOLVE("./wyn_modules/%s", module_name);
-    
+
+    // 5c. Project-local packages: ./packages/<name>/<name>.wyn — where `wyn add`
+    // and `wyn pkg install` place packages. Both the flat file and the nested
+    // <name>/<name> layout are tried (relative to cwd and the source dir).
+    TRY_RESOLVE("./packages/%s/%s", module_name, module_name);
+    TRY_RESOLVE("%s/packages/%s/%s", source_directory, module_name, module_name);
+    TRY_RESOLVE("./packages/%s", module_name);
+
     // 6. User packages: ~/.wyn/packages/module_name/module_name.wyn
     const char* home = getenv("HOME");
     if (home) {
