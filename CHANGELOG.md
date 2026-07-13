@@ -62,8 +62,6 @@ reachable from Wyn. All backward compatible; no source changes required.
 
 ## v1.15.0 — "The Payloads Release" (2026-07-13)
 
-## v1.15.0 — "The Payloads Release" (2026-07-13)
-
 Two correctness fixes that remove long-standing sharp edges: any scalar can now
 ride inside an `Option`/`Result`, and your function names no longer collide with
 the C standard library.
