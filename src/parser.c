@@ -2084,6 +2084,77 @@ Stmt* statement() {
     }
     
     if (match(TOKEN_IF)) {
+        // `if let <pattern> = <expr> { then } else { else }` — Python/Rust-style
+        // conditional binding. Desugars to a two-arm match: `<pattern> => then`,
+        // `_ => else`, so it rides the already-working Option/Result arm lowering.
+        // `let` is not a keyword in Wyn (removed in v1.2.3); we detect it as the
+        // identifier immediately after `if`.
+        if (check(TOKEN_IDENT) && parser.current.length == 3 &&
+            memcmp(parser.current.start, "let", 3) == 0) {
+            advance(); // consume `let`
+            bool saved_asi = parser.allow_struct_init;
+            parser.allow_struct_init = false;
+            Pattern* pat = parse_pattern();
+            parser.allow_struct_init = saved_asi;
+            if (!pat) { parser.had_error = true; return NULL; }
+            expect(TOKEN_EQ, "Expected '=' after 'if let' pattern");
+            bool saved_asi2 = parser.allow_struct_init;
+            parser.allow_struct_init = false;
+            Expr* subject = expression();
+            parser.allow_struct_init = saved_asi2;
+
+            Stmt* m = alloc_stmt();
+            m->type = STMT_MATCH;
+            m->match_stmt.value = subject;
+            m->match_stmt.cases = malloc(sizeof(MatchCase) * 2);
+            m->match_stmt.case_count = 0;
+
+            // then-arm: <pattern> => { <body> }
+            expect(TOKEN_LBRACE, "Expected '{' after 'if let'");
+            Stmt* then_blk = alloc_stmt();
+            then_blk->type = STMT_BLOCK;
+            then_blk->block.stmts = malloc(sizeof(Stmt*) * 256);
+            then_blk->block.count = 0;
+            while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                const char* __sp = parser.current.start;
+                then_blk->block.stmts[then_blk->block.count++] = statement();
+                if (stmt_made_no_progress(__sp)) break;
+            }
+            expect(TOKEN_RBRACE, "Expected '}' after 'if let' body");
+            m->match_stmt.cases[0].pattern = pat;
+            m->match_stmt.cases[0].guard = NULL;
+            m->match_stmt.cases[0].body = then_blk;
+            m->match_stmt.case_count = 1;
+
+            // optional else-arm: `_ => { <else-body> }`
+            if (match(TOKEN_ELSE)) {
+                Stmt* else_blk;
+                if (check(TOKEN_IF)) {
+                    // `else if …` — wrap the nested if-statement as the arm body.
+                    else_blk = statement();
+                } else {
+                    expect(TOKEN_LBRACE, "Expected '{' after else");
+                    else_blk = alloc_stmt();
+                    else_blk->type = STMT_BLOCK;
+                    else_blk->block.stmts = malloc(sizeof(Stmt*) * 256);
+                    else_blk->block.count = 0;
+                    while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                        const char* __sp = parser.current.start;
+                        else_blk->block.stmts[else_blk->block.count++] = statement();
+                        if (stmt_made_no_progress(__sp)) break;
+                    }
+                    expect(TOKEN_RBRACE, "Expected '}' after else body");
+                }
+                Pattern* wild = safe_malloc(sizeof(Pattern));
+                wild->type = PATTERN_WILDCARD;
+                m->match_stmt.cases[1].pattern = wild;
+                m->match_stmt.cases[1].guard = NULL;
+                m->match_stmt.cases[1].body = else_blk;
+                m->match_stmt.case_count = 2;
+            }
+            return m;
+        }
+
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_IF;
         
@@ -2330,7 +2401,70 @@ Stmt* statement() {
             if (match(TOKEN_IN)) {
                 // Parse the expression after 'in'
                 Expr* iter_expr = expression();
-                
+
+                // `for i in range(a, b)` / `range(a, b, step)` — Python-style range.
+                // Desugars to the same C-style counted loop as `a..b`, with the
+                // step wired in. A literal-negative step counts DOWN (`range(10,0,-1)`):
+                // condition flips to `i > end`, and `i += step` decrements.
+                bool is_range_call = iter_expr && iter_expr->type == EXPR_CALL &&
+                    iter_expr->call.callee && iter_expr->call.callee->type == EXPR_IDENT &&
+                    iter_expr->call.callee->token.length == 5 &&
+                    memcmp(iter_expr->call.callee->token.start, "range", 5) == 0 &&
+                    (iter_expr->call.arg_count == 2 || iter_expr->call.arg_count == 3);
+                if (is_range_call) {
+                    Expr* start = iter_expr->call.args[0];
+                    Expr* end   = iter_expr->call.args[1];
+                    Expr* step  = iter_expr->call.arg_count == 3 ? iter_expr->call.args[2] : NULL;
+                    // Detect a literal negative step (possibly wrapped in unary '-').
+                    bool desc = false;
+                    if (step) {
+                        Expr* sv = step;
+                        if (sv->type == EXPR_UNARY && sv->unary.op.type == TOKEN_MINUS) desc = true;
+                        else if (sv->type == EXPR_INT && sv->token.length > 0 && sv->token.start[0] == '-') desc = true;
+                        else if (sv->type == EXPR_FLOAT && sv->token.length > 0 && sv->token.start[0] == '-') desc = true;
+                    }
+                    if (has_parens) expect(TOKEN_RPAREN, "Expected ')' after range");
+
+                    stmt->for_stmt.init = alloc_stmt();
+                    stmt->for_stmt.init->type = STMT_VAR;
+                    stmt->for_stmt.init->var.name = first_var;
+                    stmt->for_stmt.init->var.init = start;
+                    stmt->for_stmt.init->var.is_const = false;
+
+                    Expr* cond = alloc_expr();
+                    cond->type = EXPR_BINARY;
+                    cond->binary.left = alloc_expr();
+                    cond->binary.left->type = EXPR_IDENT;
+                    cond->binary.left->token = first_var;
+                    cond->binary.op.type = desc ? TOKEN_GT : TOKEN_LT;
+                    cond->binary.op.start = desc ? ">" : "<";
+                    cond->binary.op.length = 1;
+                    cond->binary.right = end;
+                    stmt->for_stmt.condition = cond;
+
+                    Expr* inc = alloc_expr();
+                    inc->type = EXPR_ASSIGN;
+                    inc->assign.name = first_var;
+                    Expr* inc_val = alloc_expr();
+                    inc_val->type = EXPR_BINARY;
+                    inc_val->binary.left = alloc_expr();
+                    inc_val->binary.left->type = EXPR_IDENT;
+                    inc_val->binary.left->token = first_var;
+                    inc_val->binary.op.type = TOKEN_PLUS;
+                    inc_val->binary.op.start = "+";
+                    inc_val->binary.op.length = 1;
+                    if (step) {
+                        // i += step (step already carries its sign)
+                        inc_val->binary.right = step;
+                    } else {
+                        inc_val->binary.right = alloc_expr();
+                        inc_val->binary.right->type = EXPR_INT;
+                        Token one = {TOKEN_INT, "1", 1, 0};
+                        inc_val->binary.right->token = one;
+                    }
+                    inc->assign.value = inc_val;
+                    stmt->for_stmt.increment = inc;
+                } else
                 // Check if this is a range (has ..) or array iteration
                 if (match(TOKEN_DOTDOT) || match(TOKEN_DOTDOTEQ)) {
                     bool inclusive = (parser.previous.type == TOKEN_DOTDOTEQ);
