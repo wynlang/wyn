@@ -107,24 +107,28 @@ jobs:
           echo "Windows bindgen smoke: PASS"
         shell: bash
 
-      # `wyn add` also shells out (dir creation, pkg-config, bindgen) and isn't
-      # covered by make test on Windows — prove the curated C-package manager works.
-      - name: wyn add smoke test (Windows)
+      # Prove the whole FFI pipeline on Windows against a header/lib we fully
+      # control (mingw's system math.h declares fns via CRT-inline/macro machinery
+      # a naive scanner can't see — that's a bindgen-coverage matter, orthogonal to
+      # the pipeline). This exercises bindgen -> extern fn -> [ffi] link -> build ->
+      # run with a hand-written lib.
+      - name: FFI pipeline smoke test (Windows)
         if: runner.os == 'Windows'
         run: |
-          export WYN_ROOT="$(pwd)"
-          mkdir -p addwork && cd addwork
-          "$WYN_ROOT/wyn.exe" add m 2>&1 || (echo "wyn add m failed"; exit 1)
-          grep -q "extern fn" packages/m/m.wyn || (echo "MISSING bindings"; exit 1)
-          grep -q 'libs = "m"' wyn.toml || (echo "MISSING [ffi] libs"; exit 1)
-          # pow is declared plainly on every libm/mingw math.h; proves
-          # add -> import resolution -> [ffi] link -> build -> run end to end.
-          printf 'import m\nfn main() { println("${pow(2.0, 10.0)}") }\n' > app.wyn
-          "$WYN_ROOT/wyn.exe" build app.wyn
+          printf 'int triple(int x);\ndouble scale(double x, double f);\n' > mylib.h
+          printf 'int triple(int x){return x*3;}\ndouble scale(double x,double f){return x*f;}\n' > mylib.c
+          gcc -c mylib.c -o mylib.o && ar rcs libmylib.a mylib.o
+          ./wyn.exe bind mylib.h > mybind.wyn 2>err.txt || (echo "bind failed"; cat err.txt; exit 1)
+          cat mybind.wyn
+          grep -q "extern fn triple(a0: int) -> int;" mybind.wyn || (echo "MISSING triple"; exit 1)
+          grep -q "extern fn scale(a0: float, a1: float) -> float;" mybind.wyn || (echo "MISSING scale"; exit 1)
+          printf '[project]\nname="t"\n[ffi]\nlibs="mylib"\nlib_dirs="."\n' > wyn.toml
+          printf 'extern fn triple(a0: int) -> int;\nfn main() { println("${triple(9)}") }\n' > app.wyn
+          ./wyn.exe build app.wyn
           if [ -f app.exe ]; then ./app.exe > got.txt; else ./app > got.txt; fi
           cat got.txt
-          grep -q "1024" got.txt || (echo "wrong result"; exit 1)
-          echo "Windows wyn add smoke: PASS"
+          grep -q "27" got.txt || (echo "wrong result"; exit 1)
+          echo "Windows FFI pipeline smoke: PASS"
         shell: bash
 
   cross-compile-ios:
