@@ -52,11 +52,18 @@ static Type* builtin_string = NULL;
 static Type* builtin_bool = NULL;
 static Type* builtin_void = NULL;
 static Type* builtin_array = NULL;
+static Type* builtin_ptr = NULL;  // opaque C pointer (void*) for FFI
 
 // Map an `extern fn` C type expression (e.g. `int`, `float`, `bool`, `string`,
 // `void`, or a pointer-ish type) to the Wyn builtin used for type-checking calls.
 // NULL (no `-> T`) maps to void. Unknown types default to int (treated as an
 // opaque machine word — the C prototype in codegen mirrors this).
+// True if t is the FFI opaque pointer type (`ptr` -> TYPE_STRUCT named "void*").
+static bool is_ptr_type(Type* t) {
+    return t && t->kind == TYPE_STRUCT && t->struct_type.name.length == 5 &&
+           memcmp(t->struct_type.name.start, "void*", 5) == 0;
+}
+
 static Type* extern_map_type(Expr* type_expr) {
     if (!type_expr) return builtin_void;
     if (type_expr->type == EXPR_IDENT) {
@@ -66,6 +73,7 @@ static Type* extern_map_type(Expr* type_expr) {
         if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return builtin_bool;
         if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return builtin_string;
         if (t.length == 4 && memcmp(t.start, "void", 4) == 0) return builtin_void;
+        if (t.length == 3 && memcmp(t.start, "ptr", 3) == 0) return builtin_ptr;
     }
     return builtin_int;
 }
@@ -528,6 +536,12 @@ void init_checker() {
     builtin_string = make_type(TYPE_STRING);
     builtin_bool = make_type(TYPE_BOOL);
     builtin_void = make_type(TYPE_VOID);
+    // Opaque C pointer type for FFI (`ptr`). A TYPE_STRUCT named "void*" so it
+    // flows through codegen_c_type_from_type's struct path to the C type "void*"
+    // and is treated as an opaque machine word (not an ARC-managed Wyn struct,
+    // which is keyed off registered struct names — "void*" is never registered).
+    builtin_ptr = make_type(TYPE_STRUCT);
+    { Token _pn = {TOKEN_IDENT, "void*", 5, 0}; builtin_ptr->struct_type.name = _pn; }
     builtin_array = make_type(TYPE_ARRAY);
     
     // Register collection types
@@ -2486,7 +2500,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                        (left->kind == TYPE_STRING) ||
                                        (right->kind == TYPE_STRING) ||
                                        (left->kind == TYPE_FUNCTION) ||
-                                       (right->kind == TYPE_FUNCTION);
+                                       (right->kind == TYPE_FUNCTION) ||
+                                       // FFI opaque pointer (`ptr`, a TYPE_STRUCT named
+                                       // "void*"): comparable to another ptr and to the
+                                       // int literal 0 — the C NULL idiom (`if p == 0`).
+                                       is_ptr_type(left) || is_ptr_type(right);
                 
                 if (!types_compatible) {
                     fprintf(stderr, "Error at line %d: Cannot compare different types\n", 
