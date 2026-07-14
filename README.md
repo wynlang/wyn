@@ -179,8 +179,8 @@ Flags:
 ## Editor Support
 
 - **VS Code**: [wynlang/vscode-wyn](https://github.com/wynlang/vscode-wyn) — syntax highlighting, all keywords and modules
-- **Neovim**: [wynlang/nvim-wyn](https://github.com/wynlang/nvim-wyn) — syntax highlighting, all keywords and modules
-- **LSP**: `wyn lsp` — completions, hover, go-to-definition, rename, format
+- **Neovim**: [wynlang/nvim-wyn](https://github.com/wynlang/nvim-wyn) — syntax highlighting + LSP wiring
+- **LSP**: `wyn lsp` — live diagnostics (via `wyn check`, never runs your code), completions, hover, go-to-definition, find references, rename
 
 ## Building
 

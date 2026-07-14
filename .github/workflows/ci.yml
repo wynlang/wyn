@@ -131,6 +131,15 @@ jobs:
           echo "Windows FFI pipeline smoke: PASS"
         shell: bash
 
+      # The LSP server shells out to `wyn check` and writes temp files — exactly
+      # the path/shell-out surface that has broken on Windows before. The Windows
+      # job doesn't run `make test`, so drive the LSP protocol test explicitly.
+      - name: LSP smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          WYN=./wyn.exe python3 tests/lsp/lsp_client.py
+        shell: bash
+
   cross-compile-ios:
     name: Cross-compile (iOS)
     runs-on: macos-15
