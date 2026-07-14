@@ -61,8 +61,30 @@ class Client:
         self.p.stdin.flush()
 
     def pump(self, seconds):
-        # Messages arrive on the reader thread; just wait for them to land.
+        # Messages arrive on the reader thread; give them a moment to land. Used
+        # only where there's no specific response to wait for (e.g. notifications).
         time.sleep(seconds)
+
+    def wait_response(self, rid, timeout=6.0):
+        """Block until response `rid` arrives (or timeout). Deterministic — avoids
+        flaky fixed sleeps."""
+        end = time.time() + timeout
+        while time.time() < end:
+            with self._lock:
+                if str(rid) in self.responses:
+                    return self.responses[str(rid)]
+            time.sleep(0.05)
+        return self.get_response(rid)
+
+    def wait_diagnostics(self, uri, timeout=6.0):
+        """Block until diagnostics for `uri` arrive (or timeout)."""
+        end = time.time() + timeout
+        while time.time() < end:
+            with self._lock:
+                if uri in self.diagnostics:
+                    return self.diagnostics[uri]
+            time.sleep(0.05)
+        return self.get_diagnostics(uri)
 
     def get_response(self, rid):
         with self._lock:
@@ -99,8 +121,7 @@ def main():
     c.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": {"capabilities": {}}}, compact=False)
     c.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
-    c.pump(1.0)
-    init = c.get_response(1)
+    init = c.wait_response(1)
     check(isinstance(init, dict) and "capabilities" in init,
           "initialize returns capabilities (pretty JSON parses)")
     caps = (init or {}).get("capabilities", {})
@@ -120,8 +141,7 @@ def main():
     c.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
             "params": {"textDocument": {"uri": uri, "languageId": "wyn",
                                         "version": 1, "text": src}}})
-    c.pump(3.0)
-    diags = c.get_diagnostics(uri) or []
+    diags = c.wait_diagnostics(uri) or []
     check(len(diags) >= 1, "type error produces a diagnostic")
     if diags:
         d = diags[0]
@@ -138,15 +158,14 @@ def main():
             "params": {"textDocument": {"uri": good_uri, "languageId": "wyn",
                                         "version": 1,
                                         "text": "fn main() -> int {\n    return 0\n}\n"}}})
-    c.pump(2.5)
-    check(len(c.get_diagnostics(good_uri) or []) == 0, "clean program has no diagnostics")
+    # wait for the clean file's diagnostics to arrive, then assert it's empty.
+    check(len(c.wait_diagnostics(good_uri) or []) == 0, "clean program has no diagnostics")
 
     # 4. hover over the `helper` call → returns markdown contents.
     c.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
             "params": {"textDocument": {"uri": uri},
                        "position": {"line": 6, "character": 12}}})
-    c.pump(1.5)
-    hov = c.get_response(2)
+    hov = c.wait_response(2)
     check(isinstance(hov, dict) and "contents" in hov, "hover returns contents")
 
     # 5. completion → a non-empty list of items.
@@ -154,8 +173,7 @@ def main():
             "params": {"textDocument": {"uri": uri},
                        "position": {"line": 6, "character": 12},
                        "context": {"triggerCharacter": "."}}})
-    c.pump(1.5)
-    comp = c.get_response(3)
+    comp = c.wait_response(3)
     items = comp.get("items", []) if isinstance(comp, dict) else comp
     check(isinstance(items, list) and len(items) > 0, "completion returns items")
 
@@ -163,8 +181,7 @@ def main():
     c.send({"jsonrpc": "2.0", "id": 4, "method": "textDocument/definition",
             "params": {"textDocument": {"uri": uri},
                        "position": {"line": 6, "character": 12}}})
-    c.pump(1.5)
-    dfn = c.get_response(4)
+    dfn = c.wait_response(4)
     check(isinstance(dfn, dict) and dfn.get("range", {}).get("start", {}).get("line") == 0,
           "definition resolves to the declaration (line 0)")
 

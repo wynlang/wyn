@@ -6,6 +6,10 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#endif
 
 // ── JSON helpers ──────────────────────────────────────────────
 
@@ -580,6 +584,15 @@ static const char* lsp_version(void) {
 }
 
 int lsp_server_start(void) {
+    // LSP framing is byte-exact (Content-Length counts raw bytes, headers end in
+    // \r\n). On Windows stdio defaults to TEXT mode, which translates \n<->\r\n
+    // on the wire and corrupts both the byte counts and the framing. Force binary
+    // mode on both streams so the protocol is identical on every platform.
+#ifdef _WIN32
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+
     // Find our own binary path for running compiler checks
     char* path = getenv("_");
     if (path && strstr(path, "wyn")) {
