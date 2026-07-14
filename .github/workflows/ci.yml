@@ -137,6 +137,12 @@ jobs:
       - name: LSP smoke test (Windows)
         if: runner.os == 'Windows'
         run: |
+          # Debug: show exactly what `wyn check` emits for a type error on Windows
+          # (the LSP diagnostics parser consumes this output).
+          printf 'fn main() -> int {\n    var x: int = "nope"\n    return x\n}\n' > diag_probe.wyn
+          echo "--- wyn check output (hexdump-ish) ---"
+          ./wyn.exe check diag_probe.wyn 2>&1 | cat -A || true
+          echo "--- end ---"
           WYN=./wyn.exe python3 tests/lsp/lsp_client.py
         shell: bash
 
