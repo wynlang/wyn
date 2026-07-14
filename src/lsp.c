@@ -9,6 +9,11 @@
 #ifdef _WIN32
 #include <io.h>
 #include <fcntl.h>
+// Under -std=c11 (strict ANSI) mingw hides the underscore-prefixed CRT
+// extensions, so _setmode/_fileno aren't declared even though they link. Declare
+// them explicitly for the binary-mode switch in lsp_server_start().
+extern int _setmode(int fd, int mode);
+extern int _fileno(FILE* stream);
 #endif
 
 // ── JSON helpers ──────────────────────────────────────────────
