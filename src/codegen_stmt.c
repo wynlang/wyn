@@ -2652,6 +2652,7 @@ void codegen_stmt(Stmt* stmt) {
                 if (method->body) {
                     extern int wyn_struct_var_depth(void);
                     extern void wyn_struct_var_truncate(int);
+                    extern void register_struct_var(const char*, const char*);
                     int _sv_depth = wyn_struct_var_depth();
                     char _self_ty[64];
                     snprintf(_self_ty, sizeof(_self_ty), "%.*s",
@@ -3019,6 +3020,7 @@ void codegen_stmt(Stmt* stmt) {
                 // method emission for the same reasoning). Scoped to this body.
                 extern int wyn_struct_var_depth(void);
                 extern void wyn_struct_var_truncate(int);
+                extern void register_struct_var(const char*, const char*);
                 int _impl_sv_depth = wyn_struct_var_depth();
                 {
                     char _impl_self_ty[64];

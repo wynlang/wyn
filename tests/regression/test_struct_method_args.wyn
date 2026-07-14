@@ -1,0 +1,17 @@
+// Regression: a struct method taking parameters — fn add(self, n: int) — emitted
+// mismatched C types between its forward declaration (int) and definition
+// (long long), causing "conflicting types for Adder_add". The forward decl now
+// matches the body (long long / const char* / double).
+struct Adder {
+    base: int
+    fn add(self, n: int) -> int { return self.base + n }
+    fn scale(self, f: float) -> float { return f * 2.0 }
+}
+fn main() -> int {
+    var a = Adder { base: 10 }
+    println(a.add(5).to_string())      // 15
+    println(a.scale(1.5).to_string())  // 3.0
+    return 0
+}
+// EXPECT: 15
+// EXPECT: 3.0
