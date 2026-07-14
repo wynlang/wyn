@@ -332,12 +332,15 @@ void codegen_program(Program* prog) {
                     emit(", ");
                     if (method->param_types[k] && method->param_types[k]->type == EXPR_IDENT) {
                         Token ptype = method->param_types[k]->token;
+                        // Param C types MUST match the body definition exactly
+                        // (codegen_stmt emits `long long`/`const char*`), else the
+                        // forward decl conflicts: "conflicting types for X".
                         if (ptype.length == 3 && memcmp(ptype.start, "int", 3) == 0) {
-                            emit("int");
+                            emit("long long");
                         } else if (ptype.length == 5 && memcmp(ptype.start, "float", 5) == 0) {
                             emit("double");
                         } else if (ptype.length == 6 && memcmp(ptype.start, "string", 6) == 0) {
-                            emit("char*");
+                            emit("const char*");
                         } else {
                             emit("%.*s", ptype.length, ptype.start);
                         }

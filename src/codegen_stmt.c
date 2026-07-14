@@ -2642,13 +2642,27 @@ void codegen_stmt(Stmt* stmt) {
                     emit(" %.*s", method->params[j].length, method->params[j].start);
                 }
                 emit(") ");
-                
-                // Emit method body
+
+                // Emit method body. Register `self` as a struct var of the
+                // receiver type for the duration of the body so that internal
+                // `self.other()` calls dispatch to `Type_other(self)` (without
+                // this, self's type is unknown → the call emitted nothing, e.g.
+                // `return ( + 1)`). Save/restore the struct-var stack depth so the
+                // binding doesn't leak into later functions.
                 if (method->body) {
+                    extern int wyn_struct_var_depth(void);
+                    extern void wyn_struct_var_truncate(int);
+                    extern void register_struct_var(const char*, const char*);
+                    int _sv_depth = wyn_struct_var_depth();
+                    char _self_ty[64];
+                    snprintf(_self_ty, sizeof(_self_ty), "%.*s",
+                             stmt->struct_decl.name.length, stmt->struct_decl.name.start);
+                    register_struct_var("self", _self_ty);
                     emit("{\n");
                     emit("    /* body has %d statements */\n", method->body->block.count);
                     codegen_stmt(method->body);
                     emit("}\n");
+                    wyn_struct_var_truncate(_sv_depth);
                 } else {
                     emit("{ /* no body */ }\n");
                 }
@@ -3001,7 +3015,21 @@ void codegen_stmt(Stmt* stmt) {
                 }
                 emit(") {\n");
                 push_scope();
+                // Register `self` as the impl's receiver struct type so internal
+                // `self.other()` calls dispatch correctly (see the struct-body
+                // method emission for the same reasoning). Scoped to this body.
+                extern int wyn_struct_var_depth(void);
+                extern void wyn_struct_var_truncate(int);
+                extern void register_struct_var(const char*, const char*);
+                int _impl_sv_depth = wyn_struct_var_depth();
+                {
+                    char _impl_self_ty[64];
+                    snprintf(_impl_self_ty, sizeof(_impl_self_ty), "%.*s",
+                             stmt->impl.type_name.length, stmt->impl.type_name.start);
+                    register_struct_var("self", _impl_self_ty);
+                }
                 codegen_stmt(method->body);
+                wyn_struct_var_truncate(_impl_sv_depth);
                 pop_scope();
                 emit("}\n\n");
             }
