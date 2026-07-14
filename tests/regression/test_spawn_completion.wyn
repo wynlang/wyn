@@ -1,0 +1,29 @@
+// Regression: fire-and-forget `spawn f()` tasks were dropped when main returned
+// (no exit-time join), and the shutdown path occasionally hung. main now drains
+// outstanding spawns via wyn_spawn_wait() before the process exits (it also pumps
+// the I/O loop so an I/O-parked task can't hang the drain). This test spawns many
+// fire-and-forget tasks and asserts they all complete — and that the program
+// neither hangs nor crashes at shutdown.
+// EXPECT: PASS: 50 fire-and-forget spawns completed
+
+fn tick(counter: int) -> int {
+    Shared.add(counter, 1)
+    return 0
+}
+
+fn main() -> int {
+    var counter = Shared.new(0)
+    var i = 0
+    while i < 50 {
+        spawn tick(counter)
+        i = i + 1
+    }
+    Time::sleep(200)
+    var c = Shared.get(counter)
+    if c != 50 {
+        println("FAIL: only ${c}/50 spawns completed")
+        return 1
+    }
+    println("PASS: 50 fire-and-forget spawns completed")
+    return 0
+}
