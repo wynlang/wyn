@@ -1,0 +1,22 @@
+// Regression: the checker now validates method calls on user-defined structs.
+// A call to a method that doesn't exist (e.g. `p.bogus()`) is a checker error
+// ("struct 'P' has no method 'bogus'") instead of slipping through to a codegen
+// "Unknown method (no type info)" C failure. This test exercises the VALID
+// paths that must keep working: struct-body methods (int + string returns) and
+// a field access — proving the new guard doesn't over-fire.
+struct Vec {
+    x: int
+    y: int
+    fn sum(self) -> int { return self.x + self.y }
+    fn tag(self) -> string { return "vec" }
+}
+fn main() -> int {
+    var v = Vec { x: 3, y: 4 }
+    println(v.sum().to_string())   // struct-body int method
+    println(v.tag())               // struct-body string method
+    println(v.x.to_string())       // field access
+    return 0
+}
+// EXPECT: 7
+// EXPECT: vec
+// EXPECT: 3

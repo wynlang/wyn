@@ -332,6 +332,38 @@ static StructStmt* find_struct_definition(Token struct_name) {
     return NULL;
 }
 
+// True if `field` is a declared field of the struct named `struct_name`. Used to
+// avoid flagging `p.field()` (a function-typed field call) as a missing method.
+static bool is_field_of_struct(Token struct_name, Token field) {
+    StructStmt* s = find_struct_definition(struct_name);
+    if (!s) return false;
+    for (int i = 0; i < s->field_count; i++) {
+        if (s->fields[i].length == field.length &&
+            memcmp(s->fields[i].start, field.start, field.length) == 0) return true;
+    }
+    return false;
+}
+
+// True if the struct named `struct_name` declares a method `name` — either in
+// its body (`struct S { fn name(self) ... }`, held in methods[]) or via an `impl`
+// block / extension method registered as `S_name` in global scope. Struct-body
+// methods are NOT added to the symbol table, so both sources must be consulted.
+static bool struct_has_method(SymbolTable* global, Token struct_name, Token name) {
+    StructStmt* s = find_struct_definition(struct_name);
+    if (s) {
+        for (int i = 0; i < s->method_count; i++) {
+            if (s->methods[i]->name.length == name.length &&
+                memcmp(s->methods[i]->name.start, name.start, name.length) == 0) return true;
+        }
+    }
+    char ext[256];
+    snprintf(ext, sizeof(ext), "%.*s_%.*s",
+             struct_name.length, struct_name.start, name.length, name.start);
+    Token t = {TOKEN_IDENT, ext, (int)strlen(ext), 0};
+    Symbol* sym = find_symbol(global, t);
+    return sym && sym->type && sym->type->kind == TYPE_FUNCTION;
+}
+
 static EnumStmt* find_enum_definition(Token enum_name) {
     if (!current_program) return NULL;
     
@@ -3536,7 +3568,9 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
             }
             
-            // Look up user-defined extension methods: Type_method in symbol table
+            // Look up user-defined / struct-body methods: Type_method in the
+            // symbol table (both `impl` extension methods and methods declared in
+            // the struct body register under this name).
             if (object_type && object_type->kind == TYPE_STRUCT) {
                 Token type_name = object_type->struct_type.name;
                 char ext_fn_name[256];
@@ -3551,6 +3585,27 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         expr->expr_type = ret;
                         return ret;
                     }
+                }
+
+                // The method didn't resolve to any known method on this struct.
+                // If the receiver is a USER-DEFINED struct (has a real definition
+                // in this program), that's an error the checker should catch —
+                // otherwise it slips through to codegen and becomes a confusing
+                // "Unknown method (no type info)" C-compile failure. Restricted to
+                // real struct definitions so built-in/monomorphic struct families
+                // (OptionInt, ResultString, void*, …) keep their lenient behavior.
+                char sname[128]; token_to_cstr(sname, sizeof(sname), type_name);
+                if (find_struct_definition(type_name) &&
+                    !struct_has_method(global_scope, type_name, method) &&
+                    !is_field_of_struct(type_name, method)) {
+                    fprintf(stderr, "\nError at line %d: struct '%s' has no method '%.*s'\n",
+                            method.line, sname, (int)method.length, method.start);
+                    show_source_line(method.line);
+                    fprintf(stderr, "  \033[34mHelp:\033[0m define it with `fn %.*s(self) { ... }` inside `struct %s { ... }` (or an `impl %s` block).\n",
+                            (int)method.length, method.start, sname, sname);
+                    had_error = true;
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
                 }
             }
 
