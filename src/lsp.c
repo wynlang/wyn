@@ -125,16 +125,29 @@ static void doc_update(const char* uri, const char* content) {
 static char wyn_binary[1024] = "";
 
 static void publish_diagnostics(const char* uri, const char* path) {
-    // Write content to temp file and run compiler check
-    char tmp[256];
-    snprintf(tmp, sizeof(tmp), "/tmp/wyn_lsp_%d.wyn", getpid());
-    
+    // Write the buffer's current content to a temp file and run `wyn check` on
+    // it. Resolve a portable temp directory — Windows has no /tmp, and hardcoding
+    // it there meant the file was never written and `wyn check` ran on a
+    // nonexistent path (no diagnostics ever surfaced on Windows).
+    char tmp[1024];
+    bool wrote_tmp = false;
     LspDoc* d = doc_find(uri);
     if (d && d->content) {
+        const char* tmpdir = getenv("TMPDIR");
+        if (!tmpdir || !tmpdir[0]) tmpdir = getenv("TMP");
+        if (!tmpdir || !tmpdir[0]) tmpdir = getenv("TEMP");
+        if (!tmpdir || !tmpdir[0]) tmpdir = "/tmp";
+        // strip a trailing slash/backslash so we don't double it
+        char dir[900];
+        snprintf(dir, sizeof(dir), "%s", tmpdir);
+        size_t dl = strlen(dir);
+        if (dl && (dir[dl-1] == '/' || dir[dl-1] == '\\')) dir[dl-1] = '\0';
+        snprintf(tmp, sizeof(tmp), "%s/wyn_lsp_%d.wyn", dir, (int)getpid());
         FILE* f = fopen(tmp, "w");
-        if (f) { fputs(d->content, f); fclose(f); }
-    } else {
-        // Use the actual file
+        if (f) { fputs(d->content, f); fclose(f); wrote_tmp = true; }
+    }
+    if (!wrote_tmp) {
+        // Fall back to the on-disk file if we couldn't stage a temp copy.
         snprintf(tmp, sizeof(tmp), "%s", path);
     }
     
@@ -251,8 +264,9 @@ static void publish_diagnostics(const char* uri, const char* path) {
     pos += snprintf(diags + pos, sizeof(diags) - pos, "]}");
     lsp_notify("textDocument/publishDiagnostics", diags);
     
-    // Clean up temp file
-    if (strncmp(tmp, "/tmp/", 5) == 0) unlink(tmp);
+    // Clean up the staged temp file (only if we created one — never the user's
+    // actual source file).
+    if (wrote_tmp) unlink(tmp);
 }
 
 // ── Hover: find word at position and provide type info ───────
