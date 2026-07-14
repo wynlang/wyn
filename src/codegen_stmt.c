@@ -1848,6 +1848,26 @@ void codegen_stmt(Stmt* stmt) {
                 Stmt* s = stmt->block.stmts[i];
                 bool is_spawn_var = (s->type == STMT_VAR && s->var.init &&
                                      s->var.init->type == EXPR_SPAWN);
+                // An UNBOUND spawn — bare `spawn f()` inside the block (its own
+                // STMT_SPAWN) — must ALSO be joined at the closing brace, else it
+                // escapes the structured-concurrency barrier (it would lower to a
+                // fire-and-forget wyn_spawn_fast_traced and could outlive the block).
+                // Wrap its call in an EXPR_SPAWN and reuse the joinable expression
+                // lowering, capturing the future with no value var (empty name →
+                // joined for the barrier only).
+                if (s->type == STMT_SPAWN && s->spawn.call && joined_count < 64) {
+                    Expr spawn_expr; spawn_expr.type = EXPR_SPAWN;
+                    spawn_expr.spawn.call = s->spawn.call;
+                    spawn_expr._codegen_temp_id = -1;
+                    snprintf(joined_names[joined_count], 128, "%s", "");   // no binding
+                    snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
+                    joined_ctypes[joined_count] = "long long";
+                    emit("    Future* %s = ", joined_futs[joined_count]);
+                    codegen_expr(&spawn_expr);   // emits a joinable wyn_spawn_*(...)
+                    emit(";\n");
+                    joined_count++;
+                    continue;
+                }
                 if (is_spawn_var && joined_count < 64) {
                     // Resolve the value C type from the spawned fn's return type.
                     const char* vctype = "long long";
@@ -1894,7 +1914,10 @@ void codegen_stmt(Stmt* stmt) {
                     snprintf(getcall, sizeof(getcall), "future_get_timeout(%s, __par_to_%d)", joined_futs[j], par_id);
                 else
                     snprintf(getcall, sizeof(getcall), "future_get(%s)", joined_futs[j]);
-                if (strcmp(joined_ctypes[j], "const char*") == 0)
+                if (joined_names[j][0] == '\0')
+                    // Unbound spawn: join for the barrier, discard the value.
+                    emit("    (void)%s;\n", getcall);
+                else if (strcmp(joined_ctypes[j], "const char*") == 0)
                     emit("    %s = (const char*)(intptr_t)%s;\n", joined_names[j], getcall);
                 else if (strcmp(joined_ctypes[j], "double") == 0)
                     emit("    { long long __r = (long long)(intptr_t)%s; %s = *(double*)&__r; }\n", getcall, joined_names[j]);
