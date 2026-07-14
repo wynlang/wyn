@@ -1,0 +1,17 @@
+// Regression: a struct with a single-uppercase-letter name (P, Q, T) plus a
+// method used to be mistaken for a generic type parameter in codegen, so the
+// method call was dropped ("Unknown method" / internal codegen error). Real
+// single-letter structs must dispatch to their methods like any other struct.
+struct P {
+    x: int
+    fn label(self) -> string { return "point" }
+    fn doubled(self) -> int { return self.x * 2 }
+}
+fn main() -> int {
+    var p = P { x: 21 }
+    println(p.label())
+    println(p.doubled().to_string())
+    return 0
+}
+// EXPECT: point
+// EXPECT: 42
