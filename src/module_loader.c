@@ -69,31 +69,46 @@ void extract_exports(Program* module, SymbolTable* target_scope, ImportStmt* imp
     }
 }
 
-// Merge exported functions from module into target program
+// Merge exported functions from module into target program.
+//
+// W9 namespaced imports: for a WHOLE-module `import m` (item_count == 0) we do
+// NOT merge the module's functions into the target as bare-named statements.
+// Doing so used to (a) register the bare name globally so flat `foo()` resolved,
+// and (b) emit a bare `foo` C definition — which collides when two modules each
+// export a `foo`. The qualified `m.foo()` call lowers to the prefixed `m_foo`
+// symbol, which the STMT_IMPORT codegen loop emits directly from the module AST,
+// so dot calls still link. Functions ARE still merged for SELECTIVE imports
+// (`import { foo } from m`), where the bare name is explicitly requested.
+//
+// Structs/enums/vars are still merged in both cases (type namespacing is a
+// separate, larger change) so cross-module type references keep working.
 void merge_module_exports(Program* module, Program* target, ImportStmt* import) {
-    (void)import;
     if (!module || !target) return;
-    
+
+    bool whole_module = !import || import->item_count == 0;
+
     for (int i = 0; i < module->count; i++) {
         Stmt* stmt = module->stmts[i];
-        
+
         // Check if already merged
         bool already_exists = false;
         for (int k = 0; k < target->count; k++) {
             if (target->stmts[k] == stmt) { already_exists = true; break; }
         }
         if (already_exists) continue;
-        
+
         // Merge exported functions, enums, structs, and vars
         if (stmt->type == STMT_EXPORT && stmt->export.stmt) {
             int inner_type = stmt->export.stmt->type;
-            if (inner_type == STMT_FN || inner_type == STMT_ENUM || 
+            if (whole_module && inner_type == STMT_FN) continue;  // W9: qualified-only
+            if (inner_type == STMT_FN || inner_type == STMT_ENUM ||
                 inner_type == STMT_STRUCT || inner_type == STMT_VAR) {
                 target->stmts = realloc(target->stmts, sizeof(Stmt*) * (target->count + 1));
                 target->stmts[target->count++] = stmt;
             }
-        } else if (stmt->type == STMT_FN || stmt->type == STMT_VAR || 
+        } else if (stmt->type == STMT_FN || stmt->type == STMT_VAR ||
                    stmt->type == STMT_ENUM || stmt->type == STMT_STRUCT) {
+            if (whole_module && stmt->type == STMT_FN) continue;  // W9: qualified-only
             // Private items needed for dependencies
             target->stmts = realloc(target->stmts, sizeof(Stmt*) * (target->count + 1));
             target->stmts[target->count++] = stmt;

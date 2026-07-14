@@ -1,0 +1,9 @@
+// Companion module for test_w9_namespaced_imports.wyn (no EXPECT: not run directly).
+// W9: whole-module `import w9_shapes` requires `w9_shapes.area(...)` etc.
+pub fn area(w: int, h: int) -> int {
+    return w * h
+}
+
+pub fn label(name: string) -> string {
+    return "shape:" + name
+}

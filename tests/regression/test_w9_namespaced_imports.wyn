@@ -1,0 +1,19 @@
+// W9 namespaced imports: whole-module `import m` requires qualified `m.foo()`.
+// Covers: dot-qualified call, module fn with a string return (regression: the
+// qualified path used to stub every return type to int and miscompile strings),
+// and an aliased whole-module import `import m as x` → `x.foo()`.
+import w9_shapes
+import w9_shapes as sh
+
+fn main() -> int {
+    // dot-qualified call, int return
+    println("${w9_shapes.area(4, 5)}")
+    // dot-qualified call, string return (must NOT be typed as int)
+    println(w9_shapes.label("box"))
+    // aliased whole-module import
+    println("${sh.area(3, 3)}")
+    return 0
+}
+// EXPECT: 20
+// EXPECT: shape:box
+// EXPECT: 9

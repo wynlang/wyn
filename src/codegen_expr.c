@@ -1795,7 +1795,18 @@ void codegen_expr(Expr* expr) {
                 // Check if it's a loaded module (by full name or short name)
                 bool is_loaded_module = is_module_loaded(module_name) || is_builtin_module(module_name);
                 char resolved_mod_name[256] = "";
-                if (!is_loaded_module && !is_local) {
+                // W9: `import m as mm` → mm.foo() lowers to the real module m's
+                // symbol. Resolve the alias (unless a local/param shadows it).
+                if (!is_local) {
+                    extern const char* resolve_parser_module_alias(const char* name);
+                    const char* aliased = resolve_parser_module_alias(module_name);
+                    if (aliased && strcmp(aliased, module_name) != 0) {
+                        strncpy(resolved_mod_name, aliased, 255);
+                        resolved_mod_name[255] = '\0';
+                        is_loaded_module = true;
+                    }
+                }
+                if (!is_loaded_module && !is_local && resolved_mod_name[0] == '\0') {
                     // Check short names: "utils" might be "lib/utils"
                     extern int get_all_modules_raw(void** out, int max);
                     void* _mods[64]; int _mc = get_all_modules_raw(_mods, 64);

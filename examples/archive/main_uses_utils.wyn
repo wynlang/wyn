@@ -2,9 +2,9 @@
 import utils
 
 fn main() {
-    // These work - they're exported from utils
-    var result1 = double(5)      // Can call directly after import
-    var result2 = triple(4)      // Can call directly after import
+    // Whole-module `import utils` requires the qualified `utils.foo()` form.
+    var result1 = utils.double(5)
+    var result2 = utils.triple(4)
     var max = MAX_SIZE           // Can access exported variables
 
     result1.print()  // 10
