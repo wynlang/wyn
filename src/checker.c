@@ -47,6 +47,43 @@ void analyze_expr_captures(Expr* expr, LambdaExpr* lambda, SymbolTable* scope);
 static SymbolTable* global_scope = NULL;
 static Program* current_program = NULL;  // For looking up struct definitions
 static Type* builtin_int = NULL;
+
+// W9 namespaced imports: names brought in by a WHOLE-module `import m` (as
+// opposed to selective `import { foo } from m`). After a whole-module import,
+// the bare name must NOT be callable — `m.foo()` is the required form. We record
+// each such name here so a flat call site can emit a clear "did you mean m.foo()?"
+// error. Selective imports are never recorded (their bare names stay valid).
+typedef struct { char name[128]; char module[128]; } WholeModuleFn;
+static WholeModuleFn whole_module_fns[512];
+static int whole_module_fn_count = 0;
+
+static void register_whole_module_fn(const char* module, const char* fn) {
+    // De-dupe: if a later selective import (or a local definition) also provides
+    // the name, we keep the first module recorded for the hint; the flat-call
+    // guard separately checks that no real local/selective symbol shadows it.
+    for (int i = 0; i < whole_module_fn_count; i++) {
+        if (strcmp(whole_module_fns[i].name, fn) == 0) return;
+    }
+    if (whole_module_fn_count >= 512) return;
+    strncpy(whole_module_fns[whole_module_fn_count].name, fn, 127);
+    whole_module_fns[whole_module_fn_count].name[127] = '\0';
+    strncpy(whole_module_fns[whole_module_fn_count].module, module, 127);
+    whole_module_fns[whole_module_fn_count].module[127] = '\0';
+    whole_module_fn_count++;
+}
+
+// Defined after check_program's helpers (needs Program/Stmt layout); forward
+// declared here for the flat-call guard inside check_expr.
+static bool flat_callable_in_program(Program* prog, const char* name, int name_len);
+
+// Returns the owning module name if `fn` was imported ONLY via a whole-module
+// import (and thus must be qualified), or NULL otherwise.
+static const char* whole_module_fn_owner(const char* fn) {
+    for (int i = 0; i < whole_module_fn_count; i++) {
+        if (strcmp(whole_module_fns[i].name, fn) == 0) return whole_module_fns[i].module;
+    }
+    return NULL;
+}
 static Type* builtin_float = NULL;
 static Type* builtin_string = NULL;
 static Type* builtin_bool = NULL;
@@ -2963,6 +3000,31 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
                 
                 
+                // W9: reject a FLAT call to a function that is only available via
+                // a whole-module `import m` — it must be qualified `m.foo()`.
+                // Selective imports and locally-defined functions stay flat (see
+                // flat_callable_in_program). Only enforced in the top-level
+                // program (current_module_name empty); a module's own internal
+                // calls to its siblings remain flat.
+                if (current_module_name[0] == '\0') {
+                    const char* owner = whole_module_fn_owner(name_buf);
+                    if (owner &&
+                        !flat_callable_in_program(current_program, func_name.start, func_name.length)) {
+                        fprintf(stderr, "\nError at line %d: '%.*s' must be called as '%s.%.*s(...)'\n",
+                                func_name.line, func_name.length, func_name.start,
+                                owner, func_name.length, func_name.start);
+                        show_source_line(func_name.line);
+                        fprintf(stderr, "  \033[34mHelp:\033[0m after `import %s`, use the module-qualified form `%s.%.*s(...)`.\n",
+                                owner, owner, func_name.length, func_name.start);
+                        fprintf(stderr, "        Or import the name explicitly: `import { %.*s } from %s`.\n",
+                                func_name.length, func_name.start, owner);
+                        had_error = true;
+                        for (int i = 0; i < expr->call.arg_count; i++) check_expr(expr->call.args[i], scope);
+                        expr->expr_type = builtin_int;
+                        return builtin_int;
+                    }
+                }
+
                 // T1.5.3: Function overloading support with T1.5.4: Parameter validation
                 // Collect argument types for overload resolution
                 Type** arg_types = malloc(sizeof(Type*) * expr->call.arg_count);
@@ -3231,6 +3293,14 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             if (expr->method_call.object->type == EXPR_IDENT) {
                 char obj_name[256];
                 token_to_cstr(obj_name, sizeof(obj_name), expr->method_call.object->token);
+                // W9: resolve a module alias (`import m as mm` → mm.foo() means
+                // m.foo()) to the real module name before namespace lookup — but
+                // NOT if a real local/param shadows the alias name.
+                extern const char* resolve_parser_module_alias(const char* name);
+                if (!find_symbol(scope, expr->method_call.object->token)) {
+                    const char* aliased = resolve_parser_module_alias(obj_name);
+                    if (aliased) { strncpy(obj_name, aliased, sizeof(obj_name)-1); obj_name[sizeof(obj_name)-1] = '\0'; }
+                }
                 // Only treat as namespace if it's a known builtin module
                 extern bool is_builtin_module(const char* name);
                 extern bool is_module_loaded(const char* name);
@@ -5229,6 +5299,59 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
     }
 }
 
+// Map a function-parameter / return type EXPR_IDENT to a builtin Type*. Used
+// when registering an imported module's functions so that qualified `m.foo()`
+// calls get the RIGHT return type (previously everything was stubbed to int,
+// which miscompiled/segfaulted string/float/bool returns from `m.foo()`).
+static Type* imported_type_from_expr(Expr* type_expr) {
+    if (!type_expr || type_expr->type != EXPR_IDENT) return builtin_int;
+    Token t = type_expr->token;
+    if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return builtin_string;
+    if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return builtin_float;
+    if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return builtin_bool;
+    if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return builtin_int;
+    if (t.length == 5 && memcmp(t.start, "array", 5) == 0) return builtin_array;
+    if (t.length == 4 && memcmp(t.start, "void", 4) == 0) return builtin_void;
+    return builtin_int;  // structs/enums default to int-sized handle here
+}
+
+// W9: is `name` legitimately flat-callable in `prog` — i.e. defined as a
+// top-level function in the program itself, or brought in by a SELECTIVE import
+// (`import { name } from m`)? Those keep flat calls valid; a name available only
+// via a whole-module `import m` does not (and must be qualified `m.name()`).
+static bool flat_callable_in_program(Program* prog, const char* name, int name_len) {
+    if (!prog) return false;
+    for (int i = 0; i < prog->count; i++) {
+        Stmt* s = prog->stmts[i];
+        if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+        if (s->type == STMT_FN) {
+            if (s->fn.name.length == name_len &&
+                memcmp(s->fn.name.start, name, name_len) == 0) return true;
+        } else if (s->type == STMT_IMPORT && s->import.item_count > 0) {
+            for (int j = 0; j < s->import.item_count; j++) {
+                if (s->import.items[j].length == name_len &&
+                    memcmp(s->import.items[j].start, name, name_len) == 0) return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Build a TYPE_FUNCTION for an imported module function from its AST, resolving
+// param/return types (not just int stubs).
+static Type* imported_fn_type(FnStmt* fn) {
+    Type* fn_type = make_type(TYPE_FUNCTION);
+    fn_type->fn_type.param_count = fn->param_count;
+    fn_type->fn_type.param_types = fn->param_count
+        ? malloc(sizeof(Type*) * fn->param_count) : NULL;
+    for (int k = 0; k < fn->param_count; k++) {
+        fn_type->fn_type.param_types[k] =
+            imported_type_from_expr(fn->param_types ? fn->param_types[k] : NULL);
+    }
+    fn_type->fn_type.return_type = imported_type_from_expr(fn->return_type);
+    return fn_type;
+}
+
 void check_program(Program* prog) {
     // Set global pointer for struct field type lookup
     current_program = prog;
@@ -5880,13 +6003,30 @@ void check_program(Program* prog) {
                     // Whole module import - register functions with module prefix
                     char module_name_str[256];
                     token_to_cstr(module_name_str, sizeof(module_name_str), import->module);
-                    
-                    // Register all exported functions with qualified names
+                    // W9: if the import is aliased (`import m as mm`), the required
+                    // call form — and the flat-call hint — use the alias.
+                    char hint_name[256];
+                    if (import->alias.start != NULL && import->alias.length > 0) {
+                        token_to_cstr(hint_name, sizeof(hint_name), import->alias);
+                    } else {
+                        strncpy(hint_name, module_name_str, sizeof(hint_name)-1);
+                        hint_name[sizeof(hint_name)-1] = '\0';
+                    }
+
+                    // Register all exported functions with qualified names.
+                    // A module function is exported either as `export fn`
+                    // (STMT_EXPORT wrapping STMT_FN) or as `pub fn` (a STMT_FN
+                    // with is_public); handle both.
                     for (int j = 0; j < module->count; j++) {
                         Stmt* stmt = module->stmts[j];
+                        FnStmt* fn = NULL;
                         if (stmt->type == STMT_EXPORT && stmt->export.stmt && stmt->export.stmt->type == STMT_FN) {
-                            FnStmt* fn = &stmt->export.stmt->fn;
-                            
+                            fn = &stmt->export.stmt->fn;
+                        } else if (stmt->type == STMT_FN && stmt->fn.is_public) {
+                            fn = &stmt->fn;
+                        }
+                        if (fn) {
+
                             // Create qualified name: module::function
                             char* qualified_name = malloc(strlen(module_name_str) + 2 + fn->name.length + 1);
                             snprintf(qualified_name, strlen(module_name_str) + 2 + fn->name.length + 1, "%s::%.*s", module_name_str, fn->name.length, fn->name.start);
@@ -5894,21 +6034,27 @@ void check_program(Program* prog) {
                             Token qualified_token = fn->name;
                             qualified_token.start = qualified_name;
                             qualified_token.length = strlen(qualified_name);
-                            
-                            // Create function type
-                            Type* fn_type = make_type(TYPE_FUNCTION);
-                            fn_type->fn_type.param_count = fn->param_count;
-                            fn_type->fn_type.param_types = malloc(sizeof(Type*) * fn->param_count);
-                            Type* int_type = make_type(TYPE_INT);
-                            for (int k = 0; k < fn->param_count; k++) {
-                                fn_type->fn_type.param_types[k] = int_type;
-                            }
-                            fn_type->fn_type.return_type = int_type;
-                            
+
+                            // Function type with REAL param/return types so that
+                            // `m.foo()` calls type-check correctly (a string/float
+                            // return through the qualified path used to be stubbed
+                            // to int and miscompiled).
+                            Type* fn_type = imported_fn_type(fn);
+
                             // Register with qualified name
                             Symbol* existing = find_symbol(global_scope, qualified_token);
                             if (!existing) {
                                 add_symbol(global_scope, qualified_token, fn_type, false);
+                            }
+
+                            // W9: record the bare name as whole-module-only so a
+                            // flat `foo()` call errors with a "did you mean
+                            // m.foo()?" hint (unless the program itself defines it
+                            // or selectively imports it — checked at the call site).
+                            {
+                                char bare[128];
+                                token_to_cstr(bare, sizeof(bare), fn->name);
+                                register_whole_module_fn(hint_name, bare);
                             }
                         }
                     }
