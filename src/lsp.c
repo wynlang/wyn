@@ -205,13 +205,13 @@ static void publish_diagnostics(const char* uri, const char* path) {
     //   "Warning: <msg> (line N)"         (severity 2)
     // Bare "  --> file:line:col" lines carry no message and are skipped. We dedupe
     // per (line) so the same error reported twice doesn't clutter the panel.
-    char diags[32768];
-    int pos = 0;
-    pos += snprintf(diags + pos, sizeof(diags) - pos,
-        "{\"uri\":\"%s\",\"diagnostics\":[", uri);
+    // First pass: collect one diagnostic per source line, keeping the MOST
+    // SEVERE (an error outranks a warning). `wyn check` prints the unused-var
+    // warning before the type-mismatch error for the same line, so a naive
+    // first-wins dedupe would hide the error behind the warning.
+    struct { int line; int col; int severity; char msg[512]; } items[256];
+    int item_count = 0;
 
-    int diag_count = 0;
-    int seen_lines[256]; int seen_count = 0;  // dedupe by 0-indexed line
     char* line = output;
     while (line && *line) {
         char* nl = strchr(line, '\n');
@@ -249,40 +249,55 @@ static void publish_diagnostics(const char* uri, const char* path) {
             int mlen = paren ? (int)(paren - (line + 9)) : (int)strlen(line + 9);
             if (mlen > (int)sizeof(msg) - 1) mlen = sizeof(msg) - 1;
             if (mlen > 0) { memcpy(msg, line + 9, mlen); msg[mlen] = '\0'; }
-            // trim trailing space
             int L = (int)strlen(msg); while (L > 0 && msg[L-1] == ' ') msg[--L] = '\0';
         }
 
         if (err_line >= 0 && msg[0]) {
-            // dedupe by line
-            bool dup = false;
-            for (int s = 0; s < seen_count; s++) if (seen_lines[s] == err_line) { dup = true; break; }
-            if (!dup) {
-                if (seen_count < 256) seen_lines[seen_count++] = err_line;
-                if (err_col < 0) err_col = 0;
-                // Escape quotes/backslashes for JSON
-                char escaped[512];
-                int ei = 0;
-                for (char* c = msg; *c && ei < 500; c++) {
-                    if (*c == '"' || *c == '\\') escaped[ei++] = '\\';
-                    if (*c != '\n' && *c != '\r') escaped[ei++] = *c;
+            if (err_col < 0) err_col = 0;
+            // find an existing item for this line
+            int idx = -1;
+            for (int s = 0; s < item_count; s++) if (items[s].line == err_line) { idx = s; break; }
+            if (idx < 0) {
+                if (item_count < 256) {
+                    idx = item_count++;
+                    items[idx].line = err_line;
+                    items[idx].col = err_col;
+                    items[idx].severity = severity;
+                    snprintf(items[idx].msg, sizeof(items[idx].msg), "%s", msg);
                 }
-                escaped[ei] = '\0';
-
-                if (diag_count > 0) pos += snprintf(diags + pos, sizeof(diags) - pos, ",");
-                pos += snprintf(diags + pos, sizeof(diags) - pos,
-                    "{\"range\":{\"start\":{\"line\":%d,\"character\":%d},"
-                    "\"end\":{\"line\":%d,\"character\":%d}},"
-                    "\"severity\":%d,\"source\":\"wyn\","
-                    "\"message\":\"%s\"}",
-                    err_line, err_col, err_line, err_col + 1, severity, escaped);
-                diag_count++;
+            } else if (severity < items[idx].severity) {
+                // more severe (error < warning) wins the line
+                items[idx].col = err_col;
+                items[idx].severity = severity;
+                snprintf(items[idx].msg, sizeof(items[idx].msg), "%s", msg);
             }
         }
 
         line = nl ? nl + 1 : NULL;
     }
-    
+
+    // Second pass: emit the collected diagnostics as JSON.
+    char diags[32768];
+    int pos = 0;
+    pos += snprintf(diags + pos, sizeof(diags) - pos,
+        "{\"uri\":\"%s\",\"diagnostics\":[", uri);
+    for (int i = 0; i < item_count; i++) {
+        char escaped[512];
+        int ei = 0;
+        for (char* c = items[i].msg; *c && ei < 500; c++) {
+            if (*c == '"' || *c == '\\') escaped[ei++] = '\\';
+            if (*c != '\n' && *c != '\r') escaped[ei++] = *c;
+        }
+        escaped[ei] = '\0';
+        if (i > 0) pos += snprintf(diags + pos, sizeof(diags) - pos, ",");
+        pos += snprintf(diags + pos, sizeof(diags) - pos,
+            "{\"range\":{\"start\":{\"line\":%d,\"character\":%d},"
+            "\"end\":{\"line\":%d,\"character\":%d}},"
+            "\"severity\":%d,\"source\":\"wyn\","
+            "\"message\":\"%s\"}",
+            items[i].line, items[i].col, items[i].line, items[i].col + 1,
+            items[i].severity, escaped);
+    }
     pos += snprintf(diags + pos, sizeof(diags) - pos, "]}");
     lsp_notify("textDocument/publishDiagnostics", diags);
     

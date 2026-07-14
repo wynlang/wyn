@@ -1712,10 +1712,18 @@ void codegen_expr(Expr* expr) {
             if (expr->method_call.object->expr_type && 
                 expr->method_call.object->expr_type->kind == TYPE_STRUCT) {
                 Token type_name = expr->method_call.object->expr_type->struct_type.name;
-                
-                // Skip type parameters (T, K, V) — let generic dispatch handle them
-                if (type_name.length == 1 && type_name.start[0] >= 'A' && type_name.start[0] <= 'Z')
-                    goto skip_struct_dispatch;
+
+                // Skip type parameters (T, K, V) — let generic dispatch handle
+                // them. BUT only if the single-letter name isn't an actual struct:
+                // a real `struct P { ... fn f(self) ... }` must dispatch to P_f,
+                // not be mistaken for a generic parameter (that dropped the call
+                // entirely → "Unknown method" / codegen error for 1-letter structs).
+                if (type_name.length == 1 && type_name.start[0] >= 'A' && type_name.start[0] <= 'Z') {
+                    char _tn1[2] = { type_name.start[0], '\0' };
+                    extern int is_known_struct(const char*);
+                    if (!is_known_struct(_tn1))
+                        goto skip_struct_dispatch;
+                }
             } else if (expr->method_call.object->type == EXPR_IDENT) {
                 // Fallback: check codegen's struct var registry
                 char _svn[64]; token_to_cstr(_svn, sizeof(_svn), expr->method_call.object->token);
