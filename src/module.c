@@ -376,8 +376,11 @@ Program* load_module(const char* module_name) {
     fread(source, 1, size, f);
     source[size] = '\0';
     fclose(f);
-    free(path);
-    
+    // NB: `path` is freed later (after the package-manifest read below), NOT
+    // here — read_package_manifest(path) derives the module's directory from it,
+    // and freeing it now was a use-after-free (ASan: heap-use-after-free at
+    // package.c read_package_manifest).
+
     // Save current module path before loading imports
     char saved_module_path[512];
     strncpy(saved_module_path, current_module_path, 511);
@@ -430,7 +433,8 @@ Program* load_module(const char* module_name) {
     
     // Remove from loading stack
     pop_loading_stack();
-    
+
+    free(path);
     free(resolved_name);
     return prog;
 }

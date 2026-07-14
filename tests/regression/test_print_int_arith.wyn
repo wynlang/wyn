@@ -1,0 +1,19 @@
+// Regression: print(<int-expr>) where the expr is an arithmetic EXPR_BINARY used
+// to be codegen'd as a string temp (const char* __ps = (n+1); print(__ps);
+// wyn_rc_release(__ps)) and SEGFAULTED at runtime — the print path treated ANY
+// binary expr as a string, casting an int to const char* and releasing it. Now
+// it only wraps binaries that actually produce a string (checker expr_type).
+// `n` comes from a function call (var left __auto_type'd) to match the original
+// repro. print() has no newline, so the ints concatenate on one line.
+fn f() -> int { return 3 }
+fn main() -> int {
+    var n = f()
+    print(n + 1)    // 4
+    print(n * 2)    // 6
+    print(n - 5)    // -2
+    println("")     // terminate the line
+    println("hi" + " there")  // string concat print still works
+    return 0
+}
+// EXPECT: 46-2
+// EXPECT: hi there

@@ -913,7 +913,26 @@ void codegen_expr(Expr* expr) {
                     bool prev_skip = codegen_skip_strdup;
                     if (expr->call.args[0]->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
                     Expr* parg = expr->call.args[0];
-                    bool _print_temp = (parg->type == EXPR_BINARY) ||
+                    // A binary expression only needs the string temp wrapper when
+                    // it actually produces a STRING (concat). An arithmetic binary
+                    // like `n + 1` is NOT a string — wrapping it as `const char*`
+                    // and then wyn_rc_release()ing an integer segfaults. Trust the
+                    // checker's expr_type; fall back to a string-operand check when
+                    // the type is missing (e.g. a var left __auto_type'd).
+                    bool _binary_is_string = false;
+                    if (parg->type == EXPR_BINARY) {
+                        if (parg->expr_type) {
+                            _binary_is_string = (parg->expr_type->kind == TYPE_STRING);
+                        } else {
+                            Expr* _l = parg->binary.left;
+                            Expr* _r = parg->binary.right;
+                            _binary_is_string =
+                                (_l->type == EXPR_STRING || _r->type == EXPR_STRING) ||
+                                (_l->expr_type && _l->expr_type->kind == TYPE_STRING) ||
+                                (_r->expr_type && _r->expr_type->kind == TYPE_STRING);
+                        }
+                    }
+                    bool _print_temp = _binary_is_string ||
                                        (parg->type == EXPR_STRING_INTERP);
                     if (!_print_temp && parg->type == EXPR_METHOD_CALL &&
                         parg->method_call.method.length == 9 &&
