@@ -1,0 +1,19 @@
+// Regression: an internal `self.other()` call inside a struct/impl method used to
+// emit NOTHING (self's type was unknown to codegen), so `return self.b() + 1`
+// became `return ( + 1)` == 1. Now `self` is registered as its receiver type for
+// the method body and dispatches to Type_other(self).
+struct Calc {
+    base: int
+    fn double(self) -> int { return self.base * 2 }
+    fn plus_one(self) -> int { return self.double() + 1 }
+    fn tag(self) -> string { return "calc" }
+    fn shout(self) -> string { return self.tag() + "!" }
+}
+fn main() -> int {
+    var c = Calc { base: 5 }
+    println(c.plus_one().to_string())   // 11
+    println(c.shout())                  // calc!
+    return 0
+}
+// EXPECT: 11
+// EXPECT: calc!

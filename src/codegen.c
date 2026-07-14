@@ -1308,6 +1308,10 @@ const char* get_struct_var_type(const char* var) {
     }
     return NULL;
 }
+// Save/restore the struct-var stack depth so a scoped binding (e.g. `self`
+// inside a method body) can be popped without leaking into later functions.
+int wyn_struct_var_depth(void) { return struct_var_count; }
+void wyn_struct_var_truncate(int depth) { if (depth >= 0 && depth <= struct_var_count) struct_var_count = depth; }
 int is_known_struct(const char* name) {
     if (!current_program) return 0;
     for (int i = 0; i < current_program->count; i++) {
