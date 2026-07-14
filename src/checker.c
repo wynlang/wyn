@@ -4913,6 +4913,57 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 }
             }
             
+            // Type-check struct-body methods (`struct S { fn m(self, ...) {...} }`).
+            // Without this, method bodies were never checked, so field accesses on
+            // `self` and typed params never got an expr_type — and codegen then
+            // mis-lowered e.g. `self.name + suffix` (string+string) as a raw C `+`
+            // instead of wyn_string_concat_safe. Bind `self` to the struct type and
+            // each param to its declared type, exactly like impl-block methods.
+            {
+                Symbol* self_sym = find_symbol(global_scope, stmt->struct_decl.name);
+                Type* self_type = (self_sym && self_sym->type && self_sym->type->kind == TYPE_STRUCT)
+                    ? self_sym->type : NULL;
+                for (int mi = 0; mi < stmt->struct_decl.method_count; mi++) {
+                    FnStmt* method = stmt->struct_decl.methods[mi];
+                    if (!method->body) continue;
+                    SymbolTable method_scope = {0};
+                    method_scope.parent = scope;
+                    for (int j = 0; j < method->param_count; j++) {
+                        Type* param_type = builtin_int;
+                        if (j == 0 && method->params[0].length == 4 &&
+                            memcmp(method->params[0].start, "self", 4) == 0) {
+                            if (self_type) param_type = self_type;
+                        } else if (method->param_types[j] && method->param_types[j]->type == EXPR_IDENT) {
+                            Token tn = method->param_types[j]->token;
+                            if (tn.length == 3 && memcmp(tn.start, "int", 3) == 0) param_type = builtin_int;
+                            else if (tn.length == 6 && memcmp(tn.start, "string", 6) == 0) param_type = builtin_string;
+                            else if (tn.length == 5 && memcmp(tn.start, "float", 5) == 0) param_type = builtin_float;
+                            else if (tn.length == 4 && memcmp(tn.start, "bool", 4) == 0) param_type = builtin_bool;
+                            else {
+                                Symbol* ts = find_symbol(global_scope, tn);
+                                if (ts && ts->type && ts->type->kind == TYPE_STRUCT) param_type = ts->type;
+                            }
+                        }
+                        add_symbol(&method_scope, method->params[j], param_type,
+                                   method->param_mutable ? method->param_mutable[j] : false);
+                    }
+                    // Bind `self` and check the body for its type-inference side
+                    // effects (so field/param accesses get an expr_type). Leave
+                    // return-type mismatch checking OFF here (NULL): a self-method
+                    // call like `return self.other()` isn't yet return-typed by the
+                    // checker, so enforcing it would false-positive. Return-type
+                    // validation for methods can come with a fuller method-typing
+                    // pass later.
+                    Type* saved_ret = current_function_return_type;
+                    Type* saved_self = current_self_type;
+                    current_self_type = self_type;
+                    current_function_return_type = NULL;
+                    check_stmt(method->body, &method_scope);
+                    current_function_return_type = saved_ret;
+                    current_self_type = saved_self;
+                }
+            }
+
             // T2.5.3: Enhanced struct type checking with ARC integration
             // Struct type already registered in Pass 0
             break;

@@ -1,0 +1,22 @@
+// Regression: struct-body method bodies were never type-checked, so field
+// accesses on `self` and typed params had no expr_type. Codegen then lowered
+// `self.name + suffix` (string + string, both non-literal) as a raw C `+` on
+// two char* → compile error. Now struct-body methods are checked with `self`
+// and params bound, so string concatenation is recognized.
+struct Greeter {
+    name: string
+    fn greet(self, punct: string) -> string {
+        return "hi " + self.name + punct   // literal + field + param
+    }
+    fn shout(self) -> string {
+        return self.greet("!")             // internal self-call, string return
+    }
+}
+fn main() -> int {
+    var g = Greeter { name: "bob" }
+    println(g.greet("."))    // hi bob.
+    println(g.shout())       // hi bob!
+    return 0
+}
+// EXPECT: hi bob.
+// EXPECT: hi bob!
