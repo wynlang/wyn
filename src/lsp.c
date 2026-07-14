@@ -129,79 +129,113 @@ static void publish_diagnostics(const char* uri, const char* path) {
         snprintf(tmp, sizeof(tmp), "%s", path);
     }
     
-    // Run compiler in check mode (parse + typecheck, capture errors)
+    // Run the compiler in CHECK mode — type-check only, NEVER execute the user's
+    // program (the old code ran `wyn run`, which compiled AND ran the file on
+    // every keystroke: side effects, infinite loops, slow). `wyn check` parses +
+    // type-checks and reports the same diagnostics without running anything.
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "%s run %s 2>&1; true", wyn_binary, tmp);
-    
+    snprintf(cmd, sizeof(cmd), "%s check %s 2>&1; true", wyn_binary, tmp);
+
     FILE* fp = popen(cmd, "r");
     char output[8192] = "";
     if (fp) { fread(output, 1, sizeof(output) - 1, fp); pclose(fp); }
+
+    // Strip ANSI colour escapes (\033[...m) in place — the compiler colourises
+    // its diagnostics and the raw escape bytes would otherwise leak into the LSP
+    // message strings (and break the "Error at line" / "--> " matching below).
+    {
+        char* r = output; char* w = output;
+        while (*r) {
+            if (*r == '\033') { while (*r && *r != 'm') r++; if (*r) r++; continue; }
+            *w++ = *r++;
+        }
+        *w = '\0';
+    }
     
-    // Parse errors from output: "Error at line N: message" or "--> file:N:C"
+    // Parse the (ANSI-stripped) compiler output into diagnostics. The compiler
+    // emits errors in a couple of shapes; we want the human MESSAGE plus the best
+    // line/col, not the bare "--> file:line:col" location echo:
+    //   "Error at line N: <msg>"          (msg after the colon)
+    //   "Error: <msg> at line N"          (msg between "Error: " and " at line")
+    //   "Error: <msg> at line N:C"        (same, with a column)
+    //   "Warning: <msg> (line N)"         (severity 2)
+    // Bare "  --> file:line:col" lines carry no message and are skipped. We dedupe
+    // per (line) so the same error reported twice doesn't clutter the panel.
     char diags[32768];
     int pos = 0;
     pos += snprintf(diags + pos, sizeof(diags) - pos,
         "{\"uri\":\"%s\",\"diagnostics\":[", uri);
-    
+
     int diag_count = 0;
+    int seen_lines[256]; int seen_count = 0;  // dedupe by 0-indexed line
     char* line = output;
     while (line && *line) {
         char* nl = strchr(line, '\n');
         if (nl) *nl = '\0';
-        
+
         int err_line = -1;
         int err_col = 0;
-        char* msg_start = NULL;
+        char msg[512] = "";
         int severity = 1; // 1=error, 2=warning
-        
-        // Pattern: "Error at line N: msg"
+
         char* at_line = strstr(line, "Error at line ");
+        char* err_prefix = (strncmp(line, "Error:", 6) == 0) ? line + 6 : NULL;
+
         if (at_line) {
-            err_line = atoi(at_line + 14) - 1; // LSP is 0-indexed
-            msg_start = strchr(at_line + 14, ':');
-            if (msg_start) msg_start += 2;
-            else msg_start = at_line;
-        }
-        // Pattern: "--> file:LINE:COL"
-        if (!at_line && strstr(line, "-->")) {
-            char* colon1 = strrchr(line, ':');
-            if (colon1) {
-                err_col = atoi(colon1 + 1);
-                *colon1 = '\0';
-                char* colon2 = strrchr(line, ':');
-                if (colon2) err_line = atoi(colon2 + 1) - 1;
+            // "Error at line N: <msg>"
+            err_line = atoi(at_line + 14) - 1;
+            char* colon = strchr(at_line + 14, ':');
+            if (colon) snprintf(msg, sizeof(msg), "%s", colon + 2);
+        } else if (err_prefix) {
+            // "Error: <msg> at line N[:C]"
+            char* at = strstr(err_prefix, " at line ");
+            if (at) {
+                err_line = atoi(at + 9) - 1;
+                char* c = strchr(at + 9, ':');
+                if (c) err_col = atoi(c + 1);
+                int mlen = (int)(at - err_prefix);
+                while (mlen > 0 && (err_prefix[0] == ' ')) { err_prefix++; mlen--; }
+                if (mlen > (int)sizeof(msg) - 1) mlen = sizeof(msg) - 1;
+                if (mlen > 0) { memcpy(msg, err_prefix, mlen); msg[mlen] = '\0'; }
             }
-        }
-        // Pattern: "Warning: msg (line N)"
-        if (strncmp(line, "Warning:", 8) == 0) {
+        } else if (strncmp(line, "Warning:", 8) == 0) {
             severity = 2;
-            msg_start = line + 9;
             char* paren = strstr(line, "(line ");
             if (paren) err_line = atoi(paren + 6) - 1;
+            int mlen = paren ? (int)(paren - (line + 9)) : (int)strlen(line + 9);
+            if (mlen > (int)sizeof(msg) - 1) mlen = sizeof(msg) - 1;
+            if (mlen > 0) { memcpy(msg, line + 9, mlen); msg[mlen] = '\0'; }
+            // trim trailing space
+            int L = (int)strlen(msg); while (L > 0 && msg[L-1] == ' ') msg[--L] = '\0';
         }
-        
-        if (err_line >= 0) {
-            if (err_col < 0) err_col = 0;
-            if (!msg_start) msg_start = line;
-            // Escape quotes in message
-            char escaped[512];
-            int ei = 0;
-            for (char* c = msg_start; *c && ei < 500; c++) {
-                if (*c == '"' || *c == '\\') escaped[ei++] = '\\';
-                if (*c != '\n' && *c != '\r') escaped[ei++] = *c;
+
+        if (err_line >= 0 && msg[0]) {
+            // dedupe by line
+            bool dup = false;
+            for (int s = 0; s < seen_count; s++) if (seen_lines[s] == err_line) { dup = true; break; }
+            if (!dup) {
+                if (seen_count < 256) seen_lines[seen_count++] = err_line;
+                if (err_col < 0) err_col = 0;
+                // Escape quotes/backslashes for JSON
+                char escaped[512];
+                int ei = 0;
+                for (char* c = msg; *c && ei < 500; c++) {
+                    if (*c == '"' || *c == '\\') escaped[ei++] = '\\';
+                    if (*c != '\n' && *c != '\r') escaped[ei++] = *c;
+                }
+                escaped[ei] = '\0';
+
+                if (diag_count > 0) pos += snprintf(diags + pos, sizeof(diags) - pos, ",");
+                pos += snprintf(diags + pos, sizeof(diags) - pos,
+                    "{\"range\":{\"start\":{\"line\":%d,\"character\":%d},"
+                    "\"end\":{\"line\":%d,\"character\":%d}},"
+                    "\"severity\":%d,\"source\":\"wyn\","
+                    "\"message\":\"%s\"}",
+                    err_line, err_col, err_line, err_col + 1, severity, escaped);
+                diag_count++;
             }
-            escaped[ei] = '\0';
-            
-            if (diag_count > 0) pos += snprintf(diags + pos, sizeof(diags) - pos, ",");
-            pos += snprintf(diags + pos, sizeof(diags) - pos,
-                "{\"range\":{\"start\":{\"line\":%d,\"character\":%d},"
-                "\"end\":{\"line\":%d,\"character\":%d}},"
-                "\"severity\":%d,\"source\":\"wyn\","
-                "\"message\":\"%s\"}",
-                err_line, err_col, err_line, err_col + 1, severity, escaped);
-            diag_count++;
         }
-        
+
         line = nl ? nl + 1 : NULL;
     }
     
@@ -531,6 +565,20 @@ static bool is_local_sym(const char* c, const char* w, int ss, int se) {
 
 // ── Main LSP loop ────────────────────────────────────────────
 
+// Read the compiler version from the VERSION file (same lookup main.c uses) so
+// serverInfo.version / the banner never drift from the real release.
+static const char* lsp_version(void) {
+    static char v[64] = "";
+    if (v[0]) return v;
+    const char* paths[] = {"VERSION", "../VERSION", "../../VERSION", NULL};
+    for (int i = 0; paths[i]; i++) {
+        FILE* f = fopen(paths[i], "r");
+        if (f) { if (fgets(v, sizeof(v), f)) { char* nl = strchr(v, '\n'); if (nl) *nl = '\0'; } fclose(f); if (v[0]) return v; }
+    }
+    strcpy(v, "dev");
+    return v;
+}
+
 int lsp_server_start(void) {
     // Find our own binary path for running compiler checks
     char* path = getenv("_");
@@ -539,32 +587,39 @@ int lsp_server_start(void) {
     } else {
         strcpy(wyn_binary, "./wyn");
     }
-    
-    fprintf(stderr, "Wyn LSP Server v1.9.0\n");
+
+    fprintf(stderr, "Wyn LSP Server v%s\n", lsp_version());
     fprintf(stderr, "Binary: %s\n", wyn_binary);
     
     while (1) {
         char* msg = lsp_read_message();
         if (!msg) break;
         
-        // Extract method and id
+        // Extract method and id. Tolerate optional whitespace after the colon
+        // (`"method": "x"` as well as `"method":"x"`) — some clients / test
+        // harnesses pretty-print JSON, and the old no-space-only match silently
+        // produced an empty method (→ every request answered with null).
         char method[128] = "";
-        char* m = strstr(msg, "\"method\":\"");
-        if (m) { m += 10; int i = 0; while (*m && *m != '"' && i < 127) method[i++] = *m++; method[i] = '\0'; }
-        
+        char* m = strstr(msg, "\"method\"");
+        if (m) {
+            m += 8; while (*m == ' ' || *m == ':') m++;   // skip `:` and spaces
+            if (*m == '"') { m++; int i = 0; while (*m && *m != '"' && i < 127) method[i++] = *m++; method[i] = '\0'; }
+        }
+
         char id[64] = "null";
-        char* id_p = strstr(msg, "\"id\":");
+        char* id_p = strstr(msg, "\"id\"");
         if (id_p) {
-            id_p += 5; while (*id_p == ' ') id_p++;
+            id_p += 4; while (*id_p == ' ' || *id_p == ':') id_p++;
             int i = 0;
-            while (*id_p && *id_p != ',' && *id_p != '}' && i < 63) id[i++] = *id_p++;
+            while (*id_p && *id_p != ',' && *id_p != '}' && *id_p != ' ' && i < 63) id[i++] = *id_p++;
             id[i] = '\0';
         }
         
         fprintf(stderr, "LSP: %s\n", method);
         
         if (strcmp(method, "initialize") == 0) {
-            lsp_respond(id,
+            char init_result[1024];
+            snprintf(init_result, sizeof(init_result),
                 "{\"capabilities\":{"
                 "\"textDocumentSync\":{\"openClose\":true,\"change\":1},"
                 "\"hoverProvider\":true,"
@@ -572,7 +627,9 @@ int lsp_server_start(void) {
                 "\"definitionProvider\":true,"
                 "\"referencesProvider\":true,"
                 "\"renameProvider\":true"
-                "},\"serverInfo\":{\"name\":\"wyn-lsp\",\"version\":\"1.9.0\"}}");
+                "},\"serverInfo\":{\"name\":\"wyn-lsp\",\"version\":\"%s\"}}",
+                lsp_version());
+            lsp_respond(id, init_result);
         }
         else if (strcmp(method, "initialized") == 0) { /* noop */ }
         else if (strcmp(method, "shutdown") == 0) {
