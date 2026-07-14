@@ -651,7 +651,13 @@ void wyn_sched_enqueue(void* task_ptr) {
 }
 
 void wyn_spawn_wait(void) {
+    // Drain outstanding fire-and-forget tasks. Pump the I/O loop ourselves each
+    // iteration: a task may be I/O-parked (e.g. cooperative Time::sleep / socket
+    // wait), and if every worker processor is also parked, nothing else would
+    // advance the reactor — the old pure sched_yield() spin could hang there.
     while (atomic_load(&total_completed) < atomic_load(&total_spawned)) {
+        wyn_io_poll();     // wake any tasks whose timers/fds are ready
+        wake_all_processors();
         sched_yield();
     }
 }

@@ -15,6 +15,11 @@
 // External main function from the Wyn-compiled program
 extern long long wyn_main(void);
 
+// Drain outstanding fire-and-forget `spawn` tasks before the process exits, so
+// they aren't silently dropped when main returns (no-op stub on Windows, where
+// spawn runs synchronously). Defined in spawn_fast.c.
+extern void wyn_spawn_wait(void);
+
 // Global argc/argv for System::args()
 extern int __wyn_argc;
 extern char** __wyn_argv;
@@ -77,7 +82,9 @@ static void wyn_crash_handler(int sig) {
 int main(int argc, char** argv) {
     __wyn_argc = argc;
     __wyn_argv = argv;
-    return wyn_main();
+    long long __wyn_rc = wyn_main();
+    wyn_spawn_wait();  // join fire-and-forget tasks before exit
+    return __wyn_rc;
 }
 #elif defined(_WIN32)
 __attribute__((flatten))
@@ -87,7 +94,9 @@ int main(int argc, char** argv) {
     wyn_init_args(argc, argv);
     __wyn_argc = argc;
     __wyn_argv = argv;
-    return wyn_main();
+    long long __wyn_rc = wyn_main();
+    wyn_spawn_wait();  // join fire-and-forget tasks before exit
+    return __wyn_rc;
 }
 #else
 
@@ -117,6 +126,8 @@ int main(int argc, char** argv) {
     __wyn_argv = argv;
     
     // Call the Wyn-compiled main function
-    return wyn_main();
+    long long __wyn_rc = wyn_main();
+    wyn_spawn_wait();  // join fire-and-forget tasks before exit
+    return __wyn_rc;
 }
 #endif
