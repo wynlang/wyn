@@ -1504,7 +1504,10 @@ void init_checker() {
         // {"Json_get_int", 12, 2, json_type, builtin_string, NULL, builtin_int},
         {"Json_stringify", 14, 1, json_type, NULL, NULL, builtin_string},
     };
-    for (int i = 0; i < 6; i++) {
+    // Iterate the actual array length — two entries were commented out above, so
+    // a hardcoded 6 read one past the end (ASan: stack-buffer-overflow here).
+    int json_ns_fn_count = (int)(sizeof(json_ns_fns) / sizeof(json_ns_fns[0]));
+    for (int i = 0; i < json_ns_fn_count; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = json_ns_fns[i].pc;
         ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
