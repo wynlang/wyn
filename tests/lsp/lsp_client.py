@@ -20,8 +20,13 @@ WYN = os.environ.get("WYN", "./wyn")
 
 class Client:
     def __init__(self):
+        # Tell the server which compiler binary to use for `wyn check`
+        # diagnostics (so it doesn't guess ./wyn vs wyn.exe).
+        env = dict(os.environ)
+        env["WYN_LSP_BIN"] = WYN
         self.p = subprocess.Popen([WYN, "lsp"], stdin=subprocess.PIPE,
-                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                  env=env)
         self.responses = {}   # id -> result
         self.diagnostics = {} # uri -> latest diagnostics list
         self._lock = threading.Lock()

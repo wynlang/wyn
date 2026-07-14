@@ -612,12 +612,24 @@ int lsp_server_start(void) {
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
 
-    // Find our own binary path for running compiler checks
+    // Resolve the compiler binary used for `wyn check` diagnostics.
+    //   1. $WYN_LSP_BIN — explicit override (used by tests/CI).
+    //   2. $_ — the invoking shell's path to us, if it mentions wyn (Unix).
+    //   3. platform default on PATH: "wyn.exe" on Windows, else "./wyn".
+    // (On Windows $_ is unset and the binary is wyn.exe, so the old hardcoded
+    // "./wyn" never existed → diagnostics silently never ran.)
+    const char* env_bin = getenv("WYN_LSP_BIN");
     char* path = getenv("_");
-    if (path && strstr(path, "wyn")) {
+    if (env_bin && env_bin[0]) {
+        strncpy(wyn_binary, env_bin, sizeof(wyn_binary) - 1);
+    } else if (path && strstr(path, "wyn")) {
         strncpy(wyn_binary, path, sizeof(wyn_binary) - 1);
     } else {
+#ifdef _WIN32
+        strcpy(wyn_binary, "wyn.exe");
+#else
         strcpy(wyn_binary, "./wyn");
+#endif
     }
 
     fprintf(stderr, "Wyn LSP Server v%s\n", lsp_version());
