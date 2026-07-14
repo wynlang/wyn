@@ -13,7 +13,7 @@ plugins depend on:
 
 Runs against ./wyn (override with $WYN). No third-party deps. Exit 0 = PASS.
 """
-import json, os, subprocess, sys, time, select, tempfile
+import json, os, subprocess, sys, time, threading, tempfile
 
 WYN = os.environ.get("WYN", "./wyn")
 
@@ -24,6 +24,35 @@ class Client:
                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self.responses = {}   # id -> result
         self.diagnostics = {} # uri -> latest diagnostics list
+        self._lock = threading.Lock()
+        # Read LSP frames on a background thread. We use a blocking reader rather
+        # than select(): on Windows select() only works on sockets, not pipes
+        # (OSError WinError 10093), so a thread is the portable choice.
+        self._reader = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader.start()
+
+    def _read_loop(self):
+        out = self.p.stdout
+        while True:
+            header = b""
+            while b"\r\n\r\n" not in header:
+                c = out.read(1)
+                if not c:
+                    return  # pipe closed
+                header += c
+            if b"Content-Length:" not in header:
+                continue
+            n = int(header.split(b"Content-Length:")[1].split(b"\r\n")[0])
+            body = out.read(n)
+            try:
+                m = json.loads(body)
+            except Exception:
+                continue
+            with self._lock:
+                if m.get("id") is not None and "result" in m:
+                    self.responses[str(m["id"])] = m["result"]
+                if m.get("method") == "textDocument/publishDiagnostics":
+                    self.diagnostics[m["params"]["uri"]] = m["params"]["diagnostics"]
 
     def send(self, obj, compact=True):
         sep = (",", ":") if compact else (", ", ": ")
@@ -32,29 +61,16 @@ class Client:
         self.p.stdin.flush()
 
     def pump(self, seconds):
-        end = time.time() + seconds
-        while time.time() < end:
-            r, _, _ = select.select([self.p.stdout], [], [], 0.15)
-            if not r:
-                continue
-            header = b""
-            while b"\r\n\r\n" not in header:
-                c = self.p.stdout.read(1)
-                if not c:
-                    return
-                header += c
-            if b"Content-Length:" not in header:
-                continue
-            n = int(header.split(b"Content-Length:")[1].split(b"\r\n")[0])
-            body = self.p.stdout.read(n)
-            try:
-                m = json.loads(body)
-            except Exception:
-                continue
-            if m.get("id") is not None and "result" in m:
-                self.responses[str(m["id"])] = m["result"]
-            if m.get("method") == "textDocument/publishDiagnostics":
-                self.diagnostics[m["params"]["uri"]] = m["params"]["diagnostics"]
+        # Messages arrive on the reader thread; just wait for them to land.
+        time.sleep(seconds)
+
+    def get_response(self, rid):
+        with self._lock:
+            return self.responses.get(str(rid))
+
+    def get_diagnostics(self, uri):
+        with self._lock:
+            return self.diagnostics.get(uri)
 
     def stop(self):
         try:
@@ -84,7 +100,7 @@ def main():
             "params": {"capabilities": {}}}, compact=False)
     c.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
     c.pump(1.0)
-    init = c.responses.get("1")
+    init = c.get_response(1)
     check(isinstance(init, dict) and "capabilities" in init,
           "initialize returns capabilities (pretty JSON parses)")
     caps = (init or {}).get("capabilities", {})
@@ -105,7 +121,7 @@ def main():
             "params": {"textDocument": {"uri": uri, "languageId": "wyn",
                                         "version": 1, "text": src}}})
     c.pump(3.0)
-    diags = c.diagnostics.get(uri, [])
+    diags = c.get_diagnostics(uri) or []
     check(len(diags) >= 1, "type error produces a diagnostic")
     if diags:
         d = diags[0]
@@ -123,14 +139,14 @@ def main():
                                         "version": 1,
                                         "text": "fn main() -> int {\n    return 0\n}\n"}}})
     c.pump(2.5)
-    check(len(c.diagnostics.get(good_uri, [])) == 0, "clean program has no diagnostics")
+    check(len(c.get_diagnostics(good_uri) or []) == 0, "clean program has no diagnostics")
 
     # 4. hover over the `helper` call → returns markdown contents.
     c.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
             "params": {"textDocument": {"uri": uri},
                        "position": {"line": 6, "character": 12}}})
     c.pump(1.5)
-    hov = c.responses.get("2")
+    hov = c.get_response(2)
     check(isinstance(hov, dict) and "contents" in hov, "hover returns contents")
 
     # 5. completion → a non-empty list of items.
@@ -139,7 +155,7 @@ def main():
                        "position": {"line": 6, "character": 12},
                        "context": {"triggerCharacter": "."}}})
     c.pump(1.5)
-    comp = c.responses.get("3")
+    comp = c.get_response(3)
     items = comp.get("items", []) if isinstance(comp, dict) else comp
     check(isinstance(items, list) and len(items) > 0, "completion returns items")
 
@@ -148,7 +164,7 @@ def main():
             "params": {"textDocument": {"uri": uri},
                        "position": {"line": 6, "character": 12}}})
     c.pump(1.5)
-    dfn = c.responses.get("4")
+    dfn = c.get_response(4)
     check(isinstance(dfn, dict) and dfn.get("range", {}).get("start", {}).get("line") == 0,
           "definition resolves to the declaration (line 0)")
 

@@ -595,24 +595,46 @@ int lsp_server_start(void) {
         char* msg = lsp_read_message();
         if (!msg) break;
         
-        // Extract method and id. Tolerate optional whitespace after the colon
-        // (`"method": "x"` as well as `"method":"x"`) — some clients / test
-        // harnesses pretty-print JSON, and the old no-space-only match silently
-        // produced an empty method (→ every request answered with null).
+        // Extract the JSON top-level "method" and "id". Match the KEY (`"method"`
+        // immediately followed by `:`), NOT a string VALUE that equals "method":
+        // Neovim's initialize params include a semanticTokens tokenTypes array
+        // containing the literal string "method", which appears BEFORE the real
+        // "method":"initialize" key — matching the first `"method"` blindly
+        // parsed garbage → empty method → every request answered with null. Also
+        // tolerate optional whitespace after the colon (pretty-printed JSON).
         char method[128] = "";
-        char* m = strstr(msg, "\"method\"");
-        if (m) {
-            m += 8; while (*m == ' ' || *m == ':') m++;   // skip `:` and spaces
-            if (*m == '"') { m++; int i = 0; while (*m && *m != '"' && i < 127) method[i++] = *m++; method[i] = '\0'; }
+        {
+            const char* m = msg;
+            while ((m = strstr(m, "\"method\"")) != NULL) {
+                const char* p = m + 8;
+                while (*p == ' ' || *p == '\t') p++;
+                if (*p == ':') {
+                    p++; while (*p == ' ' || *p == '\t') p++;
+                    if (*p == '"') {
+                        p++; int i = 0; while (*p && *p != '"' && i < 127) method[i++] = *p++;
+                        method[i] = '\0';
+                    }
+                    break;  // found the key
+                }
+                m += 8;  // this occurrence was a value; keep looking
+            }
         }
 
         char id[64] = "null";
-        char* id_p = strstr(msg, "\"id\"");
-        if (id_p) {
-            id_p += 4; while (*id_p == ' ' || *id_p == ':') id_p++;
-            int i = 0;
-            while (*id_p && *id_p != ',' && *id_p != '}' && *id_p != ' ' && i < 63) id[i++] = *id_p++;
-            id[i] = '\0';
+        {
+            const char* id_p = msg;
+            while ((id_p = strstr(id_p, "\"id\"")) != NULL) {
+                const char* p = id_p + 4;
+                while (*p == ' ' || *p == '\t') p++;
+                if (*p == ':') {
+                    p++; while (*p == ' ' || *p == '\t') p++;
+                    int i = 0;
+                    while (*p && *p != ',' && *p != '}' && *p != ' ' && i < 63) id[i++] = *p++;
+                    id[i] = '\0';
+                    break;
+                }
+                id_p += 4;
+            }
         }
         
         fprintf(stderr, "LSP: %s\n", method);
