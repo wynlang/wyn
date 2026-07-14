@@ -155,12 +155,34 @@ static void publish_diagnostics(const char* uri, const char* path) {
     // program (the old code ran `wyn run`, which compiled AND ran the file on
     // every keystroke: side effects, infinite loops, slow). `wyn check` parses +
     // type-checks and reports the same diagnostics without running anything.
+    // Quote both the binary and the file path (the temp dir can contain spaces,
+    // e.g. Windows AppData paths). No trailing "; true" — that's POSIX-shell-only
+    // and breaks cmd.exe, which _popen uses on Windows; the exit code is ignored
+    // anyway since we parse stdout.
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "%s check %s 2>&1; true", wyn_binary, tmp);
+#ifdef _WIN32
+    // cmd.exe strips the outermost pair of quotes from the whole command line,
+    // so wrap the entire thing in an extra pair to preserve the quotes around
+    // the binary and file path (both can contain spaces).
+    snprintf(cmd, sizeof(cmd), "\"\"%s\" check \"%s\" 2>&1\"", wyn_binary, tmp);
+#else
+    snprintf(cmd, sizeof(cmd), "\"%s\" check \"%s\" 2>&1", wyn_binary, tmp);
+#endif
 
-    FILE* fp = popen(cmd, "r");
     char output[8192] = "";
-    if (fp) { fread(output, 1, sizeof(output) - 1, fp); pclose(fp); }
+#ifdef _WIN32
+    FILE* fp = _popen(cmd, "r");
+#else
+    FILE* fp = popen(cmd, "r");
+#endif
+    if (fp) {
+        fread(output, 1, sizeof(output) - 1, fp);
+#ifdef _WIN32
+        _pclose(fp);
+#else
+        pclose(fp);
+#endif
+    }
 
     // Strip ANSI colour escapes (\033[...m) in place — the compiler colourises
     // its diagnostics and the raw escape bytes would otherwise leak into the LSP
