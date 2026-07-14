@@ -1,0 +1,30 @@
+// Regression: an UNBOUND `spawn f()` inside a `parallel { }` block was NOT joined
+// at the closing brace — only `name = spawn f()` (bound) spawns were. So an
+// unbound spawn escaped the structured-concurrency barrier (ran fire-and-forget,
+// could outlive the block). Now every spawn in the block — bound or not — is
+// joined before the block returns. Bound vars still receive their values.
+// EXPECT: count=3
+// EXPECT: a=10 b=30
+// EXPECT: PASS: parallel unbound spawn joined
+
+fn work(counter: int, n: int) -> int {
+    Time::sleep(50)
+    Shared.add(counter, 1)
+    return n * 10
+}
+
+fn main() -> int {
+    var counter = Shared.new(0)
+    parallel {
+        a = spawn work(counter, 1)
+        spawn work(counter, 2)
+        b = spawn work(counter, 3)
+    }
+    // All three must have completed and incremented the counter by the time the
+    // block returns — including the unbound middle one.
+    println("count=${Shared.get(counter)}")
+    println("a=${a} b=${b}")
+    if Shared.get(counter) != 3 { println("FAIL: unbound spawn not joined"); return 1 }
+    println("PASS: parallel unbound spawn joined")
+    return 0
+}
