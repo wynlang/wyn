@@ -3757,14 +3757,6 @@ void codegen_stmt(Stmt* stmt) {
             // Generate the exported statement normally (comment already generated)
             codegen_stmt(stmt->export.stmt);
             break;
-        case STMT_CATCH: {
-            // TASK-026: Standalone catch statement
-            emit("// Catch block for %.*s %.*s\n",
-                 stmt->catch_stmt.exception_type.length, stmt->catch_stmt.exception_type.start,
-                 stmt->catch_stmt.exception_var.length, stmt->catch_stmt.exception_var.start);
-            codegen_stmt(stmt->catch_stmt.body);
-            break;
-        }
         case STMT_MATCH:  // T1.4.4: Control Flow Agent addition
             codegen_match_statement(stmt);
             break;

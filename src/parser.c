@@ -86,12 +86,9 @@ static Stmt* parse_continue_statement(); // T1.4.2: Control Flow Agent addition
 static Stmt* parse_match_statement(); // T1.4.3: Control Flow Agent addition
 static Expr* parse_type(); // T2.5.1: Optional Type Implementation
 static Expr* logical_or(); // Forward declaration for lambda body parsing
-static Expr* parse_result_type(); // TASK-026: Result type parsing
 static Stmt* impl_block(); // T2.5.3: Enhanced Struct System
 static Stmt* trait_decl(); // T3.2.1: Trait Definitions
 static Pattern* parse_pattern(); // T3.3.1: Pattern parsing for destructuring
-__attribute__((unused)) static Stmt* parse_catch_statement(); // TASK-026: Catch statement parsing
-__attribute__((unused)) static Expr* parse_try_expression(); // TASK-026: ? operator parsing
 void check_stmt(Stmt* stmt, SymbolTable* scope);
 void codegen_stmt(Stmt* stmt);
 
@@ -4529,95 +4526,4 @@ static Pattern* parse_pattern() {
     fprintf(stderr, "Error: Expected pattern at line %d\n", parser.current.line);
     free(pattern);
     return NULL;
-}
-// TASK-026: Result type parsing functions
-
-static Expr* parse_result_type() {
-    // Parse Result<T, E> syntax
-    expect(TOKEN_LT, "Expected '<' after Result");
-    
-    Expr* ok_type = parse_type();
-    expect(TOKEN_COMMA, "Expected ',' between Result types");
-    Expr* err_type = parse_type();
-    
-    expect(TOKEN_GT, "Expected '>' after Result types");
-    
-    Expr* result_expr = alloc_expr();
-    result_expr->type = EXPR_RESULT_TYPE;
-    result_expr->result_type.ok_type = ok_type;
-    result_expr->result_type.err_type = err_type;
-    
-    return result_expr;
-}
-
-__attribute__((unused)) static Stmt* parse_catch_statement() {
-    // Parse standalone catch statement
-    Stmt* catch_stmt = alloc_stmt();
-    catch_stmt->type = STMT_CATCH;
-    
-    expect(TOKEN_LPAREN, "Expected '(' after catch");
-    
-    // Parse exception type
-    expect(TOKEN_IDENT, "Expected exception type");
-    catch_stmt->catch_stmt.exception_type = parser.previous;
-    
-    // Parse exception variable
-    expect(TOKEN_IDENT, "Expected exception variable");
-    catch_stmt->catch_stmt.exception_var = parser.previous;
-    
-    expect(TOKEN_RPAREN, "Expected ')' after catch parameters");
-    expect(TOKEN_LBRACE, "Expected '{' after catch");
-    
-    catch_stmt->catch_stmt.body = statement();
-    
-    return catch_stmt;
-}
-
-__attribute__((unused)) static Expr* parse_try_expression() {
-    // Parse expression? for error propagation
-    Expr* expr = primary();
-    
-    if (match(TOKEN_QUESTION)) {
-        Expr* try_expr = alloc_expr();
-        try_expr->type = EXPR_TRY;
-        try_expr->try_expr.value = expr;
-        return try_expr;
-    }
-    
-    return expr;
-}
-
-// Update primary() to handle Result constructors and ? operator
-__attribute__((unused)) static Expr* primary_with_result() {
-    // Handle Ok() constructor
-    if (match(TOKEN_OK)) {
-        Expr* expr = alloc_expr();
-        expr->type = EXPR_OK;
-        expect(TOKEN_LPAREN, "Expected '(' after Ok");
-        expr->option.value = expression();
-        expect(TOKEN_RPAREN, "Expected ')' after Ok value");
-        return expr;
-    }
-    
-    // Handle Err() constructor
-    if (match(TOKEN_ERR)) {
-        Expr* expr = alloc_expr();
-        expr->type = EXPR_ERR;
-        expect(TOKEN_LPAREN, "Expected '(' after Err");
-        expr->option.value = expression();
-        expect(TOKEN_RPAREN, "Expected ')' after Err value");
-        return expr;
-    }
-    
-    // Handle Result type
-    if (check(TOKEN_IDENT)) {
-        Token name = parser.current;
-        if (strncmp(name.start, "Result", 6) == 0 && name.length == 6) {
-            advance();
-            return parse_result_type();
-        }
-    }
-    
-    // Fall back to regular primary parsing
-    return primary();
 }

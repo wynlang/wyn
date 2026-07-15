@@ -181,10 +181,6 @@ static int compile_file_with_output(const char* filename, const char* output_nam
     return 0;
 }
 
-__attribute__((unused)) static int compile_file(const char* filename) {
-    return compile_file_with_output(filename, NULL);
-}
-
 #ifndef _WIN32
 // Find main.wyn in directory
 static char* find_main_file(const char* dir) {
