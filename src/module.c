@@ -336,6 +336,14 @@ Program* load_module(const char* module_name) {
     
     char* path = resolve_module_path(resolved_name);
     if (!path) {
+        // Built-in modules (math, Math, File, System, Http, …) have no .wyn file
+        // — they're provided directly by codegen. `import math` must NOT print a
+        // spurious "Module not found" error just because there's no source file.
+        if (is_builtin_module(resolved_name)) {
+            pop_loading_stack();
+            free(resolved_name);
+            return NULL;   // silent: not an error, resolved elsewhere
+        }
         // Deduplicate: only print error once per module name
         static char _reported[32][64];
         static int _reported_count = 0;
