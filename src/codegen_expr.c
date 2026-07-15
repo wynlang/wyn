@@ -903,7 +903,7 @@ void codegen_expr(Expr* expr) {
             }
             
             // Special handling for print function
-            if (expr->call.callee->type == EXPR_IDENT && 
+            if (expr->call.callee->type == EXPR_IDENT &&
                 expr->call.callee->token.length == 5 &&
                 memcmp(expr->call.callee->token.start, "print", 5) == 0) {
                 
@@ -1378,8 +1378,18 @@ void codegen_expr(Expr* expr) {
                         free(arg_types);
                     } else {
                         // Regular function call
+                        // A callee that names a local lambda variable is a plain
+                        // function pointer — emit its name directly and ignore any
+                        // selected_overload the checker may have attached (which can
+                        // be a stale/garbage overload symbol for a copied closure).
+                        bool _callee_is_lambda_var = false;
+                        if (expr->call.callee->type == EXPR_IDENT) {
+                            char _lvn[64]; token_to_cstr(_lvn, sizeof(_lvn), expr->call.callee->token);
+                            extern int find_lambda_var(const char*);
+                            _callee_is_lambda_var = (find_lambda_var(_lvn) >= 0);
+                        }
                         // T1.5.3: Use mangled name only for actually overloaded functions
-                        if (expr->call.selected_overload) {
+                        if (expr->call.selected_overload && !_callee_is_lambda_var) {
                             Symbol* overload = (Symbol*)expr->call.selected_overload;
                             // Only use mangled name if there are multiple overloads
                             if (overload->mangled_name && overload->next_overload) {
@@ -1455,7 +1465,7 @@ void codegen_expr(Expr* expr) {
                 }
                 
                 emit("(");
-                
+
                 // Check if this is a lambda variable call - inject captured variables
                 bool is_lambda_call = false;
                 int lambda_var_idx = -1;

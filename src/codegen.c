@@ -928,11 +928,28 @@ typedef struct {
     int name_len;
     char captured_vars[16][64];
     int capture_count;
+    int param_count;    // arity of the lambda this var holds (for copy `var g = f`)
     bool is_closure;    // true if this var holds a WynClosure
 } LambdaVarInfo;
 
+// Look up a lambda variable's info by name; returns index or -1.
+int find_lambda_var(const char* name);
+
 static LambdaVarInfo lambda_var_info[256];
 static int lambda_var_count = 0;
+
+int find_lambda_var(const char* name) {
+    for (int i = 0; i < lambda_var_count; i++) {
+        if (strcmp(lambda_var_info[i].var_name, name) == 0) return i;
+    }
+    return -1;
+}
+
+// Read a lambda var's arity (param count) by index; -1 if out of range.
+int lambda_var_param_count(int idx) {
+    if (idx < 0 || idx >= lambda_var_count) return -1;
+    return lambda_var_info[idx].param_count;
+}
 
 // Spawn wrapper collection
 typedef struct {
