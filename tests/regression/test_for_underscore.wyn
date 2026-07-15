@@ -1,0 +1,32 @@
+// Regression: `_` as a for-loop variable to ignore it, Python-style.
+// `for i, _ in arr`, `for _, v in arr`, and `for _, v in zip(a, b)` used to fail
+// to parse ("Every { needs a matching }") — a standalone `_` lexes to
+// TOKEN_UNDERSCORE, but the two-variable for-loop only accepted TOKEN_IDENT.
+// Works across sequential and nested loops (no duplicate C-decl conflict).
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: x
+// EXPECT: y
+// EXPECT: 101
+// EXPECT: 102
+// EXPECT: 201
+// EXPECT: 202
+fn main() {
+    var a = [10, 20, 30]
+    var b = ["x", "y"]
+
+    // ignore the value: for i, _ in arr  (prints indices)
+    for i, _ in a { println(i) }
+
+    // ignore the index: for _, v in arr
+    for _, v in b { println(v) }
+
+    // nested, both use `_` — index vars must not collide
+    var pair = [1, 2]
+    for _, x in pair {
+        for _, y in pair {
+            println(x * 100 + y)
+        }
+    }
+}

@@ -2383,11 +2383,13 @@ Stmt* statement() {
         // Check for optional opening parenthesis
         bool has_parens = match(TOKEN_LPAREN);
         
-        // Check for range syntax: for i in 0..10 or array iteration: for item in array
-        if (check(TOKEN_IDENT)) {
+        // Check for range syntax: for i in 0..10 or array iteration: for item in array.
+        // A loop variable may be `_` (TOKEN_UNDERSCORE) to ignore it, Python-style
+        // (`for _, v in ...` / `for k, _ in ...`).
+        if (check(TOKEN_IDENT) || check(TOKEN_UNDERSCORE)) {
             Token first_var = parser.current;
             advance();
-            
+
             // Check for indexed iteration: for i, v in arr
             Token index_var = {0};
             bool has_index = false;
@@ -2395,7 +2397,9 @@ Stmt* statement() {
                 index_var = first_var;
                 has_index = true;
                 first_var = parser.current;
-                expect(TOKEN_IDENT, "Expected value variable after ','");
+                if (!check(TOKEN_IDENT) && !check(TOKEN_UNDERSCORE))
+                    expect(TOKEN_IDENT, "Expected value variable after ','");
+                else advance();
             }
             
             if (match(TOKEN_IN)) {
