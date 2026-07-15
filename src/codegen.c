@@ -9,7 +9,6 @@
 #include "arc_runtime.h"
 #include "optional.h"
 #include "result.h"
-#include "modules.h"
 #include "optimize.h"
 #include "functional.h"
 #include "hashmap.h"
@@ -345,14 +344,6 @@ static void clear_module_functions() {
         free(module_functions[i]);
     }
     module_function_count = 0;
-}
-
-__attribute__((unused)) static void register_parameter(const char* name) {
-    if (current_param_count < 64) {
-        current_param_mut[current_param_count] = false;
-        current_param_types[current_param_count][0] = 0;
-        current_function_params[current_param_count++] = strdup(name);
-    }
 }
 
 static void register_parameter_mut(const char* name, bool is_mut) {
@@ -1040,7 +1031,6 @@ static int scope_depth = 0;
 void init_codegen(FILE* output) {
     out = output;
     scope_depth = 0;
-    wyn_init_modules();  // Initialize module system
 }
 
 static void push_scope() {
@@ -1137,16 +1127,6 @@ static void track_var_with_type(const char* name, int len, const char* type) {
     }
     
     scopes[scope_idx].count++;
-}
-
-__attribute__((unused)) static void track_string_var(const char* name, int len) {
-    track_var_with_type(name, len, "char*");
-}
-
-__attribute__((unused)) static void track_string_object(WynObject* obj) {
-    if (scope_depth > 0 && scopes[scope_depth - 1].string_count < 256) {
-        scopes[scope_depth - 1].string_objects[scopes[scope_depth - 1].string_count++] = obj;
-    }
 }
 
 static void emit(const char* fmt, ...) {

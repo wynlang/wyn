@@ -32,7 +32,6 @@ typedef enum {
     EXPR_OK,
     EXPR_ERR,
     EXPR_TRY,           // TASK-026: ? operator for error propagation
-    EXPR_PIPELINE,
     EXPR_IF_EXPR,
     EXPR_STRING_INTERP,
     EXPR_RANGE,
@@ -223,11 +222,6 @@ typedef struct {
 } TernaryExpr;
 
 typedef struct {
-    Expr** stages;
-    int stage_count;
-} PipelineExpr;
-
-typedef struct {
     Expr* condition;
     Expr* then_expr;
     Expr* else_expr;
@@ -342,7 +336,6 @@ struct Expr {
         MatchExpr match;
         OptionExpr option;
         TernaryExpr ternary;
-        PipelineExpr pipeline;
         IfExpr if_expr;
         StringInterpExpr string_interp;
         RangeExpr range;
@@ -389,7 +382,6 @@ typedef enum {
     STMT_EXPORT,
     STMT_ASYNC_FN,
     STMT_TRY,
-    STMT_CATCH,      // TASK-026: Catch block for error handling
     STMT_THROW,
     STMT_TEST,  // T1.6.2: Testing Framework Agent addition
     STMT_MATCH, // T1.4.3: Control Flow Agent addition
@@ -560,12 +552,6 @@ typedef struct {
     Expr* value;  // Expression to throw
 } ThrowStmt;
 
-typedef struct {
-    Token exception_type;  // Type of exception to catch
-    Token exception_var;   // Variable to bind caught exception
-    Stmt* body;           // Catch block body
-} CatchStmt;
-
 // T1.4.2: Break/Continue Implementation - Control Flow Agent addition
 typedef struct {
     // Break statements don't need additional data
@@ -612,7 +598,6 @@ struct Stmt {
         ExportStmt export;
         TryStmt try_stmt;
         ThrowStmt throw_stmt;
-        CatchStmt catch_stmt;        // TASK-026: Catch statement
         BreakStmt break_stmt;      // T1.4.2: Control Flow Agent addition
         ContinueStmt continue_stmt; // T1.4.2: Control Flow Agent addition
         MatchStmt match_stmt;      // T1.4.3: Control Flow Agent addition

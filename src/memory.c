@@ -63,12 +63,6 @@ void free_expr(Expr* expr) {
         case EXPR_ERR:
             free_expr(expr->option.value);
             break;
-        case EXPR_PIPELINE:
-            for (int i = 0; i < expr->pipeline.stage_count; i++) {
-                free_expr(expr->pipeline.stages[i]);
-            }
-            safe_free(expr->pipeline.stages);
-            break;
         case EXPR_IF_EXPR:
             free_expr(expr->if_expr.condition);
             free_expr(expr->if_expr.then_expr);
@@ -236,9 +230,6 @@ void free_stmt(Stmt* stmt) {
             break;
         case STMT_THROW:
             free_expr(stmt->throw_stmt.value);
-            break;
-        case STMT_CATCH:
-            free_stmt(stmt->catch_stmt.body);
             break;
         case STMT_SPAWN:
         case STMT_YIELD:

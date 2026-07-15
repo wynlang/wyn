@@ -3841,15 +3841,6 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             
             return sym->type;
         }
-        case EXPR_PIPELINE: {
-            // Check all stages, return type of last stage
-            Type* last_type = builtin_int;
-            for (int i = 0; i < expr->pipeline.stage_count; i++) {
-                last_type = check_expr(expr->pipeline.stages[i], scope);
-            }
-            expr->expr_type = last_type;
-            return last_type;
-        }
         case EXPR_IF_EXPR: {
             check_expr(expr->if_expr.condition, scope);
             Type* then_type = NULL;

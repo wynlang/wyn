@@ -2299,7 +2299,6 @@ void codegen_expr(Expr* expr) {
                 expr->method_call.arg_count == 0 &&
                 (expr->method_call.object->type == EXPR_METHOD_CALL ||
                  expr->method_call.object->type == EXPR_FIELD_ACCESS ||
-                 expr->method_call.object->type == EXPR_PIPELINE ||
                  expr->method_call.object->type == EXPR_AWAIT ||
                  expr->method_call.object->type == EXPR_CALL ||
                  expr->method_call.object->type == EXPR_BINARY ||
@@ -4032,57 +4031,6 @@ void codegen_expr(Expr* expr) {
             codegen_expr(expr->ternary.else_expr);
             emit(")");
             break;
-        case EXPR_PIPELINE: {
-            // Check if any stage is a lambda — if so, use sequential temp vars
-            bool has_lambda = false;
-            for (int i = 1; i < expr->pipeline.stage_count; i++) {
-                if (expr->pipeline.stages[i]->type == EXPR_LAMBDA) { has_lambda = true; break; }
-            }
-            
-            if (has_lambda) {
-                // Sequential: { auto __p0 = x; auto __p1 = f1(__p0); auto __p2 = f2(__p1); __pN; }
-                static int pipe_id = 0;
-                int pid = pipe_id++;
-                emit("({ ");
-                emit("long long __p%d_0 = (long long)(", pid);
-                codegen_expr(expr->pipeline.stages[0]);
-                emit("); ");
-                for (int i = 1; i < expr->pipeline.stage_count; i++) {
-                    emit("long long __p%d_%d = ", pid, i);
-                    if (expr->pipeline.stages[i]->type == EXPR_LAMBDA) {
-                        emit("("); codegen_expr(expr->pipeline.stages[i]); emit(")");
-                    } else if (expr->pipeline.stages[i]->type == EXPR_IDENT) {
-                        codegen_expr(expr->pipeline.stages[i]);
-                    } else {
-                        emit("("); codegen_expr(expr->pipeline.stages[i]); emit(")");
-                    }
-                    emit("(__p%d_%d); ", pid, i - 1);
-                }
-                emit("__p%d_%d; })", pid, expr->pipeline.stage_count - 1);
-            } else {
-                // Original nested call approach for non-lambda pipes
-                for (int i = expr->pipeline.stage_count - 1; i >= 1; i--) {
-                    if (expr->pipeline.stages[i]->type == EXPR_IDENT) {
-                        char _pn[128]; token_to_cstr(_pn, sizeof(_pn), expr->pipeline.stages[i]->token);
-                        const char* _pfx = "";
-                        extern int is_user_collision(const char*);
-                        if (is_user_collision(_pn)) _pfx = WYN_UFN_PFX;
-                        emit("%s%s(", _pfx, _pn);
-                    } else if (expr->pipeline.stages[i]->type == EXPR_METHOD_CALL) {
-                        emit("%.*s(", 
-                             expr->pipeline.stages[i]->method_call.method.length,
-                             expr->pipeline.stages[i]->method_call.method.start);
-                    } else {
-                        emit("("); codegen_expr(expr->pipeline.stages[i]); emit(")(");
-                    }
-                }
-                codegen_expr(expr->pipeline.stages[0]);
-                for (int i = 1; i < expr->pipeline.stage_count; i++) {
-                    emit(")");
-                }
-            }
-            break;
-        }
         case EXPR_IF_EXPR:
             emit("(");
             codegen_expr(expr->if_expr.condition);
