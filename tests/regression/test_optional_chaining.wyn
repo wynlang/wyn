@@ -1,0 +1,38 @@
+// Regression: `?.` optional chaining. `opt?.field` where `opt` is an
+// Option<Struct> yields Option<FieldType>: None if opt is None, else
+// Some(opt.value.field). Chains compose (`u?.addr?.city`) and short-circuit on
+// the first None. Built on the monomorphic Option<Struct> families.
+// EXPECT: amy
+// EXPECT: 30
+// EXPECT: missing
+// EXPECT: NYC
+// EXPECT: (none)
+// EXPECT: NYC
+struct Addr { city: string }
+struct User { name: string, age: int, addr: Addr }
+
+fn find(id: int) -> User? {
+    if id == 1 { return Some(User { name: "amy", age: 30, addr: Addr { city: "NYC" } }) }
+    return None
+}
+
+fn main() {
+    var u = find(1)
+    println((u?.name).unwrap_or("?"))     // amy   (string? field)
+    println((u?.age).unwrap_or(-1))       // 30    (int? field)
+
+    var v = find(2)
+    println((v?.name).unwrap_or("missing"))  // missing (None short-circuits)
+
+    // chained: u?.addr yields Addr?, then ?.city yields string?
+    println((u?.addr?.city).unwrap_or("nowhere"))  // NYC
+
+    // whole chain short-circuits when the head is None
+    println((v?.addr?.city).unwrap_or("(none)"))   // (none)
+
+    // match on a ?. result (u is Some, so its addr prints)
+    match u?.addr {
+        Some(a) => println(a.city),        // NYC
+        None => println("no addr"),
+    }
+}

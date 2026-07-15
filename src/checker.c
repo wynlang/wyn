@@ -4031,6 +4031,52 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             check_expr(expr->tuple_index.tuple, scope);
             return builtin_int; // Element type (simplified for now)
         }
+        case EXPR_OPT_CHAIN: {
+            // `opt?.field`: opt is an Option<Struct>. Result is Option<FieldType>
+            // (None if opt is None, else Some(opt.value.field)).
+            Type* obj_type = check_expr(expr->opt_chain.object, scope);
+            if (!obj_type || obj_type->kind != TYPE_STRUCT ||
+                obj_type->struct_type.name.length <= 6 ||
+                memcmp(obj_type->struct_type.name.start, "Option", 6) != 0) {
+                fprintf(stderr, "Error at line %d: '?.' requires an optional value on the left\n",
+                        expr->opt_chain.field.line);
+                had_error = true;
+                return builtin_int;
+            }
+            // Resolve the payload struct type (family "OptionUser" -> struct "User").
+            Token pl = obj_type->struct_type.name;
+            Token payload_name = {TOKEN_IDENT, pl.start + 6, pl.length - 6, 0};
+            StructStmt* struct_def = find_struct_definition(payload_name);
+            if (!struct_def) {
+                fprintf(stderr, "Error at line %d: '?.' left operand is not an optional struct\n",
+                        expr->opt_chain.field.line);
+                had_error = true;
+                return builtin_int;
+            }
+            Type* field_type = get_struct_field_type(struct_def, expr->opt_chain.field);
+            if (!field_type) {
+                fprintf(stderr, "Error at line %d: field '%.*s' not found on '%.*s'\n",
+                        expr->opt_chain.field.line, expr->opt_chain.field.length,
+                        expr->opt_chain.field.start, payload_name.length, payload_name.start);
+                had_error = true;
+                return builtin_int;
+            }
+            // Result is Option<field_type>: reuse the family machinery.
+            Type* result;
+            if (field_type->kind == TYPE_STRUCT) {
+                result = register_option_struct_family(field_type);
+            } else {
+                const char* fam = "OptionInt";
+                if (field_type->kind == TYPE_STRING) fam = "OptionString";
+                else if (field_type->kind == TYPE_FLOAT) fam = "OptionFloat";
+                else if (field_type->kind == TYPE_BOOL) fam = "OptionBool";
+                Token ft = {TOKEN_IDENT, (char*)fam, (int)strlen(fam), 0};
+                Symbol* sym = find_symbol(global_scope, ft);
+                result = sym ? sym->type : make_type(TYPE_OPTIONAL);
+            }
+            expr->expr_type = result;
+            return result;
+        }
         case EXPR_FIELD_ACCESS: {
             // Handle enum member access and module.function access
             Type* object_type = check_expr(expr->field_access.object, scope);  // Validate object and get type

@@ -3339,6 +3339,32 @@ void codegen_expr(Expr* expr) {
             }
             break;
         }
+        case EXPR_OPT_CHAIN: {
+            // `opt?.field` -> ({ OptionX __oc = <opt>;
+            //    __oc.tag==1 ? OptionField_Some(__oc.value.field) : OptionField_None(); })
+            // The result family is the checker-resolved expr_type (Option<FieldType>).
+            // Use LOCAL buffers, not static: the object may itself be an opt-chain
+            // whose codegen would clobber a shared static buffer mid-emission.
+            char result_fam[128] = "OptionInt";
+            if (expr->expr_type && expr->expr_type->kind == TYPE_STRUCT &&
+                expr->expr_type->struct_type.name.length > 0) {
+                token_to_cstr(result_fam, sizeof(result_fam), expr->expr_type->struct_type.name);
+            }
+            char obj_fam[128] = "OptionInt";
+            if (expr->opt_chain.object->expr_type &&
+                expr->opt_chain.object->expr_type->kind == TYPE_STRUCT &&
+                expr->opt_chain.object->expr_type->struct_type.name.length > 0) {
+                token_to_cstr(obj_fam, sizeof(obj_fam), expr->opt_chain.object->expr_type->struct_type.name);
+            }
+            static int _oc_id = 0; int _id = _oc_id++;
+            emit("({ %s __oc%d = ", obj_fam, _id);
+            codegen_expr(expr->opt_chain.object);
+            emit("; __oc%d.tag == 1 ? %s_Some(__oc%d.value.%.*s) : %s_None(); })",
+                 _id, result_fam, _id,
+                 expr->opt_chain.field.length, expr->opt_chain.field.start,
+                 result_fam);
+            break;
+        }
         case EXPR_FIELD_ACCESS: {
             // Check if this is enum member access by looking at the pattern
             Token obj_name = expr->field_access.object->token;

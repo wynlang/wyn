@@ -1100,7 +1100,17 @@ static Expr* call() {
     Expr* expr = primary();
     
     while (true) {
-        if (match(TOKEN_LPAREN)) {
+        if (match(TOKEN_QUESTION_DOT)) {
+            // Optional chaining `opt?.field`: None-short-circuiting field access
+            // that yields an Option of the field type.
+            Token field = parser.current;
+            expect(TOKEN_IDENT, "Expected field name after '?.'");
+            Expr* oc = alloc_expr();
+            oc->type = EXPR_OPT_CHAIN;
+            oc->opt_chain.object = expr;
+            oc->opt_chain.field = field;
+            expr = oc;
+        } else if (match(TOKEN_LPAREN)) {
             Expr* call_expr = alloc_expr();
             call_expr->type = EXPR_CALL;
             call_expr->call.callee = expr;

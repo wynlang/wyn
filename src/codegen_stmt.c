@@ -988,6 +988,19 @@ void codegen_stmt(Stmt* stmt) {
                     // TASK-026: Result type
                     c_type = "WynResult*";
                     needs_arc_management = true;
+                } else if (stmt->var.init->type == EXPR_OPT_CHAIN) {
+                    // `var x = opt?.field` — the checker resolved the result Option
+                    // family (Option<FieldType>); use it and register for match.
+                    if (stmt->var.init->expr_type && stmt->var.init->expr_type->kind == TYPE_STRUCT &&
+                        stmt->var.init->expr_type->struct_type.name.length > 0) {
+                        static char _ocvbuf[128];
+                        token_to_cstr(_ocvbuf, sizeof(_ocvbuf), stmt->var.init->expr_type->struct_type.name);
+                        c_type = _ocvbuf;
+                        needs_arc_management = false;
+                        char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                        extern void register_enum_var(const char*, const char*);
+                        register_enum_var(_vn, _ocvbuf);
+                    } else { c_type = "OptionInt"; }
                 } else if (stmt->var.init->type == EXPR_LAMBDA) {
                     // Lambda/closure type - function pointer matching actual params
                     int nparams = stmt->var.init->lambda.param_count;
