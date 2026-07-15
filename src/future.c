@@ -226,6 +226,7 @@ Future* future_all(Future** futures, int count) {
 }
 
 Future* future_race(Future** futures, int count) {
+    if (count <= 0) return NULL;  // await_any([]) — nothing to wait for (was an infinite hang)
     while (1) {
         for (int i = 0; i < count; i++) {
             if (future_is_ready(futures[i])) {

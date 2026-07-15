@@ -3724,7 +3724,8 @@ long long wyn_await_any(WynArray futures) {
     for (int i = 0; i < n; i++) {
         fptrs[i] = (Future*)(intptr_t)futures.data[i].data.int_val;
     }
-    return (long long)(intptr_t)future_get(future_race(fptrs, n));
+    Future* w = future_race(fptrs, n);
+    return w ? (long long)(intptr_t)future_get(w) : 0;  // empty await_any → 0
 }
 long long wyn_await_any_int(WynIntArray futures) {
     Future* fptrs[64];
@@ -3733,7 +3734,8 @@ long long wyn_await_any_int(WynIntArray futures) {
     for (int i = 0; i < n; i++) {
         fptrs[i] = (Future*)(intptr_t)futures.data[i];
     }
-    return (long long)(intptr_t)future_get(future_race(fptrs, n));
+    Future* w = future_race(fptrs, n);
+    return w ? (long long)(intptr_t)future_get(w) : 0;  // empty await_any → 0
 }
 
 // === Shared Atomic Values ===

@@ -2412,7 +2412,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_bool;
         case EXPR_IDENT: {
             // Handle 'self' in extension methods
-            if (current_self_type && expr->token.length == 4 && 
+            if (current_self_type && expr->token.length == 4 &&
                 memcmp(expr->token.start, "self", 4) == 0) {
                 expr->expr_type = current_self_type;
                 return current_self_type;

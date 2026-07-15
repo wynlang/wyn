@@ -1,0 +1,21 @@
+// Regression: two concurrency edge cases found in the await audit.
+// (1) await_any([]) on an empty future array HUNG forever (future_race looped with
+//     nothing ready). Now returns 0 immediately.
+// (2) await_all(futs) call form must keep working (the no-parens form `await_all x`
+//     is now a clean parse error, tested separately since it must not compile).
+// EXPECT: 0
+// EXPECT: 30
+fn work(n: int) -> int { return n * n }
+fn main() {
+    // empty await_any — must not hang
+    var empty = []
+    println(await_any(empty))          // 0
+
+    // await_all call form still correct
+    var futs = []
+    for i in 1..5 { futs.push(spawn work(i)) }
+    var rs = await_all(futs)
+    var s = 0
+    for _, r in rs { s = s + r }        // 1 + 4 + 9 + 16 = 30
+    println(s)
+}
