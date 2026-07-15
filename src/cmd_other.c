@@ -96,6 +96,7 @@ int cmd_fmt(const char* file, int argc, char** argv) {
         // Write line content with spacing normalization
         {
             int i = 0;
+            int bracket_depth = 0;  // inside [ ... ] a ':' is a slice sep, not an annotation
             while (i < len) {
                 // Skip strings
                 if (start[i] == '"') {
@@ -153,7 +154,9 @@ int cmd_fmt(const char* file, int argc, char** argv) {
                     continue;
                 }
                 // Space after ':' in annotations (not before, and not for '::').
-                if (start[i] == ':' && (i + 1 >= len || start[i+1] != ':') &&
+                // Skip inside '[ ... ]' where ':' is a slice separator (arr[1:3])
+                // and must stay tight, not become arr[1: 3].
+                if (start[i] == ':' && bracket_depth == 0 && (i + 1 >= len || start[i+1] != ':') &&
                     (i == 0 || start[i-1] != ':')) {
                     if (oi > 0 && out[oi-1] == ' ') oi--; // no space before
                     out[oi++] = ':';
@@ -165,8 +168,10 @@ int cmd_fmt(const char* file, int argc, char** argv) {
                 if (start[i] == ':' && i + 1 < len && start[i+1] == ':') {
                     out[oi++] = ':'; out[oi++] = ':'; i += 2; continue;
                 }
-                // Normalize spacing around = (but not ==, !=, <=, >=, =>)
-                if (start[i] == '=' && (i == 0 || (start[i-1] != '!' && start[i-1] != '<' && start[i-1] != '>' && start[i-1] != '=')) && (i + 1 >= len || start[i+1] != '=') && (i + 1 >= len || start[i+1] != '>')) {
+                // Normalize spacing around = (but not ==, !=, <=, >=, =>, and NOT
+                // the '=' in the inclusive-range operator '..=' where the previous
+                // char is '.', e.g. `0..=10` must not become `0.. = 10`).
+                if (start[i] == '=' && (i == 0 || (start[i-1] != '!' && start[i-1] != '<' && start[i-1] != '>' && start[i-1] != '=' && start[i-1] != '.')) && (i + 1 >= len || start[i+1] != '=') && (i + 1 >= len || start[i+1] != '>')) {
                     if (oi > 0 && out[oi-1] != ' ') out[oi++] = ' ';
                     out[oi++] = '=';
                     i++;
@@ -189,6 +194,8 @@ int cmd_fmt(const char* file, int argc, char** argv) {
                 if (start[i] == '}' && oi > 0 && out[oi-1] != ' ' && out[oi-1] != '{' && out[oi-1] != '\n') {
                     out[oi++] = ' ';
                 }
+                if (start[i] == '[') bracket_depth++;
+                else if (start[i] == ']' && bracket_depth > 0) bracket_depth--;
                 out[oi++] = start[i++];
             }
         }
