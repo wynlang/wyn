@@ -8,7 +8,7 @@
 #include <sys/stat.h>
 
 // External symbols from other compilation units
-extern void init_lexer(const char* source, const char* filename);
+extern void init_lexer(const char* source);
 extern Program* parse_program(void);
 extern Type* make_type(TypeKind kind);
 extern void add_symbol(SymbolTable* table, Token name, Type* type, bool is_mutable);
