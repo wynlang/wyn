@@ -35,6 +35,9 @@ void free_expr(Expr* expr) {
         case EXPR_FIELD_ACCESS:
             free_expr(expr->field_access.object);
             break;
+        case EXPR_OPT_CHAIN:
+            free_expr(expr->opt_chain.object);
+            break;
         case EXPR_UNARY:
             free_expr(expr->unary.operand);
             break;

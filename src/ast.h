@@ -32,6 +32,7 @@ typedef enum {
     EXPR_OK,
     EXPR_ERR,
     EXPR_TRY,           // TASK-026: ? operator for error propagation
+    EXPR_OPT_CHAIN,     // Optional chaining: opt?.field — None-short-circuiting field access
     EXPR_IF_EXPR,
     EXPR_STRING_INTERP,
     EXPR_RANGE,
@@ -120,6 +121,14 @@ typedef struct {
     Token field;
     bool is_enum_access;  // True if this is enum member access (EnumName.MEMBER)
 } FieldAccessExpr;
+
+// Optional chaining `opt?.field`: if `object` (an Option<Struct>) is None the
+// whole expression is None, otherwise it is Some(object.value.field). The result
+// is itself an Option (of the field's type), so chains compose.
+typedef struct {
+    Expr* object;
+    Token field;
+} OptChainExpr;
 
 typedef struct {
     Token op;
@@ -331,6 +340,7 @@ struct Expr {
         AssignExpr assign;
         StructInitExpr struct_init;
         FieldAccessExpr field_access;
+        OptChainExpr opt_chain;
         UnaryExpr unary;
         AwaitExpr await;
         MatchExpr match;
