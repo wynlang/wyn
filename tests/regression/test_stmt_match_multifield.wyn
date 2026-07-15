@@ -1,0 +1,39 @@
+// Regression: statement-form `match x { Variant(a, b) => ... }` on a data enum
+// was broadly broken — the parser rejected multi-field bindings ("Expected ')'"),
+// and codegen misrouted the value into an OptionInt shape / bound only the first
+// field / used `==` on a struct for no-payload variants. Now it works for:
+//  - a function PARAMETER receiver (enum params are registered)
+//  - an INFERRED local var (`var m = E.X(..)`)
+//  - multi-field bindings, string payloads, and no-payload variants
+//  - both bare (Rect) and prefixed (E.Rect) variant patterns.
+enum Msg { Text(string), Pair(int, string), Rect(int, int), Ping }
+
+fn render(m: Msg) -> string {
+    match m {
+        Text(s) => return "t:" + s
+        Pair(n, label) => return label + "=" + n.to_string()
+        Rect(w, h) => return (w * h).to_string()
+        Ping => return "ping"
+    }
+    return "?"
+}
+
+fn main() -> int {
+    println(render(Msg.Text("hi")))       // t:hi
+    println(render(Msg.Pair(42, "ans")))  // ans=42
+    println(render(Msg.Rect(3, 4)))       // 12
+    println(render(Msg.Ping))             // ping
+    var m = Msg.Rect(5, 5)                // inferred var + prefixed patterns
+    match m {
+        Msg.Rect(w, h) => println((w + h).to_string())  // 10
+        Msg.Text(s) => println(s)
+        Msg.Pair(n, l) => println(l)
+        Msg.Ping => println("p")
+    }
+    return 0
+}
+// EXPECT: t:hi
+// EXPECT: ans=42
+// EXPECT: 12
+// EXPECT: ping
+// EXPECT: 10

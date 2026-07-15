@@ -1434,14 +1434,24 @@ void codegen_match_statement(Stmt* stmt) {
             } else if (match_case->pattern->type == PATTERN_OPTION) {
                 if (match_case->pattern->option.variant_name.length > 0) {
                     // Check if this is a simple enum (no data) or tagged union
-                    if (!match_case->pattern->option.is_some && 
+                    if (!match_case->pattern->option.is_some &&
                         match_case->pattern->option.enum_name.length > 0) {
-                        // Simple enum variant: Color::Red -> Color_Red
-                        emit("__match_val == %.*s_%.*s",
-                             match_case->pattern->option.enum_name.length,
-                             match_case->pattern->option.enum_name.start,
-                             match_case->pattern->option.variant_name.length,
-                             match_case->pattern->option.variant_name.start);
+                        // Prefixed variant with no payload binder: Color.Red / Msg.Ping.
+                        // For a DATA enum it's still a tagged union → compare .tag
+                        // (comparing the struct value with `==` is a C type error).
+                        if (is_data_enum_match) {
+                            emit("__match_val.tag == %.*s_%.*s_TAG",
+                                 match_case->pattern->option.enum_name.length,
+                                 match_case->pattern->option.enum_name.start,
+                                 match_case->pattern->option.variant_name.length,
+                                 match_case->pattern->option.variant_name.start);
+                        } else {
+                            emit("__match_val == %.*s_%.*s",
+                                 match_case->pattern->option.enum_name.length,
+                                 match_case->pattern->option.enum_name.start,
+                                 match_case->pattern->option.variant_name.length,
+                                 match_case->pattern->option.variant_name.start);
+                        }
                     } else if (match_case->pattern->option.is_some &&
                                match_case->pattern->option.enum_name.length > 0) {
                         // Variant with data pattern: Opt.Yep(v)
@@ -1563,10 +1573,38 @@ void codegen_match_statement(Stmt* stmt) {
                 if (!is_enum_variant) {
                     emit("        int %.*s = __match_val;\n", var_name.length, var_name.start);
                 }
-            } else if (match_case->pattern->type == PATTERN_OPTION && 
+            } else if (is_data_enum_match &&
+                       match_case->pattern->type == PATTERN_OPTION &&
+                       match_case->pattern->option.inner_count > 1 &&
+                       match_case->pattern->option.inners) {
+                // Multi-field variant: Rect(w, h) → bind each payload field with
+                // its real type (.data.Rect_value.f0, .f1). Mirrors the working
+                // expression-form match (codegen_expr EXPR_MATCH).
+                const char* vn = match_case->pattern->option.variant_name.start;
+                int vn_len = match_case->pattern->option.variant_name.length;
+                char _en[128];
+                if (match_case->pattern->option.enum_name.length > 0)
+                    token_to_cstr(_en, sizeof(_en), match_case->pattern->option.enum_name);
+                else { snprintf(_en, sizeof(_en), "%.*s", match_enum_name_len, match_enum_name ? match_enum_name : ""); }
+                char _vn[128]; snprintf(_vn, sizeof(_vn), "%.*s", vn_len, vn);
+                extern const char* get_enum_variant_field_type(const char*, const char*, int);
+                for (int pi = 0; pi < match_case->pattern->option.inner_count; pi++) {
+                    Pattern* ip = match_case->pattern->option.inners[pi];
+                    if (!ip || ip->type != PATTERN_IDENT) continue;
+                    const char* fty = get_enum_variant_field_type(_en, _vn, pi);
+                    if (!fty) fty = "long long";
+                    emit("        %s %.*s = __match_val.data.%s_value.f%d;\n",
+                         fty, ip->ident.name.length, ip->ident.name.start, _vn, pi);
+                    if (strcmp(fty, "const char*") == 0 || strcmp(fty, "char*") == 0) {
+                        char _fb[128]; token_to_cstr(_fb, sizeof(_fb), ip->ident.name);
+                        extern void register_string_var(const char*);
+                        register_string_var(_fb);
+                    }
+                }
+            } else if (match_case->pattern->type == PATTERN_OPTION &&
                        match_case->pattern->option.inner &&
                        match_case->pattern->option.inner->type == PATTERN_IDENT) {
-                
+
                 Token var_name = match_case->pattern->option.inner->ident.name;
                 if (is_data_enum_match) {
                     // Extract data from tagged union

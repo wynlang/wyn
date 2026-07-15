@@ -3890,18 +3890,35 @@ static Stmt* parse_match_statement() {
                     pattern->option.variant_name = variant_name;
                     pattern->option.enum_name = first_token;  // Store the enum type name
                     
-                    // Parse inner pattern (identifier or wildcard)
+                    // Parse inner pattern(s) — supports multi-field variants like
+                    // Shape.Rect(w, h), mirroring parse_pattern()'s inners[] path
+                    // so statement-form match matches the expression form.
+                    pattern->option.inners = NULL;
+                    pattern->option.inner_count = 0;
                     if (match(TOKEN_UNDERSCORE)) {
                         // Wildcard pattern - don't bind the value
                         pattern->option.inner = NULL;
                     } else {
-                        Pattern* inner_pattern = safe_malloc(sizeof(Pattern));
-                        inner_pattern->type = PATTERN_IDENT;
-                        inner_pattern->ident.name = parser.current;
+                        Pattern* first = safe_malloc(sizeof(Pattern));
+                        first->type = PATTERN_IDENT;
+                        first->ident.name = parser.current;
                         expect(TOKEN_IDENT, "Expected identifier in destructuring pattern");
-                        pattern->option.inner = inner_pattern;
+                        pattern->option.inner = first;
+                        if (match(TOKEN_COMMA)) {
+                            pattern->option.inners = safe_malloc(sizeof(Pattern*) * 8);
+                            pattern->option.inners[0] = first;
+                            pattern->option.inner_count = 1;
+                            do {
+                                Pattern* nxt = safe_malloc(sizeof(Pattern));
+                                nxt->type = PATTERN_IDENT;
+                                nxt->ident.name = parser.current;
+                                expect(TOKEN_IDENT, "Expected identifier in destructuring pattern");
+                                if (pattern->option.inner_count < 8)
+                                    pattern->option.inners[pattern->option.inner_count++] = nxt;
+                            } while (match(TOKEN_COMMA));
+                        }
                     }
-                    
+
                     expect(TOKEN_RPAREN, "Expected ')' after destructuring pattern");
                 } else {
                     // Simple enum variant without destructuring: Color::Red
@@ -3913,20 +3930,35 @@ static Stmt* parse_match_statement() {
                     pattern->option.inner = NULL;
                 }
             } else {
-                // Check for bare variant with data: Yep(val)
+                // Check for bare variant with data: Yep(val) / Rect(w, h)
                 if (match(TOKEN_LPAREN)) {
                     pattern->type = PATTERN_OPTION;
                     pattern->option.is_some = true;
                     pattern->option.variant_name = first_token;
-                    
+                    pattern->option.inners = NULL;
+                    pattern->option.inner_count = 0;
+
                     if (match(TOKEN_UNDERSCORE)) {
                         pattern->option.inner = NULL;
                     } else {
-                        Pattern* inner_pattern = safe_malloc(sizeof(Pattern));
-                        inner_pattern->type = PATTERN_IDENT;
-                        inner_pattern->ident.name = parser.current;
+                        Pattern* first = safe_malloc(sizeof(Pattern));
+                        first->type = PATTERN_IDENT;
+                        first->ident.name = parser.current;
                         expect(TOKEN_IDENT, "Expected identifier in destructuring pattern");
-                        pattern->option.inner = inner_pattern;
+                        pattern->option.inner = first;
+                        if (match(TOKEN_COMMA)) {
+                            pattern->option.inners = safe_malloc(sizeof(Pattern*) * 8);
+                            pattern->option.inners[0] = first;
+                            pattern->option.inner_count = 1;
+                            do {
+                                Pattern* nxt = safe_malloc(sizeof(Pattern));
+                                nxt->type = PATTERN_IDENT;
+                                nxt->ident.name = parser.current;
+                                expect(TOKEN_IDENT, "Expected identifier in destructuring pattern");
+                                if (pattern->option.inner_count < 8)
+                                    pattern->option.inners[pattern->option.inner_count++] = nxt;
+                            } while (match(TOKEN_COMMA));
+                        }
                     }
                     expect(TOKEN_RPAREN, "Expected ')' after destructuring pattern");
                 } else {
