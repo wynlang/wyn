@@ -1411,6 +1411,50 @@ void codegen_stmt(Stmt* stmt) {
                     register_str_array_var(_rv);
                 }
             }
+            // Closure copy: `var g = f` where f is a known lambda variable.
+            // Emit a function pointer of matching arity and carry f's captures
+            // forward so calls on g inject the same captured globals.
+            int _cc_src_idx = -1;
+            if (stmt->var.init && stmt->var.init->type == EXPR_IDENT) {
+                char _cc_src[64]; token_to_cstr(_cc_src, sizeof(_cc_src), stmt->var.init->token);
+                extern int find_lambda_var(const char*);
+                _cc_src_idx = find_lambda_var(_cc_src);
+            }
+            if (_cc_src_idx >= 0) {
+                extern int is_c_name_collision(const char*);
+                extern void register_user_collision(const char*);
+                extern int lambda_var_param_count(int);
+                char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                bool is_c_keyword = is_c_name_collision(_vn);
+                if (is_c_keyword) register_user_collision(_vn);
+                int nparams = lambda_var_param_count(_cc_src_idx);
+                if (nparams < 0) nparams = 0;
+                // Register g as a lambda var, copying the source's captures so
+                // call-site injection works identically through the alias.
+                if (lambda_var_count < 256) {
+                    token_to_cstr(lambda_var_info[lambda_var_count].var_name, sizeof(lambda_var_info[lambda_var_count].var_name), stmt->var.name);
+                    lambda_var_info[lambda_var_count].capture_count = lambda_var_info[_cc_src_idx].capture_count;
+                    lambda_var_info[lambda_var_count].param_count = nparams;
+                    for (int i = 0; i < lambda_var_info[_cc_src_idx].capture_count; i++) {
+                        strcpy(lambda_var_info[lambda_var_count].captured_vars[i],
+                               lambda_var_info[_cc_src_idx].captured_vars[i]);
+                    }
+                    lambda_var_count++;
+                }
+                emit("long long (*%s%.*s)(", is_c_keyword ? WYN_UFN_PFX : "", stmt->var.name.length, stmt->var.name.start);
+                for (int i = 0; i < nparams; i++) {
+                    if (i > 0) emit(", ");
+                    emit("long long");
+                }
+                emit(") = ");
+                codegen_expr(stmt->var.init);
+                emit(";\n");
+                {
+                    char _rvn[256]; token_to_cstr(_rvn, sizeof(_rvn), stmt->var.name);
+                    register_local_variable(_rvn);
+                }
+                break;
+            }
             // Special handling for function pointers (lambdas)
             if (stmt->var.init && stmt->var.init->type == EXPR_LAMBDA) {
                 // Function pointer syntax: int (*name)(params...)
@@ -1439,8 +1483,9 @@ void codegen_stmt(Stmt* stmt) {
                 if (lambda_idx >= 0 && lambda_var_count < 256) {
                     token_to_cstr(lambda_var_info[lambda_var_count].var_name, sizeof(lambda_var_info[lambda_var_count].var_name), stmt->var.name);
                     lambda_var_info[lambda_var_count].capture_count = lambda_functions[lambda_idx].capture_count;
+                    lambda_var_info[lambda_var_count].param_count = total_params;
                     for (int i = 0; i < lambda_functions[lambda_idx].capture_count; i++) {
-                        strcpy(lambda_var_info[lambda_var_count].captured_vars[i], 
+                        strcpy(lambda_var_info[lambda_var_count].captured_vars[i],
                                lambda_functions[lambda_idx].captured_vars[i]);
                     }
                     lambda_var_count++;

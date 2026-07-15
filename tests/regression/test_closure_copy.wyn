@@ -1,0 +1,29 @@
+// Regression: closure copy `var g = f` where f is a lambda variable.
+// Previously the copy typed g as `long long` (the var-decl default) instead of
+// copying f's function-pointer type, so `g(...)` failed to compile with
+// "called object type 'long long' is not a function or function pointer".
+// Now the copy emits a matching fn-ptr decl and carries f's captures forward so
+// calls through the alias inject the same captured globals.
+// EXPECT: 7
+// EXPECT: 105
+// EXPECT: 105
+// EXPECT: 42
+fn main() {
+    // plain copy
+    var add = |a, b| a + b
+    var g = add
+    println(g(3, 4))
+
+    // copy of a capturing closure — both alias and original see the capture
+    var base = 100
+    var addbase = |x| x + base
+    var h = addbase
+    println(h(5))
+    println(addbase(5))
+
+    // copy chain g = f; k = g
+    var mul = |a, b| a * b
+    var m2 = mul
+    var k = m2
+    println(k(6, 7))
+}
