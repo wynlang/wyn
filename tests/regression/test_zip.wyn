@@ -1,0 +1,34 @@
+// Regression: `for x, y in zip(a, b)` — Pythonic parallel iteration. Binds
+// x = a[i], y = b[i] for i in 0..min(len(a), len(b)). Both loop variables are
+// VALUES (not index, value). Desugars in the parser to a counted loop over a
+// hidden index with the two element bindings prepended to the body.
+// EXPECT: 1 x
+// EXPECT: 2 y
+// EXPECT: 3 z
+// EXPECT: 140
+// EXPECT: alice is 30
+// EXPECT: bob is 25
+fn main() {
+    // equal-length, string second element
+    var a = [1, 2, 3]
+    var b = ["x", "y", "z"]
+    for n, s in zip(a, b) {
+        println("${n} ${s}")
+    }
+
+    // unequal lengths iterate the SHORTER (min); int arithmetic on both values
+    var xs = [1, 2, 3, 4, 5]
+    var ys = [10, 20, 30]
+    var sum = 0
+    for x, y in zip(xs, ys) {
+        sum = sum + x * y   // 1*10 + 2*20 + 3*30 = 140
+    }
+    println(sum)
+
+    // string + int pairing
+    var names = ["alice", "bob"]
+    var ages = [30, 25]
+    for name, age in zip(names, ages) {
+        println("${name} is ${age}")
+    }
+}
