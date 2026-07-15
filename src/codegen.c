@@ -1308,6 +1308,20 @@ const char* get_struct_var_type(const char* var) {
     }
     return NULL;
 }
+// Track tuple-typed variables (`var p = (1, 2)`), so a copy `var q = p` — as
+// produced by tuple destructuring `var a, b = p` — can use __auto_type instead of
+// defaulting to long long (which truncated the tuple struct to an int).
+static char tuple_var_names[256][64];
+static int tuple_var_count = 0;
+void register_tuple_var(const char* var) {
+    if (tuple_var_count < 256) { strncpy(tuple_var_names[tuple_var_count], var, 63);
+        tuple_var_names[tuple_var_count][63] = '\0'; tuple_var_count++; }
+}
+int is_tuple_var(const char* var) {
+    for (int i = tuple_var_count - 1; i >= 0; i--)
+        if (strcmp(tuple_var_names[i], var) == 0) return 1;
+    return 0;
+}
 // Save/restore the struct-var stack depth so a scoped binding (e.g. `self`
 // inside a method body) can be popped without leaking into later functions.
 int wyn_struct_var_depth(void) { return struct_var_count; }

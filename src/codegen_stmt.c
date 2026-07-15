@@ -439,6 +439,27 @@ void codegen_stmt(Stmt* stmt) {
                         char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                         extern void register_array_var(const char*); register_array_var(_vn);
                     }
+                    // Copying a tuple var (`var q = p`, incl. the temp emitted by
+                    // tuple destructuring `var a, b = p`): keep the tuple struct
+                    // type via __auto_type instead of truncating to long long.
+                    extern int is_tuple_var(const char*);
+                    if (is_tuple_var(_idn)) {
+                        c_type = "__auto_type";
+                        char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                        extern void register_tuple_var(const char*); register_tuple_var(_vn);
+                    }
+                } else if (stmt->var.init->type == EXPR_TUPLE_INDEX) {
+                    // `var x = tup.N` — including the desugaring of tuple
+                    // destructuring `var a, b = tup`. The element can be any type
+                    // (int/string/…); __auto_type copies the field's real C type
+                    // instead of truncating a string field to long long.
+                    c_type = "__auto_type";
+                    // If the element is a string, track it so later concat/print
+                    // treats it as a string (register_string_var).
+                    if (stmt->var.init->expr_type && stmt->var.init->expr_type->kind == TYPE_STRING) {
+                        char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                        extern void register_string_var(const char*); register_string_var(_vn);
+                    }
                 } else if (stmt->var.init->type == EXPR_STRING_INTERP) {
                     c_type = "char*";
                     needs_arc_management = true;
@@ -1043,6 +1064,8 @@ void codegen_stmt(Stmt* stmt) {
                 } else if (stmt->var.init->type == EXPR_TUPLE) {
                     // Tuple type - use __auto_type (clang only, TCC uses typeof path)
                     c_type = "__auto_type";
+                    { char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                      extern void register_tuple_var(const char*); register_tuple_var(_vn); }
                 } else if (stmt->var.init->type == EXPR_CALL) {
                     // Detect module constructor calls first: Module.new()
                     bool detected = false;
