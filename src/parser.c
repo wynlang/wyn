@@ -2392,6 +2392,107 @@ Stmt* statement() {
                 // Parse the expression after 'in'
                 Expr* iter_expr = expression();
 
+                // `for x, y in zip(a, b)` — Pythonic parallel iteration. Binds
+                // x = a[i], y = b[i] for i in 0..min(len(a), len(b)). Requires the
+                // two-variable form; both names are VALUES (not index, value). We
+                // desugar to a counted loop over a hidden index and prepend the two
+                // element bindings to the body once it's parsed (see below).
+                bool is_zip_call = has_index && iter_expr && iter_expr->type == EXPR_CALL &&
+                    iter_expr->call.callee && iter_expr->call.callee->type == EXPR_IDENT &&
+                    iter_expr->call.callee->token.length == 3 &&
+                    memcmp(iter_expr->call.callee->token.start, "zip", 3) == 0 &&
+                    iter_expr->call.arg_count == 2;
+                Token zip_idx_tok = {0};
+                Expr *zip_a = NULL, *zip_b = NULL;
+                if (is_zip_call) {
+                    zip_a = iter_expr->call.args[0];
+                    zip_b = iter_expr->call.args[1];
+                    static char zip_idx_name[64];
+                    snprintf(zip_idx_name, sizeof(zip_idx_name), "__zip_%.*s_%.*s",
+                             index_var.length, index_var.start, first_var.length, first_var.start);
+                    zip_idx_tok = (Token){TOKEN_IDENT, zip_idx_name, (int)strlen(zip_idx_name), first_var.line};
+                    if (has_parens) expect(TOKEN_RPAREN, "Expected ')' after zip(...)");
+
+                    // init: var __zip_i = 0
+                    stmt->for_stmt.init = alloc_stmt();
+                    stmt->for_stmt.init->type = STMT_VAR;
+                    stmt->for_stmt.init->var.name = zip_idx_tok;
+                    stmt->for_stmt.init->var.init = alloc_expr();
+                    stmt->for_stmt.init->var.init->type = EXPR_INT;
+                    stmt->for_stmt.init->var.init->token = (Token){TOKEN_INT, "0", 1, 0};
+                    stmt->for_stmt.init->var.is_const = false;
+
+                    // cond: __zip_i < len(a) and __zip_i < len(b)   (iterate min length)
+                    Expr* condL = alloc_expr(); condL->type = EXPR_BINARY;
+                    condL->binary.left = alloc_expr(); condL->binary.left->type = EXPR_IDENT; condL->binary.left->token = zip_idx_tok;
+                    condL->binary.op = (Token){TOKEN_LT, "<", 1, 0};
+                    { Expr* lenA = alloc_expr(); lenA->type = EXPR_CALL;
+                      lenA->call.callee = alloc_expr(); lenA->call.callee->type = EXPR_IDENT;
+                      lenA->call.callee->token = (Token){TOKEN_IDENT, "len", 3, 0};
+                      lenA->call.args = malloc(sizeof(Expr*)); lenA->call.args[0] = zip_a; lenA->call.arg_count = 1;
+                      lenA->call.arg_names = NULL; lenA->call.selected_overload = NULL;
+                      condL->binary.right = lenA; }
+                    Expr* condR = alloc_expr(); condR->type = EXPR_BINARY;
+                    condR->binary.left = alloc_expr(); condR->binary.left->type = EXPR_IDENT; condR->binary.left->token = zip_idx_tok;
+                    condR->binary.op = (Token){TOKEN_LT, "<", 1, 0};
+                    { Expr* lenB = alloc_expr(); lenB->type = EXPR_CALL;
+                      lenB->call.callee = alloc_expr(); lenB->call.callee->type = EXPR_IDENT;
+                      lenB->call.callee->token = (Token){TOKEN_IDENT, "len", 3, 0};
+                      lenB->call.args = malloc(sizeof(Expr*)); lenB->call.args[0] = zip_b; lenB->call.arg_count = 1;
+                      lenB->call.arg_names = NULL; lenB->call.selected_overload = NULL;
+                      condR->binary.right = lenB; }
+                    Expr* cond = alloc_expr(); cond->type = EXPR_BINARY;
+                    cond->binary.left = condL; cond->binary.right = condR;
+                    cond->binary.op = (Token){TOKEN_AND, "and", 3, 0};
+                    stmt->for_stmt.condition = cond;
+
+                    // inc: __zip_i = __zip_i + 1
+                    Expr* inc = alloc_expr(); inc->type = EXPR_ASSIGN; inc->assign.name = zip_idx_tok;
+                    Expr* incv = alloc_expr(); incv->type = EXPR_BINARY;
+                    incv->binary.left = alloc_expr(); incv->binary.left->type = EXPR_IDENT; incv->binary.left->token = zip_idx_tok;
+                    incv->binary.op = (Token){TOKEN_PLUS, "+", 1, 0};
+                    incv->binary.right = alloc_expr(); incv->binary.right->type = EXPR_INT;
+                    incv->binary.right->token = (Token){TOKEN_INT, "1", 1, 0};
+                    inc->assign.value = incv;
+                    stmt->for_stmt.increment = inc;
+
+                    stmt->for_stmt.array_expr = NULL;
+                    stmt->for_stmt.has_index = false;
+
+                    // Parse the body, then prepend the two element bindings:
+                    //   var x = a[__zip_i]; var y = b[__zip_i];
+                    expect(TOKEN_LBRACE, "Expected '{' after for header");
+                    stmt->for_stmt.body = alloc_stmt();
+                    stmt->for_stmt.body->type = STMT_BLOCK;
+                    stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
+                    stmt->for_stmt.body->block.count = 0;
+                    // binding for x (= index_var) then y (= first_var)
+                    Token bind_names[2] = { index_var, first_var };
+                    Expr* bind_arrs[2] = { zip_a, zip_b };
+                    for (int _bi = 0; _bi < 2; _bi++) {
+                        Stmt* bind = alloc_stmt();
+                        bind->type = STMT_VAR;
+                        bind->var.name = bind_names[_bi];
+                        bind->var.is_const = false;
+                        bind->var.is_mutable = false;
+                        bind->var.type = NULL;
+                        bind->var.pattern = NULL;
+                        bind->var.uses_pattern = false;
+                        Expr* idx = alloc_expr(); idx->type = EXPR_INDEX;
+                        idx->index.array = bind_arrs[_bi];
+                        idx->index.index = alloc_expr(); idx->index.index->type = EXPR_IDENT; idx->index.index->token = zip_idx_tok;
+                        bind->var.init = idx;
+                        stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = bind;
+                    }
+                    while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                        const char* __sp = parser.current.start;
+                        stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = statement();
+                        if (stmt_made_no_progress(__sp)) break;
+                    }
+                    expect(TOKEN_RBRACE, "Expected '}' after for body");
+                    return stmt;
+                }
+
                 // `for i in range(a, b)` / `range(a, b, step)` — Python-style range.
                 // Desugars to the same C-style counted loop as `a..b`, with the
                 // step wired in. A literal-negative step counts DOWN (`range(10,0,-1)`):
