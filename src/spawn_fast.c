@@ -438,32 +438,43 @@ typedef struct { TaskFunc func; void* arg; } SpawnArgs;
 // SpawnArgs pool — avoid malloc per spawn
 #define SA_POOL_SIZE (64 * 1024)
 static SpawnArgs sa_pool[SA_POOL_SIZE];
-static _Atomic int sa_pool_head = 0;
+static int sa_pool_head = 0;
 static SpawnArgs* sa_free_arr[SA_POOL_SIZE];
-static _Atomic int sa_free_top = 0;
+static int sa_free_top = 0;
+// The old lock-free index CAS was UNSOUND: alloc CAS'd sa_free_top then read
+// sa_free_arr[top-1], but a concurrent dealloc could CAS the index back up and
+// overwrite that same slot in between — handing the same SpawnArgs to two
+// coroutines (or a torn pointer). That dropped fire-and-forget tasks (~5-9/20).
+// A dedicated mutex makes the free-list obviously correct; SpawnArgs churn is
+// not hot enough for the CAS micro-optimization to matter.
+static pthread_mutex_t sa_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static SpawnArgs* sa_alloc(void) {
-    int top = atomic_load_explicit(&sa_free_top, memory_order_relaxed);
-    while (top > 0) {
-        if (atomic_compare_exchange_weak_explicit(&sa_free_top, &top, top - 1,
-                memory_order_acq_rel, memory_order_relaxed))
-            return sa_free_arr[top - 1];
+    pthread_mutex_lock(&sa_lock);
+    if (sa_free_top > 0) {
+        SpawnArgs* sa = sa_free_arr[--sa_free_top];
+        pthread_mutex_unlock(&sa_lock);
+        return sa;
     }
-    int idx = atomic_fetch_add(&sa_pool_head, 1);
-    if (idx < SA_POOL_SIZE) return &sa_pool[idx];
+    if (sa_pool_head < SA_POOL_SIZE) {
+        SpawnArgs* sa = &sa_pool[sa_pool_head++];
+        pthread_mutex_unlock(&sa_lock);
+        return sa;
+    }
+    pthread_mutex_unlock(&sa_lock);
     return malloc(sizeof(SpawnArgs));
 }
 
 static void sa_dealloc(SpawnArgs* sa) {
     if (sa >= sa_pool && sa < sa_pool + SA_POOL_SIZE) {
-        int top = atomic_load_explicit(&sa_free_top, memory_order_relaxed);
-        while (top < SA_POOL_SIZE) {
-            if (atomic_compare_exchange_weak_explicit(&sa_free_top, &top, top + 1,
-                    memory_order_acq_rel, memory_order_relaxed)) {
-                sa_free_arr[top] = sa;
-                return;
-            }
+        pthread_mutex_lock(&sa_lock);
+        if (sa_free_top < SA_POOL_SIZE) {
+            sa_free_arr[sa_free_top++] = sa;
+            pthread_mutex_unlock(&sa_lock);
+            return;
         }
+        pthread_mutex_unlock(&sa_lock);
+        return;  // pool full — drop (came from the fixed arena, can't free())
     }
     free(sa);
 }

@@ -1,0 +1,18 @@
+// Regression: fire-and-forget spawn must not lose or duplicate work. Two prior
+// bugs: (1) the SpawnArgs and WynCoroutine pool free-lists used an unsound
+// index-CAS that could hand the same slot to two coroutines (TSan-confirmed data
+// race → dropped/duplicated tasks); (2) println was print()+printf("\n") — two
+// calls — so concurrent worker threads interleaved the newline mid-line. Now the
+// pools are mutex-guarded and println emits value+\n in one call.
+//
+// A Shared atomic counter makes the check deterministic and order-independent:
+// 50 fire-and-forget tasks each add their value; the exit drain (wyn_spawn_wait)
+// must let ALL of them complete, so the total is exactly sum(0..49) = 1225.
+// EXPECT: 1225
+fn add_to(c: int, n: int) -> int { Shared.add(c, n); return 0 }
+fn main() {
+    var counter = Shared.new(0)
+    for i in 0..50 { spawn add_to(counter, i) }
+    Time::sleep(50)
+    println(Shared.get(counter))
+}
