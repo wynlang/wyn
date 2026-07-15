@@ -1,0 +1,21 @@
+// Regression: destructuring a tuple VARIABLE (`var a, b = p`) truncated the
+// tuple struct to long long (`long long __tdestruct = p`) — a C type error.
+// Tuple vars are now tracked and copied via __auto_type; `var x = tup.N` uses
+// __auto_type so each binding keeps the element's real C type. Covers tuple-var
+// copy, all-int fn-return unpack, and a string element printed directly.
+fn pt() -> (int, int) { return (7, 8) }
+fn main() -> int {
+    var p = (10, 20)
+    var a, b = p                   // destructure a tuple VAR
+    println((a + b).to_string())   // 30
+    var c, d = pt()                // destructure a fn-return tuple
+    println((c + d).to_string())   // 15
+    var x, y, label = (1, 2, "z")  // string element, printed directly
+    println(label)                 // z
+    println((x + y).to_string())   // 3
+    return 0
+}
+// EXPECT: 30
+// EXPECT: 15
+// EXPECT: z
+// EXPECT: 3
