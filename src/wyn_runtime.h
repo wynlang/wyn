@@ -2028,7 +2028,30 @@ void print_value(WynValue v) {
 
 void print_hex(int x) { printf("0x%x\n", x); }
 void print_bin(int x) { for(int i = 31; i >= 0; i--) printf("%d", (x >> i) & 1); printf("\n"); }
-#define println(x) do { print(x); printf("\n"); } while(0)
+
+// println emits the value AND its trailing newline in ONE printf/fwrite call, so
+// output stays atomic across the M:N scheduler's worker threads (libc locks a
+// single printf per-FILE, but not a print()+printf("\n") pair — concurrent
+// fire-and-forget spawns otherwise interleave the newline mid-line). Each type
+// gets a dedicated one-call println_* rather than the old two-call macro.
+void println_int(long long x)   { printf("%lld\n", x); }
+void println_float(double x)    { printf("%g\n", x); }
+void println_str(const char* s) { printf("%s\n", s ? s : ""); fflush(stdout); }
+void println_bool(bool b)       { printf("%s\n", b ? "true" : "false"); }
+void println_array(WynArray arr){ char c='['; fwrite(&c,1,1,stdout); for(int i=0;i<arr.count;i++){ if(i>0) fputs(", ",stdout); print_array_elem(arr.data[i]); } fputs("]\n",stdout); }
+void println_value(WynValue v)  { print_value(v); }  // print_value already ends with \n
+#define println(x) _Generic((x), \
+    int: println_int, \
+    long: println_int, \
+    long long: println_int, \
+    float: println_float, \
+    double: println_float, \
+    char*: println_str, \
+    const char*: println_str, \
+    bool: println_bool, \
+    WynArray: println_array, \
+    WynValue: println_value, \
+    default: println_int)(x)
 void print_debug(const char* label, int val) { printf("%s: %d\n", label, val); }
 #define print(x) _Generic((x), \
     int: print_int_no_nl, \

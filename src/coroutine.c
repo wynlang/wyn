@@ -53,32 +53,52 @@ struct WynCoroutine {
 // === WynCoroutine struct pool ===
 #define WC_POOL_SIZE (64 * 1024)
 static WynCoroutine wc_pool[WC_POOL_SIZE];
-static _Atomic int wc_pool_head = 0;
+static int wc_pool_head = 0;
 static WynCoroutine* wc_free_stack[WC_POOL_SIZE];
-static _Atomic int wc_free_top = 0;
+static int wc_free_top = 0;
+// The old lock-free index CAS was UNSOUND (same bug as spawn_fast.c's sa pool):
+// alloc CAS'd wc_free_top then read wc_free_stack[top-1], but a concurrent
+// dealloc could CAS the index back up and overwrite that slot in between — so
+// two coroutine tasks got the same WynCoroutine, corrupting fn/arg/co and
+// silently dropping fire-and-forget work. A dedicated mutex is obviously correct;
+// coroutine create/destroy is not hot enough to need lock-free.
+#ifdef _WIN32
+static CRITICAL_SECTION wc_pool_cs;
+static int wc_pool_cs_init = 0;
+#define wc_pool_lock() do { if (!wc_pool_cs_init) { InitializeCriticalSection(&wc_pool_cs); wc_pool_cs_init = 1; } EnterCriticalSection(&wc_pool_cs); } while(0)
+#define wc_pool_unlock() LeaveCriticalSection(&wc_pool_cs)
+#else
+static pthread_mutex_t wc_pool_mtx = PTHREAD_MUTEX_INITIALIZER;
+#define wc_pool_lock() pthread_mutex_lock(&wc_pool_mtx)
+#define wc_pool_unlock() pthread_mutex_unlock(&wc_pool_mtx)
+#endif
 
 static WynCoroutine* wc_alloc(void) {
-    int top = atomic_load_explicit(&wc_free_top, memory_order_relaxed);
-    while (top > 0) {
-        if (atomic_compare_exchange_weak_explicit(&wc_free_top, &top, top - 1,
-                memory_order_acq_rel, memory_order_relaxed))
-            return wc_free_stack[top - 1];
+    wc_pool_lock();
+    if (wc_free_top > 0) {
+        WynCoroutine* wc = wc_free_stack[--wc_free_top];
+        wc_pool_unlock();
+        return wc;
     }
-    int idx = atomic_fetch_add(&wc_pool_head, 1);
-    if (idx < WC_POOL_SIZE) return &wc_pool[idx];
+    if (wc_pool_head < WC_POOL_SIZE) {
+        WynCoroutine* wc = &wc_pool[wc_pool_head++];
+        wc_pool_unlock();
+        return wc;
+    }
+    wc_pool_unlock();
     return malloc(sizeof(WynCoroutine));
 }
 
 static void wc_dealloc(WynCoroutine* wc) {
     if (wc >= wc_pool && wc < wc_pool + WC_POOL_SIZE) {
-        int top = atomic_load_explicit(&wc_free_top, memory_order_relaxed);
-        while (top < WC_POOL_SIZE) {
-            if (atomic_compare_exchange_weak_explicit(&wc_free_top, &top, top + 1,
-                    memory_order_acq_rel, memory_order_relaxed)) {
-                wc_free_stack[top] = wc;
-                return;
-            }
+        wc_pool_lock();
+        if (wc_free_top < WC_POOL_SIZE) {
+            wc_free_stack[wc_free_top++] = wc;
+            wc_pool_unlock();
+            return;
         }
+        wc_pool_unlock();
+        return;  // pool full — drop (from the fixed arena, can't free())
     }
     free(wc);
 }
