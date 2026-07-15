@@ -918,8 +918,9 @@ int cmd_debug(const char* program, int argc, char** argv) {
             snprintf(cmd, sizeof(cmd), "cc -std=c11 -g -O0 -w -I %s/src -o %s %s %s -lpthread -lm 2>/dev/null", wyn_root, bin_path, c_path, rt);
         } else {
             int p = snprintf(cmd, sizeof(cmd), "cc -std=c11 -g -O0 -w -I %s/src -I %s/vendor/minicoro -o %s %s ", wyn_root, wyn_root, bin_path, c_path);
-            const char* srcs[] = {"wyn_arena","wyn_rc","stdlib_string","stdlib_array","stdlib_time","stdlib_crypto","stdlib_math","wyn_wrapper","wyn_interface","coroutine","spawn","spawn_fast","future","io","io_loop","optional","result","arc_runtime","concurrency","async_runtime","safe_memory","error","string_runtime","hashmap","hashset","json","stdlib_runtime","hashmap_runtime","net","net_runtime","net_advanced","test_runtime","file_io_simple","stdlib_enhanced",NULL};
-            for (int i = 0; srcs[i]; i++) p += snprintf(cmd + p, sizeof(cmd) - p, "%s/src/%s.c ", wyn_root, srcs[i]);
+            extern void build_source_list(char* buf, int bufsize, const char* prefix);
+            char src_list[4096]; build_source_list(src_list, sizeof(src_list), wyn_root);
+            p += snprintf(cmd + p, sizeof(cmd) - p, "%s", src_list);
             snprintf(cmd + p, sizeof(cmd) - p, "-lpthread -lm 2>/dev/null");
         }
         system(cmd);
