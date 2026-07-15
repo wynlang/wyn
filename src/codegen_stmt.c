@@ -1432,11 +1432,18 @@ void codegen_stmt(Stmt* stmt) {
                 // Register g as a lambda var, copying the source's captures so
                 // call-site injection works identically through the alias.
                 if (lambda_var_count < 256) {
-                    token_to_cstr(lambda_var_info[lambda_var_count].var_name, sizeof(lambda_var_info[lambda_var_count].var_name), stmt->var.name);
-                    lambda_var_info[lambda_var_count].capture_count = lambda_var_info[_cc_src_idx].capture_count;
-                    lambda_var_info[lambda_var_count].param_count = nparams;
+                    LambdaVarInfo* _lvi = &lambda_var_info[lambda_var_count];
+                    token_to_cstr(_lvi->var_name, sizeof(_lvi->var_name), stmt->var.name);
+                    // name/name_len/is_closure are read at call sites — must be set,
+                    // not left as stale garbage (an uninitialized is_closure would
+                    // mis-route calls through the WynClosure path and emit garbage).
+                    token_to_cstr(_lvi->name, sizeof(_lvi->name), stmt->var.name);
+                    _lvi->name_len = stmt->var.name.length;
+                    _lvi->is_closure = lambda_var_info[_cc_src_idx].is_closure;
+                    _lvi->capture_count = lambda_var_info[_cc_src_idx].capture_count;
+                    _lvi->param_count = nparams;
                     for (int i = 0; i < lambda_var_info[_cc_src_idx].capture_count; i++) {
-                        strcpy(lambda_var_info[lambda_var_count].captured_vars[i],
+                        strcpy(_lvi->captured_vars[i],
                                lambda_var_info[_cc_src_idx].captured_vars[i]);
                     }
                     lambda_var_count++;
