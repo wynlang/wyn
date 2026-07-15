@@ -165,6 +165,32 @@ static Stmt* alloc_stmt() {
     return (Stmt*)safe_calloc(1, sizeof(Stmt));
 }
 
+// Parse a control-flow body that is EITHER a braced block `{ ... }` OR a single
+// statement (braceless form, e.g. `for i in 0..n\n  spawn f()`). Always returns a
+// STMT_BLOCK so downstream codegen/checker see a uniform body. The braceless form
+// binds exactly ONE statement — a following statement is NOT part of the body
+// (documented footgun, matching C/JS). `ctx` names the construct for errors.
+Stmt* statement();
+static Stmt* parse_block_or_stmt(const char* ctx) {
+    Stmt* body = alloc_stmt();
+    body->type = STMT_BLOCK;
+    body->block.stmts = malloc(sizeof(Stmt*) * 256);
+    body->block.count = 0;
+    if (match(TOKEN_LBRACE)) {
+        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+            const char* __sp = parser.current.start;
+            body->block.stmts[body->block.count++] = statement();
+            if (stmt_made_no_progress(__sp)) break;
+        }
+        char msg[64]; snprintf(msg, sizeof(msg), "Expected '}' after %s body", ctx);
+        expect(TOKEN_RBRACE, msg);
+    } else {
+        // Braceless single-statement body.
+        body->block.stmts[body->block.count++] = statement();
+    }
+    return body;
+}
+
 // Helper to check if we're looking at a struct initialization pattern
 // Returns true if pattern looks like: { } or { ident : ...
 static bool is_struct_init_pattern() {
@@ -2173,16 +2199,8 @@ Stmt* statement() {
         // Restore struct init flag
         parser.allow_struct_init = saved_allow_struct_init;
         
-        expect(TOKEN_LBRACE, "Expected '{' after if condition");
-        stmt->if_stmt.then_branch = alloc_stmt();
-        stmt->if_stmt.then_branch->type = STMT_BLOCK;
-        stmt->if_stmt.then_branch->block.stmts = malloc(sizeof(Stmt*) * 256);
-        stmt->if_stmt.then_branch->block.count = 0;
-        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            const char* __sp = parser.current.start; stmt->if_stmt.then_branch->block.stmts[stmt->if_stmt.then_branch->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
-        }
-        expect(TOKEN_RBRACE, "Expected '}' after if body");
-        
+        stmt->if_stmt.then_branch = parse_block_or_stmt("if");
+
         // Friendly diagnostic: Python's `elif` (and `elseif`/`elsif`) isn't a Wyn
         // keyword. Left unhandled it parsed as a stray identifier and the whole
         // else-chain was silently dropped. Point users at `else if`.
@@ -2199,15 +2217,7 @@ Stmt* statement() {
             if (check(TOKEN_IF)) {
                 stmt->if_stmt.else_branch = statement();
             } else {
-                expect(TOKEN_LBRACE, "Expected '{' after else");
-                stmt->if_stmt.else_branch = alloc_stmt();
-                stmt->if_stmt.else_branch->type = STMT_BLOCK;
-                stmt->if_stmt.else_branch->block.stmts = malloc(sizeof(Stmt*) * 256);
-                stmt->if_stmt.else_branch->block.count = 0;
-                while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-                    const char* __sp = parser.current.start; stmt->if_stmt.else_branch->block.stmts[stmt->if_stmt.else_branch->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
-                }
-                expect(TOKEN_RBRACE, "Expected '}' after else body");
+                stmt->if_stmt.else_branch = parse_block_or_stmt("else");
             }
         } else {
             stmt->if_stmt.else_branch = NULL;
@@ -2362,15 +2372,7 @@ Stmt* statement() {
         // Restore struct init flag
         parser.allow_struct_init = saved_allow_struct_init;
         
-        expect(TOKEN_LBRACE, "Expected '{' after while condition");
-        stmt->while_stmt.body = alloc_stmt();
-        stmt->while_stmt.body->type = STMT_BLOCK;
-        stmt->while_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
-        stmt->while_stmt.body->block.count = 0;
-        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            const char* __sp = parser.current.start; stmt->while_stmt.body->block.stmts[stmt->while_stmt.body->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
-        }
-        expect(TOKEN_RBRACE, "Expected '}' after while body");
+        stmt->while_stmt.body = parse_block_or_stmt("while");
         return stmt;
     }
     
@@ -2475,7 +2477,6 @@ Stmt* statement() {
 
                     // Parse the body, then prepend the two element bindings:
                     //   var x = a[__zip_i]; var y = b[__zip_i];
-                    expect(TOKEN_LBRACE, "Expected '{' after for header");
                     stmt->for_stmt.body = alloc_stmt();
                     stmt->for_stmt.body->type = STMT_BLOCK;
                     stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
@@ -2498,12 +2499,10 @@ Stmt* statement() {
                         bind->var.init = idx;
                         stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = bind;
                     }
-                    while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-                        const char* __sp = parser.current.start;
-                        stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = statement();
-                        if (stmt_made_no_progress(__sp)) break;
-                    }
-                    expect(TOKEN_RBRACE, "Expected '}' after for body");
+                    // Append the user body (braced or braceless single-statement).
+                    Stmt* _zb = parse_block_or_stmt("for");
+                    for (int _bi = 0; _bi < _zb->block.count; _bi++)
+                        stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = _zb->block.stmts[_bi];
                     return stmt;
                 }
 
@@ -2686,15 +2685,7 @@ Stmt* statement() {
                     if (has_index) stmt->for_stmt.index_var = index_var;
                 }
                 
-                expect(TOKEN_LBRACE, "Expected '{' after for header");
-                stmt->for_stmt.body = alloc_stmt();
-                stmt->for_stmt.body->type = STMT_BLOCK;
-                stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
-                stmt->for_stmt.body->block.count = 0;
-                while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-                    const char* __sp = parser.current.start; stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
-                }
-                expect(TOKEN_RBRACE, "Expected '}' after for body");
+                stmt->for_stmt.body = parse_block_or_stmt("for");
                 return stmt;
             }
             // Not a range loop, backtrack
@@ -2723,15 +2714,7 @@ Stmt* statement() {
             expect(TOKEN_RPAREN, "Expected ')' after for header");
         }
         
-        expect(TOKEN_LBRACE, "Expected '{' after for header");
-        stmt->for_stmt.body = alloc_stmt();
-        stmt->for_stmt.body->type = STMT_BLOCK;
-        stmt->for_stmt.body->block.stmts = malloc(sizeof(Stmt*) * 256);
-        stmt->for_stmt.body->block.count = 0;
-        while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
-            const char* __sp = parser.current.start; stmt->for_stmt.body->block.stmts[stmt->for_stmt.body->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
-        }
-        expect(TOKEN_RBRACE, "Expected '}' after for body");
+        stmt->for_stmt.body = parse_block_or_stmt("for");
         return stmt;
     }
     
