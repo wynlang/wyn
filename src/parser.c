@@ -1367,7 +1367,19 @@ static Expr* call() {
             break;
         }
     }
-    
+
+    // `await_all`/`await_any` are call-only. Used bare (no parens) they used to
+    // survive as a dangling identifier and mis-codegen (`await_all;` — undeclared
+    // in C). Catch it here with a clear message; the call form parses as EXPR_CALL.
+    if (expr && expr->type == EXPR_IDENT && expr->token.length == 9 &&
+        (memcmp(expr->token.start, "await_all", 9) == 0 ||
+         memcmp(expr->token.start, "await_any", 9) == 0)) {
+        fprintf(stderr, "Error at line %d: '%.*s' must be called with parentheses, e.g. '%.*s(futures)'\n",
+                expr->token.line, expr->token.length, expr->token.start,
+                expr->token.length, expr->token.start);
+        parser.had_error = true;
+    }
+
     return expr;
 }
 
