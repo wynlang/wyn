@@ -33,10 +33,16 @@ void codegen_program(Program* prog) {
                 char _fn[128]; token_to_cstr(_fn, sizeof(_fn), fn_stmt->fn.name);
                 Expr* inr = fn_stmt->fn.return_type->optional_type.inner_type;
                 const char* fam = "OptionInt";
+                static char _osfam[128];
                 if (inr && inr->type == EXPR_IDENT) {
                     if (inr->token.length == 6 && memcmp(inr->token.start, "string", 6) == 0) fam = "OptionString";
                     else if (inr->token.length == 5 && memcmp(inr->token.start, "float", 5) == 0) fam = "OptionFloat";
                     else if (inr->token.length == 4 && memcmp(inr->token.start, "bool", 4) == 0) fam = "OptionBool";
+                    else {
+                        char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inr->token);
+                        extern int is_known_struct(const char*);
+                        if (is_known_struct(_stn)) { snprintf(_osfam, sizeof(_osfam), "Option%s", _stn); fam = _osfam; }
+                    }
                 }
                 register_fn_return_type(_fn, fam);
             } else if (fn_stmt->fn.return_type && fn_stmt->fn.return_type->type == EXPR_CALL &&
@@ -158,7 +164,25 @@ void codegen_program(Program* prog) {
             }
         }
     }
-    
+
+    // Emit monomorphic Option<Struct> families for any user struct used as `S?`
+    // (registered by the checker as it resolved the optionals). These can't live
+    // in wyn_runtime.h because they name user structs defined just above.
+    {
+        extern int option_struct_count(void);
+        extern const char* option_struct_name(int);
+        for (int i = 0; i < option_struct_count(); i++) {
+            const char* s = option_struct_name(i);
+            emit("typedef struct { int tag; %s value; } Option%s;\n", s, s);
+            emit("static inline Option%s Option%s_Some(%s value){ Option%s o; o.tag=1; o.value=value; return o; }\n", s, s, s, s);
+            emit("static inline Option%s Option%s_None(void){ Option%s o; o.tag=0; return o; }\n", s, s, s);
+            emit("static inline int Option%s_is_some(Option%s o){ return o.tag==1; }\n", s, s);
+            emit("static inline int Option%s_is_none(Option%s o){ return o.tag==0; }\n", s, s);
+            emit("static inline %s Option%s_unwrap(Option%s o){ if(o.tag==0){ fprintf(stderr, \"Error: unwrap() called on None\\n\"); exit(1); } return o.value; }\n", s, s, s);
+            emit("static inline %s Option%s_unwrap_or(Option%s o, %s def){ return o.tag==1 ? o.value : def; }\n", s, s, s, s);
+        }
+    }
+
     // Generate module-level constants (only if has main — script mode puts them in wyn_main)
     if (has_main) {
     for (int i = 0; i < prog->count; i++) {
@@ -546,7 +570,15 @@ void codegen_program(Program* prog) {
                         else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return_type = "OptionString";
                         else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return_type = "OptionFloat";
                         else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return_type = "OptionBool";
-                        else return_type = "WynOptional*";
+                        else {
+                            char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                            extern int is_known_struct(const char*);
+                            if (is_known_struct(_stn)) {
+                                static char _osfd[128];
+                                snprintf(_osfd, sizeof(_osfd), "Option%s", _stn);
+                                return_type = _osfd;
+                            } else return_type = "WynOptional*";
+                        }
                     } else {
                         return_type = "WynOptional*";
                     }
@@ -714,11 +746,26 @@ void codegen_program(Program* prog) {
                         // Handle array types [type] - pass as WynArray
                         param_type = "WynArray";
                     } else if (fn->param_types[j]->type == EXPR_OPTIONAL_TYPE) {
-                        // T2.5.1: Handle optional types - use WynOptional* for proper optional handling
+                        // T2.5.1: Optional param. int?/string?/…/Struct? map to the
+                        // concrete Option family; otherwise the generic WynOptional*.
+                        Expr* _inr = fn->param_types[j]->optional_type.inner_type;
+                        static char _opbuf[128];
                         param_type = "WynOptional*";
+                        if (_inr && _inr->type == EXPR_IDENT) {
+                            Token t = _inr->token;
+                            if (t.length == 3 && memcmp(t.start, "int", 3) == 0) param_type = "OptionInt";
+                            else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) param_type = "OptionString";
+                            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) param_type = "OptionFloat";
+                            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) param_type = "OptionBool";
+                            else {
+                                char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                                extern int is_known_struct(const char*);
+                                if (is_known_struct(_stn)) { snprintf(_opbuf, sizeof(_opbuf), "Option%s", _stn); param_type = _opbuf; }
+                            }
+                        }
                     }
                 }
-                
+
                 // Emit with pointer for mut params
                 bool is_mut_param = fn->param_mutable && fn->param_mutable[j];
                 // Check if param name is a C keyword
@@ -1317,12 +1364,19 @@ void codegen_match_statement(Stmt* stmt) {
             // OptionFloat/OptionBool/OptionString lower with the right temp type
             // and payload binding (not the hardcoded OptionInt / long long).
             const char* _ofam = "OptionInt"; const char* _octy = "long long"; int _obind_str = 0;
+            static char _ofam_buf[128]; static char _octy_buf[96];
             Type* _ovt = stmt->match_stmt.value ? stmt->match_stmt.value->expr_type : NULL;
             if (_ovt && _ovt->kind == TYPE_STRUCT && _ovt->struct_type.name.length > 0) {
-                char _n[64]; token_to_cstr(_n, sizeof(_n), _ovt->struct_type.name);
+                char _n[96]; token_to_cstr(_n, sizeof(_n), _ovt->struct_type.name);
                 if (strcmp(_n, "OptionString") == 0) { _ofam = "OptionString"; _octy = "const char*"; _obind_str = 1; }
                 else if (strcmp(_n, "OptionFloat") == 0) { _ofam = "OptionFloat"; _octy = "double"; }
                 else if (strcmp(_n, "OptionBool") == 0) { _ofam = "OptionBool"; _octy = "bool"; }
+                else if (strncmp(_n, "Option", 6) == 0 && strcmp(_n, "OptionInt") != 0) {
+                    // Monomorphic Option<Struct> (e.g. OptionUser): payload is the
+                    // struct value, bound by value (no string registration).
+                    snprintf(_ofam_buf, sizeof(_ofam_buf), "%s", _n); _ofam = _ofam_buf;
+                    snprintf(_octy_buf, sizeof(_octy_buf), "%s", _n + 6); _octy = _octy_buf;
+                }
             }
             emit("    %s __match_opt_%d = ", _ofam, _omid);
             codegen_expr(stmt->match_stmt.value);

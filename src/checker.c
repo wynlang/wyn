@@ -591,6 +591,56 @@ static void mark_used(SymbolTable* scope, Token name) {
     if (scope->parent) mark_used(scope->parent, name);
 }
 
+// Lazily register a monomorphic Option<Struct> family for a user-struct payload
+// (e.g. `User` -> `OptionUser`): the fake struct type symbol + the 6 member
+// functions (_Some/_None/_is_some/_is_none/_unwrap/_unwrap_or), mirroring the
+// builtin OptionInt/OptionString families. Idempotent. Also records the struct in
+// codegen's registry so the concrete C family is emitted after the struct typedef.
+// Returns the Option<Struct> Type (a TYPE_STRUCT named "Option<Struct>").
+static Type* register_option_struct_family(Type* struct_type) {
+    if (!struct_type || struct_type->kind != TYPE_STRUCT || struct_type->struct_type.name.length == 0)
+        return NULL;
+    char sname[96]; token_to_cstr(sname, sizeof(sname), struct_type->struct_type.name);
+    // Family type name "Option<Struct>" — persistent storage for the Token.
+    char* fam = malloc(strlen(sname) + 7);
+    sprintf(fam, "Option%s", sname);
+    Token fam_tok = {TOKEN_IDENT, fam, (int)strlen(fam), 0};
+
+    // Idempotent: if already registered, return the existing symbol's type.
+    Symbol* existing = find_symbol(global_scope, fam_tok);
+    if (existing) { free(fam); return existing->type; }
+
+    Type* opt_type = make_type(TYPE_STRUCT);
+    opt_type->struct_type.name = fam_tok;
+    add_symbol(global_scope, fam_tok, opt_type, false);
+
+    // Helper to register a member fn: name suffix, param types, return type.
+    #define REG_OPT_FN(suffix, npar, p0, p1, ret) do {                      \
+        Type* ft = make_type(TYPE_FUNCTION);                                \
+        ft->fn_type.param_count = (npar);                                   \
+        ft->fn_type.param_types = (npar) ? malloc(sizeof(Type*) * (npar)) : NULL; \
+        if ((npar) >= 1) ft->fn_type.param_types[0] = (p0);                 \
+        if ((npar) >= 2) ft->fn_type.param_types[1] = (p1);                 \
+        ft->fn_type.return_type = (ret);                                    \
+        char* fn = malloc(strlen(fam) + strlen(suffix) + 2);                \
+        sprintf(fn, "%s%s", fam, suffix);                                   \
+        Token ftok = {TOKEN_IDENT, fn, (int)strlen(fn), 0};                 \
+        add_symbol(global_scope, ftok, ft, false);                          \
+    } while (0)
+
+    REG_OPT_FN("_Some", 1, struct_type, NULL, opt_type);
+    REG_OPT_FN("_None", 0, NULL, NULL, opt_type);
+    REG_OPT_FN("_is_some", 1, opt_type, NULL, builtin_bool);
+    REG_OPT_FN("_is_none", 1, opt_type, NULL, builtin_bool);
+    REG_OPT_FN("_unwrap", 1, opt_type, NULL, struct_type);
+    REG_OPT_FN("_unwrap_or", 2, opt_type, struct_type, struct_type);
+    #undef REG_OPT_FN
+
+    extern void register_option_struct(const char*);
+    register_option_struct(sname);
+    return opt_type;
+}
+
 void init_checker() {
     global_scope = calloc(1, sizeof(SymbolTable));
     global_scope->capacity = 128;
@@ -4128,8 +4178,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 Token ob_name = {TOKEN_IDENT, "OptionBool", 10, 0};
                 Symbol* sym = find_symbol(scope, ob_name);
                 if (sym) { expr->expr_type = sym->type; return sym->type; }
+            } else if (inner_type->kind == TYPE_STRUCT && inner_type->struct_type.name.length > 0) {
+                // `Struct?` -> the monomorphic Option<Struct> family (lazily made).
+                Type* opt_type = register_option_struct_family(inner_type);
+                if (opt_type) { expr->expr_type = opt_type; return opt_type; }
             }
-            
+
             // Fallback: generic optional type
             Type* optional_type = make_type(TYPE_OPTIONAL);
             optional_type->optional_type.inner_type = inner_type;
@@ -4247,6 +4301,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             Type* inner_type = check_expr(expr->option.value, scope);
             if (!inner_type) return NULL;
+            // A user-struct payload gets its own monomorphic family Option<Struct>
+            // (e.g. `Some(User{...})` -> OptionUser), registered on demand.
+            if (inner_type->kind == TYPE_STRUCT && inner_type->struct_type.name.length > 0) {
+                Type* opt_type = register_option_struct_family(inner_type);
+                if (opt_type) { expr->expr_type = opt_type; return opt_type; }
+            }
             Token concrete_name;
             if (inner_type == builtin_string) {
                 concrete_name = (Token){TOKEN_IDENT, "OptionString", 12, 0};
@@ -4366,6 +4426,17 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         } else if (pat->option.inner->type == PATTERN_IDENT) {
                             // Look up variant data type from enum definition
                             Type* bound_type = builtin_int;
+                            // Option<Struct> Some(x): bind x to the payload struct type
+                            // (family name "OptionUser" -> struct "User").
+                            if (match_value_type && match_value_type->kind == TYPE_STRUCT &&
+                                match_value_type->struct_type.name.length > 6 &&
+                                memcmp(match_value_type->struct_type.name.start, "Option", 6) == 0 &&
+                                pat->option.is_some) {
+                                Token pl = match_value_type->struct_type.name;
+                                Token payload_name = {TOKEN_IDENT, pl.start + 6, pl.length - 6, 0};
+                                Symbol* ps = find_symbol(global_scope, payload_name);
+                                if (ps && ps->type && ps->type->kind == TYPE_STRUCT) bound_type = ps->type;
+                            }
                             if (match_value_type && match_value_type->kind == TYPE_ENUM) {
                                 Token variant_name = pat->option.variant_name;
                                 EnumStmt* enum_def = find_enum_definition(match_value_type->name);
@@ -4827,13 +4898,21 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                             param_type = builtin_bool;
                         } else if (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0) {
                             param_type = builtin_array;
+                        } else {
+                            // User struct/enum param type.
+                            Symbol* ts = find_symbol(global_scope, type_name);
+                            if (ts && ts->type) param_type = ts->type;
                         }
+                    } else if (fn->param_types[j]->type == EXPR_OPTIONAL_TYPE) {
+                        // `b: Struct?` / `b: int?` — resolve to the Option family.
+                        Type* ot = check_expr(fn->param_types[j], &fn_scope);
+                        if (ot) param_type = ot;
                     }
                 }
-                
+
                 add_symbol(&fn_scope, fn->params[j], param_type, true);
             }
-            
+
             // Check function body with parameters in scope
             if (fn->body) {
                 check_stmt(fn->body, &fn_scope);
@@ -6254,6 +6333,11 @@ void check_program(Program* prog) {
                             }
                         }
                         param_type = array_type;
+                    } else if (fn->param_types[j]->type == EXPR_OPTIONAL_TYPE) {
+                        // `b: Struct?`/`b: int?` — Option family, so the signature
+                        // validates Some/None arguments (not the bare int default).
+                        Type* ot = check_expr(fn->param_types[j], global_scope);
+                        if (ot) param_type = ot;
                     }
                 }
                 fn_type->fn_type.param_types[j] = param_type;
@@ -6308,6 +6392,7 @@ void check_program(Program* prog) {
                     // result see the Option family (not plain int).
                     Expr* inner = fn->return_type->optional_type.inner_type;
                     Token concrete = {TOKEN_IDENT, "OptionInt", 9, 0};
+                    Type* struct_opt = NULL;
                     if (inner && inner->type == EXPR_IDENT) {
                         if (inner->token.length == 6 && memcmp(inner->token.start, "string", 6) == 0)
                             concrete = (Token){TOKEN_IDENT, "OptionString", 12, 0};
@@ -6315,9 +6400,20 @@ void check_program(Program* prog) {
                             concrete = (Token){TOKEN_IDENT, "OptionFloat", 11, 0};
                         else if (inner->token.length == 4 && memcmp(inner->token.start, "bool", 4) == 0)
                             concrete = (Token){TOKEN_IDENT, "OptionBool", 10, 0};
+                        else if (inner->token.length != 3 || memcmp(inner->token.start, "int", 3) != 0) {
+                            // `-> Struct?` — resolve the user struct and make its
+                            // monomorphic Option<Struct> family the signature type.
+                            Symbol* st = find_symbol(global_scope, inner->token);
+                            if (st && st->type && st->type->kind == TYPE_STRUCT)
+                                struct_opt = register_option_struct_family(st->type);
+                        }
                     }
-                    Symbol* sym = find_symbol(global_scope, concrete);
-                    fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
+                    if (struct_opt) {
+                        fn_type->fn_type.return_type = struct_opt;
+                    } else {
+                        Symbol* sym = find_symbol(global_scope, concrete);
+                        fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
+                    }
                 } else if (fn->return_type->type == EXPR_ARRAY) {
                     // Array type like [int] or [string]
                     Type* array_type = make_type(TYPE_ARRAY);
@@ -6611,9 +6707,15 @@ void check_program(Program* prog) {
                             }
                         }
                         param_type = array_type;
+                    } else if (fn->param_types[j]->type == EXPR_OPTIONAL_TYPE) {
+                        // `b: Struct?` / `b: int?` — resolve to the Option family so
+                        // the fn signature (used for call validation) matches Some/None
+                        // arguments instead of defaulting to int.
+                        Type* ot = check_expr(fn->param_types[j], &local_scope);
+                        if (ot) param_type = ot;
                     }
                 }
-                
+
                 // T1.5.2: Type check default parameter values
                 if (fn->param_defaults && fn->param_defaults[j]) {
                     Type* default_type = check_expr(fn->param_defaults[j], &local_scope);

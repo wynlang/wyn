@@ -44,14 +44,27 @@ static void codegen_string_push_transfer(Expr* value) {
 // string constant; NULL only if payload type is unknown.
 static const char* wyn_ctor_family(Type* payload, const char* kind) {
     // Suffix from the payload's own kind: string->String, float->Float,
-    // bool->Bool, everything else (int/struct/…) falls back to the Int family.
+    // bool->Bool, a user struct -> the struct's own name (a monomorphic
+    // Option<Struct>/Result<Struct> family emitted per-program), everything else
+    // (int/…) falls back to the Int family.
+    static char buf[128];
+    if (payload && payload->kind == TYPE_STRUCT && payload->struct_type.name.length > 0) {
+        char sname[96]; token_to_cstr(sname, sizeof(sname), payload->struct_type.name);
+        // Only Option currently supports a struct payload family; Result<Struct,_>
+        // stays on the Int catch-all until a Result-struct family exists.
+        if (strcmp(kind, "Option") == 0) {
+            extern void register_option_struct(const char*);
+            register_option_struct(sname);
+            snprintf(buf, sizeof(buf), "Option%s", sname);
+            return buf;
+        }
+    }
     const char* suf = "Int";
     if (payload) {
         if (payload->kind == TYPE_STRING) suf = "String";
         else if (payload->kind == TYPE_FLOAT) suf = "Float";
         else if (payload->kind == TYPE_BOOL) suf = "Bool";
     }
-    static char buf[24];
     snprintf(buf, sizeof(buf), "%s%s", kind, suf);
     return buf;
 }
@@ -3490,6 +3503,12 @@ void codegen_expr(Expr* expr) {
                 else if (strcmp(_mtn, "OptionString") == 0) { opt_kind = 1; opt_val_is_str = 1; opt_val_cty = "const char*"; }
                 else if (strcmp(_mtn, "OptionFloat") == 0) { opt_kind = 1; opt_val_cty = "double"; }
                 else if (strcmp(_mtn, "OptionBool") == 0) { opt_kind = 1; opt_val_cty = "bool"; }
+                else if (strncmp(_mtn, "Option", 6) == 0) {
+                    // Monomorphic Option<Struct> (OptionUser): payload is the struct
+                    // value, bound by value.
+                    static char _osmcty[96]; snprintf(_osmcty, sizeof(_osmcty), "%s", _mtn + 6);
+                    opt_kind = 1; opt_val_cty = _osmcty;
+                }
                 else if (strcmp(_mtn, "ResultInt") == 0) { opt_kind = 2; opt_val_cty = "long long"; }
                 else if (strcmp(_mtn, "ResultString") == 0) { opt_kind = 2; opt_val_is_str = 1; opt_val_cty = "const char*"; }
                 else if (strcmp(_mtn, "ResultFloat") == 0) { opt_kind = 2; opt_val_cty = "double"; }

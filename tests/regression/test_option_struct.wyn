@@ -1,0 +1,64 @@
+// Regression: optional USER STRUCTS — `Struct?` now compiles and works.
+// Previously only int/string/float/bool had Option families, so a struct payload
+// mis-lowered to OptionInt (`OptionInt_Some((User){...})` → C type error), the fn
+// returned WynOptional*, and match bound the payload as `long long`. Now each user
+// struct used as `S?` gets a monomorphic Option<S> family emitted per-program.
+// Covers: `-> S?` return, Some/None, match binding, is_some/is_none, unwrap,
+// unwrap_or, `var v: S? =` annotation, `S?` parameter, expression-form match.
+// EXPECT: amy 30
+// EXPECT: empty
+// EXPECT: 3
+// EXPECT: 0
+// EXPECT: 8
+// EXPECT: 1
+// EXPECT: 42
+// EXPECT: -1
+struct User { name: string, age: int }
+struct Point { x: int, y: int }
+struct Box { v: int }
+
+fn find(id: int) -> User? {
+    if id == 1 { return Some(User { name: "amy", age: 30 }) }
+    return None
+}
+
+fn get(f: bool) -> Point? {
+    if f { return Some(Point { x: 3, y: 4 }) }
+    return None
+}
+
+// `Box?` parameter + expression-form match binding the struct payload
+fn describe(b: Box?) -> int {
+    return match b {
+        Some(x) => x.v,
+        None => -1,
+    }
+}
+
+fn main() {
+    // return S?, statement-form match binding user.name/user.age, is_some
+    var u = find(1)
+    match u {
+        Some(user) => println("${user.name} ${user.age}"),
+        None => println("not found"),
+    }
+    var v = find(2)
+    if v.is_some() { println("found") } else { println("empty") }
+
+    // unwrap / unwrap_or / is_none
+    var p = get(true)
+    println(p.unwrap().x)                       // 3
+    var q = get(false)
+    var dflt = q.unwrap_or(Point { x: 0, y: 0 })
+    println(dflt.x + dflt.y)                     // 0
+
+    // `var v: S? =` annotation
+    var explicit: Point? = Some(Point { x: 7, y: 8 })
+    if explicit.is_some() { println(explicit.unwrap().y) }  // 8
+    println(q.is_none())                          // true
+
+    // Box? param + expression-form match
+    println(describe(Some(Box { v: 42 })))         // 42
+    var nb: Box? = None
+    println(describe(nb))                          // -1
+}

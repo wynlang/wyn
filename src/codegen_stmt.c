@@ -353,6 +353,13 @@ void codegen_stmt(Stmt* stmt) {
                         c_type = "OptionFloat";
                     } else if (inner && inner->type == EXPR_IDENT && inner->token.length == 4 && memcmp(inner->token.start, "bool", 4) == 0) {
                         c_type = "OptionBool";
+                    } else if (inner && inner->type == EXPR_IDENT &&
+                               ({ char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner->token);
+                                  extern int is_known_struct(const char*); is_known_struct(_stn); })) {
+                        // `var v: Struct? = ...` -> the Option<Struct> family.
+                        char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner->token);
+                        static char _osann[128]; snprintf(_osann, sizeof(_osann), "Option%s", _stn);
+                        c_type = _osann;
                     } else {
                         c_type = "WynOptional*";
                         needs_arc_management = true;
@@ -958,9 +965,25 @@ void codegen_stmt(Stmt* stmt) {
                       register_struct_var(_svn, struct_type); }
                     needs_arc_management = false;
                 } else if (stmt->var.init->type == EXPR_SOME || stmt->var.init->type == EXPR_NONE) {
-                    // Optional type
-                    c_type = "WynOptional*";
-                    needs_arc_management = true;
+                    // Optional type. If the checker resolved a concrete Option family
+                    // (OptionInt/String/…/OptionStruct), use it so the var-decl C type
+                    // matches the Some(...)/None initializer and a later match detects
+                    // the family. Falls back to the generic boxed WynOptional*.
+                    if (stmt->var.init->expr_type && stmt->var.init->expr_type->kind == TYPE_STRUCT &&
+                        stmt->var.init->expr_type->struct_type.name.length > 0) {
+                        static char _osvbuf[128];
+                        token_to_cstr(_osvbuf, sizeof(_osvbuf), stmt->var.init->expr_type->struct_type.name);
+                        if (strncmp(_osvbuf, "Option", 6) == 0) {
+                            c_type = _osvbuf;
+                            needs_arc_management = false;
+                            char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                            extern void register_enum_var(const char*, const char*);
+                            register_enum_var(_vn, _osvbuf);
+                        } else { c_type = "WynOptional*"; needs_arc_management = true; }
+                    } else {
+                        c_type = "WynOptional*";
+                        needs_arc_management = true;
+                    }
                 } else if (stmt->var.init->type == EXPR_OK || stmt->var.init->type == EXPR_ERR) {
                     // TASK-026: Result type
                     c_type = "WynResult*";
@@ -1137,11 +1160,11 @@ void codegen_stmt(Stmt* stmt) {
                                     char _cfn[128]; token_to_cstr(_cfn, sizeof(_cfn), stmt->var.init->call.callee->token);
                                     extern const char* get_function_return_type(const char*);
                                     const char* _frt = get_function_return_type(_cfn);
-                                    if (_frt && (strcmp(_frt,"OptionInt")==0 || strcmp(_frt,"OptionString")==0 ||
-                                                 strcmp(_frt,"OptionFloat")==0 || strcmp(_frt,"OptionBool")==0 ||
-                                                 strcmp(_frt,"ResultInt")==0 || strcmp(_frt,"ResultString")==0 ||
-                                                 strcmp(_frt,"ResultFloat")==0 || strcmp(_frt,"ResultBool")==0)) {
-                                        static char _orbuf[32]; snprintf(_orbuf, sizeof(_orbuf), "%s", _frt);
+                                    // Accept any Option*/Result* family — including a
+                                    // monomorphic OptionStruct (e.g. OptionUser) — not
+                                    // just the four builtin scalar families.
+                                    if (_frt && (strncmp(_frt,"Option",6)==0 || strncmp(_frt,"Result",6)==0)) {
+                                        static char _orbuf[128]; snprintf(_orbuf, sizeof(_orbuf), "%s", _frt);
                                         c_type = _orbuf; _found_result = true;
                                         char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                                         extern void register_enum_var(const char*, const char*);
@@ -1547,10 +1570,10 @@ void codegen_stmt(Stmt* stmt) {
             // annotation names (e.g. `var o: string? = None()` -> OptionString).
             extern const char* current_assign_target_kind;
             const char* _prev_assign_kind = current_assign_target_kind;
-            if (strcmp(c_type, "OptionInt") == 0 || strcmp(c_type, "OptionString") == 0 ||
-                strcmp(c_type, "OptionFloat") == 0 || strcmp(c_type, "OptionBool") == 0 ||
-                strcmp(c_type, "ResultInt") == 0 || strcmp(c_type, "ResultString") == 0 ||
-                strcmp(c_type, "ResultFloat") == 0 || strcmp(c_type, "ResultBool") == 0)
+            // Any concrete Option*/Result* family (including a monomorphic
+            // OptionStruct like OptionBox) sets the target so a bare Some/None/Ok/Err
+            // initializer lowers to the exact family the annotation names.
+            if (strncmp(c_type, "Option", 6) == 0 || strncmp(c_type, "Result", 6) == 0)
                 current_assign_target_kind = c_type;
             else
                 current_assign_target_kind = NULL;
@@ -2141,7 +2164,16 @@ void codegen_stmt(Stmt* stmt) {
                         else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return_type = "OptionString";
                         else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return_type = "OptionFloat";
                         else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return_type = "OptionBool";
-                        else return_type = "WynOptional*";
+                        else {
+                            // `-> Struct?` -> the monomorphic Option<Struct> family.
+                            char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                            extern int is_known_struct(const char*);
+                            if (is_known_struct(_stn)) {
+                                static char _ostrt[128];
+                                snprintf(_ostrt, sizeof(_ostrt), "Option%s", _stn);
+                                return_type = _ostrt;
+                            } else return_type = "WynOptional*";
+                        }
                     } else {
                         return_type = "WynOptional*";
                     }
@@ -2306,11 +2338,33 @@ void codegen_stmt(Stmt* stmt) {
                         // Handle array types [type] - pass as WynArray
                         param_type = "WynArray";
                     } else if (stmt->fn.param_types[i]->type == EXPR_OPTIONAL_TYPE) {
-                        // T2.5.1: Handle optional types - use WynOptional* for proper optional handling
+                        // T2.5.1: Optional param. int?/string?/…/Struct? map to the
+                        // concrete Option family; otherwise the generic WynOptional*.
+                        Expr* _inr = stmt->fn.param_types[i]->optional_type.inner_type;
+                        static char _opbuf2[128];
                         param_type = "WynOptional*";
+                        if (_inr && _inr->type == EXPR_IDENT) {
+                            Token t = _inr->token;
+                            if (t.length == 3 && memcmp(t.start, "int", 3) == 0) param_type = "OptionInt";
+                            else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) param_type = "OptionString";
+                            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) param_type = "OptionFloat";
+                            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) param_type = "OptionBool";
+                            else {
+                                char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                                extern int is_known_struct(const char*);
+                                if (is_known_struct(_stn)) { snprintf(_opbuf2, sizeof(_opbuf2), "Option%s", _stn); param_type = _opbuf2; }
+                            }
+                        }
+                        // Register the param as an Option-family var so a match on it
+                        // detects the family (mirrors how return-typed vars register).
+                        if (strncmp(param_type, "Option", 6) == 0) {
+                            char _pn[128]; token_to_cstr(_pn, sizeof(_pn), stmt->fn.params[i]);
+                            extern void register_enum_var(const char*, const char*);
+                            register_enum_var(_pn, param_type);
+                        }
                     }
                 }
-                
+
                 // Emit with pointer for mut params
                 bool is_mut_p = stmt->fn.param_mutable && stmt->fn.param_mutable[i];
                 char _pn[256]; token_to_cstr(_pn, sizeof(_pn), stmt->fn.params[i]);
@@ -2414,7 +2468,16 @@ void codegen_stmt(Stmt* stmt) {
                 else if (inner && inner->type == EXPR_IDENT && inner->token.length == 4 &&
                     memcmp(inner->token.start, "bool", 4) == 0)
                     current_fn_return_kind = "OptionBool";
-                else
+                else if (inner && inner->type == EXPR_IDENT) {
+                    // `-> Struct?` -> Option<Struct> family so body Some/None resolve.
+                    char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner->token);
+                    extern int is_known_struct(const char*);
+                    if (is_known_struct(_stn)) {
+                        static char _osrk[128];
+                        snprintf(_osrk, sizeof(_osrk), "Option%s", _stn);
+                        current_fn_return_kind = _osrk;
+                    } else current_fn_return_kind = "OptionInt";
+                } else
                     current_fn_return_kind = "OptionInt";
             } else if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_TUPLE) {
                 static char _tup_rk[128];
