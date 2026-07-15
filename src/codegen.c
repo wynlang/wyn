@@ -1285,6 +1285,23 @@ int is_data_enum_type(const char* name) {
     return 0;
 }
 
+// Registry of user-struct names that need a monomorphic Option<Struct> family
+// (`OptionUser` for a `User?`). Populated as struct-payload optionals are seen in
+// codegen; the concrete families are emitted into the generated C right after the
+// user struct typedefs (they cannot live in wyn_runtime.h, which precedes them).
+static char* needed_option_structs[128];
+static int needed_option_struct_count = 0;
+void register_option_struct(const char* struct_name) {
+    for (int i = 0; i < needed_option_struct_count; i++)
+        if (strcmp(needed_option_structs[i], struct_name) == 0) return;
+    if (needed_option_struct_count < 128)
+        needed_option_structs[needed_option_struct_count++] = strdup(struct_name);
+}
+int option_struct_count(void) { return needed_option_struct_count; }
+const char* option_struct_name(int i) {
+    return (i >= 0 && i < needed_option_struct_count) ? needed_option_structs[i] : NULL;
+}
+
 // Track variables that hold data-carrying enum types
 static struct { char var_name[64]; char enum_name[64]; } enum_var_map[128];
 static int enum_var_count = 0;
