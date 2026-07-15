@@ -3336,10 +3336,12 @@ void codegen_stmt(Stmt* stmt) {
                 bool is_string_array = false;
                 bool is_struct_array = false;
                 bool is_float_array = false;
+                bool is_enum_array = false;
+                char enum_arr_type[128] = "";
                 Type* elem_type = NULL;
-                
+
                 // Check if array expression has type info
-                if (stmt->for_stmt.array_expr->expr_type && 
+                if (stmt->for_stmt.array_expr->expr_type &&
                     stmt->for_stmt.array_expr->expr_type->kind == TYPE_ARRAY &&
                     stmt->for_stmt.array_expr->expr_type->array_type.element_type) {
                     elem_type = stmt->for_stmt.array_expr->expr_type->array_type.element_type;
@@ -3349,6 +3351,24 @@ void codegen_stmt(Stmt* stmt) {
                         is_struct_array = true;
                     } else if (elem_type->kind == TYPE_FLOAT) {
                         is_float_array = true;
+                    } else if (elem_type->kind == TYPE_ENUM && elem_type->name.length > 0) {
+                        is_enum_array = true;
+                        token_to_cstr(enum_arr_type, sizeof(enum_arr_type), elem_type->name);
+                    }
+                }
+                // Array literal whose first element is a data-enum constructor
+                // (`[E.A(..), ...]`): the checker doesn't type these, so detect
+                // the enum from the constructor's receiver.
+                if (!is_enum_array && !is_struct_array &&
+                    stmt->for_stmt.array_expr->type == EXPR_ARRAY &&
+                    stmt->for_stmt.array_expr->array.count > 0) {
+                    Expr* e0 = stmt->for_stmt.array_expr->array.elements[0];
+                    if (e0->type == EXPR_METHOD_CALL && e0->method_call.object->type == EXPR_IDENT) {
+                        char _en[128]; token_to_cstr(_en, sizeof(_en), e0->method_call.object->token);
+                        extern int is_data_enum_type(const char*);
+                        if (is_data_enum_type(_en)) { is_enum_array = true; snprintf(enum_arr_type, sizeof(enum_arr_type), "%s", _en); }
+                    } else if (e0->expr_type && e0->expr_type->kind == TYPE_ENUM && e0->expr_type->name.length > 0) {
+                        is_enum_array = true; token_to_cstr(enum_arr_type, sizeof(enum_arr_type), e0->expr_type->name);
                     }
                 }
                 // Array literal with a float first element -> float array.
@@ -3380,7 +3400,18 @@ void codegen_stmt(Stmt* stmt) {
                     }
                 }
                 
-                if (is_struct_array && elem_type) {
+                if (is_enum_array && enum_arr_type[0]) {
+                    // Data-enum values are stored by value as structs; bind the
+                    // loop var to the enum type and register it so `match x` /
+                    // methods on it lower correctly.
+                    emit("%s %.*s = *(%s*)__elem.data.struct_val;\n",
+                         enum_arr_type,
+                         stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start,
+                         enum_arr_type);
+                    char _lv[128]; token_to_cstr(_lv, sizeof(_lv), stmt->for_stmt.loop_var);
+                    extern void register_enum_var(const char*, const char*);
+                    register_enum_var(_lv, enum_arr_type);
+                } else if (is_struct_array && elem_type) {
                     Token type_name = elem_type->struct_type.name;
                     emit("%.*s %.*s = *(%.*s*)__elem.data.struct_val;\n",
                          type_name.length, type_name.start,
