@@ -473,6 +473,23 @@ void codegen_stmt(Stmt* stmt) {
                     c_type = "WynMap";
                     needs_arc_management = true;
                 } else if (stmt->var.init->type == EXPR_METHOD_CALL) {
+                    // Enum constructor `var s = Shape.Rect(...)` (object is the enum
+                    // type name): the var holds the enum value. Register it as an
+                    // enum var + use the enum's C type so `match s { ... }` lowers
+                    // via tags. (Without this, an inferred-type enum var wasn't
+                    // tracked and statement-form match misrouted it.)
+                    if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
+                        char _en[128]; token_to_cstr(_en, sizeof(_en), stmt->var.init->method_call.object->token);
+                        extern int is_enum_type(const char*);
+                        if (is_enum_type(_en)) {
+                            static char _enbuf[128]; snprintf(_enbuf, sizeof(_enbuf), "%s", _en);
+                            c_type = _enbuf;
+                            char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                            extern void register_enum_var(const char*, const char*);
+                            register_enum_var(_vn, _en);
+                            goto var_type_done;
+                        }
+                    }
                     // Check if this is a struct method call — infer return type
                     bool _found_method_rt = false;
                     if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
@@ -2379,6 +2396,21 @@ void codegen_stmt(Stmt* stmt) {
                     // This is handled by the simpler case above when the last stmt IS the return
                 }
             }
+            // Register enum-typed parameters so `match param { ... }` in the body
+            // recognizes it as a data enum (drives correct tag-based lowering).
+            // Params aren't otherwise tracked in codegen's enum-var map.
+            for (int pi = 0; pi < stmt->fn.param_count; pi++) {
+                if (stmt->fn.param_types[pi] && stmt->fn.param_types[pi]->type == EXPR_IDENT) {
+                    char _pt[128]; token_to_cstr(_pt, sizeof(_pt), stmt->fn.param_types[pi]->token);
+                    extern int is_enum_type(const char*);
+                    if (is_enum_type(_pt)) {
+                        char _pn[128]; token_to_cstr(_pn, sizeof(_pn), stmt->fn.params[pi]);
+                        extern void register_enum_var(const char*, const char*);
+                        register_enum_var(_pn, _pt);
+                    }
+                }
+            }
+
             if (_is_tco) emit("    __tco_start: ;\n");
             {
                 // If TCO, emit all statements except the last (which we'll convert)
