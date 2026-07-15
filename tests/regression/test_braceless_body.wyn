@@ -1,0 +1,38 @@
+// Regression: braceless single-statement bodies for for/if/else/while (C/JS-style),
+// e.g. `for i in 0..n\n  stmt`. Previously all control-flow bodies required { }.
+// The braceless form binds EXACTLY ONE statement — a following line is NOT part of
+// the body (documented footgun). Braced bodies still work; the two forms coexist.
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: big
+// EXPECT: 3
+// EXPECT: after
+// EXPECT: 20
+// EXPECT: 30
+fn main() {
+    // braceless for
+    for i in 0..3
+        println(i)
+
+    // braceless if / else
+    var x = 5
+    if x > 3
+        println("big")
+    else
+        println("small")
+
+    // braceless while
+    var n = 0
+    while n < 3
+        n = n + 1
+    println(n)
+
+    // footgun: the line after a braceless body is NOT in the loop
+    for _ in 0..3
+        x = x + 1
+    println("after")   // prints once, not per-iteration
+
+    // braced bodies still work, interleaved
+    for k in 2..4 { println(k * 10) }
+}
