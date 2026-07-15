@@ -2873,6 +2873,21 @@ void codegen_expr(Expr* expr) {
                     emit("{ WynArray __tmp_%d = ", arr_id * 100 + i);
                     codegen_expr(elem);
                     emit("; array_push_array(&__arr_%d, &__tmp_%d); } ", arr_id, arr_id * 100 + i);
+                } else if ((elem->expr_type && elem->expr_type->kind == TYPE_ENUM) ||
+                           (elem->type == EXPR_METHOD_CALL &&
+                            elem->method_call.object->type == EXPR_IDENT &&
+                            ({ char _en[128]; token_to_cstr(_en, sizeof(_en), elem->method_call.object->token);
+                               extern int is_data_enum_type(const char*); is_data_enum_type(_en); }))) {
+                    // Data-enum value (a tagged-union struct), e.g. `E.A(5)` — push
+                    // by value like a struct, using the enum type as the C type.
+                    char _en[128];
+                    if (elem->expr_type && elem->expr_type->kind == TYPE_ENUM && elem->expr_type->name.length > 0)
+                        token_to_cstr(_en, sizeof(_en), elem->expr_type->name);
+                    else
+                        token_to_cstr(_en, sizeof(_en), elem->method_call.object->token);
+                    emit("array_push_struct(&__arr_%d, ", arr_id);
+                    codegen_expr(elem);
+                    emit(", %s); ", _en);
                 } else {
                     // Check element type to use correct push function
                     Type* etype = elem->expr_type;

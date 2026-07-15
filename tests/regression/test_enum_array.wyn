@@ -1,0 +1,25 @@
+// Regression: an array of data-enum values ([E.A(5), E.B(3,4)]) codegen'd
+// array_push_int on a struct (type error), and iterating it bound the loop var
+// as long long instead of the enum. Now enum values push by value (as structs)
+// and the for-loop binds the loop var to the enum type (+ registers it, so
+// `match x` / methods work). Exercises the realistic combo of array + enum +
+// for + match + multi-field.
+enum Expr { Num(int), Add(int, int), Mul(int, int) }
+fn eval(e: Expr) -> int {
+    match e {
+        Num(n) => return n
+        Add(a, b) => return a + b
+        Mul(a, b) => return a * b
+    }
+    return 0
+}
+fn main() -> int {
+    var exprs = [Expr.Num(5), Expr.Add(3, 4), Expr.Mul(6, 7)]
+    for e in exprs {
+        println(eval(e).to_string())
+    }
+    return 0
+}
+// EXPECT: 5
+// EXPECT: 7
+// EXPECT: 42
