@@ -162,10 +162,18 @@ void* future_get(Future* f) {
         __asm__ volatile("isb");
         #endif
     }
-    // Help drain queue while waiting
+    // Help drain queue while waiting. With WYN_ASYNC_CORO the awaited task is a
+    // coroutine on the M:N scheduler, so main must PUMP the scheduler (M1) — run
+    // ready coro tasks itself — otherwise on a low-core box (no idle workers) the
+    // task would never run and this would deadlock. Fall back to the pool drain
+    // when the flag is off (awaited tasks are pool threads then).
     extern int pool_try_run_one(void);
+    extern int wyn_sched_pump_one(void);
+    static int async_coro = -1;
+    if (async_coro < 0) async_coro = getenv("WYN_ASYNC_CORO") ? 1 : 0;
     while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY) {
-        if (!pool_try_run_one()) sched_yield();
+        int did = async_coro ? wyn_sched_pump_one() : pool_try_run_one();
+        if (!did) sched_yield();
     }
     atomic_fetch_sub(&ws_blocked, 1);
     void* r = f->result;

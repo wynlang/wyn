@@ -84,6 +84,14 @@ jobs:
         run: bash tests/run_bdd.sh
         shell: bash
 
+      - name: Run suite on the coroutine async substrate (W8, Unix)
+        # WYN_ASYNC_CORO=1 runs awaited spawn/await_all/parallel as coroutines on
+        # the M:N scheduler instead of the thread pool. The suite must be
+        # behavior-identical on both substrates.
+        if: runner.os != 'Windows'
+        run: WYN_ASYNC_CORO=1 bash tests/run_bdd.sh
+        shell: bash
+
       - name: Run test suite (Windows)
         if: runner.os == 'Windows'
         run: |
