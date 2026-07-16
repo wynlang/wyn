@@ -101,6 +101,8 @@ static bool is_ptr_type(Type* t) {
            memcmp(t->struct_type.name.start, "void*", 5) == 0;
 }
 
+static StructStmt* find_struct_definition(Token struct_name);
+Type* make_type(TypeKind kind);
 static Type* extern_map_type(Expr* type_expr) {
     if (!type_expr) return builtin_void;
     if (type_expr->type == EXPR_IDENT) {
@@ -109,9 +111,23 @@ static Type* extern_map_type(Expr* type_expr) {
         if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return builtin_float;
         if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return builtin_bool;
         if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return builtin_string;
+        // `char*` / `cstr`: a raw C string, distinct from Wyn's UTF-8 `string`.
+        // Typed as string on the Wyn side (both are char*), but codegen emits a
+        // plain `char*` (not the owned/const-managed string path).
+        if (t.length == 4 && memcmp(t.start, "cstr", 4) == 0) return builtin_string;
         if (t.length == 4 && memcmp(t.start, "void", 4) == 0) return builtin_void;
         if (t.length == 3 && memcmp(t.start, "ptr", 3) == 0) return builtin_ptr;
+        // A user struct passed/returned by value across FFI: resolve to its
+        // struct Type so calls type-check (codegen emits the C struct by value).
+        StructStmt* sd = find_struct_definition(t);
+        if (sd) {
+            Type* st = make_type(TYPE_STRUCT);
+            st->struct_type.name = t;
+            return st;
+        }
     }
+    // `char*` written as a pointer type expression (EXPR_UNARY '*' on char, if the
+    // parser produces one) — treat like cstr. Fallback: opaque machine word.
     return builtin_int;
 }
 static bool had_error = false;

@@ -2706,7 +2706,11 @@ void codegen_stmt(Stmt* stmt) {
                         } else if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                             c_type = "long long";
                         } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
-                            c_type = "float";
+                            // Wyn `float` is C `double` (64-bit) everywhere — values,
+                            // params, returns — so a struct field must be `double`
+                            // too. Emitting `float` (32-bit) truncated precision on
+                            // assignment and broke by-value FFI struct layout.
+                            c_type = "double";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) {
                             c_type = "const char*"; // Always use simple strings for now
                         } else if (type_name.length == 3 && memcmp(type_name.start, "str", 3) == 0) {
