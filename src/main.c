@@ -7,6 +7,12 @@
 #include <sys/stat.h>
 #ifndef _WIN32
 #include <unistd.h>
+#else
+// mingw under -std=c11 defines __STRICT_ANSI__, which hides the MS-specific
+// _isatty/_fileno declarations in <io.h>. Forward-declare them (same approach as
+// lsp.c) so the interactive `wyn add` TTY check compiles on Windows.
+int _isatty(int fd);
+int _fileno(FILE* stream);
 #endif
 #include <time.h>
 #ifndef _WIN32
@@ -2187,7 +2193,20 @@ int main(int argc, char** argv) {
         }
         extern int wyn_cpkg_add(const char*, const char*, const char*);
         extern int wyn_cpkg_list(const char*);
-        if (argc < 3) return wyn_cpkg_list(add_root);
+        extern int wyn_cpkg_tui(const char*, const char*);
+        if (argc >= 3 && strcmp(argv[2], "--list") == 0) return wyn_cpkg_list(add_root);
+        if (argc < 3) {
+            // No package named: launch the interactive picker on a TTY, else just
+            // print the list (pipes / CI / non-interactive).
+#ifndef _WIN32
+            if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO))
+                return wyn_cpkg_tui(add_root, detect_cc());
+#else
+            if (_isatty(_fileno(stdin)) && _isatty(_fileno(stdout)))
+                return wyn_cpkg_tui(add_root, detect_cc());
+#endif
+            return wyn_cpkg_list(add_root);
+        }
         return wyn_cpkg_add(argv[2], add_root, detect_cc());
     }
 
