@@ -14,8 +14,8 @@ fn increment(counter: int) -> int {
 }
 
 fn main() -> int {
-    println("=== Spawn Concurrency ===")
-    println("")
+    print("=== Spawn Concurrency ===")
+    print("")
 
     // Spawn 100 workers and collect results with await_all
     var futures = []
@@ -24,10 +24,10 @@ fn main() -> int {
     }
     var results = await_all(futures)
 
-    println("Spawned 100 workers concurrently")
-    println("  worker(0)  = ${results[0]}")
-    println("  worker(50) = ${results[50]}")
-    println("  worker(99) = ${results[99]}")
+    print("Spawned 100 workers concurrently")
+    print("  worker(0)  = ${results[0]}")
+    print("  worker(50) = ${results[50]}")
+    print("  worker(99) = ${results[99]}")
 
     // Verify all results
     var correct = true
@@ -37,7 +37,7 @@ fn main() -> int {
         }
     }
     if correct {
-        println("  ✓ All 100 results correct")
+        print("  ✓ All 100 results correct")
     }
 
     // Shared atomic counter — safe concurrent mutation
@@ -47,8 +47,8 @@ fn main() -> int {
         inc_futures.push(spawn increment(counter))
     }
     await_all(inc_futures)
-    println("  Shared counter: ${Shared.get(counter)} (expected 100)")
+    print("  Shared counter: ${Shared.get(counter)} (expected 100)")
 
-    println("")
+    print("")
     return 0
 }

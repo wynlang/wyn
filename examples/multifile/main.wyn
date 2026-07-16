@@ -4,8 +4,8 @@
 import utils
 
 fn main() -> int {
-    println("${utils.square(5)}")
-    println("${utils.cube(3)}")
-    println("${utils.factorial(5)}")
+    print("${utils.square(5)}")
+    print("${utils.cube(3)}")
+    print("${utils.factorial(5)}")
     return 0
 }

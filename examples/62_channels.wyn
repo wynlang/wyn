@@ -31,6 +31,6 @@ fn main() -> int {
     }
     done = await w
 
-    println("sum of squares: " + total.to_string())
+    print("sum of squares: " + total.to_string())
     return 0
 }

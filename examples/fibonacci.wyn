@@ -9,7 +9,7 @@ fn fibonacci(n: int) -> int {
 
 fn main() -> int {
     for i in 0..10 {
-        println("fib(" + i.to_string() + ") = " + fibonacci(i).to_string())
+        print("fib(" + i.to_string() + ") = " + fibonacci(i).to_string())
     }
     return 0
 }

@@ -2,19 +2,19 @@
 // Use "str" * n to repeat a string n times.
 
 fn main() -> int {
-    println("ha" * 3);          // hahaha
-    println("=-" * 10);         // = - = - = - = - = - = - = - = - = - = -
+    print("ha" * 3);          // hahaha
+    print("=-" * 10);         // = - = - = - = - = - = - = - = - = - = -
 
     // Useful for formatting
     var sep = "-" * 30
-    println(sep)
-    println("  Report Title")
-    println(sep)
+    print(sep)
+    print("  Report Title")
+    print(sep)
 
     // Works with variables
     var star = "*"
     for i in 1..6 {
-        println(star * i)
+        print(star * i)
     }
     // *
     // **
