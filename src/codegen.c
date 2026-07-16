@@ -234,6 +234,13 @@ int is_c_name_collision(const char* name) {
     for (int i = 0; reserved[i]; i++) {
         if (strcmp(name, reserved[i]) == 0) return 1;
     }
+    // Also treat any standard-header library symbol (the broader string.h/stdlib.h/
+    // math.h/… set, incl. finite/j0/gamma and the f/l math variants) as a collision,
+    // so a user fn/var with that name is emitted under the wynfn_ prefix rather than
+    // clashing with the libc declaration on platforms that declare it (e.g. glibc's
+    // `finite`, which broke a build on Linux but not macOS).
+    extern int is_std_header_symbol(const char* name);
+    if (is_std_header_symbol(name)) return 1;
     return 0;
 }
 

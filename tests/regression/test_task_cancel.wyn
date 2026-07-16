@@ -24,7 +24,7 @@ fn cancellable(counter: int) -> int {
     return 0
 }
 
-fn finite(counter: int) -> int {
+fn bounded(counter: int) -> int {
     var i = 0
     while i < 50 {
         if Task.is_cancelled() { return -1 }
@@ -48,7 +48,7 @@ fn main() -> int {
 
     // A task that is never cancelled runs to completion.
     var c2 = Shared.new(0)
-    var h2 = spawn finite(c2)
+    var h2 = spawn bounded(c2)
     var r2 = await h2
     println("completed ${Shared.get(c2)}")
 
