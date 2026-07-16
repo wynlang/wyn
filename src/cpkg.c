@@ -48,6 +48,8 @@ typedef struct {
     char lib_dirs[256];
     char include_dirs[512];
     char headers[512];
+    char pkgconfig[64];   // pkg-config module name (e.g. "libcrypto" for [crypto]);
+                          // defaults to the recipe name when unset.
     int found;
 } Recipe;
 
@@ -117,6 +119,7 @@ static int registry_scan(const char* wyn_root, const char* want, Recipe* out) {
         else if (strcmp(key, "lib_dirs") == 0)     strncpy(out->lib_dirs, val, sizeof(out->lib_dirs)-1);
         else if (strcmp(key, "include_dirs") == 0) strncpy(out->include_dirs, val, sizeof(out->include_dirs)-1);
         else if (strcmp(key, "headers") == 0)      strncpy(out->headers, val, sizeof(out->headers)-1);
+        else if (strcmp(key, "pkgconfig") == 0)    strncpy(out->pkgconfig, val, sizeof(out->pkgconfig)-1);
     }
     // flush the last section in list mode
     if (!want && section[0] && cur_desc[0]) { printf("  %-14s %s\n", section, cur_desc); listed++; }
@@ -322,8 +325,11 @@ int wyn_cpkg_add(const char* name, const char* wyn_root, const char* cc) {
     printf("Adding C package '%s' — %s\n", r.name, r.description);
 
     // 1. Resolve include dirs (pkg-config, best-effort; absent on some platforms).
+    // Use the recipe's pkgconfig module name if given (it often differs from the
+    // recipe name, e.g. [crypto] -> "libcrypto"), else fall back to the name.
+    const char* pc_name = r.pkgconfig[0] ? r.pkgconfig : r.name;
     char pc_includes[1024] = "";
-    if (pkgconfig_cflags(r.name, pc_includes, sizeof(pc_includes)))
+    if (pkgconfig_cflags(pc_name, pc_includes, sizeof(pc_includes)))
         printf("  pkg-config: %s\n", pc_includes);
 
     // 2. Create ./packages/<name>/ and generate bindings for each header.

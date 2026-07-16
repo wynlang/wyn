@@ -43,3 +43,52 @@ headers = "sqlite3.h"
 system.brew = "sqlite"
 system.apt = "libsqlite3-dev"
 system.pacman = "sqlite"
+
+[crypto]
+description = "OpenSSL libcrypto — hashing (SHA/MD5), ciphers, RSA/EC, random"
+version = "system"
+libs = "crypto"
+pkgconfig = "libcrypto"
+headers = "openssl/sha.h, openssl/evp.h, openssl/rand.h"
+system.brew = "openssl"
+system.apt = "libssl-dev"
+system.pacman = "openssl"
+
+[ssl]
+description = "OpenSSL libssl — TLS/SSL client and server sockets"
+version = "system"
+libs = "ssl, crypto"
+pkgconfig = "libssl"
+headers = "openssl/ssl.h"
+system.brew = "openssl"
+system.apt = "libssl-dev"
+system.pacman = "openssl"
+
+[curses]
+description = "ncurses — terminal UI (windows, input, colors)"
+version = "system"
+libs = "ncurses"
+headers = "curses.h"
+system.brew = "ncurses"
+system.apt = "libncurses-dev"
+system.pacman = "ncurses"
+
+[readline]
+description = "GNU Readline — line editing + history for interactive prompts"
+version = "system"
+libs = "readline"
+headers = "readline/readline.h, readline/history.h"
+system.brew = "readline"
+system.apt = "libreadline-dev"
+system.pacman = "readline"
+
+[xml2]
+description = "libxml2 — XML/HTML parsing (DOM, XPath, SAX)"
+version = "system"
+libs = "xml2"
+pkgconfig = "libxml-2.0"
+include_dirs = "/usr/include/libxml2, /opt/homebrew/include/libxml2, /usr/local/include/libxml2"
+headers = "libxml/parser.h, libxml/tree.h"
+system.brew = "libxml2"
+system.apt = "libxml2-dev"
+system.pacman = "libxml2"
