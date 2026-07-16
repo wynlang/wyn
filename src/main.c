@@ -7,6 +7,12 @@
 #include <sys/stat.h>
 #ifndef _WIN32
 #include <unistd.h>
+#else
+// mingw under -std=c11 defines __STRICT_ANSI__, which hides the MS-specific
+// _isatty/_fileno declarations in <io.h>. Forward-declare them (same approach as
+// lsp.c) so the interactive `wyn add` TTY check compiles on Windows.
+int _isatty(int fd);
+int _fileno(FILE* stream);
 #endif
 #include <time.h>
 #ifndef _WIN32
