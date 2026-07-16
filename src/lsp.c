@@ -354,7 +354,7 @@ static int build_completions(char* buf, int max, bool dot_trigger, const char* u
                 int vlen = end - start + 1;
                 if (vlen > 0 && vlen < 128) { memcpy(var_name, p + start, vlen); var_name[vlen] = '\0'; }
             }
-            
+
             // Look up variable type: scan for "var <name>: <Type>" or "var <name> = <Type>{"
             if (var_name[0]) {
                 const char* s = d->content;
@@ -381,7 +381,70 @@ static int build_completions(char* buf, int max, bool dot_trigger, const char* u
                     }
                 }
             }
-            
+
+            // Module-binding completion: `m.` where `m` is an imported module.
+            // Autocomplete the functions exported by ./packages/<m>/<m>.wyn (the
+            // bindings `wyn add <m>` generates), so `m.` suggests sqrt/pow/… etc.
+            if (var_name[0] && d->path[0]) {
+                // Confirm the doc imports this module (an `import <name>` line).
+                char imp_pat[160]; snprintf(imp_pat, sizeof(imp_pat), "import %s", var_name);
+                const char* imp = strstr(d->content, imp_pat);
+                bool imported = false;
+                if (imp) {
+                    // word boundary after the module name (not `import mmm`)
+                    char after = imp[strlen(imp_pat)];
+                    if (after == '\n' || after == '\r' || after == ' ' || after == '\t' || after == '\0')
+                        imported = true;
+                }
+                if (imported) {
+                    // Locate packages/<m>/<m>.wyn relative to the current doc's dir,
+                    // then fall back to ./packages/<m>/<m>.wyn (cwd).
+                    char dir[512]; snprintf(dir, sizeof(dir), "%s", d->path);
+                    char* slash = strrchr(dir, '/');
+#ifdef _WIN32
+                    char* bslash = strrchr(dir, '\\'); if (bslash > slash) slash = bslash;
+#endif
+                    if (slash) *slash = '\0'; else dir[0] = '\0';
+                    char cand[3][700];
+                    snprintf(cand[0], sizeof(cand[0]), "%s/packages/%s/%s.wyn", dir, var_name, var_name);
+                    snprintf(cand[1], sizeof(cand[1]), "%s/packages/%s.wyn", dir, var_name);
+                    snprintf(cand[2], sizeof(cand[2]), "packages/%s/%s.wyn", var_name, var_name);
+                    FILE* bf = NULL;
+                    for (int ci = 0; ci < 3 && !bf; ci++) bf = fopen(cand[ci], "r");
+                    if (bf) {
+                        char line[1024];
+                        int emitted = 0;
+                        while (fgets(line, sizeof(line), bf) && pos < max - 256 && emitted < 500) {
+                            char* s = line;
+                            while (*s == ' ' || *s == '\t') s++;
+                            if (s[0] == '/' && s[1] == '/') continue;   // skip comments / TODO decls
+                            // Accept `extern fn NAME(`, `pub fn NAME(`, `fn NAME(`.
+                            const char* kw = NULL;
+                            if (strncmp(s, "extern fn ", 10) == 0) kw = s + 10;
+                            else if (strncmp(s, "pub fn ", 7) == 0) kw = s + 7;
+                            else if (strncmp(s, "fn ", 3) == 0) kw = s + 3;
+                            if (!kw) continue;
+                            while (*kw == ' ') kw++;
+                            const char* ne = kw;
+                            while (*ne && (*ne == '_' || (*ne >= 'a' && *ne <= 'z') || (*ne >= 'A' && *ne <= 'Z') || (*ne >= '0' && *ne <= '9'))) ne++;
+                            int nlen = (int)(ne - kw);
+                            if (nlen <= 0 || nlen > 128) continue;
+                            // detail = the signature (name + params + optional -> ret), trimmed.
+                            const char* de = ne;
+                            while (*de && *de != '\n' && *de != '\r' && *de != ';') de++;
+                            int dlen = (int)(de - kw); if (dlen > 200) dlen = 200;
+                            if (pos > 1) pos += snprintf(buf+pos, max-pos, ",");
+                            pos += snprintf(buf+pos, max-pos,
+                                "{\"label\":\"%.*s\",\"kind\":3,\"detail\":\"%.*s\"}",
+                                nlen, kw, dlen, kw);
+                            emitted++;
+                        }
+                        fclose(bf);
+                        if (emitted > 0) { pos += snprintf(buf+pos, max-pos, "]"); return pos; }
+                    }
+                }
+            }
+
             // If we resolved a struct type, find its fields
             if (receiver_type[0]) {
                 char struct_pat[256]; snprintf(struct_pat, sizeof(struct_pat), "struct %s {", receiver_type);
@@ -830,8 +893,17 @@ int lsp_server_start(void) {
             }
         }
         else if (strcmp(method, "textDocument/completion") == 0) {
-            char* trigger = strstr(msg, "\"triggerCharacter\":\"");
-            bool dot = trigger && trigger[20] == '.';
+            // Tolerate optional whitespace after the JSON colon: real editors send
+            // compact JSON (`"triggerCharacter":"."`) but a lenient parse also
+            // accepts `"triggerCharacter": "."`.
+            char* trigger = strstr(msg, "\"triggerCharacter\"");
+            bool dot = false;
+            if (trigger) {
+                char* t = trigger + strlen("\"triggerCharacter\"");
+                while (*t == ' ' || *t == ':' || *t == '\t') t++;
+                if (*t == '"') t++;
+                dot = (*t == '.');
+            }
             // Extract cursor position and document for type-aware completions
             char comp_uri[512] = "";
             json_get_string(msg, "uri", comp_uri, sizeof(comp_uri));

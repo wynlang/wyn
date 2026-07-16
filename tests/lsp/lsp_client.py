@@ -190,6 +190,32 @@ def main():
     check(isinstance(dfn, dict) and dfn.get("range", {}).get("start", {}).get("line") == 0,
           "definition resolves to the declaration (line 0)")
 
+    # 7. C-package binding completion: `m.` after `import m` suggests the functions
+    #    exported by ./packages/m/m.wyn (what `wyn add m` generates), and skips
+    #    commented-out (// TODO) decls. This is the W5 feature.
+    pkgdir = os.path.join(workdir, "packages", "m")
+    os.makedirs(pkgdir, exist_ok=True)
+    with open(os.path.join(pkgdir, "m.wyn"), "w") as f:
+        f.write("// Bindings for C package 'm'\n"
+                "extern fn sqrt(a0: float) -> float;\n"
+                "extern fn pow(a0: float, a1: float) -> float;\n"
+                "// TODO: skipme — unsupported\n")
+    pkg_uri = "file://" + os.path.join(workdir, "usepkg.wyn")
+    pkg_src = "import m\nfn main() -> int {\n    var r = m.\n    return 0\n}\n"
+    c.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+            "params": {"textDocument": {"uri": pkg_uri, "languageId": "wyn",
+                                        "version": 1, "text": pkg_src}}})
+    c.send({"jsonrpc": "2.0", "id": 5, "method": "textDocument/completion",
+            "params": {"textDocument": {"uri": pkg_uri},
+                       "position": {"line": 2, "character": 14},
+                       "context": {"triggerCharacter": "."}}})
+    comp2 = c.wait_response(5)
+    items2 = comp2.get("items", []) if isinstance(comp2, dict) else comp2
+    labels2 = [it.get("label") for it in (items2 or [])]
+    check("sqrt" in labels2 and "pow" in labels2,
+          f"m. completes C-package bindings (sqrt/pow): {labels2}")
+    check("skipme" not in labels2, "m. completion skips commented-out (// TODO) decls")
+
     c.stop()
     if FAILS:
         print(f"\nlsp: FAIL ({len(FAILS)} check(s))")
