@@ -1,0 +1,20 @@
+// Regression: a `float` struct field used to emit C `float` (32-bit) while every
+// other Wyn `float` is C `double` (64-bit) — so assigning a double value into the
+// field TRUNCATED precision, and it broke by-value FFI struct layout (a Wyn struct
+// couldn't match a C struct of `double` fields). Now float fields emit `double`.
+// EXPECT: 3.14159
+// EXPECT: 2.71828
+// EXPECT: 5.85987
+// EXPECT: 25.0
+fn main() {
+    var p = Point { x: 3.14159, y: 2.71828 }
+    println(p.x)              // full precision, not a float32 truncation
+    println(p.y)
+    println(p.x + p.y)        // 5.85987
+
+    // integer-valued floats still print/behave correctly through fields
+    var q = Point { x: 3.0, y: 4.0 }
+    println(q.x * q.x + q.y * q.y)   // 25
+}
+
+struct Point { x: float, y: float }

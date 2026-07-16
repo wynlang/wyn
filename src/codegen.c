@@ -49,8 +49,17 @@ const char* extern_c_type(Expr* type_expr, bool is_return) {
         if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return "double";
         if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return "bool";
         if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return is_return ? "char*" : "const char*";
+        // `cstr` — a raw C string; emit a plain `char*` both ways (no const/owned
+        // wrapping), so it round-trips through C funcs taking/returning char*.
+        if (t.length == 4 && memcmp(t.start, "cstr", 4) == 0) return "char*";
         if (t.length == 4 && memcmp(t.start, "void", 4) == 0) return "void";
         if (t.length == 3 && memcmp(t.start, "ptr", 3) == 0) return "void*";
+        // A user struct by value — emit the C struct name (Wyn emits the struct
+        // typedef with matching field layout, so it passes/returns by value).
+        char sn[96]; int _n = t.length < 95 ? t.length : 95;
+        memcpy(sn, t.start, _n); sn[_n] = 0;
+        extern int is_known_struct(const char*);
+        if (is_known_struct(sn)) { static char _sb[96]; snprintf(_sb, sizeof(_sb), "%.*s", t.length, t.start); return _sb; }
     }
     return "long long";
 }
