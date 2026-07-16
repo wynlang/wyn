@@ -1,0 +1,25 @@
+// Regression: every fire-and-forget `spawn` must run to completion AND have its
+// output flushed before the process exits — including the numeric println
+// variants, which (unlike println_str) don't self-flush. wyn_spawn_wait() now
+// fflush()es stdout/stderr on the joining thread after observing task-count
+// parity, so the last task's output can't be dropped by an exit-time flush race.
+// A deterministic aggregate is the observable here: 25 atomic adds of 1 == 25.
+// (Ordering is nondeterministic, so we assert the aggregate, not interleaving.)
+// EXPECT: count 25
+// EXPECT: PASS: faf drain
+
+fn tick(counter: int) {
+    Shared.add(counter, 1)
+}
+
+fn main() -> int {
+    var counter = Shared.new(0)
+    for i in 0..25 {
+        spawn tick(counter)
+    }
+    // give fire-and-forget work time to run for a deterministic aggregate
+    Time::sleep(50)
+    println("count ${Shared.get(counter)}")
+    println("PASS: faf drain")
+    return 0
+}

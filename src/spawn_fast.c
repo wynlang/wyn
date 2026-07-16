@@ -3,6 +3,7 @@
 // Per-processor local deque + global queue + work-stealing
 // Each spawn creates a stackful coroutine via minicoro.h
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -738,6 +739,14 @@ void wyn_spawn_wait(void) {
         wake_all_processors();
         sched_yield();
     }
+    // Belt-and-suspenders: flush stdout/stderr here, before main returns. Most
+    // output already flushed (println_str self-flushes), but the numeric/bool/
+    // array println variants leave data in the buffer; a fire-and-forget task
+    // that produced them last could otherwise have its tail dropped if libc's
+    // atexit flush raced the drain. Flushing on the joining (main) thread after
+    // parity is observed makes the last task's output deterministic.
+    fflush(stdout);
+    fflush(stderr);
 }
 
 // Inline spawn: run function directly without creating a coroutine.
