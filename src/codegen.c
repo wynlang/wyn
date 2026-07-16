@@ -64,6 +64,45 @@ const char* extern_c_type(Expr* type_expr, bool is_return) {
     return "long long";
 }
 
+// Standard-header library symbols that wyn_runtime.h's includes (string.h,
+// stdlib.h, ctype.h, math.h, stdio.h, unistd.h, time.h) already declare. When a
+// user writes `extern fn strlen(...)`, emitting our own prototype (with the Wyn
+// type map, e.g. `long long strlen(const char*)`) CONFLICTS with the real libc
+// prototype (`size_t strlen(const char*)`). The call itself still resolves via
+// the header's declaration, so for these we skip emitting a prototype entirely.
+// This is broader than is_c_name_collision (which also governs variable naming);
+// keeping it separate avoids over-restricting user identifiers.
+int is_std_header_symbol(const char* name) {
+    static const char* syms[] = {
+        // <string.h>
+        "strlen","strcmp","strncmp","strcpy","strncpy","strcat","strncat",
+        "strchr","strrchr","strstr","strdup","strndup","strtok","strcasecmp",
+        "strncasecmp","memcpy","memmove","memset","memcmp","memchr","strerror",
+        // <stdlib.h>
+        "atoi","atol","atoll","atof","strtol","strtoll","strtoul","strtod",
+        "calloc","realloc","qsort","bsearch","abort","getenv","setenv","system",
+        "labs","llabs","strtof",
+        // <ctype.h>
+        "isalpha","isdigit","isalnum","isspace","isupper","islower","toupper",
+        "tolower","ispunct","isxdigit","iscntrl","isprint","isgraph",
+        // <math.h> (double-returning; our map would widen wrong)
+        "sin","cos","tan","asin","acos","atan","atan2","sinh","cosh","tanh",
+        "floor","ceil","round","trunc","fabs","fmod","pow","sqrt","cbrt",
+        "log","log2","log10","exp","exp2","hypot",
+        // <stdio.h>
+        "printf","fprintf","sprintf","snprintf","puts","fputs","fopen","fclose",
+        "fread","fwrite","fgets","fputc","fgetc","getchar","putchar","perror",
+        "fflush","fseek","ftell","rewind","remove","rename","scanf","sscanf",
+        // <unistd.h> / <time.h> commonly-declared
+        "read","write","close","open","lseek","unlink","access","getpid",
+        "sleep","usleep","time","clock","difftime","mktime",
+        NULL
+    };
+    for (int i = 0; syms[i]; i++)
+        if (strcmp(syms[i], name) == 0) return 1;
+    return 0;
+}
+
 // Centralized name collision check: C keywords + runtime function names
 // Returns true if 'name' would collide with a C keyword or wyn_runtime.h symbol
 int is_c_name_collision(const char* name) {

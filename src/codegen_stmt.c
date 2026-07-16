@@ -2632,7 +2632,8 @@ void codegen_stmt(Stmt* stmt) {
             {
                 char _en[256]; token_to_cstr(_en, sizeof(_en), stmt->extern_fn.name);
                 extern int is_c_name_collision(const char*);
-                if (is_c_name_collision(_en)) break;
+                extern int is_std_header_symbol(const char*);
+                if (is_c_name_collision(_en) || is_std_header_symbol(_en)) break;
             }
             // Generate the C prototype for an `extern fn`. The type map mirrors the
             // checker's extern_map_type: int->long long, float->double, bool->bool,

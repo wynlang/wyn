@@ -1,0 +1,22 @@
+// Regression: declaring an `extern fn` for a symbol the standard headers already
+// declare (string.h/stdlib.h/ctype.h/…) must NOT emit a conflicting prototype.
+// Previously `extern fn strlen(s: string) -> int;` emitted
+// `extern long long strlen(const char*);`, which clashed with libc's
+// `size_t strlen(const char*)` ("conflicting types for 'strlen'"). Now the
+// prototype is suppressed for known standard-header symbols (the call resolves
+// via the header's own declaration); custom names are unaffected.
+// EXPECT: len 5
+// EXPECT: up 65
+// EXPECT: PASS: ffi std-header extern
+
+extern fn strlen(s: string) -> int;
+extern fn toupper(c: int) -> int;
+
+fn main() -> int {
+    var n = strlen("hello")
+    println("len ${n}")
+    var u = toupper(97)   // 'a' -> 'A' == 65
+    println("up ${u}")
+    println("PASS: ffi std-header extern")
+    return 0
+}
