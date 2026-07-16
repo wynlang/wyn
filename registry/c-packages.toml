@@ -34,3 +34,12 @@ headers = "curl/curl.h"
 system.brew = "curl"
 system.apt = "libcurl4-openssl-dev"
 system.pacman = "curl"
+
+[sqlite3]
+description = "SQLite — embedded SQL database engine (opaque handles + prepared statements)"
+version = "system"
+libs = "sqlite3"
+headers = "sqlite3.h"
+system.brew = "sqlite"
+system.apt = "libsqlite3-dev"
+system.pacman = "sqlite"

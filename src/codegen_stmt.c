@@ -161,6 +161,10 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                     c_type = "WynHashMap*";
                 } else if (type_token.length == 7 && memcmp(type_token.start, "HashSet", 7) == 0) {
                     c_type = "WynHashSet*";
+                } else if (type_token.length == 3 && memcmp(type_token.start, "ptr", 3) == 0) {
+                    c_type = "void*";   // FFI opaque pointer passed through a user fn
+                } else if (type_token.length == 4 && memcmp(type_token.start, "cstr", 4) == 0) {
+                    c_type = "char*";   // raw C string
                 } else {
                     // Custom struct type - add module prefix if in module context
                     if (current_module_prefix) {
@@ -2351,6 +2355,10 @@ void codegen_stmt(Stmt* stmt) {
                             param_type = "WynHashMap*";
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             param_type = "WynHashSet*";
+                        } else if (type_name.length == 3 && memcmp(type_name.start, "ptr", 3) == 0) {
+                            param_type = "void*";   // FFI opaque pointer through a user fn
+                        } else if (type_name.length == 4 && memcmp(type_name.start, "cstr", 4) == 0) {
+                            param_type = "char*";   // raw C string
                         } else {
                             // Assume it's a custom struct type
                             token_to_cstr(custom_type_buf, sizeof(custom_type_buf), type_name);

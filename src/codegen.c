@@ -87,12 +87,19 @@ int is_std_header_symbol(const char* name) {
         "tolower","ispunct","isxdigit","iscntrl","isprint","isgraph",
         // <math.h> (double-returning; our map would widen wrong)
         "sin","cos","tan","asin","acos","atan","atan2","sinh","cosh","tanh",
+        "asinh","acosh","atanh","exp2","log2","hypot","exp10",
         "floor","ceil","round","trunc","fabs","fmod","pow","sqrt","cbrt",
         "log","log2","log10","exp","exp2","hypot",
         // <stdio.h>
         "printf","fprintf","sprintf","snprintf","puts","fputs","fopen","fclose",
         "fread","fwrite","fgets","fputc","fgetc","getchar","putchar","perror",
         "fflush","fseek","ftell","rewind","remove","rename","scanf","sscanf",
+        // <math.h> extended
+        "log1p","expm1","erf","erfc","tgamma","lgamma","copysign","nextafter",
+        "fmin","fmax","fdim","fma","remainder","ldexp","frexp","modf","scalbn",
+        "nearbyint","rint","lround","llround","logb","ilogb","significand",
+        "scalbln","remquo","nexttoward","nan","drem","gamma","lrint","llrint",
+        "j0","j1","jn","y0","y1","yn","finite","isnan","isinf",
         // <unistd.h> / <time.h> commonly-declared
         "read","write","close","open","lseek","unlink","access","getpid",
         "sleep","usleep","time","clock","difftime","mktime",
@@ -100,6 +107,18 @@ int is_std_header_symbol(const char* name) {
     };
     for (int i = 0; syms[i]; i++)
         if (strcmp(syms[i], name) == 0) return 1;
+    // <math.h> provides `f` (float) and `l` (long double) variants of most
+    // functions (sqrtf/sqrtl, powf/powl, acosf/acosl, …). Rather than list every
+    // one, strip a single trailing 'f'/'l' and re-check the base against the set.
+    size_t n = strlen(name);
+    if (n >= 4 && (name[n-1] == 'f' || name[n-1] == 'l')) {
+        char base[64];
+        if (n - 1 < sizeof(base)) {
+            memcpy(base, name, n - 1); base[n-1] = '\0';
+            for (int i = 0; syms[i]; i++)
+                if (strcmp(syms[i], base) == 0) return 1;
+        }
+    }
     return 0;
 }
 

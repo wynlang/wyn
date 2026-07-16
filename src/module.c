@@ -59,7 +59,7 @@ bool is_builtin_module(const char* module_name) {
     const char* builtins[] = {
         "math", "Math", "File", "System", "Path", "DateTime", "Time",
         "Json", "Http", "Regex", "Random", "HashMap", "HashSet", "Terminal", "Color",
-        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "String", "Data", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Web", "Smtp", "App", "Shared", NULL
+        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "String", "Data", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Web", "Smtp", "App", "Shared", "Ptr", NULL
     };
     for (int i = 0; builtins[i] != NULL; i++) {
         if (strcmp(module_name, builtins[i]) == 0) {
@@ -141,8 +141,12 @@ void preload_imports(const char* source) {
                 p += 6;
             }
             
-            // Extract module name (including . for nested modules, convert to /)
-            while (((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_' || *p == '.') && len < 255) {
+            // Extract module name (including . for nested modules, convert to /).
+            // Digits are part of an identifier (e.g. `sqlite3`) — must match the
+            // lexer's isalnum rule, else a trailing digit is dropped and the name
+            // is truncated ("sqlite3" -> "sqlite"), breaking module resolution.
+            while (((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                    (*p >= '0' && *p <= '9') || *p == '_' || *p == '.') && len < 255) {
                 if (*p == '.') {
                     module_name[len++] = '/';  // Convert . to /
                 } else {
@@ -151,14 +155,15 @@ void preload_imports(const char* source) {
                 p++;
             }
             module_name[len] = '\0';
-            
+
             if (len > 0) {
                 // Skip optional "as alias"
                 while (*p == ' ' || *p == '\t') p++;
                 if (strncmp(p, "as ", 3) == 0) {
                     p += 3;
                     // Skip alias name
-                    while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_') p++;
+                    while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                           (*p >= '0' && *p <= '9') || *p == '_') p++;
                 }
                 
                 // Load module

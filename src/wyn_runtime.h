@@ -3765,6 +3765,28 @@ long long Shared_sub(long long handle, long long delta) {
     return atomic_fetch_sub(&wyn_shared_slab[(int)handle], delta);
 }
 
+// === Ptr: FFI pointer-cell helpers ========================================
+// Many C APIs take an OUT-parameter of type `T**` (e.g. sqlite3_open(path,
+// sqlite3** out)). Wyn has no address-of operator, so `Ptr` provides a heap
+// cell that holds one pointer: pass the cell where a `T**` is expected, then
+// read the pointer the callee stored. `Ptr.cell()` -> a `ptr` to a zeroed
+// pointer-sized slot; `Ptr.read(cell)` -> the pointer stored in it;
+// `Ptr.write(cell, p)` -> store p; `Ptr.free(cell)` -> release the cell.
+void* Ptr_cell(void) {
+    void** slot = (void**)calloc(1, sizeof(void*));
+    return (void*)slot;
+}
+void* Ptr_read(void* cell) {
+    if (!cell) return NULL;
+    return *(void**)cell;
+}
+void Ptr_write(void* cell, void* value) {
+    if (cell) *(void**)cell = value;
+}
+void Ptr_free(void* cell) {
+    free(cell);
+}
+
 // === SQLite Database Module ===
 // Only compiled when WYN_USE_SQLITE is defined (set by codegen when Db. is used)
 #ifdef WYN_USE_SQLITE

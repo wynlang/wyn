@@ -534,6 +534,20 @@ static bool wyn_is_type_compatible(Type* expected, Type* actual) {
         return true;
     }
 
+    // FFI `ptr` interop: an opaque C pointer (`void*`) is freely convertible at
+    // the C boundary with a Wyn `string` (both are char* — passing a string to a
+    // `const char*` param), with the null idiom `0` (int), and with a raw machine
+    // word. Accept these so `extern fn`s taking/returning `ptr` are callable with
+    // string literals and null without a cast. (is_ptr_type: TYPE_STRUCT "void*".)
+    if (is_ptr_type(expected) &&
+        (actual->kind == TYPE_STRING || actual->kind == TYPE_INT || is_ptr_type(actual))) {
+        return true;
+    }
+    if (is_ptr_type(actual) &&
+        (expected->kind == TYPE_STRING || expected->kind == TYPE_INT)) {
+        return true;
+    }
+
     // Allow channel <-> int (channels are int handles, so they can pass
     // through int-typed function params — e.g. fn produce(ch: int, ...)).
     if ((expected->kind == TYPE_CHANNEL && actual->kind == TYPE_INT) ||
@@ -1536,7 +1550,7 @@ void init_checker() {
 
     // Register namespace identifiers so checker doesn't reject File.read() etc.
     // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Time", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Color", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Random", "Web", "Smtp", "App", "Shared", NULL};
+    const char* namespaces[] = {"File", "Path", "DateTime", "Time", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Color", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Random", "Web", "Smtp", "App", "Shared", "Ptr", NULL};
     for (int i = 0; namespaces[i]; i++) {
         Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
         if (!find_symbol(global_scope, ns_tok)) {
@@ -1977,6 +1991,28 @@ void init_checker() {
         ft->fn_type.return_type = reg_task_fns[i].ret;
         Token tok = {TOKEN_IDENT, reg_task_fns[i].name, reg_task_fns[i].nlen, 0};
         add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Ptr namespace — FFI pointer-cell helpers for C out-parameters (`T**`).
+    // Ptr.cell() -> ptr (a heap slot holding one pointer); Ptr.read(cell) -> ptr
+    // (the pointer the callee stored); Ptr.write(cell, p); Ptr.free(cell).
+    {
+        struct { const char* name; int nlen; Type* ret; int pc; Type* p0; Type* p1; } reg_ptr_fns[] = {
+            {"Ptr_cell",  8, builtin_ptr,  0, NULL,        NULL},
+            {"Ptr_read",  8, builtin_ptr,  1, builtin_ptr, NULL},
+            {"Ptr_write", 9, builtin_void, 2, builtin_ptr, builtin_ptr},
+            {"Ptr_free",  8, builtin_void, 1, builtin_ptr, NULL},
+        };
+        for (int i = 0; i < (int)(sizeof(reg_ptr_fns)/sizeof(reg_ptr_fns[0])); i++) {
+            Type* ft = make_type(TYPE_FUNCTION);
+            ft->fn_type.param_count = reg_ptr_fns[i].pc;
+            ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+            ft->fn_type.param_types[0] = reg_ptr_fns[i].p0;
+            ft->fn_type.param_types[1] = reg_ptr_fns[i].p1;
+            ft->fn_type.return_type = reg_ptr_fns[i].ret;
+            Token tok = {TOKEN_IDENT, reg_ptr_fns[i].name, reg_ptr_fns[i].nlen, 0};
+            add_symbol(global_scope, tok, ft, false);
+        }
     }
 
     // Db namespace
@@ -5780,7 +5816,17 @@ void check_program(Program* prog) {
                 fn_type->fn_type.param_types[j] = extern_map_type(ext->param_types[j]);
             }
             fn_type->fn_type.return_type = extern_map_type(ext->return_type); // void/NULL -> void
-            add_function_overload(global_scope, ext->name, fn_type, false);
+            // A C symbol may be declared once but reach this loop twice (e.g. a
+            // C-package binding merged across checker passes, or the same header
+            // bound in two imported packages). Re-declaring the identical extern
+            // is harmless, so skip it silently rather than firing the "duplicate
+            // signature" error that add_function_overload would raise.
+            Symbol* _ext_existing = find_symbol(global_scope, ext->name);
+            if (!(_ext_existing && _ext_existing->type &&
+                  _ext_existing->type->kind == TYPE_FUNCTION &&
+                  signatures_match(_ext_existing->type, fn_type))) {
+                add_function_overload(global_scope, ext->name, fn_type, false);
+            }
         } else if (prog->stmts[i]->type == STMT_MACRO) {
             // Register macro as function
             MacroStmt* macro = &prog->stmts[i]->macro;

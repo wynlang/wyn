@@ -1358,8 +1358,11 @@ int main(int argc, char** argv) {
         // declares an extern fn. IMPORTANT: these go at the END of the link line
         // (after the .c and runtime) — GNU ld (Linux/mingw) resolves `-l` only
         // against objects listed BEFORE it, so FFI libs must come last.
+        // Trigger on a direct `extern fn` OR any `import` — an imported C package
+        // (`wyn add`) carries the extern fns in its own file, so the user source
+        // may only have `import sqlite3` yet still need the [ffi] link flags.
         static char ffi_tail[1536]; ffi_tail[0] = '\0';
-        if (strstr(source, "extern fn")) {
+        if (strstr(source, "extern fn") || strstr(source, "import ")) {
             WynConfig* _bc = wyn_config_parse("wyn.toml");
             if (_bc) { wyn_config_ffi_flags(_bc, ffi_tail, sizeof(ffi_tail)); wyn_config_free(_bc); }
         }

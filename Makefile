@@ -191,6 +191,8 @@ test: wyn
 	@WYN=./wyn bash tests/bindgen/run_bindgen_test.sh
 	@echo "=== Running C-package (wyn add) test ==="
 	@WYN=./wyn bash tests/cpkg/run_cpkg_test.sh
+	@echo "=== Running SQLite dogfood (wyn add sqlite3) test ==="
+	@WYN=./wyn bash tests/cpkg/run_sqlite_test.sh
 	@echo "=== Running LSP protocol test ==="
 	@WYN=./wyn bash tests/lsp/run_lsp_test.sh
 

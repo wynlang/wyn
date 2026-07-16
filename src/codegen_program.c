@@ -769,6 +769,11 @@ void codegen_program(Program* prog) {
                             param_type = "WynHashMap*";
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             param_type = "WynHashSet*";
+                        } else if (type_name.length == 3 && memcmp(type_name.start, "ptr", 3) == 0) {
+                            // FFI opaque pointer — a user fn can pass one through.
+                            param_type = "void*";
+                        } else if (type_name.length == 4 && memcmp(type_name.start, "cstr", 4) == 0) {
+                            param_type = "char*";  // raw C string
                         } else {
                             // Assume it's a struct type
                             token_to_cstr(struct_type_name, sizeof(struct_type_name), type_name);
