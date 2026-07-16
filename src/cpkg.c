@@ -132,6 +132,101 @@ int wyn_cpkg_list(const char* wyn_root) {
     return 0;
 }
 
+// ---- interactive TUI (wyn add, no name, on a TTY) --------------------------
+
+typedef struct { char name[64]; char desc[256]; } RecipeBrief;
+
+// Collect every recipe's name+description into `out` (up to `max`); returns count.
+static int registry_collect(const char* wyn_root, RecipeBrief* out, int max) {
+    char path[1024]; registry_path(path, sizeof(path), wyn_root);
+    FILE* f = fopen(path, "r");
+    if (!f) return 0;
+    char line[1024], section[64] = "", desc[256] = "";
+    int count = 0;
+    while (fgets(line, sizeof(line), f)) {
+        char* s = cp_trim(line);
+        if (!*s || *s == '#') continue;
+        if (*s == '[') {
+            char* end = strchr(s, ']'); if (!end) continue; *end = '\0';
+            if (section[0] && count < max) { strncpy(out[count].name, section, 63); strncpy(out[count].desc, desc, 255); count++; }
+            strncpy(section, s + 1, sizeof(section)-1); section[sizeof(section)-1]='\0';
+            desc[0] = '\0';
+            continue;
+        }
+        char* eq = strchr(s, '='); if (!eq) continue; *eq = '\0';
+        if (strcmp(cp_trim(s), "description") == 0) { strncpy(desc, cp_unquote(eq+1), 255); desc[255]='\0'; }
+    }
+    if (section[0] && count < max) { strncpy(out[count].name, section, 63); strncpy(out[count].desc, desc, 255); count++; }
+    fclose(f);
+    return count;
+}
+
+// Interactive package picker: browse/filter the registry, preview a recipe, and
+// confirm before pulling it. Runs only on a TTY (main gates this); everywhere
+// else `wyn add` with no name falls back to the plain list. Line-oriented (no
+// raw-mode/ncurses) so it works over pipes, CI, and every platform.
+int wyn_cpkg_tui(const char* wyn_root, const char* cc) {
+    RecipeBrief recipes[256];
+    int total = registry_collect(wyn_root, recipes, 256);
+    if (total == 0) { printf("No curated packages found.\n"); return 0; }
+
+    char filter[64] = "";
+    for (;;) {
+        // Render the filtered list with 1-based indices.
+        int idx[256], shown = 0;
+        printf("\n\033[1mCurated C packages\033[0m");
+        if (filter[0]) printf("  (filter: \"%s\")", filter);
+        printf("\n");
+        for (int i = 0; i < total; i++) {
+            if (filter[0] && !strstr(recipes[i].name, filter) && !strstr(recipes[i].desc, filter)) continue;
+            idx[shown++] = i;
+            printf("  \033[36m%2d\033[0m  \033[1m%-12s\033[0m %s\n", shown, recipes[i].name, recipes[i].desc);
+        }
+        if (shown == 0) printf("  (no packages match \"%s\")\n", filter);
+        printf("\nEnter a \033[1mnumber\033[0m to add, \033[1m/text\033[0m to filter, or \033[1mq\033[0m to quit: ");
+        fflush(stdout);
+
+        char inbuf[128];
+        if (!fgets(inbuf, sizeof(inbuf), stdin)) { printf("\n"); return 0; }
+        char* in = cp_trim(inbuf);
+        if (!*in) continue;
+        if (strcmp(in, "q") == 0 || strcmp(in, "quit") == 0) return 0;
+        if (in[0] == '/') { strncpy(filter, in + 1, sizeof(filter)-1); filter[sizeof(filter)-1]='\0'; continue; }
+
+        // A number selects a package from the currently-shown list.
+        char* endp = NULL;
+        long sel = strtol(in, &endp, 10);
+        if (endp != in && (*endp == '\0') && sel >= 1 && sel <= shown) {
+            RecipeBrief* r = &recipes[idx[sel - 1]];
+            // Preview the full recipe.
+            Recipe full;
+            registry_scan(wyn_root, r->name, &full);
+            printf("\n\033[1m%s\033[0m — %s\n", full.name, full.description[0] ? full.description : r->desc);
+            if (full.version[0])      printf("  version:  %s\n", full.version);
+            if (full.libs[0])         printf("  links:    %s\n", full.libs);
+            if (full.headers[0])      printf("  bindings: %s\n", full.headers);
+            if (full.include_dirs[0]) printf("  includes: %s\n", full.include_dirs);
+            printf("\nAdd \033[1m%s\033[0m to this project? [y/N] ", full.name);
+            fflush(stdout);
+            char yn[16];
+            if (fgets(yn, sizeof(yn), stdin)) {
+                char* y = cp_trim(yn);
+                if (y[0] == 'y' || y[0] == 'Y') {
+                    printf("\n");
+                    return wyn_cpkg_add(full.name, wyn_root, cc);
+                }
+            }
+            printf("Cancelled.\n");
+            continue;
+        }
+        // Not a number/filter/quit: treat as a direct package name.
+        for (int i = 0; i < total; i++) {
+            if (strcmp(recipes[i].name, in) == 0) return wyn_cpkg_add(in, wyn_root, cc);
+        }
+        printf("No package named \"%s\" (use a number or /filter).\n", in);
+    }
+}
+
 // Run `pkg-config --cflags-only-I <name>` and capture the -I flags (macOS/Linux).
 // Returns 1 and fills `out` on success, 0 otherwise. Cross-platform-safe: if
 // pkg-config is absent (e.g. Windows), returns 0 and the caller proceeds without

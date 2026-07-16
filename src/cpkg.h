@@ -19,4 +19,9 @@ int wyn_cpkg_add(const char* name, const char* wyn_root, const char* cc);
 // Implement `wyn add` with no name: list the available curated packages.
 int wyn_cpkg_list(const char* wyn_root);
 
+// Interactive picker for `wyn add` with no name on a TTY: browse/filter the
+// registry, preview a recipe, confirm, then pull it (over the same add engine).
+// Line-oriented (works over pipes/CI/all platforms). Returns wyn_cpkg_add's code.
+int wyn_cpkg_tui(const char* wyn_root, const char* cc);
+
 #endif // WYN_CPKG_H
