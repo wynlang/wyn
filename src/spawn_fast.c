@@ -34,6 +34,7 @@ Future* wyn_spawn_async_traced(void* (*func)(void*), void* arg, const char* f, i
 }
 _Atomic int ws_blocked = 0;
 int pool_try_run_one(void) { return 0; }
+int wyn_sched_pump_one(void) { return 0; }  // no scheduler on Windows (spawns run inline)
 #else
 #include <pthread.h>
 #ifdef _WIN32
@@ -267,13 +268,23 @@ static inline void execute_task(Task* task) {
         enqueue_task(task);
         return;
     }
+    // Save/restore the per-thread current_task + io_parked around the resume.
+    // On a worker this is just NULL↔task, but the main-thread await pump (M1)
+    // can call execute_task from INSIDE a coroutine that another execute_task is
+    // already running — without save/restore the inner return would clear the
+    // outer coroutine's identity (and its io_parked), corrupting its next
+    // yield/park. Saving makes execute_task safely reentrant.
+    Task* saved_task = current_task;
+    int saved_io = io_parked;
     current_task = task;
     io_parked = 0;
     bool alive = wyn_coro_resume(coro);
-    current_task = NULL;
+    current_task = saved_task;
+    int this_io = io_parked;
+    io_parked = saved_io;
     atomic_store_explicit(&task->running, 0, memory_order_release);
     if (alive) {
-        if (io_parked) {
+        if (this_io) {
             // Coroutine is waiting on I/O — don't re-enqueue.
             // The I/O loop will call wyn_sched_enqueue(task) when fd is ready.
         } else {
@@ -495,6 +506,37 @@ static void spawn_async_coro_body(void* ctx) {
     free(sa);  // SpawnAsyncArgs not pooled (less frequent)
 }
 
+// W8 S1: awaited spawn as a COROUTINE on the M:N scheduler (instead of a pool
+// thread), so cooperative I/O / cooperative Time::sleep engage inside awaited
+// tasks too. Mirrors wyn_spawn_fast_traced but attaches a Future the body
+// resolves. Behind WYN_ASYNC_CORO (see wyn_spawn_async_traced). Returns the
+// Future; falls back to running inline on any allocation failure.
+static Future* wyn_spawn_async_coro(TaskFuncWithReturn func, void* arg,
+                                    const char* file, int line) {
+    init_scheduler();
+    Future* future = future_new();
+    atomic_fetch_add(&total_spawned, 1);
+
+    SpawnAsyncArgs* sa = (SpawnAsyncArgs*)malloc(sizeof(SpawnAsyncArgs));
+    if (!sa) { future_set(future, func(arg)); atomic_fetch_add(&total_completed, 1); return future; }
+    sa->func = func; sa->arg = arg; sa->future = future;
+
+    WynCoroutine* coro = wyn_coro_create(spawn_async_coro_body, sa);
+    if (!coro) { free(sa); future_set(future, func(arg)); atomic_fetch_add(&total_completed, 1); return future; }
+
+    Task* t = alloc_task();
+    if (!t) { wyn_coro_destroy(coro); free(sa); future_set(future, func(arg)); atomic_fetch_add(&total_completed, 1); return future; }
+    t->coro = coro;
+    t->future = future;
+    t->spawn_file = file;
+    t->spawn_line = line;
+    atomic_store_explicit(&t->running, 0, memory_order_relaxed);
+    t->spawn_id = 0;
+    enqueue_task(t);
+    wake_processor();
+    return future;
+}
+
 void wyn_spawn_fast(TaskFunc func, void* arg) {
     wyn_spawn_fast_traced(func, arg, NULL, 0);
 }
@@ -629,9 +671,19 @@ static void init_pool(void) {
 }
 
 Future* wyn_spawn_async_traced(TaskFuncWithReturn func, void* arg, const char* file, int line) {
+    // W8 S1/S2: with WYN_ASYNC_CORO set, run awaited spawns as coroutines on the
+    // M:N scheduler (cooperative I/O everywhere) instead of the thread pool. Read
+    // the env once. main-thread await pumps the scheduler (see future_get), so
+    // this is safe on any core count; but if for some reason no worker processors
+    // exist AND we're on the main thread, keep the pool (its worker threads are
+    // the only executors then).
+    static int async_coro = -1;
+    if (async_coro < 0) async_coro = getenv("WYN_ASYNC_CORO") ? 1 : 0;
+    if (async_coro) return wyn_spawn_async_coro(func, arg, file, line);
+
     (void)file; (void)line;
     init_pool();
-    
+
     Future* future = future_new();
     atomic_fetch_add(&total_spawned, 1);
     
@@ -651,6 +703,21 @@ Future* wyn_spawn_async_traced(TaskFuncWithReturn func, void* arg, const char* f
     pthread_mutex_unlock(&pool_lock);
     
     return future;
+}
+
+// W8 S2 (M1 pump): run ONE scheduler task on the calling thread + poll I/O.
+// Called by future_get's main-thread branch when awaiting a coroutine-backed
+// future, so `main` (which can't yield) still drives the M:N scheduler and
+// resolves awaited coro tasks even with no/idle worker processors — this is what
+// makes WYN_ASYNC_CORO correct on every core count. execute_task is reentrant
+// (saves/restores current_task + io_parked), so pumping from inside main is safe.
+// Returns 1 if a task ran, 0 if the queue was empty (caller should yield/poll).
+int wyn_sched_pump_one(void) {
+    wyn_io_poll();  // wake any I/O/timer-ready coroutines first
+    Task* task = global_queue_pop();
+    if (!task) task = try_steal(0);
+    if (task) { execute_task(task); return 1; }
+    return 0;
 }
 
 // Re-enqueue a task from the I/O loop (called when fd becomes ready)

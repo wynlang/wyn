@@ -1,0 +1,36 @@
+// W8: awaited spawn/await_all/parallel produce identical results whether they run
+// on the thread POOL (default) or as COROUTINES on the M:N scheduler
+// (WYN_ASYNC_CORO=1). This file is the deterministic oracle — run_bdd runs it on
+// the default (pool) substrate; the suite is also run with WYN_ASYNC_CORO=1 in CI
+// to prove the coroutine substrate is behavior-identical.
+// EXPECT: 49
+// EXPECT: 285
+// EXPECT: 25
+// EXPECT: 3
+fn work(n: int) -> int { return n * n }
+fn nap(n: int) -> int { Time::sleep(5); return n }
+fn main() {
+    // spawn + await
+    var f = spawn work(7)
+    println(await f)                       // 49
+
+    // await_all over an array of futures (sum of squares 1..9 = 285)
+    var futs = []
+    for i in 1..10 { futs.push(spawn work(i)) }
+    var rs = await_all(futs)
+    var s = 0
+    for _, r in rs { s = s + r }
+    println(s)                             // 285
+
+    // parallel block
+    parallel {
+        a = spawn work(3)
+        b = spawn work(4)
+    }
+    println(a + b)                         // 25
+
+    // cooperative Time::sleep inside awaited spawns (overlap, correct result)
+    var p = spawn nap(1)
+    var q = spawn nap(2)
+    println(await p + await q)             // 3
+}

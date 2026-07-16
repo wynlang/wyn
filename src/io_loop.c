@@ -7,6 +7,7 @@
 #include <stdint.h>
 #ifndef _WIN32
 #include <unistd.h>
+#include <sched.h>   // sched_yield (io init contention spin)
 #endif
 
 // Implemented in spawn_fast.c
@@ -36,29 +37,36 @@ void wyn_io_shutdown(void) {}
 
 #include <sys/event.h>
 
-static int kq_fd = -1;
+// Atomic so the awaited-spawn coroutine path (W8) can hit these from multiple
+// worker threads + main without racing on the lazy init. The init winner creates
+// the fd and publishes it (release); readers acquire; losers spin until it's set.
+static _Atomic int kq_fd = -1;
 
 void wyn_io_init(void) {
-    if (atomic_exchange(&io_initialized, 1)) return;
-    kq_fd = kqueue();
+    if (atomic_exchange(&io_initialized, 1)) {
+        // A concurrent initializer is/was running; wait until it published the fd.
+        while (atomic_load_explicit(&kq_fd, memory_order_acquire) < 0) sched_yield();
+        return;
+    }
+    atomic_store_explicit(&kq_fd, kqueue(), memory_order_release);
 }
 
 void wyn_io_wait_readable(int fd, void* task_ptr) {
-    if (kq_fd < 0) wyn_io_init();
+    if (atomic_load_explicit(&kq_fd, memory_order_acquire) < 0) wyn_io_init();
     struct kevent ev;
     EV_SET(&ev, fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0, task_ptr);
-    kevent(kq_fd, &ev, 1, NULL, 0, NULL);
+    kevent(atomic_load_explicit(&kq_fd, memory_order_acquire), &ev, 1, NULL, 0, NULL);
 }
 
 void wyn_io_wait_writable(int fd, void* task_ptr) {
-    if (kq_fd < 0) wyn_io_init();
+    if (atomic_load_explicit(&kq_fd, memory_order_acquire) < 0) wyn_io_init();
     struct kevent ev;
     EV_SET(&ev, fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, task_ptr);
-    kevent(kq_fd, &ev, 1, NULL, 0, NULL);
+    kevent(atomic_load_explicit(&kq_fd, memory_order_acquire), &ev, 1, NULL, 0, NULL);
 }
 
 int wyn_io_wait_timer(void* task_ptr, long long ms) {
-    if (kq_fd < 0) wyn_io_init();
+    if (atomic_load_explicit(&kq_fd, memory_order_acquire) < 0) wyn_io_init();
     if (ms < 0) ms = 0;
     // Unique ident well outside the fd number space so it never collides with a
     // socket registered for read/write. EV_ONESHOT auto-removes it after firing.
@@ -66,14 +74,15 @@ int wyn_io_wait_timer(void* task_ptr, long long ms) {
     struct kevent ev;
     EV_SET(&ev, ident, EVFILT_TIMER, EV_ADD | EV_ONESHOT, NOTE_USECONDS,
            (int64_t)ms * 1000, task_ptr);
-    return kevent(kq_fd, &ev, 1, NULL, 0, NULL) == 0 ? 1 : 0;
+    return kevent(atomic_load_explicit(&kq_fd, memory_order_acquire), &ev, 1, NULL, 0, NULL) == 0 ? 1 : 0;
 }
 
 int wyn_io_poll(void) {
-    if (kq_fd < 0) return 0;
+    int kq = atomic_load_explicit(&kq_fd, memory_order_acquire);
+    if (kq < 0) return 0;
     struct kevent events[MAX_IO_EVENTS];
     struct timespec zero = {0, 0};
-    int n = kevent(kq_fd, NULL, 0, events, MAX_IO_EVENTS, &zero);
+    int n = kevent(kq, NULL, 0, events, MAX_IO_EVENTS, &zero);
     for (int i = 0; i < n; i++) {
         if (events[i].udata) wyn_sched_enqueue(events[i].udata);
     }
@@ -81,7 +90,8 @@ int wyn_io_poll(void) {
 }
 
 void wyn_io_shutdown(void) {
-    if (kq_fd >= 0) { close(kq_fd); kq_fd = -1; }
+    int kq = atomic_exchange_explicit(&kq_fd, -1, memory_order_acq_rel);
+    if (kq >= 0) close(kq);
     atomic_store(&io_initialized, 0);
 }
 
@@ -99,7 +109,7 @@ void wyn_io_shutdown(void) {
 #include <stdlib.h>
 #include <pthread.h>
 
-static int ep_fd = -1;
+static _Atomic int ep_fd = -1;  // atomic: awaited-coro path (W8) hits it from many threads
 
 // A one-shot timer needs its timerfd closed after it fires. epoll_event.data is
 // a union, so we can't stash both the task ptr and the fd in one event. Instead
@@ -123,27 +133,32 @@ static int timer_registry_find(void* ptr) {
 }
 
 void wyn_io_init(void) {
-    if (atomic_exchange(&io_initialized, 1)) return;
-    ep_fd = epoll_create1(0);
+    if (atomic_exchange(&io_initialized, 1)) {
+        while (atomic_load_explicit(&ep_fd, memory_order_acquire) < 0) sched_yield();
+        return;
+    }
+    atomic_store_explicit(&ep_fd, epoll_create1(0), memory_order_release);
 }
 
 void wyn_io_wait_readable(int fd, void* task_ptr) {
-    if (ep_fd < 0) wyn_io_init();
+    if (atomic_load_explicit(&ep_fd, memory_order_acquire) < 0) wyn_io_init();
+    int ep = atomic_load_explicit(&ep_fd, memory_order_acquire);
     struct epoll_event ev = { .events = EPOLLIN | EPOLLONESHOT, .data.ptr = task_ptr };
     // Try ADD first, if fd already registered use MOD
-    if (epoll_ctl(ep_fd, EPOLL_CTL_ADD, fd, &ev) < 0)
-        epoll_ctl(ep_fd, EPOLL_CTL_MOD, fd, &ev);
+    if (epoll_ctl(ep, EPOLL_CTL_ADD, fd, &ev) < 0)
+        epoll_ctl(ep, EPOLL_CTL_MOD, fd, &ev);
 }
 
 void wyn_io_wait_writable(int fd, void* task_ptr) {
-    if (ep_fd < 0) wyn_io_init();
+    if (atomic_load_explicit(&ep_fd, memory_order_acquire) < 0) wyn_io_init();
+    int ep = atomic_load_explicit(&ep_fd, memory_order_acquire);
     struct epoll_event ev = { .events = EPOLLOUT | EPOLLONESHOT, .data.ptr = task_ptr };
-    if (epoll_ctl(ep_fd, EPOLL_CTL_ADD, fd, &ev) < 0)
-        epoll_ctl(ep_fd, EPOLL_CTL_MOD, fd, &ev);
+    if (epoll_ctl(ep, EPOLL_CTL_ADD, fd, &ev) < 0)
+        epoll_ctl(ep, EPOLL_CTL_MOD, fd, &ev);
 }
 
 int wyn_io_wait_timer(void* task_ptr, long long ms) {
-    if (ep_fd < 0) wyn_io_init();
+    if (atomic_load_explicit(&ep_fd, memory_order_acquire) < 0) wyn_io_init();
     if (ms < 0) ms = 0;
     int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (tfd < 0) return 0;
@@ -168,7 +183,7 @@ int wyn_io_wait_timer(void* task_ptr, long long ms) {
     if (slot < 0) { free(node); close(tfd); return 0; }  // registry full
 
     struct epoll_event ev = { .events = EPOLLIN | EPOLLONESHOT, .data.ptr = node };
-    if (epoll_ctl(ep_fd, EPOLL_CTL_ADD, tfd, &ev) < 0) {
+    if (epoll_ctl(atomic_load_explicit(&ep_fd, memory_order_acquire), EPOLL_CTL_ADD, tfd, &ev) < 0) {
         pthread_mutex_lock(&timer_lock);
         timer_registry[slot] = NULL; active_timers--;
         pthread_mutex_unlock(&timer_lock);
@@ -179,9 +194,10 @@ int wyn_io_wait_timer(void* task_ptr, long long ms) {
 }
 
 int wyn_io_poll(void) {
-    if (ep_fd < 0) return 0;
+    int ep = atomic_load_explicit(&ep_fd, memory_order_acquire);
+    if (ep < 0) return 0;
     struct epoll_event events[MAX_IO_EVENTS];
-    int n = epoll_wait(ep_fd, events, MAX_IO_EVENTS, 0);
+    int n = epoll_wait(ep, events, MAX_IO_EVENTS, 0);
     for (int i = 0; i < n; i++) {
         void* ptr = events[i].data.ptr;
         if (!ptr) continue;
@@ -204,7 +220,8 @@ int wyn_io_poll(void) {
 }
 
 void wyn_io_shutdown(void) {
-    if (ep_fd >= 0) { close(ep_fd); ep_fd = -1; }
+    int ep = atomic_exchange_explicit(&ep_fd, -1, memory_order_acq_rel);
+    if (ep >= 0) close(ep);
     atomic_store(&io_initialized, 0);
 }
 
