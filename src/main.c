@@ -1968,6 +1968,62 @@ int main(int argc, char** argv) {
         return cmd_fmt(fmt_path, argc, argv);
     }
     
+    if (strcmp(command, "fix") == 0) {
+        // Automated migrator for removed syntax (&&->and, ||->or, elseif->else if,
+        // unary !->not). `--check` reports without writing (exit 1 if changes needed).
+        extern int cmd_fix_file(const char*, int, int*);
+        int check_only = 0;
+        const char* fix_path = NULL;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--check") == 0) check_only = 1;
+            else if (argv[i][0] != '-' && !fix_path) fix_path = argv[i];
+        }
+        if (!fix_path) {
+            fprintf(stderr, "Usage: wyn fix <file.wyn|directory> [--check]\n");
+            fprintf(stderr, "  Migrates removed syntax: && -> and, || -> or, elseif -> else if, unary ! -> not.\n");
+            return 1;
+        }
+        int total_files = 0, changed_files = 0, pipe_warns = 0, err = 0;
+        struct stat fix_st;
+        if (stat(fix_path, &fix_st) == 0 && S_ISDIR(fix_st.st_mode)) {
+            char find_cmd[512];
+            snprintf(find_cmd, sizeof(find_cmd), "find %s -name '*.wyn' -not -path '*/.archive/*'", fix_path);
+            FILE* fp = popen(find_cmd, "r");
+            if (fp) {
+                char fpath[512];
+                while (fgets(fpath, sizeof(fpath), fp)) {
+                    fpath[strcspn(fpath, "\n")] = 0;
+                    int r = cmd_fix_file(fpath, check_only, &pipe_warns);
+                    if (r < 0) { err++; continue; }
+                    total_files++;
+                    if (r > 0) {
+                        changed_files++;
+                        printf("%s %s (%d change%s)\n", check_only ? "would fix" : "fixed",
+                               fpath, r, r == 1 ? "" : "s");
+                    }
+                }
+                pclose(fp);
+            }
+        } else {
+            int r = cmd_fix_file(fix_path, check_only, &pipe_warns);
+            if (r < 0) return 1;
+            total_files = 1;
+            if (r > 0) { changed_files = 1;
+                printf("%s %s (%d change%s)\n", check_only ? "would fix" : "fixed",
+                       fix_path, r, r == 1 ? "" : "s"); }
+        }
+        if (changed_files == 0) printf("\033[32m✓\033[0m No removed syntax found (%d file%s clean)\n",
+                                       total_files, total_files == 1 ? "" : "s");
+        else printf("\033[32m✓\033[0m %s %d of %d file%s\n", check_only ? "Would fix" : "Fixed",
+                    changed_files, total_files, total_files == 1 ? "" : "s");
+        if (pipe_warns > 0)
+            fprintf(stderr, "\033[33m!\033[0m %d `|>` pipe%s need manual conversion "
+                            "(rewrite `a |> f` as `f(a)` — needs the AST)\n",
+                    pipe_warns, pipe_warns == 1 ? "" : "s");
+        if (err > 0) return 1;
+        return (check_only && changed_files > 0) ? 1 : 0;
+    }
+
     if (strcmp(command, "debug") == 0) {
         if (argc < 3) { fprintf(stderr, "Usage: wyn debug <program>\n"); return 1; }
         extern int cmd_debug(const char*, int, char**);
@@ -1982,7 +2038,7 @@ int main(int argc, char** argv) {
             fprintf(stderr, "\033[31mError:\033[0m Unknown command '%s'\n", command);
             fprintf(stderr, "  Run \033[1mwyn help\033[0m for available commands.\n");
             // Suggest closest match
-            const char* cmds[] = {"run","build","test","fmt","init","new","check","clean","repl","doc","bench","watch","deploy","version","help",NULL};
+            const char* cmds[] = {"run","build","test","fmt","fix","init","new","check","clean","repl","doc","bench","watch","deploy","version","help",NULL};
             for (int i = 0; cmds[i]; i++) {
                 if (cmds[i][0] == command[0] || (strlen(command) > 2 && strstr(cmds[i], command))) {
                     fprintf(stderr, "  Did you mean \033[1mwyn %s\033[0m?\n", cmds[i]);

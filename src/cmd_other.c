@@ -999,6 +999,7 @@ int cmd_help(const char* command, int argc, char** argv) {
     printf("  compile [file]   Compile Wyn source (default: current directory)\n");
     printf("  test [dir]       Run tests (default: tests/)\n");
     printf("  fmt <file>       Format source code\n");
+    printf("  fix <file|dir>   Migrate removed syntax (&&->and, ||->or, elseif->else if)\n");
     printf("  repl             Interactive shell\n");
     printf("  doc <file>       Generate documentation\n");
     printf("  pkg <cmd>        Package management\n");
@@ -1008,4 +1009,114 @@ int cmd_help(const char* command, int argc, char** argv) {
     printf("  version          Show version\n");
     printf("  help [cmd]       Show help\n");
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// `wyn fix` — automated migrator for removed syntax (R1). The evidence-backed
+// breaking-change strategy (Rust editions + `cargo fix`) says: never hard-break
+// a corpus; ship a semantics-preserving migrator. This rewrites the operators
+// that were removed in favor of words, preserving string literals and comments:
+//   &&      -> and
+//   ||      -> or
+//   elseif  -> else if
+//   unary ! -> not     (but NOT `!=`, which is a live operator)
+// `|>` (pipe) is NOT auto-fixed: it needs the AST to rewrite `a |> f` as `f(a)`;
+// we report those lines so the user can convert them by hand.
+// Whole-word / token-boundary aware so we never touch substrings inside
+// identifiers. Returns the number of substitutions made (0 = already clean).
+static int wyn_fix_line(const char* in, int len, char* out, size_t outcap,
+                        int* pipe_warns) {
+    int oi = 0, subs = 0, i = 0;
+    #define PUT(c) do { if ((size_t)oi < outcap - 1) out[oi++] = (c); } while (0)
+    #define PUTS(s) do { const char* _s=(s); while(*_s){ if((size_t)oi<outcap-1) out[oi++]=*_s; _s++; } } while(0)
+    while (i < len) {
+        char c = in[i];
+        // Copy string literals verbatim (double, single, backtick).
+        if (c == '"' || c == '\'' || c == '`') {
+            char q = c; PUT(in[i++]);
+            while (i < len && in[i] != q) {
+                if (in[i] == '\\' && i + 1 < len) PUT(in[i++]);
+                PUT(in[i++]);
+            }
+            if (i < len) PUT(in[i++]);
+            continue;
+        }
+        // Line comment: copy the rest verbatim.
+        if (c == '/' && i + 1 < len && in[i+1] == '/') { while (i < len) PUT(in[i++]); continue; }
+        if (c == '#') { while (i < len) PUT(in[i++]); continue; }
+        // && -> and , || -> or
+        if (c == '&' && i + 1 < len && in[i+1] == '&') { PUTS("and"); i += 2; subs++; continue; }
+        if (c == '|' && i + 1 < len && in[i+1] == '|') { PUTS("or"); i += 2; subs++; continue; }
+        // |> pipe: cannot auto-rewrite (needs AST). Copy + flag.
+        if (c == '|' && i + 1 < len && in[i+1] == '>') { PUT(in[i++]); PUT(in[i++]); (*pipe_warns)++; continue; }
+        // elseif -> else if  (whole word: prev char not ident, next char not ident)
+        if (c == 'e' && i + 6 <= len && strncmp(in + i, "elseif", 6) == 0) {
+            char prev = (i > 0) ? in[i-1] : ' ';
+            char next = (i + 6 < len) ? in[i+6] : ' ';
+            int prev_id = (prev == '_' || (prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') || (prev >= '0' && prev <= '9'));
+            int next_id = (next == '_' || (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || (next >= '0' && next <= '9'));
+            if (!prev_id && !next_id) { PUTS("else if"); i += 6; subs++; continue; }
+        }
+        // unary ! -> not : a '!' that is NOT part of '!=' and is in prefix
+        // position (start of expression: preceded by whitespace/(/[/{/,/= or BOL).
+        if (c == '!' && !(i + 1 < len && in[i+1] == '=')) {
+            char prev = (i > 0) ? in[i-1] : ' ';
+            int prefixpos = (prev == ' ' || prev == '\t' || prev == '(' || prev == '[' ||
+                             prev == '{' || prev == ',' || prev == '=' || i == 0);
+            if (prefixpos) {
+                PUTS("not ");
+                i += 1;
+                // swallow one following space so `!x`/`! x` both become `not x`
+                if (i < len && in[i] == ' ') i++;
+                subs++;
+                continue;
+            }
+        }
+        PUT(in[i++]);
+    }
+    out[oi] = '\0';
+    #undef PUT
+    #undef PUTS
+    return subs;
+}
+
+int cmd_fix_file(const char* file, int check_only, int* out_pipe_warns) {
+    FILE* f = fopen(file, "r");
+    if (!f) { fprintf(stderr, "Error: cannot open %s\n", file); return -1; }
+    fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
+    if (sz < 0) { fclose(f); return -1; }
+    char* src = malloc(sz + 1);
+    size_t rd = fread(src, 1, sz, f); src[rd] = '\0'; fclose(f);
+
+    size_t cap = rd * 2 + 1024;
+    char* out = malloc(cap);
+    size_t oi = 0;
+    int total_subs = 0, pipe_warns = 0;
+    char* p = src;
+    while (*p) {
+        char line[8192];
+        int li = 0;
+        while (*p && *p != '\n' && li < (int)sizeof(line) - 1) line[li++] = *p++;
+        line[li] = '\0';
+        int had_nl = (*p == '\n');
+        if (had_nl) p++;
+        char fixed[16384];
+        total_subs += wyn_fix_line(line, li, fixed, sizeof(fixed), &pipe_warns);
+        size_t fl = strlen(fixed);
+        while (oi + fl + 2 > cap) { cap *= 2; out = realloc(out, cap); }
+        memcpy(out + oi, fixed, fl); oi += fl;
+        if (had_nl) out[oi++] = '\n';
+    }
+    out[oi] = '\0';
+
+    if (out_pipe_warns) *out_pipe_warns += pipe_warns;
+
+    int changed = (total_subs > 0);
+    if (changed && !check_only) {
+        FILE* w = fopen(file, "w");
+        if (!w) { fprintf(stderr, "Error: cannot write %s\n", file); free(src); free(out); return -1; }
+        fwrite(out, 1, oi, w); fclose(w);
+    }
+    free(src); free(out);
+    return changed ? total_subs : 0;
 }

@@ -199,6 +199,8 @@ test: wyn
 	@WYN=./wyn bash tests/lsp/run_lsp_test.sh
 	@echo "=== Running removed-syntax negative test ==="
 	@WYN=./wyn bash tests/errors/run_removed_syntax_test.sh
+	@echo "=== Running wyn fix migrator test ==="
+	@WYN=./wyn bash tests/errors/run_fix_test.sh
 
 # Alias kept for muscle memory.
 test_bdd: test
