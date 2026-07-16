@@ -2,22 +2,45 @@
 
 ## v1.17.0 — "The Ecosystem Release" (2026-07-16)
 
-The big one. Wyn's C FFI grows from "you can call a function" into a real
-ecosystem: generate bindings from a header, pull a curated C library with one
-command, and call it — proven end to end against SQLite. Concurrency graduates to
-a coroutine scheduler by default (cooperative I/O everywhere) with cooperative task
-cancellation. Plus a batch of Pythonic sugar and a long tail of correctness fixes.
+The big one. Wyn gets a real package ecosystem: a **git-URL package manager** (no
+central registry — a dependency is just a git repo), a C FFI that generates
+bindings from a header and pulls curated C libraries with one command (proven end
+to end against SQLite), and concurrency on a coroutine scheduler by default
+(cooperative I/O everywhere) with cooperative task cancellation. `print()` becomes
+properly Python-style. Plus Pythonic sugar and a long tail of correctness fixes.
 
 **Heads up — breaking changes** (see *Removed / changed* below): the `|>` pipe
-operator, the `&&`/`||`/`!` operators, and `try`/`catch`/`throw` are gone, and
-`import m` now requires qualified calls (`m.foo()`). Migration is mechanical.
+operator, the `&&`/`||`/`!` operators, and `try`/`catch`/`throw` are gone;
+`import m` now requires qualified calls (`m.foo()`); the `pkg.wynlang.com` registry
+and its `wyn pkg register/login/publish` commands are removed in favour of git
+URLs. Migration is mechanical.
+
+### Package manager (git URLs, no registry)
+
+- **A dependency is a git repo.** `wyn add args` expands a bare name to
+  `github.com/wynlang/args` (the "official" convention — org membership is the
+  source of truth); `wyn add github.com/bob/lib@v1.2` takes any repo, any host, at
+  an optional tag/branch/commit; `wyn add <url> --as name` overrides the import
+  name. `wyn remove`, `wyn list`, and `wyn install` (restore from `wyn.lock`) round
+  it out. Dependencies live in `wyn.toml [dependencies]`; `import <name>` resolves
+  through it.
+- **Global content-addressed cache** (`~/.wyn/pkg/<host>/<owner>/<repo>@<ref>`,
+  overridable via `WYN_PKG_CACHE`), cloned once and shared across projects, pinned
+  by commit in `wyn.lock` for reproducible builds.
+- **Publishing is `git push` + `git tag`** — there is no registry server to talk to.
+- **Private repos just work**: the compiler shells out to `git clone`, so your
+  ambient git auth (HTTPS credential helper, stored token, or SSH key/agent, incl.
+  `git@host:owner/repo` URLs) authenticates with no extra Wyn config.
+- The old `pkg.wynlang.com` client and `wyn pkg register/login/whoami/search/
+  publish/push` are removed.
 
 ### C ecosystem (FFI)
 
-- **`wyn add <lib>` — curated C packages, end to end.** One command resolves a
-  library, generates its bindings, links it, and records the flags in `wyn.toml`,
-  so you can `import` it and start calling. Recipes ship for `m` (libm), `z`
-  (zlib), `curl`, and `sqlite3`.
+- **`wyn add <lib>` — curated C packages, end to end.** For a curated C library,
+  one command resolves it, generates its bindings, links it, and records the flags
+  in `wyn.toml`, so you can `import` it and start calling. Nine recipes ship:
+  `m` (libm), `z` (zlib), `curl`, `sqlite3`, `crypto`/`ssl` (OpenSSL), `curses`
+  (ncurses), `readline`, and `xml2` (libxml2).
 - **`wyn bind <header.h>` — binding generation.** Reads a C header and emits the
   Wyn `extern fn` declarations for everything representable by the FFI type map.
 - **`wyn add` TUI.** Run `wyn add` with no name to browse/filter/preview the
@@ -49,6 +72,11 @@ operator, the `&&`/`||`/`!` operators, and `try`/`catch`/`throw` are gone, and
 
 ### Language & syntax
 
+- **`print()` is now Python-style.** `print(a, b, c)` prints its arguments
+  space-separated with a trailing newline; `print(x, end: "")` suppresses the
+  newline; `print(a, b, sep: "-")` sets the separator. `println` remains as an
+  alias. (Previously `print` was inconsistent — no newline for strings/ints, a
+  newline for arrays, and a silently-dropped second argument.)
 - **Namespaced imports (W9):** `import m` exposes members as `m.foo()` — the
   canonical, collision-free form. A bare `foo()` after `import m` is now an error
   (selective `import { foo } from m` keeps the flat call).
@@ -68,6 +96,9 @@ operator, the `&&`/`||`/`!` operators, and `try`/`catch`/`throw` are gone, and
 - **`&&` / `||` / `!` removed** — use `and` / `or` / `not` (already canonical).
 - **`try` / `catch` / `throw` removed** — use `Result` + `Ok`/`Err` + `match` + `?`.
 - **`import m` requires `m.foo()`** — a flat `foo()` no longer resolves.
+- **The `pkg.wynlang.com` registry is gone** — `wyn pkg register/login/whoami/
+  search/publish/push` are removed; use git URLs (`wyn add <url>`) and publish by
+  pushing a repo + tag.
 
 ### Fixes & internals
 
@@ -81,7 +112,15 @@ operator, the `&&`/`||`/`!` operators, and `try`/`catch`/`throw` are gone, and
 - `wyn fmt` no longer corrupts inclusive ranges (`..=`) or slices (`[a:b]`).
 - LSP: reliable diagnostics via `wyn check`, real messages, protocol tests, and
   autocomplete on C-package bindings.
-- Compiler cleanup (W10): dead code removed, runtime source lists de-duplicated.
+- Variables named after C keywords (`int`, `long`, `char`, …) compile correctly.
+- Map literals: `{k: someVar}` with a typed non-literal value stored the wrong type
+  (defaulted to int) and read back garbage — the three map-store paths now share
+  one type selector, so store and load agree.
+- FFI: variables/params of type `ptr` and `cstr` lower correctly; `string` coerces
+  to a `ptr` parameter; imported C-package `extern fn`s link; an `extern fn` for a
+  standard-header symbol (`strlen`, math functions, …) no longer conflicts.
+- Compiler cleanup: dead code removed (`scope.c`, the old registry/semver client),
+  runtime source lists de-duplicated; warning-clean.
 
 ## v1.16.0 — "The Batteries Release" (2026-07-13)
 
