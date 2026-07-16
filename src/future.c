@@ -169,8 +169,17 @@ void* future_get(Future* f) {
     // when the flag is off (awaited tasks are pool threads then).
     extern int pool_try_run_one(void);
     extern int wyn_sched_pump_one(void);
+    // S3: default to pumping the coroutine scheduler on the main thread. Must
+    // match the executor selection in wyn_spawn_async_traced (spawn_fast.c):
+    // WYN_ASYNC_POOL=1 or WYN_ASYNC_CORO=0 forces the legacy pool drain.
     static int async_coro = -1;
-    if (async_coro < 0) async_coro = getenv("WYN_ASYNC_CORO") ? 1 : 0;
+    if (async_coro < 0) {
+        const char* pool = getenv("WYN_ASYNC_POOL");
+        const char* coro = getenv("WYN_ASYNC_CORO");
+        if (pool && pool[0] == '1') async_coro = 0;
+        else if (coro && coro[0] == '0') async_coro = 0;
+        else async_coro = 1;   // default: coroutine scheduler
+    }
     while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY) {
         int did = async_coro ? wyn_sched_pump_one() : pool_try_run_one();
         if (!did) sched_yield();

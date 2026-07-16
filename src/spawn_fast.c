@@ -678,8 +678,18 @@ Future* wyn_spawn_async_traced(TaskFuncWithReturn func, void* arg, const char* f
     // this is safe on any core count; but if for some reason no worker processors
     // exist AND we're on the main thread, keep the pool (its worker threads are
     // the only executors then).
+    // S3: the coroutine scheduler is now the DEFAULT executor for awaited work
+    // (cooperative I/O everywhere). WYN_ASYNC_POOL=1 forces the legacy thread pool
+    // as an escape hatch. WYN_ASYNC_CORO is still honored (=0 also selects the
+    // pool) for backward compatibility with existing scripts/CI.
     static int async_coro = -1;
-    if (async_coro < 0) async_coro = getenv("WYN_ASYNC_CORO") ? 1 : 0;
+    if (async_coro < 0) {
+        const char* pool = getenv("WYN_ASYNC_POOL");
+        const char* coro = getenv("WYN_ASYNC_CORO");
+        if (pool && pool[0] == '1') async_coro = 0;
+        else if (coro && coro[0] == '0') async_coro = 0;
+        else async_coro = 1;   // default: coroutine scheduler
+    }
     if (async_coro) return wyn_spawn_async_coro(func, arg, file, line);
 
     (void)file; (void)line;
