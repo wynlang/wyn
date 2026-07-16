@@ -920,143 +920,69 @@ void codegen_expr(Expr* expr) {
                 expr->call.callee->token.length == 5 &&
                 memcmp(expr->call.callee->token.start, "print", 5) == 0) {
                 
-                if (expr->call.arg_count == 1) {
-                    // Single argument - use the _Generic macro for type dispatch
-                    // Escape analysis: string interp arg to print doesn't escape
+                // Python-style print(): print all positional args separated by a
+                // space, then a terminator that defaults to "\n". A trailing named
+                // `end=` (or `sep=`) argument overrides the terminator/separator.
+                // `print(x)` == `println(x)`; `print(x, end="")` suppresses the
+                // newline (the old no-newline behavior); `print(a, b)` joins with a
+                // space. Emitted as one statement-expr so it stays a single value.
+                {
+                    // Split positional args from named end=/sep= args.
+                    int npos = 0;
+                    Expr* end_arg = NULL;   // string expr for the terminator (default "\n")
+                    Expr* sep_arg = NULL;   // string expr for the separator (default " ")
+                    Expr* pos[64];
+                    for (int i = 0; i < expr->call.arg_count && npos < 64; i++) {
+                        Token nm = expr->call.arg_names ? expr->call.arg_names[i] : (Token){0};
+                        if (nm.length == 3 && memcmp(nm.start, "end", 3) == 0) { end_arg = expr->call.args[i]; continue; }
+                        if (nm.length == 3 && memcmp(nm.start, "sep", 3) == 0) { sep_arg = expr->call.args[i]; continue; }
+                        pos[npos++] = expr->call.args[i];
+                    }
+
                     bool prev_skip = codegen_skip_strdup;
-                    if (expr->call.args[0]->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
-                    Expr* parg = expr->call.args[0];
-                    // A binary expression only needs the string temp wrapper when
-                    // it actually produces a STRING (concat). An arithmetic binary
-                    // like `n + 1` is NOT a string — wrapping it as `const char*`
-                    // and then wyn_rc_release()ing an integer segfaults. Trust the
-                    // checker's expr_type; fall back to a string-operand check when
-                    // the type is missing (e.g. a var left __auto_type'd).
-                    bool _binary_is_string = false;
-                    if (parg->type == EXPR_BINARY) {
-                        if (parg->expr_type) {
-                            _binary_is_string = (parg->expr_type->kind == TYPE_STRING);
-                        } else {
-                            Expr* _l = parg->binary.left;
-                            Expr* _r = parg->binary.right;
-                            _binary_is_string =
-                                (_l->type == EXPR_STRING || _r->type == EXPR_STRING) ||
-                                (_l->expr_type && _l->expr_type->kind == TYPE_STRING) ||
-                                (_r->expr_type && _r->expr_type->kind == TYPE_STRING);
-                        }
-                    }
-                    bool _print_temp = _binary_is_string ||
-                                       (parg->type == EXPR_STRING_INTERP);
-                    if (!_print_temp && parg->type == EXPR_METHOD_CALL &&
-                        parg->method_call.method.length == 9 &&
-                        memcmp(parg->method_call.method.start, "to_string", 9) == 0 &&
-                        !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
-                        _print_temp = true;
-                    }
-                    // Self-release the fresh temp ONLY when no statement-level
-                    // wrapper already owns it (temp_id >= 0 means codegen_stmt
-                    // hoisted it into __saN and will release it — releasing here
-                    // too would double-free).
-                    if (_print_temp && parg->_codegen_temp_id < 0) {
-                        emit("({ const char* __ps = ");
-                        codegen_expr(parg);
-                        emit("; print(__ps); wyn_rc_release(__ps); })");
-                    } else {
-                        emit("print(");
-                        codegen_expr(parg);
-                        emit(")");
-                    }
-                    codegen_skip_strdup = prev_skip;
-                } else if (expr->call.arg_count >= 2 && 
-                           expr->call.args[0]->type == EXPR_STRING) {
-                    // Format string with {} placeholders: print("Value: {}", x)
-                    const char* fmt = expr->call.args[0]->token.start + 1; // Skip opening quote
-                    int fmt_len = expr->call.args[0]->token.length - 2; // Skip quotes
-                    
-                    emit("printf(\"");
-                    int arg_idx = 1;
-                    for (int i = 0; i < fmt_len; i++) {
-                        if (i < fmt_len - 1 && fmt[i] == '{' && fmt[i+1] == '}') {
-                            // Replace {} with appropriate format specifier
-                            if (arg_idx < expr->call.arg_count) {
-                                Expr* arg = expr->call.args[arg_idx];
-                                
-                                // Determine format specifier based on argument type
-                                if (arg->expr_type && arg->expr_type->kind == TYPE_STRING) {
-                                    emit("%%s");
-                                } else if (arg->expr_type && arg->expr_type->kind == TYPE_FLOAT) {
-                                    emit("%%f");
-                                } else if (arg->expr_type && arg->expr_type->kind == TYPE_BOOL) {
-                                    emit("%%s");  // Will use ternary for true/false
-                                } else if (arg->type == EXPR_STRING) {
-                                    // String literal
-                                    emit("%%s");
-                                } else if (arg->type == EXPR_IDENT) {
-                                    // Variable - need better type detection
-                                    // For now, check if it's likely a string parameter
-                                    // This is a heuristic - proper solution needs symbol table lookup
-                                    const char* var_name = arg->token.start;
-                                    int var_len = arg->token.length;
-                                    if ((var_len >= 4 && strncmp(var_name, "name", 4) == 0) ||
-                                        (var_len >= 3 && strncmp(var_name, "msg", 3) == 0) ||
-                                        (var_len >= 3 && strncmp(var_name, "str", 3) == 0) ||
-                                        (var_len >= 4 && strncmp(var_name, "text", 4) == 0)) {
-                                        emit("%%s");
-                                    } else {
-                                        emit("%%d");  // Default to int for other variables
-                                    }
-                                } else if (arg->type == EXPR_FIELD_ACCESS) {
-                                    // Struct field access - check field name for string hints
-                                    Token field_name = arg->field_access.field;
-                                    if ((field_name.length >= 4 && strncmp(field_name.start, "name", 4) == 0) ||
-                                        (field_name.length >= 3 && strncmp(field_name.start, "str", 3) == 0) ||
-                                        (field_name.length >= 4 && strncmp(field_name.start, "text", 4) == 0) ||
-                                        (field_name.length >= 5 && strncmp(field_name.start, "title", 5) == 0)) {
-                                        emit("%%s");
-                                    } else {
-                                        emit("%%d");  // Default to int for other fields
-                                    }
-                                } else {
-                                    // Default to int for backward compatibility
-                                    emit("%%d");
-                                }
-                            }
-                            i++; // Skip the }
-                            arg_idx++;
-                        } else if (fmt[i] == '%') {
-                            emit("%%%%"); // Escape %
-                        } else if (fmt[i] == '\\' && i < fmt_len - 1) {
-                            emit("\\%c", fmt[i+1]);
-                            i++;
-                        } else {
-                            emit("%c", fmt[i]);
-                        }
-                    }
-                    emit("\\n\"");
-                    // Add arguments
-                    for (int i = 1; i < expr->call.arg_count; i++) {
-                        emit(", ");
-                        Expr* arg = expr->call.args[i];
-                        // Handle boolean arguments that need string conversion
-                        if (arg->expr_type && arg->expr_type->kind == TYPE_BOOL) {
-                            emit("(");
-                            codegen_expr(arg);
-                            emit(" ? \"true\" : \"false\")");
-                        } else {
-                            codegen_expr(arg);
-                        }
-                    }
-                    emit(")");
-                } else {
-                    // Multiple arguments - use individual print calls without newlines
                     emit("({ ");
-                    for (int i = 0; i < expr->call.arg_count; i++) {
-                        if (i > 0) emit("printf(\" \"); ");
-                        emit("print_no_nl(");
-                        codegen_expr(expr->call.args[i]);
-                        emit("); ");
+                    for (int i = 0; i < npos; i++) {
+                        Expr* parg = pos[i];
+                        if (i > 0) {
+                            if (sep_arg) { emit("print_no_nl("); codegen_expr(sep_arg); emit("); "); }
+                            else emit("printf(\" \"); ");
+                        }
+                        // Per-arg escape analysis + string-temp handling, mirroring
+                        // the old single-arg path: a fresh string temp (interp /
+                        // concat / non-string .to_string()) must be released after
+                        // printing to avoid a leak, unless a statement-level wrapper
+                        // already owns it (_codegen_temp_id >= 0).
+                        if (parg->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
+                        bool _binary_is_string = false;
+                        if (parg->type == EXPR_BINARY) {
+                            if (parg->expr_type) _binary_is_string = (parg->expr_type->kind == TYPE_STRING);
+                            else {
+                                Expr* _l = parg->binary.left; Expr* _r = parg->binary.right;
+                                _binary_is_string = (_l->type == EXPR_STRING || _r->type == EXPR_STRING) ||
+                                    (_l->expr_type && _l->expr_type->kind == TYPE_STRING) ||
+                                    (_r->expr_type && _r->expr_type->kind == TYPE_STRING);
+                            }
+                        }
+                        bool _print_temp = _binary_is_string || (parg->type == EXPR_STRING_INTERP);
+                        if (!_print_temp && parg->type == EXPR_METHOD_CALL &&
+                            parg->method_call.method.length == 9 &&
+                            memcmp(parg->method_call.method.start, "to_string", 9) == 0 &&
+                            !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
+                            _print_temp = true;
+                        }
+                        if (_print_temp && parg->_codegen_temp_id < 0) {
+                            emit("{ const char* __ps = "); codegen_expr(parg);
+                            emit("; print_no_nl(__ps); wyn_rc_release(__ps); } ");
+                        } else {
+                            emit("print_no_nl("); codegen_expr(parg); emit("); ");
+                        }
+                        codegen_skip_strdup = prev_skip;
                     }
-                    emit("printf(\"\\n\"); })");
+                    // Terminator: default newline, or the given end= string.
+                    if (end_arg) { emit("print_no_nl("); codegen_expr(end_arg); emit("); "); }
+                    else emit("printf(\"\\n\"); ");
+                    emit("})");
+                    codegen_skip_strdup = prev_skip;
                 }
             } else if (expr->call.callee->type == EXPR_IDENT && 
                        expr->call.callee->token.length == 7 &&
