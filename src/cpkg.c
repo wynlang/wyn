@@ -132,6 +132,15 @@ int wyn_cpkg_list(const char* wyn_root) {
     return 0;
 }
 
+// Return 1 if `name` matches a curated C-library recipe in c-packages.toml.
+// Used by `wyn add <arg>` to decide between the curated C-library path (cpkg)
+// and the git-URL dependency path. Non-destructive: just scans the registry.
+int wyn_cpkg_has_recipe(const char* name, const char* wyn_root) {
+    if (!name || !*name) return 0;
+    Recipe r;
+    return registry_scan(wyn_root, name, &r) ? 1 : 0;
+}
+
 // ---- interactive TUI (wyn add, no name, on a TTY) --------------------------
 
 typedef struct { char name[64]; char desc[256]; } RecipeBrief;
