@@ -3600,6 +3600,20 @@ void Task_free_value(long long handle) {
     shared_registry[handle] = NULL;
 }
 
+// S4 cooperative cancellation. `Task.cancel(h)` requests cancellation of the task
+// backing spawn handle `h` (a Future*); the awaitee bails at its next yield point.
+// `Task.is_cancelled()` lets a running spawned task check whether it was cancelled
+// so it can `return` early cooperatively. Implemented in future.c (needs Future/
+// Task internals). Not available in the Windows synchronous-spawn stub.
+#ifndef _WIN32
+// future_cancel / wyn_current_task_cancelled are declared in future.h (included above).
+static inline void Task_cancel(void* handle) { future_cancel((Future*)handle); }
+static inline long long Task_is_cancelled(void) { return wyn_current_task_cancelled(); }
+#else
+static inline void Task_cancel(void* handle) { (void)handle; }
+static inline long long Task_is_cancelled(void) { return 0; }
+#endif
+
 // Channel API (advanced) — kept for power users
 #define MAX_TASKS 64
 static WynTask* task_registry[MAX_TASKS] = {0};

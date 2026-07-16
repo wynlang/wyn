@@ -21,6 +21,8 @@ typedef struct Future {
     _Atomic int state;
     void* result;
     _Atomic(void*) waiter;  // Task* waiting on this future — atomic to prevent race
+    _Atomic int cancelled;  // S4: set by Task.cancel(h); checked cooperatively at
+                            // yield points so the awaitee's task can bail early.
 } Future;
 
 // === Recyclable slab allocator ===
@@ -62,7 +64,7 @@ Future* future_new(void) {
             if (idx >= 0 && idx < FUTURE_SLAB_SIZE) {
                 f = &future_slab[idx];
                 atomic_store_explicit(&f->state, FUTURE_PENDING, memory_order_relaxed);
-                f->result = NULL; atomic_store_explicit(&f->waiter, NULL, memory_order_relaxed);
+                f->result = NULL; atomic_store_explicit(&f->waiter, NULL, memory_order_relaxed); atomic_store_explicit(&f->cancelled, 0, memory_order_relaxed);
                 return f;
             }
         }
@@ -76,8 +78,33 @@ Future* future_new(void) {
         f = malloc(sizeof(Future));
     }
     atomic_store_explicit(&f->state, FUTURE_PENDING, memory_order_relaxed);
-    f->result = NULL; atomic_store_explicit(&f->waiter, NULL, memory_order_relaxed);
+    f->result = NULL; atomic_store_explicit(&f->waiter, NULL, memory_order_relaxed); atomic_store_explicit(&f->cancelled, 0, memory_order_relaxed);
     return f;
+}
+
+// S4: request cancellation of the task awaiting/backing this future. Cooperative
+// — sets a flag the awaitee observes at its next yield point (see future_get) and
+// which the running task can query via Task.is_cancelled(). Also wakes any waiter
+// so a parked awaiter re-checks promptly. Leak-on-cancel: a cancelled coroutine
+// still owns its stack/RC values (minicoro has no unwind); accepted for v1.
+void future_cancel(Future* f) {
+    if (!f) return;
+    atomic_store_explicit(&f->cancelled, 1, memory_order_release);
+    void* waiter = atomic_exchange_explicit(&f->waiter, NULL, memory_order_acq_rel);
+    if (waiter) wyn_sched_enqueue(waiter);
+}
+
+int future_is_cancelled(Future* f) {
+    return f ? atomic_load_explicit(&f->cancelled, memory_order_acquire) : 0;
+}
+
+// True if the currently-running coroutine task has been cancelled (its backing
+// future's flag is set). Reads the task's ->future via the spawn_fast accessor so
+// this file needn't know the Task layout.
+int wyn_current_task_cancelled(void) {
+    extern void* wyn_current_task_future(void);
+    void* fut = wyn_current_task_future();
+    return fut ? future_is_cancelled((Future*)fut) : 0;
 }
 
 void future_set(Future* f, void* result) {
@@ -132,10 +159,15 @@ void* future_get(Future* f) {
                     wyn_coro_yield();
                 }
             }
+            // S4: if THIS task was cancelled while parked, stop waiting and bail
+            // (leak-on-cancel: we abandon the awaited future rather than block).
+            if (wyn_current_task_cancelled()) return NULL;
             // CAS failed means someone else set waiter (shouldn't happen in normal use).
-            // Spin-yield until result is visible.
-            while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY)
+            // Spin-yield until result is visible — or until we're cancelled.
+            while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY) {
+                if (wyn_current_task_cancelled()) return NULL;
                 wyn_coro_yield();
+            }
         } else {
             // No task context (shouldn't happen) — busy yield
             while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY)

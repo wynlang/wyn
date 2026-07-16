@@ -16,6 +16,7 @@
 typedef void (*TaskFunc)(void*);
 void wyn_io_park(void) {}
 void* wyn_current_task(void) { return NULL; }
+void* wyn_current_task_future(void) { return NULL; }  // no coroutines on Windows
 int wyn_spawn_origin_line(void) { return 0; }
 const char* wyn_spawn_origin_file(void) { return ""; }
 long wyn_spawn_origin_id(void) { return 0; }
@@ -242,6 +243,10 @@ static __thread int io_parked = 0;
 
 // Public API: get current task pointer (for I/O loop registration)
 void* wyn_current_task(void) { return current_task; }
+
+// S4: the Future backing the current coroutine task (NULL for fire-and-forget or
+// no task). Lets future.c query cancellation without knowing the Task layout.
+void* wyn_current_task_future(void) { return current_task ? current_task->future : NULL; }
 
 // Public API: mark current coroutine as I/O-parked (don't re-enqueue on yield)
 void wyn_io_park(void) { io_parked = 1; }

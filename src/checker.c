@@ -1981,6 +1981,11 @@ void init_checker() {
         {"Task_try_recv", 13, builtin_int, 2, builtin_int},
         {"Task_select_2", 13, builtin_int, 2, builtin_int},
         {"Task_select_3", 13, builtin_int, 3, builtin_int},
+        // S4 cooperative cancellation: Task.cancel(handle) requests cancellation
+        // of an awaited spawn; Task.is_cancelled() lets a running task check if it
+        // was cancelled (0 args — reads the current coroutine).
+        {"Task_cancel", 11, builtin_void, 1, builtin_int},
+        {"Task_is_cancelled", 17, builtin_bool, 0, builtin_int},
     };
     for (int i = 0; i < (int)(sizeof(reg_task_fns)/sizeof(reg_task_fns[0])); i++) {
         Type* ft = make_type(TYPE_FUNCTION);
