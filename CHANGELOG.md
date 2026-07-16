@@ -1,5 +1,88 @@
 # Changelog
 
+## v1.17.0 — "The Ecosystem Release" (2026-07-16)
+
+The big one. Wyn's C FFI grows from "you can call a function" into a real
+ecosystem: generate bindings from a header, pull a curated C library with one
+command, and call it — proven end to end against SQLite. Concurrency graduates to
+a coroutine scheduler by default (cooperative I/O everywhere) with cooperative task
+cancellation. Plus a batch of Pythonic sugar and a long tail of correctness fixes.
+
+**Heads up — breaking changes** (see *Removed / changed* below): the `|>` pipe
+operator, the `&&`/`||`/`!` operators, and `try`/`catch`/`throw` are gone, and
+`import m` now requires qualified calls (`m.foo()`). Migration is mechanical.
+
+### C ecosystem (FFI)
+
+- **`wyn add <lib>` — curated C packages, end to end.** One command resolves a
+  library, generates its bindings, links it, and records the flags in `wyn.toml`,
+  so you can `import` it and start calling. Recipes ship for `m` (libm), `z`
+  (zlib), `curl`, and `sqlite3`.
+- **`wyn bind <header.h>` — binding generation.** Reads a C header and emits the
+  Wyn `extern fn` declarations for everything representable by the FFI type map.
+- **`wyn add` TUI.** Run `wyn add` with no name to browse/filter/preview the
+  curated registry interactively (falls back to a plain list when non-interactive).
+- **`Ptr` — pointer cells for C out-parameters.** `Ptr.cell()`/`read()`/`write()`/
+  `free()` give you a heap slot to pass where C wants a `T**` (e.g.
+  `sqlite3_open(path, sqlite3** out)`) and read the handle back — the piece that
+  makes opaque-handle APIs usable.
+- **By-value FFI structs + typed `cstr`** (raw `char*`), and `ptr` is a first-class
+  type consistent across the checker and codegen.
+- **Dogfooded against SQLite:** open a DB, create a table, insert rows, and query
+  them back through prepared statements — all from Wyn (see the C-FFI guide).
+- FFI robustness: standard-header symbols (`strlen`, `toupper`, the math library,
+  …) no longer clash with the prototypes Wyn emits; `string` coerces to a `ptr`
+  parameter; imported C-package bindings link correctly.
+
+### Concurrency
+
+- **Coroutine scheduler is now the default.** Awaited `spawn` / `await_all` /
+  `parallel { }` run as coroutines on an M:N scheduler, so cooperative I/O and
+  `Time::sleep` engage everywhere (not just for fire-and-forget). Awaiting from
+  `main` pumps the scheduler and never deadlocks. The old thread pool remains as a
+  fallback behind `WYN_ASYNC_POOL=1`.
+- **Cooperative task cancellation.** `Task.cancel(handle)` requests cancellation;
+  a task checks `Task.is_cancelled()` and returns early. Cooperative and
+  leak-on-cancel (no forced unwind).
+- Fire-and-forget `spawn` is drained (and its output flushed) at program exit, so
+  orphan tasks run reliably; unbound `spawn` inside `parallel { }` is now joined.
+
+### Language & syntax
+
+- **Namespaced imports (W9):** `import m` exposes members as `m.foo()` — the
+  canonical, collision-free form. A bare `foo()` after `import m` is now an error
+  (selective `import { foo } from m` keeps the flat call).
+- **`?.` optional chaining** — `x?.field` / `x?.method()` short-circuit on `None`.
+- **`zip()` + pair destructuring** — `for x, y in zip(a, b)`.
+- **Optional struct fields** — a `Struct?` (or `int?`/`string?`/…) field now
+  compiles and matches correctly.
+- **Closure copy** — `var g = f` where `f` is a closure.
+- **Braceless single-statement bodies** for `for`/`if`/`else`/`while`.
+- **`_` as a throwaway for-loop variable.**
+- Variables may be named after C keywords (`int`, `long`, `char`, …).
+
+### Removed / changed (breaking)
+
+- **`|>` pipe operator removed** — compose with nested calls or intermediate
+  `var`s.
+- **`&&` / `||` / `!` removed** — use `and` / `or` / `not` (already canonical).
+- **`try` / `catch` / `throw` removed** — use `Result` + `Ok`/`Err` + `match` + `?`.
+- **`import m` requires `m.foo()`** — a flat `foo()` no longer resolves.
+
+### Fixes & internals
+
+- Memory-safety: `print()` on an int expression, a module-load use-after-free, and
+  a JSON out-of-bounds read — all fixed and ASan-verified.
+- Pattern matching / data enums: statement-form match, multi-field variants,
+  arrays of enum values, tuple-variable destructuring.
+- Struct methods: `self.other()` dispatch, method params, struct-body method
+  typing, single-letter struct names; the checker now errors on calls to methods a
+  struct doesn't have.
+- `wyn fmt` no longer corrupts inclusive ranges (`..=`) or slices (`[a:b]`).
+- LSP: reliable diagnostics via `wyn check`, real messages, protocol tests, and
+  autocomplete on C-package bindings.
+- Compiler cleanup (W10): dead code removed, runtime source lists de-duplicated.
+
 ## v1.16.0 — "The Batteries Release" (2026-07-13)
 
 Batteries included. This release makes Wyn feel more like Python where it counts
