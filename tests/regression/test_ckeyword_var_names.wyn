@@ -1,0 +1,37 @@
+// Regression: a user variable named after a C keyword (long, char, int, void,
+// double, …) must compile and behave like any other variable. Codegen emits it
+// under the "wynfn_" namespace (Wyn-visible name unchanged) at BOTH its
+// declaration and every reassignment, and the checker resolves the bare
+// identifier as that variable — not as a builtin type literal — so its real
+// type flows and its uses are counted (no spurious "unused variable" warning,
+// and `int`/`char` holding a float/string round-trip correctly).
+// EXPECT: 15
+// EXPECT: hi!
+// EXPECT: 6.0
+// EXPECT: true
+// EXPECT: PASS: c-keyword var names
+
+fn main() -> int {
+    // C keyword as an int var, then reassigned via itself
+    var long = 5
+    long = long + 10
+    println("${long}")
+
+    // C keyword as a string var, reassigned by concatenation (RC path)
+    var char = "hi"
+    char = char + "!"
+    println(char)
+
+    // builtin-type name holding a NON-matching type (float in `int`) — proves
+    // the checker flows the real type instead of the type-literal it's named for
+    var int = 3.0
+    int = int * 2.0
+    println("${int}")
+
+    // builtin-type name holding a bool
+    var double = true
+    println("${double}")
+
+    println("PASS: c-keyword var names")
+    return 0
+}

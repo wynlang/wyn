@@ -3217,6 +3217,12 @@ void codegen_expr(Expr* expr) {
             // (old value might be referenced in the RHS expression)
             char target_name[512];
             token_to_cstr(target_name, sizeof target_name, expr->assign.name);
+            // A var whose name is a C keyword was emitted with the wynfn_ prefix at
+            // its declaration; the assignment must use the same prefixed C name.
+            { extern int is_user_collision(const char*);
+              if (is_user_collision(target_name)) {
+                memmove(target_name + WYN_UFN_PFX_LEN, target_name, strlen(target_name) + 1);
+                memcpy(target_name, WYN_UFN_PFX, WYN_UFN_PFX_LEN); } }
             bool _rc_string_assign = false;
             {
                 extern int is_string_var(const char*);
@@ -3256,8 +3262,10 @@ void codegen_expr(Expr* expr) {
                 }
                 
                 // Check if this is a local variable - never prefix local variables
+                // (target_name already carries the wynfn_ prefix if it's a C-keyword
+                // collision, so use it rather than the raw token).
                 if (is_local_variable(target_name)) {
-                    emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
+                    emit("%s = ", target_name);
                     codegen_expr(expr->assign.value);
                     break;
                 }
@@ -3282,9 +3290,9 @@ void codegen_expr(Expr* expr) {
                 }
             } else {
                 if (is_mut_parameter(target_name)) {
-                    emit("(*%.*s) = ", expr->assign.name.length, expr->assign.name.start);
+                    emit("(*%s) = ", target_name);
                 } else {
-                    emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
+                    emit("%s = ", target_name);
                 }
             }
             codegen_expr(expr->assign.value);

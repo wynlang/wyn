@@ -2450,7 +2450,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return builtin_int;
             }
             
-            // T2.5.1: Handle built-in type names
+            // T2.5.1: Handle built-in type names — UNLESS a real variable of that
+            // name is in scope. A user var may be named after a builtin type
+            // (int/float/string/str/bool/char/void); codegen emits it with a
+            // wynfn_ prefix, so the checker must resolve it as that variable (count
+            // its uses, flow its real type), not swallow it as a type literal.
+            if (!find_symbol(scope, expr->token)) {
             if (expr->token.length == 3 && memcmp(expr->token.start, "int", 3) == 0) {
                 expr->expr_type = builtin_int;
                 return builtin_int;
@@ -2479,7 +2484,8 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 expr->expr_type = builtin_void;
                 return builtin_void;
             }
-            
+            }
+
             Symbol* sym = find_symbol(scope, expr->token);
             if (sym) sym->is_used = true;
             if (!sym) {

@@ -443,6 +443,18 @@ int is_str_array_var(const char* name) {
     return 0;
 }
 
+// Return the C identifier for a Wyn variable name: if the name collides with a
+// C keyword / runtime symbol it was declared under the "wynfn_" namespace, so
+// its RC-release (and any by-name reference) must use the same prefixed name.
+// Writes into buf and returns it; buf must hold WYN_UFN_PFX_LEN + strlen(name) + 1.
+static const char* emit_c_var_name(char* buf, size_t bufsz, const char* name) {
+    if (is_c_name_collision(name)) {
+        snprintf(buf, bufsz, "%s%s", WYN_UFN_PFX, name);
+        return buf;
+    }
+    return name;
+}
+
 // String variable tracking for RC release on reassignment
 static char* string_var_names[256];
 static int string_var_count = 0;
@@ -463,8 +475,10 @@ void pop_string_scope_and_release(void) {
     extern FILE* codegen_get_output(void);
     FILE* out = codegen_get_output();
     if (out) {
-        for (int i = saved; i < string_var_count; i++)
-            fprintf(out, "wyn_rc_release(%s); ", string_var_names[i]);
+        for (int i = saved; i < string_var_count; i++) {
+            char _cn[288];
+            fprintf(out, "wyn_rc_release(%s); ", emit_c_var_name(_cn, sizeof _cn, string_var_names[i]));
+        }
     }
     // Restore count — inner-scope vars are no longer tracked
     string_var_count = saved;
@@ -476,8 +490,10 @@ void emit_block_string_releases(void) {
     extern FILE* codegen_get_output(void);
     FILE* out = codegen_get_output();
     if (out) {
-        for (int i = saved; i < string_var_count; i++)
-            fprintf(out, "wyn_rc_release(%s); ", string_var_names[i]);
+        for (int i = saved; i < string_var_count; i++) {
+            char _cn[288];
+            fprintf(out, "wyn_rc_release(%s); ", emit_c_var_name(_cn, sizeof _cn, string_var_names[i]));
+        }
     }
 }
 void register_string_var(const char* name) {
@@ -564,8 +580,10 @@ void pop_closure_scope_and_release(void) {
     extern FILE* codegen_get_output(void);
     FILE* out = codegen_get_output();
     if (out) {
-        for (int i = saved; i < closure_scope_count; i++)
-            fprintf(out, "wyn_rc_release(%s.env); ", closure_scope_names[i]);
+        for (int i = saved; i < closure_scope_count; i++) {
+            char _cn[288];
+            fprintf(out, "wyn_rc_release(%s.env); ", emit_c_var_name(_cn, sizeof _cn, closure_scope_names[i]));
+        }
     }
     for (int i = saved; i < closure_scope_count; i++) free(closure_scope_names[i]);
     closure_scope_count = saved;
@@ -577,8 +595,10 @@ void emit_block_closure_releases(void) {
     extern FILE* codegen_get_output(void);
     FILE* out = codegen_get_output();
     if (out) {
-        for (int i = saved; i < closure_scope_count; i++)
-            fprintf(out, "wyn_rc_release(%s.env); ", closure_scope_names[i]);
+        for (int i = saved; i < closure_scope_count; i++) {
+            char _cn[288];
+            fprintf(out, "wyn_rc_release(%s.env); ", emit_c_var_name(_cn, sizeof _cn, closure_scope_names[i]));
+        }
     }
 }
 void register_closure_scope_var(const char* name) {
@@ -639,7 +659,8 @@ void emit_string_releases(const char* except_var) {
     if (!out) return;
     for (int i = 0; i < string_var_releasable_count; i++) {
         if (except_var && strcmp(string_var_releasable[i], except_var) == 0) continue;
-        fprintf(out, "wyn_rc_release(%s); ", string_var_releasable[i]);
+        char _cn[288];
+        fprintf(out, "wyn_rc_release(%s); ", emit_c_var_name(_cn, sizeof _cn, string_var_releasable[i]));
     }
 }
 int get_string_var_count(void) { return string_var_releasable_count; }

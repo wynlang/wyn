@@ -1542,6 +1542,12 @@ void codegen_stmt(Stmt* stmt) {
                 emit(") = ");
             } else if (stmt->var.is_const && !stmt->var.is_mutable && !is_already_const) {
                 char _vn[512]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                // A var whose name is a C keyword/reserved symbol (long/int/char/
+                // double/…) must be emitted with the wynfn_ prefix, and registered
+                // so its later uses (EXPR_IDENT) prefix too — else the C is invalid.
+                { extern int is_c_name_collision(const char*); extern void register_user_collision(const char*);
+                  if (is_c_name_collision(_vn)) { register_user_collision(_vn);
+                    memmove(_vn + WYN_UFN_PFX_LEN, _vn, strlen(_vn) + 1); memcpy(_vn, WYN_UFN_PFX, WYN_UFN_PFX_LEN); } }
                 extern int get_shadow_suffix(const char*);
                 int _ss = get_shadow_suffix(_vn);
                 if (_ss > 0) {
@@ -1553,6 +1559,9 @@ void codegen_stmt(Stmt* stmt) {
                 }
             } else {
                 char _vn[512]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                { extern int is_c_name_collision(const char*); extern void register_user_collision(const char*);
+                  if (is_c_name_collision(_vn)) { register_user_collision(_vn);
+                    memmove(_vn + WYN_UFN_PFX_LEN, _vn, strlen(_vn) + 1); memcpy(_vn, WYN_UFN_PFX, WYN_UFN_PFX_LEN); } }
                 extern int get_shadow_suffix(const char*);
                 int _ss = get_shadow_suffix(_vn);
                 if (_ss > 0) {
