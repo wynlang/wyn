@@ -45,109 +45,109 @@ fn main() {
     var count = 10          // mutable, type inferred
     const PI = 3            // constant
     count = count + 1
-    println(count)          // 11
-    println(PI)
+    print(count)          // 11
+    print(PI)
 
     // ---- Strings & interpolation ----
     var name = "Wyn"
-    println("Language: ${name}, len ${name.len()}")
-    println("UP: ${name.upper()}  low: ${name.lower()}")
+    print("Language: ${name}, len ${name.len()}")
+    print("UP: ${name.upper()}  low: ${name.lower()}")
 
     // ---- Functions in action ----
-    println(add(2, 3))            // 5
-    println(square(6))            // 36
-    println(greet())              // hello, world
-    println(greet("friend"))      // hello, friend
+    print(add(2, 3))            // 5
+    print(square(6))            // 36
+    print(greet())              // hello, world
+    print(greet("friend"))      // hello, friend
 
     // ---- Control flow (braces OR braceless single-statement) ----
     if count > 10
-        println("big")
+        print("big")
     else
-        println("small")
+        print("small")
 
     for i in 0..3
-        println("i=${i}")
+        print("i=${i}")
 
     var total = 0
     for i in 1..=5 { total = total + i }   // 1..=5 is inclusive
-    println(total)                          // 15
+    print(total)                          // 15
 
     // ---- Collections ----
     var xs = [1, 2, 3, 4, 5]
-    println(xs[0])                          // 1
-    println(xs[-1])                         // 5  (negative index)
-    println(xs[1:3])                        // [2, 3]  (slice)
+    print(xs[0])                          // 1
+    print(xs[-1])                         // 5  (negative index)
+    print(xs[1:3])                        // [2, 3]  (slice)
 
     var m = {"a": 1, "b": 2}
     m["c"] = 3
     for k, v in m
-        println("${k} -> ${v}")
+        print("${k} -> ${v}")
 
     // ---- Higher-order functions + arrow lambdas ----
-    var doubled = xs.map(|n| n * 2).filter(|n| n > 4)
-    println(doubled)                        // [6, 8, 10]
+    var doubled = xs.map((n) => n * 2).filter((n) => n > 4)
+    print(doubled)                        // [6, 8, 10]
     var sum = xs.reduce(|acc, n| acc + n, 0)
-    println(sum)                            // 15
+    print(sum)                            // 15
 
     // ---- zip: parallel iteration ----
     var names = ["ada", "bob"]
     var ages = [36, 42]
     for who, age in zip(names, ages)
-        println("${who} is ${age}")
+        print("${who} is ${age}")
 
     // ---- Structs & methods ----
     var p = Point { x: 3, y: 4 }
-    println(p.dist2())                      // 25
+    print(p.dist2())                      // 25
     var q = p.shifted(1, 1)
-    println("${q.x},${q.y}")                // 4,5
+    print("${q.x},${q.y}")                // 4,5
 
     // ---- Enums + match ----
-    println(area(Shape.Circle(2)))          // 12
-    println(area(Shape.Rect(3, 5)))         // 15
+    print(area(Shape.Circle(2)))          // 12
+    print(area(Shape.Rect(3, 5)))         // 15
 
     // ---- Optionals + ?. optional chaining ----
     var found = find(1)
-    println((found?.x).unwrap_or(-1))       // 3
+    print((found?.x).unwrap_or(-1))       // 3
     var missing = find(2)
-    println((missing?.x).unwrap_or(-1))     // -1
+    print((missing?.x).unwrap_or(-1))     // -1
     match find(1) {
-        Some(pt) => println("found ${pt.x},${pt.y}"),
-        None => println("nothing"),
+        Some(pt) => print("found ${pt.x},${pt.y}"),
+        None => print("nothing"),
     }
 
     // ---- Generics ----
-    println(identity(99))
-    println(identity("generic"))
+    print(identity(99))
+    print(identity("generic"))
 
     // ---- Closures & closure copy ----
     var base = 100
-    var addbase = |n| n + base
+    var addbase = (n) => n + base
     var alias = addbase                     // copy a closure
-    println(alias(5))                       // 105
+    print(alias(5))                       // 105
 
     // ---- Concurrency: spawn / await / await_all / parallel ----
     var f = spawn square(9)
-    println(await f)                        // 81
+    print(await f)                        // 81
 
     var futs = []
     for i in 1..4 { futs.push(spawn square(i)) }
     var results = await_all(futs)
     var s2 = 0
     for _, r in results { s2 = s2 + r }
-    println(s2)                             // 1 + 4 + 9 = 14
+    print(s2)                             // 1 + 4 + 9 = 14
 
     parallel {
         a = spawn square(3)
         b = spawn square(4)
     }
-    println(a + b)                          // 9 + 16 = 25
+    print(a + b)                          // 9 + 16 = 25
 
     // Shared atomic counter across fire-and-forget spawns
     var counter = Shared.new(0)
     for i in 0..10
         spawn bump(counter, i)
     Time::sleep(30)
-    println(Shared.get(counter))            // 0+1+...+9 = 45
+    print(Shared.get(counter))            // 0+1+...+9 = 45
 }
 
 fn bump(c: int, n: int) -> int { Shared.add(c, n); return 0 }

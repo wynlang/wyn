@@ -32,6 +32,7 @@ int _fileno(FILE* stream);
 #include "module.h"
 #include "commands.h"
 #include "toml.h"
+#include "package.h"
 
 // Single source of truth for runtime source files
 const char* wyn_runtime_sources[] = {
@@ -217,7 +218,7 @@ int main(int argc, char** argv) {
         
         fprintf(stderr, "\n\033[1mPackages:\033[0m\n");
         fprintf(stderr, "  \033[32minit\033[0m [name]             Create new project\n");
-        fprintf(stderr, "  \033[32mpkg\033[0m <command>           Package manager (register, login, search, install, push)\n");
+        fprintf(stderr, "  \033[32mpkg\033[0m <command>           Package manager (add, remove, list, install)\n");
         
         fprintf(stderr, "\n\033[1mTools:\033[0m\n");
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
@@ -473,30 +474,12 @@ int main(int argc, char** argv) {
         printf("  %s wyn in PATH\n", in_path ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
         if (!in_path) printf("    Run: wyn install\n");
         
-        // Check git (for packages)
+        // Check git — used to fetch dependencies (`wyn add <name|url>`).
         snprintf(doctor_cmd, sizeof(doctor_cmd), "git --version %s", devnull);
         int has_git = (system(doctor_cmd) == 0);
-        printf("  %s git (for packages)\n", has_git ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
-        if (!has_git) printf("    Optional: install git for 'wyn pkg install'\n");
-        
-        // Check curl (for registry)
-#ifdef _WIN32
-        snprintf(doctor_cmd, sizeof(doctor_cmd), "where curl %s", devnull);
-#else
-        snprintf(doctor_cmd, sizeof(doctor_cmd), "command -v curl %s", devnull);
-#endif
-        int has_curl = (system(doctor_cmd) == 0);
-        printf("  %s curl (for package registry)\n", has_curl ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
-        if (!has_curl) printf("    Optional: install curl for 'wyn pkg search/install/push'\n");
+        printf("  %s git (for `wyn add` dependencies)\n", has_git ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
+        if (!has_git) printf("    Install git to fetch packages with 'wyn add <name|url>'\n");
 
-        // Check registry connectivity
-        if (has_curl) {
-            snprintf(doctor_cmd, sizeof(doctor_cmd), "curl -sS --max-time 5 https://pkg.wynlang.com/api/packages %s", devnull);
-            int has_registry = (system(doctor_cmd) == 0);
-            printf("  %s pkg.wynlang.com (registry)\n", has_registry ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
-            if (!has_registry) printf("    Cannot reach package registry — check your internet connection\n");
-        }
-        
         printf("\n");
         if (issues == 0 && has_cc && has_rt) printf("\033[32m✓ All good! Using fast compile path (system cc + precompiled runtime).\033[0m\n");
         else if (issues == 0) printf("\033[32m✓ All good! Using TCC backend. Install a C compiler for 2.5x faster builds.\033[0m\n");
@@ -670,7 +653,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mclean\033[0m                   Remove build artifacts\n");
         fprintf(stderr, "\n\033[1mPackages:\033[0m\n");
         fprintf(stderr, "  \033[32minit\033[0m [name]             Create new project\n");
-        fprintf(stderr, "  \033[32mpkg\033[0m <command>           Package manager (register, login, search, install, push)\n");
+        fprintf(stderr, "  \033[32mpkg\033[0m <command>           Package manager (add, remove, list, install)\n");
         
         fprintf(stderr, "\n\033[1mTools:\033[0m\n");
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
@@ -745,415 +728,53 @@ int main(int argc, char** argv) {
         return lsp_server_start();
     }
     
-    if (strcmp(command, "search") == 0) {
-        if (argc < 3) {
-            fprintf(stderr, "Usage: wyn search <query>\n");
-            return 1;
-        }
-        extern int registry_search(const char*);
-        return registry_search(argv[2]);
+    // ── Dependency commands (git-URL model; no central registry) ──
+    // A dependency is a git repo. `wyn remove` drops it from the manifest+lock;
+    // `wyn list` prints the declared deps; `wyn restore` reinstalls from the lock.
+    // (`wyn add` is handled below, near the C-package add, since it dispatches
+    // between the curated C-library path and the git-dependency path.)
+    if (strcmp(command, "remove") == 0 || strcmp(command, "rm") == 0) {
+        if (argc < 3) { fprintf(stderr, "Usage: wyn remove <name>\n"); return 1; }
+        return wyn_pkg_remove(argv[2]);
     }
-    
-    if (strcmp(command, "info") == 0) {
-        if (argc < 3) {
-            fprintf(stderr, "Usage: wyn info <package>\n");
-            return 1;
-        }
-        extern int registry_info(const char*);
-        return registry_info(argv[2]);
+
+    if (strcmp(command, "restore") == 0) {
+        return wyn_pkg_install();
     }
-    
-    if (strcmp(command, "versions") == 0) {
-        if (argc < 3) {
-            fprintf(stderr, "Usage: wyn versions <package>\n");
-            return 1;
-        }
-        extern int registry_versions(const char*);
-        return registry_versions(argv[2]);
+
+    if (strcmp(command, "list") == 0) {
+        return wyn_pkg_list();
     }
-    
-    if (strcmp(command, "publish") == 0) {
-        int dry_run = 0;
-        if (argc >= 3 && strcmp(argv[2], "--dry-run") == 0) {
-            dry_run = 1;
-        }
-        extern int registry_publish(int);
-        return registry_publish(dry_run);
-    }
-    
+
+    // `wyn pkg <sub>` — alias namespace for muscle memory / older docs. These map
+    // to the git-URL dependency engine (add/install/remove/list). Note `wyn pkg
+    // add` is git-deps-only (no C-library dispatch — use top-level `wyn add`).
     if (strcmp(command, "pkg") == 0) {
         if (argc < 3) {
             fprintf(stderr, "Usage: wyn pkg <command>\n\n");
             fprintf(stderr, "Commands:\n");
-            fprintf(stderr, "  register              Create an account on pkg.wynlang.com\n");
-            fprintf(stderr, "  login                 Log in and save API key\n");
-            fprintf(stderr, "  whoami                Show current logged-in user\n");
-            fprintf(stderr, "  search <query>        Search the package registry\n");
-            fprintf(stderr, "  info <name>           Show package details\n");
-            fprintf(stderr, "  install <name>        Install a package (latest)\n");
-            fprintf(stderr, "  install <name>@<ver>  Install a specific version\n");
-            fprintf(stderr, "  uninstall <name>      Remove an installed package\n");
-            fprintf(stderr, "  list                  List installed packages\n");
-            fprintf(stderr, "  restore               Install all packages from wyn.lock\n");
-            fprintf(stderr, "  push                  Publish current project to registry\n");
+            fprintf(stderr, "  add <name|url>[@ref]   Add a dependency (git repo)\n");
+            fprintf(stderr, "  install                Install all deps from wyn.lock / wyn.toml\n");
+            fprintf(stderr, "  remove <name>          Remove a dependency\n");
+            fprintf(stderr, "  list                   List declared dependencies\n\n");
+            fprintf(stderr, "A dependency is a git repo — there is no central registry.\n");
+            fprintf(stderr, "Bare names resolve to github.com/wynlang/<name>; publish by pushing a repo.\n");
             return 1;
         }
-        extern int package_install(const char*);
-        extern int package_list();
-        extern int registry_search(const char*);
-        extern int registry_info(const char*);
-        extern int registry_install(const char*);
-        extern int registry_publish(int dry_run);
-
-        // Helper: auth file path
-        char auth_path[512];
-        snprintf(auth_path, sizeof(auth_path), "%s/.wyn/auth", getenv("HOME") ? getenv("HOME") : "/tmp");
-
-        // Helper: temp file path (PID-scoped to avoid races)
-        char tmp_json[256];
-        snprintf(tmp_json, sizeof(tmp_json), "/tmp/wyn-pkg-%d.json", getpid());
-
-        // Helper: read API key from ~/.wyn/auth
-        #define READ_API_KEY(key_buf) do { \
-            FILE* _af = fopen(auth_path, "r"); \
-            if (!_af) { fprintf(stderr, "\033[31m✗\033[0m Not logged in. Run: wyn pkg register\n"); return 1; } \
-            char _auth[2048] = {0}; fread(_auth, 1, sizeof(_auth)-1, _af); fclose(_af); \
-            char* _kp = strstr(_auth, "\"api_key\":\""); \
-            if (!_kp) _kp = strstr(_auth, "\"api_key\": \""); \
-            if (_kp) { _kp = strchr(_kp + 9, '"'); if (_kp) { _kp++; char* _ke = strchr(_kp, '"'); \
-                if (_ke) { size_t _kl = _ke - _kp; if (_kl >= sizeof(key_buf)) _kl = sizeof(key_buf)-1; \
-                    memcpy(key_buf, _kp, _kl); key_buf[_kl] = '\0'; } } } \
-            if (!key_buf[0]) { fprintf(stderr, "\033[31m✗\033[0m Invalid auth. Run: wyn pkg register\n"); return 1; } \
-        } while(0)
-
-        // ── wyn pkg register ──
-        if (strcmp(argv[2], "register") == 0) {
-            char username[128], password[128], password2[128];
-            printf("Username: "); fflush(stdout);
-            if (!fgets(username, sizeof(username), stdin)) return 1;
-            username[strcspn(username, "\n")] = 0;
-            printf("Password: "); fflush(stdout);
-            system("stty -echo 2>/dev/null");
-            if (!fgets(password, sizeof(password), stdin)) { system("stty echo 2>/dev/null"); return 1; }
-            password[strcspn(password, "\n")] = 0;
-            system("stty echo 2>/dev/null");
-            printf("\nConfirm password: "); fflush(stdout);
-            system("stty -echo 2>/dev/null");
-            if (!fgets(password2, sizeof(password2), stdin)) { system("stty echo 2>/dev/null"); return 1; }
-            password2[strcspn(password2, "\n")] = 0;
-            system("stty echo 2>/dev/null");
-            printf("\n");
-
-            if (strcmp(password, password2) != 0) {
-                fprintf(stderr, "\033[31m✗\033[0m Passwords do not match\n");
-                return 1;
-            }
-            if (strlen(password) < 8) {
-                fprintf(stderr, "\033[31m✗\033[0m Password must be at least 8 characters\n");
-                return 1;
-            }
-
-            // Write JSON to temp file to avoid shell injection
-            FILE* jf = fopen(tmp_json, "w");
-            if (!jf) { fprintf(stderr, "\033[31m✗\033[0m Cannot create temp file\n"); return 1; }
-            fprintf(jf, "{\"username\":\"%s\",\"password\":", username);
-            // JSON-escape the password
-            fputc('"', jf);
-            for (int i = 0; password[i]; i++) {
-                if (password[i] == '"' || password[i] == '\\') fputc('\\', jf);
-                fputc(password[i], jf);
-            }
-            fprintf(jf, "\"}");
-            fclose(jf);
-
-            char cmd[1024];
-            snprintf(cmd, sizeof(cmd), "curl -sS -X POST https://pkg.wynlang.com/api/register "
-                "-H 'Content-Type: application/json' -d @%s 2>/dev/null", tmp_json);
-            FILE* fp = popen(cmd, "r");
-            char resp[2048] = {0};
-            if (fp) { fread(resp, 1, sizeof(resp)-1, fp); pclose(fp); }
-            unlink(tmp_json);
-
-            if (strstr(resp, "\"registered\"")) {
-                printf("\033[32m✓\033[0m Account created for '%s'\n", username);
-                printf("\nRun \033[1mwyn pkg login\033[0m to log in and start publishing.\n");
-                return 0;
-            } else {
-                char* ep = strstr(resp, "\"error\":\"");
-                if (ep) { ep += 9; char* ee = strchr(ep, '"'); if (ee) *ee = 0; fprintf(stderr, "\033[31m✗\033[0m %s\n", ep); }
-                else fprintf(stderr, "\033[31m✗\033[0m Registration failed\n");
-                return 1;
-            }
+        if (strcmp(argv[2], "add") == 0) {
+            if (argc < 4) { fprintf(stderr, "Usage: wyn pkg add <name|url>[@ref] [--as <name>]\n"); return 1; }
+            const char* as_name = NULL;
+            for (int i = 4; i < argc; i++) if (strcmp(argv[i], "--as") == 0 && i + 1 < argc) as_name = argv[++i];
+            return wyn_pkg_add(argv[3], as_name);
         }
-
-        // ── wyn pkg login ──
-        if (strcmp(argv[2], "login") == 0) {
-            char username[128], password[128];
-            printf("Username: "); fflush(stdout);
-            if (!fgets(username, sizeof(username), stdin)) return 1;
-            username[strcspn(username, "\n")] = 0;
-            printf("Password: "); fflush(stdout);
-            system("stty -echo 2>/dev/null");
-            if (!fgets(password, sizeof(password), stdin)) { system("stty echo 2>/dev/null"); return 1; }
-            password[strcspn(password, "\n")] = 0;
-            system("stty echo 2>/dev/null");
-            printf("\n");
-
-            // Write JSON to temp file to avoid shell injection
-            FILE* jf = fopen(tmp_json, "w");
-            if (!jf) { fprintf(stderr, "\033[31m✗\033[0m Cannot create temp file\n"); return 1; }
-            fprintf(jf, "{\"username\":\"%s\",\"password\":", username);
-            fputc('"', jf);
-            for (int i = 0; password[i]; i++) {
-                if (password[i] == '"' || password[i] == '\\') fputc('\\', jf);
-                fputc(password[i], jf);
-            }
-            fprintf(jf, "\"}");
-            fclose(jf);
-
-            char cmd[1024];
-            snprintf(cmd, sizeof(cmd), "curl -sS -X POST https://pkg.wynlang.com/api/login "
-                "-H 'Content-Type: application/json' -d @%s 2>/dev/null", tmp_json);
-            FILE* fp = popen(cmd, "r");
-            char resp[2048] = {0};
-            if (fp) { fread(resp, 1, sizeof(resp)-1, fp); pclose(fp); }
-            unlink(tmp_json);
-
-            if (strstr(resp, "\"api_key\"")) {
-                char mkdir_cmd[600]; snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p %s/.wyn", getenv("HOME"));
-                system(mkdir_cmd);
-                FILE* af = fopen(auth_path, "w");
-                if (af) { fprintf(af, "%s", resp); fclose(af);
-#ifndef _WIN32
-                    chmod(auth_path, 0600);
-#endif
-                }
-                printf("\033[32m✓\033[0m Logged in as %s\n", username);
-                return 0;
-            } else {
-                fprintf(stderr, "\033[31m✗\033[0m Invalid credentials\n");
-                return 1;
-            }
+        if (strcmp(argv[2], "install") == 0) return wyn_pkg_install();
+        if (strcmp(argv[2], "remove") == 0 || strcmp(argv[2], "uninstall") == 0) {
+            if (argc < 4) { fprintf(stderr, "Usage: wyn pkg remove <name>\n"); return 1; }
+            return wyn_pkg_remove(argv[3]);
         }
-
-        // ── wyn pkg whoami ──
-        if (strcmp(argv[2], "whoami") == 0) {
-            FILE* af = fopen(auth_path, "r");
-            if (!af) { printf("Not logged in. Run: wyn pkg register\n"); return 1; }
-            char auth[2048] = {0}; fread(auth, 1, sizeof(auth)-1, af); fclose(af);
-            char* up = strstr(auth, "\"username\":\"");
-            if (!up) up = strstr(auth, "\"username\": \"");
-            if (up) {
-                up = strchr(up + 11, '"'); if (up) { up++;
-                    char* ue = strchr(up, '"');
-                    if (ue) { *ue = 0; printf("%s\n", up); return 0; }
-                }
-            }
-            printf("Not logged in\n");
-            return 1;
-        }
-
-        // ── wyn pkg search ──
-        if (strcmp(argv[2], "search") == 0) {
-            if (argc < 4) { fprintf(stderr, "Usage: wyn pkg search <query>\n"); return 1; }
-            printf("\033[1mSearching for '%s'...\033[0m\n\n", argv[3]);
-            return registry_search(argv[3]);
-        }
-
-        // ── wyn pkg info ──
-        if (strcmp(argv[2], "info") == 0) {
-            if (argc < 4) { fprintf(stderr, "Usage: wyn pkg info <name>\n"); return 1; }
-            return registry_info(argv[3]);
-        }
-
-        // ── wyn pkg install ──
-        if (strcmp(argv[2], "install") == 0) {
-            if (argc < 4) { return package_install("."); }
-            // Try git URL first, then registry
-            if (strstr(argv[3], "github.com") || strstr(argv[3], "/")) {
-                return package_install(argv[3]);
-            }
-            return registry_install(argv[3]);
-        }
-
-        // ── wyn pkg uninstall ──
-        if (strcmp(argv[2], "uninstall") == 0) {
-            if (argc < 4) { fprintf(stderr, "Usage: wyn pkg uninstall <name>\n"); return 1; }
-            // Validate name to prevent path traversal
-            const char* pname = argv[3];
-            for (int i = 0; pname[i]; i++) {
-                if (pname[i] == '/' || pname[i] == '\\' || pname[i] == '.') {
-                    fprintf(stderr, "\033[31m✗\033[0m Invalid package name\n");
-                    return 1;
-                }
-            }
-            char pkg_dir[1024];
-            snprintf(pkg_dir, sizeof(pkg_dir), "packages/%s", pname);
-            struct stat st;
-            if (stat(pkg_dir, &st) != 0) {
-                fprintf(stderr, "\033[31m✗\033[0m Package '%s' is not installed\n", pname);
-                return 1;
-            }
-            char cmd[1100]; snprintf(cmd, sizeof(cmd), "rm -rf 'packages/%s'", pname);
-            system(cmd);
-            printf("\033[32m✓\033[0m Uninstalled %s\n", pname);
-            return 0;
-        }
-
-        // ── wyn pkg list ──
-        if (strcmp(argv[2], "list") == 0) {
-            return package_list();
-        }
-
-        // ── wyn pkg restore — install from wyn.lock ──
-        if (strcmp(argv[2], "restore") == 0) {
-            FILE* lf = fopen("wyn.lock", "r");
-            if (!lf) { fprintf(stderr, "No wyn.lock found\n"); return 1; }
-            char line[512]; int count = 0;
-            while (fgets(line, sizeof(line), lf)) {
-                if (line[0] == '#' || line[0] == '\n') continue;
-                char pkg[256], ver[64], src[64];
-                if (sscanf(line, "%255s %63s %63s", pkg, ver, src) >= 2) {
-                    char spec[320]; snprintf(spec, sizeof(spec), "%s@%s", pkg, ver);
-                    printf("Restoring %s...\n", spec);
-                    if (strcmp(src, "registry") == 0) registry_install(spec);
-                    else package_install(pkg);
-                    count++;
-                }
-            }
-            fclose(lf);
-            printf("\n✓ Restored %d packages from wyn.lock\n", count);
-            return 0;
-        }
-
-        // ── wyn pkg push ──
-        if (strcmp(argv[2], "push") == 0) {
-            // Check login first
-            FILE* af_check = fopen(auth_path, "r");
-            if (!af_check) {
-                fprintf(stderr, "\033[31m✗\033[0m You must be logged in to push packages.\n");
-                fprintf(stderr, "\n  Run \033[1mwyn pkg login\033[0m first.\n");
-                fprintf(stderr, "  Don't have an account? Run \033[1mwyn pkg register\033[0m\n");
-                return 1;
-            }
-            fclose(af_check);
-
-            FILE* toml = fopen("wyn.toml", "r");
-            if (!toml) { fprintf(stderr, "\033[31m✗\033[0m No wyn.toml found in current directory\n"); return 1; }
-            char tb[4096]; int tl = fread(tb, 1, sizeof(tb)-1, toml); tb[tl] = 0; fclose(toml);
-
-            char name[128]="", version[32]="", desc[256]="";
-            char* np = strstr(tb, "name = \""); if (np) sscanf(np, "name = \"%127[^\"]\"", name);
-            char* vp = strstr(tb, "version = \""); if (vp) sscanf(vp, "version = \"%31[^\"]\"", version);
-            char* dp = strstr(tb, "description = \""); if (dp) sscanf(dp, "description = \"%255[^\"]\"", desc);
-            if (!name[0]) { fprintf(stderr, "\033[31m✗\033[0m No 'name' field in wyn.toml\n"); return 1; }
-            if (!version[0]) { fprintf(stderr, "\033[31m✗\033[0m No 'version' field in wyn.toml\n"); return 1; }
-            if (!desc[0]) { fprintf(stderr, "\033[31m✗\033[0m No 'description' field in wyn.toml (required for publishing)\n"); return 1; }
-
-            char api_key[256] = "";
-            READ_API_KEY(api_key);
-
-            printf("Pushing %s v%s...\n", name, version);
-
-            // Create tarball excluding junk
-            char tmp_tar[256];
-            snprintf(tmp_tar, sizeof(tmp_tar), "/tmp/wyn-pkg-%d.tar.gz", getpid());
-            {
-                char tar_cmd[512];
-                snprintf(tar_cmd, sizeof(tar_cmd),
-                    "tar czf %s "
-                    "--exclude='.git' --exclude='build' --exclude='.wyn' "
-                    "--exclude='node_modules' --exclude='.DS_Store' "
-                    "--exclude='*.o' --exclude='*.out' "
-                    "-C . . 2>/dev/null", tmp_tar);
-                system(tar_cmd);
-            }
-
-            // Check size
-            struct stat tar_st;
-            if (stat(tmp_tar, &tar_st) != 0 || tar_st.st_size == 0) {
-                fprintf(stderr, "\033[31m✗\033[0m Failed to create package tarball\n");
-                return 1;
-            }
-            if (tar_st.st_size > 10 * 1024 * 1024) {
-                fprintf(stderr, "\033[31m✗\033[0m Package too large (%lldMB, max 10MB)\n", (long long)(tar_st.st_size / 1024 / 1024));
-                unlink(tmp_tar);
-                return 1;
-            }
-
-            // Build JSON payload via temp file
-            FILE* jf = fopen(tmp_json, "w");
-            if (!jf) { unlink(tmp_tar); fprintf(stderr, "\033[31m✗\033[0m Cannot create temp file\n"); return 1; }
-            // Read base64
-            char b64_cmd[512];
-#ifdef _WIN32
-            snprintf(b64_cmd, sizeof(b64_cmd), "certutil -encode %s /tmp/wyn-b64-%d.txt >nul 2>&1 && type /tmp/wyn-b64-%d.txt", tmp_tar, getpid(), getpid());
-#else
-            snprintf(b64_cmd, sizeof(b64_cmd), "base64 < %s", tmp_tar);
-#endif
-            FILE* b64p = popen(b64_cmd, "r");
-            char* b64 = malloc(tar_st.st_size * 2);
-            size_t b64_len = 0;
-            if (b64p && b64) {
-                b64_len = fread(b64, 1, tar_st.st_size * 2 - 1, b64p);
-                pclose(b64p);
-                size_t j = 0;
-                for (size_t i = 0; i < b64_len; i++) {
-                    if (b64[i] != '\n' && b64[i] != '\r') b64[j++] = b64[i];
-                }
-                b64[j] = '\0'; b64_len = j;
-            } else {
-                if (b64p) pclose(b64p);
-                if (b64) free(b64);
-                fclose(jf); unlink(tmp_tar); unlink(tmp_json);
-                fprintf(stderr, "\033[31m✗\033[0m Failed to encode package\n");
-                return 1;
-            }
-            unlink(tmp_tar);
-
-            // Write JSON with proper escaping for all fields
-            fprintf(jf, "{\"api_key\":\"");
-            for (int i = 0; api_key[i]; i++) { if (api_key[i]=='"'||api_key[i]=='\\') fputc('\\',jf); fputc(api_key[i],jf); }
-            fprintf(jf, "\",\"name\":\"");
-            for (int i = 0; name[i]; i++) { if (name[i]=='"'||name[i]=='\\') fputc('\\',jf); fputc(name[i],jf); }
-            fprintf(jf, "\",\"version\":\"");
-            for (int i = 0; version[i]; i++) { if (version[i]=='"'||version[i]=='\\') fputc('\\',jf); fputc(version[i],jf); }
-            fprintf(jf, "\",\"description\":\"");
-            for (int i = 0; desc[i]; i++) {
-                if (desc[i] == '"' || desc[i] == '\\') fputc('\\', jf);
-                else if (desc[i] == '\n') { fputc('\\', jf); fputc('n', jf); continue; }
-                fputc(desc[i], jf);
-            }
-            fprintf(jf, "\",\"tarball\":\"");
-            fwrite(b64, 1, b64_len, jf);
-            free(b64);
-            fprintf(jf, "\"}");
-            fclose(jf);
-
-            char pub_cmd[1024];
-            snprintf(pub_cmd, sizeof(pub_cmd), "curl -sS -X POST https://pkg.wynlang.com/api/publish "
-                "-H 'Content-Type: application/json' -d @%s 2>/dev/null", tmp_json);
-            FILE* fp = popen(pub_cmd, "r");
-            char resp[2048] = {0};
-            if (fp) { fread(resp, 1, sizeof(resp)-1, fp); pclose(fp); }
-            unlink(tmp_json);
-
-            if (strstr(resp, "\"published\"")) {
-                printf("\033[32m✓\033[0m Published %s v%s to pkg.wynlang.com\n", name, version);
-                return 0;
-            } else {
-                char* ep = strstr(resp, "\"error\":\"");
-                if (ep) {
-                    ep += 9; char* ee = strchr(ep, '"'); if (ee) *ee = 0;
-                    fprintf(stderr, "\033[31m✗\033[0m %s\n", ep);
-                } else {
-                    fprintf(stderr, "\033[31m✗\033[0m Push failed — could not reach pkg.wynlang.com\n");
-                }
-                return 1;
-            }
-        }
-
+        if (strcmp(argv[2], "list") == 0) return wyn_pkg_list();
         fprintf(stderr, "Unknown command: wyn pkg %s\n", argv[2]);
+        fprintf(stderr, "Try: add | install | remove | list\n");
         return 1;
     }
     
@@ -1358,10 +979,16 @@ int main(int argc, char** argv) {
         // declares an extern fn. IMPORTANT: these go at the END of the link line
         // (after the .c and runtime) — GNU ld (Linux/mingw) resolves `-l` only
         // against objects listed BEFORE it, so FFI libs must come last.
+        // Trigger on a direct `extern fn` OR any `import` — an imported C package
+        // (`wyn add`) carries the extern fns in its own file, so the user source
+        // may only have `import sqlite3` yet still need the [ffi] link flags.
         static char ffi_tail[1536]; ffi_tail[0] = '\0';
-        if (strstr(source, "extern fn")) {
+        if (strstr(source, "extern fn") || strstr(source, "import ")) {
             WynConfig* _bc = wyn_config_parse("wyn.toml");
             if (_bc) { wyn_config_ffi_flags(_bc, ffi_tail, sizeof(ffi_tail)); wyn_config_free(_bc); }
+            // Also union in each git-dependency's own [ffi] link flags, so an
+            // imported C-binding package (`wyn add <url>`) links its library.
+            wyn_deps_ffi_flags(ffi_tail, sizeof(ffi_tail));
         }
 
         char cmd[4096];
@@ -2174,8 +1801,17 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "add") == 0) {
-        // wyn add [<name>] — add a curated C package: generate bindings + wire
-        // wyn.toml [ffi]. With no name, list the available packages.
+        // `wyn add <arg>` serves two package systems and dispatches between them:
+        //
+        //   • Curated C library (cpkg): a bare name that matches a recipe in
+        //     registry/c-packages.toml (e.g. `wyn add z`, `wyn add sqlite3`).
+        //     Generates Wyn bindings + wires wyn.toml [ffi] to link the C lib.
+        //   • Git-URL dependency (wyn_pkg_add): a full URL (contains '/'), or a
+        //     bare name with NO curated recipe. Bare names expand to
+        //     github.com/wynlang/<name>; anything with '/' or a scheme is a repo.
+        //
+        // With no name, run the curated C-library picker/list (the C path owns the
+        // interactive UX). `--list` also lists curated C packages.
         char add_root[1024] = ".";
         { char* re = getenv("WYN_ROOT");
           if (re && re[0]) { strncpy(add_root, re, sizeof(add_root)-1); }
@@ -2194,10 +1830,11 @@ int main(int argc, char** argv) {
         extern int wyn_cpkg_add(const char*, const char*, const char*);
         extern int wyn_cpkg_list(const char*);
         extern int wyn_cpkg_tui(const char*, const char*);
+        extern int wyn_cpkg_has_recipe(const char*, const char*);
         if (argc >= 3 && strcmp(argv[2], "--list") == 0) return wyn_cpkg_list(add_root);
         if (argc < 3) {
-            // No package named: launch the interactive picker on a TTY, else just
-            // print the list (pipes / CI / non-interactive).
+            // No package named: launch the interactive C-library picker on a TTY,
+            // else just print the list (pipes / CI / non-interactive).
 #ifndef _WIN32
             if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO))
                 return wyn_cpkg_tui(add_root, detect_cc());
@@ -2207,7 +1844,18 @@ int main(int argc, char** argv) {
 #endif
             return wyn_cpkg_list(add_root);
         }
-        return wyn_cpkg_add(argv[2], add_root, detect_cc());
+        // Dispatch: a bare name (no '/') that matches a curated C recipe → cpkg;
+        // otherwise treat the arg as a git-URL dependency (wyn_pkg_add, which
+        // expands bare names to github.com/wynlang/<name>).
+        const char* arg = argv[2];
+        if (!strchr(arg, '/') && wyn_cpkg_has_recipe(arg, add_root)) {
+            return wyn_cpkg_add(arg, add_root, detect_cc());
+        }
+        // Git dependency: collect an optional `--as <name>` override.
+        const char* as_name = NULL;
+        for (int i = 3; i < argc; i++)
+            if (strcmp(argv[i], "--as") == 0 && i + 1 < argc) as_name = argv[++i];
+        return wyn_pkg_add(arg, as_name);
     }
 
     if (strcmp(command, "bind") == 0) {
@@ -2557,12 +2205,18 @@ int main(int argc, char** argv) {
         // every build). See wyn_config_ffi_flags for the shell-metachar guard.
         static char ffi_flags[1536];
         ffi_flags[0] = '\0';
-        if (strstr(source, "extern fn") || strstr(source, "extern  fn")) {
+        // Trigger on a direct `extern fn` OR any `import` — an imported C-binding
+        // package (`wyn add`) carries the extern fns in its own file, so the user
+        // source may only have `import sqlite3` yet still need the [ffi] flags.
+        if (strstr(source, "extern fn") || strstr(source, "extern  fn") || strstr(source, "import ")) {
             WynConfig* _ffi_cfg = wyn_config_parse("wyn.toml");
             if (_ffi_cfg) {
                 wyn_config_ffi_flags(_ffi_cfg, ffi_flags, sizeof(ffi_flags));
                 wyn_config_free(_ffi_cfg);
             }
+            // Also union in each git-dependency's own [ffi] link flags, so an
+            // imported C-binding package (`wyn add <url>`) links its library.
+            wyn_deps_ffi_flags(ffi_flags, sizeof(ffi_flags));
         }
 
         // Check for --fast flag (use -O0 for fastest compile)

@@ -112,6 +112,14 @@ void merge_module_exports(Program* module, Program* target, ImportStmt* import) 
             // Private items needed for dependencies
             target->stmts = realloc(target->stmts, sizeof(Stmt*) * (target->count + 1));
             target->stmts[target->count++] = stmt;
+        } else if (stmt->type == STMT_EXTERN) {
+            // C-package bindings (`wyn add`) are `extern fn` declarations. They
+            // must merge into the target so their prototypes are emitted and the
+            // symbols type-check + link. Extern fns stay FLAT (callable as
+            // `sqlite3_open(...)`), not namespaced — the W9 qualified-only rule
+            // applies to Wyn STMT_FN definitions, not C FFI declarations.
+            target->stmts = realloc(target->stmts, sizeof(Stmt*) * (target->count + 1));
+            target->stmts[target->count++] = stmt;
         }
     }
 }

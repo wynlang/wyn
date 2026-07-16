@@ -3,6 +3,7 @@
 // Per-processor local deque + global queue + work-stealing
 // Each spawn creates a stackful coroutine via minicoro.h
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -15,6 +16,7 @@
 typedef void (*TaskFunc)(void*);
 void wyn_io_park(void) {}
 void* wyn_current_task(void) { return NULL; }
+void* wyn_current_task_future(void) { return NULL; }  // no coroutines on Windows
 int wyn_spawn_origin_line(void) { return 0; }
 const char* wyn_spawn_origin_file(void) { return ""; }
 long wyn_spawn_origin_id(void) { return 0; }
@@ -241,6 +243,10 @@ static __thread int io_parked = 0;
 
 // Public API: get current task pointer (for I/O loop registration)
 void* wyn_current_task(void) { return current_task; }
+
+// S4: the Future backing the current coroutine task (NULL for fire-and-forget or
+// no task). Lets future.c query cancellation without knowing the Task layout.
+void* wyn_current_task_future(void) { return current_task ? current_task->future : NULL; }
 
 // Public API: mark current coroutine as I/O-parked (don't re-enqueue on yield)
 void wyn_io_park(void) { io_parked = 1; }
@@ -677,8 +683,18 @@ Future* wyn_spawn_async_traced(TaskFuncWithReturn func, void* arg, const char* f
     // this is safe on any core count; but if for some reason no worker processors
     // exist AND we're on the main thread, keep the pool (its worker threads are
     // the only executors then).
+    // S3: the coroutine scheduler is now the DEFAULT executor for awaited work
+    // (cooperative I/O everywhere). WYN_ASYNC_POOL=1 forces the legacy thread pool
+    // as an escape hatch. WYN_ASYNC_CORO is still honored (=0 also selects the
+    // pool) for backward compatibility with existing scripts/CI.
     static int async_coro = -1;
-    if (async_coro < 0) async_coro = getenv("WYN_ASYNC_CORO") ? 1 : 0;
+    if (async_coro < 0) {
+        const char* pool = getenv("WYN_ASYNC_POOL");
+        const char* coro = getenv("WYN_ASYNC_CORO");
+        if (pool && pool[0] == '1') async_coro = 0;
+        else if (coro && coro[0] == '0') async_coro = 0;
+        else async_coro = 1;   // default: coroutine scheduler
+    }
     if (async_coro) return wyn_spawn_async_coro(func, arg, file, line);
 
     (void)file; (void)line;
@@ -738,6 +754,14 @@ void wyn_spawn_wait(void) {
         wake_all_processors();
         sched_yield();
     }
+    // Belt-and-suspenders: flush stdout/stderr here, before main returns. Most
+    // output already flushed (println_str self-flushes), but the numeric/bool/
+    // array println variants leave data in the buffer; a fire-and-forget task
+    // that produced them last could otherwise have its tail dropped if libc's
+    // atexit flush raced the drain. Flushing on the joining (main) thread after
+    // parity is observed makes the last task's output deterministic.
+    fflush(stdout);
+    fflush(stderr);
 }
 
 // Inline spawn: run function directly without creating a coroutine.

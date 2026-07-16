@@ -19,6 +19,11 @@ int wyn_cpkg_add(const char* name, const char* wyn_root, const char* cc);
 // Implement `wyn add` with no name: list the available curated packages.
 int wyn_cpkg_list(const char* wyn_root);
 
+// Return 1 if `name` is a curated C-library recipe (present in
+// registry/c-packages.toml under wyn_root), 0 otherwise. Lets `wyn add <arg>`
+// dispatch bare names to the C-library path only when a recipe actually exists.
+int wyn_cpkg_has_recipe(const char* name, const char* wyn_root);
+
 // Interactive picker for `wyn add` with no name on a TTY: browse/filter the
 // registry, preview a recipe, confirm, then pull it (over the same add engine).
 // Line-oriented (works over pipes/CI/all platforms). Returns wyn_cpkg_add's code.

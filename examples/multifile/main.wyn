@@ -1,8 +1,11 @@
-// Main program using utils
+// Main program using utils.
+// W9 namespaced imports: after `import utils`, its functions are called
+// qualified as `utils.<fn>(...)` (a bare `square(...)` is an error).
+import utils
 
 fn main() -> int {
-    print(square(5))
-    print(cube(3))
-    print(factorial(5))
+    print("${utils.square(5)}")
+    print("${utils.cube(3)}")
+    print("${utils.factorial(5)}")
     return 0
 }

@@ -1,0 +1,57 @@
+// S4: cooperative task cancellation API. `Task.cancel(h)` requests cancellation
+// of an awaited spawn handle; a spawned task observes it via `Task.is_cancelled()`
+// and returns early. This test asserts the PATH-INDEPENDENT guarantees (the API
+// compiles/links, is_cancelled() is false on main, a non-cancelled task completes,
+// and a cancel+await round-trips without hanging). The *timing* of cancellation
+// taking effect is coroutine-scheduler semantics (the default) — proven ad hoc,
+// not asserted here since under WYN_ASYNC_POOL a task may finish before the flag
+// is read. Cooperative + leak-on-cancel (bail at a check; no forced unwind).
+// EXPECT: main not cancelled
+// EXPECT: cancel round-trip ok
+// EXPECT: completed 50
+// EXPECT: PASS: task cancel
+
+fn cancellable(counter: int) -> int {
+    var i = 0
+    while i < 200 {
+        if Task.is_cancelled() {
+            Shared.set(counter, -1)
+            return -1
+        }
+        Shared.add(counter, 1)
+        i = i + 1
+    }
+    return 0
+}
+
+fn bounded(counter: int) -> int {
+    var i = 0
+    while i < 50 {
+        if Task.is_cancelled() { return -1 }
+        Shared.add(counter, 1)
+        i = i + 1
+    }
+    return 0
+}
+
+fn main() -> int {
+    // is_cancelled() is false on the main thread (nothing cancelled it)
+    if Task.is_cancelled() { println("main WAS cancelled") } else { println("main not cancelled") }
+
+    // Request cancellation then await — must round-trip cleanly (no hang/crash),
+    // whether or not the task observed the flag in time.
+    var c1 = Shared.new(0)
+    var h1 = spawn cancellable(c1)
+    Task.cancel(h1)
+    var r1 = await h1
+    println("cancel round-trip ok")
+
+    // A task that is never cancelled runs to completion.
+    var c2 = Shared.new(0)
+    var h2 = spawn bounded(c2)
+    var r2 = await h2
+    println("completed ${Shared.get(c2)}")
+
+    println("PASS: task cancel")
+    return 0
+}

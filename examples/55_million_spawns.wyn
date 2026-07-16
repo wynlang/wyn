@@ -7,8 +7,8 @@ fn worker(id: int) -> int {
 }
 
 fn main() -> int {
-    println("=== Spawn Scaling ===")
-    println("")
+    print("=== Spawn Scaling ===")
+    print("")
 
     // Batch 10 × 1K = 10K total spawns with recycling
     var total = 0
@@ -24,14 +24,14 @@ fn main() -> int {
     }
 
     // sum of (i+1) for i = 0..9999 = 50005000
-    println("  10K spawns (10 × 1K batches): total = ${total}")
+    print("  10K spawns (10 × 1K batches): total = ${total}")
     if total == 50005000 {
-        println("  ✓ Correct!")
+        print("  ✓ Correct!")
     }
 
-    println("")
-    println("  Note: ~5-10K concurrent spawns with 8MB stacks.")
-    println("  Higher throughput via batching (spawn, await_all, recycle).")
-    println("")
+    print("")
+    print("  Note: ~5-10K concurrent spawns with 8MB stacks.")
+    print("  Higher throughput via batching (spawn, await_all, recycle).")
+    print("")
     return 0
 }

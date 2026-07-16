@@ -12,6 +12,11 @@ void* future_get_timeout(Future* f, int timeout_ms);
 int future_is_ready(Future* f);
 void future_free(Future* f);
 
+// S4 cooperative cancellation
+void future_cancel(Future* f);          // request cancellation of the awaitee
+int  future_is_cancelled(Future* f);    // is this future's task cancelled?
+int  wyn_current_task_cancelled(void);  // is the running coroutine task cancelled?
+
 // Combinators
 Future* future_map(Future* f, MapFunc map_fn);
 Future* future_all(Future** futures, int count);

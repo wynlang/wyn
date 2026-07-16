@@ -1,420 +1,409 @@
+// Git-URL dependency management — see package.h for the contract.
+#define _POSIX_C_SOURCE 200809L
 #include "package.h"
+#include "pkgspec.h"
+#include "toml.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-// Read package.wyn manifest from module directory
-PackageInfo* read_package_manifest(const char* module_path) {
-    char dir[512];
-    const char* last_slash = strrchr(module_path, '/');
-    if (last_slash) {
-        int len = last_slash - module_path;
-        memcpy(dir, module_path, len);
-        dir[len] = '\0';
-    } else {
-        strcpy(dir, ".");
+// ---- small shell/quoting helpers -------------------------------------------
+
+// Reject characters that would let a wyn.toml value break out of the single-
+// quoted shell argument we build. URLs, refs, and paths never legitimately
+// contain these. Returns 1 if safe.
+static int shell_safe(const char* s) {
+    if (!s) return 0;
+    for (const char* c = s; *c; c++) {
+        if (*c == '\'' || *c == '`' || *c == '$' || *c == '\n' || *c == '\r') return 0;
     }
-    
-    char package_path[512];
-    snprintf(package_path, sizeof(package_path), "%s/package.wyn", dir);
-    
-    struct stat st;
-    if (stat(package_path, &st) != 0) return NULL;
-    
-    FILE* f = fopen(package_path, "r");
-    if (!f) return NULL;
-    
-    PackageInfo* info = calloc(1, sizeof(PackageInfo));
-    char line[512];
-    
-    while (fgets(line, sizeof(line), f)) {
-        if (line[0] == '#' || line[0] == '\n') continue;
-        char* eq = strchr(line, '=');
-        if (!eq) continue;
-        
-        char key[128], value[256];
-        int key_len = eq - line;
-        while (key_len > 0 && (line[key_len-1] == ' ' || line[key_len-1] == '\t')) key_len--;
-        memcpy(key, line, key_len);
-        key[key_len] = '\0';
-        
-        char* val_start = eq + 1;
-        while (*val_start == ' ' || *val_start == '\t' || *val_start == '"') val_start++;
-        char* val_end = val_start + strlen(val_start) - 1;
-        while (val_end > val_start && (*val_end == '\n' || *val_end == ' ' || *val_end == '\t' || *val_end == '"')) val_end--;
-        int val_len = val_end - val_start + 1;
-        memcpy(value, val_start, val_len);
-        value[val_len] = '\0';
-        
-        if (strcmp(key, "name") == 0) strncpy(info->name, value, sizeof(info->name) - 1);
-        else if (strcmp(key, "version") == 0) strncpy(info->version, value, sizeof(info->version) - 1);
-        else if (strcmp(key, "description") == 0) strncpy(info->description, value, sizeof(info->description) - 1);
-        else if (strcmp(key, "author") == 0) strncpy(info->author, value, sizeof(info->author) - 1);
-    }
-    
-    fclose(f);
-    return info;
+    return 1;
 }
 
-void free_package_info(PackageInfo* info) {
-    if (info) free(info);
-}
-
-// Ensure directory exists
 static void ensure_dir(const char* path) {
-    char cmd[1024];
+    if (!shell_safe(path)) return;
+    char cmd[1200];
     snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", path);
     system(cmd);
 }
 
-// Get packages directory
-static void get_packages_dir(char* buf, size_t size) {
-    // Project-local: packages/ in current directory
-    snprintf(buf, size, "./packages");
+static int dir_exists(const char* path) {
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
-// Check if a string looks like a git URL
-static int is_git_url(const char* s) {
-    if (!s || !s[0]) return 0;
-    if (s[0] == '.' || s[0] == '/' || s[0] == '~') return 0;  // local path
-    if (strstr(s, "://") || strstr(s, "git@") || strstr(s, ".git")) return 1;
-    const char* dot = strchr(s, '.');
-    const char* slash = strchr(s, '/');
-    if (dot && slash && dot < slash) return 1;
-    return 0;
-}
-static int install_local(const char* name, const char* source_path) {
-    char pkg_dir[512];
-    get_packages_dir(pkg_dir, sizeof(pkg_dir));
-    ensure_dir(pkg_dir);
-    
-    char dest[512];
-    snprintf(dest, sizeof(dest), "%s/%s", pkg_dir, name);
-    ensure_dir(dest);
-    
-    // Copy .wyn and .🐉 files
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cp '%s'/*.wyn '%s/' 2>/dev/null; cp '%s'/*.🐉 '%s/' 2>/dev/null", source_path, dest, source_path, dest);
-    int result = system(cmd);
-    
-    if (result == 0) {
-        printf("  ✓ Installed %s from %s\n", name, source_path);
-        printf("    → %s\n", dest);
-        return 0;
-    } else {
-        // Try single file
-        snprintf(cmd, sizeof(cmd), "cp '%s' '%s/%s.wyn' 2>/dev/null", source_path, dest, name);
-        result = system(cmd);
-        if (result == 0) {
-            printf("  ✓ Installed %s from %s\n", name, source_path);
-            printf("    → %s/%s.wyn\n", dest, name);
-            return 0;
-        }
-    }
-    
-    fprintf(stderr, "  ✗ Failed to install from %s\n", source_path);
-    return 1;
-}
-
-// Get git commit hash for a cloned repo
-static void get_git_hash(const char* repo_path, char* hash, size_t hash_size) {
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "git -C '%s' rev-parse HEAD 2>/dev/null", repo_path);
+// git rev-parse HEAD of a checkout → `sha`.
+static void get_head_sha(const char* dir, char* sha, size_t n) {
+    sha[0] = '\0';
+    if (!shell_safe(dir)) return;
+    char cmd[1200];
+    snprintf(cmd, sizeof(cmd), "git -C '%s' rev-parse HEAD 2>/dev/null", dir);
     FILE* fp = popen(cmd, "r");
-    hash[0] = '\0';
     if (fp) {
-        if (fgets(hash, hash_size, fp)) {
-            char* nl = strchr(hash, '\n');
-            if (nl) *nl = '\0';
-        }
+        if (fgets(sha, n, fp)) { char* nl = strchr(sha, '\n'); if (nl) *nl = '\0'; }
         pclose(fp);
     }
 }
 
-// Write wyn.lock file
-static void write_lockfile(const char* name, const char* url, const char* hash) {
-    // Read existing lock entries
-    FILE* f = fopen("wyn.lock", "r");
-    char entries[64][3][256];
-    int count = 0;
-    int replaced = 0;
-    
-    if (f) {
-        char line[1024];
-        while (fgets(line, sizeof(line), f) && count < 64) {
-            char* nl = strchr(line, '\n'); if (nl) *nl = '\0';
-            if (line[0] == '#' || line[0] == '\0') continue;
-            // Format: name url hash
-            char n[256], u[256], h[256];
-            if (sscanf(line, "%255s %255s %255s", n, u, h) == 3) {
-                if (strcmp(n, name) == 0) {
-                    strncpy(entries[count][0], name, 255);
-                    strncpy(entries[count][1], url, 255);
-                    strncpy(entries[count][2], hash, 255);
-                    replaced = 1;
-                } else {
-                    strncpy(entries[count][0], n, 255);
-                    strncpy(entries[count][1], u, 255);
-                    strncpy(entries[count][2], h, 255);
-                }
-                count++;
-            }
-        }
-        fclose(f);
-    }
-    
-    if (!replaced && count < 64) {
-        strncpy(entries[count][0], name, 255);
-        strncpy(entries[count][1], url, 255);
-        strncpy(entries[count][2], hash, 255);
-        count++;
-    }
-    
-    f = fopen("wyn.lock", "w");
-    if (!f) return;
-    fprintf(f, "# wyn.lock — pinned package versions (do not edit)\n");
-    for (int i = 0; i < count; i++) {
-        fprintf(f, "%s %s %s\n", entries[i][0], entries[i][1], entries[i][2]);
-    }
-    fclose(f);
-}
+// ---- the global cache -------------------------------------------------------
 
-// Read locked hash for a package
-static int read_locked_hash(const char* name, char* hash, size_t hash_size) {
-    FILE* f = fopen("wyn.lock", "r");
-    if (!f) return 0;
-    char line[1024];
-    while (fgets(line, sizeof(line), f)) {
-        if (line[0] == '#') continue;
-        char n[256], u[256], h[256];
-        if (sscanf(line, "%255s %255s %255s", n, u, h) == 3) {
-            if (strcmp(n, name) == 0) {
-                strncpy(hash, h, hash_size - 1);
-                hash[hash_size - 1] = '\0';
-                fclose(f);
-                return 1;
-            }
-        }
+// Ensure `spec` is cloned into the cache at its ref. On success writes the
+// resolved commit sha into `sha_out` and the cache dir into `dir_out`.
+// Idempotent: an existing, non-empty cache dir is reused (no re-clone).
+static int clone_into_cache(const PkgSpec* spec, char* dir_out, size_t dir_n,
+                            char* sha_out, size_t sha_n) {
+    pkgspec_cache_dir(spec, dir_out, dir_n);
+
+    if (dir_exists(dir_out)) {
+        // Already cached — reuse. Report its pinned commit.
+        get_head_sha(dir_out, sha_out, sha_n);
+        return 0;
     }
-    fclose(f);
+    if (!shell_safe(spec->url) || !shell_safe(dir_out) || !shell_safe(spec->ref)) {
+        fprintf(stderr, "  \033[31m✗\033[0m Refusing unsafe URL/ref for %s\n", spec->name);
+        return 1;
+    }
+
+    // Make the parent dir, then clone into the leaf.
+    char parent[600]; snprintf(parent, sizeof(parent), "%s", dir_out);
+    char* last = strrchr(parent, '/'); if (last) { *last = '\0'; ensure_dir(parent); }
+
+    char cmd[1600];
+    if (spec->ref[0]) {
+        // Try a shallow clone at the ref (tags/branches); fall back to a full
+        // clone + checkout for commit SHAs which --branch can't take.
+        snprintf(cmd, sizeof(cmd),
+                 "git clone --depth 1 --branch '%s' '%s' '%s' 2>/dev/null "
+                 "|| ( git clone '%s' '%s' 2>&1 && git -C '%s' checkout '%s' 2>&1 )",
+                 spec->ref, spec->url, dir_out,
+                 spec->url, dir_out, dir_out, spec->ref);
+    } else {
+        snprintf(cmd, sizeof(cmd), "git clone --depth 1 '%s' '%s' 2>&1", spec->url, dir_out);
+    }
+    printf("  Cloning %s%s%s...\n", spec->url, spec->ref[0] ? "@" : "", spec->ref);
+    int rc = system(cmd);
+    if (rc != 0 || !dir_exists(dir_out)) {
+        fprintf(stderr, "  \033[31m✗\033[0m Failed to clone %s\n", spec->url);
+        // Clean up a half-made dir so a retry starts fresh.
+        if (shell_safe(dir_out)) { char rm[700]; snprintf(rm, sizeof(rm), "rm -rf '%s'", dir_out); system(rm); }
+        return 1;
+    }
+
+    // Validate it looks like a Wyn package (has .wyn / .🐉, or .c/.h for a C binding).
+    char check[1400];
+    snprintf(check, sizeof(check),
+             "find '%s' \\( -name '*.wyn' -o -name '*.🐉' -o -name '*.c' -o -name '*.h' \\) 2>/dev/null | head -1",
+             dir_out);
+    FILE* fp = popen(check, "r");
+    char buf[512] = "";
+    if (fp) { if (fgets(buf, sizeof(buf), fp)) {} pclose(fp); }
+    if (buf[0] == '\0') {
+        fprintf(stderr, "  \033[31m✗\033[0m Not a Wyn package (no .wyn/.c files): %s\n", spec->url);
+        char rm[700]; snprintf(rm, sizeof(rm), "rm -rf '%s'", dir_out); system(rm);
+        return 1;
+    }
+    get_head_sha(dir_out, sha_out, sha_n);
     return 0;
 }
 
-// Install from git URL
-static int install_git(const char* name, const char* url) {
-    char pkg_dir[512];
-    get_packages_dir(pkg_dir, sizeof(pkg_dir));
-    ensure_dir(pkg_dir);
-    
-    char dest[512];
-    snprintf(dest, sizeof(dest), "%s/%s", pkg_dir, name);
-    
-    // Remove existing
-    struct stat st;
-    if (stat(dest, &st) == 0) {
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dest);
-        system(cmd);
+// ---- wyn.lock (one format: `name url ref sha`, whitespace-separated) --------
+
+typedef struct { char name[128], url[512], ref[128], sha[64]; } LockEntry;
+
+// Read wyn.lock into `out` (capacity `max`), returns count. Tolerates a missing
+// ref column (legacy `name url sha`): then ref="" and the 3rd token is the sha.
+static int lock_read(LockEntry* out, int max) {
+    FILE* f = fopen("wyn.lock", "r");
+    if (!f) return 0;
+    char line[900]; int n = 0;
+    while (fgets(line, sizeof(line), f) && n < max) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        char a[512] = "", b[512] = "", c[512] = "", d[512] = "";
+        int got = sscanf(line, "%127s %511s %127s %63s", a, b, c, d);
+        if (got < 2) continue;
+        LockEntry* e = &out[n++];
+        snprintf(e->name, sizeof(e->name), "%s", a);
+        snprintf(e->url,  sizeof(e->url),  "%s", b);
+        if (got >= 4)      { snprintf(e->ref, sizeof(e->ref), "%s", c); snprintf(e->sha, sizeof(e->sha), "%s", d); }
+        else if (got == 3) { e->ref[0] = '\0'; snprintf(e->sha, sizeof(e->sha), "%s", c); }
+        else               { e->ref[0] = '\0'; e->sha[0] = '\0'; }
     }
-    
-    // Normalize URL: add https:// if missing protocol
-    char full_url[512];
-    if (strstr(url, "://") || strstr(url, "git@")) {
-        snprintf(full_url, sizeof(full_url), "%s", url);
+    fclose(f);
+    return n;
+}
+
+static void lock_write(const LockEntry* e, int n) {
+    FILE* f = fopen("wyn.lock", "w");
+    if (!f) return;
+    fprintf(f, "# wyn.lock — resolved dependency graph (do not edit by hand)\n");
+    for (int i = 0; i < n; i++)
+        fprintf(f, "%s %s %s %s\n", e[i].name, e[i].url, e[i].ref[0] ? e[i].ref : "-", e[i].sha);
+    fclose(f);
+}
+
+// Upsert one entry into wyn.lock.
+static void lock_upsert(const char* name, const char* url, const char* ref, const char* sha) {
+    LockEntry e[128]; int n = lock_read(e, 128);
+    int found = 0;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(e[i].name, name) == 0) {
+            snprintf(e[i].url, sizeof(e[i].url), "%s", url);
+            snprintf(e[i].ref, sizeof(e[i].ref), "%s", ref[0] ? ref : "-");
+            snprintf(e[i].sha, sizeof(e[i].sha), "%s", sha);
+            found = 1; break;
+        }
+    }
+    if (!found && n < 128) {
+        snprintf(e[n].name, sizeof(e[n].name), "%s", name);
+        snprintf(e[n].url,  sizeof(e[n].url),  "%s", url);
+        snprintf(e[n].ref,  sizeof(e[n].ref),  "%s", ref[0] ? ref : "-");
+        snprintf(e[n].sha,  sizeof(e[n].sha),  "%s", sha);
+        n++;
+    }
+    lock_write(e, n);
+}
+
+static void lock_remove(const char* name) {
+    LockEntry e[128]; int n = lock_read(e, 128);
+    int w = 0;
+    for (int i = 0; i < n; i++) if (strcmp(e[i].name, name) != 0) e[w++] = e[i];
+    lock_write(e, w);
+}
+
+// ---- wyn.toml [dependencies] upsert/remove ---------------------------------
+//
+// We reuse the toml parser for reads; writes are line-oriented so we preserve
+// the rest of the file. A dependency line is `name = "url@ref"` inside the
+// [dependencies] section.
+
+// Store `name = "value"` under [dependencies], creating the section if needed.
+static int manifest_upsert_dep(const char* name, const char* value) {
+    FILE* in = fopen("wyn.toml", "r");
+    const char* out_path = "wyn.toml.tmp";
+    FILE* out = fopen(out_path, "w");
+    if (!out) { if (in) fclose(in); fprintf(stderr, "Error: cannot write wyn.toml\n"); return 1; }
+
+    int in_deps = 0, wrote = 0, saw_deps = 0;
+    if (in) {
+        char line[1024];
+        while (fgets(line, sizeof(line), in)) {
+            // Detect section transitions on a trimmed copy.
+            char t[1024]; snprintf(t, sizeof(t), "%s", line);
+            char* s = t; while (*s == ' ' || *s == '\t') s++;
+            char* e = s + strlen(s); while (e > s && (e[-1]=='\n'||e[-1]=='\r'||e[-1]==' '||e[-1]=='\t')) *--e = '\0';
+
+            if (s[0] == '[') {
+                // Leaving [dependencies] without having written our line → add it now.
+                if (in_deps && !wrote) { fprintf(out, "%s = \"%s\"\n", name, value); wrote = 1; }
+                in_deps = (strcmp(s, "[dependencies]") == 0);
+                if (in_deps) saw_deps = 1;
+                fputs(line, out);
+                continue;
+            }
+            if (in_deps) {
+                // Replace an existing `name = ...` line.
+                char* eq = strchr(s, '=');
+                if (eq) {
+                    char key[128]; int kl = eq - s;
+                    while (kl > 0 && (s[kl-1]==' '||s[kl-1]=='\t')) kl--;
+                    if (kl > 0 && kl < (int)sizeof(key)) {
+                        memcpy(key, s, kl); key[kl] = '\0';
+                        if (strcmp(key, name) == 0) {
+                            if (!wrote) { fprintf(out, "%s = \"%s\"\n", name, value); wrote = 1; }
+                            continue;   // drop old line
+                        }
+                    }
+                }
+            }
+            fputs(line, out);
+        }
+        // File ended while still in [dependencies].
+        if (in_deps && !wrote) { fprintf(out, "%s = \"%s\"\n", name, value); wrote = 1; }
+        fclose(in);
+    }
+    if (!saw_deps && !wrote) {
+        if (!in) fprintf(out, "[project]\nname = \"app\"\nversion = \"0.1.0\"\nentry = \"src/main.wyn\"\n");
+        fprintf(out, "\n[dependencies]\n%s = \"%s\"\n", name, value);
+    }
+    fclose(out);
+    rename(out_path, "wyn.toml");
+    return 0;
+}
+
+static int manifest_remove_dep(const char* name) {
+    FILE* in = fopen("wyn.toml", "r");
+    if (!in) return 0;
+    FILE* out = fopen("wyn.toml.tmp", "w");
+    if (!out) { fclose(in); return 1; }
+    int in_deps = 0, removed = 0;
+    char line[1024];
+    while (fgets(line, sizeof(line), in)) {
+        char t[1024]; snprintf(t, sizeof(t), "%s", line);
+        char* s = t; while (*s == ' ' || *s == '\t') s++;
+        char* e = s + strlen(s); while (e > s && (e[-1]=='\n'||e[-1]=='\r'||e[-1]==' '||e[-1]=='\t')) *--e = '\0';
+        if (s[0] == '[') { in_deps = (strcmp(s, "[dependencies]") == 0); fputs(line, out); continue; }
+        if (in_deps) {
+            char* eq = strchr(s, '=');
+            if (eq) {
+                char key[128]; int kl = eq - s;
+                while (kl > 0 && (s[kl-1]==' '||s[kl-1]=='\t')) kl--;
+                if (kl > 0 && kl < (int)sizeof(key)) {
+                    memcpy(key, s, kl); key[kl] = '\0';
+                    if (strcmp(key, name) == 0) { removed = 1; continue; }
+                }
+            }
+        }
+        fputs(line, out);
+    }
+    fclose(in); fclose(out);
+    rename("wyn.toml.tmp", "wyn.toml");
+    return removed ? 0 : 1;
+}
+
+// Parse `name = "url@ref"` (or legacy `{ git = "url" }`) into a PkgSpec. The
+// stored value already carries the ref, so we hand it straight to pkgspec_parse.
+static int spec_from_dep_value(const char* name, const char* value, PkgSpec* spec) {
+    // Legacy `{ git = "URL" }` form: pull the URL out.
+    const char* v = value;
+    char extracted[512];
+    const char* g = strstr(value, "git");
+    if (value[0] == '{' && g) {
+        const char* q = strchr(g, '"');
+        if (q) { q++; const char* q2 = strchr(q, '"');
+            if (q2 && (size_t)(q2 - q) < sizeof(extracted)) { memcpy(extracted, q, q2 - q); extracted[q2-q] = '\0'; v = extracted; } }
+    }
+    if (pkgspec_parse(v, name, spec) != 0) return 1;
+    return 0;
+}
+
+// ---- public API -------------------------------------------------------------
+
+int wyn_pkg_add(const char* input, const char* override_name) {
+    PkgSpec spec;
+    if (pkgspec_parse(input, override_name, &spec) != 0) {
+        fprintf(stderr, "\033[31m✗\033[0m Not a valid package: '%s'\n", input);
+        fprintf(stderr, "  Try a name (\033[1margs\033[0m → github.com/wynlang/args) or a URL "
+                        "(\033[1mgithub.com/user/repo[@ref]\033[0m).\n");
+        return 1;
+    }
+
+    char dir[600], sha[64];
+    if (clone_into_cache(&spec, dir, sizeof(dir), sha, sizeof(sha)) != 0) return 1;
+
+    // Store `name = "url[@ref]"` in [dependencies].
+    char value[640];
+    if (spec.ref[0]) snprintf(value, sizeof(value), "%s@%s", spec.url, spec.ref);
+    else             snprintf(value, sizeof(value), "%s", spec.url);
+    if (manifest_upsert_dep(spec.name, value) != 0) return 1;
+    lock_upsert(spec.name, spec.url, spec.ref, sha);
+
+    printf("\033[32m✓\033[0m Added \033[1m%s\033[0m → %s%s%s\n",
+           spec.name, spec.url, spec.ref[0] ? "@" : "", spec.ref);
+    printf("    cached: %s\n", dir);
+    printf("    use it: \033[1mimport %s\033[0m\n", spec.name);
+    return 0;
+}
+
+int wyn_pkg_install(void) {
+    // Prefer wyn.lock (pinned). Fall back to the manifest for a fresh checkout.
+    LockEntry le[128]; int ln = lock_read(le, 128);
+    int ok = 0, fail = 0;
+
+    if (ln > 0) {
+        for (int i = 0; i < ln; i++) {
+            PkgSpec spec;
+            // Reconstruct spec from the locked url + ref (pin to the exact ref).
+            char urlref[640];
+            if (le[i].ref[0] && strcmp(le[i].ref, "-") != 0) snprintf(urlref, sizeof(urlref), "%s@%s", le[i].url, le[i].ref);
+            else snprintf(urlref, sizeof(urlref), "%s", le[i].url);
+            if (pkgspec_parse(urlref, le[i].name, &spec) != 0) { fail++; continue; }
+            char dir[600], sha[64];
+            if (clone_into_cache(&spec, dir, sizeof(dir), sha, sizeof(sha)) == 0) {
+                printf("  \033[32m✓\033[0m %s\n", le[i].name); ok++;
+            } else fail++;
+        }
     } else {
-        snprintf(full_url, sizeof(full_url), "https://%s", url);
+        WynConfig* cfg = wyn_config_parse("wyn.toml");
+        if (!cfg) { fprintf(stderr, "No wyn.toml / wyn.lock found.\n"); return 1; }
+        for (int i = 0; i < cfg->dependency_count; i++) {
+            PkgSpec spec;
+            if (spec_from_dep_value(cfg->dependencies[i].name, cfg->dependencies[i].version, &spec) != 0) { fail++; continue; }
+            char dir[600], sha[64];
+            if (clone_into_cache(&spec, dir, sizeof(dir), sha, sizeof(sha)) == 0) {
+                lock_upsert(spec.name, spec.url, spec.ref, sha);
+                printf("  \033[32m✓\033[0m %s\n", spec.name); ok++;
+            } else fail++;
+        }
+        wyn_config_free(cfg);
     }
-    
-    // Clone
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "git clone --depth 1 '%s' '%s' 2>&1", full_url, dest);
-    printf("  Cloning %s...\n", full_url);
-    int result = system(cmd);
-    
-    if (result == 0) {
-        // Check for locked version and checkout if present
-        char locked_hash[64];
-        if (read_locked_hash(name, locked_hash, sizeof(locked_hash))) {
-            // Fetch full history to checkout specific commit
-            char fetch[1024];
-            snprintf(fetch, sizeof(fetch), "git -C '%s' fetch --unshallow 2>/dev/null; git -C '%s' checkout %s 2>/dev/null", dest, dest, locked_hash);
-            system(fetch);
-        }
-        
-        // Record commit hash in lockfile
-        char hash[64];
-        get_git_hash(dest, hash, sizeof(hash));
-        if (hash[0]) write_lockfile(name, full_url, hash);
-        
-        // Validate: must contain .wyn files OR .c/.h files (C library package)
-        char check[1024];
-        snprintf(check, sizeof(check), "find '%s' \\( -name '*.wyn' -o -name '*.🐉' -o -name '*.c' -o -name '*.h' \\) -maxdepth 3 | head -1", dest);
-        FILE* fp = popen(check, "r");
-        char buf[256] = "";
-        if (fp) { fgets(buf, sizeof(buf), fp); pclose(fp); }
-        if (buf[0] == '\0') {
-            fprintf(stderr, "  \033[31m✗\033[0m Not a valid Wyn package: no .wyn/.🐉 files found in %s\n", url);
-            char rm[1024]; snprintf(rm, sizeof(rm), "rm -rf '%s'", dest); system(rm);
-            return 1;
-        }
-        // Warn if no wyn.toml
-        char toml_path[512];
-        snprintf(toml_path, sizeof(toml_path), "%s/wyn.toml", dest);
-        struct stat ts;
-        if (stat(toml_path, &ts) != 0) {
-            printf("  \033[33m⚠\033[0m No wyn.toml found — package may not have version info\n");
-        }
-        printf("  \033[32m✓\033[0m Installed %s\n", name);
-        printf("    → %s\n", dest);
-        return 0;
-    }
-    
-    fprintf(stderr, "  ✗ Failed to clone %s\n", url);
+    printf("\n%d installed%s\n", ok, fail ? ", some failed" : "");
+    return fail ? 1 : 0;
+}
+
+int wyn_pkg_remove(const char* name) {
+    int m = manifest_remove_dep(name);
+    lock_remove(name);
+    if (m == 0) { printf("\033[32m✓\033[0m Removed %s\n", name); return 0; }
+    fprintf(stderr, "\033[33m⚠\033[0m %s was not in [dependencies]\n", name);
     return 1;
 }
 
-// Main install command
-int package_install(const char* spec) {
-    if (!spec || strlen(spec) == 0 || strcmp(spec, ".") == 0) {
-        // Install from wyn.toml in current directory
-        printf("Installing packages from wyn.toml...\n");
-        
-        struct stat st;
-        if (stat("wyn.toml", &st) != 0) {
-            fprintf(stderr, "Error: No wyn.toml found in current directory\n");
-            return 1;
+int wyn_pkg_list(void) {
+    WynConfig* cfg = wyn_config_parse("wyn.toml");
+    if (!cfg) { fprintf(stderr, "No wyn.toml in current directory.\n"); return 1; }
+    printf("Dependencies:\n\n");
+    if (cfg->dependency_count == 0) printf("  (none)\n");
+    for (int i = 0; i < cfg->dependency_count; i++) {
+        PkgSpec spec; char dir[600]; int present = 0;
+        if (spec_from_dep_value(cfg->dependencies[i].name, cfg->dependencies[i].version, &spec) == 0) {
+            pkgspec_cache_dir(&spec, dir, sizeof(dir));
+            present = dir_exists(dir);
         }
-        
-        // Parse wyn.toml for [packages]
-        FILE* f = fopen("wyn.toml", "r");
-        if (!f) return 1;
-        
-        char line[512];
-        int in_deps = 0;
-        int installed = 0;
-        
-        while (fgets(line, sizeof(line), f)) {
-            // Trim
-            char* trimmed = line;
-            while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
-            char* end = trimmed + strlen(trimmed) - 1;
-            while (end > trimmed && (*end == '\n' || *end == '\r' || *end == ' ')) *end-- = '\0';
-            
-            if (strcmp(trimmed, "[packages]") == 0) { in_deps = 1; continue; }
-            if (trimmed[0] == '[') { in_deps = 0; continue; }
-            if (!in_deps || trimmed[0] == '#' || trimmed[0] == '\0') continue;
-            
-            // Parse: name = "path_or_url"
-            char* eq = strchr(trimmed, '=');
-            if (!eq) continue;
-            
-            char name[128], source[256];
-            int nlen = eq - trimmed;
-            while (nlen > 0 && trimmed[nlen-1] == ' ') nlen--;
-            memcpy(name, trimmed, nlen);
-            name[nlen] = '\0';
-            
-            char* src = eq + 1;
-            while (*src == ' ' || *src == '"') src++;
-            char* src_end = src + strlen(src) - 1;
-            while (src_end > src && (*src_end == '"' || *src_end == ' ')) src_end--;
-            int slen = src_end - src + 1;
-            memcpy(source, src, slen);
-            source[slen] = '\0';
-            
-            // Determine source type
-            if (is_git_url(source)) {
-                install_git(name, source);
-            } else {
-                install_local(name, source);
-            }
-            installed++;
-        }
-        
-        fclose(f);
-        printf("\n%d package(s) processed\n", installed);
-        return 0;
+        printf("  %-14s %s  %s\n", cfg->dependencies[i].name, cfg->dependencies[i].version,
+               present ? "\033[32m✓\033[0m" : "\033[33m(not installed — run `wyn install`)\033[0m");
     }
-    
-    // Install single package by name/path/url
-    // Detect if it's a git URL
-    if (is_git_url(spec)) {
-        // Extract name from URL
-        const char* name = strrchr(spec, '/');
-        if (name) name++; else name = spec;
-        char clean_name[128];
-        strncpy(clean_name, name, sizeof(clean_name) - 1);
-        // Remove .git suffix
-        char* dot_git = strstr(clean_name, ".git");
-        if (dot_git) *dot_git = '\0';
-        
-        return install_git(clean_name, spec);
-    }
-    
-    // Check if it's a local path
-    struct stat st;
-    if (stat(spec, &st) == 0) {
-        const char* name = strrchr(spec, '/');
-        if (name) name++; else name = spec;
-        char clean_name[128];
-        strncpy(clean_name, name, sizeof(clean_name) - 1);
-        // Remove .wyn suffix
-        char* dot_wyn = strstr(clean_name, ".wyn");
-        if (dot_wyn) *dot_wyn = '\0';
-        
-        return install_local(clean_name, spec);
-    }
-    
-    // Try registry (will fail if server not available)
-    printf("Package '%s' not found locally. Trying registry...\n", spec);
-    extern int registry_install(const char*);
-    return registry_install(spec);
+    printf("\n%d dependenc%s\n", cfg->dependency_count, cfg->dependency_count == 1 ? "y" : "ies");
+    wyn_config_free(cfg);
+    return 0;
 }
 
-int package_list() {
-    char pkg_dir[512];
-    get_packages_dir(pkg_dir, sizeof(pkg_dir));
-    
-    printf("Installed packages (%s):\n\n", pkg_dir);
-    
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "ls -1 '%s' 2>/dev/null", pkg_dir);
-    FILE* pipe = popen(cmd, "r");
-    if (!pipe) {
-        printf("  (none)\n");
-        return 0;
+int wyn_dep_resolve(const char* import_name, char* dir_out, size_t n) {
+    WynConfig* cfg = wyn_config_parse("wyn.toml");
+    if (!cfg) return 0;
+    int hit = 0;
+    for (int i = 0; i < cfg->dependency_count; i++) {
+        if (strcmp(cfg->dependencies[i].name, import_name) != 0) continue;
+        PkgSpec spec;
+        if (spec_from_dep_value(cfg->dependencies[i].name, cfg->dependencies[i].version, &spec) == 0) {
+            pkgspec_cache_dir(&spec, dir_out, n);
+            if (dir_exists(dir_out)) hit = 1;
+        }
+        break;
     }
-    
-    char line[256];
-    int count = 0;
-    while (fgets(line, sizeof(line), pipe)) {
-        line[strcspn(line, "\n")] = '\0';
-        if (strlen(line) > 0) {
-            // Check for package.wyn manifest
-            char manifest[512];
-            snprintf(manifest, sizeof(manifest), "%s/%s/package.wyn", pkg_dir, line);
-            struct stat st;
-            if (stat(manifest, &st) == 0) {
-                char full_path[512];
-                snprintf(full_path, sizeof(full_path), "%s/%s", pkg_dir, line);
-                PackageInfo* info = read_package_manifest(full_path);
-                if (info) {
-                    printf("  %s@%s — %s\n", info->name, info->version, info->description);
-                    free_package_info(info);
-                } else {
-                    printf("  %s\n", line);
-                }
-            } else {
-                printf("  %s\n", line);
-            }
-            count++;
+    wyn_config_free(cfg);
+    return hit;
+}
+
+void wyn_deps_ffi_flags(char* out, size_t out_size) {
+    WynConfig* cfg = wyn_config_parse("wyn.toml");
+    if (!cfg) return;
+    for (int i = 0; i < cfg->dependency_count; i++) {
+        PkgSpec spec; char dir[600];
+        if (spec_from_dep_value(cfg->dependencies[i].name, cfg->dependencies[i].version, &spec) != 0) continue;
+        pkgspec_cache_dir(&spec, dir, sizeof(dir));
+        if (!dir_exists(dir)) continue;
+        char toml[700]; snprintf(toml, sizeof(toml), "%s/wyn.toml", dir);
+        WynConfig* dep = wyn_config_parse(toml);
+        if (dep) {
+            char frag[512]; frag[0] = '\0';
+            wyn_config_ffi_flags(dep, frag, sizeof(frag));
+            size_t used = strlen(out);
+            if (frag[0] && used + strlen(frag) + 1 < out_size)
+                snprintf(out + used, out_size - used, "%s", frag);
+            wyn_config_free(dep);
         }
     }
-    pclose(pipe);
-    
-    if (count == 0) printf("  (none)\n");
-    printf("\n%d package(s) installed\n", count);
-    return 0;
+    wyn_config_free(cfg);
 }

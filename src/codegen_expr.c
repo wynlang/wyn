@@ -1,6 +1,24 @@
 // codegen_expr.c - Expression code generation
 // Included from codegen.c - shares all statics
 
+// Pick the hashmap_insert_* function for a value expression by its type. Consults
+// BOTH the literal node type and the checker-resolved expr_type, so a typed
+// non-literal value (e.g. `{k: someStringVar}`) inserts with the right function
+// instead of silently defaulting to int. Shared by all three map-store sites
+// (.set/.insert, map literal, m[k]=v) so they can't drift apart. Default int.
+static const char* hashmap_insert_fn_for(Expr* value_expr) {
+    if (!value_expr) return "hashmap_insert_int";
+    if (value_expr->type == EXPR_STRING) return "hashmap_insert_string";
+    if (value_expr->type == EXPR_FLOAT)  return "hashmap_insert_float";
+    if (value_expr->type == EXPR_BOOL)   return "hashmap_insert_bool";
+    if (value_expr->expr_type) {
+        if (value_expr->expr_type->kind == TYPE_STRING) return "hashmap_insert_string";
+        if (value_expr->expr_type->kind == TYPE_FLOAT)  return "hashmap_insert_float";
+        if (value_expr->expr_type->kind == TYPE_BOOL)   return "hashmap_insert_bool";
+    }
+    return "hashmap_insert_int";
+}
+
 // A string pushed into an array transfers ownership: array_push_str stores the
 // pointer without retaining, and array_free releases it. So a local string var
 // pushed into an array must NOT also be released at scope exit — that would
@@ -920,143 +938,69 @@ void codegen_expr(Expr* expr) {
                 expr->call.callee->token.length == 5 &&
                 memcmp(expr->call.callee->token.start, "print", 5) == 0) {
                 
-                if (expr->call.arg_count == 1) {
-                    // Single argument - use the _Generic macro for type dispatch
-                    // Escape analysis: string interp arg to print doesn't escape
+                // Python-style print(): print all positional args separated by a
+                // space, then a terminator that defaults to "\n". A trailing named
+                // `end=` (or `sep=`) argument overrides the terminator/separator.
+                // `print(x)` == `println(x)`; `print(x, end="")` suppresses the
+                // newline (the old no-newline behavior); `print(a, b)` joins with a
+                // space. Emitted as one statement-expr so it stays a single value.
+                {
+                    // Split positional args from named end=/sep= args.
+                    int npos = 0;
+                    Expr* end_arg = NULL;   // string expr for the terminator (default "\n")
+                    Expr* sep_arg = NULL;   // string expr for the separator (default " ")
+                    Expr* pos[64];
+                    for (int i = 0; i < expr->call.arg_count && npos < 64; i++) {
+                        Token nm = expr->call.arg_names ? expr->call.arg_names[i] : (Token){0};
+                        if (nm.length == 3 && memcmp(nm.start, "end", 3) == 0) { end_arg = expr->call.args[i]; continue; }
+                        if (nm.length == 3 && memcmp(nm.start, "sep", 3) == 0) { sep_arg = expr->call.args[i]; continue; }
+                        pos[npos++] = expr->call.args[i];
+                    }
+
                     bool prev_skip = codegen_skip_strdup;
-                    if (expr->call.args[0]->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
-                    Expr* parg = expr->call.args[0];
-                    // A binary expression only needs the string temp wrapper when
-                    // it actually produces a STRING (concat). An arithmetic binary
-                    // like `n + 1` is NOT a string — wrapping it as `const char*`
-                    // and then wyn_rc_release()ing an integer segfaults. Trust the
-                    // checker's expr_type; fall back to a string-operand check when
-                    // the type is missing (e.g. a var left __auto_type'd).
-                    bool _binary_is_string = false;
-                    if (parg->type == EXPR_BINARY) {
-                        if (parg->expr_type) {
-                            _binary_is_string = (parg->expr_type->kind == TYPE_STRING);
-                        } else {
-                            Expr* _l = parg->binary.left;
-                            Expr* _r = parg->binary.right;
-                            _binary_is_string =
-                                (_l->type == EXPR_STRING || _r->type == EXPR_STRING) ||
-                                (_l->expr_type && _l->expr_type->kind == TYPE_STRING) ||
-                                (_r->expr_type && _r->expr_type->kind == TYPE_STRING);
-                        }
-                    }
-                    bool _print_temp = _binary_is_string ||
-                                       (parg->type == EXPR_STRING_INTERP);
-                    if (!_print_temp && parg->type == EXPR_METHOD_CALL &&
-                        parg->method_call.method.length == 9 &&
-                        memcmp(parg->method_call.method.start, "to_string", 9) == 0 &&
-                        !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
-                        _print_temp = true;
-                    }
-                    // Self-release the fresh temp ONLY when no statement-level
-                    // wrapper already owns it (temp_id >= 0 means codegen_stmt
-                    // hoisted it into __saN and will release it — releasing here
-                    // too would double-free).
-                    if (_print_temp && parg->_codegen_temp_id < 0) {
-                        emit("({ const char* __ps = ");
-                        codegen_expr(parg);
-                        emit("; print(__ps); wyn_rc_release(__ps); })");
-                    } else {
-                        emit("print(");
-                        codegen_expr(parg);
-                        emit(")");
-                    }
-                    codegen_skip_strdup = prev_skip;
-                } else if (expr->call.arg_count >= 2 && 
-                           expr->call.args[0]->type == EXPR_STRING) {
-                    // Format string with {} placeholders: print("Value: {}", x)
-                    const char* fmt = expr->call.args[0]->token.start + 1; // Skip opening quote
-                    int fmt_len = expr->call.args[0]->token.length - 2; // Skip quotes
-                    
-                    emit("printf(\"");
-                    int arg_idx = 1;
-                    for (int i = 0; i < fmt_len; i++) {
-                        if (i < fmt_len - 1 && fmt[i] == '{' && fmt[i+1] == '}') {
-                            // Replace {} with appropriate format specifier
-                            if (arg_idx < expr->call.arg_count) {
-                                Expr* arg = expr->call.args[arg_idx];
-                                
-                                // Determine format specifier based on argument type
-                                if (arg->expr_type && arg->expr_type->kind == TYPE_STRING) {
-                                    emit("%%s");
-                                } else if (arg->expr_type && arg->expr_type->kind == TYPE_FLOAT) {
-                                    emit("%%f");
-                                } else if (arg->expr_type && arg->expr_type->kind == TYPE_BOOL) {
-                                    emit("%%s");  // Will use ternary for true/false
-                                } else if (arg->type == EXPR_STRING) {
-                                    // String literal
-                                    emit("%%s");
-                                } else if (arg->type == EXPR_IDENT) {
-                                    // Variable - need better type detection
-                                    // For now, check if it's likely a string parameter
-                                    // This is a heuristic - proper solution needs symbol table lookup
-                                    const char* var_name = arg->token.start;
-                                    int var_len = arg->token.length;
-                                    if ((var_len >= 4 && strncmp(var_name, "name", 4) == 0) ||
-                                        (var_len >= 3 && strncmp(var_name, "msg", 3) == 0) ||
-                                        (var_len >= 3 && strncmp(var_name, "str", 3) == 0) ||
-                                        (var_len >= 4 && strncmp(var_name, "text", 4) == 0)) {
-                                        emit("%%s");
-                                    } else {
-                                        emit("%%d");  // Default to int for other variables
-                                    }
-                                } else if (arg->type == EXPR_FIELD_ACCESS) {
-                                    // Struct field access - check field name for string hints
-                                    Token field_name = arg->field_access.field;
-                                    if ((field_name.length >= 4 && strncmp(field_name.start, "name", 4) == 0) ||
-                                        (field_name.length >= 3 && strncmp(field_name.start, "str", 3) == 0) ||
-                                        (field_name.length >= 4 && strncmp(field_name.start, "text", 4) == 0) ||
-                                        (field_name.length >= 5 && strncmp(field_name.start, "title", 5) == 0)) {
-                                        emit("%%s");
-                                    } else {
-                                        emit("%%d");  // Default to int for other fields
-                                    }
-                                } else {
-                                    // Default to int for backward compatibility
-                                    emit("%%d");
-                                }
-                            }
-                            i++; // Skip the }
-                            arg_idx++;
-                        } else if (fmt[i] == '%') {
-                            emit("%%%%"); // Escape %
-                        } else if (fmt[i] == '\\' && i < fmt_len - 1) {
-                            emit("\\%c", fmt[i+1]);
-                            i++;
-                        } else {
-                            emit("%c", fmt[i]);
-                        }
-                    }
-                    emit("\\n\"");
-                    // Add arguments
-                    for (int i = 1; i < expr->call.arg_count; i++) {
-                        emit(", ");
-                        Expr* arg = expr->call.args[i];
-                        // Handle boolean arguments that need string conversion
-                        if (arg->expr_type && arg->expr_type->kind == TYPE_BOOL) {
-                            emit("(");
-                            codegen_expr(arg);
-                            emit(" ? \"true\" : \"false\")");
-                        } else {
-                            codegen_expr(arg);
-                        }
-                    }
-                    emit(")");
-                } else {
-                    // Multiple arguments - use individual print calls without newlines
                     emit("({ ");
-                    for (int i = 0; i < expr->call.arg_count; i++) {
-                        if (i > 0) emit("printf(\" \"); ");
-                        emit("print_no_nl(");
-                        codegen_expr(expr->call.args[i]);
-                        emit("); ");
+                    for (int i = 0; i < npos; i++) {
+                        Expr* parg = pos[i];
+                        if (i > 0) {
+                            if (sep_arg) { emit("print_no_nl("); codegen_expr(sep_arg); emit("); "); }
+                            else emit("printf(\" \"); ");
+                        }
+                        // Per-arg escape analysis + string-temp handling, mirroring
+                        // the old single-arg path: a fresh string temp (interp /
+                        // concat / non-string .to_string()) must be released after
+                        // printing to avoid a leak, unless a statement-level wrapper
+                        // already owns it (_codegen_temp_id >= 0).
+                        if (parg->type == EXPR_STRING_INTERP) codegen_skip_strdup = true;
+                        bool _binary_is_string = false;
+                        if (parg->type == EXPR_BINARY) {
+                            if (parg->expr_type) _binary_is_string = (parg->expr_type->kind == TYPE_STRING);
+                            else {
+                                Expr* _l = parg->binary.left; Expr* _r = parg->binary.right;
+                                _binary_is_string = (_l->type == EXPR_STRING || _r->type == EXPR_STRING) ||
+                                    (_l->expr_type && _l->expr_type->kind == TYPE_STRING) ||
+                                    (_r->expr_type && _r->expr_type->kind == TYPE_STRING);
+                            }
+                        }
+                        bool _print_temp = _binary_is_string || (parg->type == EXPR_STRING_INTERP);
+                        if (!_print_temp && parg->type == EXPR_METHOD_CALL &&
+                            parg->method_call.method.length == 9 &&
+                            memcmp(parg->method_call.method.start, "to_string", 9) == 0 &&
+                            !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
+                            _print_temp = true;
+                        }
+                        if (_print_temp && parg->_codegen_temp_id < 0) {
+                            emit("{ const char* __ps = "); codegen_expr(parg);
+                            emit("; print_no_nl(__ps); wyn_rc_release(__ps); } ");
+                        } else {
+                            emit("print_no_nl("); codegen_expr(parg); emit("); ");
+                        }
+                        codegen_skip_strdup = prev_skip;
                     }
-                    emit("printf(\"\\n\"); })");
+                    // Terminator: default newline, or the given end= string.
+                    if (end_arg) { emit("print_no_nl("); codegen_expr(end_arg); emit("); "); }
+                    else emit("printf(\"\\n\"); ");
+                    emit("})");
+                    codegen_skip_strdup = prev_skip;
                 }
             } else if (expr->call.callee->type == EXPR_IDENT && 
                        expr->call.callee->token.length == 7 &&
@@ -2499,24 +2443,9 @@ void codegen_expr(Expr* expr) {
                 
                 if ((strcmp(method_name, "set") == 0 || strcmp(method_name, "insert") == 0) && 
                     expr->method_call.arg_count == 2) {
-                    // Determine insert function based on value type
+                    // Determine insert function based on value type (shared helper).
                     Expr* value_expr = expr->method_call.args[1];
-                    const char* insert_func = "hashmap_insert_int";
-                    if (value_expr->type == EXPR_STRING) {
-                        insert_func = "hashmap_insert_string";
-                    } else if (value_expr->type == EXPR_FLOAT) {
-                        insert_func = "hashmap_insert_float";
-                    } else if (value_expr->type == EXPR_BOOL) {
-                        insert_func = "hashmap_insert_bool";
-                    } else if (value_expr->expr_type) {
-                        if (value_expr->expr_type->kind == TYPE_STRING) {
-                            insert_func = "hashmap_insert_string";
-                        } else if (value_expr->expr_type->kind == TYPE_FLOAT) {
-                            insert_func = "hashmap_insert_float";
-                        } else if (value_expr->expr_type->kind == TYPE_BOOL) {
-                            insert_func = "hashmap_insert_bool";
-                        }
-                    }
+                    const char* insert_func = hashmap_insert_fn_for(value_expr);
                     emit("%s(", insert_func);
                     codegen_expr(expr->method_call.object);
                     emit(", ");
@@ -2943,17 +2872,9 @@ void codegen_expr(Expr* expr) {
                 // Insert key-value pairs (stored as key, value, key, value...)
                 for (int i = 0; i < expr->array.count; i += 2) {
                     Expr* value_expr = expr->array.elements[i+1];
-                    
-                    // Determine insert function based on value type
-                    const char* insert_func = "hashmap_insert_int";
-                    if (value_expr->type == EXPR_FLOAT) {
-                        insert_func = "hashmap_insert_float";
-                    } else if (value_expr->type == EXPR_STRING) {
-                        insert_func = "hashmap_insert_string";
-                    } else if (value_expr->type == EXPR_BOOL) {
-                        insert_func = "hashmap_insert_bool";
-                    }
-                    
+                    // Shared type→insert-fn selection (consults expr_type too, so a
+                    // typed non-literal value like `{k: someVar}` isn't defaulted to int).
+                    const char* insert_func = hashmap_insert_fn_for(value_expr);
                     emit("%s(__map_%d, ", insert_func, map_id);
                     codegen_expr(expr->array.elements[i]);    // key
                     emit(", ");
@@ -3217,6 +3138,12 @@ void codegen_expr(Expr* expr) {
             // (old value might be referenced in the RHS expression)
             char target_name[512];
             token_to_cstr(target_name, sizeof target_name, expr->assign.name);
+            // A var whose name is a C keyword was emitted with the wynfn_ prefix at
+            // its declaration; the assignment must use the same prefixed C name.
+            { extern int is_user_collision(const char*);
+              if (is_user_collision(target_name)) {
+                memmove(target_name + WYN_UFN_PFX_LEN, target_name, strlen(target_name) + 1);
+                memcpy(target_name, WYN_UFN_PFX, WYN_UFN_PFX_LEN); } }
             bool _rc_string_assign = false;
             {
                 extern int is_string_var(const char*);
@@ -3256,8 +3183,10 @@ void codegen_expr(Expr* expr) {
                 }
                 
                 // Check if this is a local variable - never prefix local variables
+                // (target_name already carries the wynfn_ prefix if it's a C-keyword
+                // collision, so use it rather than the raw token).
                 if (is_local_variable(target_name)) {
-                    emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
+                    emit("%s = ", target_name);
                     codegen_expr(expr->assign.value);
                     break;
                 }
@@ -3282,9 +3211,9 @@ void codegen_expr(Expr* expr) {
                 }
             } else {
                 if (is_mut_parameter(target_name)) {
-                    emit("(*%.*s) = ", expr->assign.name.length, expr->assign.name.start);
+                    emit("(*%s) = ", target_name);
                 } else {
-                    emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
+                    emit("%s = ", target_name);
                 }
             }
             codegen_expr(expr->assign.value);
@@ -3330,10 +3259,22 @@ void codegen_expr(Expr* expr) {
             // Wrapped in extra parens to protect commas in macro contexts
             {
                 emit("((%.*s){", actual_type_name_len, actual_type_name);
+                char _sn[96]; token_to_cstr(_sn, sizeof(_sn), type_name);
+                extern const char* current_assign_target_kind;
+                extern int get_struct_field_option_family(const char*, const char*, char*, size_t);
                 for (int i = 0; i < expr->struct_init.field_count; i++) {
                     if (i > 0) emit(", ");
                     emit(".%.*s = ", expr->struct_init.field_names[i].length, expr->struct_init.field_names[i].start);
+                    // If the field's declared type is optional (`f: T?`), tell
+                    // Some/None codegen the exact Option family so a bare
+                    // `f: None` / `f: Some(x)` lowers to that family, not OptionInt.
+                    char _fn[96]; token_to_cstr(_fn, sizeof(_fn), expr->struct_init.field_names[i]);
+                    char _fam[128];
+                    const char* _prev_kind = current_assign_target_kind;
+                    if (get_struct_field_option_family(_sn, _fn, _fam, sizeof(_fam)))
+                        current_assign_target_kind = _fam;
                     codegen_expr(expr->struct_init.field_values[i]);
+                    current_assign_target_kind = _prev_kind;
                 }
                 emit("})");
             }
@@ -4402,23 +4343,8 @@ void codegen_expr(Expr* expr) {
             
             if (is_map_assign) {
                 // Map assignment: map["key"] = value -> hashmap_insert_*(map, "key", value)
-                // Determine insert function based on value type
-                const char* insert_func = "hashmap_insert_int";
-                if (expr->index_assign.value->type == EXPR_STRING) {
-                    insert_func = "hashmap_insert_string";
-                } else if (expr->index_assign.value->type == EXPR_FLOAT) {
-                    insert_func = "hashmap_insert_float";
-                } else if (expr->index_assign.value->type == EXPR_BOOL) {
-                    insert_func = "hashmap_insert_bool";
-                } else if (expr->index_assign.value->expr_type) {
-                    if (expr->index_assign.value->expr_type->kind == TYPE_STRING) {
-                        insert_func = "hashmap_insert_string";
-                    } else if (expr->index_assign.value->expr_type->kind == TYPE_FLOAT) {
-                        insert_func = "hashmap_insert_float";
-                    } else if (expr->index_assign.value->expr_type->kind == TYPE_BOOL) {
-                        insert_func = "hashmap_insert_bool";
-                    }
-                }
+                // Determine insert function based on value type (shared helper).
+                const char* insert_func = hashmap_insert_fn_for(expr->index_assign.value);
                 emit("%s(", insert_func);
                 codegen_expr(expr->index_assign.object);
                 emit(", ");

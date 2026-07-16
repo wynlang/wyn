@@ -479,8 +479,33 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     }
                 }
                 return array_type;
+            } else if (field_type_expr->type == EXPR_OPTIONAL_TYPE) {
+                // Optional field `f: T?` — resolve to the Option<T> family type so
+                // field access (`x.f`) and match on it lower correctly (was falling
+                // through to NULL → default int, breaking match on the field).
+                Expr* inner = field_type_expr->optional_type.inner_type;
+                const char* fam = NULL;
+                if (inner && inner->type == EXPR_IDENT) {
+                    Token t = inner->token;
+                    if (t.length == 3 && memcmp(t.start, "int", 3) == 0) fam = "OptionInt";
+                    else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) fam = "OptionString";
+                    else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) fam = "OptionFloat";
+                    else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) fam = "OptionBool";
+                    else {
+                        // Struct?: reuse the registered Option<Struct> family symbol.
+                        char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                        static char _famb[128]; snprintf(_famb, sizeof(_famb), "Option%s", _stn);
+                        fam = _famb;
+                    }
+                }
+                if (fam) {
+                    Token fam_tok = {TOKEN_IDENT, (char*)fam, (int)strlen(fam), 0};
+                    Symbol* fsym = find_symbol(global_scope, fam_tok);
+                    if (fsym && fsym->type) return fsym->type;
+                }
+                return NULL;
             }
-            
+
             return NULL;
         }
     }
@@ -506,6 +531,20 @@ static bool wyn_is_type_compatible(Type* expected, Type* actual) {
     // Allow enum <-> int (enums are represented as ints)
     if ((expected->kind == TYPE_ENUM && actual->kind == TYPE_INT) ||
         (expected->kind == TYPE_INT && actual->kind == TYPE_ENUM)) {
+        return true;
+    }
+
+    // FFI `ptr` interop: an opaque C pointer (`void*`) is freely convertible at
+    // the C boundary with a Wyn `string` (both are char* — passing a string to a
+    // `const char*` param), with the null idiom `0` (int), and with a raw machine
+    // word. Accept these so `extern fn`s taking/returning `ptr` are callable with
+    // string literals and null without a cast. (is_ptr_type: TYPE_STRUCT "void*".)
+    if (is_ptr_type(expected) &&
+        (actual->kind == TYPE_STRING || actual->kind == TYPE_INT || is_ptr_type(actual))) {
+        return true;
+    }
+    if (is_ptr_type(actual) &&
+        (expected->kind == TYPE_STRING || expected->kind == TYPE_INT)) {
         return true;
     }
 
@@ -1511,7 +1550,7 @@ void init_checker() {
 
     // Register namespace identifiers so checker doesn't reject File.read() etc.
     // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Time", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Color", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Random", "Web", "Smtp", "App", "Shared", NULL};
+    const char* namespaces[] = {"File", "Path", "DateTime", "Time", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Color", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Random", "Web", "Smtp", "App", "Shared", "Ptr", NULL};
     for (int i = 0; namespaces[i]; i++) {
         Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
         if (!find_symbol(global_scope, ns_tok)) {
@@ -1942,6 +1981,11 @@ void init_checker() {
         {"Task_try_recv", 13, builtin_int, 2, builtin_int},
         {"Task_select_2", 13, builtin_int, 2, builtin_int},
         {"Task_select_3", 13, builtin_int, 3, builtin_int},
+        // S4 cooperative cancellation: Task.cancel(handle) requests cancellation
+        // of an awaited spawn; Task.is_cancelled() lets a running task check if it
+        // was cancelled (0 args — reads the current coroutine).
+        {"Task_cancel", 11, builtin_void, 1, builtin_int},
+        {"Task_is_cancelled", 17, builtin_bool, 0, builtin_int},
     };
     for (int i = 0; i < (int)(sizeof(reg_task_fns)/sizeof(reg_task_fns[0])); i++) {
         Type* ft = make_type(TYPE_FUNCTION);
@@ -1952,6 +1996,28 @@ void init_checker() {
         ft->fn_type.return_type = reg_task_fns[i].ret;
         Token tok = {TOKEN_IDENT, reg_task_fns[i].name, reg_task_fns[i].nlen, 0};
         add_symbol(global_scope, tok, ft, false);
+    }
+
+    // Ptr namespace — FFI pointer-cell helpers for C out-parameters (`T**`).
+    // Ptr.cell() -> ptr (a heap slot holding one pointer); Ptr.read(cell) -> ptr
+    // (the pointer the callee stored); Ptr.write(cell, p); Ptr.free(cell).
+    {
+        struct { const char* name; int nlen; Type* ret; int pc; Type* p0; Type* p1; } reg_ptr_fns[] = {
+            {"Ptr_cell",  8, builtin_ptr,  0, NULL,        NULL},
+            {"Ptr_read",  8, builtin_ptr,  1, builtin_ptr, NULL},
+            {"Ptr_write", 9, builtin_void, 2, builtin_ptr, builtin_ptr},
+            {"Ptr_free",  8, builtin_void, 1, builtin_ptr, NULL},
+        };
+        for (int i = 0; i < (int)(sizeof(reg_ptr_fns)/sizeof(reg_ptr_fns[0])); i++) {
+            Type* ft = make_type(TYPE_FUNCTION);
+            ft->fn_type.param_count = reg_ptr_fns[i].pc;
+            ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
+            ft->fn_type.param_types[0] = reg_ptr_fns[i].p0;
+            ft->fn_type.param_types[1] = reg_ptr_fns[i].p1;
+            ft->fn_type.return_type = reg_ptr_fns[i].ret;
+            Token tok = {TOKEN_IDENT, reg_ptr_fns[i].name, reg_ptr_fns[i].nlen, 0};
+            add_symbol(global_scope, tok, ft, false);
+        }
     }
 
     // Db namespace
@@ -2450,7 +2516,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return builtin_int;
             }
             
-            // T2.5.1: Handle built-in type names
+            // T2.5.1: Handle built-in type names — UNLESS a real variable of that
+            // name is in scope. A user var may be named after a builtin type
+            // (int/float/string/str/bool/char/void); codegen emits it with a
+            // wynfn_ prefix, so the checker must resolve it as that variable (count
+            // its uses, flow its real type), not swallow it as a type literal.
+            if (!find_symbol(scope, expr->token)) {
             if (expr->token.length == 3 && memcmp(expr->token.start, "int", 3) == 0) {
                 expr->expr_type = builtin_int;
                 return builtin_int;
@@ -2479,7 +2550,8 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 expr->expr_type = builtin_void;
                 return builtin_void;
             }
-            
+            }
+
             Symbol* sym = find_symbol(scope, expr->token);
             if (sym) sym->is_used = true;
             if (!sym) {
@@ -5749,7 +5821,17 @@ void check_program(Program* prog) {
                 fn_type->fn_type.param_types[j] = extern_map_type(ext->param_types[j]);
             }
             fn_type->fn_type.return_type = extern_map_type(ext->return_type); // void/NULL -> void
-            add_function_overload(global_scope, ext->name, fn_type, false);
+            // A C symbol may be declared once but reach this loop twice (e.g. a
+            // C-package binding merged across checker passes, or the same header
+            // bound in two imported packages). Re-declaring the identical extern
+            // is harmless, so skip it silently rather than firing the "duplicate
+            // signature" error that add_function_overload would raise.
+            Symbol* _ext_existing = find_symbol(global_scope, ext->name);
+            if (!(_ext_existing && _ext_existing->type &&
+                  _ext_existing->type->kind == TYPE_FUNCTION &&
+                  signatures_match(_ext_existing->type, fn_type))) {
+                add_function_overload(global_scope, ext->name, fn_type, false);
+            }
         } else if (prog->stmts[i]->type == STMT_MACRO) {
             // Register macro as function
             MacroStmt* macro = &prog->stmts[i]->macro;

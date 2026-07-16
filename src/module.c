@@ -59,7 +59,7 @@ bool is_builtin_module(const char* module_name) {
     const char* builtins[] = {
         "math", "Math", "File", "System", "Path", "DateTime", "Time",
         "Json", "Http", "Regex", "Random", "HashMap", "HashSet", "Terminal", "Color",
-        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "String", "Data", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Web", "Smtp", "App", "Shared", NULL
+        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "String", "Data", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Web", "Smtp", "App", "Shared", "Ptr", NULL
     };
     for (int i = 0; builtins[i] != NULL; i++) {
         if (strcmp(module_name, builtins[i]) == 0) {
@@ -141,8 +141,12 @@ void preload_imports(const char* source) {
                 p += 6;
             }
             
-            // Extract module name (including . for nested modules, convert to /)
-            while (((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_' || *p == '.') && len < 255) {
+            // Extract module name (including . for nested modules, convert to /).
+            // Digits are part of an identifier (e.g. `sqlite3`) — must match the
+            // lexer's isalnum rule, else a trailing digit is dropped and the name
+            // is truncated ("sqlite3" -> "sqlite"), breaking module resolution.
+            while (((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                    (*p >= '0' && *p <= '9') || *p == '_' || *p == '.') && len < 255) {
                 if (*p == '.') {
                     module_name[len++] = '/';  // Convert . to /
                 } else {
@@ -151,14 +155,15 @@ void preload_imports(const char* source) {
                 p++;
             }
             module_name[len] = '\0';
-            
+
             if (len > 0) {
                 // Skip optional "as alias"
                 while (*p == ' ' || *p == '\t') p++;
                 if (strncmp(p, "as ", 3) == 0) {
                     p += 3;
                     // Skip alias name
-                    while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_') p++;
+                    while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                           (*p >= '0' && *p <= '9') || *p == '_') p++;
                 }
                 
                 // Load module
@@ -264,9 +269,23 @@ char* resolve_module_path(const char* module_name) {
     // 5. ./wyn_modules/ directory
     TRY_RESOLVE("./wyn_modules/%s", module_name);
 
-    // 5c. Project-local packages: ./packages/<name>/<name>.wyn — where `wyn add`
-    // and `wyn pkg install` place packages. Both the flat file and the nested
-    // <name>/<name> layout are tried (relative to cwd and the source dir).
+    // 5c. Git-URL dependency in the global cache. `wyn add <name|url>` records the
+    // package in wyn.toml [dependencies] and clones it into ~/.wyn/pkg/…; resolve
+    // the import name → its cache dir, then try the usual library layouts inside.
+    {
+        extern int wyn_dep_resolve(const char* import_name, char* dir_out, size_t n);
+        char dep_dir[600];
+        if (wyn_dep_resolve(module_name, dep_dir, sizeof(dep_dir))) {
+            TRY_RESOLVE("%s/%s", dep_dir, module_name);      // <cache>/<name>.wyn
+            TRY_RESOLVE("%s/src/%s", dep_dir, module_name);  // <cache>/src/<name>.wyn
+            TRY_RESOLVE("%s/src/main", dep_dir);             // <cache>/src/main.wyn
+        }
+    }
+
+    // 5d. Legacy project-local packages: ./packages/<name>/<name>.wyn — where the
+    // curated C-package `wyn add <clib>` still places generated bindings, and
+    // pre-git-deps checkouts kept pure-Wyn packages. Both the flat file and the
+    // nested <name>/<name> layout are tried (relative to cwd and the source dir).
     TRY_RESOLVE("./packages/%s/%s", module_name, module_name);
     TRY_RESOLVE("%s/packages/%s/%s", source_directory, module_name, module_name);
     TRY_RESOLVE("./packages/%s", module_name);
@@ -384,10 +403,8 @@ Program* load_module(const char* module_name) {
     fread(source, 1, size, f);
     source[size] = '\0';
     fclose(f);
-    // NB: `path` is freed later (after the package-manifest read below), NOT
-    // here — read_package_manifest(path) derives the module's directory from it,
-    // and freeing it now was a use-after-free (ASan: heap-use-after-free at
-    // package.c read_package_manifest).
+    // `path` is freed at the end of this function (after the module is parsed +
+    // registered); the AST tokens point into `source`, not `path`.
 
     // Save current module path before loading imports
     char saved_module_path[512];
@@ -427,18 +444,8 @@ Program* load_module(const char* module_name) {
     if (prog) {
         extern void register_module(const char* name, Program* ast);
         register_module(resolved_name, prog);
-        
-        // Read package manifest if available
-        extern PackageInfo* read_package_manifest(const char* module_path);
-        PackageInfo* pkg = read_package_manifest(path);
-        if (pkg) {
-            // Package manifest found - could validate version, dependencies, etc.
-            // For now, just acknowledge it exists
-            extern void free_package_info(PackageInfo* info);
-            free_package_info(pkg);
-        }
     }
-    
+
     // Remove from loading stack
     pop_loading_stack();
 

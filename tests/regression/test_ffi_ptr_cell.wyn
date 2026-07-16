@@ -1,0 +1,41 @@
+// Regression: FFI pointer-cell helpers (`Ptr`) + string->ptr arg coercion + a
+// `ptr` parameter on a user function. These are the primitives an opaque C
+// out-parameter needs (e.g. sqlite3_open(path, sqlite3** out)). Uses libc only
+// (malloc/memcpy/free — always linked), so it's hermetic. Exercises:
+//   - Ptr.cell()/read()/write()/free() round-trip a pointer through a heap cell
+//   - passing a Wyn `string` where an extern expects `ptr` (const char*)
+//   - a user fn taking a `ptr` parameter (lowers to void*)
+// EXPECT: cell roundtrip ok
+// EXPECT: len 5
+// EXPECT: PASS: ffi ptr cell
+
+extern fn malloc(n: int) -> ptr;
+extern fn free(p: ptr);
+extern fn strlen(s: ptr) -> int;
+
+fn use_ptr(p: ptr) -> int {
+    // a user fn with a ptr param; null-check via the C 0 idiom
+    if p == 0 { return -1 }
+    return 1
+}
+
+fn main() -> int {
+    var cell = Ptr.cell()
+    var block = malloc(64)
+    Ptr.write(cell, block)
+    var got = Ptr.read(cell)
+    if got == block and use_ptr(got) == 1 {
+        println("cell roundtrip ok")
+    } else {
+        println("MISMATCH")
+    }
+    free(block)
+    Ptr.free(cell)
+
+    // string -> ptr coercion: pass a Wyn string to a const char* extern param
+    var n = strlen("hello")
+    println("len ${n}")
+
+    println("PASS: ffi ptr cell")
+    return 0
+}

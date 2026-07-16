@@ -1,0 +1,38 @@
+// Regression: an optional value as a STRUCT FIELD (`f: T?`) must compile and
+// round-trip through construction + match. Previously the field was emitted as
+// `long long` (default) instead of the Option<T> family, so struct construction
+// and matching on the field failed with an internal codegen error. Fix: emit the
+// Option family as the field's C type, emit the Option<Struct> family typedef
+// right after its base struct (ordering), resolve the field-access type in the
+// checker, and coerce a bare Some(..)/None field initializer to the field's
+// family. Covers optional-struct fields and optional-scalar fields, Some + None.
+// EXPECT: city NYC
+// EXPECT: no home
+// EXPECT: n 42
+// EXPECT: no s
+// EXPECT: PASS: optional struct field
+
+struct Addr { city: string }
+struct User { name: string, home: Addr? }
+struct Box { n: int?, s: string? }
+
+fn main() -> int {
+    var u = User { name: "amy", home: Some(Addr { city: "NYC" }) }
+    match u.home {
+        Some(a) => println("city ${a.city}"),
+        None => println("no home"),
+    }
+
+    var v = User { name: "bob", home: None }
+    match v.home {
+        Some(a) => println("city ${a.city}"),
+        None => println("no home"),
+    }
+
+    var b = Box { n: Some(42), s: None }
+    match b.n { Some(x) => println("n ${x}"), None => println("no n") }
+    match b.s { Some(x) => println("s ${x}"), None => println("no s") }
+
+    println("PASS: optional struct field")
+    return 0
+}

@@ -5,12 +5,12 @@ enum Color { Red, Green, Blue }
 enum Direction { North, South, East, West }
 
 fn main() -> int {
-    println(Color.Red.to_string())
-    println(Color.Green.to_string())
-    println(Color.Blue.to_string())
+    print(Color.Red.to_string())
+    print(Color.Green.to_string())
+    print(Color.Blue.to_string())
 
     var d = Direction.West
-    println(d.to_string())
+    print(d.to_string())
 
     return 0
 }

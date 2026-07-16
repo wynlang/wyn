@@ -3600,6 +3600,20 @@ void Task_free_value(long long handle) {
     shared_registry[handle] = NULL;
 }
 
+// S4 cooperative cancellation. `Task.cancel(h)` requests cancellation of the task
+// backing spawn handle `h` (a Future*); the awaitee bails at its next yield point.
+// `Task.is_cancelled()` lets a running spawned task check whether it was cancelled
+// so it can `return` early cooperatively. Implemented in future.c (needs Future/
+// Task internals). Not available in the Windows synchronous-spawn stub.
+#ifndef _WIN32
+// future_cancel / wyn_current_task_cancelled are declared in future.h (included above).
+static inline void Task_cancel(void* handle) { future_cancel((Future*)handle); }
+static inline long long Task_is_cancelled(void) { return wyn_current_task_cancelled(); }
+#else
+static inline void Task_cancel(void* handle) { (void)handle; }
+static inline long long Task_is_cancelled(void) { return 0; }
+#endif
+
 // Channel API (advanced) — kept for power users
 #define MAX_TASKS 64
 static WynTask* task_registry[MAX_TASKS] = {0};
@@ -3763,6 +3777,28 @@ long long Shared_add(long long handle, long long delta) {
 }
 long long Shared_sub(long long handle, long long delta) {
     return atomic_fetch_sub(&wyn_shared_slab[(int)handle], delta);
+}
+
+// === Ptr: FFI pointer-cell helpers ========================================
+// Many C APIs take an OUT-parameter of type `T**` (e.g. sqlite3_open(path,
+// sqlite3** out)). Wyn has no address-of operator, so `Ptr` provides a heap
+// cell that holds one pointer: pass the cell where a `T**` is expected, then
+// read the pointer the callee stored. `Ptr.cell()` -> a `ptr` to a zeroed
+// pointer-sized slot; `Ptr.read(cell)` -> the pointer stored in it;
+// `Ptr.write(cell, p)` -> store p; `Ptr.free(cell)` -> release the cell.
+void* Ptr_cell(void) {
+    void** slot = (void**)calloc(1, sizeof(void*));
+    return (void*)slot;
+}
+void* Ptr_read(void* cell) {
+    if (!cell) return NULL;
+    return *(void**)cell;
+}
+void Ptr_write(void* cell, void* value) {
+    if (cell) *(void**)cell = value;
+}
+void Ptr_free(void* cell) {
+    free(cell);
 }
 
 // === SQLite Database Module ===

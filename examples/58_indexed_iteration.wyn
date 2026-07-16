@@ -4,9 +4,9 @@
 fn main() -> int {
     var fruits = ["apple", "banana", "cherry"]
 
-    println("=== Indexed Iteration ===")
+    print("=== Indexed Iteration ===")
     for i, fruit in fruits {
-        println("  ${i}: ${fruit}")
+        print("  ${i}: ${fruit}")
     }
     // Output:
     //   0: apple
@@ -16,7 +16,7 @@ fn main() -> int {
     // Works with int arrays too
     var scores = [90, 85, 77]
     for i, s in scores {
-        println("  Student ${i} scored ${s}")
+        print("  Student ${i} scored ${s}")
     }
 
     return 0

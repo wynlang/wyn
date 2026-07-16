@@ -161,6 +161,10 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                     c_type = "WynHashMap*";
                 } else if (type_token.length == 7 && memcmp(type_token.start, "HashSet", 7) == 0) {
                     c_type = "WynHashSet*";
+                } else if (type_token.length == 3 && memcmp(type_token.start, "ptr", 3) == 0) {
+                    c_type = "void*";   // FFI opaque pointer passed through a user fn
+                } else if (type_token.length == 4 && memcmp(type_token.start, "cstr", 4) == 0) {
+                    c_type = "char*";   // raw C string
                 } else {
                     // Custom struct type - add module prefix if in module context
                     if (current_module_prefix) {
@@ -1542,6 +1546,12 @@ void codegen_stmt(Stmt* stmt) {
                 emit(") = ");
             } else if (stmt->var.is_const && !stmt->var.is_mutable && !is_already_const) {
                 char _vn[512]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                // A var whose name is a C keyword/reserved symbol (long/int/char/
+                // double/…) must be emitted with the wynfn_ prefix, and registered
+                // so its later uses (EXPR_IDENT) prefix too — else the C is invalid.
+                { extern int is_c_name_collision(const char*); extern void register_user_collision(const char*);
+                  if (is_c_name_collision(_vn)) { register_user_collision(_vn);
+                    memmove(_vn + WYN_UFN_PFX_LEN, _vn, strlen(_vn) + 1); memcpy(_vn, WYN_UFN_PFX, WYN_UFN_PFX_LEN); } }
                 extern int get_shadow_suffix(const char*);
                 int _ss = get_shadow_suffix(_vn);
                 if (_ss > 0) {
@@ -1553,6 +1563,9 @@ void codegen_stmt(Stmt* stmt) {
                 }
             } else {
                 char _vn[512]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                { extern int is_c_name_collision(const char*); extern void register_user_collision(const char*);
+                  if (is_c_name_collision(_vn)) { register_user_collision(_vn);
+                    memmove(_vn + WYN_UFN_PFX_LEN, _vn, strlen(_vn) + 1); memcpy(_vn, WYN_UFN_PFX, WYN_UFN_PFX_LEN); } }
                 extern int get_shadow_suffix(const char*);
                 int _ss = get_shadow_suffix(_vn);
                 if (_ss > 0) {
@@ -2342,6 +2355,10 @@ void codegen_stmt(Stmt* stmt) {
                             param_type = "WynHashMap*";
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             param_type = "WynHashSet*";
+                        } else if (type_name.length == 3 && memcmp(type_name.start, "ptr", 3) == 0) {
+                            param_type = "void*";   // FFI opaque pointer through a user fn
+                        } else if (type_name.length == 4 && memcmp(type_name.start, "cstr", 4) == 0) {
+                            param_type = "char*";   // raw C string
                         } else {
                             // Assume it's a custom struct type
                             token_to_cstr(custom_type_buf, sizeof(custom_type_buf), type_name);
@@ -2623,7 +2640,8 @@ void codegen_stmt(Stmt* stmt) {
             {
                 char _en[256]; token_to_cstr(_en, sizeof(_en), stmt->extern_fn.name);
                 extern int is_c_name_collision(const char*);
-                if (is_c_name_collision(_en)) break;
+                extern int is_std_header_symbol(const char*);
+                if (is_c_name_collision(_en) || is_std_header_symbol(_en)) break;
             }
             // Generate the C prototype for an `extern fn`. The type map mirrors the
             // checker's extern_map_type: int->long long, float->double, bool->bool,
@@ -2725,9 +2743,37 @@ void codegen_stmt(Stmt* stmt) {
                     } else if (stmt->struct_decl.field_types[i]->type == EXPR_ARRAY) {
                         // Array field type
                         c_type = "WynArray";
+                    } else if (stmt->struct_decl.field_types[i]->type == EXPR_OPTIONAL_TYPE) {
+                        // Optional field `f: T?` — emit the Option<T> family type so
+                        // Some(...)/None and match work (was defaulting to long long,
+                        // which miscompiled struct construction + match on the field).
+                        Expr* inner = stmt->struct_decl.field_types[i]->optional_type.inner_type;
+                        if (inner && inner->type == EXPR_IDENT) {
+                            Token t = inner->token;
+                            if (t.length == 3 && memcmp(t.start, "int", 3) == 0) c_type = "OptionInt";
+                            else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) c_type = "OptionString";
+                            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) c_type = "OptionFloat";
+                            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) c_type = "OptionBool";
+                            else {
+                                char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                                extern int is_known_struct(const char*);
+                                if (is_known_struct(_stn)) {
+                                    // Ensure the Option<Struct> family typedef is emitted.
+                                    extern void register_option_struct(const char*);
+                                    register_option_struct(_stn);
+                                    static char _osf[128];
+                                    snprintf(_osf, sizeof(_osf), "Option%s", _stn);
+                                    c_type = _osf;
+                                } else {
+                                    c_type = "WynOptional*";
+                                }
+                            }
+                        } else {
+                            c_type = "WynOptional*";
+                        }
                     }
                 }
-                
+
                 // Add ARC annotation comment for managed fields
                 if (stmt->struct_decl.field_arc_managed[i]) {
                     emit("    %s %.*s; // ARC-managed\n", 

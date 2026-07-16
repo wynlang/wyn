@@ -1,0 +1,29 @@
+// print() is Python-style: prints its positional args separated by a space, then
+// a terminator that defaults to a newline. `end:` overrides the terminator (""
+// suppresses it); `sep:` overrides the separator. `print(x)` == `println(x)`.
+// Covers strings, ints, floats, bools, arrays, multi-arg, end:, sep:.
+// EXPECT: hello
+// EXPECT: a b c
+// EXPECT: x-y-z
+// EXPECT: joined!
+// EXPECT: 42
+// EXPECT: 3.5
+// EXPECT: true
+// EXPECT: [1, 2, 3]
+// EXPECT: same via println
+// EXPECT: PASS: print semantics
+
+fn main() -> int {
+    print("hello")              // trailing newline by default
+    print("a", "b", "c")        // space-separated
+    print("x", "y", "z", sep: "-")  // custom separator
+    print("joined", end: "")    // no newline
+    print("!")                  // continues the previous line -> "joined!"
+    print(42)
+    print(3.5)
+    print(true)
+    print([1, 2, 3])
+    println("same via println") // println still works as an alias
+    print("PASS: print semantics")
+    return 0
+}
