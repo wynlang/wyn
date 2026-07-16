@@ -2271,9 +2271,13 @@ int main(int argc, char** argv) {
                     int result = system(run_cmd);
                     free(source);
                     if (!keep_artifacts) {
+                        // Keep <file>.out: the incremental fast-path above reuses it
+                        // when it's newer than the source (skips recompile on re-run).
+                        // Deleting it here made every `wyn run` fully recompile, so the
+                        // cache never hit. Only the intermediate .c is removed — the
+                        // system-cc path below already keeps .out for the same reason.
                         char c_path[512]; snprintf(c_path, 512, "%s.c", file);
-                        char out_path2[512]; snprintf(out_path2, 512, "%s.out", file);
-                        unlink(c_path); unlink(out_path2);
+                        unlink(c_path);
                     }
                     unlink("wyn_cc_err.txt");
                     if (WIFEXITED(result)) return WEXITSTATUS(result);
@@ -2573,13 +2577,16 @@ int main(int argc, char** argv) {
         }
         result = system(run_cmd);
         free(source);
-        // Cleanup artifacts unless --debug
+        // Cleanup artifacts unless --debug. Keep <file>.out: the incremental
+        // fast-path at the top of `run` reuses it when it's newer than the source,
+        // skipping recompilation on re-run. Deleting it here made the documented
+        // "62ms cached re-run" impossible — every `wyn run` fully recompiled. Only
+        // the intermediate .c is removed. (The stale-binary risk is already handled
+        // by the mtime guard: out_st.st_mtime >= src_st.st_mtime.)
         if (!keep_artifacts) {
-            char c_path[512], out_path2[512];
+            char c_path[512];
             snprintf(c_path, 512, "%s.c", file);
-            snprintf(out_path2, 512, "%s.out", file);
             unlink(c_path);
-            unlink(out_path2);
         }
         // Extract actual exit code from system() result
 #ifdef _WIN32

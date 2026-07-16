@@ -1055,6 +1055,28 @@ void codegen_stmt(Stmt* stmt) {
                             default:
                                 c_type = "long long";
                         }
+                    } else if (stmt->var.init->index.array->expr_type &&
+                               stmt->var.init->index.array->expr_type->kind == TYPE_ARRAY &&
+                               stmt->var.init->index.array->expr_type->array_type.element_type) {
+                        // The indexed array has a KNOWN element type — use it, rather
+                        // than falling through to the name-substring heuristics below
+                        // (which mis-typed e.g. `var x = parts[1]` on an int array as
+                        // const char* purely because the var was named "parts").
+                        Type* _et = stmt->var.init->index.array->expr_type->array_type.element_type;
+                        switch (_et->kind) {
+                            case TYPE_STRING: c_type = "const char*"; is_already_const = true; break;
+                            case TYPE_INT:    c_type = "long long"; break;
+                            case TYPE_FLOAT:  c_type = "double"; break;
+                            case TYPE_BOOL:   c_type = "bool"; break;
+                            case TYPE_MAP:    c_type = "WynHashMap*"; break;
+                            case TYPE_STRUCT: {
+                                static char _elt_struct_buf[256];
+                                token_to_cstr(_elt_struct_buf, sizeof(_elt_struct_buf), _et->struct_type.name);
+                                c_type = _elt_struct_buf;
+                                break;
+                            }
+                            default: c_type = "long long";
+                        }
                     } else {
                         // Fallback to heuristics
                         if (stmt->var.init->index.array->type == EXPR_CALL) {
@@ -1074,12 +1096,14 @@ void codegen_stmt(Stmt* stmt) {
                                 is_already_const = true;
                             }
                         } else if (stmt->var.init->index.array->type == EXPR_IDENT) {
-                            Token var_name = stmt->var.init->index.array->token;
-                            if ((var_name.length == 4 && memcmp(var_name.start, "args", 4) == 0) ||
-                                (var_name.length == 5 && memcmp(var_name.start, "files", 5) == 0) ||
-                                (var_name.length == 5 && memcmp(var_name.start, "names", 5) == 0) ||
-                                (var_name.length == 5 && memcmp(var_name.start, "parts", 5) == 0) ||
-                                (var_name.length == 7 && memcmp(var_name.start, "entries", 7) == 0)) {
+                            // Content-tracked string arrays only. (Removed the old
+                            // args/files/names/parts/entries name-substring list — it
+                            // mis-typed int/float arrays that happened to share those
+                            // names; the real element type above is authoritative.)
+                            char _idxvan[256];
+                            token_to_cstr(_idxvan, sizeof(_idxvan), stmt->var.init->index.array->token);
+                            extern int is_str_array_var(const char*);
+                            if (is_str_array_var(_idxvan)) {
                                 c_type = "const char*";
                                 is_already_const = true;
                             }
@@ -1822,6 +1846,12 @@ void codegen_stmt(Stmt* stmt) {
                 emit("*temp = ");
                 codegen_expr(stmt->ret.value);
                 emit("; goto async_return;\n");
+            } else if (!stmt->ret.value) {
+                // Bare `return;`. If the emitted C function is non-void (e.g.
+                // `long long wyn_main()` for an inferred-void main), a valueless
+                // return is a C error — emit `return 0;` instead.
+                extern bool current_fn_c_nonvoid;
+                emit(current_fn_c_nonvoid ? "return 0;\n" : "return;\n");
             } else {
                 emit("return ");
                 codegen_expr(stmt->ret.value);
@@ -2436,6 +2466,15 @@ void codegen_stmt(Stmt* stmt) {
             // Set current function return kind for Ok/Err/Some/None resolution
             const char* prev_fn_return_kind = current_fn_return_kind;
             current_fn_return_kind = NULL;
+
+            // Track whether this function's emitted C signature is non-void, so a
+            // bare `return;` in its body lowers to `return 0;` (see STMT_RETURN).
+            extern bool current_fn_c_nonvoid;
+            bool prev_fn_c_nonvoid = current_fn_c_nonvoid;
+            {
+                const char* _rt_eff = (return_type_buf[0] != '\0') ? return_type_buf : return_type;
+                current_fn_c_nonvoid = (strcmp(_rt_eff, "void") != 0);
+            }
             if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_CALL &&
                 stmt->fn.return_type->call.callee->type == EXPR_IDENT) {
                 Token rt = stmt->fn.return_type->call.callee->token;
@@ -2540,6 +2579,7 @@ void codegen_stmt(Stmt* stmt) {
                     emit("    return wyn_iter_create(_gen_body_%s, NULL);\n", gn);
                 }
                 pop_scope(); current_fn_return_kind = prev_fn_return_kind;
+                current_fn_c_nonvoid = prev_fn_c_nonvoid;
                 emit("}\n\n"); break;
             }
             // TCO: detect tail-recursive calls and convert to goto loop
@@ -2625,6 +2665,7 @@ void codegen_stmt(Stmt* stmt) {
             
             pop_scope();   // Auto-cleanup before function end
             current_fn_return_kind = prev_fn_return_kind;
+            current_fn_c_nonvoid = prev_fn_c_nonvoid;
             codegen_fn_returns_array = _prev_fn_returns_array;
             emit("}\n\n");
             break;

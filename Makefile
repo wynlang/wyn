@@ -197,6 +197,8 @@ test: wyn
 	@WYN=./wyn bash tests/pkg/run_pkg_test.sh
 	@echo "=== Running LSP protocol test ==="
 	@WYN=./wyn bash tests/lsp/run_lsp_test.sh
+	@echo "=== Running removed-syntax negative test ==="
+	@WYN=./wyn bash tests/errors/run_removed_syntax_test.sh
 
 # Alias kept for muscle memory.
 test_bdd: test

@@ -3872,7 +3872,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     fprintf(stderr, "Error: Array index must be int\n");
                     return NULL;
                 }
-                
+
+                // AUTHORITATIVE: if the array has a known element type, that's the
+                // result type. This must come BEFORE the name/source heuristics
+                // below — otherwise an int/float array named args/files/names/parts/
+                // entries was force-typed `string` purely by its name, miscompiling
+                // `var x = parts[1]` (read through array_get_str → crash/garbage).
+                if (array_type && array_type->kind == TYPE_ARRAY &&
+                    array_type->array_type.element_type) {
+                    expr->expr_type = array_type->array_type.element_type;
+                    return array_type->array_type.element_type;
+                }
+
                 // Try to infer element type from array source
                 // Check if array came from a function that returns string array
                 if (expr->index.array->type == EXPR_CALL) {

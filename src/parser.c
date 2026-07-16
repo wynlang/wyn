@@ -1555,6 +1555,22 @@ static Expr* pipeline() {
         advance(); // consume |> so the no-progress guard doesn't loop
     }
 
+    // The C-style logical operators `&&`/`||` were removed — Wyn uses the words
+    // `and`/`or` (and `not` for negation). Without this, `logical_or()` returns
+    // without consuming the `&&`/`||` token, so an enclosing `if`/`while` condition
+    // loop can never advance and the parser hangs. Emit a friendly error and drain
+    // the rest of the (mis-typed) boolean chain so we surface further errors.
+    while (check(TOKEN_AMPAMP) || check(TOKEN_PIPEPIPE)) {
+        const char* removed = check(TOKEN_AMPAMP) ? "&&" : "||";
+        const char* canonical = check(TOKEN_AMPAMP) ? "and" : "or";
+        fprintf(stderr, "Error at line %d: the operator '%s' has been removed — "
+                        "use `%s` instead\n",
+                parser.current.line, removed, canonical);
+        parser.had_error = true;
+        advance();     // consume the removed operator so we don't loop
+        logical_or();  // parse + discard the right-hand operand
+    }
+
     return expr;
 }
 
