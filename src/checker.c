@@ -479,8 +479,33 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     }
                 }
                 return array_type;
+            } else if (field_type_expr->type == EXPR_OPTIONAL_TYPE) {
+                // Optional field `f: T?` — resolve to the Option<T> family type so
+                // field access (`x.f`) and match on it lower correctly (was falling
+                // through to NULL → default int, breaking match on the field).
+                Expr* inner = field_type_expr->optional_type.inner_type;
+                const char* fam = NULL;
+                if (inner && inner->type == EXPR_IDENT) {
+                    Token t = inner->token;
+                    if (t.length == 3 && memcmp(t.start, "int", 3) == 0) fam = "OptionInt";
+                    else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) fam = "OptionString";
+                    else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) fam = "OptionFloat";
+                    else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) fam = "OptionBool";
+                    else {
+                        // Struct?: reuse the registered Option<Struct> family symbol.
+                        char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                        static char _famb[128]; snprintf(_famb, sizeof(_famb), "Option%s", _stn);
+                        fam = _famb;
+                    }
+                }
+                if (fam) {
+                    Token fam_tok = {TOKEN_IDENT, (char*)fam, (int)strlen(fam), 0};
+                    Symbol* fsym = find_symbol(global_scope, fam_tok);
+                    if (fsym && fsym->type) return fsym->type;
+                }
+                return NULL;
             }
-            
+
             return NULL;
         }
     }

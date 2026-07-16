@@ -1,6 +1,31 @@
 // codegen_program.c - Program-level code generation
 // Included from codegen.c - shares all statics
 
+// Track which Option<Struct> family typedefs have already been emitted this
+// compilation, so the per-struct emission (below) and the standalone catch-all
+// block don't emit the same family twice. Reset at the top of codegen_program.
+static char* emitted_opt_struct[256];
+static int emitted_opt_struct_count = 0;
+static int opt_struct_already_emitted(const char* s) {
+    for (int i = 0; i < emitted_opt_struct_count; i++)
+        if (strcmp(emitted_opt_struct[i], s) == 0) return 1;
+    return 0;
+}
+// Emit the monomorphic Option<Struct> family (typedef + 6 inline members) for a
+// user struct named `s`. Idempotent. The base struct `s` MUST already be emitted
+// (the Option embeds an `s value` by value). Returns without emitting if already done.
+static void emit_option_struct_family(const char* s) {
+    if (opt_struct_already_emitted(s)) return;
+    if (emitted_opt_struct_count < 256) emitted_opt_struct[emitted_opt_struct_count++] = strdup(s);
+    emit("typedef struct { int tag; %s value; } Option%s;\n", s, s);
+    emit("static inline Option%s Option%s_Some(%s value){ Option%s o; o.tag=1; o.value=value; return o; }\n", s, s, s, s);
+    emit("static inline Option%s Option%s_None(void){ Option%s o; o.tag=0; return o; }\n", s, s, s);
+    emit("static inline int Option%s_is_some(Option%s o){ return o.tag==1; }\n", s, s);
+    emit("static inline int Option%s_is_none(Option%s o){ return o.tag==0; }\n", s, s);
+    emit("static inline %s Option%s_unwrap(Option%s o){ if(o.tag==0){ fprintf(stderr, \"Error: unwrap() called on None\\n\"); exit(1); } return o.value; }\n", s, s, s);
+    emit("static inline %s Option%s_unwrap_or(Option%s o, %s def){ return o.tag==1 ? o.value : def; }\n", s, s, s, s);
+}
+
 void codegen_program(Program* prog) {
     current_program = prog;
     bool has_main = false;
@@ -14,6 +39,10 @@ void codegen_program(Program* prog) {
     lambda_count = 0;
     lambda_id_counter = 0;
     lambda_ref_counter = 0;
+
+    // Reset Option<Struct> emission tracking for this compilation
+    for (int _i = 0; _i < emitted_opt_struct_count; _i++) free(emitted_opt_struct[_i]);
+    emitted_opt_struct_count = 0;
     
     // Reset spawn wrapper collection
     spawn_wrapper_count = 0;
@@ -141,6 +170,14 @@ void codegen_program(Program* prog) {
                 register_trait_name(s->trait_decl.name.start, s->trait_decl.name.length);
             }
             codegen_stmt(s);
+            // If this struct is used elsewhere as `S?`, emit its Option<S> family
+            // right here — after S's typedef (Option embeds S by value) and before
+            // any later struct that has an `S?` field can reference OptionS.
+            if (s->type == STMT_STRUCT) {
+                char _sn[96]; token_to_cstr(_sn, sizeof(_sn), s->struct_decl.name);
+                extern int is_registered_option_struct(const char*);
+                if (is_registered_option_struct(_sn)) emit_option_struct_family(_sn);
+            }
             // For imported enums, emit module-prefixed typedef and constructor aliases
             if (s->type == STMT_ENUM && prog->stmts[i]->type == STMT_EXPORT) {
                 char ename[128]; token_to_cstr(ename, sizeof(ename), s->enum_decl.name);
@@ -171,15 +208,11 @@ void codegen_program(Program* prog) {
     {
         extern int option_struct_count(void);
         extern const char* option_struct_name(int);
+        // Catch-all for any registered family not already emitted next to its
+        // base struct above (e.g. the base struct was defined after the use, so
+        // the per-struct hook didn't fire — emit_option_struct_family dedups).
         for (int i = 0; i < option_struct_count(); i++) {
-            const char* s = option_struct_name(i);
-            emit("typedef struct { int tag; %s value; } Option%s;\n", s, s);
-            emit("static inline Option%s Option%s_Some(%s value){ Option%s o; o.tag=1; o.value=value; return o; }\n", s, s, s, s);
-            emit("static inline Option%s Option%s_None(void){ Option%s o; o.tag=0; return o; }\n", s, s, s);
-            emit("static inline int Option%s_is_some(Option%s o){ return o.tag==1; }\n", s, s);
-            emit("static inline int Option%s_is_none(Option%s o){ return o.tag==0; }\n", s, s);
-            emit("static inline %s Option%s_unwrap(Option%s o){ if(o.tag==0){ fprintf(stderr, \"Error: unwrap() called on None\\n\"); exit(1); } return o.value; }\n", s, s, s);
-            emit("static inline %s Option%s_unwrap_or(Option%s o, %s def){ return o.tag==1 ? o.value : def; }\n", s, s, s, s);
+            emit_option_struct_family(option_struct_name(i));
         }
     }
 

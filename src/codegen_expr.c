@@ -3338,10 +3338,22 @@ void codegen_expr(Expr* expr) {
             // Wrapped in extra parens to protect commas in macro contexts
             {
                 emit("((%.*s){", actual_type_name_len, actual_type_name);
+                char _sn[96]; token_to_cstr(_sn, sizeof(_sn), type_name);
+                extern const char* current_assign_target_kind;
+                extern int get_struct_field_option_family(const char*, const char*, char*, size_t);
                 for (int i = 0; i < expr->struct_init.field_count; i++) {
                     if (i > 0) emit(", ");
                     emit(".%.*s = ", expr->struct_init.field_names[i].length, expr->struct_init.field_names[i].start);
+                    // If the field's declared type is optional (`f: T?`), tell
+                    // Some/None codegen the exact Option family so a bare
+                    // `f: None` / `f: Some(x)` lowers to that family, not OptionInt.
+                    char _fn[96]; token_to_cstr(_fn, sizeof(_fn), expr->struct_init.field_names[i]);
+                    char _fam[128];
+                    const char* _prev_kind = current_assign_target_kind;
+                    if (get_struct_field_option_family(_sn, _fn, _fam, sizeof(_fam)))
+                        current_assign_target_kind = _fam;
                     codegen_expr(expr->struct_init.field_values[i]);
+                    current_assign_target_kind = _prev_kind;
                 }
                 emit("})");
             }

@@ -2734,9 +2734,37 @@ void codegen_stmt(Stmt* stmt) {
                     } else if (stmt->struct_decl.field_types[i]->type == EXPR_ARRAY) {
                         // Array field type
                         c_type = "WynArray";
+                    } else if (stmt->struct_decl.field_types[i]->type == EXPR_OPTIONAL_TYPE) {
+                        // Optional field `f: T?` — emit the Option<T> family type so
+                        // Some(...)/None and match work (was defaulting to long long,
+                        // which miscompiled struct construction + match on the field).
+                        Expr* inner = stmt->struct_decl.field_types[i]->optional_type.inner_type;
+                        if (inner && inner->type == EXPR_IDENT) {
+                            Token t = inner->token;
+                            if (t.length == 3 && memcmp(t.start, "int", 3) == 0) c_type = "OptionInt";
+                            else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) c_type = "OptionString";
+                            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) c_type = "OptionFloat";
+                            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) c_type = "OptionBool";
+                            else {
+                                char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                                extern int is_known_struct(const char*);
+                                if (is_known_struct(_stn)) {
+                                    // Ensure the Option<Struct> family typedef is emitted.
+                                    extern void register_option_struct(const char*);
+                                    register_option_struct(_stn);
+                                    static char _osf[128];
+                                    snprintf(_osf, sizeof(_osf), "Option%s", _stn);
+                                    c_type = _osf;
+                                } else {
+                                    c_type = "WynOptional*";
+                                }
+                            }
+                        } else {
+                            c_type = "WynOptional*";
+                        }
                     }
                 }
-                
+
                 // Add ARC annotation comment for managed fields
                 if (stmt->struct_decl.field_arc_managed[i]) {
                     emit("    %s %.*s; // ARC-managed\n", 

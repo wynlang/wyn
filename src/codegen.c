@@ -795,6 +795,41 @@ int function_can_inline(const char* name) {
     return 0; // unknown function — don't inline
 }
 
+// If struct `struct_name` has a field `field_name` declared as an optional type
+// (`f: T?`), return the concrete C Option family name (e.g. "OptionInt",
+// "OptionAddr") in `out`; return 1 on match, 0 otherwise. Used to coerce a bare
+// Some(..)/None field initializer to the exact family the field's type names.
+int get_struct_field_option_family(const char* struct_name, const char* field_name,
+                                   char* out, size_t outsz) {
+    extern Program* current_program;
+    if (!current_program) return 0;
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* s = current_program->stmts[i];
+        if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+        if (s->type != STMT_STRUCT) continue;
+        if ((int)strlen(struct_name) != s->struct_decl.name.length ||
+            memcmp(struct_name, s->struct_decl.name.start, s->struct_decl.name.length) != 0) continue;
+        for (int f = 0; f < s->struct_decl.field_count; f++) {
+            if ((int)strlen(field_name) != s->struct_decl.fields[f].length ||
+                memcmp(field_name, s->struct_decl.fields[f].start, s->struct_decl.fields[f].length) != 0) continue;
+            Expr* ft = s->struct_decl.field_types[f];
+            if (!ft || ft->type != EXPR_OPTIONAL_TYPE) return 0;
+            Expr* inner = ft->optional_type.inner_type;
+            if (!inner || inner->type != EXPR_IDENT) return 0;
+            Token t = inner->token;
+            if (t.length == 3 && memcmp(t.start, "int", 3) == 0) snprintf(out, outsz, "OptionInt");
+            else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) snprintf(out, outsz, "OptionString");
+            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) snprintf(out, outsz, "OptionFloat");
+            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) snprintf(out, outsz, "OptionBool");
+            else { char _stn[96]; snprintf(_stn, sizeof(_stn), "%.*s", t.length, t.start);
+                   snprintf(out, outsz, "Option%s", _stn); }
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
 static char* sb_var_names[64];
 static int sb_var_count = 0;
 static void register_sb_var(const char* name) {
@@ -1330,6 +1365,11 @@ void register_option_struct(const char* struct_name) {
 int option_struct_count(void) { return needed_option_struct_count; }
 const char* option_struct_name(int i) {
     return (i >= 0 && i < needed_option_struct_count) ? needed_option_structs[i] : NULL;
+}
+int is_registered_option_struct(const char* struct_name) {
+    for (int i = 0; i < needed_option_struct_count; i++)
+        if (strcmp(needed_option_structs[i], struct_name) == 0) return 1;
+    return 0;
 }
 
 // Track variables that hold data-carrying enum types
