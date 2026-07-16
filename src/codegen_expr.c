@@ -1,6 +1,24 @@
 // codegen_expr.c - Expression code generation
 // Included from codegen.c - shares all statics
 
+// Pick the hashmap_insert_* function for a value expression by its type. Consults
+// BOTH the literal node type and the checker-resolved expr_type, so a typed
+// non-literal value (e.g. `{k: someStringVar}`) inserts with the right function
+// instead of silently defaulting to int. Shared by all three map-store sites
+// (.set/.insert, map literal, m[k]=v) so they can't drift apart. Default int.
+static const char* hashmap_insert_fn_for(Expr* value_expr) {
+    if (!value_expr) return "hashmap_insert_int";
+    if (value_expr->type == EXPR_STRING) return "hashmap_insert_string";
+    if (value_expr->type == EXPR_FLOAT)  return "hashmap_insert_float";
+    if (value_expr->type == EXPR_BOOL)   return "hashmap_insert_bool";
+    if (value_expr->expr_type) {
+        if (value_expr->expr_type->kind == TYPE_STRING) return "hashmap_insert_string";
+        if (value_expr->expr_type->kind == TYPE_FLOAT)  return "hashmap_insert_float";
+        if (value_expr->expr_type->kind == TYPE_BOOL)   return "hashmap_insert_bool";
+    }
+    return "hashmap_insert_int";
+}
+
 // A string pushed into an array transfers ownership: array_push_str stores the
 // pointer without retaining, and array_free releases it. So a local string var
 // pushed into an array must NOT also be released at scope exit — that would
@@ -2425,24 +2443,9 @@ void codegen_expr(Expr* expr) {
                 
                 if ((strcmp(method_name, "set") == 0 || strcmp(method_name, "insert") == 0) && 
                     expr->method_call.arg_count == 2) {
-                    // Determine insert function based on value type
+                    // Determine insert function based on value type (shared helper).
                     Expr* value_expr = expr->method_call.args[1];
-                    const char* insert_func = "hashmap_insert_int";
-                    if (value_expr->type == EXPR_STRING) {
-                        insert_func = "hashmap_insert_string";
-                    } else if (value_expr->type == EXPR_FLOAT) {
-                        insert_func = "hashmap_insert_float";
-                    } else if (value_expr->type == EXPR_BOOL) {
-                        insert_func = "hashmap_insert_bool";
-                    } else if (value_expr->expr_type) {
-                        if (value_expr->expr_type->kind == TYPE_STRING) {
-                            insert_func = "hashmap_insert_string";
-                        } else if (value_expr->expr_type->kind == TYPE_FLOAT) {
-                            insert_func = "hashmap_insert_float";
-                        } else if (value_expr->expr_type->kind == TYPE_BOOL) {
-                            insert_func = "hashmap_insert_bool";
-                        }
-                    }
+                    const char* insert_func = hashmap_insert_fn_for(value_expr);
                     emit("%s(", insert_func);
                     codegen_expr(expr->method_call.object);
                     emit(", ");
@@ -2869,17 +2872,9 @@ void codegen_expr(Expr* expr) {
                 // Insert key-value pairs (stored as key, value, key, value...)
                 for (int i = 0; i < expr->array.count; i += 2) {
                     Expr* value_expr = expr->array.elements[i+1];
-                    
-                    // Determine insert function based on value type
-                    const char* insert_func = "hashmap_insert_int";
-                    if (value_expr->type == EXPR_FLOAT) {
-                        insert_func = "hashmap_insert_float";
-                    } else if (value_expr->type == EXPR_STRING) {
-                        insert_func = "hashmap_insert_string";
-                    } else if (value_expr->type == EXPR_BOOL) {
-                        insert_func = "hashmap_insert_bool";
-                    }
-                    
+                    // Shared type→insert-fn selection (consults expr_type too, so a
+                    // typed non-literal value like `{k: someVar}` isn't defaulted to int).
+                    const char* insert_func = hashmap_insert_fn_for(value_expr);
                     emit("%s(__map_%d, ", insert_func, map_id);
                     codegen_expr(expr->array.elements[i]);    // key
                     emit(", ");
@@ -4348,23 +4343,8 @@ void codegen_expr(Expr* expr) {
             
             if (is_map_assign) {
                 // Map assignment: map["key"] = value -> hashmap_insert_*(map, "key", value)
-                // Determine insert function based on value type
-                const char* insert_func = "hashmap_insert_int";
-                if (expr->index_assign.value->type == EXPR_STRING) {
-                    insert_func = "hashmap_insert_string";
-                } else if (expr->index_assign.value->type == EXPR_FLOAT) {
-                    insert_func = "hashmap_insert_float";
-                } else if (expr->index_assign.value->type == EXPR_BOOL) {
-                    insert_func = "hashmap_insert_bool";
-                } else if (expr->index_assign.value->expr_type) {
-                    if (expr->index_assign.value->expr_type->kind == TYPE_STRING) {
-                        insert_func = "hashmap_insert_string";
-                    } else if (expr->index_assign.value->expr_type->kind == TYPE_FLOAT) {
-                        insert_func = "hashmap_insert_float";
-                    } else if (expr->index_assign.value->expr_type->kind == TYPE_BOOL) {
-                        insert_func = "hashmap_insert_bool";
-                    }
-                }
+                // Determine insert function based on value type (shared helper).
+                const char* insert_func = hashmap_insert_fn_for(expr->index_assign.value);
                 emit("%s(", insert_func);
                 codegen_expr(expr->index_assign.object);
                 emit(", ");

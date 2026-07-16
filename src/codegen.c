@@ -16,7 +16,6 @@
 #include "json.h"
 #include "module_registry.h"
 #include "module_aliases.h"
-#include "scope.h"
 
 // Forward declarations
 void codegen_stmt(Stmt* stmt);
@@ -255,10 +254,6 @@ static bool modules_emitted_this_compilation = false;
 
 // Current module being emitted (for prefixing internal calls)
 static const char* current_module_prefix = NULL;
-
-// Identifier scope tracking for proper identifier resolution
-__attribute__((unused)) static IdentScope* current_ident_scope = NULL;
-__attribute__((unused)) static IdentScope* module_ident_scope = NULL;
 
 // Convert module name to C identifier (network/http -> network_http)
 static const char* module_to_c_ident(const char* module_name) {
