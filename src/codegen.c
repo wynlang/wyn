@@ -707,7 +707,19 @@ void unregister_string_var(const char* name) {
     for (int i = 0; i < string_var_count; i++) {
         if (strcmp(string_var_names[i], name) == 0) {
             free(string_var_names[i]);
-            string_var_names[i] = string_var_names[--string_var_count];
+            // Order-preserving removal: string_var_names is a STACK whose scope
+            // boundaries are recorded by count in scope_var_count_stack. A
+            // swap-remove would move an inner-scope pointer below an outer scope
+            // boundary and drop the count; a later `count = saved` restore in
+            // pop_string_scope_and_release then re-exposes the freed slot → the
+            // dangling name is read (strcmp/fprintf) and emitted as garbage bytes
+            // inside wyn_rc_release(...). Shift the tail down and adjust any scope
+            // boundary that sat above the removed index instead.
+            for (int j = i; j < string_var_count - 1; j++)
+                string_var_names[j] = string_var_names[j + 1];
+            string_var_count--;
+            for (int s = 0; s < scope_stack_top; s++)
+                if (scope_var_count_stack[s] > i) scope_var_count_stack[s]--;
             break;
         }
     }
