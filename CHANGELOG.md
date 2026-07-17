@@ -1,5 +1,46 @@
 # Changelog
 
+## v1.18.0 — "The Correctness Release" (2026-07-17)
+
+A focused hardening pass: a batch of real correctness fixes found by dogfooding the
+whole corpus (all 48 sample-apps now build), a memory-safety fix in codegen, a big C-FFI
+reliability win, and the first steps of the lambda + dot-syntax cleanups. No breaking
+changes — a drop-in upgrade from v1.17.
+
+**Memory safety**
+- Fixed a heap-use-after-free in codegen's string-var scope tracking: on large programs
+  with nested scopes + string-into-array moves, a freed name pointer was re-exposed and
+  its bytes emitted into a `wyn_rc_release(...)` call, producing invalid (non-UTF-8) C.
+  ASan-verified; the 2600-line JS-interpreter sample now builds reliably.
+
+**Compiler correctness**
+- `.sort()` / `.reverse()` work as expressions and chain (`xs.sort().reverse()`).
+- `for row in [[...],[...]]` binds each row as the sub-array (was a silent `0 0`);
+  `var d = structArray[i]` binds the struct element type (was `long long` → C error).
+- `match` on a `Result`/`Option` payload **inside a loop** compiles.
+- `m.get(k).unwrap_or(default)` on int maps; `len(s)` on a string; a namespaced stdlib
+  call returning a string (`Color.green(...)`) is typed correctly (incl. its codegen name).
+- Bare `return` in an inferred-void `main`; the parser no longer hangs on the removed
+  `&&`/`||` (clean "use `and`/`or`" error); array-index typing no longer keys off names.
+
+**C FFI / ecosystem**
+- `wyn bind` handles export-macro'd headers (strips `__attribute__((...))`) — unlocking
+  real libraries (**lz4 0→44, zstd 0→59** bindings); bare `unsigned` returns map to int.
+  New curated recipes: **lz4, zstd, jsonc**.
+- `wyn add` records pkg-config's `-L` dirs into `[ffi].lib_dirs`, so libraries off the
+  default path (Homebrew Cellar) actually link.
+
+**Language surface**
+- Lambda parameter types are inferred; a string/float-parameter lambda gives a clear
+  "not supported yet" message + workaround (was a cryptic error or silent miscompile).
+  Integer lambdas + `.map`/`.filter`/`.reduce` unchanged.
+- The `File` namespace works uniformly via both `File.x` and `File::x` — a step toward
+  `.` as the one canonical call syntax.
+
+**Tooling / tests**
+- New `wyn fix` migrator for removed syntax (`&&`→`and`, `||`→`or`, `elseif`→`else if`).
+- De-flaked the fire-and-forget drain test; new regression tests across all of the above.
+
 ## v1.17.0 — "The Ecosystem Release" (2026-07-16)
 
 The big one. Wyn gets a real package ecosystem: a **git-URL package manager** (no
