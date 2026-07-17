@@ -1,0 +1,17 @@
+// Regression: `var d = structArray[i]` typed d as long long instead of the struct,
+// so accessing d.field failed to compile (array_get_struct(..) into a long long).
+// The var-decl now uses the array's real element type. (2026-07)
+struct Item { name: string, qty: int }
+fn main() {
+    var items = [Item{name: "apple", qty: 3}, Item{name: "pear", qty: 7}]
+    var d = items[0]
+    println(d.name)
+    println(d.qty)
+    var e = items[1]
+    println(e.name)
+    println(e.qty)
+}
+// EXPECT: apple
+// EXPECT: 3
+// EXPECT: pear
+// EXPECT: 7
