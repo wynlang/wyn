@@ -2653,6 +2653,36 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
+            // Special case: `m.get(k).unwrap_or(default)`. HashMap.get returns the
+            // raw value (not an Option — many programs rely on that), so routing it
+            // through OptionInt_unwrap_or passed a raw int where an OptionInt was
+            // expected → C type error. Lower the whole idiom to the runtime's
+            // key-or-default lookup (hashmap_get_or_int / _str). (2026-07)
+            if (method.length == 9 && memcmp(method.start, "unwrap_or", 9) == 0 &&
+                expr->method_call.arg_count == 1 &&
+                expr->method_call.object->type == EXPR_METHOD_CALL) {
+                Expr* inner = expr->method_call.object;
+                Token im = inner->method_call.method;
+                bool inner_is_get = (im.length == 3 && memcmp(im.start, "get", 3) == 0 &&
+                                     inner->method_call.arg_count == 1);
+                Type* rot = inner->method_call.object->expr_type;
+                // Scoped to non-string value maps: the string path collides with the
+                // print/assign string-method-object wrapper (double-wrap + stray
+                // paren). Int/bool/float value maps lower cleanly here; string-value
+                // `.get().unwrap_or` remains routed through the general path (logged).
+                if (inner_is_get && rot && rot->kind == TYPE_MAP &&
+                    !(rot->map_type.value_type && rot->map_type.value_type->kind == TYPE_STRING)) {
+                    emit("hashmap_get_or_int(");
+                    codegen_expr(inner->method_call.object);       // the map
+                    emit(", ");
+                    codegen_expr(inner->method_call.args[0]);      // the key
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);       // the default
+                    emit(")");
+                    break;
+                }
+            }
+
             // Fallback: try Result/Option method dispatch
             // When type info is missing, check if method matches known Result/Option API
             {
