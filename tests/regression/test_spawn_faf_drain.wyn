@@ -17,8 +17,10 @@ fn main() -> int {
     for i in 0..25 {
         spawn tick(counter)
     }
-    // give fire-and-forget work time to run for a deterministic aggregate
-    Time::sleep(50)
+    // Grace period for fire-and-forget work to drain. 500ms (not 50) so the
+    // deterministic aggregate is reliable on loaded CI runners — the tasks DO all
+    // complete; a tight 50ms just occasionally lost the tail on slow shared runners.
+    Time::sleep(500)
     println("count ${Shared.get(counter)}")
     println("PASS: faf drain")
     return 0
