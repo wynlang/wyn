@@ -7,19 +7,19 @@ fn main() -> int {
 
     // Test 1: Execute command and get output
     print("1. Running 'echo Hello from shell':")
-    var output = System::exec("echo Hello from shell")
+    var output = System.exec("echo Hello from shell")
     print(output)
 
     // Test 2: Execute command and get exit code
     print("2. Running 'true' (should return 0):")
-    var code1 = System::exec_code("true")
+    var code1 = System.exec_code("true")
     if code1 == 0 {
         print("   ✓ Exit code: 0 (success)")
     }
     print("")
 
     print("3. Running 'false' (should return non-zero):")
-    var code2 = System::exec_code("false")
+    var code2 = System.exec_code("false")
     if code2 != 0 {
         print("   ✓ Exit code: non-zero (failure)")
     }
@@ -27,7 +27,7 @@ fn main() -> int {
 
     // Test 3: Get command line arguments
     print("4. Command line arguments:")
-    var args = System::args()
+    var args = System.args()
     var arg_count = args.len()
     print("   Arguments count:")
     if arg_count > 0 {
@@ -37,7 +37,7 @@ fn main() -> int {
 
     // Test 4: List files
     print("5. Listing current directory:")
-    var files = System::exec("ls -1 | head -5")
+    var files = System.exec("ls -1 | head -5")
     print(files)
 
     print("=== USAGE EXAMPLES ===")

@@ -20,7 +20,7 @@ fn main() -> int {
     print("2. Creating test file...")
     var test_file = "test_output/level1/test.txt"
     var content = "Hello from Wyn!\nThis is a test file.\n"
-    File::write(test_file, content)
+    File.write(test_file, content)
     print("   ✓ Created test file")
     print("")
 
@@ -37,16 +37,16 @@ fn main() -> int {
 
     // Test 4: Check what we created
     print("4. Verifying created files...")
-    if File::is_dir("test_output") {
+    if File.is_dir("test_output") {
         print("   ✓ test_output/ exists")
     }
-    if File::is_dir("test_output/level1") {
+    if File.is_dir("test_output/level1") {
         print("   ✓ test_output/level1/ exists")
     }
-    if File::is_dir("test_output/level1/level2") {
+    if File.is_dir("test_output/level1/level2") {
         print("   ✓ test_output/level1/level2/ exists")
     }
-    if File::is_file(test_file) {
+    if File.is_file(test_file) {
         print("   ✓ test.txt exists")
     }
     print("")
@@ -63,7 +63,7 @@ fn main() -> int {
 
     // Test 6: Verify cleanup
     print("6. Verifying cleanup...")
-    if File::is_dir("test_output") {
+    if File.is_dir("test_output") {
         print("   ✗ test_output/ still exists")
     } else {
         print("   ✓ test_output/ successfully removed")

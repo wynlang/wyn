@@ -1,6 +1,6 @@
 // TDD Test for System::args() returning string array
 fn main() -> int {
-    var args = System::args()
+    var args = System.args()
 
     // Test that args is an array
     var count = args.len()

@@ -41,10 +41,10 @@ fn main() -> int {
     print("File Operations:")
     var test_file = "/tmp/wyn_showcase.txt"
     var content = "Wyn v1.4.0 is amazing!"
-    File::write(test_file, content)
+    File.write(test_file, content)
 
-    if File::exists(test_file) {
-        var read_back = File::read(test_file)
+    if File.exists(test_file) {
+        var read_back = File.read(test_file)
         var size = File::file_size(test_file)
         print("  Written: ${content}")
         print("  Read back: ${read_back}")
@@ -55,7 +55,7 @@ fn main() -> int {
     // 6. System Integration
     print("System Info:")
     var cwd = File::get_cwd()
-    var timestamp = Time::now()
+    var timestamp = Time.now()
     print("  Working dir: ${cwd}")
     print("  Timestamp: ${timestamp}")
     print("")

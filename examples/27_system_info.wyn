@@ -5,19 +5,19 @@ fn main() -> int {
 
     // Environment variables
     print("Environment Variables:\n")
-    var path = System::env("PATH")
+    var path = System.env("PATH")
     print("  PATH length: ")
     print(path.len())
     print(" characters\n")
 
-    var home = System::env("HOME")
+    var home = System.env("HOME")
     if home.len() > 0 {
         print("  HOME: ")
         print(home)
         print("\n")
     }
 
-    var user = System::env("USER")
+    var user = System.env("USER")
     if user.len() > 0 {
         print("  USER: ")
         print(user)
@@ -26,9 +26,9 @@ fn main() -> int {
 
     // Set custom environment variable
     print("\nSetting custom variable...\n")
-    var set_result = System::set_env("WYN_VERSION", "1.4.0")
+    var set_result = System.set_env("WYN_VERSION", "1.4.0")
     if set_result == 1 {
-        var version = System::env("WYN_VERSION")
+        var version = System.env("WYN_VERSION")
         print("  WYN_VERSION = ")
         print(version)
         print("\n")
@@ -36,19 +36,19 @@ fn main() -> int {
 
     // Time operations
     print("\nTime Information:\n")
-    var now = Time::now()
+    var now = Time.now()
     print("  Current timestamp: ")
     print(now)
     print("\n")
 
-    var formatted = Time::format(now)
+    var formatted = Time.format(now)
     print("  Formatted time: ")
     print(formatted)
     print("\n")
 
     // Command line arguments
     print("\nCommand Line Arguments:\n")
-    var args = System::args()
+    var args = System.args()
     print("  Argument count: ")
     print(args.len())
     print("\n")

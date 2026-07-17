@@ -11,14 +11,14 @@ fn main() -> int {
 
     // List files in current directory
     print("Files in current directory:\n")
-    var entries = File::list_dir(".")
+    var entries = File.list_dir(".")
     var i = 0
     while i < entries.len() {
         var entry = entries[i]
 
         // Get file info
-        var is_file = File::is_file(entry)
-        var is_dir = File::is_dir(entry)
+        var is_file = File.is_file(entry)
+        var is_dir = File.is_dir(entry)
 
         // Show type
         if is_dir == 1 {
