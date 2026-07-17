@@ -201,6 +201,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_removed_syntax_test.sh
 	@echo "=== Running wyn fix migrator test ==="
 	@WYN=./wyn bash tests/errors/run_fix_test.sh
+	@echo "=== Running lambda param-type test ==="
+	@WYN=./wyn bash tests/errors/run_lambda_param_test.sh
 
 # Alias kept for muscle memory.
 test_bdd: test

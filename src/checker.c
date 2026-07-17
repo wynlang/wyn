@@ -42,6 +42,7 @@ extern Program* load_module(const char* module_name);  // From module.c
 void check_stmt(Stmt* stmt, SymbolTable* scope);
 Type* check_expr(Expr* expr, SymbolTable* scope);
 void analyze_lambda_captures(LambdaExpr* lambda, Expr* body, SymbolTable* scope);
+static int lambda_param_is_string(const char* pname, Expr* e);
 void analyze_expr_captures(Expr* expr, LambdaExpr* lambda, SymbolTable* scope);
 
 static SymbolTable* global_scope = NULL;
@@ -4081,9 +4082,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             SymbolTable lambda_scope = {0};
             lambda_scope.parent = scope;
             
-            // Add parameters to lambda scope
+            // S1 lambda rework: infer each param's type from body usage (string if it
+            // is concatenated with a string or is a string-method receiver), else int.
+            // This lets string-parameter lambdas type-check instead of failing with a
+            // bare "Type mismatch". (Codegen support for non-int params is staged — see
+            // the guard after body-checking below and internal-docs/LAMBDA_REWORK.md.)
+            Type* param_inferred[16];
+            for (int i = 0; i < expr->lambda.param_count && i < 16; i++) {
+                char pn[64]; int pl = expr->lambda.params[i].length < 63 ? expr->lambda.params[i].length : 63;
+                memcpy(pn, expr->lambda.params[i].start, pl); pn[pl] = '\0';
+                int is_str = expr->lambda.body && lambda_param_is_string(pn, expr->lambda.body);
+                param_inferred[i] = is_str ? builtin_string : builtin_int;
+            }
+            // Add parameters to lambda scope with their inferred types
             for (int i = 0; i < expr->lambda.param_count; i++) {
-                add_symbol(&lambda_scope, expr->lambda.params[i], builtin_int, false);
+                Type* pt = (i < 16) ? param_inferred[i] : builtin_int;
+                add_symbol(&lambda_scope, expr->lambda.params[i], pt, false);
             }
             
             // Check lambda body statements (multiline lambda)
@@ -4124,13 +4138,36 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             lambda_type->fn_type.param_count = expr->lambda.param_count;
             lambda_type->fn_type.param_types = malloc(sizeof(Type*) * expr->lambda.param_count);
             
-            // For now, assume all parameters are int (simplified)
+            // Use the inferred param types (S1).
             for (int i = 0; i < expr->lambda.param_count; i++) {
-                lambda_type->fn_type.param_types[i] = builtin_int;
+                lambda_type->fn_type.param_types[i] = (i < 16) ? param_inferred[i] : builtin_int;
             }
-            
+
             lambda_type->fn_type.return_type = body_type;
             expr->expr_type = lambda_type;
+
+            // Staged-codegen guard: the lambda code emitter is int-only today (see
+            // internal-docs/LAMBDA_REWORK.md — S2 routes bodies through codegen_expr).
+            // Until then, a string/float PARAM lambda would mis-emit, so surface a
+            // clear, actionable limitation error here instead of letting it produce
+            // wrong C. Int-param lambdas (incl. .map/.filter/.reduce over ints) are
+            // unaffected.
+            for (int i = 0; i < expr->lambda.param_count; i++) {
+                Type* pt = (i < 16) ? param_inferred[i] : builtin_int;
+                if (pt && pt->kind != TYPE_INT) {
+                    fprintf(stderr,
+                        "\nError at line %d: lambda parameters other than int are not "
+                        "supported yet (parameter '%.*s' is used as a %s).\n",
+                        expr->lambda.params[i].line,
+                        expr->lambda.params[i].length, expr->lambda.params[i].start,
+                        pt->kind == TYPE_STRING ? "string" : "non-int value");
+                    fprintf(stderr,
+                        "  Workaround: use a named `fn`, or operate on int params. "
+                        "(Tracked: string/float lambda support — LAMBDA_REWORK.md S2.)\n");
+                    had_error = true;
+                    break;
+                }
+            }
             return lambda_type;
         }
         case EXPR_MAP: {
@@ -7101,6 +7138,68 @@ const char* type_to_string(Type* type) {
 }
 
 // TASK-040: Capture analysis for lambda expressions
+// S1 (lambda rework): detect whether a lambda parameter named `pname` is used as a
+// STRING anywhere in `e` — i.e. it participates in string concat (`+` with a string
+// operand) or is the receiver of a string method. Used to infer the param's type so
+// string-parameter lambdas type-check (rather than failing with a bare "Type
+// mismatch"). Conservative: returns false unless there's positive evidence.
+static int expr_is_string_literal_or_typed(Expr* e) {
+    if (!e) return 0;
+    if (e->type == EXPR_STRING) return 1;
+    if (e->expr_type && e->expr_type->kind == TYPE_STRING) return 1;
+    return 0;
+}
+static int lambda_param_is_string(const char* pname, Expr* e) {
+    if (!e || !pname) return 0;
+    switch (e->type) {
+        case EXPR_BINARY: {
+            // `param + <string>` or `<string> + param` → param is a string
+            if (e->binary.op.type == TOKEN_PLUS) {
+                Expr* l = e->binary.left; Expr* r = e->binary.right;
+                int l_is_p = (l && l->type == EXPR_IDENT && l->token.length == (int)strlen(pname) &&
+                              memcmp(l->token.start, pname, l->token.length) == 0);
+                int r_is_p = (r && r->type == EXPR_IDENT && r->token.length == (int)strlen(pname) &&
+                              memcmp(r->token.start, pname, r->token.length) == 0);
+                if (l_is_p && expr_is_string_literal_or_typed(r)) return 1;
+                if (r_is_p && expr_is_string_literal_or_typed(l)) return 1;
+            }
+            return lambda_param_is_string(pname, e->binary.left) ||
+                   lambda_param_is_string(pname, e->binary.right);
+        }
+        case EXPR_METHOD_CALL: {
+            // `param.<string-method>(...)` → param is a string. Recognize the common
+            // string methods (the ones the mini-emitter/string runtime expose).
+            Expr* obj = e->method_call.object;
+            if (obj && obj->type == EXPR_IDENT && obj->token.length == (int)strlen(pname) &&
+                memcmp(obj->token.start, pname, obj->token.length) == 0) {
+                Token m = e->method_call.method;
+                const char* sm[] = {"to_upper","to_lower","upper","lower","trim","replace",
+                    "repeat","substring","split","contains","starts_with","ends_with",
+                    "len","chars","index_of","pad_left","pad_right","capitalize", NULL};
+                for (int i = 0; sm[i]; i++)
+                    if ((int)strlen(sm[i]) == m.length && memcmp(sm[i], m.start, m.length) == 0)
+                        return 1;
+            }
+            if (lambda_param_is_string(pname, e->method_call.object)) return 1;
+            for (int i = 0; i < e->method_call.arg_count; i++)
+                if (lambda_param_is_string(pname, e->method_call.args[i])) return 1;
+            return 0;
+        }
+        case EXPR_CALL:
+            for (int i = 0; i < e->call.arg_count; i++)
+                if (lambda_param_is_string(pname, e->call.args[i])) return 1;
+            return 0;
+        case EXPR_IF_EXPR:
+            return lambda_param_is_string(pname, e->if_expr.condition) ||
+                   lambda_param_is_string(pname, e->if_expr.then_expr) ||
+                   lambda_param_is_string(pname, e->if_expr.else_expr);
+        case EXPR_UNARY:
+            return lambda_param_is_string(pname, e->unary.operand);
+        default:
+            return 0;
+    }
+}
+
 void analyze_lambda_captures(LambdaExpr* lambda, Expr* body, SymbolTable* scope) {
     if (!lambda || !body || !scope) return;
     
