@@ -265,13 +265,36 @@ static int pkgconfig_cflags(const char* name, char* out, size_t sz) {
 #endif
 }
 
+// Run `pkg-config --libs-only-L <name>` and capture the -L flags. Same contract as
+// pkgconfig_cflags. WITHOUT this, a library installed off the default link path
+// (e.g. Homebrew Cellar: /opt/homebrew/opt/lz4/lib) generated bindings but failed to
+// LINK (`ld: library 'lz4' not found`) because only its -I was recorded, never -L.
+static int pkgconfig_libdirs(const char* name, char* out, size_t sz) {
+    out[0] = '\0';
+#ifdef _WIN32
+    (void)name; (void)sz;
+    return 0;
+#else
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "pkg-config --libs-only-L %s 2>/dev/null", name);
+    FILE* p = popen(cmd, "r");
+    if (!p) return 0;
+    size_t got = fread(out, 1, sz - 1, p);
+    int rc = pclose(p);
+    if (rc != 0 || got == 0) { out[0] = '\0'; return 0; }
+    out[got] = '\0';
+    char* nl = strchr(out, '\n'); if (nl) *nl = '\0';
+    return out[0] ? 1 : 0;
+#endif
+}
+
 // Append " key = \"val\"" style lines into the [ffi] section of ./wyn.toml,
 // merging with any existing values. Minimal approach: rewrite the file with an
 // [ffi] block reflecting the union of existing + new libs/lib_dirs/include_dirs.
 // To keep it simple and robust we append a fresh [ffi] block if none exists, or
 // append the new libs to the existing one. (The toml parser reads the last value
 // per key, and the build path concatenates -l flags, so appended libs take effect.)
-static int merge_ffi_into_manifest(const Recipe* r, const char* extra_includes) {
+static int merge_ffi_into_manifest(const Recipe* r, const char* extra_includes, const char* extra_libdirs) {
     // Build the additions.
     // If wyn.toml doesn't exist, create a minimal one.
     FILE* f = fopen("wyn.toml", "r");
@@ -294,7 +317,22 @@ static int merge_ffi_into_manifest(const Recipe* r, const char* extra_includes) 
     // and this keeps `wyn add` idempotent-friendly and simple.
     fprintf(out, "\n# added by `wyn add %s`\n[ffi]\n", r->name);
     if (r->libs[0])     fprintf(out, "libs = \"%s\"\n", r->libs);
-    if (r->lib_dirs[0]) fprintf(out, "lib_dirs = \"%s\"\n", r->lib_dirs);
+    // lib dirs: recipe + anything pkg-config's -L found (strip -L to bare dirs)
+    char ld[1024]; ld[0] = '\0';
+    if (r->lib_dirs[0]) { strncpy(ld, r->lib_dirs, sizeof(ld)-1); ld[sizeof(ld)-1]=0; }
+    if (extra_libdirs && extra_libdirs[0]) {
+        char tmp[1024]; strncpy(tmp, extra_libdirs, sizeof(tmp)-1); tmp[sizeof(tmp)-1]=0;
+        char* st=NULL;
+        for (char* t = strtok_r(tmp, " ", &st); t; t = strtok_r(NULL, " ", &st)) {
+            const char* dir = (strncmp(t, "-L", 2) == 0) ? t + 2 : t;
+            if (!*dir) continue;
+            // avoid duplicating a dir already present
+            if (strstr(ld, dir)) continue;
+            size_t n = strlen(ld);
+            snprintf(ld + n, sizeof(ld) - n, "%s%s", n ? " " : "", dir);
+        }
+    }
+    if (ld[0]) fprintf(out, "lib_dirs = \"%s\"\n", ld);
     // include dirs: recipe + anything pkg-config found (strip -I prefixes to bare dirs)
     char inc[1024]; inc[0] = '\0';
     if (r->include_dirs[0]) { strncpy(inc, r->include_dirs, sizeof(inc)-1); }
@@ -331,6 +369,10 @@ int wyn_cpkg_add(const char* name, const char* wyn_root, const char* cc) {
     char pc_includes[1024] = "";
     if (pkgconfig_cflags(pc_name, pc_includes, sizeof(pc_includes)))
         printf("  pkg-config: %s\n", pc_includes);
+    // Also capture -L link dirs so libs off the default path (Homebrew Cellar) link.
+    char pc_libdirs[1024] = "";
+    if (pkgconfig_libdirs(pc_name, pc_libdirs, sizeof(pc_libdirs)) && pc_libdirs[0])
+        printf("  pkg-config libs: %s\n", pc_libdirs);
 
     // 2. Create ./packages/<name>/ and generate bindings for each header.
     char pkgdir[512]; snprintf(pkgdir, sizeof(pkgdir), "packages/%s", r.name);
@@ -364,7 +406,7 @@ int wyn_cpkg_add(const char* name, const char* wyn_root, const char* cc) {
     printf("  bound %d/%d header(s) → %s\n", ok, total, binding_path);
 
     // 3. Merge link flags into wyn.toml [ffi].
-    if (merge_ffi_into_manifest(&r, pc_includes) != 0) return 1;
+    if (merge_ffi_into_manifest(&r, pc_includes, pc_libdirs) != 0) return 1;
     printf("  linked via wyn.toml [ffi]: libs = \"%s\"\n", r.libs);
 
     printf("\n\033[32m✓\033[0m Added '%s'. Bindings in %s; `import` it or copy the extern fns.\n", r.name, binding_path);
