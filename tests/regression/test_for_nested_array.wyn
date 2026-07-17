@@ -1,0 +1,19 @@
+// Regression: iterating an array-of-arrays bound the loop var as int → every row
+// printed 0 (silent miscompile), and row[0]/re-iteration failed to compile. The
+// loop var is now bound as the sub-array. (2026-07)
+fn main() {
+    var grid = [[1, 2], [3, 4]]
+    for row in grid {
+        println(row)
+    }
+    var total = 0
+    for row in grid {
+        for v in row {
+            total = total + v
+        }
+    }
+    println(total)
+}
+// EXPECT: [1, 2]
+// EXPECT: [3, 4]
+// EXPECT: 10

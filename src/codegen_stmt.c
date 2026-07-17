@@ -3556,6 +3556,7 @@ void codegen_stmt(Stmt* stmt) {
                 bool is_struct_array = false;
                 bool is_float_array = false;
                 bool is_enum_array = false;
+                bool is_array_array = false;   // element is itself an array (nested)
                 char enum_arr_type[128] = "";
                 Type* elem_type = NULL;
 
@@ -3570,10 +3571,21 @@ void codegen_stmt(Stmt* stmt) {
                         is_struct_array = true;
                     } else if (elem_type->kind == TYPE_FLOAT) {
                         is_float_array = true;
+                    } else if (elem_type->kind == TYPE_ARRAY) {
+                        is_array_array = true;
                     } else if (elem_type->kind == TYPE_ENUM && elem_type->name.length > 0) {
                         is_enum_array = true;
                         token_to_cstr(enum_arr_type, sizeof(enum_arr_type), elem_type->name);
                     }
+                }
+                // Array LITERAL whose first element is itself an array literal
+                // (`[[1,2],[3,4]]`): the checker may not carry the nested element
+                // type, so detect it directly here.
+                if (!is_array_array && !is_struct_array && !is_enum_array &&
+                    stmt->for_stmt.array_expr->type == EXPR_ARRAY &&
+                    stmt->for_stmt.array_expr->array.count > 0 &&
+                    stmt->for_stmt.array_expr->array.elements[0]->type == EXPR_ARRAY) {
+                    is_array_array = true;
                 }
                 // Array literal whose first element is a data-enum constructor
                 // (`[E.A(..), ...]`): the checker doesn't type these, so detect
@@ -3642,6 +3654,15 @@ void codegen_stmt(Stmt* stmt) {
                 } else if (is_float_array) {
                     emit("double %.*s = (__elem.type == WYN_TYPE_FLOAT) ? __elem.data.float_val : (double)__elem.data.int_val;\n",
                          stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
+                } else if (is_array_array) {
+                    // Nested array element: bind the loop var to the sub-array by
+                    // value (deref the stored WynArray*), and register it so the body
+                    // treats it as an array (indexing / re-iteration). Without this it
+                    // was bound as `long long … : 0` → every row printed 0. (2026-07)
+                    emit("WynArray %.*s = (__elem.type == WYN_TYPE_ARRAY && __elem.data.array_val) ? *__elem.data.array_val : array_new();\n",
+                         stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
+                    { char _lv[256]; token_to_cstr(_lv, sizeof(_lv), stmt->for_stmt.loop_var);
+                      extern void register_array_var(const char*); register_array_var(_lv); }
                 } else {
                     emit("long long %.*s = (__elem.type == WYN_TYPE_INT) ? __elem.data.int_val : 0;\n",
                          stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
