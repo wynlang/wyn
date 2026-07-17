@@ -1,0 +1,15 @@
+// Regression: .sort() must be usable as an EXPRESSION (and chainable), not just
+// a bare statement. Emitting the void array_sort(&xs) made print(xs.sort()) /
+// var s = xs.sort() / xs.sort().reverse() fail with "incompatible type void" —
+// which broke the project's own test_array_ops/test_showcase. (2026-07)
+fn main() {
+    var xs = [3, 1, 2]
+    println(xs.sort())
+    var ys = [5, 2, 8, 1]
+    println(ys.sort().reverse())
+    var ss = ["c", "a", "b"]
+    println(ss.sort())
+}
+// EXPECT: [1, 2, 3]
+// EXPECT: [8, 5, 2, 1]
+// EXPECT: ["a", "b", "c"]

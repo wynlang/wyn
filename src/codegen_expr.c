@@ -1956,7 +1956,9 @@ void codegen_expr(Expr* expr) {
                         codegen_expr(expr->method_call.args[0]); emit(")"); break;
                     }
                     if (m.length == 4 && memcmp(m.start, "sort", 4) == 0) {
-                        emit("int_array_sort(&("); codegen_expr(expr->method_call.object); emit("))"); break;
+                        // sort in place AND yield the array (usable as an expression)
+                        emit("({ int_array_sort(&("); codegen_expr(expr->method_call.object);
+                        emit(")); "); codegen_expr(expr->method_call.object); emit("; })"); break;
                     }
                     if (m.length == 3 && memcmp(m.start, "len", 3) == 0) {
                         emit("int_array_len("); codegen_expr(expr->method_call.object); emit(")"); break;
@@ -2089,9 +2091,16 @@ void codegen_expr(Expr* expr) {
                         char _vn[256]; token_to_cstr(_vn, sizeof(_vn), _sobj->token);
                         if (is_str_array_var(_vn)) _is_str_arr = true;
                     }
-                    emit(_is_str_arr ? "array_sort_str(&(" : "array_sort(&(");
+                    // Sort in place AND evaluate to the array, so `.sort()` works in
+                    // expression position too (`print(xs.sort())`, `xs.sort().reverse()`).
+                    // Emitting the void `array_sort(&xs)` alone made `.sort()` unusable
+                    // as a value ("incompatible type 'void'") — a regression that broke
+                    // the project's own test_array_ops / test_showcase. (2026-07)
+                    emit(_is_str_arr ? "({ array_sort_str(&(" : "({ array_sort(&(");
                     codegen_expr(expr->method_call.object);
-                    emit("))");
+                    emit(")); ");
+                    codegen_expr(expr->method_call.object);
+                    emit("; })");
                     goto method_done;
                 }
                 // arr.sort_by(cmp_fn) -> wyn_array_sort_by(&arr, cmp_fn)
