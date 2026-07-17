@@ -1,0 +1,16 @@
+// Regression: a namespaced stdlib call that returns a string (Color::green, …) was
+// typed int (namespaced calls defaulted to int), so concatenating or printing its
+// result emitted int_to_string(...) and showed a raw pointer. The checker now
+// resolves Module::func to the registered Module_func symbol and uses its real
+// return type. (2026-07). We assert the ANSI-wrapped content, not raw color codes.
+fn main() {
+    var g = Color::green("hi")
+    // color codes wrap the text; the visible substring must be present
+    var s = g + "!"
+    if s.contains("hi") and s.contains("!") {
+        println("ok")
+    } else {
+        println("FAIL")
+    }
+}
+// EXPECT: ok

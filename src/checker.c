@@ -3286,6 +3286,24 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             return map_type;
                         }
                     }
+                    // Stdlib namespaces register their functions under the
+                    // `Module_func` underscore name (e.g. Color_green, String_…).
+                    // Resolve the qualified `Module::func` callee to that symbol and
+                    // use its REAL return type — otherwise every namespaced stdlib
+                    // call defaulted to int, so a string-returning one (Color::green)
+                    // was concatenated/printed as a raw pointer value. (2026-07)
+                    {
+                        char _uname[264];
+                        snprintf(_uname, sizeof(_uname), "%s_%s", qual_module, qual_func);
+                        Token _utok = {TOKEN_IDENT, _uname, (int)strlen(_uname), expr->call.callee->token.line};
+                        Symbol* _usym = find_symbol(scope, _utok);
+                        if (_usym && _usym->type && _usym->type->kind == TYPE_FUNCTION &&
+                            _usym->type->fn_type.return_type) {
+                            expr->expr_type = _usym->type->fn_type.return_type;
+                            free(arg_types);
+                            return _usym->type->fn_type.return_type;
+                        }
+                    }
                     expr->expr_type = builtin_int;  // Default return type
                     free(arg_types);
                     return builtin_int;
