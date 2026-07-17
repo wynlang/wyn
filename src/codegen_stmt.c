@@ -478,7 +478,32 @@ void codegen_stmt(Stmt* stmt) {
                            stmt->var.init->index.array->type == EXPR_IDENT) {
                     char _ixn[256]; token_to_cstr(_ixn, sizeof(_ixn), stmt->var.init->index.array->token);
                     extern int is_str_array_var(const char*);
-                    if (is_str_array_var(_ixn)) { c_type = "const char*"; is_already_const = true; }
+                    // Prefer the array's REAL element type when known — otherwise an
+                    // indexed element (`var d = items[i]`) defaulted to long long even
+                    // for a struct/float/string array, so `var d = structArray[i]`
+                    // emitted `long long d = array_get_struct(..)` → C type error. Use
+                    // the index expr's checked type, then the array's element type. (2026-07)
+                    Type* _idx_t = stmt->var.init->expr_type;
+                    Type* _arr_t = stmt->var.init->index.array->expr_type;
+                    Type* _elt = (_idx_t && _idx_t->kind != TYPE_INT) ? _idx_t
+                               : (_arr_t && _arr_t->kind == TYPE_ARRAY) ? _arr_t->array_type.element_type
+                               : NULL;
+                    if (_elt && _elt->kind == TYPE_STRUCT) {
+                        static char _sa_buf[256];
+                        token_to_cstr(_sa_buf, sizeof(_sa_buf), _elt->struct_type.name);
+                        c_type = _sa_buf;
+                        char _dvn[256]; token_to_cstr(_dvn, sizeof(_dvn), stmt->var.name);
+                        extern void register_struct_var(const char*, const char*);
+                        register_struct_var(_dvn, _sa_buf);
+                    } else if (_elt && _elt->kind == TYPE_STRING) {
+                        c_type = "const char*"; is_already_const = true;
+                    } else if (_elt && _elt->kind == TYPE_FLOAT) {
+                        c_type = "double";
+                    } else if (_elt && _elt->kind == TYPE_BOOL) {
+                        c_type = "bool";
+                    } else if (is_str_array_var(_ixn)) {
+                        c_type = "const char*"; is_already_const = true;
+                    }
                 } else if (stmt->var.init->type == EXPR_FLOAT) {
                     c_type = "double";
                 } else if (stmt->var.init->type == EXPR_BOOL) {
