@@ -179,7 +179,31 @@ static void emit_defines(FILE* dump, FILE* out, int* emitted_any) {
 // Emit `extern fn` for a single function prototype `<ret> <name>(<params>)`.
 // `decl` is the text between statement boundaries, already known to contain a
 // top-level `(`...`)` and end at `;`. Returns 1 if emitted, 0 if skipped.
+// Strip a leading GNU `__attribute__((...))` (with balanced parens), repeatedly.
+// After `cc -E`, export macros like LZ4LIB_API / ZSTDLIB_API expand to
+// `__attribute__ ((visibility ("default")))` in front of the return type; without
+// removing it, the scanner mistook the attribute's own `(...)` for the parameter
+// list and skipped every such function (all of lz4, zstd, and many real libraries).
+static char* bg_strip_attributes(char* s) {
+    for (;;) {
+        s = bg_trim(s);
+        if (strncmp(s, "__attribute__", 13) != 0) return s;
+        char* p = s + 13;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p != '(') return s;            // malformed — leave it
+        int depth = 0;
+        while (*p) {
+            if (*p == '(') depth++;
+            else if (*p == ')') { depth--; if (depth == 0) { p++; break; } }
+            p++;
+        }
+        if (depth != 0) return s;           // unbalanced — bail
+        s = p;                              // continue: there may be another
+    }
+}
+
 static int emit_prototype(char* decl, FILE* out) {
+    decl = bg_strip_attributes(decl);
     // Split at the first '(' — everything before is "<ret-and-quals> name".
     char* lp = strchr(decl, '(');
     if (!lp) return 0;
