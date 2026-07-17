@@ -1,0 +1,14 @@
+// Regression: File functions had a mix of file_x / File_x runtime names, so
+// File.dirname (dot) and File::glob (::) each failed for half the functions. Every
+// File fn now has both names; both call syntaxes work uniformly. (2026-07, task #31)
+fn main() {
+    println(File.dirname("/a/b/c.txt"))
+    println(File.basename("/a/b/c.txt"))
+    println(File::dirname("/x/y.txt"))
+    var g = File::glob("*.nonexistent-xyz")
+    println(len(g))
+}
+// EXPECT: /a/b
+// EXPECT: c.txt
+// EXPECT: /x
+// EXPECT: 0
