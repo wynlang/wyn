@@ -291,6 +291,19 @@ void codegen_expr(Expr* expr) {
                     break;
                 }
                 
+                // Special handling for Color:: module - map to Color_ prefix.
+                // The runtime exposes Color_red/green/... (string-returning ANSI
+                // wrappers). Without this the generic ::->_ path mangled
+                // `Color::green` to `_green` (module name dropped) → undefined
+                // reference under gcc (clang happened to tolerate it). (2026-07)
+                if (strcmp(temp_ident, "Color") == 0) {
+                    snprintf(temp_ident, sizeof(temp_ident), "Color_%s", function_part);
+                    strcpy(ident + offset, temp_ident);
+                    emit("%s", ident);
+                    free(ident);
+                    break;
+                }
+
                 // Special handling for Time:: module - map to Time_ prefix.
                 // The runtime exposes capitalized Time_* functions with the
                 // arities the checker registers (Time_format(ts), Time_sleep(ms),

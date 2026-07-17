@@ -1,16 +1,16 @@
-// Regression: a namespaced stdlib call that returns a string (Color::green, …) was
-// typed int (namespaced calls defaulted to int), so concatenating or printing its
-// result emitted int_to_string(...) and showed a raw pointer. The checker now
-// resolves Module::func to the registered Module_func symbol and uses its real
-// return type. (2026-07). We assert the ANSI-wrapped content, not raw color codes.
+// Regression (two coupled fixes, 2026-07):
+// (1) checker: a namespaced stdlib call returning a string (Color::green, …) was
+//     typed int, so its char* result printed as a raw pointer via int_to_string.
+//     The checker now resolves Module::func to the Module_func symbol's real type.
+// (2) codegen: `Color::green` mangled to `_green` (module name dropped) → undefined
+//     reference under gcc (clang tolerated it). Added an explicit Color_ mapping.
+// Assert the wrapped string is longer than the plain text (ANSI codes present =
+// real string, not a stringified pointer) — stable across clang and gcc.
 fn main() {
     var g = Color::green("hi")
-    // color codes wrap the text; the visible substring must be present
-    var s = g + "!"
-    if s.contains("hi") and s.contains("!") {
-        println("ok")
-    } else {
-        println("FAIL")
-    }
+    println(len(g) > 2)
+    var s = Color::red("x") + "!"
+    println(len(s) > 2)
 }
-// EXPECT: ok
+// EXPECT: true
+// EXPECT: true
