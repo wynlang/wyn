@@ -1,7 +1,7 @@
 // CLI Argument Parsing - Simple command-line argument handling
 
 fn main() -> int {
-    var args = System::args()
+    var args = System.args()
 
     print("=== CLI ARGUMENT PARSING ===")
     print("")

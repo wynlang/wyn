@@ -146,7 +146,7 @@ fn main() {
     var counter = Shared.new(0)
     for i in 0..10
         spawn bump(counter, i)
-    Time::sleep(30)
+    Time.sleep(30)
     print(Shared.get(counter))            // 0+1+...+9 = 45
 }
 

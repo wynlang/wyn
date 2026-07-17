@@ -50,8 +50,8 @@ fn main() -> int {
 
     // 8. File operations
     var test_file = "/tmp/test.txt"
-    File::write(test_file, "Hello, Wyn!")
-    if File::exists(test_file) {
+    File.write(test_file, "Hello, Wyn!")
+    if File.exists(test_file) {
         var size = File::file_size(test_file)
         print("File: ${test_file} (${size} bytes)")
     }
@@ -59,7 +59,7 @@ fn main() -> int {
 
     // 9. System info
     var cwd = File::get_cwd()
-    var timestamp = Time::now()
+    var timestamp = Time.now()
     print("System: cwd=${cwd}")
     print("        time=${timestamp}")
     print("")

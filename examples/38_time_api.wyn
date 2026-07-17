@@ -7,7 +7,7 @@ fn main() -> int {
 
     // Test 1: Get current timestamp
     print("1. Getting current timestamp:")
-    var now = Time::now()
+    var now = Time.now()
     if now > 0 {
         print("   ✓ Got timestamp (Unix time)")
     }
@@ -15,16 +15,16 @@ fn main() -> int {
 
     // Test 2: Format timestamp
     print("2. Formatting timestamp:")
-    var formatted = Time::format(now)
+    var formatted = Time.format(now)
     print("   Current time:")
     print(formatted)
     print("")
 
     // Test 3: Sleep
     print("3. Testing sleep (500ms)...")
-    var before = Time::now()
-    Time::sleep(500)
-    var after = Time::now()
+    var before = Time.now()
+    Time.sleep(500)
+    var after = Time.now()
     if after >= before {
         print("   ✓ Sleep completed")
     }
