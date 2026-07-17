@@ -1276,6 +1276,15 @@ void codegen_expr(Expr* expr) {
                     if (arg->type == EXPR_ARRAY) {
                         // Array literal - count elements directly
                         emit("%d", arg->array.count);
+                    } else if ((arg->expr_type && arg->expr_type->kind == TYPE_STRING) ||
+                               arg->type == EXPR_STRING) {
+                        // len() on a string is its length — use string_len (matches
+                        // the `s.len()` method). Without this, `len(s)` emitted
+                        // `(s).count`, treating the char* as a collection struct →
+                        // C error "member reference base type 'const char *'…". (2026-07)
+                        emit("string_len(");
+                        codegen_expr(arg);
+                        emit(")");
                     } else {
                         // Variable - assume it's a dynamic array now
                         emit("(");

@@ -1,0 +1,16 @@
+// Regression: len() on a string must return its length via string_len, not
+// treat the char* as a collection ((s).count → C type error). s.len() worked
+// but the len() builtin didn't in value/print position. (2026-07)
+fn main() {
+    var s = "hello"
+    println(len(s))
+    var n = len(s)
+    println(n)
+    println(len("world!"))
+    var a = [1, 2, 3, 4]
+    println(len(a))
+}
+// EXPECT: 5
+// EXPECT: 5
+// EXPECT: 6
+// EXPECT: 4
