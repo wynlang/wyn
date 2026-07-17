@@ -1,0 +1,19 @@
+// Regression: a statement-form match on a Result/Option payload INSIDE a loop
+// emitted the borrowed string binder's wyn_rc_release AFTER the arm's closing
+// brace → "use of undeclared identifier 'e'". The arm binder is borrowed from the
+// matched value and is now unregistered at arm close so no stray release. (2026-07)
+fn get(i: int) -> Result<int, string> {
+    if i == 0 { return Err("bad") }
+    return Ok(i)
+}
+fn main() {
+    for i in 0..3 {
+        match get(i) {
+            Ok(n) => println(n),
+            Err(e) => println(e),
+        }
+    }
+}
+// EXPECT: bad
+// EXPECT: 1
+// EXPECT: 2

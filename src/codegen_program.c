@@ -1433,6 +1433,14 @@ void codegen_match_statement(Stmt* stmt) {
                     }
                     emit("        ");
                     if (mc->body) codegen_stmt(mc->body);
+                    // Borrowed arm binder — unregister so the enclosing block's
+                    // release pass doesn't free an out-of-scope name (see the Result
+                    // arm below for the full rationale). (2026-07)
+                    if (mc->pattern->option.inner &&
+                        mc->pattern->option.inner->type == PATTERN_IDENT) {
+                        char _ub[256]; token_to_cstr(_ub, sizeof(_ub), mc->pattern->option.inner->ident.name);
+                        extern void unregister_string_var(const char*); unregister_string_var(_ub);
+                    }
                     emit("    }");
                 } else if (mc->pattern->type == PATTERN_OPTION && !mc->pattern->option.is_some) {
                     emit("if (__match_opt_%d.tag == 0) {\n", _omid);
@@ -1488,6 +1496,18 @@ void codegen_match_statement(Stmt* stmt) {
                     }
                     emit("        ");
                     if (mc->body) codegen_stmt(mc->body);
+                    // The payload binder is BORROWED from the Result (points into
+                    // __match_val_%d.data), scoped to this arm, and must NOT be
+                    // released here. Unregister it so the enclosing block's string-
+                    // release pass doesn't emit `wyn_rc_release(<binder>)` AFTER the
+                    // arm's closing brace — which referenced an out-of-scope name
+                    // ("use of undeclared identifier 'e'") when the match sat inside
+                    // a loop or other releasing block. (2026-07)
+                    if (mc->pattern->option.inner &&
+                        mc->pattern->option.inner->type == PATTERN_IDENT) {
+                        char _ub[256]; token_to_cstr(_ub, sizeof(_ub), mc->pattern->option.inner->ident.name);
+                        extern void unregister_string_var(const char*); unregister_string_var(_ub);
+                    }
                     emit("    }");
                 } else if (mc->pattern->type == PATTERN_WILDCARD) {
                     emit("{\n        ");
