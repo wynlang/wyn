@@ -2342,6 +2342,54 @@ int file_is_file(const char* path);
 int file_mkdir(const char* path);
 char* file_get_cwd();
 
+// File namespace: the runtime historically grew a MIX of `file_x` and `File_x`
+// names, so `File::x` (→ file_x) and `File.x` (→ File_x) each covered only half the
+// functions. These aliases give every File function BOTH names so both call syntaxes
+// work uniformly. (2026-07 — dot-uniformity, task #31.)
+//
+// Forward-declare the file_* functions defined later in this header, so the aliases
+// below (and the File_* twins) can reference them regardless of definition order.
+long file_modified_time(const char* path);
+int  file_create_dir_all(const char* path);
+int  file_remove_dir_all(const char* path);
+int  file_rmdir(const char* path);
+// (a) File_x twins for the file_-only functions (fixes `File.dirname` etc. under dot):
+char* File_dirname(const char* p) { return file_dirname(p); }
+char* File_basename(const char* p) { return file_basename(p); }
+char* File_extension(const char* p) { return file_extension(p); }
+int   File_file_size(const char* p) { return file_file_size(p); }
+char* File_get_cwd(void) { return file_get_cwd(); }
+char* File_path_join(const char* a, const char* b) { return file_path_join(a, b); }
+long  File_modified_time(const char* p) { return file_modified_time(p); }
+int   File_create_dir(const char* p) { return file_create_dir(p); }
+int   File_create_dir_all(const char* p) { return file_create_dir_all(p); }
+int   File_remove_dir_all(const char* p) { return file_remove_dir_all(p); }
+int   File_rmdir(const char* p) { return file_rmdir(p); }
+// (b) file_x twins for the File_-only functions (fixes `File::glob` etc. under ::).
+//     These forward to File_* which are defined later in this header.
+int   File_append(const char* p, const char* d);
+void  File_close(long long h);
+char* File_cwd(void);
+int   File_eof(long long h);
+char* File_glob(const char* pattern);
+long long File_open(const char* path, const char* mode);
+char* File_read_line(long long h);
+int   File_rename(const char* o, const char* n);
+char* File_temp_file(void);
+char* File_walk_dir(const char* p);
+int   File_write_line(long long h, const char* d);
+static inline int   file_append(const char* p, const char* d) { return File_append(p, d); }
+static inline void  file_close(long long h) { File_close(h); }
+static inline char* file_cwd(void) { return File_cwd(); }
+static inline int   file_eof(long long h) { return File_eof(h); }
+static inline char* file_glob(const char* pattern) { return File_glob(pattern); }
+static inline long long file_open(const char* path, const char* mode) { return File_open(path, mode); }
+static inline char* file_read_line(long long h) { return File_read_line(h); }
+static inline int   file_rename(const char* o, const char* n) { return File_rename(o, n); }
+static inline char* file_temp_file(void) { return File_temp_file(); }
+static inline char* file_walk_dir(const char* p) { return File_walk_dir(p); }
+static inline int   file_write_line(long long h, const char* d) { return File_write_line(h, d); }
+
 // File namespace aliases: File.read(path) -> File_read(path)
 char* File_read(const char* p) { return file_read(p); }
 char* File_read_lines(const char* p) { return file_read(p); }
