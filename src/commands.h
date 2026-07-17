@@ -5,6 +5,9 @@
 int cmd_compile(const char* target, int argc, char** argv);
 int cmd_test(const char* test_dir, int argc, char** argv);
 int cmd_fmt(const char* file, int argc, char** argv);
+// wyn fix: migrate removed syntax (&&->and, ||->or, elseif->else if, !->not).
+// Returns >0 = substitutions made, 0 = clean, -1 = error. Counts unfixable |>.
+int cmd_fix_file(const char* file, int check_only, int* out_pipe_warns);
 int cmd_repl(int argc, char** argv);
 int cmd_doc(const char* file, int argc, char** argv);
 int cmd_lsp(int argc, char** argv);

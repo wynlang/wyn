@@ -1,0 +1,17 @@
+// Regression: `var x = arr[i]` must use arr's REAL element type, not a heuristic
+// based on the variable's NAME. Arrays named args/files/names/parts/entries were
+// force-typed string, so int/float ones miscompiled (array_get_str → crash). (2026-07)
+fn main() {
+    var parts = [10, 20, 30]
+    var files = [1.5, 2.5, 3.5]
+    var names = ["ann", "bob"]
+    var a = parts[1]
+    var b = files[2]
+    var c = names[0]
+    println(a)
+    println(b)
+    println(c)
+}
+// EXPECT: 20
+// EXPECT: 3.5
+// EXPECT: ann

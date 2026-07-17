@@ -386,6 +386,13 @@ static int current_local_count = 0;
 // Values: "ResultInt", "ResultString", "OptionInt", "OptionString", or NULL
 static const char* current_fn_return_kind = NULL;
 
+// True while emitting the body of a function whose C signature is non-void
+// (e.g. `long long wyn_main()`). A bare `return;` there must become `return 0;`
+// or the C compiler rejects "non-void function should return a value" — which
+// bit early-return-without-value in an inferred-void `main`. Set at function
+// emit, saved/restored across nested function codegen.
+static bool current_fn_c_nonvoid = false;
+
 // Track the Option/Result family of the current assignment target (the declared
 // type of a `var x: T? = Some(..)` / `var r: ResultString = Ok(..)`), so a
 // Some/None/Ok/Err initializer lowers to the exact family the annotation names —

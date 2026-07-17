@@ -870,6 +870,24 @@ void codegen_expr(Expr* expr) {
                     emit(")");
                     break;
                 }
+                // HashMap::set(map, key, value) — pick the typed insert_* by the
+                // VALUE's type. Without this, the qualified free-function form fell
+                // through to hashmap_set(), which is hardcoded to insert_string and
+                // stored a non-string value AS a char* → the paired read
+                // (hashmap_get_*) then dereferenced a non-pointer and crashed. The
+                // `m[k]=v` and `m.set()` forms already dispatch via hashmap_insert_fn_for;
+                // this closes the last untyped store path.
+                if (fn.length == 12 && memcmp(fn.start, "HashMap::set", 12) == 0 && expr->call.arg_count == 3) {
+                    const char* insert_func = hashmap_insert_fn_for(expr->call.args[2]);
+                    emit("%s(", insert_func);
+                    codegen_expr(expr->call.args[0]);
+                    emit(", ");
+                    codegen_expr(expr->call.args[1]);
+                    emit(", ");
+                    codegen_expr(expr->call.args[2]);
+                    emit(")");
+                    break;
+                }
             }
             // Check if callee is a closure variable (WynClosure)
             // Heuristic: if callee is an identifier that starts with lowercase
@@ -2995,15 +3013,13 @@ void codegen_expr(Expr* expr) {
                     // Check tracked string content arrays
                     char _van[256]; token_to_cstr(_van, sizeof(_van), var_name);
                     extern int is_str_array_var(const char*);
+                    // Content-tracked string arrays (populated when the array is
+                    // declared). The old code ALSO force-typed any array literally
+                    // named args/files/names/parts/entries as string regardless of
+                    // its real element type — a miscompile (`var x = parts[1]` on an
+                    // int array read through array_get_str). Removed: the real
+                    // element type above + this content registry are authoritative.
                     if (is_str_array_var(_van)) is_string_array = true;
-                    // Common variable names for string arrays
-                    if ((var_name.length == 4 && memcmp(var_name.start, "args", 4) == 0) ||
-                        (var_name.length == 5 && memcmp(var_name.start, "files", 5) == 0) ||
-                        (var_name.length == 5 && memcmp(var_name.start, "names", 5) == 0) ||
-                        (var_name.length == 5 && memcmp(var_name.start, "parts", 5) == 0) ||
-                        (var_name.length == 7 && memcmp(var_name.start, "entries", 7) == 0)) {
-                        is_string_array = true;
-                    }
                 }
                 
                 // Check array literals - if first element is string, assume string array

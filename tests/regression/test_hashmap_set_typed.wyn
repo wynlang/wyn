@@ -1,0 +1,13 @@
+// Regression: HashMap::set(map, key, int) must store a real int and be
+// read back with HashMap::get_int — previously it stored the int AS a
+// char* (via the untyped hashmap_set → insert_string) and the paired read
+// dereferenced a non-pointer and SEGFAULTED. (2026-07)
+fn main() {
+    var m = HashMap::new()
+    HashMap::set(m, "a", 42)
+    HashMap::set(m, "b", 100)
+    var a = HashMap::get_int(m, "a")
+    var b = HashMap::get_int(m, "b")
+    println(a + b)
+}
+// EXPECT: 142

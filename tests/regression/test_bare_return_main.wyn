@@ -1,0 +1,12 @@
+// Regression: a bare `return` (no value) inside `fn main()` compiled `main` as
+// `long long wyn_main()` and emitted `return ;` → C error "non-void function
+// should return a value". Now a bare return in a non-void fn emits `return 0;`. (2026-07)
+fn main() {
+    var x = 5
+    if x > 3 {
+        println("big")
+        return
+    }
+    println("small")
+}
+// EXPECT: big
