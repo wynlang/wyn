@@ -73,6 +73,12 @@ static const char* map_c_type(const char* c, int is_return) {
         return "ptr"; // any other single/multi pointer -> opaque
     }
 
+    // Bare `unsigned` / `signed` mean `unsigned int` / `int` (C implicit-int). The
+    // strip loop above only removes `unsigned `/`signed ` WITH a trailing base word
+    // (e.g. `unsigned int`); a lone `unsigned` (as in zstd's `unsigned
+    // ZSTD_versionNumber(void)`) survives here and must collapse to int too.
+    if (strcmp(s, "unsigned") == 0 || strcmp(s, "signed") == 0) return "int";
+
     // Bare scalar spellings.
     if (strcmp(s, "void") == 0) return is_return ? "void" : NULL;
     if (strcmp(s, "bool") == 0 || strcmp(s, "_Bool") == 0) return "bool";

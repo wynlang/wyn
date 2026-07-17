@@ -14,3 +14,6 @@ void obj_free(void* o);
 // (LZ4LIB_API / ZSTDLIB_API expand to this after `cc -E`). Bindgen must strip the
 // leading __attribute__((...)) and still bind the function.
 __attribute__((visibility("default"))) int exported_fn(int n);
+
+// A bare `unsigned` return (C implicit-int) — e.g. zstd's version/isError fns.
+unsigned version_code(void);

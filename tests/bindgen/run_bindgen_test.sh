@@ -15,6 +15,7 @@ check "extern fn obj_new(a0: int) -> ptr;"
 check "extern fn obj_value(a0: ptr) -> int;"
 check "extern fn obj_free(a0: ptr);"
 check "extern fn exported_fn(a0: int) -> int;"
+check "extern fn version_code() -> int;"
 check "const SAMPLE_MAX = 100"
 check 'const SAMPLE_NAME = "sample"'
 # must NOT leak system macros

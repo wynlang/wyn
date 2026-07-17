@@ -119,7 +119,9 @@ version = "system"
 libs = "json-c"
 pkgconfig = "json-c"
 include_dirs = "/usr/include/json-c, /opt/homebrew/include/json-c, /usr/local/include/json-c"
-headers = "json-c/json.h"
+# json.h is an umbrella that only #includes the real headers; bindgen scans decls
+# from the TARGET header only, so bind the functional sub-headers directly.
+headers = "json-c/json_object.h, json-c/json_tokener.h, json-c/linkhash.h"
 system.brew = "json-c"
 system.apt = "libjson-c-dev"
 system.pacman = "json-c"
