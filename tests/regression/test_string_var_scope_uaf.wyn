@@ -1,0 +1,22 @@
+// Regression: unregister_string_var used a swap-remove that corrupted the string-var
+// scope-boundary stack, causing a heap-use-after-free in codegen on larger programs
+// with nested scopes + string-into-array moves (garbage bytes emitted into
+// wyn_rc_release calls → "source file is not valid UTF-8"). wynjs was the repro.
+// Now order-preserving. This exercises nested scopes + string pushes. (2026-07)
+fn build(prefix: string) -> string {
+    var parts = []
+    for i in 0..3 {
+        var s = prefix
+        var t = s
+        parts.push(t)
+    }
+    return "${len(parts)}"
+}
+fn main() {
+    var a = build("x")
+    var b = build("yy")
+    println(a)
+    println(b)
+}
+// EXPECT: 3
+// EXPECT: 3
