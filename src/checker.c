@@ -3648,8 +3648,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     expr->expr_type = builtin_void;
                     return builtin_void;
                 }
+                // In-place mutators that also YIELD the array so they chain and
+                // work in expression position: `xs.sort()`, `xs.reverse()`,
+                // `xs.sort().reverse()`, `print(xs.sort())`. Typing them as the
+                // receiver array (not int/void) is what lets print route to
+                // print_array instead of to_string(long long). (2026-07)
+                if ((method.length == 4 && memcmp(method.start, "sort", 4) == 0) ||
+                    (method.length == 7 && memcmp(method.start, "reverse", 7) == 0)) {
+                    expr->expr_type = object_type;
+                    return object_type;
+                }
             }
-            
+
             // Use method signature table for type inference (Phase 1)
             const char* receiver_type = get_receiver_type_string(object_type);
             if (receiver_type) {
