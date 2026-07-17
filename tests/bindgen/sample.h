@@ -9,3 +9,11 @@ void reset(void);
 void* obj_new(int seed);
 int obj_value(void* o);
 void obj_free(void* o);
+
+// A function declared behind a GNU export-attribute, as real library headers do
+// (LZ4LIB_API / ZSTDLIB_API expand to this after `cc -E`). Bindgen must strip the
+// leading __attribute__((...)) and still bind the function.
+__attribute__((visibility("default"))) int exported_fn(int n);
+
+// A bare `unsigned` return (C implicit-int) — e.g. zstd's version/isError fns.
+unsigned version_code(void);
