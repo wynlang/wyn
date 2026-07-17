@@ -1,0 +1,14 @@
+// Regression: m.get(k).unwrap_or(default) on an int-valued map. HashMap.get returns
+// the raw value (not an Option), so routing through OptionInt_unwrap_or passed a raw
+// int where an OptionInt was expected → C type error. Now lowers to the runtime's
+// key-or-default lookup. (2026-07)
+fn main() {
+    var m = {"a": 10, "b": 20}
+    println(m.get("a").unwrap_or(-1))
+    println(m.get("missing").unwrap_or(-1))
+    var v = m.get("b").unwrap_or(0)
+    println(v)
+}
+// EXPECT: 10
+// EXPECT: -1
+// EXPECT: 20
