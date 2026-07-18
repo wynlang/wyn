@@ -1170,12 +1170,23 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "test") == 0) {
+        // `wyn test [dir-or-filter]` — an existing directory selects the test
+        // dir; anything else is a name filter (`wyn test math` runs only test
+        // files whose path contains "math").
         const char* test_dir = NULL;
+        const char* filter = NULL;
         for (int i = 2; i < argc; i++) {
-            if (argv[i][0] != '-') { test_dir = argv[i]; break; }
+            if (argv[i][0] == '-') continue;
+            struct stat st;
+            if (!test_dir && stat(argv[i], &st) == 0 && S_ISDIR(st.st_mode)) {
+                test_dir = argv[i];
+            } else if (!filter) {
+                filter = argv[i];
+            }
         }
         extern int cmd_test(const char*, int, char**);
-        return cmd_test(test_dir, argc, argv);
+        char* fargv[2] = {(char*)filter, NULL};
+        return cmd_test(test_dir, filter ? 1 : 0, fargv);
     }
     
     if (strcmp(command, "build-runtime") == 0) {

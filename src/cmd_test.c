@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -89,20 +90,30 @@ static int run_binary(const char* path) {
 #endif
 }
 
-// Scan directory for test files
+// A test file is test_*.wyn or *_test.wyn
+static int is_test_name(const char* name) {
+    size_t len = strlen(name);
+    if (len < 5 || strcmp(name + len - 4, ".wyn") != 0) return 0;
+    if (strncmp(name, "test_", 5) == 0) return 1;
+    if (len >= 9 && strncmp(name + len - 9, "_test.wyn", 9) == 0) return 1;
+    return 0;
+}
+
+// Scan directory (one level of subdirectories too) for test files
 static int collect_tests(const char* dir, char files[][512], int max) {
     int count = 0;
 #ifdef _WIN32
     WIN32_FIND_DATAA fd;
     char pattern[512];
-    snprintf(pattern, sizeof(pattern), "%s\\test_*.wyn", dir);
+    snprintf(pattern, sizeof(pattern), "%s\\*", dir);
     HANDLE h = FindFirstFileA(pattern, &fd);
     if (h == INVALID_HANDLE_VALUE) return 0;
     do {
-        if (count < max) {
-            snprintf(files[count], 512, "%s\\%s", dir, fd.cFileName);
-            count++;
-        }
+        if (count >= max) break;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (!is_test_name(fd.cFileName)) continue;
+        snprintf(files[count], 512, "%s\\%s", dir, fd.cFileName);
+        count++;
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 #else
@@ -110,10 +121,28 @@ static int collect_tests(const char* dir, char files[][512], int max) {
     if (!d) return 0;
     struct dirent* e;
     while ((e = readdir(d)) != NULL && count < max) {
-        if (strncmp(e->d_name, "test_", 5) != 0) continue;
-        size_t len = strlen(e->d_name);
-        if (len < 5 || strcmp(e->d_name + len - 4, ".wyn") != 0) continue;
-        snprintf(files[count], 512, "%s/%s", dir, e->d_name);
+        if (e->d_name[0] == '.') continue;
+        char path[512];
+        snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+        // stat() instead of d_type: DT_DIR needs _DEFAULT_SOURCE on glibc and
+        // d_type is unsupported on some filesystems anyway.
+        struct stat st;
+        if (stat(path, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            // one level deep: tests/unit/test_x.wyn
+            DIR* sub = opendir(path);
+            if (!sub) continue;
+            struct dirent* se;
+            while ((se = readdir(sub)) != NULL && count < max) {
+                if (!is_test_name(se->d_name)) continue;
+                snprintf(files[count], 512, "%s/%s", path, se->d_name);
+                count++;
+            }
+            closedir(sub);
+            continue;
+        }
+        if (!is_test_name(e->d_name)) continue;
+        snprintf(files[count], 512, "%s", path);
         count++;
     }
     closedir(d);
@@ -122,17 +151,31 @@ static int collect_tests(const char* dir, char files[][512], int max) {
 }
 
 int cmd_test(const char* test_dir, int argc, char** argv) {
-    (void)argc; (void)argv;
     if (!test_dir) test_dir = "tests";
     find_wyn_exe();
 
+    // Optional name filter: `wyn test math` runs only files whose path
+    // contains "math".
+    const char* filter = NULL;
+    for (int i = 0; i < argc; i++) {
+        if (argv[i] && argv[i][0] != '-') { filter = argv[i]; break; }
+    }
+
     printf("\033[1m🧪 Wyn Test Runner\033[0m\n");
-    printf("Scanning: %s/\n\n", test_dir);
+    printf("Scanning: %s/%s%s\n\n", test_dir,
+           filter ? "  filter: " : "", filter ? filter : "");
 
     static char files[256][512];
     int count = collect_tests(test_dir, files, 256);
     if (count == 0) {
         fprintf(stderr, "No test files found in %s/\n", test_dir);
+        fprintf(stderr, "  Tests are .wyn files named test_*.wyn or *_test.wyn.\n");
+        fprintf(stderr, "  Example tests/test_math.wyn:\n\n");
+        fprintf(stderr, "    fn main() {\n");
+        fprintf(stderr, "        Test.init(\"math\")\n");
+        fprintf(stderr, "        Test.assert_eq_int(2 + 3, 5, \"addition\")\n");
+        fprintf(stderr, "        Test.summary()\n");
+        fprintf(stderr, "    }\n");
         return 1;
     }
 
@@ -140,6 +183,7 @@ int cmd_test(const char* test_dir, int argc, char** argv) {
     clock_t t0 = clock();
 
     for (int i = 0; i < count; i++) {
+        if (filter && !strstr(files[i], filter)) continue;
         r.total++;
         clock_t ts = clock();
 
