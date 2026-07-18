@@ -3311,6 +3311,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
                 
                 if (best_match && best_match->type->kind == TYPE_FUNCTION) {
+                    // Mark the callee as used (critical for lambda variables stored
+                    // in locals — without this, `var f = (n) => n+1; f(5)` warns
+                    // "unused variable 'f'" because this path returns early before
+                    // the fallback check_expr(callee) which would mark_used).
+                    mark_used(scope, expr->call.callee->token);
                     // T1.5.4: Validate the function call with detailed parameter checking
                     // Skip validation for named arguments (codegen handles reordering)
                     ValidationResult validation = VALIDATION_SUCCESS;
@@ -3337,7 +3342,8 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     // Check if function exists but with wrong arg count
                     Symbol* _existing = find_symbol(scope, expr->call.callee->token);
                     if (_existing && _existing->type && _existing->type->kind == TYPE_FUNCTION) {
-                        // Function exists — wrong arg count, not undefined
+                        // Function exists (possibly a lambda variable) — mark it used
+                        mark_used(scope, expr->call.callee->token);
                     } else {
                     // Search scope for similar names (typo detection)
                     int min_dist = 999;
