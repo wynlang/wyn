@@ -205,6 +205,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_lambda_param_test.sh
 	@echo "=== Running recursive-struct negative test ==="
 	@WYN=./wyn bash tests/errors/run_recursive_struct_test.sh
+	@echo "=== Running unknown-method negative test ==="
+	@WYN=./wyn bash tests/errors/run_unknown_method_test.sh
 
 # Alias kept for muscle memory.
 test_bdd: test

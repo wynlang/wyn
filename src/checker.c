@@ -3557,7 +3557,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 } else if (strcmp(method_name, "upper") == 0 || strcmp(method_name, "lower") == 0) {
                     expr->expr_type = builtin_string;
                     return builtin_string;
-                } else if (strcmp(method_name, "len") == 0 || strcmp(method_name, "length") == 0) {
+                } else if (strcmp(method_name, "len") == 0) {
+                    // NOTE: "length" was accepted here as an alias but codegen only
+                    // supports len — it compiled clean and then failed in C. One
+                    // name, checked and generated the same way.
                     expr->expr_type = builtin_int;
                     return builtin_int;
                 } else if (strcmp(method_name, "starts_with") == 0 || strcmp(method_name, "ends_with") == 0) {
@@ -3780,6 +3783,28 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     expr->expr_type = builtin_int;
                     return builtin_int;
                 }
+            }
+
+            // Unknown method on a STRING or ARRAY receiver: reject at check time.
+            // Everything the language supports on these two receivers returned
+            // earlier (the explicit chain above or the method_signatures table);
+            // reaching here means codegen would fail with a bare
+            // "Unknown method '...'" C-compile error or emit garbage. Restricted
+            // to string/array so structs, maps, options, FFI handles and other
+            // receivers keep their existing (lenient) paths.
+            if (object_type &&
+                (object_type->kind == TYPE_STRING || object_type->kind == TYPE_ARRAY)) {
+                const char* recv = object_type->kind == TYPE_STRING ? "string" : "array";
+                extern const char* suggest_method_name(const char*, const char*);
+                const char* near = suggest_method_name(recv, method_name);
+                fprintf(stderr, "\nError at line %d: %s has no method '%s'\n",
+                        method.line, recv, method_name);
+                show_source_line(method.line);
+                if (near)
+                    fprintf(stderr, "  \033[33mDid you mean:\033[0m .%s()?\n", near);
+                had_error = true;
+                expr->expr_type = builtin_int;
+                return builtin_int;
             }
 
             // Fallback to int

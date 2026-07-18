@@ -9,6 +9,7 @@ static const MethodSignature method_signatures[] = {
     {"string", "upper", "string", 0},
     {"string", "lower", "string", 0},
     {"string", "trim", "string", 0},
+    {"string", "to_string", "string", 0}, // identity — supported by codegen (generic to_string path)
     {"string", "trim_left", "string", 0},
     {"string", "trim_right", "string", 0},
     {"string", "split", "array", 1},     // Returns array of strings
@@ -167,7 +168,17 @@ static const MethodSignature method_signatures[] = {
     {"array", "zip", "array", 1},       // zip(other) -> array of pairs
     {"array", "flatten", "array", 0},   // flatten() -> array
     {"array", "unique", "array", 0},    // unique() -> array
-    
+    {"array", "sum", "int", 0},         // sum() -> int (codegen: array_sum)
+    {"array", "min", "int", 0},         // min() -> int (codegen: array_min)
+    {"array", "max", "int", 0},         // max() -> int (codegen: array_max)
+    {"array", "average", "float", 0},   // average() -> float (codegen: array_average)
+    {"array", "clear", "void", 0},      // clear() -> void
+    {"array", "each", "void", 1},       // each(fn) (codegen: array_each)
+    {"array", "every", "bool", 1},      // every(fn) (codegen: array_every)
+    {"array", "flat_map", "array", 1},  // flat_map(fn) (codegen: array_flat_map)
+    {"array", "insert", "array", 2},    // insert(i, v) (codegen: array_insert)
+    {"array", "remove_at", "array", 1}, // remove_at(i) (codegen: array_remove_at)
+
     // HashMap methods
     {"map", "insert", "void", 2},
     {"map", "set", "void", 2},
@@ -257,6 +268,31 @@ const char* lookup_method_return_type(const char* receiver_type, const char* met
     }
     
     return NULL;  // Method not found
+}
+
+// Nearest known method name on a receiver, for "did you mean" hints when an
+// unknown method is rejected. Simple distance: differing chars + length diff,
+// same metric as the undefined-function suggester in checker.c. Returns NULL
+// when nothing is within distance 3.
+const char* suggest_method_name(const char* receiver_type, const char* method_name) {
+    if (!receiver_type || !method_name) return NULL;
+    const char* best = NULL;
+    int best_dist = 4;  // only suggest reasonably close names
+    size_t ml = strlen(method_name);
+    for (int i = 0; method_signatures[i].receiver_type != NULL; i++) {
+        if (strcmp(method_signatures[i].receiver_type, receiver_type) != 0) continue;
+        const char* cand = method_signatures[i].method_name;
+        size_t cl = strlen(cand);
+        int diff = (int)(ml > cl ? ml - cl : cl - ml);
+        if (diff > 2) continue;
+        size_t shorter = ml < cl ? ml : cl;
+        int match = 0;
+        for (size_t c = 0; c < shorter; c++)
+            if (method_name[c] == cand[c]) match++;
+        int d = (int)(shorter - match) + diff;
+        if (d > 0 && d < best_dist) { best_dist = d; best = cand; }
+    }
+    return best;
 }
 
 // Get receiver type string from Type for method dispatch
