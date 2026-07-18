@@ -5192,7 +5192,28 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     check_expr(stmt->struct_decl.field_types[i], scope);
                 }
             }
-            
+
+            // Reject self-referential fields (`next: Node` or `next: Node?` inside
+            // `struct Node`). Wyn structs are by-value with no pointer indirection,
+            // so a recursive field is infinite-size; letting it through here used to
+            // surface later as a bare "internal codegen error" at build time.
+            for (int i = 0; i < stmt->struct_decl.field_count; i++) {
+                Expr* ft = stmt->struct_decl.field_types[i];
+                if (ft && ft->type == EXPR_OPTIONAL_TYPE) ft = ft->optional_type.inner_type;
+                if (ft && ft->type == EXPR_IDENT &&
+                    ft->token.length == stmt->struct_decl.name.length &&
+                    memcmp(ft->token.start, stmt->struct_decl.name.start,
+                           ft->token.length) == 0) {
+                    fprintf(stderr,
+                            "Error at line %d: struct '%.*s' cannot contain a field of its own type"
+                            " (structs are by-value, so a recursive field would be infinite-size).\n"
+                            "  Workaround: store an index into an array of nodes instead of the node itself.\n",
+                            ft->token.line,
+                            (int)stmt->struct_decl.name.length, stmt->struct_decl.name.start);
+                    had_error = true;
+                }
+            }
+
             // Type-check struct-body methods (`struct S { fn m(self, ...) {...} }`).
             // Without this, method bodies were never checked, so field accesses on
             // `self` and typed params never got an expr_type — and codegen then
