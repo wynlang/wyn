@@ -196,6 +196,14 @@ void Test_skip(const char* reason) {
     printf("  ⊘ SKIPPED: %s\n", reason);
 }
 
+// Exit-code hook for the program wrapper: any recorded assertion failure makes
+// the process exit nonzero even when wyn_main returns 0. Without this, a test
+// file whose asserts failed still exited 0 (Test_summary's return value was
+// ignored by main), so `wyn test` counted it as PASSED.
+int wyn_test_exit_code(void) {
+    return (test_state.failed > 0 || wyn_test_fail_count > 0) ? 1 : 0;
+}
+
 // Summary
 int Test_summary() {
     double elapsed = get_time() - test_state.start_time;

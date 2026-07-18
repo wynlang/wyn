@@ -15,6 +15,11 @@
 // External main function from the Wyn-compiled program
 extern long long wyn_main(void);
 
+// Test hook: nonzero when any Test.* assertion failed (defined in
+// test_runtime.c, which is in every runtime source list — clang lib, TCC lib,
+// and the per-build list — so a plain extern always links).
+extern int wyn_test_exit_code(void);
+
 // Drain outstanding fire-and-forget `spawn` tasks before the process exits, so
 // they aren't silently dropped when main returns (no-op stub on Windows, where
 // spawn runs synchronously). Defined in spawn_fast.c.
@@ -84,6 +89,7 @@ int main(int argc, char** argv) {
     __wyn_argv = argv;
     long long __wyn_rc = wyn_main();
     wyn_spawn_wait();  // join fire-and-forget tasks before exit
+    if (__wyn_rc == 0) __wyn_rc = wyn_test_exit_code();  // failed asserts -> nonzero exit
     return __wyn_rc;
 }
 #elif defined(_WIN32)
@@ -96,6 +102,7 @@ int main(int argc, char** argv) {
     __wyn_argv = argv;
     long long __wyn_rc = wyn_main();
     wyn_spawn_wait();  // join fire-and-forget tasks before exit
+    if (__wyn_rc == 0) __wyn_rc = wyn_test_exit_code();  // failed asserts -> nonzero exit
     return __wyn_rc;
 }
 #else
@@ -128,6 +135,7 @@ int main(int argc, char** argv) {
     // Call the Wyn-compiled main function
     long long __wyn_rc = wyn_main();
     wyn_spawn_wait();  // join fire-and-forget tasks before exit
+    if (__wyn_rc == 0) __wyn_rc = wyn_test_exit_code();  // failed asserts -> nonzero exit
     return __wyn_rc;
 }
 #endif
