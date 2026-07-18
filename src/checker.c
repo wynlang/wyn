@@ -801,10 +801,30 @@ void init_checker() {
     };
     
     for (int i = 0; i < (int)(sizeof(stdlib_funcs)/sizeof(stdlib_funcs[0])); i++) {
+        // await_all gets a real function type below (returns [int], not int) —
+        // find_symbol returns the FIRST match, so it must not be added here.
+        if (strcmp(stdlib_funcs[i], "await_all") == 0) continue;
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
     }
     
+    // await_all returns the array of awaited results, not int — the blanket
+    // int registration above made `println(await_all(futs))` emit
+    // to_string(<WynArray>) and die at the C level (B3, 2026-07-18).
+    // Element type is int (the only awaited payload today); re-registering
+    // OVERRIDES the entry added by the stdlib_funcs loop.
+    {
+        Type* aa_ret = make_type(TYPE_ARRAY);
+        aa_ret->array_type.element_type = builtin_int;
+        Type* aa_type = make_type(TYPE_FUNCTION);
+        aa_type->fn_type.param_count = 1;
+        aa_type->fn_type.param_types = malloc(sizeof(Type*));
+        aa_type->fn_type.param_types[0] = builtin_array;
+        aa_type->fn_type.return_type = aa_ret;
+        Token aa_tok = {TOKEN_IDENT, "await_all", 9, 0};
+        add_symbol(global_scope, aa_tok, aa_type, false);
+    }
+
     // Add C interface functions with correct function types
     Type* get_argc_type = make_type(TYPE_FUNCTION);
     get_argc_type->fn_type.param_count = 0;
@@ -2697,6 +2717,41 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             if (expr->binary.op.type == TOKEN_EQEQ || expr->binary.op.type == TOKEN_BANGEQ ||
                 expr->binary.op.type == TOKEN_LT || expr->binary.op.type == TOKEN_GT ||
                 expr->binary.op.type == TOKEN_LTEQ || expr->binary.op.type == TOKEN_GTEQ) {
+                // Comparing an Option to None/none doesn't lower to C == (the
+                // Option families are structs) — it used to either ICE at the C
+                // level (`r == None`, struct == struct) or give an unhelpful
+                // "Cannot compare different types" (`r == none`). Reject with
+                // the actual fix. (Python devs write `x == None` on day one.)
+                if (expr->binary.op.type == TOKEN_EQEQ || expr->binary.op.type == TOKEN_BANGEQ) {
+                    bool left_opt = left->kind == TYPE_STRUCT &&
+                        left->struct_type.name.length >= 6 &&
+                        memcmp(left->struct_type.name.start, "Option", 6) == 0;
+                    bool right_is_none_ident =
+                        (expr->binary.right->type == EXPR_IDENT &&
+                         ((expr->binary.right->token.length == 4 &&
+                           (memcmp(expr->binary.right->token.start, "none", 4) == 0 ||
+                            memcmp(expr->binary.right->token.start, "None", 4) == 0)))) ||
+                        expr->binary.right->type == EXPR_NONE;
+                    if (left_opt && right_is_none_ident) {
+                        const char* m = expr->binary.op.type == TOKEN_EQEQ ? "is_none" : "is_some";
+                        fprintf(stderr, "Error at line %d: Options are not compared with %s none — use .%s()\n",
+                                expr->binary.op.line,
+                                expr->binary.op.type == TOKEN_EQEQ ? "==" : "!=", m);
+                        had_error = true;
+                        return NULL;
+                    }
+                    // Option == Option (both struct Option families) also can't
+                    // lower to C ==; same targeted rejection.
+                    bool right_opt = right->kind == TYPE_STRUCT &&
+                        right->struct_type.name.length >= 6 &&
+                        memcmp(right->struct_type.name.start, "Option", 6) == 0;
+                    if (left_opt && right_opt) {
+                        fprintf(stderr, "Error at line %d: Options cannot be compared directly — match on them, or compare .unwrap_or(...) values\n",
+                                expr->binary.op.line);
+                        had_error = true;
+                        return NULL;
+                    }
+                }
                 // Allow comparing compatible types
                 // Int, bool, and enum are all compatible for comparison
                 bool types_compatible = (left->kind == right->kind) ||

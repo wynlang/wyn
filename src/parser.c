@@ -1741,6 +1741,18 @@ Stmt* statement() {
         return NULL;
     }
     
+    // `mut` is a parameter modifier only (`fn f(mut x: int)`). In statement
+    // position nothing consumed the token, so the statement loop spun forever
+    // on `mut m = 1` (parser hang, found 2026-07-18). Give a targeted error
+    // and treat the rest as a var declaration so parsing continues.
+    if (check(TOKEN_MUT)) {
+        fprintf(stderr, "Error at line %d: 'mut' is only valid on function parameters (fn f(mut x: int)).\n"
+                        "  Local variables are mutable by default — use `var m = ...` or `m = ...`.\n",
+                parser.current.line);
+        parser.had_error = true;
+        advance();  // consume 'mut' — never leave the loop stuck on it
+    }
+
     if (match(TOKEN_RETURN)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_RETURN;

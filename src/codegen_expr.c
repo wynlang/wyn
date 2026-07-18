@@ -964,10 +964,17 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
-            // Special handling for print function
+            // Special handling for print function. Multi-arg and zero-arg
+            // `println` route through the same path (true alias) — they used to
+            // fall through to the raw C println macro, which is single-arg only
+            // and died with an "internal codegen error" the checker never saw.
+            // Single-arg println keeps its tuned fast path below.
             if (expr->call.callee->type == EXPR_IDENT &&
-                expr->call.callee->token.length == 5 &&
-                memcmp(expr->call.callee->token.start, "print", 5) == 0) {
+                ((expr->call.callee->token.length == 5 &&
+                  memcmp(expr->call.callee->token.start, "print", 5) == 0) ||
+                 (expr->call.callee->token.length == 7 &&
+                  memcmp(expr->call.callee->token.start, "println", 7) == 0 &&
+                  expr->call.arg_count != 1))) {
                 
                 // Python-style print(): print all positional args separated by a
                 // space, then a terminator that defaults to "\n". A trailing named
