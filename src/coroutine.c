@@ -31,7 +31,14 @@ static inline int munmap(void* addr, size_t len) { (void)len; VirtualFree(addr, 
 #include "../vendor/minicoro/minicoro.h"
 #include "coroutine.h"
 
-#define WYN_CORO_STACK_SIZE 65536
+// 8MB default (same as MCO_DEFAULT_STACK_SIZE above, and the size of a macOS
+// main-thread stack). Stacks are mmap'd anonymous memory: pages are committed
+// lazily on first touch, so a coroutine that uses 10KB of stack costs ~3 pages
+// of RAM regardless of this number — raising it only spends virtual address
+// space. The old 64KB default made ~5000-frame recursion (or deep sort/parse
+// work) die with SIGBUS in awaited spawns (sample-apps/algorithms/sorting, bug
+// H1 2026-07-18); 2MB still overflowed under TCC's unoptimized frames.
+#define WYN_CORO_STACK_SIZE (8 * 1024 * 1024)
 
 static size_t wyn_coro_stack_size(void) {
     static size_t sz = 0;

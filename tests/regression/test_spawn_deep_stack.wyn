@@ -1,0 +1,28 @@
+// H1 (2026-07-18): deep call stacks inside awaited spawns crashed with SIGBUS —
+// the coroutine stack default was 64KB, so ~5000-frame recursion (or a heavy
+// sort/parse workload) overflowed. Stacks are lazily-committed mmap pages, so
+// the 8MB default costs virtual space only.
+// EXPECT: 5000
+// EXPECT: 12502500
+
+fn deep(n: int) -> int {
+    if n <= 0 { return 0 }
+    return 1 + deep(n - 1)
+}
+
+fn heavy(n: int) -> int {
+    var data = []
+    for i in 0..n { data.push(n - i) }
+    var sum = 0
+    for i in 0..n { sum = sum + data[i] }
+    return sum
+}
+
+fn main() {
+    var futs = []
+    futs.push(spawn deep(5000))
+    futs.push(spawn heavy(5000))
+    var rs = await_all(futs)
+    println(rs[0])
+    println(rs[1])
+}
