@@ -203,6 +203,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_fix_test.sh
 	@echo "=== Running lambda param-type test ==="
 	@WYN=./wyn bash tests/errors/run_lambda_param_test.sh
+	@echo "=== Running recursive-struct negative test ==="
+	@WYN=./wyn bash tests/errors/run_recursive_struct_test.sh
 
 # Alias kept for muscle memory.
 test_bdd: test
