@@ -217,7 +217,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mclean\033[0m                   Remove build artifacts\n");
         
         fprintf(stderr, "\n\033[1mPackages:\033[0m\n");
-        fprintf(stderr, "  \033[32minit\033[0m [name]             Create new project\n");
+        fprintf(stderr, "  \033[32minit\033[0m [name]             Create new project (--template cli|api|web|lib)\n");
         fprintf(stderr, "  \033[32mpkg\033[0m <command>           Package manager (add, remove, list, install)\n");
         
         fprintf(stderr, "\n\033[1mTools:\033[0m\n");
@@ -652,7 +652,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mbuild-runtime\033[0m           Precompile runtime for fast builds\n");
         fprintf(stderr, "  \033[32mclean\033[0m                   Remove build artifacts\n");
         fprintf(stderr, "\n\033[1mPackages:\033[0m\n");
-        fprintf(stderr, "  \033[32minit\033[0m [name]             Create new project\n");
+        fprintf(stderr, "  \033[32minit\033[0m [name]             Create new project (--template cli|api|web|lib)\n");
         fprintf(stderr, "  \033[32mpkg\033[0m <command>           Package manager (add, remove, list, install)\n");
         
         fprintf(stderr, "\n\033[1mTools:\033[0m\n");
@@ -683,6 +683,21 @@ int main(int argc, char** argv) {
             if (strcmp(argv[i], "--web") == 0) template = "web";
             else if (strcmp(argv[i], "--api") == 0) template = "api";
             else if (strcmp(argv[i], "--cli") == 0) template = "cli";
+            else if (strcmp(argv[i], "--template") == 0 && i + 1 < argc) {
+                // `--template <name>` spelling; accept common aliases.
+                const char* t = argv[++i];
+                if (strcmp(t, "web") == 0 || strcmp(t, "website") == 0) template = "web";
+                else if (strcmp(t, "api") == 0 || strcmp(t, "http-service") == 0 ||
+                         strcmp(t, "http") == 0 || strcmp(t, "service") == 0) template = "api";
+                else if (strcmp(t, "cli") == 0) template = "cli";
+                else if (strcmp(t, "lib") == 0) template = "lib";
+                else if (strcmp(t, "default") == 0 || strcmp(t, "hello") == 0) template = "default";
+                else {
+                    fprintf(stderr, "Error: unknown template '%s'\n", t);
+                    fprintf(stderr, "  Available: cli, api (alias: http-service), web, lib, default\n");
+                    return 1;
+                }
+            }
             else if (strcmp(argv[i], "--lib") == 0) {
                 template = "lib";
                 if (i + 1 < argc && argv[i+1][0] != '-') {
@@ -2968,22 +2983,22 @@ int create_new_project_with_template(const char* name, const char* template, con
             "    var path = parts[1]\n"
             "    var body = parts[2]\n"
             "    var fd = parts[3].to_int()\n\n"
-            "    if method == \"GET\" && path == \"/\" {\n"
+            "    if method == \"GET\" and path == \"/\" {\n"
             "        Http.respond_html(fd, 200, home_page())\n"
             "        return\n"
             "    }\n\n"
-            "    if method == \"GET\" && path == \"/api/health\" {\n"
+            "    if method == \"GET\" and path == \"/api/health\" {\n"
             "        Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ok\\\"}\")\n"
             "        return\n"
             "    }\n\n"
-            "    if method == \"GET\" && path == \"/api/items\" {\n"
+            "    if method == \"GET\" and path == \"/api/items\" {\n"
             "        var db = init_db()\n"
             "        var rows = Db.query(db, \"SELECT name FROM items ORDER BY id DESC LIMIT 50\")\n"
             "        Db.close(db)\n"
             "        Http.respond_json(fd, 200, \"{\\\"items\\\": [\" + rows + \"]}\")\n"
             "        return\n"
             "    }\n\n"
-            "    if method == \"POST\" && path == \"/api/items\" {\n"
+            "    if method == \"POST\" and path == \"/api/items\" {\n"
             "        if body.len() == 0 { Http.respond_json(fd, 400, \"{\\\"error\\\": \\\"body required\\\"}\"); return }\n"
             "        var db = init_db()\n"
             "        Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [body])\n"
@@ -3031,14 +3046,14 @@ int create_new_project_with_template(const char* name, const char* template, con
             "    var fd = parts[3].to_int()\n\n"
             "    if path == \"/health\" { Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ok\\\"}\"); return }\n"
             "    if path == \"/ready\"  { Http.respond_json(fd, 200, \"{\\\"status\\\": \\\"ready\\\"}\"); return }\n\n"
-            "    if method == \"GET\" && path == \"/api/items\" {\n"
+            "    if method == \"GET\" and path == \"/api/items\" {\n"
             "        var db = init_db()\n"
             "        var rows = Db.query(db, \"SELECT name FROM items ORDER BY id DESC LIMIT 100\")\n"
             "        Db.close(db)\n"
             "        Http.respond_json(fd, 200, \"{\\\"items\\\": [\" + rows + \"]}\")\n"
             "        return\n"
             "    }\n\n"
-            "    if method == \"POST\" && path == \"/api/items\" {\n"
+            "    if method == \"POST\" and path == \"/api/items\" {\n"
             "        if body.len() == 0 { Http.respond_json(fd, 400, \"{\\\"error\\\": \\\"body required\\\"}\"); return }\n"
             "        var db = init_db()\n"
             "        Db.exec_p(db, \"INSERT INTO items (name) VALUES (?)\", [body])\n"
@@ -3115,9 +3130,9 @@ int create_new_project_with_template(const char* name, const char* template, con
             "        return 0\n"
             "    }\n"
             "    var cmd = args[1]\n"
-            "    if cmd == \"help\" || cmd == \"--help\" || cmd == \"-h\" {\n"
+            "    if cmd == \"help\" or cmd == \"--help\" or cmd == \"-h\" {\n"
             "        print_help()\n"
-            "    } else if cmd == \"version\" || cmd == \"--version\" || cmd == \"-v\" {\n"
+            "    } else if cmd == \"version\" or cmd == \"--version\" or cmd == \"-v\" {\n"
             "        println(\"%s v0.1.0\")\n"
             "    } else if cmd == \"info\" {\n"
             "        cmd_info()\n"
