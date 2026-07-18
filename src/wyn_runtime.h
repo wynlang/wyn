@@ -5172,9 +5172,6 @@ WynHashMap* Data_load(const char* path) {
     return map;
 }
 
-#endif // WYN_RUNTIME_H
-
-
 // === Template Engine ===
 // Replaces ${key} in template strings with values from a HashMap context.
 // Auto HTML-escapes values. Use ${raw:key} for unescaped output.
@@ -5455,3 +5452,5 @@ char* Web_render(const char* name, const char* vars) {
 #include "wyn_iter.h"
 #endif
 #include "wyn_webview.h"
+
+#endif // WYN_RUNTIME_H

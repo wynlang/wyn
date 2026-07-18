@@ -1295,7 +1295,10 @@ static void emit(const char* fmt, ...) {
     va_start(args, fmt);
     vfprintf(out, fmt, args);
     va_end(args);
-    fflush(out);  // Flush after every emit to prevent buffer truncation
+    // No fflush here: every caller fcloses the stream after codegen_program
+    // (fclose flushes), and wyn_emit never flushed. The old per-emit fflush
+    // made write() the single hottest function on large builds (one syscall
+    // per fragment across ~800 emit sites).
 }
 
 // Global emit function for use by other modules
