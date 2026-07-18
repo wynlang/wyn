@@ -210,10 +210,20 @@ void codegen_expr(Expr* expr) {
                     break;
                 }
                 
+                // A KNOWN function of this module always gets the prefix — before
+                // any name heuristics. `path` is in common_locals below, so a
+                // sibling call to `pub fn path(..)` emitted the bare name and the
+                // C compiler saw an undefined identifier (bug M1, 2026-07-18).
+                if (is_module_function(temp_ident)) {
+                    emit("%s_%s", current_module_prefix, temp_ident);
+                    free(ident);
+                    break;
+                }
+
                 // Check if this is a simple identifier (no :: or .)
                 // For module-level identifiers, we need to prefix them
                 // Heuristic: uppercase = constant, lowercase = might be module var or local var
-                bool looks_like_module_level = (temp_ident[0] >= 'A' && temp_ident[0] <= 'Z') || 
+                bool looks_like_module_level = (temp_ident[0] >= 'A' && temp_ident[0] <= 'Z') ||
                                                (temp_ident[0] >= 'a' && temp_ident[0] <= 'z');
                 
                 // Don't prefix common local variable names or single-letter variables
