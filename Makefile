@@ -207,6 +207,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_recursive_struct_test.sh
 	@echo "=== Running unknown-method negative test ==="
 	@WYN=./wyn bash tests/errors/run_unknown_method_test.sh
+	@echo "=== Running bug-batch-2 test ==="
+	@WYN=./wyn bash tests/errors/run_bug_batch2_test.sh
 
 # Alias kept for muscle memory.
 test_bdd: test
