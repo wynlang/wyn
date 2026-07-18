@@ -1,0 +1,25 @@
+// Bare return coercion: `return x` auto-wraps to Some(x) and `return none`
+// auto-wraps to None() inside fn -> T? functions. Users should not need to
+// write the explicit constructors for simple cases.
+// EXPECT: 5
+// EXPECT: 99
+// EXPECT: found
+// EXPECT: miss
+
+fn find_int(x: int) -> int? {
+    if x > 0 { return x }
+    return none
+}
+
+fn find_str(key: string) -> string? {
+    if key == "a" { return "found" }
+    return none
+}
+
+fn main() -> int {
+    println(find_int(5).unwrap_or(0))
+    println(find_int(-1).unwrap_or(99))
+    println(find_str("a").unwrap_or("miss"))
+    println(find_str("z").unwrap_or("miss"))
+    return 0
+}

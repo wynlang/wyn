@@ -1878,9 +1878,31 @@ void codegen_stmt(Stmt* stmt) {
                 extern bool current_fn_c_nonvoid;
                 emit(current_fn_c_nonvoid ? "return 0;\n" : "return;\n");
             } else {
-                emit("return ");
-                codegen_expr(stmt->ret.value);
-                emit(";\n");
+                // Auto-wrap bare returns into Option/Result constructors when the
+                // current function returns an Option family type (e.g. `return x` in
+                // a `fn -> int?` emits `return OptionInt_Some(x)`; `return none`
+                // emits `return OptionInt_None()`).
+                extern const char* current_fn_return_kind;
+                if (current_fn_return_kind &&
+                    strncmp(current_fn_return_kind, "Option", 6) == 0 &&
+                    stmt->ret.value->type != EXPR_SOME &&
+                    stmt->ret.value->type != EXPR_NONE) {
+                    // `return none` → emit <Family>_None()
+                    if (stmt->ret.value->type == EXPR_IDENT &&
+                        stmt->ret.value->token.length == 4 &&
+                        memcmp(stmt->ret.value->token.start, "none", 4) == 0) {
+                        emit("return %s_None();\n", current_fn_return_kind);
+                    } else {
+                        // `return x` → emit <Family>_Some(x)
+                        emit("return %s_Some(", current_fn_return_kind);
+                        codegen_expr(stmt->ret.value);
+                        emit(");\n");
+                    }
+                } else {
+                    emit("return ");
+                    codegen_expr(stmt->ret.value);
+                    emit(";\n");
+                }
             }
             break;
         case STMT_BREAK:

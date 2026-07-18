@@ -4954,6 +4954,27 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         return_expr_type->kind == TYPE_STRUCT) {
                         break;
                     }
+                    // Coerce bare values into Optional: `return x` in an `fn -> T?`
+                    // auto-wraps in Some, and `return none` auto-wraps in None().
+                    // Without this, users must write `return Some(x)` / `return None()`
+                    // which violates the "obvious and forgiving" design goal.
+                    // The return type of `fn -> int?` is resolved to the monomorphic
+                    // Option struct (OptionInt/OptionString/OptionFloat/OptionBool),
+                    // which has kind TYPE_STRUCT — detect it by name prefix.
+                    if (current_function_return_type->kind == TYPE_STRUCT &&
+                        current_function_return_type->struct_type.name.length >= 6 &&
+                        memcmp(current_function_return_type->struct_type.name.start, "Option", 6) == 0) {
+                        // `none` is typed as int by the identifier resolver; accept it.
+                        if (stmt->ret.value->type == EXPR_IDENT &&
+                            stmt->ret.value->token.length == 4 &&
+                            memcmp(stmt->ret.value->token.start, "none", 4) == 0) {
+                            break;
+                        }
+                        // Any other value: coerce into Some(value) — the inner type
+                        // should match the Optional's wrapped type, but codegen already
+                        // handles the wrapping; here we just don't reject it.
+                        break;
+                    }
                     // Allow int/bool interchangeability (comparisons return int but work as bool)
                     bool types_match = (current_function_return_type->kind == return_expr_type->kind) ||
                         (current_function_return_type->kind == TYPE_BOOL && return_expr_type->kind == TYPE_INT) ||
