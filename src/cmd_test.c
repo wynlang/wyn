@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -123,7 +124,11 @@ static int collect_tests(const char* dir, char files[][512], int max) {
         if (e->d_name[0] == '.') continue;
         char path[512];
         snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
-        if (e->d_type == DT_DIR) {
+        // stat() instead of d_type: DT_DIR needs _DEFAULT_SOURCE on glibc and
+        // d_type is unsupported on some filesystems anyway.
+        struct stat st;
+        if (stat(path, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
             // one level deep: tests/unit/test_x.wyn
             DIR* sub = opendir(path);
             if (!sub) continue;
