@@ -195,6 +195,8 @@ test: wyn
 	@WYN=./wyn bash tests/cpkg/run_sqlite_test.sh
 	@echo "=== Running git-deps (wyn add <url>) test ==="
 	@WYN=./wyn bash tests/pkg/run_pkg_test.sh
+	@echo "=== Running pkg audit test ==="
+	@WYN=./wyn bash tests/pkg/run_audit_test.sh
 	@echo "=== Running LSP protocol test ==="
 	@WYN=./wyn bash tests/lsp/run_lsp_test.sh
 	@echo "=== Running removed-syntax negative test ==="
