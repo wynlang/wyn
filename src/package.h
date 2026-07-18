@@ -23,6 +23,12 @@ int wyn_pkg_remove(const char* name);
 // `wyn list` / `wyn pkg list`: print the project's declared dependencies.
 int wyn_pkg_list(void);
 
+// `wyn pkg audit`: supply-chain verification from wyn.lock + git — lock↔remote
+// (moved tags = error), lock↔cache integrity, pin quality (branch<tag<sha),
+// ffi surface flags. `offline` skips the ls-remote checks. Returns the worst
+// finding: 0 clean, 1 warnings, 2 errors.
+int wyn_pkg_audit(int offline);
+
 // Resolve an import name to its on-disk package directory in the cache, using
 // the current project's wyn.toml [dependencies]. Returns 1 and fills `dir_out`
 // if `import_name` is a declared, present dependency; 0 otherwise.

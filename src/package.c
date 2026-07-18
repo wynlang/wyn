@@ -407,3 +407,172 @@ void wyn_deps_ffi_flags(char* out, size_t out_size) {
     }
     wyn_config_free(cfg);
 }
+
+// ---- wyn pkg audit -----------------------------------------------------------
+// Supply-chain verification with zero infrastructure: everything comes from
+// wyn.lock + the git cache + `git ls-remote`. Design: SECURITY_DESIGN.md §3b.
+// Output rules: few lines, every line actionable, exit code = worst finding
+// (0 ok / 1 warning / 2 error). No advisory database — an empty one would be
+// theater ("0 known vulnerabilities" implying coverage that doesn't exist).
+
+// `git ls-remote <url> <ref>` → sha of what the ref points at NOW (or "" on
+// failure/missing). Tags are also tried peeled (`ref^{}`) since an annotated
+// tag's own sha differs from the commit it tags.
+static void ls_remote_sha(const char* url, const char* ref, char* sha, size_t n) {
+    sha[0] = '\0';
+    if (!shell_safe(url) || !shell_safe(ref)) return;
+    char cmd[1400];
+    snprintf(cmd, sizeof(cmd),
+             "git ls-remote '%s' '%s' '%s^{}' 2>/dev/null | tail -1 | cut -f1", url, ref, ref);
+    FILE* fp = popen(cmd, "r");
+    if (fp) {
+        if (fgets(sha, n, fp)) { char* nl = strchr(sha, '\n'); if (nl) *nl = '\0'; }
+        pclose(fp);
+    }
+}
+
+// Is `ref` a tag (vs branch) on the remote? 1=tag, 0=branch/unknown.
+static int remote_ref_is_tag(const char* url, const char* ref) {
+    if (!shell_safe(url) || !shell_safe(ref)) return 0;
+    char cmd[1400];
+    snprintf(cmd, sizeof(cmd), "git ls-remote --tags '%s' '%s' 2>/dev/null | head -1", url, ref);
+    FILE* fp = popen(cmd, "r");
+    char buf[256] = "";
+    if (fp) { if (fgets(buf, sizeof(buf), fp)) {} pclose(fp); }
+    return buf[0] != '\0';
+}
+
+// Does this ref LOOK like a full/abbrev commit sha? (all hex, >= 7 chars)
+static int ref_is_sha(const char* ref) {
+    size_t len = strlen(ref);
+    if (len < 7 || len > 40) return 0;
+    for (size_t i = 0; i < len; i++) {
+        char c = ref[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return 0;
+    }
+    return 1;
+}
+
+int wyn_pkg_audit(int offline) {
+    LockEntry locks[128];
+    int n = lock_read(locks, 128);
+    WynConfig* cfg = wyn_config_parse("wyn.toml");
+    int dep_count = cfg ? cfg->dependency_count : 0;
+
+    if (n == 0 && dep_count == 0) {
+        printf("No dependencies (no wyn.lock, nothing in [dependencies]). Nothing to audit.\n");
+        if (cfg) wyn_config_free(cfg);
+        return 0;
+    }
+    printf("\033[1mAuditing %d dependenc%s\033[0m%s\n\n", n, n == 1 ? "y" : "ies",
+           offline ? "  (offline: remote checks skipped)" : "");
+
+    int worst = 0;  // 0 ok, 1 warn, 2 error
+    int ffi_count = 0;
+
+    for (int i = 0; i < n; i++) {
+        LockEntry* e = &locks[i];
+        const char* ref = (e->ref[0] && strcmp(e->ref, "-") != 0) ? e->ref : "";
+        char short_sha[12]; snprintf(short_sha, sizeof(short_sha), "%.9s", e->sha);
+
+        // Cache integrity: does the cached checkout still match the lock?
+        // pkgspec_parse fills host/owner/repo, which cache_dir needs — a raw
+        // field copy computes the wrong path.
+        PkgSpec spec; memset(&spec, 0, sizeof(spec));
+        char spec_input[700];
+        snprintf(spec_input, sizeof(spec_input), "%s%s%s", e->url,
+                 ref[0] ? "@" : "", ref);
+        if (pkgspec_parse(spec_input, e->name, &spec) != 0) {
+            printf("  \033[33m⚠\033[0m %-14s unparseable lock entry (%s)\n", e->name, e->url);
+            if (worst < 1) worst = 1;
+            continue;
+        }
+        char dir[600]; pkgspec_cache_dir(&spec, dir, sizeof(dir));
+        char cache_sha[64] = "";
+        int cached = dir_exists(dir);
+        if (cached) get_head_sha(dir, cache_sha, sizeof(cache_sha));
+
+        // FFI surface: does the dep's manifest declare linked C libs?
+        char ffi_libs[256] = "";
+        if (cached) {
+            char toml[700]; snprintf(toml, sizeof(toml), "%s/wyn.toml", dir);
+            WynConfig* dep = wyn_config_parse(toml);
+            if (dep) {
+                if (dep->ffi.libs && dep->ffi.libs[0])
+                    snprintf(ffi_libs, sizeof(ffi_libs), "%s", dep->ffi.libs);
+                wyn_config_free(dep);
+            }
+        }
+
+        // Remote check: where does the pinned ref point NOW?
+        char remote_sha[64] = "";
+        int is_tag = 0;
+        if (!offline && ref[0] && !ref_is_sha(ref)) {
+            ls_remote_sha(e->url, ref, remote_sha, sizeof(remote_sha));
+            is_tag = remote_ref_is_tag(e->url, ref);
+        }
+
+        // Verdict per dep, worst condition wins.
+        if (!offline && ref[0] && !ref_is_sha(ref) && remote_sha[0] == '\0') {
+            printf("  \033[33m⚠\033[0m %-14s %s@%s  %s  REF NOT FOUND on remote (deleted or renamed?)\n",
+                   e->name, e->url, ref, short_sha);
+            if (worst < 1) worst = 1;
+        } else if (!offline && is_tag && remote_sha[0] && e->sha[0] &&
+                   strncmp(remote_sha, e->sha, strlen(e->sha)) != 0) {
+            printf("  \033[31m✗\033[0m %-14s %s@%s  %s  TAG MOVED — now %.9s\n",
+                   e->name, e->url, ref, short_sha, remote_sha);
+            printf("      a retagged (force-pushed) release can hide code changes. Inspect before updating:\n");
+            printf("      git -C %s log --oneline -5\n", dir);
+            worst = 2;
+        } else if (cached && cache_sha[0] && e->sha[0] &&
+                   strcmp(cache_sha, e->sha) != 0) {
+            printf("  \033[31m✗\033[0m %-14s %s@%s  %s  CACHE MISMATCH — checkout is at %.9s\n",
+                   e->name, e->url, ref[0] ? ref : "-", short_sha, cache_sha);
+            printf("      the local cache was modified or moved. Re-install: rm -rf %s && wyn pkg install\n", dir);
+            worst = 2;
+        } else if (ref[0] == '\0' || (!ref_is_sha(ref) && !is_tag && !offline && remote_sha[0])) {
+            // branch pin (or no ref at all): mutable — the same install command
+            // gives different code tomorrow.
+            const char* what = ref[0] ? "BRANCH PIN" : "NO REF";
+            printf("  \033[33m⚠\033[0m %-14s %s@%s  %s  %s — mutable; pin a tag or sha\n",
+                   e->name, e->url, ref[0] ? ref : "-", short_sha, what);
+            if (!offline && remote_sha[0] && e->sha[0] &&
+                strncmp(remote_sha, e->sha, strlen(e->sha)) != 0)
+                printf("      '%s' has moved (now %.9s). To keep today's code: wyn pkg add %s@%s\n",
+                       ref[0] ? ref : "HEAD", remote_sha, e->name, short_sha);
+            if (worst < 1) worst = 1;
+        } else {
+            const char* kind = ref_is_sha(ref) ? "sha" : (is_tag || offline ? "tag" : "ref");
+            printf("  \033[32m✓\033[0m %-14s %s@%s  %s  %s%s\n",
+                   e->name, e->url, ref[0] ? ref : "-", short_sha,
+                   kind, offline ? " (unverified)" : ", verified");
+        }
+        if (ffi_libs[0]) {
+            ffi_count++;
+            printf("      \033[33mffi\033[0m links native code (%s) — capability limits don't apply to C; review this package\n",
+                   ffi_libs);
+        }
+    }
+
+    // Deps declared but never locked/installed.
+    for (int d = 0; d < dep_count; d++) {
+        int found = 0;
+        for (int i = 0; i < n; i++)
+            if (strcmp(cfg->dependencies[d].name, locks[i].name) == 0) { found = 1; break; }
+        if (!found) {
+            printf("  \033[33m⚠\033[0m %-14s declared in wyn.toml but not in wyn.lock — run: wyn pkg install\n",
+                   cfg->dependencies[d].name);
+            if (worst < 1) worst = 1;
+        }
+    }
+    if (cfg) wyn_config_free(cfg);
+
+    printf("\n");
+    if (ffi_count > 0)
+        printf("%d ffi dependenc%s — these link arbitrary native code and carry full trust.\n",
+               ffi_count, ffi_count == 1 ? "y" : "ies");
+    if (worst == 0) printf("\033[32m✓ audit clean\033[0m\n");
+    else printf("%s\n", worst == 2 ? "\033[31maudit found errors\033[0m (exit 2)"
+                                   : "\033[33maudit found warnings\033[0m (exit 1)");
+    return worst;
+}

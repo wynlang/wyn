@@ -756,7 +756,8 @@ int main(int argc, char** argv) {
             fprintf(stderr, "  add <name|url>[@ref]   Add a dependency (git repo)\n");
             fprintf(stderr, "  install                Install all deps from wyn.lock / wyn.toml\n");
             fprintf(stderr, "  remove <name>          Remove a dependency\n");
-            fprintf(stderr, "  list                   List declared dependencies\n\n");
+            fprintf(stderr, "  list                   List declared dependencies\n");
+            fprintf(stderr, "  audit [--offline]      Verify lock vs remotes; flag moved tags, mutable pins, ffi deps\n\n");
             fprintf(stderr, "A dependency is a git repo — there is no central registry.\n");
             fprintf(stderr, "Bare names resolve to github.com/wynlang/<name>; publish by pushing a repo.\n");
             return 1;
@@ -773,8 +774,15 @@ int main(int argc, char** argv) {
             return wyn_pkg_remove(argv[3]);
         }
         if (strcmp(argv[2], "list") == 0) return wyn_pkg_list();
+        if (strcmp(argv[2], "audit") == 0) {
+            extern int wyn_pkg_audit(int offline);
+            int offline = 0;
+            for (int i = 3; i < argc; i++)
+                if (strcmp(argv[i], "--offline") == 0) offline = 1;
+            return wyn_pkg_audit(offline);
+        }
         fprintf(stderr, "Unknown command: wyn pkg %s\n", argv[2]);
-        fprintf(stderr, "Try: add | install | remove | list\n");
+        fprintf(stderr, "Try: add | install | remove | list | audit\n");
         return 1;
     }
     
