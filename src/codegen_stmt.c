@@ -68,8 +68,11 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
         emit("static ");
     }
     
-    // Determine return type
-    const char* return_type = "long long";
+    // Determine return type. No annotation (and nothing synthesized by the
+    // checker's inference) means VOID — the old "long long" default made a
+    // module fn with a bare `return` guard emit non-void C ("should return a
+    // value", bug M4 2026-07-18). Matches the same-file STMT_FN default.
+    const char* return_type = fn_stmt->fn.return_type ? "long long" : "void";
     static char custom_return_type[128];
     if (fn_stmt->fn.return_type) {
         if (fn_stmt->fn.return_type->type == EXPR_ARRAY) {
@@ -1835,25 +1838,15 @@ void codegen_stmt(Stmt* stmt) {
                     }
                 }
             }
-            // RC: release local string variables before return
+            // RC: release local string variables before return — EXCEPT any
+            // referenced by the return expression itself (an exact-identifier
+            // exception wasn't enough: `return "<y>" + t + "</y>"` released t
+            // before the concat read it — use-after-free, bug M3 2026-07-18).
             {
-                extern void emit_string_releases(const char*);
+                extern void emit_string_releases_for_return(Expr*);
                 extern int get_string_var_count(void);
                 if (get_string_var_count() > 0) {
-                    // If returning a string variable, don't release it
-                    const char* except = NULL;
-                    if (stmt->ret.value && stmt->ret.value->type == EXPR_IDENT) {
-                        char _rv[256]; token_to_cstr(_rv, sizeof(_rv), stmt->ret.value->token);
-                        extern int is_string_var(const char*);
-                        if (is_string_var(_rv)) except = stmt->ret.value->token.start;
-                    }
-                    // Use a temp buf for except since token isn't null-terminated
-                    char _except_buf[256] = "";
-                    if (except) {
-                        int _el = stmt->ret.value->token.length < 255 ? stmt->ret.value->token.length : 255;
-                        memcpy(_except_buf, except, _el); _except_buf[_el] = '\0';
-                    }
-                    emit_string_releases(_except_buf[0] ? _except_buf : NULL);
+                    emit_string_releases_for_return(stmt->ret.value);
                 }
             }
             // RC: release closure-env-owning locals before return, EXCEPT a
@@ -3719,6 +3712,18 @@ void codegen_stmt(Stmt* stmt) {
                     emit("        long long %.*s = __i;\n",
                          stmt->for_stmt.index_var.length, stmt->for_stmt.index_var.start);
                 }
+                // Register loop var(s) as locals: inside a MODULE function,
+                // EXPR_IDENT prefixes anything it doesn't know is a local — the
+                // declaration above emitted the bare name but every use became
+                // `mod_name` (undeclared identifier, bug M2 2026-07-18).
+                {
+                    char _lvn[256]; token_to_cstr(_lvn, sizeof(_lvn), stmt->for_stmt.loop_var);
+                    register_local_variable(_lvn);
+                    if (stmt->for_stmt.has_index) {
+                        char _ivn[256]; token_to_cstr(_ivn, sizeof(_ivn), stmt->for_stmt.index_var);
+                        register_local_variable(_ivn);
+                    }
+                }
                 codegen_stmt(stmt->for_stmt.body);
                 emit("    }\n");
                 pop_scope();
@@ -3867,8 +3872,11 @@ void codegen_stmt(Stmt* stmt) {
                                     emit("static ");
                                 }
                                 
-                                // Determine return type
-                                const char* return_type = "long long";
+                                // Determine return type — void when unannotated,
+                                // matching the definition emitter (M4 fix: the
+                                // prototype said long long while the definition
+                                // said void → "conflicting types").
+                                const char* return_type = s->fn.return_type ? "long long" : "void";
                                 static char custom_ret_type[128];
                                 if (s->fn.return_type) {
                                     if (s->fn.return_type->type == EXPR_ARRAY) {

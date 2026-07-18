@@ -213,6 +213,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_bug_batch2_test.sh
 	@echo "=== Running user test-runner test ==="
 	@WYN=./wyn bash tests/errors/run_user_test_runner_test.sh
+	@echo "=== Running module-codegen (M1-M4) test ==="
+	@WYN=./wyn bash tests/errors/run_module_codegen_test.sh
 	@echo "=== Running scaffold (wyn new) test ==="
 	@WYN=./wyn bash tests/errors/run_scaffold_test.sh
 

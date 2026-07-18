@@ -742,6 +742,23 @@ void emit_string_releases(const char* except_var) {
         fprintf(out, "wyn_rc_release(%s); ", emit_c_var_name(_cn, sizeof _cn, string_var_releasable[i]));
     }
 }
+
+// Pre-return release that skips every local referenced by the return
+// expression, not just an exact-identifier return. `return "<y>" + t + "</y>"`
+// released t BEFORE the concat evaluated — use-after-free that read as empty
+// output (bug M3, 2026-07-18; module functions made it visible but the defect
+// is general).
+static int expr_references_var(Expr* e, const char* name);
+void emit_string_releases_for_return(Expr* ret_value) {
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (!out) return;
+    for (int i = 0; i < string_var_releasable_count; i++) {
+        if (ret_value && expr_references_var(ret_value, string_var_releasable[i])) continue;
+        char _cn[288];
+        fprintf(out, "wyn_rc_release(%s); ", emit_c_var_name(_cn, sizeof _cn, string_var_releasable[i]));
+    }
+}
 int get_string_var_count(void) { return string_var_releasable_count; }
 
 // Liveness: check if a variable name appears in an expression
@@ -769,6 +786,12 @@ static int expr_references_var(Expr* e, const char* name) {
         case EXPR_SPAWN: return expr_references_var(e->spawn.call, name);
         case EXPR_INDEX:
             return expr_references_var(e->index.array, name) || expr_references_var(e->index.index, name);
+        case EXPR_STRING_INTERP:
+            // "${t}" references t — without this the pre-return release freed
+            // interpolated locals (M3's interp variant).
+            for (int i = 0; i < e->string_interp.count; i++)
+                if (expr_references_var(e->string_interp.expressions[i], name)) return 1;
+            return 0;
         default: return 0;
     }
 }
