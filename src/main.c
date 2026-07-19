@@ -1064,17 +1064,37 @@ int main(int argc, char** argv) {
             if (_rt_check) {
                 fclose(_rt_check);
                 const char* _opt = build_release ? "-O3" : "-O0";
+#ifdef __APPLE__
+                // Dev-loop pch: parsing wyn_runtime.h is ~2/3 of the -O0 compile.
+                // Use runtime/wyn_runtime.pch when it's current (built by `make
+                // runtime` with EXACTLY the flags below — clang hard-errors on a
+                // stale pch, so only inject it when newer than the header).
+                static char _pch_flag[600]; _pch_flag[0] = '\0';
+                // sqlite_flags adds -D defines — a macro mismatch vs. the pch
+                // build is a hard clang error, so skip the pch in that case.
+                if (!build_release && sqlite_flags[0] == '\0') {
+                    char _pch_path[512], _hdr_path[512];
+                    snprintf(_pch_path, sizeof(_pch_path), "%s/runtime/wyn_runtime.pch", wyn_root);
+                    snprintf(_hdr_path, sizeof(_hdr_path), "%s/src/wyn_runtime.h", wyn_root);
+                    struct stat _ps, _hs;
+                    if (stat(_pch_path, &_ps) == 0 && stat(_hdr_path, &_hs) == 0 &&
+                        _ps.st_mtime >= _hs.st_mtime) {
+                        snprintf(_pch_flag, sizeof(_pch_flag), "-include-pch %s ", _pch_path);
+                    }
+                }
+#endif
                 snprintf(cmd, sizeof(cmd),
 #ifdef _WIN32
                     "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm",
 #elif defined(__APPLE__)
-                    "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src -Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
+                    "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
 #else
                     "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
 #endif
-                    cc, _opt, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
 #ifdef __APPLE__
-                    , app_link
+                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, app_link
+#else
+                    cc, _opt, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
 #endif
                     );
                 // Splice FFI link flags in at the END of the link line (before any

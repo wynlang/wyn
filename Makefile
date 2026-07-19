@@ -501,6 +501,16 @@ runtime/libwyn_rt.a: $(RT_SRCS) $(wildcard src/*.h) | wyn$(EXE_EXT)
 	@ar rcs runtime/libwyn_rt.a runtime/obj/*.o
 	@echo "Built runtime/libwyn_rt.a ($$(du -h runtime/libwyn_rt.a | cut -f1))"
 
+# Precompiled header for the dev loop (macOS/clang). Flags MUST match the -O0
+# dev compile in main.c exactly — clang refuses a pch whose flags differ.
+ifeq ($(shell uname),Darwin)
+runtime: runtime/wyn_runtime.pch
+runtime/wyn_runtime.pch: src/wyn_runtime.h
+	@$(CC) -x c-header -std=c11 -O0 -w -Wno-int-conversion -ffunction-sections -fdata-sections -I src \
+		src/wyn_runtime.h -o runtime/wyn_runtime.pch 2>/dev/null && \
+		echo "Built runtime/wyn_runtime.pch ($$(du -h runtime/wyn_runtime.pch | cut -f1))" || true
+endif
+
 # TCC runtime — excludes spawn.c, coroutine.c (can't compile macOS headers with TCC)
 TCC_BIN = vendor/tcc/bin/tcc
 TCC_RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/io_loop.c src/runtime_exports.c src/wyn_wrapper.c src/wyn_interface.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c
