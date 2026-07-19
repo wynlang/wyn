@@ -23,11 +23,37 @@ static int has_char(const char* s, char c) { return strchr(s, c) != NULL; }
 
 // ---- C type -> Wyn type ---------------------------------------------------
 
+// ---- typedef resolution -----------------------------------------------------
+// Real headers name almost everything through typedefs (png_uint_32,
+// png_structp, uv_file, …). During the scan we record every simple typedef —
+// from ALL files in the preprocessed unit, since a library's typedefs usually
+// live in a sub-header (pngconf.h) rather than the umbrella target header —
+// and map_c_type resolves unknown spellings through this table.
+#define TD_CAP 4096
+static char td_names[TD_CAP][64];
+static const char* td_types[TD_CAP];   // interned "int"/"float"/"bool"/"string"/"ptr"
+static int td_count = 0;
+
+static const char* td_lookup(const char* name) {
+    for (int i = td_count - 1; i >= 0; i--)   // later defs win
+        if (strcmp(td_names[i], name) == 0) return td_types[i];
+    return NULL;
+}
+
+static void td_add(const char* name, const char* wyn_type) {
+    if (td_count >= TD_CAP || !wyn_type) return;
+    if (strlen(name) >= sizeof(td_names[0])) return;
+    strcpy(td_names[td_count], name);
+    td_types[td_count] = wyn_type;
+    td_count++;
+}
+
 // Map a (trimmed) C type spelling to a Wyn FFI type keyword, or NULL if the
 // type is outside the representable subset. `is_return` allows `void`.
 // Pointer types (single `*`) collapse to `ptr`, except char*/const char* which
 // map to Wyn `string`. Width/signedness of integer types collapses to `int`
 // (all pass as machine words on LP64); floating types map to `float` (double).
+// Unknown single-word spellings resolve through the typedef table.
 static const char* map_c_type(const char* c, int is_return) {
     char t[256];
     strncpy(t, c, sizeof(t) - 1);
@@ -70,6 +96,8 @@ static const char* map_c_type(const char* c, int is_return) {
         for (const char* p = s; *p && bi < 255; p++) if (*p != '*' && !isspace((unsigned char)*p)) base[bi++] = *p;
         base[bi] = '\0';
         if (strcmp(base, "char") == 0 && stars == 1) return "string";
+        // A typedef'd string pointer (png_const_charp = const char*) with one
+        // extra star is still opaque; the plain typedef resolves below.
         return "ptr"; // any other single/multi pointer -> opaque
     }
 
@@ -92,7 +120,49 @@ static const char* map_c_type(const char* c, int is_return) {
         strcmp(s, "int16_t") == 0 || strcmp(s, "uint16_t") == 0 || strcmp(s, "int32_t") == 0 ||
         strcmp(s, "uint32_t") == 0 || strcmp(s, "int64_t") == 0 || strcmp(s, "uint64_t") == 0)
         return "int";
+    // Single identifier: resolve through the typedef table (png_uint_32 -> int,
+    // png_structp -> ptr, uv_file -> int, ...).
+    {
+        int is_ident = isalpha((unsigned char)s[0]) || s[0] == '_';
+        for (const char* p = s; *p && is_ident; p++)
+            if (!isalnum((unsigned char)*p) && *p != '_') is_ident = 0;
+        if (is_ident) {
+            const char* td = td_lookup(s);
+            if (td) {
+                if (strcmp(td, "void") == 0) return is_return ? "void" : NULL;
+                return td;
+            }
+        }
+    }
     return NULL; // struct-by-value, unknown typedef, etc. — not representable
+}
+
+// Record `typedef <spelling> <name>;` into the table. Handles the simple
+// one-line forms that cover real library headers:
+//   typedef unsigned int png_uint_32;
+//   typedef struct png_struct_def *png_structp;   (pointer -> ptr)
+//   typedef const char * png_const_charp;         (char* -> string)
+// Function-pointer/array/struct-body typedefs are skipped (not representable).
+static void td_record(const char* decl) {
+    const char* s = decl + 7;                       // past "typedef"
+    while (*s == ' ' || *s == '\t') s++;
+    if (has_char(s, '{') || has_char(s, '[')) return;
+    if (has_char(s, '(')) return;                    // function-pointer typedef
+    // Name = last identifier; spelling = everything before it.
+    const char* e = s + strlen(s);
+    while (e > s && isspace((unsigned char)e[-1])) e--;
+    const char* ns = e;
+    while (ns > s && (isalnum((unsigned char)ns[-1]) || ns[-1] == '_')) ns--;
+    if (ns == e || ns == s) return;
+    char name[64]; size_t nl = (size_t)(e - ns);
+    if (nl >= sizeof(name)) return;
+    memcpy(name, ns, nl); name[nl] = '\0';
+    char spelling[256]; size_t sl = (size_t)(ns - s);
+    if (sl >= sizeof(spelling)) return;
+    memcpy(spelling, s, sl); spelling[sl] = '\0';
+    // Map the spelling with the same rules as parameters (no `void` collapse).
+    const char* wt = map_c_type(spelling, 1);
+    if (wt) td_add(name, wt);
 }
 
 // ---- preprocess ------------------------------------------------------------
@@ -193,6 +263,11 @@ static void emit_defines(FILE* dump, FILE* out, int* emitted_any) {
 static char* bg_strip_attributes(char* s) {
     for (;;) {
         s = bg_trim(s);
+        // Storage-class words may precede the attribute (`extern
+        // __attribute__((visibility(...))) int git_...`) — hop over them so the
+        // attribute is found; the type mapper re-strips them later anyway.
+        if (strncmp(s, "extern ", 7) == 0) { s += 7; continue; }
+        if (strncmp(s, "static ", 7) == 0) { s += 7; continue; }
         if (strncmp(s, "__attribute__", 13) != 0) return s;
         char* p = s + 13;
         while (*p == ' ' || *p == '\t') p++;
@@ -208,13 +283,66 @@ static char* bg_strip_attributes(char* s) {
     }
 }
 
+// Remove nullability/restrict annotations in place — macOS SDK headers wrap
+// nearly every pointer in `_Nullable`/`_Nonnull`/`_Null_unspecified`, and many
+// libraries use `restrict`/`__restrict`. They carry no FFI meaning; without
+// stripping, the type mapper sees "pthread_t _Nullable *" and bails.
+static void bg_strip_annotations(char* s) {
+    const char* kw[] = {"_Nullable", "_Nonnull", "_Null_unspecified",
+                        "__restrict", "restrict", NULL};
+    for (int k = 0; kw[k]; k++) {
+        size_t kl = strlen(kw[k]);
+        char* pos = s;
+        while ((pos = strstr(pos, kw[k])) != NULL) {
+            // Only whole tokens (avoid eating identifiers containing the word).
+            int lb = (pos == s) || (!isalnum((unsigned char)pos[-1]) && pos[-1] != '_');
+            int rb = !isalnum((unsigned char)pos[kl]) && pos[kl] != '_';
+            if (lb && rb) memmove(pos, pos + kl, strlen(pos + kl) + 1);
+            else pos += kl;
+        }
+    }
+}
+
 static int emit_prototype(char* decl, FILE* out) {
     decl = bg_strip_attributes(decl);
+    bg_strip_annotations(decl);
+    // Unwrap a parenthesized function name: `extern T (name)(args)` — libpng
+    // (PNG_FUNCTION) and other export-macro styles emit this. Detect a first
+    // paren group that contains a single identifier and is followed by another
+    // '(' — that group is the name, not the parameter list.
+    {
+        char* lp0 = strchr(decl, '(');
+        if (lp0) {
+            char* q = lp0 + 1;
+            while (*q == ' ' || *q == '\t') q++;
+            char* id = q;
+            while (isalnum((unsigned char)*q) || *q == '_') q++;
+            char* qe = q;
+            while (*q == ' ' || *q == '\t') q++;
+            if (qe > id && *q == ')') {
+                char* after = q + 1;
+                while (*after == ' ' || *after == '\t') after++;
+                if (*after == '(') {
+                    // Rewrite "(  name  )" -> " name " in place.
+                    *lp0 = ' '; *q = ' ';
+                }
+            }
+        }
+    }
     // Split at the first '(' — everything before is "<ret-and-quals> name".
+    // The parameter list ends at the MATCHING ')', not the last one in the
+    // declaration: macOS/SDK prototypes carry trailing availability/__asm
+    // attributes with their own parens (`pthread_t pthread_self(void)
+    // __asm("_pthread_self")`) which strrchr used to swallow into the params.
     char* lp = strchr(decl, '(');
     if (!lp) return 0;
-    char* rp = strrchr(decl, ')');
-    if (!rp || rp < lp) return 0;
+    char* rp = NULL;
+    { int depth = 0;
+      for (char* p = lp; *p; p++) {
+          if (*p == '(') depth++;
+          else if (*p == ')') { depth--; if (depth == 0) { rp = p; break; } }
+      } }
+    if (!rp) return 0;
 
     // Header = ret type + name; params = between lp+1 and rp.
     *lp = '\0';
@@ -307,6 +435,7 @@ static int emit_prototype(char* decl, FILE* out) {
 }
 
 int wyn_bindgen(const char* header_path, const char* cc, const char* extra_iflags, FILE* out) {
+    td_count = 0;   // fresh typedef table per header
     char* pp = preprocess(header_path, cc, extra_iflags);
     if (!pp) {
         fprintf(stderr, "Error: could not preprocess '%s' (is the header path/-I correct?)\n", header_path);
@@ -342,33 +471,45 @@ int wyn_bindgen(const char* header_path, const char* cc, const char* extra_iflag
             decl[0] = '\0';
             continue;
         }
-        if (!in_target) continue;
-
-        // Accumulate until a ';' or '}' terminates a top-level declaration.
+        // Accumulate everywhere: typedefs from sub-headers (pngconf.h,
+        // uv/unix.h, SDL_stdinc.h, …) feed the typedef table; prototypes are
+        // only EMITTED from the target header.
         strncat(decl, line, sizeof(decl) - strlen(decl) - 1);
 
-        char* semi = strchr(decl, ';');
-        if (!semi) {
-            // A struct/enum/union body spans braces — if we see a '{' with no
-            // matching handling, skip to its ';' (structs handled in a later pass).
-            if (strlen(decl) > 3000) decl[0] = '\0'; // runaway guard
-            continue;
-        }
-        *semi = '\0';
-        char* d = bg_trim(decl);
+        // Drain EVERY ';'-terminated declaration in the buffer, not just the
+        // first: macro-generated headers (pcre2.h emits its whole API per
+        // code-unit width on a single physical line) pack dozens of decls per
+        // fgets chunk — processing one per read silently truncated the rest.
+        char* semi;
+        while ((semi = strchr(decl, ';')) != NULL) {
+            *semi = '\0';
+            char* d = bg_trim(decl);
 
-        // Only handle plain function prototypes in this first bindgen: contains a
-        // top-level '(' and does NOT start a struct/enum/typedef/union body.
-        if (*d && strchr(d, '(') &&
-            strncmp(d, "typedef", 7) != 0 && strncmp(d, "struct", 6) != 0 &&
-            strncmp(d, "enum", 4) != 0 && strncmp(d, "union", 5) != 0 &&
-            !has_char(d, '{') && !has_char(d, '=')) {
-            char work[4096]; strncpy(work, d, sizeof(work) - 1); work[sizeof(work) - 1] = '\0';
-            if (emit_prototype(work, out)) fn_count++;
-            emitted_any = 1;
+            // Strip leading attributes BEFORE the shape filters: macOS
+            // availability attributes contain '='
+            // (`availability(macos,introduced=10.4)`), which the
+            // `!has_char(d, '=')` initializer-filter below would otherwise
+            // reject — silently skipping every attributed prototype in SDK
+            // headers (all of pthread.h, most of libgit2).
+            d = bg_strip_attributes(d);
+
+            if (strncmp(d, "typedef", 7) == 0 && !has_char(d, '{')) {
+                td_record(d);
+            } else if (in_target && *d && strchr(d, '(') &&
+                strncmp(d, "struct", 6) != 0 &&
+                strncmp(d, "enum", 4) != 0 && strncmp(d, "union", 5) != 0 &&
+                !has_char(d, '{') && !has_char(d, '=')) {
+                // Plain function prototype from the target header.
+                char work[4096]; strncpy(work, d, sizeof(work) - 1); work[sizeof(work) - 1] = '\0';
+                if (emit_prototype(work, out)) fn_count++;
+                emitted_any = 1;
+            }
+            // Advance past the processed declaration.
+            memmove(decl, semi + 1, strlen(semi + 1) + 1);
         }
-        // Advance past the processed declaration.
-        memmove(decl, semi + 1, strlen(semi + 1) + 1);
+        // No ';' left: a struct/enum/union body spans braces — drop a runaway
+        // accumulation (struct bodies are handled in a later bindgen pass).
+        if (strlen(decl) > 3000) decl[0] = '\0';
     }
     fclose(f);
     unlink(pp); free(pp);

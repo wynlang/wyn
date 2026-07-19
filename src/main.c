@@ -1010,7 +1010,7 @@ int main(int argc, char** argv) {
         // Trigger on a direct `extern fn` OR any `import` — an imported C package
         // (`wyn add`) carries the extern fns in its own file, so the user source
         // may only have `import sqlite3` yet still need the [ffi] link flags.
-        static char ffi_tail[1536]; ffi_tail[0] = '\0';
+        static char ffi_tail[4096]; ffi_tail[0] = '\0';
         if (strstr(source, "extern fn") || strstr(source, "import ")) {
             WynConfig* _bc = wyn_config_parse("wyn.toml");
             if (_bc) { wyn_config_ffi_flags(_bc, ffi_tail, sizeof(ffi_tail)); wyn_config_free(_bc); }
@@ -1019,7 +1019,7 @@ int main(int argc, char** argv) {
             wyn_deps_ffi_flags(ffi_tail, sizeof(ffi_tail));
         }
 
-        char cmd[4096];
+        char cmd[8192];   // must hold the link line + a multi-package ffi_tail
         int result = -1;
         char rt_lib[512]; snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
 
@@ -1934,6 +1934,12 @@ int main(int argc, char** argv) {
             } else if (strncmp(argv[i], "-I", 2) == 0) {
                 size_t n = strlen(iflags);
                 snprintf(iflags + n, sizeof(iflags) - n, "%s%s", n ? " " : "", argv[i]);
+            } else if (strcmp(argv[i], "-D") == 0 && i + 1 < argc) {
+                size_t n = strlen(iflags);
+                snprintf(iflags + n, sizeof(iflags) - n, "%s-D%s", n ? " " : "", argv[++i]);
+            } else if (strncmp(argv[i], "-D", 2) == 0) {
+                size_t n = strlen(iflags);
+                snprintf(iflags + n, sizeof(iflags) - n, "%s%s", n ? " " : "", argv[i]);
             }
         }
         // Also fold in wyn.toml [ffi].include_dirs so bindgen resolves headers the
@@ -2318,7 +2324,7 @@ int main(int argc, char** argv) {
         // program that calls `extern fn`s into a C library links against it. Only
         // read when the source actually declares an extern fn (avoids a stat on
         // every build). See wyn_config_ffi_flags for the shell-metachar guard.
-        static char ffi_flags[1536];
+        static char ffi_flags[4096];   // multi-package projects accumulate long flag lists
         ffi_flags[0] = '\0';
         // Trigger on a direct `extern fn` OR any `import` — an imported C-binding
         // package (`wyn add`) carries the extern fns in its own file, so the user

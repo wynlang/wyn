@@ -219,6 +219,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_search_test.sh
 	@echo "=== Running scaffold (wyn new) test ==="
 	@WYN=./wyn bash tests/errors/run_scaffold_test.sh
+	@echo "=== Running bindgen robustness test ==="
+	@WYN=./wyn bash tests/errors/run_bindgen_test.sh
 
 # Alias kept for muscle memory.
 test_bdd: test

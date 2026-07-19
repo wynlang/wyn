@@ -79,10 +79,25 @@ WynConfig* wyn_config_parse(const char* filename) {
             config->dependencies[config->dependency_count].version = value;
             config->dependency_count++;
         } else if (strcmp(current_section, "ffi") == 0) {
-            if (strcmp(key, "libs") == 0) { free(config->ffi.libs); config->ffi.libs = value; }
-            else if (strcmp(key, "lib_dirs") == 0) { free(config->ffi.lib_dirs); config->ffi.lib_dirs = value; }
-            else if (strcmp(key, "include_dirs") == 0) { free(config->ffi.include_dirs); config->ffi.include_dirs = value; }
-            else free(value);
+            // ACCUMULATE across repeated [ffi] sections — `wyn add` appends one
+            // block per C package, so replacing meant only the LAST package's
+            // libs/dirs survived and every earlier package failed to link.
+            char** slot = NULL;
+            if      (strcmp(key, "libs") == 0)         slot = &config->ffi.libs;
+            else if (strcmp(key, "lib_dirs") == 0)     slot = &config->ffi.lib_dirs;
+            else if (strcmp(key, "include_dirs") == 0) slot = &config->ffi.include_dirs;
+            if (slot) {
+                if (*slot && **slot) {
+                    size_t need = strlen(*slot) + strlen(value) + 3;
+                    char* merged = malloc(need);
+                    snprintf(merged, need, "%s, %s", *slot, value);
+                    free(*slot); free(value);
+                    *slot = merged;
+                } else {
+                    free(*slot);
+                    *slot = value;
+                }
+            } else free(value);
         } else {
             free(value);
         }
@@ -95,7 +110,7 @@ WynConfig* wyn_config_parse(const char* filename) {
 // Append `-<flag><token>` for each comma/space-separated token in `list` to buf.
 static void append_flag_list(char* buf, int buf_size, const char* flag, const char* list) {
     if (!list || !*list) return;
-    char tmp[1024];
+    char tmp[4096];   // accumulated multi-package lists can be long
     strncpy(tmp, list, sizeof(tmp) - 1);
     tmp[sizeof(tmp) - 1] = '\0';
     // Reject shell metacharacters — an FFI list should be bare lib/dir names,
