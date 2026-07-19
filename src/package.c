@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <ctype.h>
 
 // ---- small shell/quoting helpers -------------------------------------------
 
@@ -575,4 +576,148 @@ int wyn_pkg_audit(int offline) {
     else printf("%s\n", worst == 2 ? "\033[31maudit found errors\033[0m (exit 2)"
                                    : "\033[33maudit found warnings\033[0m (exit 1)");
     return worst;
+}
+
+// ---- wyn search ---------------------------------------------------------------
+// Zero-infrastructure discovery: the "registry" is GitHub itself.
+//   1. Official packages: repos in the wynlang org.
+//   2. Community packages: repos tagged with the `wyn-package` topic.
+// Unauthenticated API (60 req/h rate limit is plenty for interactive search);
+// the compiler already shells out to git/curl, so popen keeps the pattern.
+// Output rule: every hit shows the exact `wyn pkg add ...` to run.
+
+// Non-package repos in the org (tooling, docs, this compiler, editors, ...).
+static int search_is_infra_repo(const char* name) {
+    static const char* infra[] = {
+        "wyn", "internal-docs", "site", "sample-apps", "awesome-wyn",
+        "nvim-wyn", "vscode-wyn", "play", "book", "wyn_old", "assets",
+        ".github", NULL
+    };
+    for (int i = 0; infra[i]; i++)
+        if (strcmp(name, infra[i]) == 0) return 1;
+    return 0;
+}
+
+// Fetch a URL with curl into a malloc'd buffer (NULL on failure).
+static char* search_fetch(const char* url) {
+    if (!shell_safe(url)) return NULL;
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "curl -s -m 10 -H 'Accept: application/vnd.github+json' '%s'", url);
+    FILE* fp = popen(cmd, "r");
+    if (!fp) return NULL;
+    size_t cap = 65536, len = 0;
+    char* buf = malloc(cap);
+    size_t n;
+    while ((n = fread(buf + len, 1, cap - len - 1, fp)) > 0) {
+        len += n;
+        if (cap - len < 4096) { cap *= 2; buf = realloc(buf, cap); }
+    }
+    pclose(fp);
+    buf[len] = '\0';
+    if (len == 0) { free(buf); return NULL; }
+    return buf;
+}
+
+// Minimal scanner over the GitHub JSON array: pull "name" and "description"
+// pairs in order. Full JSON parsing is overkill for two string fields; this
+// tolerates description:null and keeps package.c dependency-free.
+// Find `"key"` then skip `: "` with arbitrary whitespace; returns the value
+// start or NULL. GitHub pretty-prints its JSON ("name": "web"), so fixed
+// "key":"value" patterns don't match.
+static const char* search_json_str(const char* from, const char* key) {
+    char pat[64]; snprintf(pat, sizeof(pat), "\"%s\"", key);
+    const char* k = strstr(from, pat);
+    if (!k) return NULL;
+    k += strlen(pat);
+    while (*k == ' ' || *k == '\t') k++;
+    if (*k != ':') return NULL;
+    k++;
+    while (*k == ' ' || *k == '\t' || *k == '\n') k++;
+    if (*k != '"') return NULL;  // null / non-string
+    return k + 1;
+}
+
+static void search_print_repos(const char* json, const char* needle,
+                               const char* add_prefix, int* shown) {
+    const char* p = json;
+    char full[256], name[128], desc[512];
+    // Anchor on "full_name" ("owner/repo") — unique per repo object; a bare
+    // "name" key also appears inside nested license/owner objects ("MIT
+    // License" showed up as a package before this).
+    while ((p = search_json_str(p, "full_name")) != NULL) {
+        size_t i = 0;
+        while (*p && *p != '"' && i < sizeof(full) - 1) full[i++] = *p++;
+        full[i] = '\0';
+        const char* slash = strrchr(full, '/');
+        snprintf(name, sizeof(name), "%s", slash ? slash + 1 : full);
+        // description follows full_name in the repo object
+        desc[0] = '\0';
+        const char* next_repo = strstr(p, "\"full_name\"");
+        const char* d = search_json_str(p, "description");
+        if (d && (!next_repo || d < next_repo)) {
+            size_t j = 0;
+            while (*d && *d != '"' && j < sizeof(desc) - 1) {
+                if (*d == '\\' && d[1]) d++;  // unescape \" etc.
+                desc[j++] = *d++;
+            }
+            desc[j] = '\0';
+        }
+        if (search_is_infra_repo(name)) continue;
+        if (needle && needle[0]) {
+            // case-insensitive substring match on name or description
+            char lname[128], ldesc[512], lneedle[128];
+            size_t k;
+            for (k = 0; name[k] && k < 127; k++) lname[k] = (char)tolower((unsigned char)name[k]);
+            lname[k] = 0;
+            for (k = 0; desc[k] && k < 511; k++) ldesc[k] = (char)tolower((unsigned char)desc[k]);
+            ldesc[k] = 0;
+            for (k = 0; needle[k] && k < 127; k++) lneedle[k] = (char)tolower((unsigned char)needle[k]);
+            lneedle[k] = 0;
+            if (!strstr(lname, lneedle) && !strstr(ldesc, lneedle)) continue;
+        }
+        printf("  \033[1m%-14s\033[0m %s\n", name, desc[0] ? desc : "(no description)");
+        printf("                 \033[2mwyn pkg add %s%s\033[0m\n", add_prefix, name);
+        (*shown)++;
+    }
+}
+
+int wyn_pkg_search(const char* query) {
+    printf("\033[1mSearching packages\033[0m%s%s\n\n",
+           query && query[0] ? " for: " : "", query ? query : "");
+
+    int shown = 0;
+    // Official: the wynlang org. Bare names resolve here.
+    char* org = search_fetch("https://api.github.com/orgs/wynlang/repos?per_page=100&sort=updated");
+    if (org) {
+        search_print_repos(org, query, "", &shown);
+        free(org);
+    } else {
+        fprintf(stderr, "  \033[33m⚠\033[0m could not reach api.github.com (offline?)\n");
+        return 1;
+    }
+
+    // Community: anything tagged `wyn-package`, any owner. Install by full path.
+    char topic_url[512];
+    if (query && query[0] && shell_safe(query)) {
+        snprintf(topic_url, sizeof(topic_url),
+                 "https://api.github.com/search/repositories?q=topic:wyn-package+%s&per_page=30", query);
+    } else {
+        snprintf(topic_url, sizeof(topic_url),
+                 "https://api.github.com/search/repositories?q=topic:wyn-package&per_page=30");
+    }
+    char* topic = search_fetch(topic_url);
+    if (topic) {
+        search_print_repos(topic, query, "github.com/", &shown);
+        free(topic);
+    }
+
+    if (shown == 0) {
+        printf("  no packages matched%s%s\n", query ? " " : "", query ? query : "");
+        printf("\n  Publish your own: push a repo with a wyn.toml and tag it\n");
+        printf("  (add the 'wyn-package' GitHub topic so search finds it).\n");
+    } else {
+        printf("\n%d package%s. Pin a version: wyn pkg add <name>@<tag>\n", shown, shown == 1 ? "" : "s");
+    }
+    return 0;
 }
