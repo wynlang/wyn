@@ -23,10 +23,22 @@ fixes that make writing Wyn packages actually pleasant. No breaking changes.
   detected, and dependencies that link native code via `[ffi]` are flagged for
   review. `--offline` skips remote checks. Exit code = worst finding.
 
+**Language: string lambdas** (the biggest expressiveness gap, closed)
+- **String-parameter lambdas work end-to-end**: `words.map((s) => s.upper())`,
+  `names.map((s) => "Hi " + s + "!")`, `words.filter((s) => s.len() > 3)` —
+  string methods, string concat, and identity lambdas on `[string]` arrays all
+  compile and run. Lambda bodies now go through the real expression code
+  generator instead of a separate int-only mini-emitter, so every expression
+  form works inside a lambda. `.map()`/`.filter()` on a `[string]` array
+  return `[string]` (element types are preserved through the chain).
+
 **Ecosystem**
 - **`wyn pkg add web`** — the first official batteries-included web package
   (github.com/wynlang/web): request parsing, JSON/HTML responses, traversal-safe
   static files, an HTML page builder, spawn-per-request concurrency.
+- **Curated C recipes: 12 → 31.** `wyn add png|jpeg|pcre2|yaml|ffi|uuid|ev|uv|
+  sdl2|pthread|expat|bz2|iconv|gmp|onig|ssh2|git2|archive|magic` — each with
+  headers, pkg-config, and per-OS install hints.
 
 **Module/package correctness** (found building that package)
 - Fixed four imported-module codegen bugs: sibling calls to functions with
@@ -69,8 +81,16 @@ fixes that make writing Wyn packages actually pleasant. No breaking changes.
 **Performance**
 - Code generation no longer flushes per fragment — large builds are ~25%
   faster on the frontend side.
+- The checker's symbol table is hashed — `wyn check` on very large files is
+  now near-linear instead of O(n²) (name lookups were 95% of checker time).
+- Dev builds are ~40% faster on macOS: the 5,400-line runtime header is
+  precompiled once (`make runtime`) instead of re-parsed on every
+  `wyn build`/`wyn run` (hello: 830ms → 500ms).
+- Compiled binaries no longer carry a 2.1MB zeroed scheduler-deque block —
+  the work-stealing deques are allocated at scheduler start, sized to the
+  real core count (hello's data segment: 2.1MB → 16KB).
 
-**Tests**: 134 expect/regression tests + 12 dedicated sub-suites (scaffolding,
+**Tests**: 135 expect/regression tests + 12 dedicated sub-suites (scaffolding,
 test runner, pkg audit, module codegen, and more), all green on all platforms.
 
 ## v1.18.0 — "The Correctness Release" (2026-07-17)
