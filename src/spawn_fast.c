@@ -198,7 +198,12 @@ typedef struct {
     pthread_cond_t park_cond;
 } Processor;
 
-static Processor processors[MAX_PROCESSORS];
+// Heap-allocated at init, sized to the real core count. The old static
+// `processors[MAX_PROCESSORS]` embedded 64 × 4096-entry atomic deques =
+// ~2.1MB of BSS zerofill in EVERY compiled binary (hello world included).
+// All access paths loop to num_processors (0 before init), so a NULL
+// pointer is never dereferenced before init_scheduler allocates it.
+static Processor* processors = NULL;
 static _Atomic int num_processors = 0;
 static _Atomic int initialized = 0;
 static _Atomic int scheduler_shutdown = 0;
@@ -404,9 +409,12 @@ static void init_scheduler(void) {
     if (cpus < 1) cpus = 4;
     if (cpus > MAX_PROCESSORS) cpus = MAX_PROCESSORS;
     
+    processors = calloc((size_t)cpus, sizeof(Processor));
+    if (!processors) { fprintf(stderr, "wyn: scheduler alloc failed\n"); exit(1); }
+
     atomic_store(&num_processors, cpus);
     global_queue_init();
-    
+
     processors[0].id = 0;
     deque_init(&processors[0].deque);
     atomic_store(&processors[0].spinning, 0);
