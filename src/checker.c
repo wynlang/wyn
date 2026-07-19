@@ -622,29 +622,64 @@ static Type* get_inner_type(Type* optional_type) {
     return optional_type->optional_type.inner_type;
 }
 
+// FNV-1a hash for token bytes
+static inline uint32_t sym_hash(const char* s, int len) {
+    if (!s || len <= 0) return 0;
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < len; i++) {
+        h ^= (unsigned char)s[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static void sym_table_rehash(SymbolTable* scope) {
+    int new_cap = scope->hash_capacity == 0 ? 16 : scope->hash_capacity * 2;
+    int* new_indices = malloc(new_cap * sizeof(int));
+    for (int i = 0; i < new_cap; i++) new_indices[i] = -1;
+    int mask = new_cap - 1;
+    for (int i = 0; i < scope->count; i++) {
+        if (!scope->symbols[i].name.start || scope->symbols[i].name.length <= 0) continue;
+        uint32_t h = sym_hash(scope->symbols[i].name.start, scope->symbols[i].name.length);
+        int slot = h & mask;
+        while (new_indices[slot] != -1) slot = (slot + 1) & mask;
+        new_indices[slot] = i;
+    }
+    free(scope->hash_indices);
+    scope->hash_indices = new_indices;
+    scope->hash_capacity = new_cap;
+}
+
 void add_symbol(SymbolTable* scope, Token name, Type* type, bool is_mutable) {
     if (scope->count >= scope->capacity) {
-        scope->capacity = scope->capacity == 0 ? 8 : scope->capacity * 2;
-        scope->symbols = realloc(scope->symbols, scope->capacity * sizeof(Symbol));
+        int new_cap = scope->capacity == 0 ? 8 : scope->capacity * 2;
+        scope->symbols = realloc(scope->symbols, new_cap * sizeof(Symbol));
+        scope->capacity = new_cap;
     }
-    scope->symbols[scope->count].name = name;
-    scope->symbols[scope->count].type = type;
-    scope->symbols[scope->count].is_mutable = is_mutable;
-    scope->symbols[scope->count].is_used = false;
-    scope->symbols[scope->count].next_overload = NULL;  // T1.5.3: Initialize overload chain
-    scope->symbols[scope->count].mangled_name = NULL;   // T1.5.3: Initialize mangled name
+    int idx = scope->count;
+    scope->symbols[idx].name = name;
+    scope->symbols[idx].type = type;
+    scope->symbols[idx].is_mutable = is_mutable;
+    scope->symbols[idx].is_used = false;
+    scope->symbols[idx].next_overload = NULL;
+    scope->symbols[idx].mangled_name = NULL;
     scope->count++;
+
+    // Rehash if load factor > 0.7
+    if (scope->hash_capacity == 0 || scope->count * 10 > scope->hash_capacity * 7) {
+        sym_table_rehash(scope);
+    } else if (name.start && name.length > 0) {
+        int mask = scope->hash_capacity - 1;
+        uint32_t h = sym_hash(name.start, name.length);
+        int slot = h & mask;
+        while (scope->hash_indices[slot] != -1) slot = (slot + 1) & mask;
+        scope->hash_indices[slot] = idx;
+    }
 }
 
 static void mark_used(SymbolTable* scope, Token name) {
-    for (int i = 0; i < scope->count; i++) {
-        if (scope->symbols[i].name.length == name.length &&
-            memcmp(scope->symbols[i].name.start, name.start, name.length) == 0) {
-            scope->symbols[i].is_used = true;
-            return;
-        }
-    }
-    if (scope->parent) mark_used(scope->parent, name);
+    Symbol* sym = find_symbol(scope, name);
+    if (sym) sym->is_used = true;
 }
 
 // Lazily register a monomorphic Option<Struct> family for a user-struct payload
@@ -2298,10 +2333,28 @@ void init_checker() {
 }
 
 Symbol* find_symbol(SymbolTable* scope, Token name) {
-    for (int i = 0; i < scope->count; i++) {
-        if (scope->symbols[i].name.length == name.length &&
-            memcmp(scope->symbols[i].name.start, name.start, name.length) == 0) {
-            return &scope->symbols[i];
+    if (name.length <= 0 || !name.start) {
+        if (scope->parent) return find_symbol(scope->parent, name);
+        return NULL;
+    }
+    if (scope->hash_capacity > 0 && scope->hash_indices) {
+        int mask = scope->hash_capacity - 1;
+        uint32_t h = sym_hash(name.start, name.length);
+        int slot = h & mask;
+        while (scope->hash_indices[slot] != -1) {
+            int idx = scope->hash_indices[slot];
+            if (scope->symbols[idx].name.length == name.length &&
+                memcmp(scope->symbols[idx].name.start, name.start, name.length) == 0) {
+                return &scope->symbols[idx];
+            }
+            slot = (slot + 1) & mask;
+        }
+    } else {
+        for (int i = 0; i < scope->count; i++) {
+            if (scope->symbols[i].name.length == name.length &&
+                memcmp(scope->symbols[i].name.start, name.start, name.length) == 0) {
+                return &scope->symbols[i];
+            }
         }
     }
     if (scope->parent) return find_symbol(scope->parent, name);
@@ -3543,6 +3596,36 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Token method = expr->method_call.method;
             char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
 
+            // S2 context-propagation: when .map()/.filter() is called on a [string]
+            // array and the lambda arg has int-defaulted params, override them to
+            // string. This handles identity lambdas like `(s) => s` where body analysis
+            // alone gives no type evidence.
+            if (object_type && object_type->kind == TYPE_ARRAY &&
+                object_type->array_type.element_type &&
+                object_type->array_type.element_type->kind == TYPE_STRING &&
+                expr->method_call.arg_count == 1 &&
+                expr->method_call.args[0]->type == EXPR_LAMBDA &&
+                ((method.length == 3 && memcmp(method.start, "map", 3) == 0) ||
+                 (method.length == 6 && memcmp(method.start, "filter", 6) == 0))) {
+                Expr* lam = expr->method_call.args[0];
+                if (lam->expr_type && lam->expr_type->kind == TYPE_FUNCTION) {
+                    for (int pi = 0; pi < lam->expr_type->fn_type.param_count; pi++) {
+                        if (lam->expr_type->fn_type.param_types[pi] &&
+                            lam->expr_type->fn_type.param_types[pi]->kind == TYPE_INT) {
+                            lam->expr_type->fn_type.param_types[pi] = builtin_string;
+                        }
+                    }
+                    // Also update the return type for map: if return was int (body = just
+                    // the param ident), the lambda actually returns string.
+                    if (method.length == 3 && memcmp(method.start, "map", 3) == 0 &&
+                        lam->expr_type->fn_type.return_type &&
+                        lam->expr_type->fn_type.return_type->kind == TYPE_INT &&
+                        lam->lambda.body && lam->lambda.body->type == EXPR_IDENT) {
+                        lam->expr_type->fn_type.return_type = builtin_string;
+                    }
+                }
+            }
+
             // Check for namespace method calls: File.read() -> File_read
             // Only for known namespaces, not regular variables
             if (expr->method_call.object->type == EXPR_IDENT) {
@@ -3787,6 +3870,16 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                 expr->expr_type = string_array;
                                 return string_array;
                             }
+                        }
+                        // S2: .map()/.filter() on [string] returns [string]
+                        if (object_type && object_type->kind == TYPE_ARRAY &&
+                            object_type->array_type.element_type &&
+                            object_type->array_type.element_type->kind == TYPE_STRING &&
+                            (strcmp(method_name, "map") == 0 || strcmp(method_name, "filter") == 0)) {
+                            Type* str_arr = make_type(TYPE_ARRAY);
+                            str_arr->array_type.element_type = builtin_string;
+                            expr->expr_type = str_arr;
+                            return str_arr;
                         }
                         expr->expr_type = builtin_array;
                         return builtin_array;
@@ -4234,28 +4327,6 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             lambda_type->fn_type.return_type = body_type;
             expr->expr_type = lambda_type;
 
-            // Staged-codegen guard: the lambda code emitter is int-only today (see
-            // internal-docs/LAMBDA_REWORK.md — S2 routes bodies through codegen_expr).
-            // Until then, a string/float PARAM lambda would mis-emit, so surface a
-            // clear, actionable limitation error here instead of letting it produce
-            // wrong C. Int-param lambdas (incl. .map/.filter/.reduce over ints) are
-            // unaffected.
-            for (int i = 0; i < expr->lambda.param_count; i++) {
-                Type* pt = (i < 16) ? param_inferred[i] : builtin_int;
-                if (pt && pt->kind != TYPE_INT) {
-                    fprintf(stderr,
-                        "\nError at line %d: lambda parameters other than int are not "
-                        "supported yet (parameter '%.*s' is used as a %s).\n",
-                        expr->lambda.params[i].line,
-                        expr->lambda.params[i].length, expr->lambda.params[i].start,
-                        pt->kind == TYPE_STRING ? "string" : "non-int value");
-                    fprintf(stderr,
-                        "  Workaround: use a named `fn`, or operate on int params. "
-                        "(Tracked: string/float lambda support — LAMBDA_REWORK.md S2.)\n");
-                    had_error = true;
-                    break;
-                }
-            }
             return lambda_type;
         }
         case EXPR_MAP: {
@@ -6907,11 +6978,10 @@ void check_program(Program* prog) {
             fn_stmt = fn_stmt->export.stmt;
         }
         if (fn_stmt->type == STMT_FN) {
-            SymbolTable local_scope;
+            SymbolTable local_scope = {0};
             local_scope.parent = global_scope;
             local_scope.capacity = 32;
             local_scope.symbols = calloc(32, sizeof(Symbol));
-            local_scope.count = 0;
             
             FnStmt* fn = &fn_stmt->fn;
             

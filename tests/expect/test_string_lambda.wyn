@@ -1,0 +1,22 @@
+// EXPECT: HELLO
+// EXPECT: WORLD
+// EXPECT: hello world
+// EXPECT: 2
+// String-parameter lambdas: the S2 rework routes bodies through codegen_expr,
+// giving string concat, string methods, and type-safe map/filter for free.
+
+fn main() -> int {
+    words = ["hello", "world"]
+
+    upper = words.map((s) => s.upper())
+    println(upper[0])
+    println(upper[1])
+
+    joined = words.map((s) => s).join(" ")
+    println(joined)
+
+    long_words = words.filter((s) => s.len() > 4)
+    println(long_words.len().to_string())
+
+    return 0
+}

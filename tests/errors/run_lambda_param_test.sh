@@ -1,7 +1,6 @@
 #!/bin/bash
-# Lambda param-type inference (S1): int-param lambdas + .map/.filter/.reduce over ints
-# still work; a string-param lambda gives a CLEAN "not supported yet" error (not a
-# cryptic type mismatch, and not a silent miscompile). (2026-07)
+# Lambda param-type tests: int lambdas, int .map/.filter, and string lambdas
+# (S2 rework landed — string params now work end-to-end). (2026-07)
 set -uo pipefail
 WYN="${WYN:-./wyn}"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -19,9 +18,9 @@ printf 'fn main() {\n  var xs=[1,2,3,4]\n  println(xs.map((n) => n*10))\n  print
 out=$("$WYN" build "$TMP/m.wyn" >/dev/null 2>&1 && "$TMP/m" 2>&1; rm -f "$TMP/m" "$TMP/m.wyn.c")
 echo "$out" | grep -q "10, 20, 30, 40" && ok "int .map runs" || bad "int .map: [$out]"
 
-# string-param lambda → clean limitation error (exit non-zero, helpful message)
-printf 'fn main() {\n  var f = (s) => s + "!"\n  println(f("hi"))\n}\n' > "$TMP/s.wyn"
-out=$("$WYN" check "$TMP/s.wyn" 2>&1); code=$?
-if [ $code -ne 0 ] && echo "$out" | grep -q "not supported yet"; then ok "string lambda: clean error"; else bad "string lambda err: code=$code [$out]"; fi
+# string lambda: .map with string method
+printf 'fn main() {\n  words = ["hello", "world"]\n  upper = words.map((s) => s.upper())\n  println(upper[0])\n  println(upper[1])\n}\n' > "$TMP/s.wyn"
+out=$("$WYN" build "$TMP/s.wyn" >/dev/null 2>&1 && "$TMP/s" 2>&1; rm -f "$TMP/s" "$TMP/s.wyn.c")
+echo "$out" | grep -q "HELLO" && echo "$out" | grep -q "WORLD" && ok "string .map runs" || bad "string .map: [$out]"
 
 echo ""; echo "lambda-params: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]

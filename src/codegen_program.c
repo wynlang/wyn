@@ -428,7 +428,12 @@ void codegen_program(Program* prog) {
     if (lambda_count > 0) {
         emit("// Lambda functions\n");
         for (int i = 0; i < lambda_count; i++) {
-            emit("%s\n", lambda_functions[i].code);
+            if (lambda_functions[i].ast) {
+                emit_lambda_via_codegen(&lambda_functions[i]);
+                emit("\n");
+            } else if (lambda_functions[i].code) {
+                emit("%s\n", lambda_functions[i].code);
+            }
         }
         emit("\n");
     }

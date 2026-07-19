@@ -125,3 +125,185 @@ headers = "json-c/json_object.h, json-c/json_tokener.h, json-c/linkhash.h"
 system.brew = "json-c"
 system.apt = "libjson-c-dev"
 system.pacman = "json-c"
+
+[png]
+description = "libpng — PNG image reading and writing"
+version = "system"
+libs = "png"
+pkgconfig = "libpng"
+headers = "png.h"
+system.brew = "libpng"
+system.apt = "libpng-dev"
+system.pacman = "libpng"
+
+[jpeg]
+description = "libjpeg — JPEG image compression and decompression"
+version = "system"
+libs = "jpeg"
+pkgconfig = "libjpeg"
+headers = "jpeglib.h"
+system.brew = "jpeg"
+system.apt = "libjpeg-dev"
+system.pacman = "libjpeg-turbo"
+
+[pcre2]
+description = "PCRE2 — Perl-Compatible Regular Expressions (8-bit)"
+version = "system"
+libs = "pcre2-8"
+pkgconfig = "libpcre2-8"
+headers = "pcre2.h"
+system.brew = "pcre2"
+system.apt = "libpcre2-dev"
+system.pacman = "pcre2"
+
+[yaml]
+description = "libyaml — YAML 1.1 parser and emitter"
+version = "system"
+libs = "yaml"
+pkgconfig = "yaml-0.1"
+headers = "yaml.h"
+system.brew = "libyaml"
+system.apt = "libyaml-dev"
+system.pacman = "libyaml"
+
+[ffi]
+description = "libffi — portable foreign function interface (calling conventions)"
+version = "system"
+libs = "ffi"
+pkgconfig = "libffi"
+headers = "ffi.h"
+system.brew = "libffi"
+system.apt = "libffi-dev"
+system.pacman = "libffi"
+
+[uuid]
+description = "libuuid — UUID generation (RFC 4122)"
+version = "system"
+libs = "uuid"
+pkgconfig = "uuid"
+headers = "uuid/uuid.h"
+system.brew = "ossp-uuid"
+system.apt = "uuid-dev"
+system.pacman = "util-linux-libs"
+
+[ev]
+description = "libev — high-performance event loop (epoll/kqueue/select)"
+version = "system"
+libs = "ev"
+headers = "ev.h"
+system.brew = "libev"
+system.apt = "libev-dev"
+system.pacman = "libev"
+
+[uv]
+description = "libuv — cross-platform async I/O (event loop, TCP, UDP, FS)"
+version = "system"
+libs = "uv"
+pkgconfig = "libuv"
+headers = "uv.h"
+system.brew = "libuv"
+system.apt = "libuv1-dev"
+system.pacman = "libuv"
+
+[sdl2]
+description = "SDL2 — cross-platform graphics, audio, and input"
+version = "system"
+libs = "SDL2"
+pkgconfig = "sdl2"
+include_dirs = "/opt/homebrew/include/SDL2, /usr/include/SDL2, /usr/local/include/SDL2"
+headers = "SDL.h"
+system.brew = "sdl2"
+system.apt = "libsdl2-dev"
+system.pacman = "sdl2"
+
+[pthread]
+description = "POSIX threads — mutexes, conditions, thread creation"
+version = "system"
+libs = "pthread"
+headers = "pthread.h"
+
+[expat]
+description = "Expat — streaming XML parser (SAX-style)"
+version = "system"
+libs = "expat"
+pkgconfig = "expat"
+headers = "expat.h"
+system.brew = "expat"
+system.apt = "libexpat1-dev"
+system.pacman = "expat"
+
+[bz2]
+description = "bzip2 — block-sorting compression"
+version = "system"
+libs = "bz2"
+headers = "bzlib.h"
+system.brew = "bzip2"
+system.apt = "libbz2-dev"
+system.pacman = "bzip2"
+
+[iconv]
+description = "libiconv — character set conversion (UTF-8, Latin-1, …)"
+version = "system"
+libs = "iconv"
+headers = "iconv.h"
+system.brew = "libiconv"
+system.apt = "libc6-dev"
+
+[gmp]
+description = "GMP — GNU Multiple Precision arithmetic (big integers, rationals)"
+version = "system"
+libs = "gmp"
+pkgconfig = "gmp"
+headers = "gmp.h"
+system.brew = "gmp"
+system.apt = "libgmp-dev"
+system.pacman = "gmp"
+
+[onig]
+description = "Oniguruma — advanced regex engine (Unicode, named groups)"
+version = "system"
+libs = "onig"
+pkgconfig = "oniguruma"
+headers = "oniguruma.h"
+system.brew = "oniguruma"
+system.apt = "libonig-dev"
+system.pacman = "oniguruma"
+
+[ssh2]
+description = "libssh2 — SSH2 client (session, channel, SFTP, SCP)"
+version = "system"
+libs = "ssh2"
+pkgconfig = "libssh2"
+headers = "libssh2.h"
+system.brew = "libssh2"
+system.apt = "libssh2-1-dev"
+system.pacman = "libssh2"
+
+[git2]
+description = "libgit2 — pure-C Git implementation (repos, commits, diffs)"
+version = "system"
+libs = "git2"
+pkgconfig = "libgit2"
+headers = "git2.h"
+system.brew = "libgit2"
+system.apt = "libgit2-dev"
+system.pacman = "libgit2"
+
+[archive]
+description = "libarchive — reading/writing tar, zip, gzip, xz, …"
+version = "system"
+libs = "archive"
+pkgconfig = "libarchive"
+headers = "archive.h, archive_entry.h"
+system.brew = "libarchive"
+system.apt = "libarchive-dev"
+system.pacman = "libarchive"
+
+[magic]
+description = "libmagic — file type detection (like the `file` command)"
+version = "system"
+libs = "magic"
+headers = "magic.h"
+system.brew = "libmagic"
+system.apt = "libmagic-dev"
+system.pacman = "file"

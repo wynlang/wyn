@@ -142,6 +142,9 @@ typedef struct SymbolTable {
     int count;
     int capacity;
     struct SymbolTable* parent;
+    // Hash index for O(1) find_symbol (open-addressing, FNV-1a)
+    int* hash_indices;   // maps hash slot → index in symbols[] (-1 = empty)
+    int hash_capacity;   // always a power of 2
 } SymbolTable;
 
 // Symbol table operations
