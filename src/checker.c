@@ -2102,6 +2102,8 @@ void init_checker() {
         {"Http_timeout", 12, 1, builtin_int},
         {"Http_listen", 11, 1, builtin_int},
         {"Http_accept", 11, 1, builtin_string},
+        {"Http_accept_fd", 14, 1, builtin_int},
+        {"Http_read_request", 17, 1, builtin_string},
         {"Http_method", 11, 1, builtin_string},
         {"Http_path", 9, 1, builtin_string},
         {"Http_body", 9, 1, builtin_string},
