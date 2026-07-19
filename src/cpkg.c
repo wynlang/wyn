@@ -50,6 +50,8 @@ typedef struct {
     char headers[512];
     char pkgconfig[64];   // pkg-config module name (e.g. "libcrypto" for [crypto]);
                           // defaults to the recipe name when unset.
+    char defines[256];    // -D flags required to preprocess the headers
+                          // (e.g. PCRE2_CODE_UNIT_WIDTH=8), comma/space separated
     int found;
 } Recipe;
 
@@ -120,6 +122,7 @@ static int registry_scan(const char* wyn_root, const char* want, Recipe* out) {
         else if (strcmp(key, "include_dirs") == 0) strncpy(out->include_dirs, val, sizeof(out->include_dirs)-1);
         else if (strcmp(key, "headers") == 0)      strncpy(out->headers, val, sizeof(out->headers)-1);
         else if (strcmp(key, "pkgconfig") == 0)    strncpy(out->pkgconfig, val, sizeof(out->pkgconfig)-1);
+        else if (strcmp(key, "defines") == 0)      strncpy(out->defines, val, sizeof(out->defines)-1);
     }
     // flush the last section in list mode
     if (!want && section[0] && cur_desc[0]) { printf("  %-14s %s\n", section, cur_desc); listed++; }
@@ -398,6 +401,11 @@ int wyn_cpkg_add(const char* name, const char* wyn_root, const char* cc) {
                     size_t n=strlen(iflags); snprintf(iflags+n,sizeof(iflags)-n,"%s-I%s",n?" ":"",d); }
             }
             if (pc_includes[0]) { size_t n=strlen(iflags); snprintf(iflags+n,sizeof(iflags)-n,"%s%s",n?" ":"",pc_includes); }
+            if (r.defines[0]) {
+                char tmp[256]; strncpy(tmp,r.defines,sizeof(tmp)-1); tmp[sizeof(tmp)-1]=0;
+                char* s3=NULL; for (char* d=strtok_r(tmp,", \t",&s3); d; d=strtok_r(NULL,", \t",&s3)) {
+                    size_t n=strlen(iflags); snprintf(iflags+n,sizeof(iflags)-n,"%s-D%s",n?" ":"",d); }
+            }
             if (wyn_bindgen(h, cc, iflags, bf) == 0) ok++;
             fprintf(bf, "\n");
         }
