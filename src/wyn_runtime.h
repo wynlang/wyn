@@ -2483,6 +2483,52 @@ static void wyn_http_nosigpipe(int fd) { (void)fd; }
 static void wyn_http_nosigpipe(int fd) { (void)fd; }
 #endif
 
+// --- Keep-alive state (2026-07-19) -------------------------------------------
+// HTTP/1.1 default is persistent connections; closing after every response
+// forced a fresh TCP handshake per request — measured 5x slower than Go on
+// the same endpoint (7k vs 35k rps with ab -k). read_request records whether
+// THIS request wants keep-alive (per fd); respond consults it. Bitset sized
+// by fd — fds above the table always close (correct, just not persistent).
+#define WYN_HTTP_KA_MAX 4096
+static _Atomic unsigned char wyn_http_ka[WYN_HTTP_KA_MAX];
+static void wyn_http_set_ka(int fd, int on) {
+    if (fd >= 0 && fd < WYN_HTTP_KA_MAX) atomic_store(&wyn_http_ka[fd], (unsigned char)(on ? 1 : 0));
+}
+static int wyn_http_get_ka(int fd) {
+    return (fd >= 0 && fd < WYN_HTTP_KA_MAX) ? atomic_load(&wyn_http_ka[fd]) : 0;
+}
+// Parse the request head for connection semantics: HTTP/1.1 defaults to
+// keep-alive unless "Connection: close"; HTTP/1.0 defaults to close unless
+// "Connection: keep-alive". Case-insensitive scan of the header block only.
+// Local case-insensitive strncmp: strncasecmp lives in strings.h and is
+// hidden by _POSIX_C_SOURCE strictness on some platforms; Windows spells it
+// _strnicmp. A 6-line loop beats the ifdef zoo.
+static int wyn_http_ci_ncmp(const char* a, const char* b, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        int ca = (unsigned char)a[i], cb = (unsigned char)b[i];
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return ca - cb;
+        if (ca == 0) return 0;
+    }
+    return 0;
+}
+static int wyn_http_request_wants_ka(const char* head) {
+    int http11 = strstr(head, "HTTP/1.1") != NULL;
+    const char* h = head;
+    while ((h = strchr(h, '\n')) != NULL) {
+        h++;
+        if (wyn_http_ci_ncmp(h, "connection:", 11) == 0) {
+            const char* v = h + 11;
+            while (*v == ' ' || *v == '\t') v++;
+            if (wyn_http_ci_ncmp(v, "close", 5) == 0) return 0;
+            if (wyn_http_ci_ncmp(v, "keep-alive", 10) == 0) return 1;
+        }
+        if (h[0] == '\r' && h[1] == '\n') break;
+    }
+    return http11;
+}
+
 static void http_send_response(int client_fd, int status, const char* content_type, const char* body) {
     wyn_http_nosigpipe(client_fd);
     const char* status_text = "OK";
@@ -2491,17 +2537,28 @@ static void http_send_response(int client_fd, int status, const char* content_ty
     else if (status == 404) status_text = "Not Found";
     else if (status == 500) status_text = "Internal Server Error";
     int body_len = body ? (int)strlen(body) : 0;
+    int ka = wyn_http_get_ka(client_fd);
     char header[1024];
     snprintf(header, sizeof(header),
-        "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
-        status, status_text, content_type ? content_type : "text/plain", body_len);
+        "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: %s\r\n\r\n",
+        status, status_text, content_type ? content_type : "text/plain", body_len,
+        ka ? "keep-alive" : "close");
     send(client_fd, header, strlen(header), WYN_HTTP_SEND_FLAGS);
     if (body && body_len > 0) send(client_fd, body, body_len, WYN_HTTP_SEND_FLAGS);
 }
 
 void Http_respond(long long client_fd, long long status, const char* content_type, const char* body) {
     http_send_response((int)client_fd, (int)status, content_type, body);
-    close((int)client_fd);
+    // The CLOSE happens in Http_read_request's next iteration, never here:
+    // if respond closed the fd while the handler coroutine was still going
+    // to loop, the kernel could recycle the fd number to a brand-new
+    // connection and the old handler would read — and close — the new
+    // client's traffic (connection-resets under ab -c 100, 2026-07-19).
+    // Single owner: the handler loop. Flag value 2 = "close pending".
+    if (!wyn_http_get_ka((int)client_fd)) {
+        if ((int)client_fd >= 0 && (int)client_fd < WYN_HTTP_KA_MAX)
+            atomic_store(&wyn_http_ka[(int)client_fd], 2);
+    }
 }
 
 // --- Route matching: /users/:id → extracts params ---
@@ -2715,6 +2772,10 @@ long long Http_accept_fd(int server_fd) {
         client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
         if (client_fd < 0) return -1;
     }
+    // Fresh connection: clear any stale keep-alive flag left by a previous
+    // connection that used this fd number (fds are recycled; a stale ka=1
+    // made respond skip the close for a client that never asked for KA).
+    wyn_http_set_ka(client_fd, 0);
     wyn_http_nosigpipe(client_fd);
     return client_fd;
 }
@@ -2725,6 +2786,15 @@ long long Http_accept_fd(int server_fd) {
 char* Http_read_request(long long client_fd_ll) {
     int client_fd = (int)client_fd_ll;
     if (client_fd < 0) return "";
+    // A previous respond() on this connection answered a close-semantics
+    // request (HTTP/1.0 / Connection: close): flag value 2 = close pending.
+    // Close here — the handler loop is the fd's single owner — and end the
+    // loop. (Fresh connections have flag 0 from accept and fall through.)
+    if (client_fd < WYN_HTTP_KA_MAX && atomic_load(&wyn_http_ka[client_fd]) == 2) {
+        wyn_http_set_ka(client_fd, 0);
+        close(client_fd);
+        return "";
+    }
     char buf[8192] = {0};
     int n = -1;
 #ifndef _WIN32
@@ -2752,8 +2822,9 @@ char* Http_read_request(long long client_fd_ll) {
 #endif
         n = (int)recv(client_fd, buf, sizeof(buf) - 1, 0);
     }
-    if (n <= 0) { close(client_fd); return ""; }
+    if (n <= 0) { wyn_http_set_ka(client_fd, 0); close(client_fd); return ""; }
     buf[n] = 0;
+    wyn_http_set_ka(client_fd, wyn_http_request_wants_ka(buf));
     char buf_copy[8192];
     memcpy(buf_copy, buf, n + 1);
     char method[16] = "", path[1024] = "";
