@@ -1,5 +1,67 @@
 # Changelog
 
+## v1.19.0 — "The DX Release" (2026-07-19)
+
+The developer-experience release: a real test runner, working project templates,
+supply-chain auditing, the first official web package — and the module-codegen
+fixes that make writing Wyn packages actually pleasant. No breaking changes.
+
+**New tooling**
+- **`wyn test` is a real test runner for your projects**: discovers
+  `tests/test_*.wyn` and `*_test.wyn` (one subdirectory level too), runs them,
+  and — crucially — **failing assertions now fail the run** (they used to exit 0
+  and count as passed). `wyn test <name>` filters by name; an empty project
+  prints a copy-pasteable starter test.
+- **`wyn new <name> --template cli|api|web|lib`** scaffolds a runnable project
+  (wyn.toml, src/, a passing test, README, CI workflow). The templates now
+  actually compile — they had shipped with the removed `&&`/`||` syntax — and
+  every template is CI-verified to check clean and pass its own tests.
+  `http-service` is an alias for `api`.
+- **`wyn pkg audit`** verifies your lockfile against reality: a **moved tag**
+  (the classic retag/force-push supply-chain attack) is an error, branch pins
+  warn with the exact command to pin today's SHA, local cache tampering is
+  detected, and dependencies that link native code via `[ffi]` are flagged for
+  review. `--offline` skips remote checks. Exit code = worst finding.
+
+**Ecosystem**
+- **`wyn pkg add web`** — the first official batteries-included web package
+  (github.com/wynlang/web): request parsing, JSON/HTML responses, traversal-safe
+  static files, an HTML page builder, spawn-per-request concurrency.
+
+**Module/package correctness** (found building that package)
+- Fixed four imported-module codegen bugs: sibling calls to functions with
+  common names (`path`, `text`, …) lost their module prefix; `for x in xs` loop
+  variables miscompiled; **returning a composed string
+  (`return "a" + t + "b"` or `"${t}"`) released `t` before reading it** — a
+  use-after-free that silently produced empty output (this one was general, not
+  module-only); unannotated void module functions emitted conflicting C types.
+
+**Concurrency**
+- Coroutine stacks are now 8MB (lazily committed — no RSS cost) instead of
+  64KB: deep recursion and heavy sort/parse workloads inside awaited spawns no
+  longer crash with SIGBUS.
+- `println(await_all(futs))` prints the result array (was an internal error).
+
+**Forgiveness & errors**
+- `return x` and `return none` auto-wrap in `fn -> T?` functions — no more
+  mandatory `Some(x)` / `None()` ceremony.
+- `opt == None` / `!= none` give a targeted "use `.is_none()` / `.is_some()`"
+  error instead of a C-level crash.
+- Unknown methods on strings/arrays are rejected at check time with a
+  "Did you mean: `.upper()`?" hint (they used to pass `wyn check` and die in
+  the C compiler). The method table gained the missing entries this exposed
+  (array `min`/`max`/`sum`/`average`/`clear` and friends).
+- Multi-arg and zero-arg `println` work (Python-style, like `print`).
+- Statement-position `mut` no longer hangs the compiler; recursive struct
+  fields are rejected at check time with a clear message.
+
+**Performance**
+- Code generation no longer flushes per fragment — large builds are ~25%
+  faster on the frontend side.
+
+**Tests**: 134 expect/regression tests + 12 dedicated sub-suites (scaffolding,
+test runner, pkg audit, module codegen, and more), all green on all platforms.
+
 ## v1.18.0 — "The Correctness Release" (2026-07-17)
 
 A focused hardening pass: a batch of real correctness fixes found by dogfooding the
