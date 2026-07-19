@@ -2464,7 +2464,27 @@ void File_close(long long handle) {
 }
 
 // === HTTP Server ===
+// send() flags/setup so a client that already hung up can't kill the server
+// with SIGPIPE (no handler was installed anywhere — one dead client == dead
+// server under load, found benchmarking 2026-07-19).
+#if defined(__APPLE__)
+#define WYN_HTTP_SEND_FLAGS 0
+// _POSIX_C_SOURCE hides SO_NOSIGPIPE's define on macOS; the kernel constant is
+// stable (0x1022, sys/socket.h) — define it if the header didn't.
+#ifndef SO_NOSIGPIPE
+#define SO_NOSIGPIPE 0x1022
+#endif
+static void wyn_http_nosigpipe(int fd) { int one = 1; setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one)); }
+#elif defined(MSG_NOSIGNAL)
+#define WYN_HTTP_SEND_FLAGS MSG_NOSIGNAL
+static void wyn_http_nosigpipe(int fd) { (void)fd; }
+#else
+#define WYN_HTTP_SEND_FLAGS 0
+static void wyn_http_nosigpipe(int fd) { (void)fd; }
+#endif
+
 static void http_send_response(int client_fd, int status, const char* content_type, const char* body) {
+    wyn_http_nosigpipe(client_fd);
     const char* status_text = "OK";
     if (status == 201) status_text = "Created";
     else if (status == 400) status_text = "Bad Request";
@@ -2475,8 +2495,8 @@ static void http_send_response(int client_fd, int status, const char* content_ty
     snprintf(header, sizeof(header),
         "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
         status, status_text, content_type ? content_type : "text/plain", body_len);
-    send(client_fd, header, strlen(header), 0);
-    if (body && body_len > 0) send(client_fd, body, body_len, 0);
+    send(client_fd, header, strlen(header), WYN_HTTP_SEND_FLAGS);
+    if (body && body_len > 0) send(client_fd, body, body_len, WYN_HTTP_SEND_FLAGS);
 }
 
 void Http_respond(long long client_fd, long long status, const char* content_type, const char* body) {
@@ -2557,7 +2577,7 @@ int Http_serve(int port) {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(port);
     if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(server_fd); return -1; }
-    if (listen(server_fd, 128) < 0) { close(server_fd); return -1; }
+    if (listen(server_fd, 1024) < 0) { close(server_fd); return -1; }
     return server_fd;
 }
 int Http_listen(int port) { return Http_serve(port); }
@@ -2622,6 +2642,11 @@ char* Http_accept(int server_fd) {
         client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
         if (client_fd < 0) return "";
     }
+    // A client that connects but never sends (or died) must not wedge the
+    // accept loop: bound the request read. 5s is generous for a request line.
+#ifndef _WIN32
+    { struct timeval tv = {5, 0}; setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)); }
+#endif
     char buf[8192] = {0};
     int n = recv(client_fd, buf, sizeof(buf) - 1, 0);
     if (n <= 0) { close(client_fd); return ""; }
@@ -2645,6 +2670,102 @@ char* Http_accept(int server_fd) {
     char* body_start = strstr(buf_copy, "\r\n\r\n");
     const char* body = body_start ? body_start + 4 : "";
     
+    char* result = wyn_str_alloc(16384);
+    snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
+    return result;
+}
+
+
+// --- Concurrent-accept API (2026-07-19) -------------------------------------
+// Http_accept does accept+recv+parse on ONE loop — a slow client blocks every
+// other connection (head-of-line; found when ab -c 50 wedged the server, stack
+// sample showed main parked in recv inside Http_accept). The fast pattern
+// splits it: the main loop runs accept-only (cheap syscall), and the REQUEST
+// READ happens inside the spawned handler, where it parks cooperatively on the
+// coroutine scheduler instead of blocking anyone else.
+//
+//   while true { var fd = Http.accept_fd(server)  if fd > 0 { spawn handle(fd) } }
+//   fn handle(fd: int) { var req = Http.read_request(fd) ... }
+
+// Accept only — returns the client fd (or -1). Coroutine-aware like Http_accept.
+long long Http_accept_fd(int server_fd) {
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int client_fd;
+#ifndef _WIN32
+    if (wyn_coro_current()) {
+        int flags = fcntl(server_fd, F_GETFL, 0);
+        fcntl(server_fd, F_SETFL, flags | O_NONBLOCK);
+        for (;;) {
+            client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
+            if (client_fd >= 0) break;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                void* task = wyn_current_task();
+                if (task) { wyn_io_wait_readable(server_fd, task); wyn_io_park(); }
+                wyn_coro_yield();
+                continue;
+            }
+            fcntl(server_fd, F_SETFL, flags);
+            return -1;
+        }
+        fcntl(server_fd, F_SETFL, flags);
+    } else
+#endif
+    {
+        client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
+        if (client_fd < 0) return -1;
+    }
+    wyn_http_nosigpipe(client_fd);
+    return client_fd;
+}
+
+// Read + parse one request from an accepted fd → "METHOD|PATH|BODY|FD".
+// Inside a coroutine (the spawned handler) the read parks cooperatively; a
+// dead client costs its own coroutine a timeout, never the accept loop.
+char* Http_read_request(long long client_fd_ll) {
+    int client_fd = (int)client_fd_ll;
+    if (client_fd < 0) return "";
+    char buf[8192] = {0};
+    int n = -1;
+#ifndef _WIN32
+    if (wyn_coro_current()) {
+        int flags = fcntl(client_fd, F_GETFL, 0);
+        fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
+        for (;;) {
+            n = (int)recv(client_fd, buf, sizeof(buf) - 1, 0);
+            if (n >= 0) break;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                void* task = wyn_current_task();
+                if (task) { wyn_io_wait_readable(client_fd, task); wyn_io_park(); }
+                wyn_coro_yield();
+                continue;
+            }
+            break;
+        }
+        fcntl(client_fd, F_SETFL, flags);
+    } else
+#endif
+    {
+#ifndef _WIN32
+        struct timeval tv = {5, 0};
+        setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+        n = (int)recv(client_fd, buf, sizeof(buf) - 1, 0);
+    }
+    if (n <= 0) { close(client_fd); return ""; }
+    buf[n] = 0;
+    char buf_copy[8192];
+    memcpy(buf_copy, buf, n + 1);
+    char method[16] = "", path[1024] = "";
+    char* sp1 = strchr(buf, ' ');
+    if (sp1) {
+        *sp1 = 0;
+        strncpy(method, buf, 15);
+        char* sp2 = strchr(sp1 + 1, ' ');
+        if (sp2) { *sp2 = 0; strncpy(path, sp1 + 1, 1023); }
+    }
+    char* body_start = strstr(buf_copy, "\r\n\r\n");
+    const char* body = body_start ? body_start + 4 : "";
     char* result = wyn_str_alloc(16384);
     snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
     return result;
