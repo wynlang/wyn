@@ -600,6 +600,23 @@ void codegen_stmt(Stmt* stmt) {
                             c_type = "WynArray";
                             char _vn2[256]; token_to_cstr(_vn2, sizeof(_vn2), stmt->var.name);
                             extern void register_array_var(const char*); register_array_var(_vn2);
+                            // S2: if the source array contains strings, propagate to result
+                            bool _src_is_str_arr = false;
+                            if (stmt->var.init->method_call.object->expr_type &&
+                                stmt->var.init->method_call.object->expr_type->kind == TYPE_ARRAY &&
+                                stmt->var.init->method_call.object->expr_type->array_type.element_type &&
+                                stmt->var.init->method_call.object->expr_type->array_type.element_type->kind == TYPE_STRING) {
+                                _src_is_str_arr = true;
+                            }
+                            if (!_src_is_str_arr && stmt->var.init->method_call.object->type == EXPR_IDENT) {
+                                char _srcn[256]; token_to_cstr(_srcn, sizeof(_srcn), stmt->var.init->method_call.object->token);
+                                extern int is_str_array_var(const char*);
+                                if (is_str_array_var(_srcn)) _src_is_str_arr = true;
+                            }
+                            if (_src_is_str_arr) {
+                                extern void register_str_array_var(const char*);
+                                register_str_array_var(_vn2);
+                            }
                             goto var_type_done;
                         }
                         // String-returning methods
@@ -1035,13 +1052,27 @@ void codegen_stmt(Stmt* stmt) {
                     } else { c_type = "OptionInt"; }
                 } else if (stmt->var.init->type == EXPR_LAMBDA) {
                     // Lambda/closure type - function pointer matching actual params
+                    // S2: use checker-inferred types instead of hardcoding long long
                     int nparams = stmt->var.init->lambda.param_count;
                     static char _fn_ptr_buf[256];
                     int _fp = 0;
-                    _fp += snprintf(_fn_ptr_buf + _fp, sizeof(_fn_ptr_buf) - _fp, "long long (*)(");
+                    const char* _rct = "long long";
+                    if (stmt->var.init->expr_type && stmt->var.init->expr_type->kind == TYPE_FUNCTION &&
+                        stmt->var.init->expr_type->fn_type.return_type) {
+                        const char* _rt = codegen_c_type_from_type(stmt->var.init->expr_type->fn_type.return_type);
+                        if (_rt) _rct = _rt;
+                    }
+                    _fp += snprintf(_fn_ptr_buf + _fp, sizeof(_fn_ptr_buf) - _fp, "%s (*)(", _rct);
                     for (int _pi = 0; _pi < nparams; _pi++) {
                         if (_pi > 0) _fp += snprintf(_fn_ptr_buf + _fp, sizeof(_fn_ptr_buf) - _fp, ", ");
-                        _fp += snprintf(_fn_ptr_buf + _fp, sizeof(_fn_ptr_buf) - _fp, "long long");
+                        const char* _pct = "long long";
+                        if (stmt->var.init->expr_type && stmt->var.init->expr_type->kind == TYPE_FUNCTION &&
+                            _pi < stmt->var.init->expr_type->fn_type.param_count &&
+                            stmt->var.init->expr_type->fn_type.param_types[_pi]) {
+                            const char* _pt = codegen_c_type_from_type(stmt->var.init->expr_type->fn_type.param_types[_pi]);
+                            if (_pt) _pct = _pt;
+                        }
+                        _fp += snprintf(_fn_ptr_buf + _fp, sizeof(_fn_ptr_buf) - _fp, "%s", _pct);
                     }
                     _fp += snprintf(_fn_ptr_buf + _fp, sizeof(_fn_ptr_buf) - _fp, ")");
                     c_type = _fn_ptr_buf;
@@ -1590,10 +1621,24 @@ void codegen_stmt(Stmt* stmt) {
                     lambda_var_count++;
                 }
                 
-                emit("long long (*%s%.*s)(", is_c_keyword ? WYN_UFN_PFX : "", stmt->var.name.length, stmt->var.name.start);
+                // S2: use checker-inferred types for the function pointer declaration
+                const char* _ret_ct = "long long";
+                if (stmt->var.init->expr_type && stmt->var.init->expr_type->kind == TYPE_FUNCTION &&
+                    stmt->var.init->expr_type->fn_type.return_type) {
+                    const char* _rt = codegen_c_type_from_type(stmt->var.init->expr_type->fn_type.return_type);
+                    if (_rt) _ret_ct = _rt;
+                }
+                emit("%s (*%s%.*s)(", _ret_ct, is_c_keyword ? WYN_UFN_PFX : "", stmt->var.name.length, stmt->var.name.start);
                 for (int i = 0; i < total_params; i++) {
                     if (i > 0) emit(", ");
-                    emit("long long");
+                    const char* _pct = "long long";
+                    if (stmt->var.init->expr_type && stmt->var.init->expr_type->kind == TYPE_FUNCTION &&
+                        i < stmt->var.init->expr_type->fn_type.param_count &&
+                        stmt->var.init->expr_type->fn_type.param_types[i]) {
+                        const char* _pt = codegen_c_type_from_type(stmt->var.init->expr_type->fn_type.param_types[i]);
+                        if (_pt) _pct = _pt;
+                    }
+                    emit("%s", _pct);
                 }
                 emit(") = ");
             } else if (stmt->var.is_const && !stmt->var.is_mutable && !is_already_const) {

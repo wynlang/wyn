@@ -2076,18 +2076,32 @@ void codegen_expr(Expr* expr) {
             if (object_type && object_type->kind == TYPE_ARRAY) {
                 Token method = expr->method_call.method;
                 
-                // arr.map(fn) -> wyn_array_map(arr, fn)
+                // arr.map(fn) -> wyn_array_map(arr, fn) or wyn_array_map_str for [string]
                 if (method.length == 3 && memcmp(method.start, "map", 3) == 0 && expr->method_call.arg_count == 1) {
-                    emit("wyn_array_map(");
+                    bool _elem_is_str = object_type->array_type.element_type &&
+                        object_type->array_type.element_type->kind == TYPE_STRING;
+                    if (!_elem_is_str && expr->method_call.object->type == EXPR_IDENT) {
+                        char _vn[256]; token_to_cstr(_vn, sizeof(_vn), expr->method_call.object->token);
+                        extern int is_str_array_var(const char*);
+                        if (is_str_array_var(_vn)) _elem_is_str = true;
+                    }
+                    emit(_elem_is_str ? "wyn_array_map_str(" : "wyn_array_map(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
                     codegen_expr(expr->method_call.args[0]);
                     emit(")");
                     break;
                 }
-                // arr.filter(fn) -> wyn_array_filter(arr, fn)
+                // arr.filter(fn) -> wyn_array_filter(arr, fn) or _str for [string]
                 if (method.length == 6 && memcmp(method.start, "filter", 6) == 0 && expr->method_call.arg_count == 1) {
-                    emit("wyn_array_filter(");
+                    bool _elem_is_str = object_type->array_type.element_type &&
+                        object_type->array_type.element_type->kind == TYPE_STRING;
+                    if (!_elem_is_str && expr->method_call.object->type == EXPR_IDENT) {
+                        char _vn[256]; token_to_cstr(_vn, sizeof(_vn), expr->method_call.object->token);
+                        extern int is_str_array_var(const char*);
+                        if (is_str_array_var(_vn)) _elem_is_str = true;
+                    }
+                    emit(_elem_is_str ? "wyn_array_filter_str(" : "wyn_array_filter(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
                     codegen_expr(expr->method_call.args[0]);

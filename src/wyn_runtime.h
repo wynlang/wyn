@@ -3594,6 +3594,24 @@ long long wyn_array_reduce(WynArray arr, long long (*fn)(long long, long long), 
     }
     return result;
 }
+// String-element array map/filter: lambda takes and returns const char*
+WynArray wyn_array_map_str(WynArray arr, const char* (*fn)(const char*)) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        const char* val = array_get_str(arr, i);
+        const char* mapped = fn(val);
+        array_push_str(&result, mapped ? wyn_strdup(mapped) : wyn_strdup(""));
+    }
+    return result;
+}
+WynArray wyn_array_filter_str(WynArray arr, long long (*fn)(const char*)) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        const char* val = array_get_str(arr, i);
+        if (fn(val)) array_push_str(&result, wyn_strdup(val));
+    }
+    return result;
+}
 int random_int(int min, int max) { return min + rand() % (max - min + 1); }
 int random_range(int min, int max) { return min + rand() % (max - min + 1); }
 double random_float() { return (double)rand() / RAND_MAX; }

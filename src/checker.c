@@ -3543,6 +3543,36 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Token method = expr->method_call.method;
             char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
 
+            // S2 context-propagation: when .map()/.filter() is called on a [string]
+            // array and the lambda arg has int-defaulted params, override them to
+            // string. This handles identity lambdas like `(s) => s` where body analysis
+            // alone gives no type evidence.
+            if (object_type && object_type->kind == TYPE_ARRAY &&
+                object_type->array_type.element_type &&
+                object_type->array_type.element_type->kind == TYPE_STRING &&
+                expr->method_call.arg_count == 1 &&
+                expr->method_call.args[0]->type == EXPR_LAMBDA &&
+                ((method.length == 3 && memcmp(method.start, "map", 3) == 0) ||
+                 (method.length == 6 && memcmp(method.start, "filter", 6) == 0))) {
+                Expr* lam = expr->method_call.args[0];
+                if (lam->expr_type && lam->expr_type->kind == TYPE_FUNCTION) {
+                    for (int pi = 0; pi < lam->expr_type->fn_type.param_count; pi++) {
+                        if (lam->expr_type->fn_type.param_types[pi] &&
+                            lam->expr_type->fn_type.param_types[pi]->kind == TYPE_INT) {
+                            lam->expr_type->fn_type.param_types[pi] = builtin_string;
+                        }
+                    }
+                    // Also update the return type for map: if return was int (body = just
+                    // the param ident), the lambda actually returns string.
+                    if (method.length == 3 && memcmp(method.start, "map", 3) == 0 &&
+                        lam->expr_type->fn_type.return_type &&
+                        lam->expr_type->fn_type.return_type->kind == TYPE_INT &&
+                        lam->lambda.body && lam->lambda.body->type == EXPR_IDENT) {
+                        lam->expr_type->fn_type.return_type = builtin_string;
+                    }
+                }
+            }
+
             // Check for namespace method calls: File.read() -> File_read
             // Only for known namespaces, not regular variables
             if (expr->method_call.object->type == EXPR_IDENT) {
@@ -3787,6 +3817,16 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                 expr->expr_type = string_array;
                                 return string_array;
                             }
+                        }
+                        // S2: .map()/.filter() on [string] returns [string]
+                        if (object_type && object_type->kind == TYPE_ARRAY &&
+                            object_type->array_type.element_type &&
+                            object_type->array_type.element_type->kind == TYPE_STRING &&
+                            (strcmp(method_name, "map") == 0 || strcmp(method_name, "filter") == 0)) {
+                            Type* str_arr = make_type(TYPE_ARRAY);
+                            str_arr->array_type.element_type = builtin_string;
+                            expr->expr_type = str_arr;
+                            return str_arr;
                         }
                         expr->expr_type = builtin_array;
                         return builtin_array;
@@ -4234,28 +4274,6 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             lambda_type->fn_type.return_type = body_type;
             expr->expr_type = lambda_type;
 
-            // Staged-codegen guard: the lambda code emitter is int-only today (see
-            // internal-docs/LAMBDA_REWORK.md — S2 routes bodies through codegen_expr).
-            // Until then, a string/float PARAM lambda would mis-emit, so surface a
-            // clear, actionable limitation error here instead of letting it produce
-            // wrong C. Int-param lambdas (incl. .map/.filter/.reduce over ints) are
-            // unaffected.
-            for (int i = 0; i < expr->lambda.param_count; i++) {
-                Type* pt = (i < 16) ? param_inferred[i] : builtin_int;
-                if (pt && pt->kind != TYPE_INT) {
-                    fprintf(stderr,
-                        "\nError at line %d: lambda parameters other than int are not "
-                        "supported yet (parameter '%.*s' is used as a %s).\n",
-                        expr->lambda.params[i].line,
-                        expr->lambda.params[i].length, expr->lambda.params[i].start,
-                        pt->kind == TYPE_STRING ? "string" : "non-int value");
-                    fprintf(stderr,
-                        "  Workaround: use a named `fn`, or operate on int params. "
-                        "(Tracked: string/float lambda support — LAMBDA_REWORK.md S2.)\n");
-                    had_error = true;
-                    break;
-                }
-            }
             return lambda_type;
         }
         case EXPR_MAP: {

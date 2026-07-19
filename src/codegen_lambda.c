@@ -425,6 +425,7 @@ static void scan_expr_for_lambdas(Expr* expr) {
             
             if (lambda_count < 256) {
                 lambda_functions[lambda_count].code = func_code;
+                lambda_functions[lambda_count].ast = expr;
                 lambda_functions[lambda_count].id = lambda_id;
                 lambda_functions[lambda_count].param_count = expr->lambda.param_count;
                 lambda_functions[lambda_count].capture_count = capture_count;
@@ -531,5 +532,102 @@ static void scan_expr_for_lambdas(Expr* expr) {
 
 static void scan_for_lambdas(Stmt* body) {
     scan_stmt_for_lambdas(body);
+}
+
+// S2: Emit a lambda function using the real codegen_expr pipeline instead of the
+// string-based mini-emitter. This gives string concat, string methods, float ops,
+// and block bodies for free — everything codegen_expr already handles.
+static void emit_lambda_via_codegen(LambdaFunction* lf) {
+    Expr* expr = lf->ast;
+    if (!expr || expr->type != EXPR_LAMBDA) return;
+
+    int capture_count = lf->capture_count;
+    int lambda_id = lf->id;
+
+    // Determine return type from checker's inference (stored on expr->expr_type)
+    const char* ret_c_type = "long long";
+    if (expr->expr_type && expr->expr_type->kind == TYPE_FUNCTION &&
+        expr->expr_type->fn_type.return_type) {
+        const char* inferred = codegen_c_type_from_type(expr->expr_type->fn_type.return_type);
+        if (inferred) ret_c_type = inferred;
+    }
+
+    // Determine param C types from checker inference
+    const char* param_c_types[16];
+    for (int i = 0; i < expr->lambda.param_count && i < 16; i++) {
+        param_c_types[i] = "long long";
+        if (expr->expr_type && expr->expr_type->kind == TYPE_FUNCTION &&
+            i < expr->expr_type->fn_type.param_count &&
+            expr->expr_type->fn_type.param_types[i]) {
+            const char* inferred = codegen_c_type_from_type(expr->expr_type->fn_type.param_types[i]);
+            if (inferred) param_c_types[i] = inferred;
+        }
+    }
+
+    if (capture_count > 0 && lf->is_closure) {
+        // Closure with env struct: emit typedef + function taking void* env
+        emit("typedef struct { ");
+        for (int i = 0; i < capture_count; i++) {
+            emit("long long %s; ", lf->captured_vars[i]);
+        }
+        emit("} __closure_env_%d;\n", lambda_id);
+        emit("%s __lambda_%d(void* __env", ret_c_type, lambda_id);
+        for (int i = 0; i < expr->lambda.param_count; i++) {
+            emit(", %s %.*s", param_c_types[i],
+                expr->lambda.params[i].length, expr->lambda.params[i].start);
+        }
+        emit(") {\n");
+        emit("    __closure_env_%d* __e = (__closure_env_%d*)__env;\n", lambda_id, lambda_id);
+        for (int i = 0; i < capture_count; i++) {
+            emit("    long long %s = __e->%s;\n", lf->captured_vars[i], lf->captured_vars[i]);
+        }
+    } else {
+        // Non-closure: static capture globals + plain function
+        if (capture_count > 0) {
+            for (int i = 0; i < capture_count; i++) {
+                const char* cap_type = is_scan_array_var(lf->captured_vars[i]) ? "WynArray" : "long long";
+                emit("static %s __cap_%d_%s;\n", cap_type, lambda_id, lf->captured_vars[i]);
+            }
+        }
+        emit("%s __lambda_%d(", ret_c_type, lambda_id);
+        for (int i = 0; i < expr->lambda.param_count; i++) {
+            if (i > 0) emit(", ");
+            emit("%s %.*s", param_c_types[i],
+                expr->lambda.params[i].length, expr->lambda.params[i].start);
+        }
+        emit(") {\n");
+        if (capture_count > 0) {
+            for (int i = 0; i < capture_count; i++) {
+                emit("#define %s __cap_%d_%s\n", lf->captured_vars[i], lambda_id, lf->captured_vars[i]);
+            }
+        }
+    }
+
+    // Emit body statements (multiline lambda)
+    for (int si = 0; si < expr->lambda.body_stmt_count; si++) {
+        Stmt* s = expr->lambda.body_stmts[si];
+        if (s) {
+            emit("    ");
+            codegen_stmt(s);
+        }
+    }
+
+    // Emit return expression using the real codegen_expr
+    if (expr->lambda.body) {
+        emit("    return ");
+        codegen_expr(expr->lambda.body);
+        emit(";\n");
+    } else {
+        emit("    return 0;\n");
+    }
+
+    emit("}\n");
+
+    // Undef capture aliases (non-closure path)
+    if (capture_count > 0 && !lf->is_closure) {
+        for (int i = 0; i < capture_count; i++) {
+            emit("#undef %s\n", lf->captured_vars[i]);
+        }
+    }
 }
 
