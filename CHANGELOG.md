@@ -55,6 +55,17 @@ fixes that make writing Wyn packages actually pleasant. No breaking changes.
 - Statement-position `mut` no longer hangs the compiler; recursive struct
   fields are rejected at check time with a clear message.
 
+**Web performance** (with the `web` package)
+- **HTTP/1.1 keep-alive**: persistent connections instead of a TCP handshake
+  per request — measured **22,000+ req/s with zero failed requests at 200
+  concurrent connections** on the hello example (3× the previous throughput).
+- **Concurrent accept**: the old accept path read the request on the accept
+  loop, so one slow client stalled every other connection (and could wedge
+  the server under load). New `Http.accept_fd` + `Http.read_request` split:
+  accept-only main loop, request reads park cooperatively in each handler's
+  coroutine. One dead client can also no longer kill the server (SIGPIPE
+  protection — none existed).
+
 **Performance**
 - Code generation no longer flushes per fragment — large builds are ~25%
   faster on the frontend side.
