@@ -38,7 +38,20 @@ fixes that make writing Wyn packages actually pleasant. No breaking changes.
   static files, an HTML page builder, spawn-per-request concurrency.
 - **Curated C recipes: 12 → 31.** `wyn add png|jpeg|pcre2|yaml|ffi|uuid|ev|uv|
   sdl2|pthread|expat|bz2|iconv|gmp|onig|ssh2|git2|archive|magic` — each with
-  headers, pkg-config, and per-OS install hints.
+  headers, pkg-config, and per-OS install hints. Every recipe is verified
+  end-to-end (add → bind → link → run).
+- **`wyn bind` handles real-world headers.** Bindgen now resolves typedefs
+  (`png_uint_32`, `uv_file`, opaque handle pointers — recorded from the whole
+  preprocessed unit), scans prototypes behind macOS availability/`__asm`
+  attributes, handles many declarations per line (pcre2's macro-generated
+  API), and strips `_Nullable`/`restrict`. Measured on real libraries:
+  png 0→232 bound functions, pcre2 0→212, pthread 0→94, archive 434,
+  OpenSSL crypto 729. Recipes can carry required `-D` defines
+  (`wyn bind -D` works too).
+- **Multi-package projects link.** Repeated `[ffi]` sections in wyn.toml
+  (one per `wyn add`) now accumulate — previously only the LAST added
+  package's libs survived, so any project using two C packages failed at
+  link time.
 
 **Module/package correctness** (found building that package)
 - Fixed four imported-module codegen bugs: sibling calls to functions with
@@ -90,7 +103,7 @@ fixes that make writing Wyn packages actually pleasant. No breaking changes.
   the work-stealing deques are allocated at scheduler start, sized to the
   real core count (hello's data segment: 2.1MB → 16KB).
 
-**Tests**: 135 expect/regression tests + 12 dedicated sub-suites (scaffolding,
+**Tests**: 135 expect/regression tests + 13 dedicated sub-suites (scaffolding,
 test runner, pkg audit, module codegen, and more), all green on all platforms.
 
 ## v1.18.0 — "The Correctness Release" (2026-07-17)
