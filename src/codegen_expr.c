@@ -743,8 +743,45 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
+            // struct == struct: call the generated field-wise helper. Raw C
+            // `==` on struct values doesn't compile (this was an ICE). Detect
+            // via expr_type AND the struct-var registry — the checker often
+            // doesn't propagate TYPE_STRUCT onto bare ident references.
+            if (expr->binary.op.type == TOKEN_EQEQ || expr->binary.op.type == TOKEN_BANGEQ) {
+                const char* _eqsn = NULL;
+                Expr* _sides[2] = { expr->binary.left, expr->binary.right };
+                for (int _si = 0; _si < 2 && !_eqsn; _si++) {
+                    Expr* _e = _sides[_si];
+                    if (_e->expr_type && _e->expr_type->kind == TYPE_STRUCT) {
+                        Token _snt = _e->expr_type->struct_type.name.length > 0
+                            ? _e->expr_type->struct_type.name : _e->expr_type->name;
+                        if (_snt.length > 0) {
+                            static char _eqsb[64]; token_to_cstr(_eqsb, sizeof(_eqsb), _snt);
+                            _eqsn = _eqsb;
+                        }
+                    }
+                    if (!_eqsn && _e->type == EXPR_IDENT) {
+                        char _vn[128]; token_to_cstr(_vn, sizeof(_vn), _e->token);
+                        extern const char* get_struct_var_type(const char*);
+                        _eqsn = get_struct_var_type(_vn);
+                    }
+                }
+                // Option families and the FFI `void*` ptr struct keep their
+                // existing paths; only user structs route to the helper.
+                if (_eqsn && strncmp(_eqsn, "Option", 6) != 0 && strchr(_eqsn, '*') == NULL) {
+                    if (expr->binary.op.type == TOKEN_BANGEQ) emit("(!");
+                    emit("__wyn_eq_%s(", _eqsn);
+                    codegen_expr(expr->binary.left);
+                    emit(", ");
+                    codegen_expr(expr->binary.right);
+                    emit(")");
+                    if (expr->binary.op.type == TOKEN_BANGEQ) emit(")");
+                    break;
+                }
+            }
+
             // Default binary expression handling
-            
+
             // Special handling for nil coalescing operator ??
             if (expr->binary.op.type == TOKEN_QUESTION_QUESTION) {
                 // Generate: (left->has_value ? *(int*)left->value : right)

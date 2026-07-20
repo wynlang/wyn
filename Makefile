@@ -223,6 +223,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_bindgen_test.sh
 	@echo "=== Running parser stability test ==="
 	@WYN=./wyn bash tests/errors/run_parser_stability_test.sh
+	@echo "=== Running struct-eq negative test ==="
+	@WYN=./wyn bash tests/errors/run_struct_eq_test.sh
 	@echo "=== Running CLI DX test ==="
 	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
 	@echo "=== Running install-layout canary ==="
