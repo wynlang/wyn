@@ -2680,8 +2680,37 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         _s = _s->parent;
                     }
                 }
+                // Foreign-value table: True/False/null/undefined/self etc. get
+                // a targeted fix instead of "Undefined variable 'True' — did
+                // you mean Time?" (edit-distance suggestions were harmful here).
                 if (!_suppress_var_err) {
-                fprintf(stderr, "\nError at line %d: Undefined variable '%.*s'\n", 
+                    static const struct { const char* kw; const char* fix; } _fkv[] = {
+                        {"True",      "booleans are lowercase: true"},
+                        {"False",     "booleans are lowercase: false"},
+                        {"None",      "Wyn optionals use lowercase 'none' (or Some(x))"},
+                        {"null",      "Wyn has no null — use Option types (none / Some(x))"},
+                        {"undefined", "Wyn has no undefined — use Option types (none / Some(x))"},
+                        {"self",      "'self' only exists inside struct methods"},
+                        {"console",   "print with: println(\"...\")"},
+                        {"len",       "call it as a function: len(x), or use x.len()"},
+                        {NULL, NULL}
+                    };
+                    for (int _fi = 0; _fkv[_fi].kw; _fi++) {
+                        size_t _kl = strlen(_fkv[_fi].kw);
+                        if ((size_t)expr->token.length == _kl &&
+                            memcmp(expr->token.start, _fkv[_fi].kw, _kl) == 0) {
+                            fprintf(stderr, "\nError at line %d: '%.*s' is not Wyn syntax — %s\n",
+                                    expr->token.line, expr->token.length, expr->token.start,
+                                    _fkv[_fi].fix);
+                            show_source_line(expr->token.line);
+                            had_error = true;
+                            expr->expr_type = builtin_int;
+                            return builtin_int;
+                        }
+                    }
+                }
+                if (!_suppress_var_err) {
+                fprintf(stderr, "\nError at line %d: Undefined variable '%.*s'\n",
                         expr->token.line, expr->token.length, expr->token.start);
                 show_source_line(expr->token.line);
                 
