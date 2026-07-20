@@ -535,14 +535,10 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0 || strcmp(command, "-v") == 0) {
-        printf("\033[36m"
-            "    /\\_/\\\n"
-            "   / o o \\   \033[0m\033[1mWyn\033[0m v%s\n"
-            "\033[36m  (  >.<  )  \033[0m\033[2m1 language for everything\033[0m\n"
-            "\033[36m   \\_^_/\n"
-            "  /|     |\\\n"
-            " (_|     |_)  \033[0m\033[2m🐉 Wynter the Wyvern\033[0m\n\n",
-            get_version());
+        // Same dragon as the no-args banner, on stdout (version output is
+        // parsed by scripts). An old cat drawing lived here — Wynter is a
+        // WYVERN; one mascot, one drawing, everywhere.
+        print_banner_to(stdout, get_version());
         return 0;
     }
     
