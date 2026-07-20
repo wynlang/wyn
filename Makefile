@@ -227,6 +227,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_unterminated_string_test.sh
 	@echo "=== Running struct-eq negative test ==="
 	@WYN=./wyn bash tests/errors/run_struct_eq_test.sh
+	@echo "=== Running select-deadlock test ==="
+	@WYN=./wyn bash tests/errors/run_select_deadlock_test.sh
 	@echo "=== Running CLI DX test ==="
 	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
 	@echo "=== Running install-layout canary ==="
@@ -544,7 +546,9 @@ ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/expect/test_println_rich_types.wyn \
              tests/expect/test_closure_env_lifetime.wyn \
              tests/expect/test_channels.wyn \
-             tests/expect/test_parallel.wyn
+             tests/expect/test_parallel.wyn \
+             tests/expect/test_await_twice.wyn \
+             tests/expect/test_select_arms.wyn
 
 asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a
 	@echo "=== ASan runtime test (representative set) ==="
@@ -586,7 +590,9 @@ TSAN_TESTS = tests/expect/test_channels.wyn \
              tests/expect/test_spawn_await.wyn \
              tests/expect/test_spawn_parallel.wyn \
              tests/expect/test_spawn_typed_args.wyn \
-             tests/expect/test_concurrent_strings.wyn
+             tests/expect/test_concurrent_strings.wyn \
+             tests/expect/test_await_twice.wyn \
+             tests/expect/test_select_arms.wyn
 
 tsan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_tsan.a
 	@echo "=== TSan runtime test (both executor configs) ==="

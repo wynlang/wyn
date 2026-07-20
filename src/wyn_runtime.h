@@ -3993,36 +3993,63 @@ long long Task_try_recv(long long handle, long long* out_value) {
 }
 
 // Select: wait until one of the channels has data, return its index (0-based).
-// channels is a Wyn array of channel handles. Yields coroutine if none ready.
-long long Task_select_2(long long ch1, long long ch2) {
-    // Fast path: check both
+// Returns -1 when every channel is closed (no arm runs).
+//
+// Deadlock detection (main thread only): if no channel is ready, none are
+// closed, and the scheduler has NOTHING in flight, no producer can ever send —
+// spinning would hang forever (this was a real P0: select with no ready arm
+// hung silently). Send-before-complete ordering makes the zero check sound;
+// we re-check once after a pump to dodge any last-instant enqueue. Inside a
+// coroutine the calling task is itself "in flight", so this check can't apply
+// — the coroutine path keeps the yield loop.
+extern long wyn_sched_inflight(void);
+extern int wyn_sched_pump_one(void);
+long long Task_select_n(const long long* chans, int n) {
     for (;;) {
-        if (ch1 > 0 && ch1 < MAX_TASKS && task_registry[ch1] && task_registry[ch1]->size > 0) return 0;
-        if (ch2 > 0 && ch2 < MAX_TASKS && task_registry[ch2] && task_registry[ch2]->size > 0) return 1;
-        // Check if both closed
         int closed = 0;
-        if (ch1 > 0 && ch1 < MAX_TASKS && task_registry[ch1] && task_registry[ch1]->closed) closed++;
-        if (ch2 > 0 && ch2 < MAX_TASKS && task_registry[ch2] && task_registry[ch2]->closed) closed++;
-        if (closed >= 2) return -1;
-        // Yield and retry
-        if (wyn_coro_current()) wyn_coro_yield();
-        else sched_yield();
+        for (int i = 0; i < n; i++) {
+            long long ch = chans[i];
+            if (ch > 0 && ch < MAX_TASKS && task_registry[ch]) {
+                if (task_registry[ch]->size > 0) return i;
+                if (task_registry[ch]->closed) closed++;
+            } else {
+                closed++;  // invalid handle can never deliver
+            }
+        }
+        if (closed >= n) return -1;
+        if (wyn_coro_current()) {
+            wyn_coro_yield();
+        } else {
+            // Drive the scheduler so coroutine senders progress on any core
+            // count (mirrors future_get's main-thread pump).
+            int did = wyn_sched_pump_one();
+            if (!did && wyn_sched_inflight() == 0) {
+                // Double-check: one more pump + rescan before declaring death.
+                wyn_sched_pump_one();
+                int ready = 0;
+                for (int i = 0; i < n; i++) {
+                    long long ch = chans[i];
+                    if (ch > 0 && ch < MAX_TASKS && task_registry[ch] &&
+                        task_registry[ch]->size > 0) { ready = 1; break; }
+                }
+                if (ready) continue;
+                if (wyn_sched_inflight() == 0) {
+                    fprintf(stderr, "wyn: deadlock — select has no ready channel and no live tasks (nothing can ever send)\n");
+                    exit(1);
+                }
+            }
+            if (!did) sched_yield();
+        }
     }
 }
-
+// Fixed-arity wrappers kept for ABI stability with previously generated C.
+long long Task_select_2(long long ch1, long long ch2) {
+    long long chans[2] = { ch1, ch2 };
+    return Task_select_n(chans, 2);
+}
 long long Task_select_3(long long ch1, long long ch2, long long ch3) {
-    for (;;) {
-        if (ch1 > 0 && ch1 < MAX_TASKS && task_registry[ch1] && task_registry[ch1]->size > 0) return 0;
-        if (ch2 > 0 && ch2 < MAX_TASKS && task_registry[ch2] && task_registry[ch2]->size > 0) return 1;
-        if (ch3 > 0 && ch3 < MAX_TASKS && task_registry[ch3] && task_registry[ch3]->size > 0) return 2;
-        int closed = 0;
-        if (ch1 > 0 && ch1 < MAX_TASKS && task_registry[ch1] && task_registry[ch1]->closed) closed++;
-        if (ch2 > 0 && ch2 < MAX_TASKS && task_registry[ch2] && task_registry[ch2]->closed) closed++;
-        if (ch3 > 0 && ch3 < MAX_TASKS && task_registry[ch3] && task_registry[ch3]->closed) closed++;
-        if (closed >= 3) return -1;
-        if (wyn_coro_current()) wyn_coro_yield();
-        else sched_yield();
-    }
+    long long chans[3] = { ch1, ch2, ch3 };
+    return Task_select_n(chans, 3);
 }
 
 // await_all: await every future in an array, return array of results
@@ -4030,7 +4057,7 @@ WynArray wyn_await_all(WynArray futures) {
     WynArray results = array_new();
     for (int i = 0; i < futures.count; i++) {
         long long fh = futures.data[i].data.int_val;
-        long long result = (long long)(intptr_t)future_get((Future*)(intptr_t)fh);
+        long long result = (long long)(intptr_t)future_get_consume((Future*)(intptr_t)fh);
         array_push_int(&results, result);
     }
     return results;
@@ -4039,7 +4066,7 @@ WynArray wyn_await_all_str(WynArray futures) {
     WynArray results = array_new();
     for (int i = 0; i < futures.count; i++) {
         long long fh = futures.data[i].data.int_val;
-        const char* result = (const char*)(intptr_t)future_get((Future*)(intptr_t)fh);
+        const char* result = (const char*)(intptr_t)future_get_consume((Future*)(intptr_t)fh);
         array_push_str(&results, result ? result : "");
     }
     return results;
@@ -4048,7 +4075,7 @@ WynArray wyn_await_all_int(WynIntArray futures) {
     WynArray results = array_new();
     for (int i = 0; i < futures.count; i++) {
         long long fh = futures.data[i];
-        long long result = (long long)(intptr_t)future_get((Future*)(intptr_t)fh);
+        long long result = (long long)(intptr_t)future_get_consume((Future*)(intptr_t)fh);
         array_push_int(&results, result);
     }
     return results;
@@ -4057,7 +4084,7 @@ WynArray wyn_await_all_int_str(WynIntArray futures) {
     WynArray results = array_new();
     for (int i = 0; i < futures.count; i++) {
         long long fh = futures.data[i];
-        const char* result = (const char*)(intptr_t)future_get((Future*)(intptr_t)fh);
+        const char* result = (const char*)(intptr_t)future_get_consume((Future*)(intptr_t)fh);
         array_push_str(&results, result ? result : "");
     }
     return results;
@@ -4072,7 +4099,7 @@ long long wyn_await_any(WynArray futures) {
         fptrs[i] = (Future*)(intptr_t)futures.data[i].data.int_val;
     }
     Future* w = future_race(fptrs, n);
-    return w ? (long long)(intptr_t)future_get(w) : 0;  // empty await_any → 0
+    return w ? (long long)(intptr_t)future_get_consume(w) : 0;  // empty await_any → 0
 }
 long long wyn_await_any_int(WynIntArray futures) {
     Future* fptrs[64];
@@ -4082,7 +4109,7 @@ long long wyn_await_any_int(WynIntArray futures) {
         fptrs[i] = (Future*)(intptr_t)futures.data[i];
     }
     Future* w = future_race(fptrs, n);
-    return w ? (long long)(intptr_t)future_get(w) : 0;  // empty await_any → 0
+    return w ? (long long)(intptr_t)future_get_consume(w) : 0;  // empty await_any → 0
 }
 
 // === Shared Atomic Values ===

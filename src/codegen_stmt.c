@@ -2179,7 +2179,9 @@ void codegen_stmt(Stmt* stmt) {
                 if (has_timeout)
                     snprintf(getcall, sizeof(getcall), "future_get_timeout(%s, __par_to_%d)", joined_futs[j], par_id);
                 else
-                    snprintf(getcall, sizeof(getcall), "future_get(%s)", joined_futs[j]);
+                    // Parallel-block futures are hidden temps with one reader —
+                    // consume so the slot recycles.
+                    snprintf(getcall, sizeof(getcall), "future_get_consume(%s)", joined_futs[j]);
                 if (joined_names[j][0] == '\0')
                     // Unbound spawn: join for the barrier, discard the value.
                     emit("    (void)%s;\n", getcall);
@@ -2200,19 +2202,17 @@ void codegen_stmt(Stmt* stmt) {
             static int select_ctr = 0;
             int sid = select_ctr++;
             if (n == 0) { break; }
-            emit("{ long long __sel_%d = ", sid);
-            if (n == 2 || n == 3) {
-                emit("Task_select_%d(", n);
-                for (int i = 0; i < n; i++) {
-                    if (i) emit(", ");
-                    codegen_expr(stmt->select_stmt.channels[i]);
-                }
-                emit(");\n");
-            } else {
-                // 1 arm, or >3: fall back to a simple ready-poll on the first
-                // channel (Task_select_2/3 cover the common cases).
-                emit("0; (void)__sel_%d;\n", sid);
+            // Task_select_n handles every arity. The old n==1 / n>3 fallback
+            // hardcoded __sel = 0, unconditionally dispatching arm 0 — a
+            // 4-arm select where only channel 4 had data blocked forever in
+            // Task_recv on empty channel 1.
+            emit("{ long long __selch_%d[%d] = { ", sid, n);
+            for (int i = 0; i < n; i++) {
+                if (i) emit(", ");
+                codegen_expr(stmt->select_stmt.channels[i]);
             }
+            emit(" };\n");
+            emit("  long long __sel_%d = Task_select_n(__selch_%d, %d);\n", sid, sid, n);
             for (int i = 0; i < n; i++) {
                 emit("    %s if (__sel_%d == %d) {\n", i ? "else" : "", sid, i);
                 // Bind the received value and run the body.

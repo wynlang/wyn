@@ -37,6 +37,7 @@ Future* wyn_spawn_async_traced(void* (*func)(void*), void* arg, const char* f, i
 _Atomic int ws_blocked = 0;
 int pool_try_run_one(void) { return 0; }
 int wyn_sched_pump_one(void) { return 0; }  // no scheduler on Windows (spawns run inline)
+long wyn_sched_inflight(void) { return 0; } // spawns run inline — nothing in flight
 #else
 #include <pthread.h>
 #ifdef _WIN32
@@ -742,6 +743,18 @@ int wyn_sched_pump_one(void) {
     if (!task) task = try_steal(0);
     if (task) { execute_task(task); return 1; }
     return 0;
+}
+
+// Tasks currently in flight (spawned but not completed) across both spawn
+// paths. Used by select's deadlock detection: if the main thread is blocked
+// in select with no ready channel and nothing in flight, no producer can
+// ever send — error out instead of spinning forever. Send-before-complete
+// ordering (a task's sends happen before its completed increment) makes a
+// zero reading safe: if it reads 0, every send that will ever happen has
+// already landed and been checked.
+long wyn_sched_inflight(void) {
+    return atomic_load_explicit(&total_spawned, memory_order_acquire) -
+           atomic_load_explicit(&total_completed, memory_order_acquire);
 }
 
 // Re-enqueue a task from the I/O loop (called when fd becomes ready)

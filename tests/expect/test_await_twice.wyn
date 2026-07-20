@@ -1,0 +1,58 @@
+// EXPECT: 42
+// EXPECT: 42
+// EXPECT: 42
+// EXPECT: 42
+// EXPECT: 540
+// EXPECT: 3.5
+// EXPECT: 3.5
+// EXPECT: hello
+// EXPECT: hello
+// Futures are MEMOIZED: awaiting the same future twice returns the same
+// value. future_get used to recycle the slot on first read — the second
+// await silently returned 0, floats/structs segfaulted (*(double*)NULL),
+// and if the slot had been re-issued to a newer spawn the stale handle
+// STOLE that spawn's result (the 42/540/0 cross-task corruption below).
+
+fn work(n: int) -> int {
+    return n + 40
+}
+fn fwork() -> float {
+    return 3.5
+}
+fn swork() -> string {
+    return "hello"
+}
+
+fn main() {
+    // int: await twice
+    f = spawn work(2)
+    a = await f
+    b = await f
+    println(a)
+    println(b)
+
+    // interleaved: the stale first future must NOT alias the second spawn's
+    // slot (used to print 42, 540, 0)
+    g = spawn work(2)
+    x = await g
+    h = spawn work(500)
+    y = await g
+    z = await h
+    println(x)
+    println(y)
+    println(z)
+
+    // float: used to segfault on the second await
+    ff = spawn fwork()
+    p = await ff
+    q = await ff
+    println(p)
+    println(q)
+
+    // string: used to come back empty on the second await
+    sf = spawn swork()
+    s1 = await sf
+    s2 = await sf
+    println(s1)
+    println(s2)
+}

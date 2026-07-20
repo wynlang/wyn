@@ -37,38 +37,60 @@ static _Atomic int future_slab_idx = 0;
 static _Atomic int free_stack[FREE_STACK_SIZE];
 static _Atomic int free_top = 0;  // number of items in free stack
 
+// Free-stack lock. The old lock-free push CASed the counter up BEFORE storing
+// the index (and pop CASed down before loading), so a concurrent pop could
+// read a stale index and hand out a future still owned by a live spawn —
+// silent cross-task result corruption. A spinlock is contended only on
+// recycle/new, both rare relative to the work a spawn does.
+static atomic_flag free_stack_lock = ATOMIC_FLAG_INIT;
+static inline void free_stack_acquire(void) {
+    while (atomic_flag_test_and_set_explicit(&free_stack_lock, memory_order_acquire)) {
+        #ifdef __x86_64__
+        __asm__ volatile("pause");
+        #elif defined(__aarch64__) && !defined(__TINYC__)
+        __asm__ volatile("isb");
+        #endif
+    }
+}
+static inline void free_stack_release(void) {
+    atomic_flag_clear_explicit(&free_stack_lock, memory_order_release);
+}
+
 static inline void future_recycle(Future* f) {
     atomic_store_explicit(&f->state, FUTURE_FREE, memory_order_release);
     int idx = (int)(f - future_slab);
-    if (idx < 0 || idx >= FUTURE_SLAB_SIZE) { free(f); return; }
-    // Atomically claim a slot — if full, just drop (slab still owns the memory)
+    // Out-of-slab (malloc'd overflow) futures are LEAKED, not freed: a stale
+    // handle's double-get would read freed memory (UAF) and could double-free.
+    // They only exist past 4096 concurrent futures; the slab-recycling roadmap
+    // item covers reclaiming them properly.
+    if (idx < 0 || idx >= FUTURE_SLAB_SIZE) return;
+    free_stack_acquire();
     int top = atomic_load_explicit(&free_top, memory_order_relaxed);
-    while (top < FREE_STACK_SIZE) {
-        if (atomic_compare_exchange_weak_explicit(&free_top, &top, top + 1,
-                memory_order_acq_rel, memory_order_relaxed)) {
-            atomic_store_explicit(&free_stack[top], idx, memory_order_release);
-            return;
-        }
+    if (top < FREE_STACK_SIZE) {
+        atomic_store_explicit(&free_stack[top], idx, memory_order_relaxed);
+        atomic_store_explicit(&free_top, top + 1, memory_order_relaxed);
     }
-    // Free stack full — future stays allocated in slab, will be reused when slab wraps
+    // else: free stack full — future stays in the slab unreclaimed
+    free_stack_release();
 }
 
 Future* future_new(void) {
     Future* f;
     // Try free list first (recycled futures)
-    int top = atomic_load_explicit(&free_top, memory_order_acquire);
-    while (top > 0) {
-        if (atomic_compare_exchange_weak_explicit(&free_top, &top, top - 1,
-                memory_order_acq_rel, memory_order_acquire)) {
-            int idx = atomic_load_explicit(&free_stack[top - 1], memory_order_acquire);
-            if (idx >= 0 && idx < FUTURE_SLAB_SIZE) {
-                f = &future_slab[idx];
-                atomic_store_explicit(&f->state, FUTURE_PENDING, memory_order_relaxed);
-                f->result = NULL; atomic_store_explicit(&f->waiter, NULL, memory_order_relaxed); atomic_store_explicit(&f->cancelled, 0, memory_order_relaxed);
-                return f;
-            }
+    free_stack_acquire();
+    int top = atomic_load_explicit(&free_top, memory_order_relaxed);
+    if (top > 0) {
+        int idx = atomic_load_explicit(&free_stack[top - 1], memory_order_relaxed);
+        atomic_store_explicit(&free_top, top - 1, memory_order_relaxed);
+        free_stack_release();
+        if (idx >= 0 && idx < FUTURE_SLAB_SIZE) {
+            f = &future_slab[idx];
+            atomic_store_explicit(&f->state, FUTURE_PENDING, memory_order_relaxed);
+            f->result = NULL; atomic_store_explicit(&f->waiter, NULL, memory_order_relaxed); atomic_store_explicit(&f->cancelled, 0, memory_order_relaxed);
+            return f;
         }
-        top = atomic_load_explicit(&free_top, memory_order_acquire);
+    } else {
+        free_stack_release();
     }
     // Slab allocation
     int idx = atomic_fetch_add_explicit(&future_slab_idx, 1, memory_order_relaxed);
@@ -123,15 +145,21 @@ void future_set(Future* f, void* result) {
     }
 }
 
+// future_get MEMOIZES: the result stays readable, so `await f` twice returns
+// the same value (it used to recycle on first read — the second await silently
+// returned 0, or 42/540/0-style cross-task corruption if the slot had already
+// been re-issued to another spawn). Single-use consumers (await-of-temporary,
+// parallel joins, await_all) use future_get_consume below, which recycles —
+// that keeps the constant-memory property on the hot paths. A named future
+// that's never consumed leaks its 40-byte slab slot; acceptable until the
+// slab-recycling roadmap item lands a drop pass.
 void* future_get(Future* f) {
     if (!f) return NULL;
-    // Guard against double-await
+    // Stale handle (already consumed + recycled)
     if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_FREE) return NULL;
     // Fast path
     if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
-        void* r = f->result;
-        future_recycle(f);
-        return r;
+        return f->result;
     }
     // If inside a coroutine, park and wait for future_set to wake us
     if (wyn_coro_current()) {
@@ -173,9 +201,7 @@ void* future_get(Future* f) {
             while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY)
                 wyn_coro_yield();
         }
-        void* r = f->result;
-        future_recycle(f);
-        return r;
+        return f->result;
     }
     // Help drain queue while waiting — prevents deadlock in recursive spawn
     // Safe with mutex pool (no data races unlike Chase-Lev re-entrant pop)
@@ -184,9 +210,7 @@ void* future_get(Future* f) {
     for (int i = 0; i < 256; i++) {
         if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
             atomic_fetch_sub(&ws_blocked, 1);
-            void* r = f->result;
-            future_recycle(f);
-            return r;
+            return f->result;
         }
         #ifdef __x86_64__
         __asm__ volatile("pause");
@@ -217,17 +241,13 @@ void* future_get(Future* f) {
         if (!did) sched_yield();
     }
     atomic_fetch_sub(&ws_blocked, 1);
-    void* r = f->result;
-    future_recycle(f);
-    return r;
+    return f->result;
 }
 
 void* future_get_timeout(Future* f, int timeout_ms) {
     if (!f) return NULL;
     if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
-        void* r = f->result;
-        future_recycle(f);
-        return r;
+        return f->result;
     }
     // Wall-clock deadline so `timeout_ms` means real milliseconds regardless of
     // how the scheduler is progressing. Yield to let other tasks run; if we're
@@ -236,9 +256,7 @@ void* future_get_timeout(Future* f, int timeout_ms) {
     clock_gettime(CLOCK_MONOTONIC, &start);
     for (;;) {
         if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) {
-            void* r = f->result;
-            future_recycle(f);
-            return r;
+            return f->result;
         }
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
@@ -252,6 +270,17 @@ void* future_get_timeout(Future* f, int timeout_ms) {
 
 int future_is_ready(Future* f) {
     return atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY;
+}
+
+// Consuming get: wait, read, recycle. For futures that provably have exactly
+// one reader — `await spawn f()` inline temporaries, parallel-block joins,
+// await_all internals — where recycling keeps memory constant.
+void* future_get_consume(Future* f) {
+    if (!f) return NULL;
+    void* r = future_get(f);
+    if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY)
+        future_recycle(f);
+    return r;
 }
 
 void future_free(Future* f) { if (f) future_recycle(f); }
