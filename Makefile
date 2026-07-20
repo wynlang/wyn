@@ -511,6 +511,51 @@ runtime/libwyn_rt.a: $(RT_SRCS) $(wildcard src/*.h) | wyn$(EXE_EXT)
 	@ar rcs runtime/libwyn_rt.a runtime/obj/*.o
 	@echo "Built runtime/libwyn_rt.a ($$(du -h runtime/libwyn_rt.a | cut -f1))"
 
+# ASan-instrumented runtime: compile RT_SRCS with -fsanitize=address into a
+# separate lib, then build+run a set of representative tests against it. The
+# RC/string/IO bugs live in the RUNTIME — `make debug-memory` only instruments
+# the compiler, so this is the check that has caught every real UAF. Used by
+# the sanitizer CI job; run locally with `make asan-runtime-test`.
+runtime-asan: runtime/libwyn_rt_asan.a
+runtime/libwyn_rt_asan.a: $(RT_SRCS) $(wildcard src/*.h)
+	@echo "Building ASan runtime library..."
+	@mkdir -p runtime/obj_asan
+	@set -e; for f in $(RT_SRCS); do \
+		$(CC) -std=c11 -O1 -g -w -fsanitize=address -fno-omit-frame-pointer \
+		-D_GNU_SOURCE -I src -I vendor/minicoro \
+		-c $$f -o runtime/obj_asan/$$(basename $$f .c).o; \
+	done
+	@ar rcs runtime/libwyn_rt_asan.a runtime/obj_asan/*.o
+	@echo "Built runtime/libwyn_rt_asan.a"
+
+# Compile a representative test set's generated C against the ASan runtime
+# and run each binary. Any ASan report (UAF, overflow, leak-at-exit is NOT
+# checked — detect_leaks=0 keeps signal high) fails the target.
+ASAN_TESTS = tests/expect/test_string_utf8.wyn \
+             tests/expect/test_lambda_typed_variants.wyn \
+             tests/expect/test_arrow_lambda.wyn \
+             tests/expect/test_string_lambda.wyn \
+             tests/expect/test_reduce_both_orders.wyn \
+             tests/expect/test_match_stmt_patterns.wyn \
+             tests/expect/test_println_rich_types.wyn \
+             tests/expect/test_closure_env_lifetime.wyn \
+             tests/expect/test_channels.wyn \
+             tests/expect/test_parallel.wyn
+
+asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a
+	@echo "=== ASan runtime test (representative set) ==="
+	@set -e; for t in $(ASAN_TESTS); do \
+		[ -f $$t ] || continue; \
+		./wyn build $$t --debug >/dev/null 2>&1 || { echo "  skip (build) $$t"; continue; }; \
+		$(CC) -std=c11 -O0 -g -w -fsanitize=address -fno-omit-frame-pointer \
+			-I src -o $${t%.wyn}.asan $$t.c runtime/libwyn_rt_asan.a $(PLATFORM_LIBS); \
+		ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 ./$${t%.wyn}.asan >/dev/null 2>$${t%.wyn}.asan.log \
+			|| { echo "  ASAN FAIL: $$t"; cat $${t%.wyn}.asan.log; exit 1; }; \
+		echo "  ok    $$t"; \
+		rm -f $${t%.wyn}.asan $${t%.wyn}.asan.log $$t.c; \
+	done
+	@echo "asan-runtime: all clean"
+
 # Precompiled header for the dev loop (macOS/clang). Flags MUST match the -O0
 # dev compile in main.c exactly — clang refuses a pch whose flags differ.
 ifeq ($(shell uname),Darwin)

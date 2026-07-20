@@ -148,6 +148,21 @@ jobs:
           WYN=./wyn.exe python3 tests/lsp/lsp_client.py
         shell: bash
 
+  # The RC/string/IO bugs live in the RUNTIME; every real UAF so far was
+  # found by ASan-compiling the runtime and running programs against it —
+  # but only when a human remembered to. This job makes it a gate.
+  sanitize-runtime:
+    name: ASan runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc make
+      - name: Build compiler
+        run: make clean && make
+      - name: ASan runtime test set
+        run: make asan-runtime-test
+
   cross-compile-ios:
     name: Cross-compile (iOS)
     runs-on: macos-15
