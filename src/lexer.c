@@ -30,8 +30,16 @@ void init_lexer(const char* source) {
     lexer.start = source;
     lexer.current = source;
     lexer.line = 1;
+    // Skip a UTF-8 BOM (EF BB BF) — files saved by Windows editors carry one.
+    // Left unhandled it silently derailed the parse: the whole program body
+    // was dropped and the "compiled" binary did nothing.
+    if ((unsigned char)source[0] == 0xEF && (unsigned char)source[1] == 0xBB &&
+        (unsigned char)source[2] == 0xBF) {
+        lexer.current += 3;
+        lexer.start = lexer.current;
+    }
     // Skip shebang line: #!/usr/bin/env wyn run
-    if (source[0] == '#' && source[1] == '!') {
+    if (lexer.current[0] == '#' && lexer.current[1] == '!') {
         while (*lexer.current && *lexer.current != '\n') lexer.current++;
         if (*lexer.current == '\n') { lexer.current++; lexer.line++; }
         lexer.start = lexer.current;
@@ -383,7 +391,7 @@ Token next_token() {
         case '^': return make_token(TOKEN_CARET);
         case '~': return make_token(TOKEN_TILDE);
         case '!': return match('=') ? make_token(TOKEN_BANGEQ) : make_token(TOKEN_BANG);
-        case '=': 
+        case '=':
             if (match('=')) return make_token(TOKEN_EQEQ);
             if (match('>')) return make_token(TOKEN_FATARROW);
             return make_token(TOKEN_EQ);

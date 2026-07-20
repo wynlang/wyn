@@ -221,6 +221,10 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_scaffold_test.sh
 	@echo "=== Running bindgen robustness test ==="
 	@WYN=./wyn bash tests/errors/run_bindgen_test.sh
+	@echo "=== Running parser stability test ==="
+	@WYN=./wyn bash tests/errors/run_parser_stability_test.sh
+	@echo "=== Running fuzz smoke (seed 1) ==="
+	@WYN=./wyn bash tests/fuzz/run_fuzz.sh 1 60
 
 # Alias kept for muscle memory.
 test_bdd: test
