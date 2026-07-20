@@ -95,6 +95,21 @@ void codegen_stmt(Stmt* stmt);
 static void advance() {
     parser.previous = parser.current;
     parser.current = next_token();
+    // Lexer-level error (unterminated string): report ONCE with the position
+    // of the opening quote, then convert the token to EOF so parsing winds
+    // down without a cascade of misleading "Expected ')'/'}'" errors.
+    if (parser.current.type == TOKEN_ERROR) {
+        extern const char* lexer_error_msg(void);
+        extern int lexer_error_col;
+        if (current_source_file) {
+            show_error_context(current_source_file, parser.current.line,
+                               lexer_error_col, lexer_error_msg(), NULL);
+        } else {
+            fprintf(stderr, "Error at line %d: %s\n", parser.current.line, lexer_error_msg());
+        }
+        parser.had_error = true;
+        parser.current.type = TOKEN_EOF;
+    }
 }
 
 static bool check(WynTokenType type) {
@@ -191,7 +206,12 @@ static void expect(WynTokenType type, const char* message) {
         advance();
         return;
     }
-    
+
+    // At EOF with an error already reported, every enclosing block's expect()
+    // fires in turn (the recovery loop below can't advance past EOF) — one
+    // real error would cascade into 2-3 misleading "Expected '}'" ones.
+    if (parser.current.type == TOKEN_EOF && parser.had_error) return;
+
     // Use enhanced error reporting if filename is available
     if (current_source_file) {
         show_error_context(current_source_file, parser.current.line, 1, message, NULL);

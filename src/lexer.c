@@ -12,6 +12,14 @@ typedef struct {
 } Lexer;
 
 static Lexer lexer;
+static const char* lexer_source_begin = NULL;
+
+// Lexer-level error reporting (unterminated strings). The lexer can't print
+// diagnostics itself (no filename), so it returns TOKEN_ERROR and stashes the
+// message + position of the OPENING quote here for the parser to report.
+static const char* lexer_err_msg = NULL;
+const char* lexer_error_msg(void) { return lexer_err_msg; }
+int lexer_error_col = 1;
 static Lexer lexer_stack[16];
 static int lexer_stack_depth = 0;
 
@@ -30,6 +38,8 @@ void init_lexer(const char* source) {
     lexer.start = source;
     lexer.current = source;
     lexer.line = 1;
+    lexer_source_begin = source;
+    lexer_err_msg = NULL;
     // Skip a UTF-8 BOM (EF BB BF) — files saved by Windows editors carry one.
     // Left unhandled it silently derailed the parse: the whole program body
     // was dropped and the "compiled" binary did nothing.
@@ -240,14 +250,33 @@ static Token identifier() {
     return make_token(type);
 }
 
+// Unterminated string: return TOKEN_ERROR pointing at the OPENING quote
+// (open_line + column computed from the source), with the message stashed
+// for the parser. Before this, the lexer silently returned a fake TOKEN_EOF,
+// so users saw "Expected '}' after function body" pointing at the file end.
+static Token error_token(const char* msg, const char* open_quote, int open_line) {
+    lexer_err_msg = msg;
+    lexer_error_col = 1;
+    for (const char* p = open_quote; p > lexer_source_begin && p[-1] != '\n'; p--)
+        lexer_error_col++;
+    Token token;
+    token.type = TOKEN_ERROR;
+    token.start = open_quote;
+    token.length = 1;
+    token.line = open_line;
+    return token;
+}
+
 static Token string() {
+    const char* open_quote = lexer.start;  // the opening " (start of this token)
+    int open_line = lexer.line;
     // Check for multi-line string """
     if (peek() == '"' && peek_next() == '"') {
         advance(); // Skip second "
         advance(); // Skip third "
-        
+
         while (true) {
-            if (is_at_end()) return make_token(TOKEN_EOF);
+            if (is_at_end()) return error_token("Unterminated multi-line string literal (opened here)", open_quote, open_line);
             if (peek() == '"' && peek_next() == '"' && *(lexer.current + 2) == '"') {
                 advance(); // Skip first "
                 advance(); // Skip second "
@@ -260,8 +289,11 @@ static Token string() {
         return make_token(TOKEN_STRING);
     }
     
-    // Regular string - handle ${} interpolation with nested quotes
-    while (peek() != '"' && !is_at_end()) {
+    // Regular string - handle ${} interpolation with nested quotes.
+    // A newline ends the scan: regular strings are single-line (""" is the
+    // multi-line form), so an unterminated string errors at ITS line instead
+    // of swallowing the rest of the file and erroring at EOF.
+    while (peek() != '"' && peek() != '\n' && !is_at_end()) {
         if (peek() == '\\') {
             advance();
             if (!is_at_end()) advance();
@@ -305,12 +337,14 @@ static Token string() {
                 }
                 else { if (peek() == '\n') lexer.line++; advance(); }
             }
+            if (depth > 0 && is_at_end())
+                return error_token("Unterminated string interpolation (string opened here)", open_quote, open_line);
         } else {
-            if (peek() == '\n') lexer.line++;
             advance();
         }
     }
-    if (is_at_end()) return make_token(TOKEN_EOF);
+    if (is_at_end() || peek() == '\n')
+        return error_token("Unterminated string literal (opened here)", open_quote, open_line);
     advance();
     return make_token(TOKEN_STRING);
 }
@@ -335,21 +369,17 @@ Token next_token() {
     }
     if (c == '"') return string();
     if (c == '\'') {
-        // Single-quote string (no interpolation)
-        while (peek() != '\'' && !is_at_end()) {
+        // Single-quote string (no interpolation, single-line like "")
+        const char* open_quote = lexer.start;
+        int open_line = lexer.line;
+        while (peek() != '\'' && peek() != '\n' && !is_at_end()) {
             if (peek() == '\\') { advance(); if (!is_at_end()) advance(); }
-            else { if (peek() == '\n') lexer.line++; advance(); }
+            else advance();
         }
-        if (!is_at_end()) advance();
+        if (is_at_end() || peek() == '\n')
+            return error_token("Unterminated string literal (opened here)", open_quote, open_line);
+        advance();
         return make_token(TOKEN_STRING);
-    }
-    if (c == '\'') {
-        // Character literal
-        advance(); // Skip opening '
-        if (peek() == '\\') advance(); // Handle escape
-        advance(); // The character
-        if (peek() == '\'') advance(); // Skip closing '
-        return make_token(TOKEN_CHAR);
     }
     
     switch (c) {
