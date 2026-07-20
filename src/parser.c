@@ -4204,6 +4204,16 @@ static Stmt* parse_match_statement() {
                         }
                     }
                     expect(TOKEN_RPAREN, "Expected ')' after destructuring pattern");
+                } else if (first_token.length == 4 &&
+                           memcmp(first_token.start, "none", 4) == 0) {
+                    // Lowercase `none` — the canonical no-value spelling
+                    // everywhere else in the language (values, returns). As a
+                    // pattern it used to bind as PATTERN_IDENT, which the
+                    // option-match lowering silently dropped (emitted a
+                    // dangling `else` — an ICE).
+                    pattern->type = PATTERN_OPTION;
+                    pattern->option.is_some = false;
+                    pattern->option.inner = NULL;
                 } else {
                     // Just a simple identifier pattern
                     pattern->type = PATTERN_IDENT;
@@ -4571,6 +4581,14 @@ static Pattern* parse_pattern() {
                 (int)parser.previous.length, parser.previous.start);
             pattern->ident.name.start = buf;
             pattern->ident.name.length = len;
+            return pattern;
+        } else if (potential_struct.length == 4 &&
+                   memcmp(potential_struct.start, "none", 4) == 0) {
+            // Lowercase `none` pattern — same fix as the statement form:
+            // treat as the None option pattern, not a variable binding.
+            pattern->type = PATTERN_OPTION;
+            pattern->option.is_some = false;
+            pattern->option.inner = NULL;
             return pattern;
         } else {
             // This is just an identifier pattern

@@ -1497,7 +1497,11 @@ void codegen_match_statement(Stmt* stmt) {
         }
         
         if (is_string_match) {
-            static int _smid = 0; _smid++;
+            // Capture the id in a LOCAL: a nested match inside an arm body
+            // re-enters this code and bumps the counter; reading the static
+            // after that emitted references to the INNER match's (out-of-
+            // scope) temp — an undeclared-variable ICE.
+            static int _smid_ctr = 0; int _smid = ++_smid_ctr;
             emit("    const char* __match_str_%d = ", _smid);
             codegen_expr(stmt->match_stmt.value);
             emit(";\n");
@@ -1518,7 +1522,9 @@ void codegen_match_statement(Stmt* stmt) {
             }
             emit("\n");
         } else if (is_option_match) {
-            static int _omid = 0; _omid++;
+            // Local id — see the string-match comment above (nested match
+            // inside an arm body must not clobber this match's temp name).
+            static int _omid_ctr = 0; int _omid = ++_omid_ctr;
             // Resolve the concrete Option family from the checker-typed value, so
             // OptionFloat/OptionBool/OptionString lower with the right temp type
             // and payload binding (not the hardcoded OptionInt / long long).
@@ -1572,11 +1578,19 @@ void codegen_match_statement(Stmt* stmt) {
                     emit("{\n        ");
                     if (mc->body) codegen_stmt(mc->body);
                     emit("    }");
+                } else {
+                    // Defensive: an arm pattern this lowering doesn't handle
+                    // (e.g. a stray ident binding) must still emit a block —
+                    // a bare ` else ` with no body is a C syntax error.
+                    emit("{\n        ");
+                    if (mc->body) codegen_stmt(mc->body);
+                    emit("    }");
                 }
             }
             emit("\n");
         } else if (is_result_match) {
-            static int _rmid = 0; _rmid++;
+            // Local id — see the string-match comment above.
+            static int _rmid_ctr = 0; int _rmid = ++_rmid_ctr;
             // Resolve the concrete Result family from the checker-typed value, so
             // ResultFloat/ResultBool/ResultString lower with the right temp type
             // and Ok-payload binding (Err is always a string).
