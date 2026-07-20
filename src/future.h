@@ -7,7 +7,8 @@ typedef void* (*MapFunc)(void*);
 // Core API
 Future* future_new(void);
 void future_set(Future* f, void* result);
-void* future_get(Future* f);
+void* future_get(Future* f);          // memoizing: await twice returns the same value
+void* future_get_consume(Future* f);  // single-reader: get + recycle (temps, joins)
 void* future_get_timeout(Future* f, int timeout_ms);
 int future_is_ready(Future* f);
 void future_free(Future* f);

@@ -458,16 +458,22 @@ void codegen_expr(Expr* expr) {
                     struct_return_type = get_struct_future_type(vn2);
                 }
             }
+            // Inline `await spawn f()` temporaries have exactly one reader —
+            // consume (get + recycle) to keep future memory constant. Named
+            // futures (`await f`) use the memoizing get so awaiting twice
+            // returns the same value instead of 0/garbage.
+            const char* _getfn = (inner && inner->type == EXPR_SPAWN)
+                ? "future_get_consume" : "future_get";
             if (struct_return_type) {
-                emit("(*(%s*)future_get((Future*)(intptr_t)", struct_return_type);
+                emit("(*(%s*)%s((Future*)(intptr_t)", struct_return_type, _getfn);
                 codegen_expr(inner);
                 emit("))");
             } else if (is_string_return) {
-                emit("(const char*)(intptr_t)future_get((Future*)(intptr_t)");
+                emit("(const char*)(intptr_t)%s((Future*)(intptr_t)", _getfn);
                 codegen_expr(inner);
                 emit(")");
             } else {
-                emit("(long long)(intptr_t)future_get((Future*)(intptr_t)");
+                emit("(long long)(intptr_t)%s((Future*)(intptr_t)", _getfn);
                 codegen_expr(inner);
                 emit(")");
             }

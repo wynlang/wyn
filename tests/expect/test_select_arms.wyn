@@ -1,0 +1,48 @@
+// EXPECT: 11
+// EXPECT: from d
+// EXPECT: 77
+// EXPECT: done
+// Select arm dispatch. The old codegen only called Task_select_2/3; one-arm
+// and four-plus-arm selects fell back to a hardcoded `__sel = 0` that
+// unconditionally dispatched arm 0 — a 4-arm select where only channel 4 had
+// data blocked forever in Task_recv on empty channel 1. All arities now go
+// through Task_select_n.
+
+fn producer(ch: int) -> int {
+    Task.send(ch, 77)
+    return 0
+}
+
+fn main() {
+    // 1-arm select (used to work only by luck of the arm-0 fallback)
+    a = channel(2)
+    a.send(11)
+    select {
+        v = a.recv() => println(v)
+    }
+
+    // 4-arm select, only the LAST channel ready (used to hang forever)
+    w = channel(2)
+    x = channel(2)
+    y = channel(2)
+    z = channel(2)
+    z.send(44)
+    select {
+        v = w.recv() => println("from w")
+        v = x.recv() => println("from x")
+        v = y.recv() => println("from y")
+        v = z.recv() => println("from d")
+    }
+
+    // select with a live spawned producer — the main thread pumps the
+    // scheduler while waiting, so this resolves on any core count
+    p = channel(2)
+    q = channel(2)
+    f = spawn producer(q)
+    select {
+        v = p.recv() => println("from p")
+        v = q.recv() => println(v)
+    }
+
+    println("done")
+}
