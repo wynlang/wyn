@@ -161,8 +161,26 @@ static char* read_file(const char* path) {
 // runtime header — every release died with "internal codegen error" on
 // hello world. Falls back to the exe dir when nothing probes.
 static void resolve_wyn_root(const char* argv0, char* out, size_t out_sz) {
-    char exe_path[1024]; strncpy(exe_path, argv0, sizeof(exe_path) - 1);
-    exe_path[sizeof(exe_path) - 1] = 0;
+    // Resolve the REAL executable path from the OS first. argv[0] is only
+    // a directory hint when the binary was invoked with a path — a PATH
+    // lookup (`wyn run x.wyn` after install.sh) gives a bare "wyn", which
+    // used to fall back to "." and probe the USER'S CWD for src/ — so every
+    // installed binary failed with an internal codegen error. Caught by the
+    // release install-canary on the first tag it ever gated (v1.19.0).
+    char exe_path[1024] = "";
+#ifdef __APPLE__
+    uint32_t sz = sizeof(exe_path);
+    if (_NSGetExecutablePath(exe_path, &sz) != 0) exe_path[0] = 0;
+#elif defined(_WIN32)
+    if (GetModuleFileNameA(NULL, exe_path, sizeof(exe_path)) == 0) exe_path[0] = 0;
+#else
+    ssize_t rl = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (rl > 0) exe_path[rl] = '\0'; else exe_path[0] = 0;
+#endif
+    if (!exe_path[0]) {  // OS lookup failed — fall back to argv0
+        strncpy(exe_path, argv0, sizeof(exe_path) - 1);
+        exe_path[sizeof(exe_path) - 1] = 0;
+    }
     char* ls = strrchr(exe_path, '/');
 #ifdef _WIN32
     if (!ls) ls = strrchr(exe_path, '\\');
