@@ -44,6 +44,12 @@ static const char* wynter_hint_for_message(const char* msg) {
     if (!msg) return NULL;
 
     // What was expected tells us what's likely missing/wrong.
+    if (strstr(msg, "nterminated string interpolation"))
+        return "The ${ ... } inside this string is never closed — add the } and the closing quote.";
+    if (strstr(msg, "nterminated multi-line string"))
+        return "This \"\"\" string is never closed — add the closing \"\"\".";
+    if (strstr(msg, "nterminated string"))
+        return "Strings must close on the same line — use \"\"\" for multi-line text.";
     if (strstr(msg, "'{'"))
         return "Blocks open with { — add one to start the body.";
     if (strstr(msg, "'}'"))
@@ -483,6 +489,21 @@ void parser_error_unclosed_delimiter(const char* filename, int line, int column,
 
 // Show source code context for better error messages
 void show_error_context(const char* filename, int line, int column, const char* message, const char* suggestion) {
+    // Dedupe byte-identical consecutive diagnostics: parser recovery at EOF
+    // can fire the same expect() for every enclosing block, printing the
+    // identical error 2-3 times for one typo.
+    static char last_msg[256] = "";
+    static char last_file[256] = "";
+    static int last_line = -1, last_col = -1;
+    if (line == last_line && column == last_col &&
+        strncmp(message ? message : "", last_msg, sizeof(last_msg) - 1) == 0 &&
+        strncmp(filename ? filename : "", last_file, sizeof(last_file) - 1) == 0) {
+        return;
+    }
+    snprintf(last_msg, sizeof(last_msg), "%s", message ? message : "");
+    snprintf(last_file, sizeof(last_file), "%s", filename ? filename : "");
+    last_line = line; last_col = column;
+
     FILE* f = fopen(filename, "r");
     if (!f) {
         printf("Error at %s:%d:%d: %s\n", filename, line, column, message);

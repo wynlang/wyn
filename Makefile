@@ -223,6 +223,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_bindgen_test.sh
 	@echo "=== Running parser stability test ==="
 	@WYN=./wyn bash tests/errors/run_parser_stability_test.sh
+	@echo "=== Running unterminated-string test ==="
+	@WYN=./wyn bash tests/errors/run_unterminated_string_test.sh
 	@echo "=== Running CLI DX test ==="
 	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
 	@echo "=== Running install-layout canary ==="
