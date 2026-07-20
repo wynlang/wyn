@@ -4010,8 +4010,15 @@ long long Task_select_n(const long long* chans, int n) {
         for (int i = 0; i < n; i++) {
             long long ch = chans[i];
             if (ch > 0 && ch < MAX_TASKS && task_registry[ch]) {
-                if (task_registry[ch]->size > 0) return i;
-                if (task_registry[ch]->closed) closed++;
+                // Poll under the channel mutex — senders mutate size under it,
+                // and the unlocked read was a real data race (TSan gate).
+                WynTask* t = task_registry[ch];
+                pthread_mutex_lock(&t->mutex);
+                int has_data = t->size > 0;
+                int is_closed = t->closed;
+                pthread_mutex_unlock(&t->mutex);
+                if (has_data) return i;
+                if (is_closed) closed++;
             } else {
                 closed++;  // invalid handle can never deliver
             }
@@ -4029,8 +4036,13 @@ long long Task_select_n(const long long* chans, int n) {
                 int ready = 0;
                 for (int i = 0; i < n; i++) {
                     long long ch = chans[i];
-                    if (ch > 0 && ch < MAX_TASKS && task_registry[ch] &&
-                        task_registry[ch]->size > 0) { ready = 1; break; }
+                    if (ch > 0 && ch < MAX_TASKS && task_registry[ch]) {
+                        WynTask* t = task_registry[ch];
+                        pthread_mutex_lock(&t->mutex);
+                        int has_data = t->size > 0;
+                        pthread_mutex_unlock(&t->mutex);
+                        if (has_data) { ready = 1; break; }
+                    }
                 }
                 if (ready) continue;
                 if (wyn_sched_inflight() == 0) {
