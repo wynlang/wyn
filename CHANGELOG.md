@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.19.1 (2026-07-21)
+
+Identity and polish patch — no language changes, drop-in upgrade from v1.19.0.
+
+- **Clean CLI output**: `wyn`, `wyn version`, and `wyn --help` print a single
+  informative line instead of ASCII art. The visual identity (the new
+  wyvern-W emblem) lives at wynlang.com; the terminal stays clean and
+  script-friendly. `wyn version` prints to stdout for easy parsing.
+- **Fixed PATH invocation** (also shipped in the re-tagged v1.19.0): the
+  installed binary resolves its runtime from the real executable path, so
+  `wyn run x.wyn` works when invoked through PATH — not just as `./wyn`.
+- Website: new wyvern-W emblem as logo/favicon/social image; WYN block
+  wordmark on the homepage and 404 page.
+
 ## v1.19.0 — "The DX Release" (2026-07-20)
 
 The developer-experience release: a real test runner, working project templates,
