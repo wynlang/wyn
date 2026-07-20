@@ -1,10 +1,79 @@
 # Changelog
 
-## v1.19.0 — "The DX Release" (2026-07-19)
+## v1.19.0 — "The DX Release" (2026-07-20)
 
 The developer-experience release: a real test runner, working project templates,
-supply-chain auditing, the first official web package — and the module-codegen
-fixes that make writing Wyn packages actually pleasant. No breaking changes.
+supply-chain auditing, the first official web package, the module-codegen
+fixes that make writing Wyn packages actually pleasant — plus two hardening
+passes that fixed every known silent-wrong-answer bug and put the compiler
+under continuous fuzzing and sanitizer gates. No breaking changes.
+
+**Correctness: no more silent wrong answers**
+- **Structs compare with `==`**: `if a == b` on struct values works —
+  field-wise (strings by content, nested structs recursively). It used to be
+  an internal compiler error on day-one code. Structs with non-comparable
+  fields (arrays/maps), cross-type compares, and ordering (`<`) give clear
+  check-time errors instead.
+- **Channels are typed**: a channel's element type is inferred from its first
+  `send` and enforced from then on. `ch.send("hello")` → `recv()` returns the
+  string (it used to print a pointer number); floats round-trip exactly
+  (`3.14` used to come back as `3`); sending the wrong type is a check-time
+  error.
+- **Mismatched collection stores are check-time errors**: pushing a string
+  onto an int array, or storing a string into an int-valued map slot, used to
+  pass `wyn check` and corrupt memory at runtime. All store paths (method
+  `push`, `m[k] = v`, `a[i] = v`) are enforced now; `int`↔`float` stays
+  permissive.
+- **Awaiting a future twice returns the same value**: results are memoized.
+  The second `await f` used to return 0 silently — or, worse, steal a
+  *different* spawn's result; float results crashed. Also fixed a race that
+  could hand the same future to two spawns, and spawned functions' float
+  arguments/returns no longer truncate (`spawn half(7.0)` used to return 3).
+- **Nested Options work**: `Some(Some(x))` with nested `match` compiles and
+  runs (four distinct compiler bugs fixed), including string payloads,
+  `Some(None)`, triple nesting, and lowercase `none` match arms.
+- **`select` dispatches correctly at every arity**: one-arm and 4+-arm
+  selects used to always run the *first* arm (hanging if its channel was
+  empty). A `select` that can never receive — no ready channel, no live
+  tasks — now exits with a deadlock error instead of hanging forever.
+- **`println(struct)` prints the fields** (`Point { x: 3, y: 4 }`) and
+  `println(option)` prints `Some(5)` / `none` — both were internal compiler
+  errors. Nested array assignment (`m[0][1] = v`) and lambda captures inside
+  `"${...}"` interpolation are fixed too.
+
+**Match statements** (statement position now equals expression position)
+- Or-patterns `1 | 3 | 5 =>` work (they used to compile to `if (0)` — the arm
+  silently *never* matched), guards `x if x > 2 =>` no longer crash the
+  compiler, and range patterns `1..5` / `1..=5` parse.
+
+**Stability: the parser can't be crashed**
+- A fuzzing harness now runs in `make test` and CI. Every crash and hang it
+  found is fixed: four parser infinite loops, a segfault on `===`, UTF-8 BOM
+  silently emptying entire programs, `split("")`/`replace("")` hangs,
+  `.chars()`/`.reverse()` corrupting multi-byte UTF-8, `.reduce(init, fn)`
+  segfaulting, and more. Invariant: **0 crashes, 0 hangs, 0 internal errors**
+  on malformed input.
+
+**Error messages that tell the truth**
+- **Unterminated strings point at the opening quote** with "Unterminated
+  string literal", instead of a misleading `Expected '}'` at the end of the
+  file — and you get *one* error, not a cascade of three identical ones.
+- **Python/JS habits get targeted fixes**: `def`, `lambda`, `True`, `null`,
+  `let`, `function`, `console`, `try` and friends each produce the exact Wyn
+  equivalent (`functions are declared with 'fn': fn add(a, b) {...}`) instead
+  of a generic parse error.
+- `wyn --version` reports the real version everywhere (it was cwd-dependent),
+  `wyn check`/`run` on a directory fails instead of false-greening, cached
+  `wyn run` propagates the program's real exit code, and `wyn test` with zero
+  matching tests says so instead of reporting success.
+
+**Hardening gates (CI)**
+- Every commit now runs the full suite under **AddressSanitizer** (the
+  runtime, where the real memory bugs live) and **ThreadSanitizer** (all
+  concurrency tests, under *both* executor configurations) — plus an
+  install-layout canary that blocks any release whose tarball wouldn't
+  actually run after `install.sh`. The TSan gate caught and fixed a real
+  data race in `select` before this release.
 
 **New tooling**
 - **`wyn test` is a real test runner for your projects**: discovers
@@ -103,8 +172,10 @@ fixes that make writing Wyn packages actually pleasant. No breaking changes.
   the work-stealing deques are allocated at scheduler start, sized to the
   real core count (hello's data segment: 2.1MB → 16KB).
 
-**Tests**: 135 expect/regression tests + 13 dedicated sub-suites (scaffolding,
-test runner, pkg audit, module codegen, and more), all green on all platforms.
+**Tests**: 146 expect/regression tests + 20 dedicated sub-suites (parser
+stability, struct equality, collection types, select deadlock, unterminated
+strings, scaffolding, test runner, pkg audit, module codegen, and more) + the
+fuzz invariants + ASan/TSan sanitizer sets, all green on all platforms.
 
 ## v1.18.0 — "The Correctness Release" (2026-07-17)
 
