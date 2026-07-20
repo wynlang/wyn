@@ -54,25 +54,49 @@ jobs:
           smoke.exe
         shell: cmd
 
+      # Layout contract (install.sh depends on this — see the canary job):
+      #   bin/wyn            the compiler
+      #   src/wyn_runtime.h  runtime sources (bin/../src probe in main.c)
+      #   runtime/libwyn_rt.a
+      #   vendor/minicoro/
+      #   VERSION
+      # The old packaging had wyn at the tarball ROOT (install.sh expected
+      # bin/), nested sources at src/src/ (cp -r src dist/src copies INTO an
+      # existing dir), and no VERSION — so no released binary ever worked.
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          mkdir -p dist/src dist/vendor/minicoro dist/runtime
-          cp wyn dist/
-          cp -r src dist/src
-          [ -d vendor/minicoro ] && cp -r vendor/minicoro dist/vendor/minicoro
-          [ -d vendor/tcc ] && cp -r vendor/tcc dist/vendor/tcc
-          # Build and include runtime library for this platform
+          mkdir -p dist/bin dist/runtime dist/vendor
+          cp wyn dist/bin/
+          cp -r src dist/
+          cp VERSION dist/
+          [ -d vendor/minicoro ] && cp -r vendor/minicoro dist/vendor/
           make runtime
           cp runtime/libwyn_rt.a dist/runtime/
           tar czf ${{ matrix.artifact }}.tar.gz -C dist .
 
+      - name: Verify artifact layout (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p /tmp/verify && tar xzf ${{ matrix.artifact }}.tar.gz -C /tmp/verify
+          test -x /tmp/verify/bin/wyn
+          test -f /tmp/verify/src/wyn_runtime.h
+          test -f /tmp/verify/runtime/libwyn_rt.a
+          test -f /tmp/verify/VERSION
+          # The INSTALLED binary must compile and run hello world from a
+          # foreign cwd — this exact path was broken in every prior release.
+          cd /tmp && echo 'fn main() { println("install-ok") }' > hello.wyn
+          /tmp/verify/bin/wyn run hello.wyn | grep -q "install-ok"
+          /tmp/verify/bin/wyn version | grep -vq "1.10.0"
+          echo "✅ artifact layout + installed-binary smoke verified"
+
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          mkdir dist\src
-          copy wyn.exe dist\
+          mkdir dist\bin
+          copy wyn.exe dist\bin\
           xcopy /E /I src dist\src
+          copy VERSION dist\
           Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip
         shell: pwsh
 
@@ -82,9 +106,51 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.*
 
+  # THE GATE: simulate the exact public `curl | sh` install flow against the
+  # just-built artifacts on clean VMs. If a stranger couldn't install and run
+  # hello world, the release does not happen. (Every prior release shipped
+  # broken: asset-name mismatch vs install.sh, no bin/ layout, src/src/
+  # nesting, missing VERSION — nothing exercised the public path.)
+  install-canary:
+    name: Install canary (${{ matrix.artifact }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: wyn-linux-x64
+          - os: macos-15
+            artifact: wyn-macos-arm64
+          - os: macos-15-intel
+            artifact: wyn-macos-x64
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+
+      - name: Install exactly like install.sh does
+        run: |
+          # Mirror site/public/install.sh: extract into ~/.wyn, run bin/wyn.
+          INSTALL_DIR="$HOME/.wyn"
+          mkdir -p "$INSTALL_DIR"
+          tar xzf ${{ matrix.artifact }}.tar.gz -C "$INSTALL_DIR"
+          chmod +x "$INSTALL_DIR/bin/wyn"
+          export PATH="$INSTALL_DIR/bin:$PATH"
+          # First-five-minutes flow, from a foreign cwd, like a real user.
+          cd "$(mktemp -d)"
+          wyn version
+          wyn version | grep -vq "1.10.0"
+          echo 'fn main() { println("hello from installed wyn") }' > hello.wyn
+          wyn run hello.wyn | grep -q "hello from installed wyn"
+          wyn new demo --template cli
+          cd demo && wyn test
+          echo "✅ public install flow verified on ${{ matrix.artifact }}"
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, install-canary]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

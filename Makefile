@@ -225,6 +225,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_parser_stability_test.sh
 	@echo "=== Running CLI DX test ==="
 	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
+	@echo "=== Running install-layout canary ==="
+	@WYN=./wyn bash tests/errors/run_install_layout_test.sh
 	@echo "=== Running fuzz smoke (seed 1) ==="
 	@WYN=./wyn bash tests/fuzz/run_fuzz.sh 1 60
 
