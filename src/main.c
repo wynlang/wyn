@@ -153,6 +153,38 @@ static char* read_file(const char* path) {
     return buffer;
 }
 
+// Resolve the Wyn installation root: the directory containing src/
+// wyn_runtime.h and runtime/libwyn_rt.a. Probe order: $WYN_ROOT env, the
+// exe's own directory (source checkout: ./wyn beside src/), then the exe's
+// PARENT (installed layout: ~/.wyn/bin/wyn beside ~/.wyn/src/). The parent
+// probe was missing everywhere, so INSTALLED binaries could never find the
+// runtime header — every release died with "internal codegen error" on
+// hello world. Falls back to the exe dir when nothing probes.
+static void resolve_wyn_root(const char* argv0, char* out, size_t out_sz) {
+    char exe_path[1024]; strncpy(exe_path, argv0, sizeof(exe_path) - 1);
+    exe_path[sizeof(exe_path) - 1] = 0;
+    char* ls = strrchr(exe_path, '/');
+#ifdef _WIN32
+    if (!ls) ls = strrchr(exe_path, '\\');
+#endif
+    char exe_dir[1024] = ".";
+    if (ls) { *ls = 0; snprintf(exe_dir, sizeof(exe_dir), "%s", exe_path); }
+
+    const char* env_root = getenv("WYN_ROOT");
+    char parent_dir[1040]; snprintf(parent_dir, sizeof(parent_dir), "%s/..", exe_dir);
+    const char* candidates[3];
+    int ncand = 0;
+    if (env_root && *env_root) candidates[ncand++] = env_root;
+    candidates[ncand++] = exe_dir;
+    candidates[ncand++] = parent_dir;
+    for (int ci = 0; ci < ncand; ci++) {
+        char probe[1200]; snprintf(probe, sizeof(probe), "%s/src/wyn_runtime.h", candidates[ci]);
+        FILE* pf = fopen(probe, "r");
+        if (pf) { fclose(pf); snprintf(out, out_sz, "%s", candidates[ci]); return; }
+    }
+    snprintf(out, out_sz, "%s", exe_dir);
+}
+
 // The version is embedded at COMPILE TIME (-DWYN_VERSION, from the VERSION
 // file, wired in the Makefile). The old implementation read a VERSION file
 // relative to the CURRENT WORKING DIRECTORY with a hardcoded "1.10.0"
@@ -974,14 +1006,9 @@ int main(int argc, char** argv) {
             char* dot = strrchr(bin_path, '.'); if (dot) *dot = 0;
         }
         
-        // Determine wyn_root
-        char wyn_root[1024] = ".";
-        char exe_path[1024]; strncpy(exe_path, argv[0], sizeof(exe_path)-1);
-        char* ls = strrchr(exe_path, '/');
-#ifdef _WIN32
-        if (!ls) ls = strrchr(exe_path, '\\');
-#endif
-        if (ls) { *ls = 0; snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path); }
+        // Determine wyn_root (shared helper — see resolve_wyn_root).
+        char wyn_root[1024];
+        resolve_wyn_root(argv[0], wyn_root, sizeof(wyn_root));
 
         // Compile with TCC or system cc
         const char* cc = detect_cc();
@@ -1238,15 +1265,8 @@ int main(int argc, char** argv) {
         // Precompile runtime library for fast compilation
         printf("Building runtime library...\n");
         char cmd[8192];
-        char wyn_root[1024] = ".";
-        char* root_env = getenv("WYN_ROOT");
-        if (root_env) strncpy(wyn_root, root_env, sizeof(wyn_root)-1);
-        else {
-            char exe_path[1024];
-            strncpy(exe_path, argv[0], sizeof(exe_path)-1);
-            char* last_slash = strrchr(exe_path, '/');
-            if (last_slash) { *last_slash = 0; strncpy(wyn_root, exe_path, sizeof(wyn_root)-1); }
-        }
+        char wyn_root[1024];
+        resolve_wyn_root(argv[0], wyn_root, sizeof(wyn_root));
         // Build for-loop command from unified source list
         char for_list[4096];
         build_source_list(for_list, sizeof(for_list), "");
@@ -1494,15 +1514,9 @@ int main(int argc, char** argv) {
         }
         
         // Find wyn root for includes
-        char wyn_root[1024] = ".";
-        char* root_env = getenv("WYN_ROOT");
-        if (root_env) { snprintf(wyn_root, sizeof(wyn_root), "%s", root_env); }
-        else {
-            char ep[1024]; strncpy(ep, argv[0], sizeof(ep)-1); ep[sizeof(ep)-1]=0;
-            char* ls = strrchr(ep, '/');
-            if (ls) { *ls = 0; snprintf(wyn_root, sizeof(wyn_root), "%s", ep); }
-        }
-        
+        char wyn_root[1024];
+        resolve_wyn_root(argv[0], wyn_root, sizeof(wyn_root));
+
         // Compile to C first
         char* source = read_file(file);
         { extern void set_source_directory(const char*); set_source_directory(file); }
@@ -2285,24 +2299,12 @@ int main(int argc, char** argv) {
         codegen_program(prog);
         fclose(out);
         
-        // Get WYN_ROOT or auto-detect from executable path
-        char wyn_root[1024] = ".";
-        char* root_env = getenv("WYN_ROOT");
-        if (root_env) {
-            snprintf(wyn_root, sizeof(wyn_root), "%s", root_env);
-        } else {
-            // Derive from executable path
-            char exe_path[1024];
-            strncpy(exe_path, argv[0], sizeof(exe_path) - 1);
-            exe_path[sizeof(exe_path) - 1] = '\0';
-            char* last_slash = strrchr(exe_path, '/');
-            if (last_slash) {
-                *last_slash = '\0';
-                if (exe_path[0] != '\0') {
-                    snprintf(wyn_root, sizeof(wyn_root), "%s", exe_path);
-                }
-            }
-            // Verify
+        // Get WYN_ROOT or auto-detect (shared helper: env → exe dir → exe
+        // parent, probing for src/wyn_runtime.h — covers the installed
+        // ~/.wyn/bin layout). Keep the legacy cwd fallbacks after it.
+        char wyn_root[1024];
+        resolve_wyn_root(argv[0], wyn_root, sizeof(wyn_root));
+        {
             char test_path[1100];
             snprintf(test_path, sizeof(test_path), "%s/src/wyn_wrapper.c", wyn_root);
             FILE* test = fopen(test_path, "r");
