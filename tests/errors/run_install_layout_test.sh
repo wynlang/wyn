@@ -29,6 +29,15 @@ printf 'fn main() {\n    println("install-ok")\n}\n' > hello.wyn
 out=$(perl -e 'alarm(60); exec @ARGV' -- "$W" run hello.wyn 2>&1); rc=$?
 if [ $rc -eq 0 ] && echo "$out" | grep -q "install-ok"; then ok "installed binary runs hello world"; else bad "hello: rc=$rc [$(echo "$out" | tail -2)]"; fi
 
+# 1b. Same, but invoked as a bare name through PATH — how install.sh users
+# actually call it. argv[0] is then just "wyn" (no directory), which used to
+# make root resolution fall back to "." and probe the USER'S CWD for src/ —
+# every PATH invocation died with an internal codegen error. The v1.19.0
+# release canary caught this on its first gated tag.
+rm -f hello.wyn.out hello
+out=$(perl -e 'alarm(60); exec @ARGV' -- env PATH="$TMP/install/bin:$PATH" wyn run hello.wyn 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | grep -q "install-ok"; then ok "PATH-lookup invocation works (bare argv0)"; else bad "PATH hello: rc=$rc [$(echo "$out" | tail -2)]"; fi
+
 # 2. version is real (not the old 1.10.0 fallback)
 out=$("$W" version 2>&1)
 if echo "$out" | grep -q "1.10.0"; then bad "version fallback 1.10.0"; else ok "version reports real version"; fi
