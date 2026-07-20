@@ -4255,8 +4255,18 @@ void codegen_expr(Expr* expr) {
             // enclosing function-return kind wins (they name the exact declared
             // family); otherwise infer from the payload's own type so bare
             // `Some(x)` lowers correctly for any payload, not just int.
-            emit("%s_Some(", wyn_option_ctor_kind(expr, "Option"));
+            const char* _fam = wyn_option_ctor_kind(expr, "Option");
+            emit("%s_Some(", _fam);
+            // Peel the target family for the payload: inside Some(Some(5)) the
+            // inner ctor's target is the OUTER family's payload (OptionOptionInt
+            // → OptionInt), not the outer family itself — without the peel the
+            // inner Some also emitted OptionOptionInt_Some (a C type error).
+            extern const char* current_assign_target_kind;
+            const char* _prev_tk = current_assign_target_kind;
+            current_assign_target_kind =
+                (strncmp(_fam, "OptionOption", 12) == 0) ? _fam + 6 : NULL;
             if (expr->option.value) codegen_expr(expr->option.value);
+            current_assign_target_kind = _prev_tk;
             emit(")");
             break;
         }
@@ -4268,13 +4278,23 @@ void codegen_expr(Expr* expr) {
         }
         case EXPR_OK: {
             emit("%s_Ok(", wyn_option_ctor_kind(expr, "Result"));
+            // Same peel rationale as EXPR_SOME: the payload must not inherit
+            // the outer Result family as its own target.
+            extern const char* current_assign_target_kind;
+            const char* _prev_tk_ok = current_assign_target_kind;
+            current_assign_target_kind = NULL;
             if (expr->option.value) codegen_expr(expr->option.value);
+            current_assign_target_kind = _prev_tk_ok;
             emit(")");
             break;
         }
         case EXPR_ERR: {
             emit("%s_Err(", wyn_option_ctor_kind(expr, "Result"));
+            extern const char* current_assign_target_kind;
+            const char* _prev_tk_err = current_assign_target_kind;
+            current_assign_target_kind = NULL;
             if (expr->option.value) codegen_expr(expr->option.value);
+            current_assign_target_kind = _prev_tk_err;
             emit(")");
             break;
         }

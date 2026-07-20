@@ -1,0 +1,85 @@
+// EXPECT: 5
+// EXPECT: inner none
+// EXPECT: outer none
+// EXPECT: hi
+// EXPECT: 1
+// EXPECT: txt
+// EXPECT: 7
+// EXPECT: 5.0
+// EXPECT: dflt
+// Nested Options used to ICE four ways: the inner Some(5) constructor
+// inherited the OUTER family (OptionOptionInt_Some(OptionOptionInt_Some(5))),
+// a nested match clobbered the outer match's temp id (undeclared
+// __match_opt_2), lowercase `none` patterns were silently dropped (dangling
+// C `else`), and the Some(inner) binder was always typed int (miscompiled
+// string payloads).
+
+fn main() {
+    // Some(Some(int)) — the original ICE repro, with lowercase none arms
+    x = Some(Some(5))
+    match x {
+        Some(inner) => match inner {
+            Some(v) => println(v)
+            none => println("inner none")
+        }
+        none => println("outer none")
+    }
+
+    // Some(None): inner none arm
+    y = Some(None)
+    match y {
+        Some(inner) => match inner {
+            Some(v) => println(v)
+            none => println("inner none")
+        }
+        none => println("outer none")
+    }
+
+    // Bare None: outer none arm
+    z = None
+    match z {
+        Some(inner) => println("has inner")
+        none => println("outer none")
+    }
+
+    // Nested STRING payload: binder must be typed string, temp OptionString
+    s = Some(Some("hi"))
+    match s {
+        Some(inner) => match inner {
+            Some(v) => println(v)
+            none => println("no str")
+        }
+        none => println("none")
+    }
+
+    // Two sequential (non-nested) matches: ids stay distinct
+    a = Some(1)
+    match a {
+        Some(v) => println(v)
+        none => println("none a")
+    }
+    b = Some("txt")
+    match b {
+        Some(v) => println(v)
+        none => println("none b")
+    }
+
+    // Triple nesting: the family peel must compose
+    t = Some(Some(Some(7)))
+    match t {
+        Some(m) => match m {
+            Some(inner) => match inner {
+                Some(v) => println(v)
+                none => println("n3")
+            }
+            none => println("n2")
+        }
+        none => println("n1")
+    }
+
+    // No-regression: explicit target annotations still win over payload inference
+    var f: float? = Some(5)
+    println(f.unwrap_or(0.0))
+    var g: string? = None
+    println(g.unwrap_or("dflt"))
+}

@@ -5897,6 +5897,26 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         Token var_name = match_case->pattern->option.inner->ident.name;
                         // Look up the variant's data type from the enum definition
                         Type* bound_type = builtin_int; // default
+                        // Option family Some(x): bind x to the PAYLOAD type —
+                        // OptionString -> string, OptionOptionInt -> OptionInt
+                        // (global-scope lookup), OptionUser -> struct User.
+                        // Without this the binder was always int, so a nested
+                        // `match inner` miscompiled for non-int payloads.
+                        if (match_value_type && match_value_type->kind == TYPE_STRUCT &&
+                            match_value_type->struct_type.name.length > 6 &&
+                            memcmp(match_value_type->struct_type.name.start, "Option", 6) == 0 &&
+                            match_case->pattern->option.is_some) {
+                            Token pl = match_value_type->struct_type.name;
+                            Token payload = {TOKEN_IDENT, pl.start + 6, pl.length - 6, 0};
+                            if (payload.length == 6 && memcmp(payload.start, "String", 6) == 0) bound_type = builtin_string;
+                            else if (payload.length == 5 && memcmp(payload.start, "Float", 5) == 0) bound_type = builtin_float;
+                            else if (payload.length == 4 && memcmp(payload.start, "Bool", 4) == 0) bound_type = builtin_bool;
+                            else if (payload.length == 3 && memcmp(payload.start, "Int", 3) == 0) bound_type = builtin_int;
+                            else {
+                                Symbol* ps = find_symbol(global_scope, payload);
+                                if (ps && ps->type && ps->type->kind == TYPE_STRUCT) bound_type = ps->type;
+                            }
+                        }
                         if (match_value_type && match_value_type->kind == TYPE_ENUM) {
                             Token variant_name = match_case->pattern->option.variant_name;
                             EnumStmt* enum_def = find_enum_definition(match_value_type->name);
