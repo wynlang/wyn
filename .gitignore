@@ -71,3 +71,5 @@ tests/test_*
 tests/run_tests
 !tests/run_tests.sh
 !tests/run_tests*.sh
+runtime/libwyn_rt_asan.a
+runtime/obj_asan/
