@@ -1662,17 +1662,74 @@ void codegen_match_statement(Stmt* stmt) {
                 } else {
                     emit("1"); // Variable binding always matches
                 }
+            } else if (match_case->pattern->type == PATTERN_RANGE) {
+                // Range pattern in STATEMENT position — the expression form
+                // always supported this; the statement form emitted `0`
+                // (arm silently never matched).
+                emit("(__match_val >= ");
+                codegen_expr(match_case->pattern->range.start);
+                emit(" && __match_val %s ", match_case->pattern->range.inclusive ? "<=" : "<");
+                codegen_expr(match_case->pattern->range.end);
+                emit(")");
+            } else if (match_case->pattern->type == PATTERN_OR) {
+                // Or pattern in STATEMENT position: 1 | 3 | 5. Was emitted as
+                // constant 0 — `match n { 1 | 3 | 5 => ... }` NEVER matched.
+                emit("(");
+                for (int oi = 0; oi < match_case->pattern->or_pat.pattern_count; oi++) {
+                    Pattern* sub = match_case->pattern->or_pat.patterns[oi];
+                    if (oi > 0) emit(" || ");
+                    if (sub->type == PATTERN_LITERAL) {
+                        if (sub->literal.value.start[0] == '"') {
+                            emit("strcmp(__match_val, %.*s) == 0",
+                                 sub->literal.value.length, sub->literal.value.start);
+                        } else {
+                            emit("__match_val == %.*s",
+                                 sub->literal.value.length, sub->literal.value.start);
+                        }
+                    } else if (sub->type == PATTERN_RANGE) {
+                        emit("(__match_val >= ");
+                        codegen_expr(sub->range.start);
+                        emit(" && __match_val %s ", sub->range.inclusive ? "<=" : "<");
+                        codegen_expr(sub->range.end);
+                        emit(")");
+                    } else {
+                        emit("0");
+                    }
+                }
+                emit(")");
             } else {
                 emit("0"); // Unsupported pattern
             }
             
-            // Add guard clause if present
+            // Add guard clause if present. A guard on a binding pattern
+            // (`x if x > 2 =>`) references the binding INSIDE the condition,
+            // but the binding declaration is emitted after it — so wrap the
+            // guard in a statement-expression that declares the binding
+            // locally. (Was emitted bare: C error "use of undeclared x".)
             if (match_case->guard) {
-                emit(" && (");
-                codegen_expr(match_case->guard);
-                emit(")");
+                bool _guard_binds = false;
+                Token _bind_name = {0};
+                if (match_case->pattern->type == PATTERN_IDENT) {
+                    Token vn = match_case->pattern->ident.name;
+                    bool _is_variant = false;
+                    for (int j = 0; j < vn.length; j++)
+                        if (vn.start[j] == '_') { _is_variant = true; break; }
+                    if (!_is_variant && match_enum_name) _is_variant = true;
+                    if (!_is_variant) { _guard_binds = true; _bind_name = vn; }
+                }
+                if (_guard_binds) {
+                    emit(" && ({ long long %.*s = __match_val; (void)%.*s; (bool)(",
+                         _bind_name.length, _bind_name.start,
+                         _bind_name.length, _bind_name.start);
+                    codegen_expr(match_case->guard);
+                    emit("); })");
+                } else {
+                    emit(" && (");
+                    codegen_expr(match_case->guard);
+                    emit(")");
+                }
             }
-            
+
             emit(") {\n");
             
             // Generate variable bindings for patterns that need them
