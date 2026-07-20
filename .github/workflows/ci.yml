@@ -163,6 +163,21 @@ jobs:
       - name: ASan runtime test set
         run: make asan-runtime-test
 
+  # Data races hide in whichever executor a test doesn't exercise — the
+  # coroutine scheduler (default) or the legacy thread pool (WYN_ASYNC_POOL=1).
+  # The tsan-runtime-test target runs every concurrency test under BOTH.
+  sanitize-runtime-tsan:
+    name: TSan runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc make
+      - name: Build compiler
+        run: make clean && make
+      - name: TSan runtime test set (both executors)
+        run: make tsan-runtime-test
+
   cross-compile-ios:
     name: Cross-compile (iOS)
     runs-on: macos-15

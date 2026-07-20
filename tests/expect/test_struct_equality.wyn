@@ -1,0 +1,50 @@
+// EXPECT: true
+// EXPECT: false
+// EXPECT: true
+// EXPECT: true
+// EXPECT: false
+// EXPECT: true
+// EXPECT: false
+// EXPECT: true
+// EXPECT: false
+// Field-wise struct == / != (used to be an internal codegen error: raw C ==
+// on struct values doesn't compile). Covers int/float/bool/string fields,
+// nested struct fields, enum fields, and function-return operands.
+
+enum Color { Red, Green, Blue }
+
+struct Point { x: int, y: int }
+struct Person { name: string, age: int, score: float, active: bool }
+struct Line { a: Point, b: Point }
+struct Pixel { c: Color, v: int }
+
+fn make_pixel(v: int) -> Pixel {
+    return Pixel{c: Color::Green, v: v}
+}
+
+fn main() {
+    p1 = Point{x: 1, y: 2}
+    p2 = Point{x: 1, y: 2}
+    p3 = Point{x: 1, y: 3}
+    println(p1 == p2)          // true
+    println(p1 == p3)          // false
+    println(p1 != p3)          // true
+
+    // strings compare by content (strcmp), floats and bools by value
+    q1 = Person{name: "amy", age: 30, score: 1.5, active: true}
+    q2 = Person{name: "amy", age: 30, score: 1.5, active: true}
+    q3 = Person{name: "bob", age: 30, score: 1.5, active: true}
+    println(q1 == q2)          // true
+    println(q1 == q3)          // false
+
+    // nested struct fields recurse
+    l1 = Line{a: Point{x: 0, y: 0}, b: Point{x: 5, y: 5}}
+    l2 = Line{a: Point{x: 0, y: 0}, b: Point{x: 5, y: 5}}
+    l3 = Line{a: Point{x: 0, y: 0}, b: Point{x: 5, y: 6}}
+    println(l1 == l2)          // true
+    println(l1 == l3)          // false
+
+    // enum fields + operands from function returns (expr_type path)
+    println(make_pixel(9) == make_pixel(9))   // true
+    println(make_pixel(9) == Pixel{c: Color::Red, v: 9})  // false
+}

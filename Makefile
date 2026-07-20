@@ -225,6 +225,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_parser_stability_test.sh
 	@echo "=== Running unterminated-string test ==="
 	@WYN=./wyn bash tests/errors/run_unterminated_string_test.sh
+	@echo "=== Running struct-eq negative test ==="
+	@WYN=./wyn bash tests/errors/run_struct_eq_test.sh
 	@echo "=== Running CLI DX test ==="
 	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
 	@echo "=== Running install-layout canary ==="
@@ -557,6 +559,51 @@ asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a
 		rm -f $${t%.wyn}.asan $${t%.wyn}.asan.log $$t.c; \
 	done
 	@echo "asan-runtime: all clean"
+
+# TSan-instrumented runtime: same shape as the ASan lib, but for data races.
+# Two executors exist (coroutine scheduler + legacy thread pool behind
+# WYN_ASYNC_POOL=1) and races hide in whichever one a test doesn't exercise,
+# so every test runs under BOTH configs. Used by the sanitizer CI job; run
+# locally with `make tsan-runtime-test`.
+runtime-tsan: runtime/libwyn_rt_tsan.a
+runtime/libwyn_rt_tsan.a: $(RT_SRCS) $(wildcard src/*.h)
+	@echo "Building TSan runtime library..."
+	@mkdir -p runtime/obj_tsan
+	@set -e; for f in $(RT_SRCS); do \
+		$(CC) -std=c11 -O1 -g -w -fsanitize=thread -fno-omit-frame-pointer \
+		-D_GNU_SOURCE -I src -I vendor/minicoro \
+		-c $$f -o runtime/obj_tsan/$$(basename $$f .c).o; \
+	done
+	@ar rcs runtime/libwyn_rt_tsan.a runtime/obj_tsan/*.o
+	@echo "Built runtime/libwyn_rt_tsan.a"
+
+# Concurrency-focused test set: spawn/await/parallel/channels are where the
+# two executors interleave threads. Each binary runs twice — default
+# (coroutine) and WYN_ASYNC_POOL=1 (thread pool). Any TSan report fails.
+TSAN_TESTS = tests/expect/test_channels.wyn \
+             tests/expect/test_parallel.wyn \
+             tests/expect/test_parallel_timeout.wyn \
+             tests/expect/test_spawn_await.wyn \
+             tests/expect/test_spawn_parallel.wyn \
+             tests/expect/test_spawn_typed_args.wyn \
+             tests/expect/test_concurrent_strings.wyn
+
+tsan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_tsan.a
+	@echo "=== TSan runtime test (both executor configs) ==="
+	@set -e; for t in $(TSAN_TESTS); do \
+		[ -f $$t ] || continue; \
+		./wyn build $$t --debug >/dev/null 2>&1 || { echo "  skip (build) $$t"; continue; }; \
+		$(CC) -std=c11 -O0 -g -w -fsanitize=thread -fno-omit-frame-pointer \
+			-I src -o $${t%.wyn}.tsan $$t.c runtime/libwyn_rt_tsan.a $(PLATFORM_LIBS); \
+		for pool in "" "WYN_ASYNC_POOL=1"; do \
+			env $$pool TSAN_OPTIONS=halt_on_error=1:abort_on_error=1 \
+				./$${t%.wyn}.tsan >/dev/null 2>$${t%.wyn}.tsan.log \
+				|| { echo "  TSAN FAIL: $$t ($${pool:-default})"; cat $${t%.wyn}.tsan.log; exit 1; }; \
+			echo "  ok    $$t ($${pool:-default})"; \
+		done; \
+		rm -f $${t%.wyn}.tsan $${t%.wyn}.tsan.log $$t.c; \
+	done
+	@echo "tsan-runtime: all clean"
 
 # Precompiled header for the dev loop (macOS/clang). Flags MUST match the -O0
 # dev compile in main.c exactly — clang refuses a pch whose flags differ.

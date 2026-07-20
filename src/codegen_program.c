@@ -26,6 +26,83 @@ static void emit_option_struct_family(const char* s) {
     emit("static inline %s Option%s_unwrap_or(Option%s o, %s def){ return o.tag==1 ? o.value : def; }\n", s, s, s, s);
 }
 
+// --- Field-wise struct equality helpers (`a == b` on struct values) ---
+// The checker gates which structs are comparable; codegen emits one
+// `static int __wyn_eq_<Name>(Name, Name)` per comparable struct so
+// EXPR_BINARY == can call it instead of emitting C's illegal struct ==.
+static StructStmt* cg_find_struct(Program* prog, Token name) {
+    for (int i = 0; i < prog->count; i++) {
+        Stmt* s = prog->stmts[i];
+        if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+        if (s->type == STMT_STRUCT && s->struct_decl.name.length == name.length &&
+            memcmp(s->struct_decl.name.start, name.start, name.length) == 0)
+            return &s->struct_decl;
+    }
+    return NULL;
+}
+// Mirrors the checker's struct_fields_comparable: every field must be a
+// scalar (int/float/bool), string, enum, or another comparable struct.
+static int cg_struct_comparable(Program* prog, StructStmt* sd, int depth) {
+    if (!sd || depth > 8) return 0;
+    for (int i = 0; i < sd->field_count; i++) {
+        Expr* ft = sd->field_types[i];
+        if (!ft || ft->type != EXPR_IDENT) return 0;
+        Token t = ft->token;
+        if ((t.length == 3 && memcmp(t.start, "int", 3) == 0) ||
+            (t.length == 5 && memcmp(t.start, "float", 5) == 0) ||
+            (t.length == 4 && memcmp(t.start, "bool", 4) == 0) ||
+            (t.length == 6 && memcmp(t.start, "string", 6) == 0)) continue;
+        StructStmt* fsd = cg_find_struct(prog, t);
+        if (fsd) { if (!cg_struct_comparable(prog, fsd, depth + 1)) return 0; continue; }
+        int is_enum = 0;
+        for (int j = 0; j < prog->count && !is_enum; j++) {
+            Stmt* es = prog->stmts[j];
+            if (es->type == STMT_EXPORT && es->export.stmt) es = es->export.stmt;
+            if (es->type == STMT_ENUM && es->enum_decl.name.length == t.length &&
+                memcmp(es->enum_decl.name.start, t.start, t.length) == 0) is_enum = 1;
+        }
+        if (!is_enum) return 0;
+    }
+    return 1;
+}
+// Emitted after ALL struct typedefs; prototypes first so helpers for structs
+// with struct-typed fields can call each other regardless of source order.
+static void emit_struct_eq_helpers(Program* prog) {
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* s = prog->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            if (s->type != STMT_STRUCT) continue;
+            StructStmt* sd = &s->struct_decl;
+            if (sd->type_param_count > 0) continue;  // generics: no monomorphic type
+            if (!cg_struct_comparable(prog, sd, 0)) continue;
+            Token n = sd->name;
+            if (pass == 0) {
+                emit("static int __wyn_eq_%.*s(%.*s __l, %.*s __r);\n",
+                     n.length, n.start, n.length, n.start, n.length, n.start);
+                continue;
+            }
+            emit("static int __wyn_eq_%.*s(%.*s __l, %.*s __r) {\n",
+                 n.length, n.start, n.length, n.start, n.length, n.start);
+            for (int fi = 0; fi < sd->field_count; fi++) {
+                Token fn = sd->fields[fi];
+                Token t = sd->field_types[fi]->token;
+                if (t.length == 6 && memcmp(t.start, "string", 6) == 0) {
+                    emit("    if (strcmp(__l.%.*s ? __l.%.*s : \"\", __r.%.*s ? __r.%.*s : \"\") != 0) return 0;\n",
+                         fn.length, fn.start, fn.length, fn.start, fn.length, fn.start, fn.length, fn.start);
+                } else if (cg_find_struct(prog, t)) {
+                    emit("    if (!__wyn_eq_%.*s(__l.%.*s, __r.%.*s)) return 0;\n",
+                         t.length, t.start, fn.length, fn.start, fn.length, fn.start);
+                } else {
+                    emit("    if (__l.%.*s != __r.%.*s) return 0;\n",
+                         fn.length, fn.start, fn.length, fn.start);
+                }
+            }
+            emit("    return 1;\n}\n");
+        }
+    }
+}
+
 void codegen_program(Program* prog) {
     current_program = prog;
     bool has_main = false;
@@ -215,6 +292,9 @@ void codegen_program(Program* prog) {
             emit_option_struct_family(option_struct_name(i));
         }
     }
+
+    // Field-wise == helpers for user structs (after all typedefs exist).
+    emit_struct_eq_helpers(prog);
 
     // Generate module-level constants (only if has main — script mode puts them in wyn_main)
     if (has_main) {

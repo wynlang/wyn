@@ -349,6 +349,46 @@ static StructStmt* find_struct_definition(Token struct_name) {
     return NULL;
 }
 
+// Field-wise struct equality (`a == b` on struct values): a struct is
+// comparable when every field is int/float/bool/string, an enum, or another
+// comparable struct. Arrays/maps/functions/optionals make it non-comparable —
+// those get a check-time error instead of the C-level ICE `==` used to hit.
+// On failure, the offending field's name is written to *bad_field.
+static bool struct_fields_comparable(Token struct_name, Token* bad_field, int depth) {
+    if (depth > 8) return false;  // recursive fields are rejected elsewhere; belt and braces
+    StructStmt* s = find_struct_definition(struct_name);
+    if (!s) return false;
+    for (int i = 0; i < s->field_count; i++) {
+        Expr* ft = s->field_types[i];
+        bool ok = false;
+        if (ft && ft->type == EXPR_IDENT) {
+            Token t = ft->token;
+            if ((t.length == 3 && memcmp(t.start, "int", 3) == 0) ||
+                (t.length == 5 && memcmp(t.start, "float", 5) == 0) ||
+                (t.length == 4 && memcmp(t.start, "bool", 4) == 0) ||
+                (t.length == 6 && memcmp(t.start, "string", 6) == 0)) {
+                ok = true;
+            } else if (find_struct_definition(t)) {
+                if (!struct_fields_comparable(t, bad_field, depth + 1)) return false;
+                ok = true;
+            } else if (current_program) {
+                // Enum fields compare as ints in C.
+                for (int j = 0; j < current_program->count && !ok; j++) {
+                    Stmt* es = current_program->stmts[j];
+                    if (es->type == STMT_EXPORT && es->export.stmt) es = es->export.stmt;
+                    if (es->type == STMT_ENUM && es->enum_decl.name.length == t.length &&
+                        memcmp(es->enum_decl.name.start, t.start, t.length) == 0) ok = true;
+                }
+            }
+        }
+        if (!ok) {
+            if (bad_field) *bad_field = s->fields[i];
+            return false;
+        }
+    }
+    return true;
+}
+
 // True if `field` is a declared field of the struct named `struct_name`. Used to
 // avoid flagging `p.field()` (a function-typed field call) as a missing method.
 static bool is_field_of_struct(Token struct_name, Token field) {
@@ -2832,6 +2872,59 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     if (left_opt && right_opt) {
                         fprintf(stderr, "Error at line %d: Options cannot be compared directly — match on them, or compare .unwrap_or(...) values\n",
                                 expr->binary.op.line);
+                        had_error = true;
+                        return NULL;
+                    }
+                    // struct == struct: lowered to a generated field-wise
+                    // __wyn_eq_<Name> helper. Gate it here — different struct
+                    // types can't compare, and structs with non-comparable
+                    // fields (arrays/maps/fns) get a real error instead of
+                    // the C-level ICE raw `==` used to produce.
+                    bool left_ustruct = left->kind == TYPE_STRUCT && !left_opt &&
+                        !is_ptr_type(left) && left->struct_type.name.length > 0 &&
+                        find_struct_definition(left->struct_type.name);
+                    bool right_opt2 = right->kind == TYPE_STRUCT &&
+                        right->struct_type.name.length >= 6 &&
+                        memcmp(right->struct_type.name.start, "Option", 6) == 0;
+                    bool right_ustruct = right->kind == TYPE_STRUCT && !right_opt2 &&
+                        !is_ptr_type(right) && right->struct_type.name.length > 0 &&
+                        find_struct_definition(right->struct_type.name);
+                    if (left_ustruct || right_ustruct) {
+                        if (!left_ustruct || !right_ustruct ||
+                            left->struct_type.name.length != right->struct_type.name.length ||
+                            memcmp(left->struct_type.name.start, right->struct_type.name.start,
+                                   left->struct_type.name.length) != 0) {
+                            fprintf(stderr, "Error at line %d: Cannot compare different types\n",
+                                    expr->binary.op.line);
+                            had_error = true;
+                            return NULL;
+                        }
+                        Token bad = {0};
+                        if (!struct_fields_comparable(left->struct_type.name, &bad, 0)) {
+                            fprintf(stderr, "Error at line %d: == is not defined for struct '%.*s' (field '%.*s' is not comparable) — compare fields explicitly\n",
+                                    expr->binary.op.line,
+                                    left->struct_type.name.length, left->struct_type.name.start,
+                                    bad.length, bad.start);
+                            had_error = true;
+                            return NULL;
+                        }
+                        expr->expr_type = builtin_int;
+                        return builtin_int;
+                    }
+                }
+                // Ordering on structs has no meaning (and raw C < on struct
+                // values doesn't compile) — reject at check time.
+                if ((left->kind == TYPE_STRUCT || right->kind == TYPE_STRUCT) &&
+                    !is_ptr_type(left) && !is_ptr_type(right) &&
+                    (expr->binary.op.type == TOKEN_LT || expr->binary.op.type == TOKEN_GT ||
+                     expr->binary.op.type == TOKEN_LTEQ || expr->binary.op.type == TOKEN_GTEQ)) {
+                    bool l_user = left->kind == TYPE_STRUCT && left->struct_type.name.length > 0 &&
+                                  find_struct_definition(left->struct_type.name);
+                    bool r_user = right->kind == TYPE_STRUCT && right->struct_type.name.length > 0 &&
+                                  find_struct_definition(right->struct_type.name);
+                    if (l_user || r_user) {
+                        fprintf(stderr, "Error at line %d: structs cannot be ordered with %.*s — compare fields explicitly\n",
+                                expr->binary.op.line, expr->binary.op.length, expr->binary.op.start);
                         had_error = true;
                         return NULL;
                     }
