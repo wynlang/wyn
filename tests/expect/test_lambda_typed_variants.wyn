@@ -1,0 +1,26 @@
+// EXPECT: ["x!", "y!"]
+// EXPECT: [1, 2, 3]
+// EXPECT: [3, 5]
+// EXPECT: [2.5]
+// Typed lambda variants over arrays — each line used to be a silent wrong
+// answer or a segfault:
+// 1. String lambda capturing an outer string emitted pointer garbage
+//    (capture cells were hardcoded long long).
+// 2. [string].map with an int-returning lambda was typed [string] and read
+//    ints as char* (segfault at print).
+// 3. [float].map rode the int path: [1.5, 2.5].map(f => f * 2.0) -> [1, 2].
+// 4. [float].filter likewise truncated.
+
+fn main() -> int {
+    suffix = "!"
+    a = ["x", "y"]
+    println(a.map((s) => s + suffix))
+
+    words = ["a", "bb", "ccc"]
+    println(words.map((s) => s.len()))
+
+    nums = [1.5, 2.5]
+    println(nums.map((f) => f * 2.0))
+    println(nums.filter((f) => f > 2.0))
+    return 0
+}

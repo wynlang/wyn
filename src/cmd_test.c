@@ -171,10 +171,8 @@ int cmd_test(const char* test_dir, int argc, char** argv) {
         fprintf(stderr, "No test files found in %s/\n", test_dir);
         fprintf(stderr, "  Tests are .wyn files named test_*.wyn or *_test.wyn.\n");
         fprintf(stderr, "  Example tests/test_math.wyn:\n\n");
-        fprintf(stderr, "    fn main() {\n");
-        fprintf(stderr, "        Test.init(\"math\")\n");
-        fprintf(stderr, "        Test.assert_eq_int(2 + 3, 5, \"addition\")\n");
-        fprintf(stderr, "        Test.summary()\n");
+        fprintf(stderr, "    test \"addition\" {\n");
+        fprintf(stderr, "        assert_eq(2 + 3, 5)\n");
         fprintf(stderr, "    }\n");
         return 1;
     }
@@ -196,6 +194,16 @@ int cmd_test(const char* test_dir, int argc, char** argv) {
         if (compile_rc != 0) {
             r.failed++;
             printf("  \033[31m✗\033[0m %s (compile error)\n", files[i]);
+            // Re-run `wyn check` WITHOUT output suppression so the user sees
+            // the actual diagnostics — "(compile error)" alone was a dead end.
+#ifndef _WIN32
+            pid_t dp = fork();
+            if (dp == 0) {
+                execl(wyn_exe, wyn_exe, "check", files[i], (char*)NULL);
+                _exit(127);
+            }
+            if (dp > 0) { int ds; waitpid(dp, &ds, 0); }
+#endif
             continue;
         }
 
@@ -222,6 +230,12 @@ int cmd_test(const char* test_dir, int argc, char** argv) {
 
     printf("\n\033[1mResults:\033[0m %d passed, %d failed (%.1fs)\n",
            r.passed, r.failed, r.total_time);
+    // Zero tests run is a FAILURE, not a pass: a typo'd filter in CI used to
+    // print "All tests passed!" with exit 0 while running nothing.
+    if (r.passed == 0 && r.failed == 0) {
+        fprintf(stderr, "✗ No tests matched. Check the filter or add tests under tests/.\n");
+        return 1;
+    }
     if (r.failed == 0) printf("🎉 All tests passed!\n");
 
     return r.failed > 0 ? 1 : 0;

@@ -29,7 +29,7 @@ else
     PLATFORM_CFLAGS := -DWYN_PLATFORM_UNKNOWN
 endif
 
-CFLAGS=-Wall -Wextra -std=c11 -g $(PLATFORM_CFLAGS)
+CFLAGS=-Wall -Wextra -std=c11 -g $(PLATFORM_CFLAGS) -DWYN_VERSION=\"$(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)\"
 OPTFLAGS=-O2
 
 all: wyn$(EXE_EXT) runtime
@@ -223,6 +223,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_bindgen_test.sh
 	@echo "=== Running parser stability test ==="
 	@WYN=./wyn bash tests/errors/run_parser_stability_test.sh
+	@echo "=== Running CLI DX test ==="
+	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
 	@echo "=== Running fuzz smoke (seed 1) ==="
 	@WYN=./wyn bash tests/fuzz/run_fuzz.sh 1 60
 

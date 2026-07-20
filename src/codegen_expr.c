@@ -2080,7 +2080,10 @@ void codegen_expr(Expr* expr) {
             if (object_type && object_type->kind == TYPE_ARRAY) {
                 Token method = expr->method_call.method;
                 
-                // arr.map(fn) -> wyn_array_map(arr, fn) or wyn_array_map_str for [string]
+                // arr.map(fn): pick the runtime variant from BOTH the element
+                // type and the lambda's RETURN type — a str->int lambda
+                // (`words.map((s) => s.len())`) through the str->str variant
+                // treated returned ints as char* and segfaulted at print.
                 if (method.length == 3 && memcmp(method.start, "map", 3) == 0 && expr->method_call.arg_count == 1) {
                     bool _elem_is_str = object_type->array_type.element_type &&
                         object_type->array_type.element_type->kind == TYPE_STRING;
@@ -2089,23 +2092,37 @@ void codegen_expr(Expr* expr) {
                         extern int is_str_array_var(const char*);
                         if (is_str_array_var(_vn)) _elem_is_str = true;
                     }
-                    emit(_elem_is_str ? "wyn_array_map_str(" : "wyn_array_map(");
+                    bool _elem_is_float = object_type->array_type.element_type &&
+                        object_type->array_type.element_type->kind == TYPE_FLOAT;
+                    bool _lam_ret_str = true;   // default matches element type
+                    Expr* _fn_arg0 = expr->method_call.args[0];
+                    if (_fn_arg0->expr_type && _fn_arg0->expr_type->kind == TYPE_FUNCTION &&
+                        _fn_arg0->expr_type->fn_type.return_type) {
+                        _lam_ret_str = _fn_arg0->expr_type->fn_type.return_type->kind == TYPE_STRING;
+                    }
+                    emit(_elem_is_str ? (_lam_ret_str ? "wyn_array_map_str(" : "wyn_array_map_str_to_int(")
+                         : _elem_is_float ? "wyn_array_map_float("
+                         : "wyn_array_map(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
                     codegen_expr(expr->method_call.args[0]);
                     emit(")");
                     break;
                 }
-                // arr.filter(fn) -> wyn_array_filter(arr, fn) or _str for [string]
+                // arr.filter(fn) -> element-typed variant ([string]/[float]/int)
                 if (method.length == 6 && memcmp(method.start, "filter", 6) == 0 && expr->method_call.arg_count == 1) {
                     bool _elem_is_str = object_type->array_type.element_type &&
                         object_type->array_type.element_type->kind == TYPE_STRING;
+                    bool _elem_is_float = object_type->array_type.element_type &&
+                        object_type->array_type.element_type->kind == TYPE_FLOAT;
                     if (!_elem_is_str && expr->method_call.object->type == EXPR_IDENT) {
                         char _vn[256]; token_to_cstr(_vn, sizeof(_vn), expr->method_call.object->token);
                         extern int is_str_array_var(const char*);
                         if (is_str_array_var(_vn)) _elem_is_str = true;
                     }
-                    emit(_elem_is_str ? "wyn_array_filter_str(" : "wyn_array_filter(");
+                    emit(_elem_is_str ? "wyn_array_filter_str("
+                         : _elem_is_float ? "wyn_array_filter_float("
+                         : "wyn_array_filter(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
                     codegen_expr(expr->method_call.args[0]);
