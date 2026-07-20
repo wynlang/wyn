@@ -107,9 +107,62 @@ static bool check(WynTokenType type) {
 // spin forever. Call after each statement() with the token position captured
 // before it; returns true (and reports one error + advances) when stuck, so the
 // caller can break. `before` is the parser.current.start pointer pre-statement().
+// Foreign-keyword table: the mistakes Python/JS refugees actually type, each
+// mapped to the Wyn equivalent — modeled on the `&&` → "use and" error, which
+// testing showed is the single most effective error message in the compiler.
+// Generic "Undefined variable 'True' — did you mean Time?" suggestions were
+// actively harmful; these fire first.
+static const struct { const char* kw; const char* fix; } foreign_keywords[] = {
+    {"def",       "functions are declared with 'fn':  fn add(a, b) { ... }"},
+    {"lambda",    "anonymous functions use arrows:  (x) => x + 1"},
+    {"True",      "booleans are lowercase:  true"},
+    {"False",     "booleans are lowercase:  false"},
+    {"null",      "Wyn has no null — use Option types (none / Some(x))"},
+    {"undefined", "Wyn has no undefined — use Option types (none / Some(x))"},
+    {"let",       "declare with 'var' or just assign:  x = 5"},
+    {"function",  "functions are declared with 'fn':  fn add(a, b) { ... }"},
+    {"console",   "print with:  println(\"...\")"},
+    {"try",       "Wyn has no exceptions — return Result (Ok/Err) and use match or '?'"},
+    {"except",    "Wyn has no exceptions — return Result (Ok/Err) and use match or '?'"},
+    {"raise",     "Wyn has no exceptions — return an Err(...) Result"},
+    {"throw",     "Wyn has no exceptions — return an Err(...) Result"},
+    {"self",      "'self' only exists inside struct methods"},
+    {"elif",      "use 'else if'"},
+    {"elseif",    "use 'else if'"},
+    {"switch",    "use 'match':  match x { 1 => ..., _ => ... }"},
+    {"do",        "Wyn has no do-while — use 'while' with a condition"},
+    {NULL, NULL}
+};
+
+// If the current token is a known foreign keyword, print the targeted fix and
+// return true. Callers still advance past it via their own recovery.
+static bool check_foreign_keyword(void) {
+    if (!check(TOKEN_IDENT)) return false;
+    for (int i = 0; foreign_keywords[i].kw; i++) {
+        size_t kl = strlen(foreign_keywords[i].kw);
+        if ((size_t)parser.current.length == kl &&
+            memcmp(parser.current.start, foreign_keywords[i].kw, kl) == 0) {
+            fprintf(stderr, "Error at line %d: '%.*s' is not Wyn syntax — %s\n",
+                    parser.current.line, parser.current.length, parser.current.start,
+                    foreign_keywords[i].fix);
+            parser.had_error = true;
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool stmt_made_no_progress(const char* before) {
     if (parser.current.start != before) return false;
     if (check(TOKEN_EOF)) return true;
+    if (check_foreign_keyword()) {
+        advance();
+        // Consume the remainder of the foreign construct's line so its tail
+        // (`x: x + 1`, `(a, b):` ...) doesn't cascade into more errors.
+        int line = parser.previous.line;
+        while (!check(TOKEN_EOF) && parser.current.line == line) advance();
+        return true;
+    }
     fprintf(stderr, "Error at line %d: unexpected token '%.*s' — expected a statement\n",
             parser.current.line, parser.current.length, parser.current.start);
     parser.had_error = true;
@@ -3878,6 +3931,23 @@ Program* parse_program() {
         } else if (check(TOKEN_VAR) || check(TOKEN_CONST)) {
             // Global variable/constant declarations
             prog->stmts[prog->count++] = statement();
+        } else if (check_foreign_keyword()) {
+            // Python/JS construct at top level (`def f():`, `function f()`,
+            // `console.log`, ...): targeted error already printed — skip the
+            // rest of the construct's line (and a following indented block for
+            // def/function) so it doesn't cascade.
+            int line = parser.current.line;
+            advance();
+            while (!check(TOKEN_EOF) && parser.current.line == line) advance();
+            // Swallow a brace block if one follows (JS function body).
+            if (check(TOKEN_LBRACE)) {
+                int depth = 0;
+                do {
+                    if (check(TOKEN_LBRACE)) depth++;
+                    else if (check(TOKEN_RBRACE)) depth--;
+                    advance();
+                } while (!check(TOKEN_EOF) && depth > 0);
+            }
         } else {
             // Script mode: allow arbitrary statements at top level
             Stmt* stmt = statement();
