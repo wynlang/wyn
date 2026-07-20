@@ -45,4 +45,9 @@ out=$("$WYN" run m.wyn 2>&1); rc=$?
 if [ $rc -eq 0 ] && echo "$out" | grep -qi "warning.*wyn.toml"; then ok "malformed wyn.toml warns"; else bad "toml warn: rc=$rc [$(echo "$out" | head -2)]"; fi
 cd - >/dev/null
 
+# 7. `wyn update --help` prints help and DOES NOT fire the upgrade. The old
+#    code immediately downloaded, and a 404 body could overwrite the binary.
+out=$("$WYN" update --help 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | grep -q "Usage:"; then ok "update --help is safe (no network)"; else bad "update --help: rc=$rc [$out]"; fi
+
 echo ""; echo "cli-dx: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]
