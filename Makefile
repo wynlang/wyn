@@ -229,6 +229,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_struct_eq_test.sh
 	@echo "=== Running select-deadlock test ==="
 	@WYN=./wyn bash tests/errors/run_select_deadlock_test.sh
+	@echo "=== Running collection type-safety test ==="
+	@WYN=./wyn bash tests/errors/run_collection_type_test.sh
 	@echo "=== Running CLI DX test ==="
 	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
 	@echo "=== Running install-layout canary ==="

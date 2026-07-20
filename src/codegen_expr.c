@@ -1737,22 +1737,48 @@ void codegen_expr(Expr* expr) {
             Token method = expr->method_call.method;
 
             // Channel methods: ch.send(v) / ch.recv() / ch.close() lower to the
-            // Task_* runtime. The channel value is a long long handle.
+            // Task_* runtime. The channel value is a long long handle and the
+            // payload moves through one word: ints/bools ride it directly,
+            // strings ride it as pointers (recv casts back — the checker now
+            // types recv() as the element type), and floats BIT-CAST through
+            // the word (a plain double→long long conversion truncated 3.14→3).
             if (expr->method_call.object->expr_type &&
                 expr->method_call.object->expr_type->kind == TYPE_CHANNEL) {
+                Type* _ch_elem = expr->method_call.object->expr_type->array_type.element_type;
                 if (method.length == 4 && memcmp(method.start, "send", 4) == 0) {
+                    Expr* _sv = expr->method_call.arg_count > 0 ? expr->method_call.args[0] : NULL;
+                    bool _sv_float = _sv && (_sv->type == EXPR_FLOAT ||
+                        (_sv->expr_type && _sv->expr_type->kind == TYPE_FLOAT) ||
+                        (_ch_elem && _ch_elem->kind == TYPE_FLOAT));
                     emit("Task_send(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
-                    if (expr->method_call.arg_count > 0) codegen_expr(expr->method_call.args[0]);
-                    else emit("0");
+                    if (_sv && _sv_float) {
+                        emit("({ union { double _d; long long _i; } _u; _u._d = ");
+                        codegen_expr(_sv);
+                        emit("; _u._i; })");
+                    } else if (_sv) {
+                        emit("(long long)(intptr_t)(");
+                        codegen_expr(_sv);
+                        emit(")");
+                    } else emit("0");
                     emit(")");
                     break;
                 }
                 if (method.length == 4 && memcmp(method.start, "recv", 4) == 0) {
-                    emit("Task_recv(");
-                    codegen_expr(expr->method_call.object);
-                    emit(")");
+                    if (_ch_elem && _ch_elem->kind == TYPE_FLOAT) {
+                        emit("({ union { long long _i; double _d; } _u; _u._i = Task_recv(");
+                        codegen_expr(expr->method_call.object);
+                        emit("); _u._d; })");
+                    } else if (_ch_elem && _ch_elem->kind == TYPE_STRING) {
+                        emit("((const char*)(intptr_t)Task_recv(");
+                        codegen_expr(expr->method_call.object);
+                        emit("))");
+                    } else {
+                        emit("Task_recv(");
+                        codegen_expr(expr->method_call.object);
+                        emit(")");
+                    }
                     break;
                 }
                 if (method.length == 5 && memcmp(method.start, "close", 5) == 0) {
