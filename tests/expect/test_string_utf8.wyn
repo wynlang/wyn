@@ -1,0 +1,26 @@
+// EXPECT: 日
+// EXPECT: 本
+// EXPECT: 語
+// EXPECT: olléh
+// EXPECT: 語本日
+// EXPECT: a|b|c
+// EXPECT: aaa
+// EXPECT: 3
+// UTF-8 string semantics: .chars() yields characters (not bytes), .reverse()
+// reverses by character (byte reversal corrupted multibyte strings),
+// split("") splits into characters instead of hanging, replace("", x) returns
+// the string unchanged instead of hanging, and s.reverse().len() chains
+// (the checker used to type string.reverse() as an array).
+
+fn main() -> int {
+    for ch in "日本語".chars() {
+        println(ch)
+    }
+    println("héllo".reverse())
+    println("日本語".reverse())
+    println("abc".split("").join("|"))
+    println("aaa".replace("", "x"))
+    s = "abc"
+    println(s.reverse().len().to_string())
+    return 0
+}

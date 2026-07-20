@@ -1471,6 +1471,16 @@ static Expr* comparison() {
         }
         advance();  // consume the relational/equality operator
         Token op = parser.previous;
+        // JS habit: `===`/`!==` lex as `==`+`=` / `!=`+`=`. Left alone, the
+        // stray `=` parsed as garbage that segfaulted codegen. Reject clearly.
+        if ((op.type == TOKEN_EQEQ || op.type == TOKEN_BANGEQ) && check(TOKEN_EQ)) {
+            fprintf(stderr, "Error at line %d: '%s=' is not an operator — use '%s'\n",
+                    parser.current.line,
+                    op.type == TOKEN_EQEQ ? "==" : "!=",
+                    op.type == TOKEN_EQEQ ? "==" : "!=");
+            parser.had_error = true;
+            advance();  // consume the stray '=' so parsing can continue
+        }
         bool is_relational = (op.type == TOKEN_LT || op.type == TOKEN_GT ||
                               op.type == TOKEN_LTEQ || op.type == TOKEN_GTEQ);
         // Reject chained relational comparisons like `0 < x < 10`. Wyn has no
@@ -2847,9 +2857,11 @@ static void mark_implicit_return(Stmt* body) {
         return;
     }
     
-    // Find the last statement in the block
+    // Find the last statement in the block. A rejected construct (e.g. a
+    // nested fn) leaves a NULL slot — deref'd here, that was a segfault.
     Stmt* last_stmt = body->block.stmts[body->block.count - 1];
-    
+    if (!last_stmt) return;
+
     // If the last statement is an expression statement, mark it as implicit return
     if (last_stmt->type == STMT_EXPR) {
         last_stmt->expr->is_implicit_return = true;
@@ -3029,7 +3041,13 @@ Stmt* function() {
             block_capacity *= 2;
             body->block.stmts = realloc(body->block.stmts, sizeof(Stmt*) * block_capacity);
         }
+        // Progress guard: if statement() consumed nothing (unrecognized
+        // construct), this loop used to spin forever — `lambda x:`, a stray
+        // `!cond`, and `if (x) == 1 {` all hung the compiler here. Same guard
+        // parse_block_or_stmt has always had.
+        const char* __sp = parser.current.start;
         body->block.stmts[body->block.count++] = statement();
+        if (stmt_made_no_progress(__sp)) break;
     }
 
     expect(TOKEN_RBRACE, "Expected '}' after function body");

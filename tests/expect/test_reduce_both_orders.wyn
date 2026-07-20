@@ -1,0 +1,15 @@
+// EXPECT: 10
+// EXPECT: 10
+// EXPECT: 24
+// .reduce() accepts both argument orders — reduce(fn, init) is canonical, but
+// reduce(init, fn) (the Python/JS habit) is detected by which arg is the
+// lambda. The positional emit used to call the int initializer as a function
+// pointer: a guaranteed segfault on the most common form.
+
+fn main() -> int {
+    a = [1, 2, 3, 4]
+    println(a.reduce((acc, x) => acc + x, 0).to_string())
+    println(a.reduce(0, (acc, x) => acc + x).to_string())
+    println(a.reduce(1, (acc, x) => acc * x).to_string())
+    return 0
+}

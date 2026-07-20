@@ -546,10 +546,14 @@ void codegen_expr(Expr* expr) {
 
             // Special handling for string concatenation with + operator
             if (expr->binary.op.type == TOKEN_PLUS) {
-                // Check if either operand is actually a string type
+                // Check if either operand is actually a string type. Interp
+                // literals count: `"v=${a}" + "v=${b}"` used to emit raw C
+                // `char* + char*` (invalid) because neither side matched.
                 bool left_is_string = (expr->binary.left->type == EXPR_STRING) ||
+                                     (expr->binary.left->type == EXPR_STRING_INTERP) ||
                                      (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_STRING);
                 bool right_is_string = (expr->binary.right->type == EXPR_STRING) ||
+                                      (expr->binary.right->type == EXPR_STRING_INTERP) ||
                                       (expr->binary.right->expr_type && expr->binary.right->expr_type->kind == TYPE_STRING);
                 
                 // .to_string() always returns string
@@ -2108,14 +2112,23 @@ void codegen_expr(Expr* expr) {
                     emit(")");
                     break;
                 }
-                // arr.reduce(fn, init) -> wyn_array_reduce(arr, fn, init)
+                // arr.reduce(fn, init) -> wyn_array_reduce(arr, fn, init).
+                // Forgiveness: accept reduce(init, fn) too (Python/JS habit) by
+                // putting whichever arg is the lambda in the fn slot — the old
+                // positional emit called the int initializer as a function
+                // pointer and segfaulted.
                 if (method.length == 6 && memcmp(method.start, "reduce", 6) == 0 && expr->method_call.arg_count == 2) {
+                    Expr* _fn_arg = expr->method_call.args[0];
+                    Expr* _init_arg = expr->method_call.args[1];
+                    if (_fn_arg->type != EXPR_LAMBDA && _init_arg->type == EXPR_LAMBDA) {
+                        Expr* _sw = _fn_arg; _fn_arg = _init_arg; _init_arg = _sw;
+                    }
                     emit("wyn_array_reduce(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
-                    codegen_expr(expr->method_call.args[0]);
+                    codegen_expr(_fn_arg);
                     emit(", ");
-                    codegen_expr(expr->method_call.args[1]);
+                    codegen_expr(_init_arg);
                     emit(")");
                     break;
                 }
@@ -2374,7 +2387,14 @@ void codegen_expr(Expr* expr) {
             // Method chaining: if object is a method call that returns an array, treat as array
             if (expr->method_call.object->type == EXPR_METHOD_CALL) {
                 Token inner = expr->method_call.object->method_call.method;
-                if ((inner.length == 4 && memcmp(inner.start, "sort", 4) == 0) ||
+                // Trust the checker's type first: `.reverse()`/`.sort()` on a
+                // STRING return a string, on an array return the array. Keying
+                // on the method NAME alone routed `s.reverse().len()` to
+                // array_len(const char*) — an internal codegen error. (2026-07)
+                Type* _inner_t = expr->method_call.object->expr_type;
+                bool _inner_is_string = _inner_t && _inner_t->kind == TYPE_STRING;
+                if (!_inner_is_string &&
+                    ((inner.length == 4 && memcmp(inner.start, "sort", 4) == 0) ||
                     (inner.length == 7 && memcmp(inner.start, "reverse", 7) == 0) ||
                     (inner.length == 6 && memcmp(inner.start, "filter", 6) == 0) ||
                     (inner.length == 3 && memcmp(inner.start, "map", 3) == 0) ||
@@ -2384,8 +2404,9 @@ void codegen_expr(Expr* expr) {
                     (inner.length == 5 && memcmp(inner.start, "split", 5) == 0) ||
                     (inner.length == 5 && memcmp(inner.start, "chars", 5) == 0) ||
                     (inner.length == 5 && memcmp(inner.start, "words", 5) == 0) ||
-                    (inner.length == 5 && memcmp(inner.start, "lines", 5) == 0))
+                    (inner.length == 5 && memcmp(inner.start, "lines", 5) == 0)))
                     receiver_type = "array";
+                if (_inner_is_string) receiver_type = "string";
                 // String-returning methods
                 if ((inner.length == 5 && memcmp(inner.start, "upper", 5) == 0) ||
                     (inner.length == 5 && memcmp(inner.start, "lower", 5) == 0) ||

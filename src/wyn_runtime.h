@@ -1220,9 +1220,24 @@ char* string_capitalize(const char* str) {
     return result;
 }
 char* string_reverse(const char* str) {
+    // UTF-8 aware: reverse by character, not by byte — byte reversal turned
+    // "héllo" into invalid UTF-8 ("oll??h"). Multibyte sequences are copied
+    // intact in reverse character order.
     int len = string_length(str);
     char* result = wyn_str_alloc(len + 1);
-    for (int i = 0; i < len; i++) result[i] = str[len - 1 - i];
+    const unsigned char* s = (const unsigned char*)str;
+    int w = len;
+    int i = 0;
+    while (i < len) {
+        int cl = 1;
+        if ((s[i] & 0xE0) == 0xC0) cl = 2;
+        else if ((s[i] & 0xF0) == 0xE0) cl = 3;
+        else if ((s[i] & 0xF8) == 0xF0) cl = 4;
+        if (i + cl > len) cl = len - i;   // truncated sequence: copy as-is
+        w -= cl;
+        memcpy(result + w, s + i, cl);
+        i += cl;
+    }
     result[len] = '\0';
     wyn_rc_set_length(result, len);
     return result;
@@ -1243,9 +1258,12 @@ int string_index_of(const char* str, const char* substr) {
     return pos ? (int)(pos - str) : -1;
 }
 char* string_replace(const char* str, const char* old, const char* new) {
+    int old_len = strlen(old);
+    // Empty needle: strstr matches at every position and the scan cursor never
+    // advances — this hung forever. Match JS-adjacent sanity: return unchanged.
+    if (old_len == 0) return wyn_strdup(str);
     int count = 0;
     const char* p = str;
-    int old_len = strlen(old);
     while ((p = strstr(p, old))) { count++; p += old_len; }
     int new_len = strlen(new);
     int result_len = strlen(str) + count * (new_len - old_len);
@@ -1339,6 +1357,26 @@ char* string_trim(const char* str) {
 WynArray string_split(const char* str, const char* delim) {
     WynArray arr = array_new();
     int dlen = strlen(delim);
+    // Empty separator: split into individual UTF-8 characters (Python-ish;
+    // the old strstr loop matched at every position without advancing = hang).
+    if (dlen == 0) {
+        const unsigned char* s = (const unsigned char*)str;
+        int i = 0;
+        while (s[i]) {
+            int cl = 1;
+            if ((s[i] & 0xE0) == 0xC0) cl = 2;
+            else if ((s[i] & 0xF0) == 0xE0) cl = 3;
+            else if ((s[i] & 0xF8) == 0xF0) cl = 4;
+            // guard truncated sequences at end of string
+            for (int k = 1; k < cl; k++) if (!s[i + k]) { cl = k; break; }
+            char* seg = wyn_str_alloc(cl);
+            memcpy(seg, s + i, cl);
+            seg[cl] = 0;
+            array_push_str(&arr, seg);
+            i += cl;
+        }
+        return arr;
+    }
     const char* p = str;
     while (1) {
         const char* found = strstr(p, delim);
@@ -1365,12 +1403,22 @@ const char* wyn_string_charat(const char* str, int index) {
     return result;
 }
 WynArray string_chars(const char* str) {
+    // UTF-8 aware: each element is one character (code point), not one byte —
+    // byte-splitting produced 9 invalid fragments for "日本語" instead of 3 chars.
     WynArray arr = array_new();
-    for (int i = 0; str[i] != '\0'; i++) {
-        char* ch = wyn_str_alloc(1);
-        ch[0] = str[i];
-        ch[1] = '\0';
+    const unsigned char* s = (const unsigned char*)str;
+    int i = 0;
+    while (s[i]) {
+        int cl = 1;
+        if ((s[i] & 0xE0) == 0xC0) cl = 2;
+        else if ((s[i] & 0xF0) == 0xE0) cl = 3;
+        else if ((s[i] & 0xF8) == 0xF0) cl = 4;
+        for (int k = 1; k < cl; k++) if (!s[i + k]) { cl = k; break; }
+        char* ch = wyn_str_alloc(cl);
+        memcpy(ch, s + i, cl);
+        ch[cl] = '\0';
         array_push_str(&arr, ch);
+        i += cl;
     }
     return arr;
 }
