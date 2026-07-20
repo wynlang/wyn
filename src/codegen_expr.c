@@ -1093,6 +1093,94 @@ void codegen_expr(Expr* expr) {
                     codegen_skip_strdup = prev_skip;
                     break;
                 }
+                // println(struct): print "Name { field: value, ... }" by
+                // looking up the struct declaration from current_program.
+                // Falling through to to_string(struct) passed a struct by
+                // value to a long long param — an internal codegen error on
+                // completely reasonable code. Detect via BOTH expr_type
+                // (ideal) and the codegen struct-var registry (fallback —
+                // the checker often doesn't propagate TYPE_STRUCT onto
+                // bare ident references to struct vars).
+                {
+                    const char* _psn = NULL;
+                    if (!arg_is_string && parg->expr_type && parg->expr_type->kind == TYPE_STRUCT) {
+                        Token _snt = parg->expr_type->struct_type.name.length > 0
+                            ? parg->expr_type->struct_type.name : parg->expr_type->name;
+                        static char _psnb[64]; token_to_cstr(_psnb, sizeof(_psnb), _snt);
+                        _psn = _psnb;
+                    }
+                    if (!_psn && !arg_is_string && parg->type == EXPR_IDENT) {
+                        char _pvn[128]; token_to_cstr(_pvn, sizeof(_pvn), parg->token);
+                        extern const char* get_struct_var_type(const char*);
+                        _psn = get_struct_var_type(_pvn);
+                    }
+                    // println(Option): print "Some(v)" / "none" from the tag.
+                    // Detect via the enum-var registry OR the checker typing
+                    // the ident as an Option* family struct (_psn) — falling
+                    // through to to_string(opt) passed the struct by value to
+                    // a long long param — an internal codegen error.
+                    if (!arg_is_string && parg->type == EXPR_IDENT) {
+                        char _pvn[128]; token_to_cstr(_pvn, sizeof(_pvn), parg->token);
+                        extern const char* get_enum_var_type(const char*);
+                        const char* _oet = get_enum_var_type(_pvn);
+                        if (!_oet && _psn && strncmp(_psn, "Option", 6) == 0) _oet = _psn;
+                        if (_oet && strncmp(_oet, "Option", 6) == 0) {
+                            const char* _fam = _oet + 6;
+                            const char* _fmt =
+                                strcmp(_fam, "String") == 0 ? "printf(\"Some(\\\"%%s\\\")\\n\", %s.value);"
+                              : strcmp(_fam, "Float") == 0  ? "printf(\"Some(%%g)\\n\", %s.value);"
+                              : strcmp(_fam, "Bool") == 0   ? "printf(\"Some(%%s)\\n\", %s.value ? \"true\" : \"false\");"
+                              : "printf(\"Some(%%lld)\\n\", (long long)%s.value);";
+                            emit("({ if (%s.tag == 1) { ", _pvn);
+                            emit(_fmt, _pvn);
+                            emit(" } else { printf(\"none\\n\"); } })");
+                            codegen_skip_strdup = prev_skip;
+                            break;
+                        }
+                    }
+                    if (_psn) {
+                    Token _sn = {TOKEN_IDENT, _psn, (int)strlen(_psn), 0};
+                    // Find the struct declaration to get field names and types.
+                    extern Program* current_program;
+                    StructStmt* _sd = NULL;
+                    for (int si = 0; si < current_program->count && !_sd; si++) {
+                        if (current_program->stmts[si]->type == STMT_STRUCT &&
+                            current_program->stmts[si]->struct_decl.name.length == _sn.length &&
+                            memcmp(current_program->stmts[si]->struct_decl.name.start, _sn.start, _sn.length) == 0) {
+                            _sd = &current_program->stmts[si]->struct_decl;
+                        }
+                    }
+                    if (_sd && _sd->field_count > 0) {
+                        char _tmpn[64]; snprintf(_tmpn, sizeof(_tmpn), "__psv_%d", parg->token.line);
+                        emit("({ %.*s %s = ", _sn.length, _sn.start, _tmpn);
+                        codegen_expr(parg);
+                        emit("; printf(\"%.*s { \");", _sn.length, _sn.start);
+                        for (int fi = 0; fi < _sd->field_count; fi++) {
+                            if (fi > 0) emit(" printf(\", \");");
+                            Token fn = _sd->fields[fi];
+                            Expr* ftype = _sd->field_types[fi];
+                            const char* cft = ftype ? c_type_from_expr(ftype) : "long long";
+                            if (strcmp(cft, "const char*") == 0) {
+                                emit(" printf(\"%.*s: \\\"%%s\\\"\", %s.%.*s);",
+                                     fn.length, fn.start, _tmpn, fn.length, fn.start);
+                            } else if (strcmp(cft, "double") == 0) {
+                                emit(" printf(\"%.*s: %%g\", %s.%.*s);",
+                                     fn.length, fn.start, _tmpn, fn.length, fn.start);
+                            } else if (strcmp(cft, "int") == 0 && ftype && ftype->type == EXPR_IDENT &&
+                                       ftype->token.length == 4 && memcmp(ftype->token.start, "bool", 4) == 0) {
+                                emit(" printf(\"%.*s: %%s\", %s.%.*s ? \"true\" : \"false\");",
+                                     fn.length, fn.start, _tmpn, fn.length, fn.start);
+                            } else {
+                                emit(" printf(\"%.*s: %%lld\", (long long)%s.%.*s);",
+                                     fn.length, fn.start, _tmpn, fn.length, fn.start);
+                            }
+                        }
+                        emit(" printf(\" }\\n\"); })");
+                        codegen_skip_strdup = prev_skip;
+                        break;
+                    }
+                    } // end if (_psn)
+                } // end struct println block
                 if (!arg_is_string && (parg->type == EXPR_INT || parg->type == EXPR_FLOAT ||
                     parg->type == EXPR_BOOL || parg->type == EXPR_IDENT || parg->type == EXPR_CALL ||
                     parg->type == EXPR_METHOD_CALL || parg->type == EXPR_INDEX ||
@@ -4561,6 +4649,21 @@ void codegen_expr(Expr* expr) {
                 emit(", ");
                 codegen_expr(expr->index_assign.value);
                 emit(")");
+            } else if (expr->index_assign.object->type == EXPR_INDEX) {
+                // Nested element assign: m[0][1] = v. The object m[0] is an
+                // RVALUE (array_get_* call) — taking its address was a C error.
+                // Reach the inner array THROUGH the WynValue pointer instead.
+                emit("{ WynArray* __arr_ptr = (");
+                codegen_expr(expr->index_assign.object->index.array);
+                emit(").data[");
+                codegen_expr(expr->index_assign.object->index.index);
+                emit("].data.array_val; int __idx = ");
+                codegen_expr(expr->index_assign.index);
+                emit("; if (__arr_ptr && __idx >= 0 && __idx < __arr_ptr->count) { ");
+                emit("__arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = ");
+                codegen_expr(expr->index_assign.value);
+                emit("; } }");
+                break;
             } else {
                 // ARC-managed array assignment
                 emit("{ WynArray* __arr_ptr = &(");

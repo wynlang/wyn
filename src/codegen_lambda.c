@@ -113,6 +113,9 @@ static void collect_idents(Expr* expr, char idents[][64], int* count, int max) {
     else if (expr->type == EXPR_IF_EXPR) { collect_idents(expr->if_expr.condition, idents, count, max); collect_idents(expr->if_expr.then_expr, idents, count, max); collect_idents(expr->if_expr.else_expr, idents, count, max); }
     else if (expr->type == EXPR_INDEX) { collect_idents(expr->index.array, idents, count, max); collect_idents(expr->index.index, idents, count, max); }
     else if (expr->type == EXPR_ASSIGN) { collect_idents(expr->assign.value, idents, count, max); /* also capture the target */ char name[64]; int len = expr->assign.name.length < 63 ? expr->assign.name.length : 63; memcpy(name, expr->assign.name.start, len); name[len] = '\0'; for (int i = 0; i < *count; i++) if (strcmp(idents[i], name) == 0) return; if (*count < max) { strcpy(idents[*count], name); (*count)++; } }
+    // Interpolation segments reference outer vars too — "${n}" inside a lambda
+    // used to skip capture collection entirely (C error: undeclared 'n').
+    else if (expr->type == EXPR_STRING_INTERP) { for (int i = 0; i < expr->string_interp.count; i++) collect_idents(expr->string_interp.expressions[i], idents, count, max); }
 }
 static int lambda_expr_to_string(Expr* expr, char* buf, int max_len) {
     if (!expr) return 0;

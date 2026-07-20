@@ -7531,6 +7531,19 @@ void analyze_expr_captures(Expr* expr, LambdaExpr* lambda, SymbolTable* scope) {
         case EXPR_UNARY:
             analyze_expr_captures(expr->unary.operand, lambda, scope);
             break;
+        case EXPR_STRING_INTERP:
+            // "${n}" segments inside a lambda body capture outer vars too —
+            // skipping them left the capture untyped (and unemitted).
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                analyze_expr_captures(expr->string_interp.expressions[i], lambda, scope);
+            }
+            break;
+        case EXPR_METHOD_CALL:
+            analyze_expr_captures(expr->method_call.object, lambda, scope);
+            for (int i = 0; i < expr->method_call.arg_count; i++) {
+                analyze_expr_captures(expr->method_call.args[i], lambda, scope);
+            }
+            break;
         // Add more cases as needed for other expression types
         default:
             break;
