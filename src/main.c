@@ -153,22 +153,21 @@ static char* read_file(const char* path) {
     return buffer;
 }
 
+// The version is embedded at COMPILE TIME (-DWYN_VERSION, from the VERSION
+// file, wired in the Makefile). The old implementation read a VERSION file
+// relative to the CURRENT WORKING DIRECTORY with a hardcoded "1.10.0"
+// fallback — so every installed binary reported v1.10.0 forever, and a cwd
+// that happened to contain a VERSION file changed what `wyn version` said.
+#ifndef WYN_VERSION
+#define WYN_VERSION "0.0.0-dev"
+#endif
 static char* get_version() {
     static char version[64] = {0};
     if (version[0] == 0) {
-        // Try multiple locations for VERSION file
-        const char* paths[] = {
-            "VERSION",
-            "../VERSION",
-            "../../VERSION",
-            NULL
-        };
-        
-        FILE* f = NULL;
-        for (int i = 0; paths[i] != NULL && !f; i++) {
-            f = fopen(paths[i], "r");
-        }
-        
+        // Prefer the repo VERSION file when running from a source checkout
+        // (keeps `./wyn version` current between rebuilds); otherwise use the
+        // compile-time constant.
+        FILE* f = fopen("VERSION", "r");
         if (f) {
             if (fgets(version, sizeof(version), f)) {
                 char* newline = strchr(version, '\n');
@@ -176,9 +175,7 @@ static char* get_version() {
             }
             fclose(f);
         }
-        if (version[0] == 0) strcpy(version, "1.10.0");
-        
-        // Version string
+        if (version[0] == 0) strncpy(version, WYN_VERSION, sizeof(version) - 1);
     }
     return version;
 }
@@ -1963,6 +1960,13 @@ int main(int argc, char** argv) {
     if (strcmp(command, "check") == 0) {
         if (argc < 3) { fprintf(stderr, "Usage: wyn check <file.wyn>\n"); return 1; }
         char* file = argv[2];
+        // A directory used to "read" as empty and print "✓ no errors" —
+        // a false green for anyone checking a project dir in CI.
+        { struct stat _st;
+          if (stat(file, &_st) == 0 && S_ISDIR(_st.st_mode)) {
+              fprintf(stderr, "Error: '%s' is a directory — pass a .wyn file (e.g. wyn check src/main.wyn)\n", file);
+              return 1;
+          } }
         { extern void set_source_directory(const char*); set_source_directory(file); }
         char* source = read_file(file);
         if (!source) { fprintf(stderr, "Error: Cannot read %s\n", file); return 1; }
@@ -2199,13 +2203,33 @@ int main(int argc, char** argv) {
 #endif
                     }
                     for (int i = 3; i < argc; i++) { strcat(run_cmd, " "); strcat(run_cmd, argv[i]); }
-                    return system(run_cmd);
+                    // system() returns the raw WAIT STATUS; returning it from
+                    // main truncates to its low byte, so exit(1) programs
+                    // reported 0 on every cached (no-recompile) run — CI
+                    // wrapping `wyn run` never saw the failure.
+                    { int _ws = system(run_cmd);
+#ifdef _WIN32
+                      return _ws;
+#else
+                      if (WIFEXITED(_ws)) return WEXITSTATUS(_ws);
+                      if (WIFSIGNALED(_ws)) return 128 + WTERMSIG(_ws);
+                      return _ws ? 1 : 0;
+#endif
+                    }
                 }
             }
         }
         
+        // A directory target is a user error, not an empty program — exit
+        // nonzero so scripts wrapping `wyn run $TARGET` can detect it.
+        { struct stat _rst;
+          if (stat(file, &_rst) == 0 && S_ISDIR(_rst.st_mode)) {
+              fprintf(stderr, "Error: '%s' is a directory — pass a .wyn file (e.g. wyn run src/main.wyn)\n", file);
+              return 1;
+          } }
+
         char* source = read_file(file);
-        
+
         // Friendly message for empty files
         if (!source || strlen(source) == 0 || (strlen(source) == 1 && source[0] == '\n')) {
             printf("\033[33m○\033[0m Nothing to run. Try:\n\n  println(\"hello\")\n\n");

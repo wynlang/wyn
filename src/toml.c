@@ -37,25 +37,38 @@ WynConfig* wyn_config_parse(const char* filename) {
     config->dependency_count = 0;
     int dep_capacity = 16;
 
+    int lineno = 0;
+    int warned = 0;
     while (fgets(line, sizeof(line), f)) {
+        lineno++;
         char* trimmed = trim(line);
-        
+
         // Skip empty lines and comments
         if (*trimmed == '\0' || *trimmed == '#') continue;
-        
+
         // Section header
         if (*trimmed == '[') {
             char* end = strchr(trimmed, ']');
             if (end) {
                 *end = '\0';
                 strncpy(current_section, trimmed + 1, sizeof(current_section) - 1);
+            } else if (!warned) {
+                fprintf(stderr, "\033[33mWarning:\033[0m wyn.toml line %d: unterminated section header (missing ']')\n", lineno);
+                warned = 1;
             }
             continue;
         }
-        
-        // Key = value
+
+        // Key = value. Anything else is malformed — warn ONCE instead of
+        // silently ignoring it (a typo'd manifest line was never surfaced).
         char* eq = strchr(trimmed, '=');
-        if (!eq) continue;
+        if (!eq) {
+            if (!warned) {
+                fprintf(stderr, "\033[33mWarning:\033[0m wyn.toml line %d: ignoring malformed line (expected `key = value` or `[section]`): %.60s\n", lineno, trimmed);
+                warned = 1;
+            }
+            continue;
+        }
         
         *eq = '\0';
         char* key = trim(trimmed);
