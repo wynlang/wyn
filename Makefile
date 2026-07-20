@@ -52,7 +52,7 @@ CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/
 # sees no changed prerequisite and silently keeps a stale binary.
 CODEGEN_INCLUDED_SRCS = src/codegen_expr.c src/codegen_stmt.c src/codegen_lambda.c src/codegen_program.c
 
-wyn$(EXE_EXT): $(CORE_SRCS) $(CODEGEN_INCLUDED_SRCS)
+wyn$(EXE_EXT): $(CORE_SRCS) $(CODEGEN_INCLUDED_SRCS) $(wildcard src/*.h)
 	$(CC) $(CFLAGS) -I src -I vendor/tcc/include -I vendor/minicoro -o $@ $(CORE_SRCS) vendor/tcc/lib/libtcc.a $(PLATFORM_LIBS)
 
 # Platform-specific targets
