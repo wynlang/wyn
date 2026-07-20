@@ -576,7 +576,17 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "upgrade") == 0 || strcmp(command, "update") == 0) {
+        // Any argument (--help, -h, anything) prints usage instead of
+        // upgrading — `wyn update --help` used to fire the upgrade
+        // immediately, and a failed download could brick the binary.
+        if (argc > 2) {
+            printf("wyn upgrade — replace this binary with the latest GitHub release\n");
+            printf("Usage: wyn upgrade   (no arguments; also: wyn update)\n");
+            printf("Downloads the release for this platform, verifies it runs, then swaps it in.\n");
+            return strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0 ? 0 : 1;
+        }
         printf("\033[1mChecking for updates...\033[0m\n");
+        fflush(stdout);  // system() writes next; unflushed printf prints after it
 #ifdef __APPLE__
 #ifdef __aarch64__
         const char* platform = "macos-arm64";
@@ -592,15 +602,29 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
         // Windows: use PowerShell
         char cmd[2048];
+        // Releases ship wyn-windows-x64.zip (bin\wyn.exe + src + runtime) —
+        // the old code fetched a bare .exe asset that has never existed, and
+        // without -f/ErrorActionPreference the 404 body overwrote the binary.
         snprintf(cmd, sizeof(cmd),
             "powershell -Command \""
+            "$ErrorActionPreference = 'Stop';"
             "$latest = (Invoke-RestMethod https://api.github.com/repos/wynlang/wyn/releases/latest).tag_name -replace 'v','';"
             "if (-not $latest) { Write-Host '✗ Could not check for updates' -ForegroundColor Red; exit 1 }"
             "$current = '%s';"
             "if ($latest -eq $current) { Write-Host '✓ Already on latest (v'$current')' -ForegroundColor Green; exit 0 }"
+            "if (([version]$current) -gt ([version]$latest)) { Write-Host '✓ v'$current' is newer than the latest release (v'$latest')' -ForegroundColor Green; exit 0 }"
             "Write-Host 'Upgrading v'$current' → v'$latest'...';"
-            "Invoke-WebRequest -Uri https://github.com/wynlang/wyn/releases/download/v$latest/wyn-%s.exe -OutFile $env:TEMP\\wyn_new.exe;"
-            "Copy-Item $env:TEMP\\wyn_new.exe (Get-Command wyn).Source -Force;"
+            "$t = Join-Path $env:TEMP ('wyn_up_' + [System.IO.Path]::GetRandomFileName());"
+            "New-Item -ItemType Directory -Path $t | Out-Null;"
+            "try { Invoke-WebRequest -Uri https://github.com/wynlang/wyn/releases/download/v$latest/wyn-%s.zip -OutFile (Join-Path $t 'wyn.zip') } "
+            "catch { Write-Host '✗ Download failed — install unchanged' -ForegroundColor Red; exit 1 };"
+            "Expand-Archive -Path (Join-Path $t 'wyn.zip') -DestinationPath (Join-Path $t 'x');"
+            "$newexe = Join-Path $t 'x\\bin\\wyn.exe';"
+            "if (-not (Test-Path $newexe)) { Write-Host '✗ Archive missing bin\\wyn.exe — install unchanged' -ForegroundColor Red; exit 1 };"
+            "& $newexe --version | Out-Null;"
+            "if ($LASTEXITCODE -ne 0) { Write-Host '✗ New binary does not run — install unchanged' -ForegroundColor Red; exit 1 };"
+            "$root = Split-Path -Parent (Split-Path -Parent (Get-Command wyn).Source);"
+            "Copy-Item -Recurse -Force (Join-Path $t 'x\\*') $root;"
             "Write-Host '✓ Upgraded to v'$latest -ForegroundColor Green\"",
             get_version(), platform);
         return system(cmd) == 0 ? 0 : 1;
@@ -624,18 +648,50 @@ int main(int argc, char** argv) {
         if (last_slash) { size_t dlen = last_slash - self_path; memcpy(dir, self_path, dlen); dir[dlen] = '\0'; }
         int need_sudo = (access(dir, W_OK) != 0);
 
-        char cmd[2048];
+        // Safety-hardened rewrite. The old code was doubly broken: it fetched
+        // a bare-binary asset (`wyn-macos-arm64`) that has NEVER existed —
+        // releases ship `wyn-<platform>.tar.gz` bundles (bin/ + src/ +
+        // runtime/, the install.sh layout contract) — and it curled without
+        // -f, so the guaranteed 404 body ("Not Found") was chmod+x'd and
+        // moved OVER the working binary. It also "upgraded" to any version
+        // that merely differed (a downgrade counted).
+        // Now: sort -V comparison; download the real tarball with curl -f;
+        // extract to a temp dir; run the new bin/wyn --version as proof of
+        // life; only then sync the whole layout into the install root
+        // (binary alone is not enough — a new compiler with the old
+        // runtime/ lib is the staleness footgun). The running install is
+        // never touched until the new one has proven it runs.
+        char install_root[1024] = "/usr/local";
+        if (last_slash) {
+            // self is .../bin/wyn → root is ...; self at dir root → use dir
+            size_t dlen = last_slash - self_path;
+            memcpy(install_root, self_path, dlen); install_root[dlen] = '\0';
+            char* bin_suffix = strrchr(install_root, '/');
+            if (bin_suffix && strcmp(bin_suffix, "/bin") == 0) *bin_suffix = '\0';
+        }
+        char cmd[3072];
         snprintf(cmd, sizeof(cmd),
             "latest=$(curl -sL https://api.github.com/repos/wynlang/wyn/releases/latest | grep tag_name | head -1 | sed 's/.*\"v//' | sed 's/\".*//');"
             "if [ -z \"$latest\" ]; then echo '\\033[31m✗\\033[0m Could not check for updates'; exit 1; fi;"
             "current='%s';"
             "if [ \"$latest\" = \"$current\" ]; then echo '\\033[32m✓\\033[0m Already on latest (v'$current')'; exit 0; fi;"
+            "newest=$(printf '%%s\\n%%s\\n' \"$latest\" \"$current\" | sort -V | tail -1);"
+            "if [ \"$newest\" = \"$current\" ]; then echo '\\033[32m✓\\033[0m v'$current' is newer than the latest release (v'$latest') — nothing to do'; exit 0; fi;"
             "echo 'Upgrading v'$current' → v'$latest'...';"
-            "curl -sL https://github.com/wynlang/wyn/releases/download/v$latest/wyn-%s -o /tmp/wyn_new && "
-            "chmod +x /tmp/wyn_new && "
-            "%smv /tmp/wyn_new %s && "
+            "tdir=$(mktemp -d /tmp/wyn_up.XXXXXX) || exit 1;"
+            "trap 'rm -rf \"$tdir\"' EXIT;"
+            "if ! curl -fsSL https://github.com/wynlang/wyn/releases/download/v$latest/wyn-%s.tar.gz -o \"$tdir/wyn.tar.gz\"; then "
+            "  echo '\\033[31m✗\\033[0m Download failed — install unchanged'; exit 1; fi;"
+            "mkdir -p \"$tdir/x\" && tar xzf \"$tdir/wyn.tar.gz\" -C \"$tdir/x\" || { echo '\\033[31m✗\\033[0m Bad archive — install unchanged'; exit 1; };"
+            // v1.19+ tarballs put the binary at bin/wyn (the install.sh layout
+            // contract); v1.18 and earlier had it at the root. Accept both.
+            "if [ -x \"$tdir/x/bin/wyn\" ]; then newbin=\"$tdir/x/bin/wyn\";"
+            "elif [ -x \"$tdir/x/wyn\" ]; then newbin=\"$tdir/x/wyn\"; mkdir -p \"$tdir/x/bin\" && mv \"$tdir/x/wyn\" \"$tdir/x/bin/wyn\" && newbin=\"$tdir/x/bin/wyn\";"
+            "else echo '\\033[31m✗\\033[0m Archive missing wyn binary — install unchanged'; exit 1; fi;"
+            "\"$newbin\" --version >/dev/null 2>&1 || { echo '\\033[31m✗\\033[0m New binary does not run — install unchanged'; exit 1; };"
+            "%scp -R \"$tdir/x/.\" '%s/' && "
             "echo '\\033[32m✓\\033[0m Upgraded to v'$latest",
-            get_version(), platform, need_sudo ? "sudo " : "", self_path[0] ? self_path : "/usr/local/bin/wyn");
+            get_version(), platform, need_sudo ? "sudo " : "", install_root);
         return system(cmd) == 0 ? 0 : 1;
 #endif
     }
