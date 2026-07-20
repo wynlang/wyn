@@ -71,3 +71,9 @@ tests/test_*
 tests/run_tests
 !tests/run_tests.sh
 !tests/run_tests*.sh
+runtime/libwyn_rt_asan.a
+runtime/obj_asan/
+# compiled expect-test binaries (no extension)
+tests/expect/*
+!tests/expect/*.wyn
+!tests/expect/*.sh

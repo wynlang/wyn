@@ -1,0 +1,27 @@
+// EXPECT: 7
+// EXPECT: 3.5
+// EXPECT: 3.5
+// Spawn with non-word argument/return types — both used to be corrupted by
+// the (void*)(intptr_t) word cast:
+// - struct arg: internal codegen error (struct through a pointer cast)
+// - float arg AND float return: silently truncated (spawn half(7.0) -> 3)
+// Non-word args now travel in a malloc'd box; float returns are boxed like
+// structs and deref'd by await.
+
+struct Point { x: int, y: int }
+
+fn sumpt(p: Point) -> int => p.x + p.y
+fn half(f: float) -> float => f / 2.0
+
+fn main() -> int {
+    var p = Point { x: 3, y: 4 }
+    var f1 = spawn sumpt(p)
+    println((await f1).to_string())
+
+    var f2 = spawn half(7.0)
+    println((await f2).to_string())
+
+    // direct await (no intermediate var) exercises the other decode path
+    println((await spawn half(7.0)).to_string())
+    return 0
+}
