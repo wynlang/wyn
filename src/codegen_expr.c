@@ -1110,6 +1110,30 @@ void codegen_expr(Expr* expr) {
                         extern const char* get_struct_var_type(const char*);
                         _psn = get_struct_var_type(_pvn);
                     }
+                    // println(Option): print "Some(v)" / "none" from the tag.
+                    // Detect via the enum-var registry OR the checker typing
+                    // the ident as an Option* family struct (_psn) — falling
+                    // through to to_string(opt) passed the struct by value to
+                    // a long long param — an internal codegen error.
+                    if (!arg_is_string && parg->type == EXPR_IDENT) {
+                        char _pvn[128]; token_to_cstr(_pvn, sizeof(_pvn), parg->token);
+                        extern const char* get_enum_var_type(const char*);
+                        const char* _oet = get_enum_var_type(_pvn);
+                        if (!_oet && _psn && strncmp(_psn, "Option", 6) == 0) _oet = _psn;
+                        if (_oet && strncmp(_oet, "Option", 6) == 0) {
+                            const char* _fam = _oet + 6;
+                            const char* _fmt =
+                                strcmp(_fam, "String") == 0 ? "printf(\"Some(\\\"%%s\\\")\\n\", %s.value);"
+                              : strcmp(_fam, "Float") == 0  ? "printf(\"Some(%%g)\\n\", %s.value);"
+                              : strcmp(_fam, "Bool") == 0   ? "printf(\"Some(%%s)\\n\", %s.value ? \"true\" : \"false\");"
+                              : "printf(\"Some(%%lld)\\n\", (long long)%s.value);";
+                            emit("({ if (%s.tag == 1) { ", _pvn);
+                            emit(_fmt, _pvn);
+                            emit(" } else { printf(\"none\\n\"); } })");
+                            codegen_skip_strdup = prev_skip;
+                            break;
+                        }
+                    }
                     if (_psn) {
                     Token _sn = {TOKEN_IDENT, _psn, (int)strlen(_psn), 0};
                     // Find the struct declaration to get field names and types.
