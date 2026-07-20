@@ -1,0 +1,37 @@
+// EXPECT: 42
+// EXPECT: hello
+// EXPECT: 3.14
+// EXPECT: 4.64
+// EXPECT: done
+// Channels used to be untyped int64 pipes: send("hello") came back as a
+// pointer number, send(3.14) truncated to 3. The checker now infers a
+// channel's element type from its first send (like array push) and recv()
+// returns that type; codegen bit-casts floats through the payload word and
+// casts string pointers back.
+
+fn main() {
+    // int round-trip (always worked; guard it)
+    ci = channel(4)
+    ci.send(42)
+    v = ci.recv()
+    println(v)
+
+    // string round-trip (was: prints a pointer number)
+    cs = channel(4)
+    cs.send("hello")
+    s = cs.recv()
+    println(s)
+
+    // float round-trip (was: 3.14 -> 3)
+    cf = channel(4)
+    cf.send(3.14)
+    f = cf.recv()
+    println(f)
+
+    // recv result usable in typed arithmetic
+    cf.send(3.14)
+    g = cf.recv()
+    println(g + 1.5)
+
+    println("done")
+}

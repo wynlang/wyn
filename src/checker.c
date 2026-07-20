@@ -3674,14 +3674,44 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int;
         }
         case EXPR_METHOD_CALL: {
-            // Channel methods: ch.send(v) / ch.recv() / ch.close() where ch is
-            // a channel value. send/close return nothing (int), recv returns int.
+            // Channel methods: ch.send(v) / ch.recv() / ch.close(). Channels
+            // carry ONE element type, inferred from the first send (mirroring
+            // array push inference; stored in the union's array_type slot).
+            // Later sends must match — the runtime moves payloads through a
+            // single word, so an unchecked string send used to come back as a
+            // pointer number and floats silently truncated. recv() returns
+            // the element type so codegen can marshal it back correctly.
             {
                 Type* obj_t = check_expr(expr->method_call.object, scope);
                 if (obj_t && obj_t->kind == TYPE_CHANNEL) {
-                    for (int i = 0; i < expr->method_call.arg_count; i++)
-                        check_expr(expr->method_call.args[i], scope);
-                    expr->expr_type = builtin_int; // recv() -> int; send/close -> int (unused)
+                    Token method = expr->method_call.method;
+                    Type* arg_t = NULL;
+                    for (int i = 0; i < expr->method_call.arg_count; i++) {
+                        Type* t = check_expr(expr->method_call.args[i], scope);
+                        if (i == 0) arg_t = t;
+                    }
+                    if (method.length == 4 && memcmp(method.start, "send", 4) == 0 && arg_t) {
+                        Type* elem = obj_t->array_type.element_type;
+                        if (!elem) {
+                            obj_t->array_type.element_type = arg_t;
+                        } else if (elem->kind != arg_t->kind &&
+                                   !(elem->kind == TYPE_FLOAT && arg_t->kind == TYPE_INT)) {
+                            fprintf(stderr, "Error at line %d: Cannot send %s through a channel of %s\n",
+                                    method.line, type_to_string(arg_t), type_to_string(elem));
+                            fprintf(stderr, "  \033[34mHelp:\033[0m A channel carries one type — its first send decides which\n");
+                            had_error = true;
+                            return NULL;
+                        }
+                        expr->expr_type = builtin_int;
+                        return builtin_int;
+                    }
+                    if ((method.length == 4 && memcmp(method.start, "recv", 4) == 0) ||
+                        (method.length == 8 && memcmp(method.start, "try_recv", 8) == 0)) {
+                        Type* elem = obj_t->array_type.element_type;
+                        expr->expr_type = elem ? elem : builtin_int;
+                        return expr->expr_type;
+                    }
+                    expr->expr_type = builtin_int; // close() etc.
                     return builtin_int;
                 }
             }
@@ -3945,6 +3975,24 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                 sym->type->array_type.element_type = val_type;
                             }
                         }
+                    } else if (val_type && object_type->array_type.element_type &&
+                               object_type->array_type.element_type->kind != val_type->kind &&
+                               // int<->float pushes are coerced at codegen; a
+                               // string/struct into a numeric array is not.
+                               !((val_type->kind == TYPE_INT || val_type->kind == TYPE_FLOAT) &&
+                                 (object_type->array_type.element_type->kind == TYPE_INT ||
+                                  object_type->array_type.element_type->kind == TYPE_FLOAT))) {
+                        // The function-form array_push(arr, v) has had this
+                        // check for ages; the METHOD form silently accepted a
+                        // mismatched push and corrupted memory at runtime
+                        // (string pointer stored in an int array).
+                        fprintf(stderr, "Error at line %d: Cannot push %s into array of %s\n",
+                                method.line,
+                                type_to_string(val_type),
+                                type_to_string(object_type->array_type.element_type));
+                        fprintf(stderr, "  \033[34mHelp:\033[0m Use separate arrays for different types\n");
+                        had_error = true;
+                        return NULL;
                     }
                     expr->expr_type = builtin_void;
                     return builtin_void;
@@ -4613,9 +4661,34 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
         }
         case EXPR_INDEX_ASSIGN: {
             // Check index assignment
-            check_expr(expr->index_assign.object, scope);
+            Type* obj_t = check_expr(expr->index_assign.object, scope);
             check_expr(expr->index_assign.index, scope);
-            check_expr(expr->index_assign.value, scope);
+            Type* val_t = check_expr(expr->index_assign.value, scope);
+            // Enforce element/value type on stores. Codegen picks the insert
+            // fn from the VALUE's type but reads decode with the CONTAINER's
+            // declared type — a mismatched store passed check and read back
+            // as garbage (string stored, int-decoded → 0 or a pointer).
+            // int<->float stays permissive (codegen coerces numerics).
+            if (obj_t && val_t) {
+                Type* slot = NULL;
+                const char* container = NULL;
+                if (obj_t->kind == TYPE_MAP) { slot = obj_t->map_type.value_type; container = "map with values of"; }
+                else if (obj_t->kind == TYPE_ARRAY) { slot = obj_t->array_type.element_type; container = "array of"; }
+                if (slot && slot->kind != val_t->kind &&
+                    !((val_t->kind == TYPE_INT || val_t->kind == TYPE_FLOAT) &&
+                      (slot->kind == TYPE_INT || slot->kind == TYPE_FLOAT))) {
+                    fprintf(stderr, "Error at line %d: Cannot store %s in %s %s\n",
+                            expr->index_assign.object->token.line,
+                            type_to_string(val_t), container, type_to_string(slot));
+                    fprintf(stderr, "  \033[34mHelp:\033[0m Values in a collection must share one type\n");
+                    had_error = true;
+                    return NULL;
+                }
+                // First store into an untyped map slot sets the value type.
+                if (obj_t->kind == TYPE_MAP && !obj_t->map_type.value_type) {
+                    obj_t->map_type.value_type = val_t;
+                }
+            }
             return builtin_int; // Assignment returns int (simplified)
         }
         case EXPR_FIELD_ASSIGN: {
