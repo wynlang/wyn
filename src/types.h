@@ -45,6 +45,10 @@ typedef struct LambdaExpr {
     Token* captured_vars;     // Variables captured from environment
     int captured_count;       // Number of captured variables
     bool* capture_by_move;    // Whether each capture is by move or reference
+    struct Type** captured_types; // Checker-resolved type per capture; codegen
+                                  // reads this for capture cell C types (it
+                                  // used to hardcode long long, so a captured
+                                  // string emitted pointer garbage)
 } LambdaExpr;
 
 typedef enum {

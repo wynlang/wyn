@@ -564,11 +564,30 @@ static void emit_lambda_via_codegen(LambdaFunction* lf) {
         }
     }
 
+    // Capture-cell C type: resolve from the checker's recorded capture types
+    // (matched by NAME against the codegen-scan capture list — the two lists
+    // are built independently). Hardcoded `long long` cells made a captured
+    // string round-trip through an integer: pointer-address output.
+    const char* cap_c_types[16];
+    for (int i = 0; i < capture_count && i < 16; i++) {
+        cap_c_types[i] = is_scan_array_var(lf->captured_vars[i]) ? "WynArray" : "long long";
+        for (int j = 0; j < expr->lambda.captured_count && j < 8; j++) {
+            Token ct = expr->lambda.captured_vars[j];
+            if ((int)strlen(lf->captured_vars[i]) == ct.length &&
+                memcmp(lf->captured_vars[i], ct.start, ct.length) == 0 &&
+                expr->lambda.captured_types && expr->lambda.captured_types[j]) {
+                const char* t = codegen_c_type_from_type(expr->lambda.captured_types[j]);
+                if (t) cap_c_types[i] = t;
+                break;
+            }
+        }
+    }
+
     if (capture_count > 0 && lf->is_closure) {
         // Closure with env struct: emit typedef + function taking void* env
         emit("typedef struct { ");
         for (int i = 0; i < capture_count; i++) {
-            emit("long long %s; ", lf->captured_vars[i]);
+            emit("%s %s; ", i < 16 ? cap_c_types[i] : "long long", lf->captured_vars[i]);
         }
         emit("} __closure_env_%d;\n", lambda_id);
         emit("%s __lambda_%d(void* __env", ret_c_type, lambda_id);
@@ -579,14 +598,15 @@ static void emit_lambda_via_codegen(LambdaFunction* lf) {
         emit(") {\n");
         emit("    __closure_env_%d* __e = (__closure_env_%d*)__env;\n", lambda_id, lambda_id);
         for (int i = 0; i < capture_count; i++) {
-            emit("    long long %s = __e->%s;\n", lf->captured_vars[i], lf->captured_vars[i]);
+            emit("    %s %s = __e->%s;\n", i < 16 ? cap_c_types[i] : "long long",
+                 lf->captured_vars[i], lf->captured_vars[i]);
         }
     } else {
         // Non-closure: static capture globals + plain function
         if (capture_count > 0) {
             for (int i = 0; i < capture_count; i++) {
-                const char* cap_type = is_scan_array_var(lf->captured_vars[i]) ? "WynArray" : "long long";
-                emit("static %s __cap_%d_%s;\n", cap_type, lambda_id, lf->captured_vars[i]);
+                emit("static %s __cap_%d_%s;\n",
+                     i < 16 ? cap_c_types[i] : "long long", lambda_id, lf->captured_vars[i]);
             }
         }
         emit("%s __lambda_%d(", ret_c_type, lambda_id);

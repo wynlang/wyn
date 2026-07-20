@@ -3660,6 +3660,33 @@ WynArray wyn_array_filter_str(WynArray arr, long long (*fn)(const char*)) {
     }
     return result;
 }
+// [string] -> [int] map: lambda takes a string, returns an int
+// (e.g. words.map((s) => s.len())). Routing this through the str->str
+// variant treated the returned ints as char* — a segfault at print.
+WynArray wyn_array_map_str_to_int(WynArray arr, long long (*fn)(const char*)) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        array_push_int(&result, fn(array_get_str(arr, i)));
+    }
+    return result;
+}
+// [float] map/filter: doubles pass through the double ABI. Riding the int
+// variant truncated every element ([1.5, 2.5].map((f) => f * 2.0) -> [1, 2]).
+WynArray wyn_array_map_float(WynArray arr, double (*fn)(double)) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        array_push_float(&result, fn(array_get_float(arr, i)));
+    }
+    return result;
+}
+WynArray wyn_array_filter_float(WynArray arr, long long (*fn)(double)) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        double v = array_get_float(arr, i);
+        if (fn(v)) array_push_float(&result, v);
+    }
+    return result;
+}
 int random_int(int min, int max) { return min + rand() % (max - min + 1); }
 int random_range(int min, int max) { return min + rand() % (max - min + 1); }
 double random_float() { return (double)rand() / RAND_MAX; }

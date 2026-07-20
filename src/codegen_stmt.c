@@ -600,20 +600,23 @@ void codegen_stmt(Stmt* stmt) {
                             c_type = "WynArray";
                             char _vn2[256]; token_to_cstr(_vn2, sizeof(_vn2), stmt->var.name);
                             extern void register_array_var(const char*); register_array_var(_vn2);
-                            // S2: if the source array contains strings, propagate to result
-                            bool _src_is_str_arr = false;
-                            if (stmt->var.init->method_call.object->expr_type &&
-                                stmt->var.init->method_call.object->expr_type->kind == TYPE_ARRAY &&
-                                stmt->var.init->method_call.object->expr_type->array_type.element_type &&
-                                stmt->var.init->method_call.object->expr_type->array_type.element_type->kind == TYPE_STRING) {
-                                _src_is_str_arr = true;
-                            }
-                            if (!_src_is_str_arr && stmt->var.init->method_call.object->type == EXPR_IDENT) {
+                            // S2: register the RESULT as a string array only
+                            // when the checker typed it [string] — a str->int
+                            // .map result registered by SOURCE type made
+                            // c = b.map((s) => s.len()) read ints as char*.
+                            bool _res_is_str_arr =
+                                stmt->var.init->expr_type &&
+                                stmt->var.init->expr_type->kind == TYPE_ARRAY &&
+                                stmt->var.init->expr_type->array_type.element_type &&
+                                stmt->var.init->expr_type->array_type.element_type->kind == TYPE_STRING;
+                            // Fallback (no expr_type): propagate from the source.
+                            if (!_res_is_str_arr && !stmt->var.init->expr_type &&
+                                stmt->var.init->method_call.object->type == EXPR_IDENT) {
                                 char _srcn[256]; token_to_cstr(_srcn, sizeof(_srcn), stmt->var.init->method_call.object->token);
                                 extern int is_str_array_var(const char*);
-                                if (is_str_array_var(_srcn)) _src_is_str_arr = true;
+                                if (is_str_array_var(_srcn)) _res_is_str_arr = true;
                             }
-                            if (_src_is_str_arr) {
+                            if (_res_is_str_arr) {
                                 extern void register_str_array_var(const char*);
                                 register_str_array_var(_vn2);
                             }

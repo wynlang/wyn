@@ -42,7 +42,7 @@ extern Program* load_module(const char* module_name);  // From module.c
 void check_stmt(Stmt* stmt, SymbolTable* scope);
 Type* check_expr(Expr* expr, SymbolTable* scope);
 void analyze_lambda_captures(LambdaExpr* lambda, Expr* body, SymbolTable* scope);
-static int lambda_param_is_string(const char* pname, Expr* e);
+static int lambda_param_is_string(const char* pname, Expr* e, SymbolTable* scope);
 void analyze_expr_captures(Expr* expr, LambdaExpr* lambda, SymbolTable* scope);
 
 static SymbolTable* global_scope = NULL;
@@ -3625,32 +3625,43 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Token method = expr->method_call.method;
             char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
 
-            // S2 context-propagation: when .map()/.filter() is called on a [string]
-            // array and the lambda arg has int-defaulted params, override them to
-            // string. This handles identity lambdas like `(s) => s` where body analysis
-            // alone gives no type evidence.
+            // S2 context-propagation: when .map()/.filter() is called on a
+            // [string] or [float] array and the lambda arg has int-defaulted
+            // params, override them to the element type. Handles identity
+            // lambdas ((s) => s) and float bodies whose arithmetic gave no
+            // string/float evidence at inference time.
             if (object_type && object_type->kind == TYPE_ARRAY &&
                 object_type->array_type.element_type &&
-                object_type->array_type.element_type->kind == TYPE_STRING &&
+                (object_type->array_type.element_type->kind == TYPE_STRING ||
+                 object_type->array_type.element_type->kind == TYPE_FLOAT) &&
                 expr->method_call.arg_count == 1 &&
                 expr->method_call.args[0]->type == EXPR_LAMBDA &&
                 ((method.length == 3 && memcmp(method.start, "map", 3) == 0) ||
                  (method.length == 6 && memcmp(method.start, "filter", 6) == 0))) {
+                Type* elem_t = object_type->array_type.element_type;
                 Expr* lam = expr->method_call.args[0];
                 if (lam->expr_type && lam->expr_type->kind == TYPE_FUNCTION) {
                     for (int pi = 0; pi < lam->expr_type->fn_type.param_count; pi++) {
                         if (lam->expr_type->fn_type.param_types[pi] &&
                             lam->expr_type->fn_type.param_types[pi]->kind == TYPE_INT) {
-                            lam->expr_type->fn_type.param_types[pi] = builtin_string;
+                            lam->expr_type->fn_type.param_types[pi] = elem_t;
                         }
                     }
-                    // Also update the return type for map: if return was int (body = just
-                    // the param ident), the lambda actually returns string.
+                    // map return type: an int-typed return usually just means
+                    // "no evidence" — identity bodies and float arithmetic
+                    // both produce the element type.
                     if (method.length == 3 && memcmp(method.start, "map", 3) == 0 &&
                         lam->expr_type->fn_type.return_type &&
-                        lam->expr_type->fn_type.return_type->kind == TYPE_INT &&
-                        lam->lambda.body && lam->lambda.body->type == EXPR_IDENT) {
-                        lam->expr_type->fn_type.return_type = builtin_string;
+                        lam->expr_type->fn_type.return_type->kind == TYPE_INT) {
+                        if (elem_t->kind == TYPE_STRING &&
+                            lam->lambda.body && lam->lambda.body->type == EXPR_IDENT) {
+                            lam->expr_type->fn_type.return_type = builtin_string;
+                        } else if (elem_t->kind == TYPE_FLOAT) {
+                            // float-in, arithmetic body: result is float unless
+                            // the body is an explicit int producer (.len() etc.)
+                            if (!(lam->lambda.body && lam->lambda.body->type == EXPR_METHOD_CALL))
+                                lam->expr_type->fn_type.return_type = builtin_float;
+                        }
                     }
                 }
             }
@@ -3900,15 +3911,28 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                 return string_array;
                             }
                         }
-                        // S2: .map()/.filter() on [string] returns [string]
+                        // S2: .map()/.filter() on [string] — element type of the
+                        // result follows the LAMBDA's return type for map (a
+                        // str->int lambda produces [int]; typing it [string]
+                        // made downstream indexing read ints as char* and
+                        // crash); filter always preserves [string].
                         if (object_type && object_type->kind == TYPE_ARRAY &&
                             object_type->array_type.element_type &&
                             object_type->array_type.element_type->kind == TYPE_STRING &&
                             (strcmp(method_name, "map") == 0 || strcmp(method_name, "filter") == 0)) {
-                            Type* str_arr = make_type(TYPE_ARRAY);
-                            str_arr->array_type.element_type = builtin_string;
-                            expr->expr_type = str_arr;
-                            return str_arr;
+                            Type* elem = builtin_string;
+                            if (strcmp(method_name, "map") == 0 &&
+                                expr->method_call.arg_count == 1 &&
+                                expr->method_call.args[0]->expr_type &&
+                                expr->method_call.args[0]->expr_type->kind == TYPE_FUNCTION &&
+                                expr->method_call.args[0]->expr_type->fn_type.return_type &&
+                                expr->method_call.args[0]->expr_type->fn_type.return_type->kind != TYPE_STRING) {
+                                elem = expr->method_call.args[0]->expr_type->fn_type.return_type;
+                            }
+                            Type* res_arr = make_type(TYPE_ARRAY);
+                            res_arr->array_type.element_type = elem;
+                            expr->expr_type = res_arr;
+                            return res_arr;
                         }
                         expr->expr_type = builtin_array;
                         return builtin_array;
@@ -4301,7 +4325,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             for (int i = 0; i < expr->lambda.param_count && i < 16; i++) {
                 char pn[64]; int pl = expr->lambda.params[i].length < 63 ? expr->lambda.params[i].length : 63;
                 memcpy(pn, expr->lambda.params[i].start, pl); pn[pl] = '\0';
-                int is_str = expr->lambda.body && lambda_param_is_string(pn, expr->lambda.body);
+                int is_str = expr->lambda.body && lambda_param_is_string(pn, expr->lambda.body, scope);
                 param_inferred[i] = is_str ? builtin_string : builtin_int;
             }
             // Add parameters to lambda scope with their inferred types
@@ -7372,13 +7396,21 @@ const char* type_to_string(Type* type) {
 // operand) or is the receiver of a string method. Used to infer the param's type so
 // string-parameter lambdas type-check (rather than failing with a bare "Type
 // mismatch"). Conservative: returns false unless there's positive evidence.
-static int expr_is_string_literal_or_typed(Expr* e) {
+static int expr_is_string_literal_or_typed(Expr* e, SymbolTable* scope) {
     if (!e) return 0;
-    if (e->type == EXPR_STRING) return 1;
+    if (e->type == EXPR_STRING || e->type == EXPR_STRING_INTERP) return 1;
     if (e->expr_type && e->expr_type->kind == TYPE_STRING) return 1;
+    // Inference runs BEFORE the body is checked, so a captured outer variable
+    // has no expr_type yet — resolve identifiers through the enclosing scope
+    // (a string capture used to give no evidence, so `(s) => s + suffix`
+    // inferred s as int and emitted pointer garbage).
+    if (e->type == EXPR_IDENT && scope) {
+        Symbol* sym = find_symbol(scope, e->token);
+        if (sym && sym->type && sym->type->kind == TYPE_STRING) return 1;
+    }
     return 0;
 }
-static int lambda_param_is_string(const char* pname, Expr* e) {
+static int lambda_param_is_string(const char* pname, Expr* e, SymbolTable* scope) {
     if (!e || !pname) return 0;
     switch (e->type) {
         case EXPR_BINARY: {
@@ -7389,11 +7421,11 @@ static int lambda_param_is_string(const char* pname, Expr* e) {
                               memcmp(l->token.start, pname, l->token.length) == 0);
                 int r_is_p = (r && r->type == EXPR_IDENT && r->token.length == (int)strlen(pname) &&
                               memcmp(r->token.start, pname, r->token.length) == 0);
-                if (l_is_p && expr_is_string_literal_or_typed(r)) return 1;
-                if (r_is_p && expr_is_string_literal_or_typed(l)) return 1;
+                if (l_is_p && expr_is_string_literal_or_typed(r, scope)) return 1;
+                if (r_is_p && expr_is_string_literal_or_typed(l, scope)) return 1;
             }
-            return lambda_param_is_string(pname, e->binary.left) ||
-                   lambda_param_is_string(pname, e->binary.right);
+            return lambda_param_is_string(pname, e->binary.left, scope) ||
+                   lambda_param_is_string(pname, e->binary.right, scope);
         }
         case EXPR_METHOD_CALL: {
             // `param.<string-method>(...)` → param is a string. Recognize the common
@@ -7409,21 +7441,21 @@ static int lambda_param_is_string(const char* pname, Expr* e) {
                     if ((int)strlen(sm[i]) == m.length && memcmp(sm[i], m.start, m.length) == 0)
                         return 1;
             }
-            if (lambda_param_is_string(pname, e->method_call.object)) return 1;
+            if (lambda_param_is_string(pname, e->method_call.object, scope)) return 1;
             for (int i = 0; i < e->method_call.arg_count; i++)
-                if (lambda_param_is_string(pname, e->method_call.args[i])) return 1;
+                if (lambda_param_is_string(pname, e->method_call.args[i], scope)) return 1;
             return 0;
         }
         case EXPR_CALL:
             for (int i = 0; i < e->call.arg_count; i++)
-                if (lambda_param_is_string(pname, e->call.args[i])) return 1;
+                if (lambda_param_is_string(pname, e->call.args[i], scope)) return 1;
             return 0;
         case EXPR_IF_EXPR:
-            return lambda_param_is_string(pname, e->if_expr.condition) ||
-                   lambda_param_is_string(pname, e->if_expr.then_expr) ||
-                   lambda_param_is_string(pname, e->if_expr.else_expr);
+            return lambda_param_is_string(pname, e->if_expr.condition, scope) ||
+                   lambda_param_is_string(pname, e->if_expr.then_expr, scope) ||
+                   lambda_param_is_string(pname, e->if_expr.else_expr, scope);
         case EXPR_UNARY:
-            return lambda_param_is_string(pname, e->unary.operand);
+            return lambda_param_is_string(pname, e->unary.operand, scope);
         default:
             return 0;
     }
@@ -7438,8 +7470,9 @@ void analyze_lambda_captures(LambdaExpr* lambda, Expr* body, SymbolTable* scope)
     // Initialize capture arrays
     lambda->captured_vars = malloc(sizeof(Token) * 8);
     lambda->capture_by_move = malloc(sizeof(bool) * 8);
+    lambda->captured_types = malloc(sizeof(Type*) * 8);
     lambda->captured_count = 0;
-    
+
     // Recursively analyze the body expression for free variables
     analyze_expr_captures(body, lambda, scope);
 }
@@ -7474,6 +7507,12 @@ void analyze_expr_captures(Expr* expr, LambdaExpr* lambda, SymbolTable* scope) {
                 if (!already_captured) {
                     lambda->captured_vars[lambda->captured_count] = expr->token;
                     lambda->capture_by_move[lambda->captured_count] = false; // Default to reference
+                    // Record the capture's real type so codegen can emit the
+                    // right capture-cell C type (a string capture in a
+                    // long long cell produced pointer-address output).
+                    Symbol* cap_sym = find_symbol(scope, expr->token);
+                    lambda->captured_types[lambda->captured_count] =
+                        cap_sym ? cap_sym->type : NULL;
                     lambda->captured_count++;
                 }
             }
