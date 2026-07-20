@@ -1,0 +1,39 @@
+// EXPECT: odd13
+// EXPECT: gt2
+// EXPECT: small
+// EXPECT: big
+// EXPECT: mid
+// Match in STATEMENT position (no result binding) — these patterns all worked
+// in expression form but were broken as statements: or-patterns emitted
+// constant 0 (arm silently NEVER matched), guards referenced an undeclared
+// binding (internal codegen error), and range patterns didn't parse at all.
+
+fn main() -> int {
+    n = 3
+    match n {
+        1 | 3 | 5 => println("odd13")
+        _ => println("other")
+    }
+
+    match n {
+        x if x > 2 => println("gt2")
+        _ => println("le2")
+    }
+
+    match n {
+        1..5 => println("small")
+        _ => println("big")
+    }
+
+    m = 5
+    match m {
+        1..5 => println("small")
+        _ => println("big")
+    }
+
+    match m {
+        1..=5 => println("mid")
+        _ => println("high")
+    }
+    return 0
+}

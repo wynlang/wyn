@@ -4015,10 +4015,30 @@ static Stmt* parse_match_statement() {
             pattern->option.is_some = false;
             pattern->option.inner = NULL;
         } else if (check(TOKEN_INT) || check(TOKEN_FLOAT) || check(TOKEN_STRING) || check(TOKEN_TRUE) || check(TOKEN_FALSE)) {
-            // Literal pattern
-            pattern->type = PATTERN_LITERAL;
-            pattern->literal.value = parser.current;
+            // Literal pattern — possibly the start of a RANGE (1..5 / 1..=5).
+            // The expression-form match always parsed ranges; the statement
+            // form errored with "Expected '=>' after match pattern".
+            Token lit_tok = parser.current;
             advance();
+            if (check(TOKEN_DOTDOT) || check(TOKEN_DOTDOTEQ)) {
+                bool inclusive = check(TOKEN_DOTDOTEQ);
+                advance();  // consume ../..=
+                Token end_tok = parser.current;
+                expect(TOKEN_INT, "Expected integer after '..' in range pattern");
+                pattern->type = PATTERN_RANGE;
+                pattern->range.inclusive = inclusive;
+                Expr* start_expr = alloc_expr();
+                start_expr->type = EXPR_INT;
+                start_expr->token = lit_tok;
+                pattern->range.start = start_expr;
+                Expr* end_expr = alloc_expr();
+                end_expr->type = EXPR_INT;
+                end_expr->token = end_tok;
+                pattern->range.end = end_expr;
+            } else {
+                pattern->type = PATTERN_LITERAL;
+                pattern->literal.value = lit_tok;
+            }
         } else if (match(TOKEN_UNDERSCORE)) {
             // Wildcard pattern
             pattern->type = PATTERN_WILDCARD;
