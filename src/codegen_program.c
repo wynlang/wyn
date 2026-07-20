@@ -944,12 +944,48 @@ void codegen_program(Program* prog) {
                     }
                 }
                 emit("}\n\n");
+            } else if (ac == 1 && spawn_wrappers[i].boxed_arg1) {
+                // Boxed single arg (float/struct/array): the call site mallocs
+                // a one-field box; unpack with the REAL param type instead of
+                // the truncating (void*)(intptr_t) word cast.
+                const char* _bpt = "long long";
+                if (current_program) {
+                    for (int fi = 0; fi < current_program->count; fi++) {
+                        Stmt* fs = current_program->stmts[fi];
+                        if (fs->type == STMT_FN &&
+                            strlen(spawn_wrappers[i].func_name) == (size_t)fs->fn.name.length &&
+                            memcmp(spawn_wrappers[i].func_name, fs->fn.name.start, fs->fn.name.length) == 0) {
+                            if (fs->fn.param_count > 0 && fs->fn.param_types[0]) {
+                                Expr* pt0 = fs->fn.param_types[0];
+                                if (pt0->type == EXPR_ARRAY) _bpt = "WynArray";
+                                else if (pt0->type == EXPR_IDENT) {
+                                    Token ptk = pt0->token;
+                                    if (ptk.length == 5 && memcmp(ptk.start, "float", 5) == 0) _bpt = "double";
+                                    else { static char _bpb[96]; snprintf(_bpb, sizeof(_bpb), "%.*s", ptk.length, ptk.start); _bpt = _bpb; }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+                emit("void* __spawn_wrapper_%s_1b(void* arg) {\n", spawn_wrappers[i].func_name);
+                emit("    struct { %s a0; } *args = arg;\n", _bpt);
+                if (spawn_wrappers[i].returns_void) {
+                    emit("    %s(args->a0);\n    free(args);\n    return NULL;\n", spawn_wrappers[i].func_name);
+                } else if (spawn_wrappers[i].return_type[0]) {
+                    emit("    %s* __r = malloc(sizeof(%s));\n    *__r = %s(args->a0);\n    free(args);\n    return __r;\n",
+                         spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                } else {
+                    emit("    long long __r = (long long)%s(args->a0);\n    free(args);\n    return (void*)(intptr_t)__r;\n",
+                         spawn_wrappers[i].func_name);
+                }
+                emit("}\n\n");
             } else if (ac == 1) {
                 // Check if function has more params with defaults
                 extern int get_fn_param_count(const char*);
                 extern Expr* get_fn_default(const char*, int);
                 int total_params = get_fn_param_count(spawn_wrappers[i].func_name);
-                
+
                 emit("void* __spawn_wrapper_%s_1(void* arg) {\n", spawn_wrappers[i].func_name);
                 if (total_params > 1) {
                     // Function has more params — fill in defaults after the explicit arg

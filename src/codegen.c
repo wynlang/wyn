@@ -1128,6 +1128,9 @@ typedef struct {
     int returns_string;
     char return_type[64];
     int can_inline;     // 1 if function has no yield points (no await/channel)
+    int boxed_arg1;     // 1 = single non-word arg (float/struct/array): args
+                        // travel in a malloc'd box (see __spawn_wrapper_*_1b),
+                        // never through the truncating (void*)(intptr_t) cast
 } SpawnWrapper;
 
 static SpawnWrapper spawn_wrappers[256];

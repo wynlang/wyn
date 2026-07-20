@@ -435,7 +435,9 @@ void codegen_expr(Expr* expr) {
                 extern int is_string_future(const char*);
                 if (is_string_future(vn)) is_string_return = true;
             }
-            // Check for struct return
+            // Check for struct return. Floats are boxed like structs — the
+            // (void*)(intptr_t) word cast truncated 3.5 to 3 — so a float
+            // return maps to the "double" boxed type here.
             const char* struct_return_type = NULL;
             if (!is_string_return) {
                 if (inner && inner->type == EXPR_SPAWN && inner->spawn.call &&
@@ -444,8 +446,10 @@ void codegen_expr(Expr* expr) {
                     char fn2[256]; token_to_cstr(fn2, sizeof(fn2), inner->spawn.call->call.callee->token);
                     extern const char* get_function_return_type(const char*);
                     const char* rt2 = get_function_return_type(fn2);
-                    if (rt2 && strcmp(rt2, "int") != 0 && strcmp(rt2, "string") != 0 &&
-                        strcmp(rt2, "float") != 0 && strcmp(rt2, "bool") != 0)
+                    if (rt2 && strcmp(rt2, "float") == 0)
+                        struct_return_type = "double";
+                    else if (rt2 && strcmp(rt2, "int") != 0 && strcmp(rt2, "string") != 0 &&
+                        strcmp(rt2, "bool") != 0)
                         struct_return_type = rt2;
                 }
                 if (!struct_return_type && inner && inner->type == EXPR_IDENT) {
@@ -4339,12 +4343,39 @@ void codegen_expr(Expr* expr) {
                     }
                 }
                 
+                // A single argument that is NOT a machine word (float/struct/
+                // array) cannot ride the (void*)(intptr_t) cast: floats were
+                // silently TRUNCATED (spawn half(7.0) -> 3), structs were a C
+                // type error. Route those through the args-struct path.
+                bool _arg1_needs_box = false;
+                if (arg_count == 1 && current_program) {
+                    for (int _fi = 0; _fi < current_program->count; _fi++) {
+                        Stmt* _fs = current_program->stmts[_fi];
+                        if (_fs->type == STMT_FN &&
+                            (size_t)_fs->fn.name.length == strlen(func_name) &&
+                            memcmp(_fs->fn.name.start, func_name, _fs->fn.name.length) == 0) {
+                            if (_fs->fn.param_count > 0 && _fs->fn.param_types[0]) {
+                                Expr* pt0 = _fs->fn.param_types[0];
+                                if (pt0->type == EXPR_ARRAY) _arg1_needs_box = true;
+                                else if (pt0->type == EXPR_IDENT) {
+                                    Token ptk = pt0->token;
+                                    bool is_word = (ptk.length == 3 && memcmp(ptk.start, "int", 3) == 0) ||
+                                                   (ptk.length == 4 && memcmp(ptk.start, "bool", 4) == 0) ||
+                                                   (ptk.length == 6 && memcmp(ptk.start, "string", 6) == 0);
+                                    if (!is_word) _arg1_needs_box = true;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
                 if (arg_count == 0) {
                     if (_can_inline)
                         emit("wyn_spawn_inline((TaskFuncWithReturn)__spawn_wrapper_%s, NULL)", func_name);
                     else
                         emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s, NULL, __FILE__, __LINE__)", func_name);
-                } else if (arg_count == 1) {
+                } else if (arg_count == 1 && !_arg1_needs_box) {
                     if (_can_inline) {
                         emit("wyn_spawn_inline((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
                     } else {
@@ -4355,6 +4386,38 @@ void codegen_expr(Expr* expr) {
                         emit("))");
                     else
                         emit("), __FILE__, __LINE__)");
+                } else if (arg_count == 1 && _arg1_needs_box) {
+                    // Boxed single arg: same shape as the multi-arg path — the
+                    // wrapper (which knows the real param type) unpacks it.
+                    spawn_id_counter++;
+                    int sid = spawn_id_counter;
+                    const char* _box_ct = "long long";
+                    {   // recover the param's C type for the box field
+                        for (int _fi = 0; _fi < current_program->count; _fi++) {
+                            Stmt* _fs = current_program->stmts[_fi];
+                            if (_fs->type == STMT_FN &&
+                                (size_t)_fs->fn.name.length == strlen(func_name) &&
+                                memcmp(_fs->fn.name.start, func_name, _fs->fn.name.length) == 0) {
+                                Expr* pt0 = _fs->fn.param_types[0];
+                                if (pt0->type == EXPR_ARRAY) _box_ct = "WynArray";
+                                else if (pt0->type == EXPR_IDENT) {
+                                    Token ptk = pt0->token;
+                                    if (ptk.length == 5 && memcmp(ptk.start, "float", 5) == 0) _box_ct = "double";
+                                    else { static char _bcb[96]; snprintf(_bcb, sizeof(_bcb), "%.*s", ptk.length, ptk.start); _box_ct = _bcb; }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    emit("({ struct __spawn_args_%d { %s a0; } *__sa_%d = malloc(sizeof(struct __spawn_args_%d)); ",
+                         sid, _box_ct, sid, sid);
+                    emit("__sa_%d->a0 = ", sid);
+                    codegen_expr(call->call.args[0]);
+                    emit("; ");
+                    if (_can_inline)
+                        emit("wyn_spawn_inline((TaskFuncWithReturn)__spawn_wrapper_%s_1b, __sa_%d); })", func_name, sid);
+                    else
+                        emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_1b, __sa_%d, __FILE__, __LINE__); })", func_name, sid);
                 } else {
                     // Create args struct and pass to wrapper
                     spawn_id_counter++;

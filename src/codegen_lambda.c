@@ -514,8 +514,37 @@ static void scan_expr_for_lambdas(Expr* expr) {
                         strcmp(_rt, "float") != 0 && strcmp(_rt, "bool") != 0) {
                         strncpy(spawn_wrappers[spawn_wrapper_count].return_type, _rt, 63);
                     }
+                    // A float RETURN can't ride (void*)(intptr_t) either — the
+                    // double was truncated to its integer part. Box it like a
+                    // struct: the wrapper mallocs a double, await derefs it.
+                    if (_rt && strcmp(_rt, "float") == 0) {
+                        strncpy(spawn_wrappers[spawn_wrapper_count].return_type, "double", 63);
+                    }
                     extern int function_can_inline(const char*);
                     spawn_wrappers[spawn_wrapper_count].can_inline = function_can_inline(func_name);
+                    // Single non-word arg (float/struct/array) → boxed wrapper.
+                    spawn_wrappers[spawn_wrapper_count].boxed_arg1 = 0;
+                    if (arg_count == 1 && current_program) {
+                        for (int _fi = 0; _fi < current_program->count; _fi++) {
+                            Stmt* _fs = current_program->stmts[_fi];
+                            if (_fs->type == STMT_FN &&
+                                (size_t)_fs->fn.name.length == strlen(func_name) &&
+                                memcmp(_fs->fn.name.start, func_name, _fs->fn.name.length) == 0) {
+                                if (_fs->fn.param_count > 0 && _fs->fn.param_types[0]) {
+                                    Expr* pt0 = _fs->fn.param_types[0];
+                                    if (pt0->type == EXPR_ARRAY) spawn_wrappers[spawn_wrapper_count].boxed_arg1 = 1;
+                                    else if (pt0->type == EXPR_IDENT) {
+                                        Token ptk = pt0->token;
+                                        bool is_word = (ptk.length == 3 && memcmp(ptk.start, "int", 3) == 0) ||
+                                                       (ptk.length == 4 && memcmp(ptk.start, "bool", 4) == 0) ||
+                                                       (ptk.length == 6 && memcmp(ptk.start, "string", 6) == 0);
+                                        if (!is_word) spawn_wrappers[spawn_wrapper_count].boxed_arg1 = 1;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
                     spawn_wrapper_count++;
                 }
             }

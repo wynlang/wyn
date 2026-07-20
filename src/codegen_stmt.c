@@ -937,7 +937,14 @@ void codegen_stmt(Stmt* stmt) {
                             char _vn2[256]; token_to_cstr(_vn2, sizeof(_vn2), stmt->var.name);
                             extern void register_string_future(const char*);
                             register_string_future(_vn2);
-                        } else if (_srt && strcmp(_srt, "int") != 0 && strcmp(_srt, "float") != 0 && strcmp(_srt, "bool") != 0) {
+                        } else if (_srt && strcmp(_srt, "float") == 0) {
+                            // Float results are BOXED (a malloc'd double) like
+                            // structs — the word cast truncated them. Register
+                            // so await derefs *(double*) instead.
+                            char _vn2[256]; token_to_cstr(_vn2, sizeof(_vn2), stmt->var.name);
+                            extern void register_struct_future(const char*, const char*);
+                            register_struct_future(_vn2, "double");
+                        } else if (_srt && strcmp(_srt, "int") != 0 && strcmp(_srt, "bool") != 0) {
                             char _vn2[256]; token_to_cstr(_vn2, sizeof(_vn2), stmt->var.name);
                             extern void register_struct_future(const char*, const char*);
                             register_struct_future(_vn2, _srt);
