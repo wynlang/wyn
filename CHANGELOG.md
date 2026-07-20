@@ -67,6 +67,14 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
   `wyn run` propagates the program's real exit code, and `wyn test` with zero
   matching tests says so instead of reporting success.
 
+**Self-upgrade that works (and can't hurt you)**
+- **`wyn upgrade`** updates to the latest release; **`wyn upgrade 1.18.0`**
+  installs an exact version (up or down). The new binary is downloaded to a
+  temp dir, extracted, and proven to run before anything is touched — a
+  failed download can no longer damage the install (previously a 404
+  response body could overwrite the binary). Bare `wyn upgrade` never
+  downgrades; an explicit version pin is honored exactly.
+
 **Hardening gates (CI)**
 - Every commit now runs the full suite under **AddressSanitizer** (the
   runtime, where the real memory bugs live) and **ThreadSanitizer** (all

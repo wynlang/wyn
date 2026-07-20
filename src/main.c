@@ -576,16 +576,34 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "upgrade") == 0 || strcmp(command, "update") == 0) {
-        // Any argument (--help, -h, anything) prints usage instead of
-        // upgrading — `wyn update --help` used to fire the upgrade
-        // immediately, and a failed download could brick the binary.
+        // Optional version argument: `wyn upgrade 1.18.0` (or v1.18.0) pins
+        // to that release — an explicit version is deliberate, so it may
+        // downgrade. No argument means "latest", which never downgrades.
+        // Anything that isn't a version or --help prints usage — `wyn update
+        // --help` used to fire the upgrade immediately, and a failed
+        // download could brick the binary.
+        char target_version[64] = "";
         if (argc > 2) {
-            printf("wyn upgrade — replace this binary with the latest GitHub release\n");
-            printf("Usage: wyn upgrade   (no arguments; also: wyn update)\n");
-            printf("Downloads the release for this platform, verifies it runs, then swaps it in.\n");
-            return strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0 ? 0 : 1;
+            const char* a = argv[2];
+            if (a[0] == 'v') a++;  // accept v1.18.0 and 1.18.0
+            int looks_like_version = (a[0] >= '0' && a[0] <= '9');
+            for (const char* p = a; *p && looks_like_version; p++)
+                if (!((*p >= '0' && *p <= '9') || *p == '.')) looks_like_version = 0;
+            if (looks_like_version && strlen(a) < sizeof(target_version)) {
+                snprintf(target_version, sizeof(target_version), "%s", a);
+            } else {
+                printf("wyn upgrade — replace this binary with a GitHub release\n");
+                printf("Usage: wyn upgrade [version]   (also: wyn update)\n");
+                printf("  wyn upgrade          upgrade to the latest release (never downgrades)\n");
+                printf("  wyn upgrade 1.18.0   install exactly v1.18.0 (up or down)\n");
+                printf("Downloads the release for this platform, verifies it runs, then swaps it in.\n");
+                return strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0 ? 0 : 1;
+            }
         }
-        printf("\033[1mChecking for updates...\033[0m\n");
+        if (target_version[0])
+            printf("\033[1mFetching v%s...\033[0m\n", target_version);
+        else
+            printf("\033[1mChecking for updates...\033[0m\n");
         fflush(stdout);  // system() writes next; unflushed printf prints after it
 #ifdef __APPLE__
 #ifdef __aarch64__
@@ -608,12 +626,14 @@ int main(int argc, char** argv) {
         snprintf(cmd, sizeof(cmd),
             "powershell -Command \""
             "$ErrorActionPreference = 'Stop';"
-            "$latest = (Invoke-RestMethod https://api.github.com/repos/wynlang/wyn/releases/latest).tag_name -replace 'v','';"
+            "$pin = '%s';"
+            "if ($pin) { $latest = $pin } else {"
+            "$latest = (Invoke-RestMethod https://api.github.com/repos/wynlang/wyn/releases/latest).tag_name -replace 'v','' };"
             "if (-not $latest) { Write-Host '✗ Could not check for updates' -ForegroundColor Red; exit 1 }"
             "$current = '%s';"
-            "if ($latest -eq $current) { Write-Host '✓ Already on latest (v'$current')' -ForegroundColor Green; exit 0 }"
-            "if (([version]$current) -gt ([version]$latest)) { Write-Host '✓ v'$current' is newer than the latest release (v'$latest')' -ForegroundColor Green; exit 0 }"
-            "Write-Host 'Upgrading v'$current' → v'$latest'...';"
+            "if ($latest -eq $current) { Write-Host '✓ Already on v'$current'' -ForegroundColor Green; exit 0 }"
+            "if ((-not $pin) -and (([version]$current) -gt ([version]$latest))) { Write-Host '✓ v'$current' is newer than the latest release (v'$latest')' -ForegroundColor Green; exit 0 }"
+            "Write-Host 'Installing v'$latest' (current: v'$current')...';"
             "$t = Join-Path $env:TEMP ('wyn_up_' + [System.IO.Path]::GetRandomFileName());"
             "New-Item -ItemType Directory -Path $t | Out-Null;"
             "try { Invoke-WebRequest -Uri https://github.com/wynlang/wyn/releases/download/v$latest/wyn-%s.zip -OutFile (Join-Path $t 'wyn.zip') } "
@@ -625,8 +645,8 @@ int main(int argc, char** argv) {
             "if ($LASTEXITCODE -ne 0) { Write-Host '✗ New binary does not run — install unchanged' -ForegroundColor Red; exit 1 };"
             "$root = Split-Path -Parent (Split-Path -Parent (Get-Command wyn).Source);"
             "Copy-Item -Recurse -Force (Join-Path $t 'x\\*') $root;"
-            "Write-Host '✓ Upgraded to v'$latest -ForegroundColor Green\"",
-            get_version(), platform);
+            "Write-Host '✓ Now on v'$latest -ForegroundColor Green\"",
+            target_version, get_version(), platform);
         return system(cmd) == 0 ? 0 : 1;
 #else
         // Find where the current binary is installed
@@ -669,15 +689,21 @@ int main(int argc, char** argv) {
             char* bin_suffix = strrchr(install_root, '/');
             if (bin_suffix && strcmp(bin_suffix, "/bin") == 0) *bin_suffix = '\0';
         }
+        // %1$s = pinned version ('' = latest). Pinned versions skip the
+        // never-downgrade check: an explicit `wyn upgrade 1.18.0` means
+        // "install exactly that", up or down.
         char cmd[3072];
         snprintf(cmd, sizeof(cmd),
-            "latest=$(curl -sL https://api.github.com/repos/wynlang/wyn/releases/latest | grep tag_name | head -1 | sed 's/.*\"v//' | sed 's/\".*//');"
+            "pin='%s';"
+            "if [ -n \"$pin\" ]; then latest=\"$pin\"; else "
+            "latest=$(curl -sL https://api.github.com/repos/wynlang/wyn/releases/latest | grep tag_name | head -1 | sed 's/.*\"v//' | sed 's/\".*//'); fi;"
             "if [ -z \"$latest\" ]; then echo '\\033[31m✗\\033[0m Could not check for updates'; exit 1; fi;"
             "current='%s';"
-            "if [ \"$latest\" = \"$current\" ]; then echo '\\033[32m✓\\033[0m Already on latest (v'$current')'; exit 0; fi;"
+            "if [ \"$latest\" = \"$current\" ]; then echo '\\033[32m✓\\033[0m Already on v'$current''; exit 0; fi;"
+            "if [ -z \"$pin\" ]; then "
             "newest=$(printf '%%s\\n%%s\\n' \"$latest\" \"$current\" | sort -V | tail -1);"
-            "if [ \"$newest\" = \"$current\" ]; then echo '\\033[32m✓\\033[0m v'$current' is newer than the latest release (v'$latest') — nothing to do'; exit 0; fi;"
-            "echo 'Upgrading v'$current' → v'$latest'...';"
+            "if [ \"$newest\" = \"$current\" ]; then echo '\\033[32m✓\\033[0m v'$current' is newer than the latest release (v'$latest') — nothing to do'; exit 0; fi; fi;"
+            "echo 'Installing v'$latest' (current: v'$current')...';"
             "tdir=$(mktemp -d /tmp/wyn_up.XXXXXX) || exit 1;"
             "trap 'rm -rf \"$tdir\"' EXIT;"
             "if ! curl -fsSL https://github.com/wynlang/wyn/releases/download/v$latest/wyn-%s.tar.gz -o \"$tdir/wyn.tar.gz\"; then "
@@ -690,8 +716,9 @@ int main(int argc, char** argv) {
             "else echo '\\033[31m✗\\033[0m Archive missing wyn binary — install unchanged'; exit 1; fi;"
             "\"$newbin\" --version >/dev/null 2>&1 || { echo '\\033[31m✗\\033[0m New binary does not run — install unchanged'; exit 1; };"
             "%scp -R \"$tdir/x/.\" '%s/' && "
-            "echo '\\033[32m✓\\033[0m Upgraded to v'$latest",
-            get_version(), platform, need_sudo ? "sudo " : "", install_root);
+            "echo '\\033[32m✓\\033[0m Now on v'$latest",
+            target_version, get_version(), platform,
+            need_sudo ? "sudo " : "", install_root);
         return system(cmd) == 0 ? 0 : 1;
 #endif
     }
