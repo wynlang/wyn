@@ -1,0 +1,12 @@
+// Regression: a bare `return` in top-level (script-mode) code compiled into the
+// synthesized `long long wyn_main()` as `return;` → C error "non-void function
+// should return a value". codegen_program now sets current_fn_c_nonvoid while
+// emitting the synthesized main, so a bare return lowers to `return 0;`. (2026-07)
+print("start")
+if 1 == 1 {
+    print("early")
+    return
+}
+print("late")
+// EXPECT: start
+// EXPECT: early

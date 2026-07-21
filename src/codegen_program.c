@@ -1224,6 +1224,13 @@ void codegen_program(Program* prog) {
         if (prog->stmts[i]->type == STMT_TEST) test_count++;
     }
     
+    // The synthesized wyn_main below (test runner / script mode) is non-void
+    // (long long): a bare `return` in a test body or top-level statement must
+    // lower to `return 0;` or C rejects it (see STMT_RETURN in codegen_stmt.c).
+    extern bool current_fn_c_nonvoid;
+    bool prev_fn_c_nonvoid = current_fn_c_nonvoid;
+    if (!has_main) current_fn_c_nonvoid = true;
+
     if (!has_main && test_count > 0) {
         // Emit global variables before test runner
         for (int i = 0; i < prog->count; i++) {
@@ -1345,6 +1352,7 @@ void codegen_program(Program* prog) {
         // User defined main() is renamed to wyn_main during codegen
         // main() wrapper is in wyn_wrapper.c (compiled into runtime libraries)
     }
+    current_fn_c_nonvoid = prev_fn_c_nonvoid;
 }
 
 // T1.4.4: Control Flow Code Generation - Control Flow Agent addition
