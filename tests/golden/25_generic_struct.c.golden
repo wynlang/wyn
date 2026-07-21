@@ -1,0 +1,29 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+typedef struct {
+    long long first;
+    long long second;
+} Pair;
+
+void Pair_cleanup(Pair* obj) {
+}
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 25_generic_struct.wyn:7 */ 
+#line 7 "25_generic_struct.wyn"
+long long wyn_main() {
+    /* 25_generic_struct.wyn:8 */ 
+#line 8 "25_generic_struct.wyn"
+Pair p = ((Pair){.first = 10, .second = 20});
+    ({ const char* __ps = to_string(p.first); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(p.second); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string((p.first + p.second)); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

@@ -1,0 +1,38 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 20_control_flow.wyn:2 */ 
+#line 2 "20_control_flow.wyn"
+long long wyn_main() {
+    /* 20_control_flow.wyn:3 */ 
+#line 3 "20_control_flow.wyn"
+long long n = 7;
+    if ((bool)(n > 10)) {
+    println("big");
+    } else if ((bool)(n > 5)) {
+    println("mid");
+    } else {
+    println("small");
+    }
+    /* 20_control_flow.wyn:8 */ 
+#line 8 "20_control_flow.wyn"
+long long i = 0;
+    while ((bool)(i < 10)) {
+    i = (i + 1);
+    if ((bool)(i == 3)) {
+    continue;
+    }
+    if ((bool)(i > 5)) {
+    break;
+    }
+    ({ const char* __ps = to_string(i); println(__ps); wyn_rc_release(__ps); });
+    }
+    return 0;
+}
+

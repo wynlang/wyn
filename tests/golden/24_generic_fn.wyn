@@ -1,0 +1,7 @@
+// Golden: generic identity function monomorphized at int and string.
+fn identity<T>(x: T) -> T { return x }
+
+fn main() {
+    println(identity(42))
+    println(identity("wyn"))
+}

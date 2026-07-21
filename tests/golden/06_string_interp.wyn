@@ -1,0 +1,8 @@
+// Golden: string interpolation with vars, expressions, and method calls.
+fn main() {
+    var name = "wyn"
+    var version = 2
+    println("lang ${name} v${version}")
+    println("sum ${1 + 2}")
+    println("upper ${name.upper()}")
+}

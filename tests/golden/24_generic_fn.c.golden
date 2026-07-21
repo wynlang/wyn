@@ -1,0 +1,33 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+const char* identity_string(const char* x);
+long long identity_int(long long x);
+// Monomorphic instance of identity
+const char* identity_string(const char* x) {
+    /* 24_generic_fn.wyn:2 */ 
+#line 2 "24_generic_fn.wyn"
+return x;
+}
+
+// Monomorphic instance of identity
+long long identity_int(long long x) {
+    /* 24_generic_fn.wyn:2 */ 
+#line 2 "24_generic_fn.wyn"
+return x;
+}
+
+long long wyn_main();
+
+/* 24_generic_fn.wyn:4 */ 
+#line 4 "24_generic_fn.wyn"
+long long wyn_main() {
+    ({ const char* __ps = to_string(identity_int(42)); println(__ps); wyn_rc_release(__ps); });
+    { const char* __sa0 = identity_string("wyn"); println(__sa0); wyn_rc_release(__sa0); }
+    return 0;
+}
+

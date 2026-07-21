@@ -1,0 +1,8 @@
+// Golden: chained method calls across strings and arrays.
+fn main() {
+    var s = "  a,b,c  "
+    println(s.trim().split(",").join("|"))
+    var xs = [1, 2, 3, 4, 5, 6]
+    println(xs.filter((n) => n % 2 == 0).map((n) => n * 10))
+    println("x".repeat(3).upper())
+}

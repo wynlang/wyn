@@ -1,0 +1,16 @@
+// Golden: struct destructuring in match arms with guards.
+struct Pt { x: int, y: int }
+
+fn classify(p: Pt) -> string {
+    return match p {
+        Pt { x, y } if x == y => "diag"
+        Pt { x, y } if x > y => "below"
+        Pt { x, y } => "above"
+    }
+}
+
+fn main() {
+    println(classify(Pt { x: 4, y: 4 }))
+    println(classify(Pt { x: 7, y: 2 }))
+    println(classify(Pt { x: 1, y: 9 }))
+}

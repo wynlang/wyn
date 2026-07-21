@@ -1,0 +1,9 @@
+// Golden: Option method surface - unwrap, unwrap_or, is_some/is_none.
+fn main() {
+    var a: int? = Some(42)
+    println(a.unwrap())
+    println(a.is_some())
+    var b: int? = None()
+    println(b.is_none())
+    println(b.unwrap_or(7))
+}

@@ -1,0 +1,38 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+__attribute__((hot)) static inline long long square(long long n);
+__attribute__((hot)) static inline char* greet(const char* who);
+long long wyn_main();
+
+/* 30_bare_assign_exprfn.wyn:2 */ 
+#line 2 "30_bare_assign_exprfn.wyn"
+__attribute__((hot)) static inline long long square(long long n) {
+    return (n * n);
+}
+
+/* 30_bare_assign_exprfn.wyn:3 */ 
+#line 3 "30_bare_assign_exprfn.wyn"
+__attribute__((hot)) static inline char* greet(const char* who) {
+    /* 30_bare_assign_exprfn.wyn:3 */ 
+#line 3 "30_bare_assign_exprfn.wyn"
+return ({ const char* __si0 = to_string(who); int __n = snprintf(NULL, 0, "hello, %s", __si0); char* __buf = wyn_str_alloc(__n + 1); snprintf(__buf, __n + 1, "hello, %s", __si0); __buf; });
+}
+
+/* 30_bare_assign_exprfn.wyn:5 */ 
+#line 5 "30_bare_assign_exprfn.wyn"
+long long wyn_main() {
+    /* 30_bare_assign_exprfn.wyn:6 */ 
+#line 6 "30_bare_assign_exprfn.wyn"
+long long x = 5;
+    x = (x + 1);
+    ({ const char* __ps = to_string(square(x)); println(__ps); wyn_rc_release(__ps); });
+    { const char* __sa0 = greet("world"); println(__sa0); wyn_rc_release(__sa0); }
+    { const char* __sa0 = greet("wyn"); println(__sa0); wyn_rc_release(__sa0); }
+    return 0;
+}
+

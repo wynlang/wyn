@@ -1,0 +1,30 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 03_arithmetic.wyn:2 */ 
+#line 2 "03_arithmetic.wyn"
+long long wyn_main() {
+    /* 03_arithmetic.wyn:3 */ 
+#line 3 "03_arithmetic.wyn"
+long long a = 10;
+    /* 03_arithmetic.wyn:4 */ 
+#line 4 "03_arithmetic.wyn"
+long long b = 3;
+    ({ const char* __ps = to_string((a + (b << 1))); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(((a + b) << 1)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(wyn_safe_div(a, b)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(wyn_safe_mod(a, b)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(-a); println(__ps); wyn_rc_release(__ps); });
+    a = (a + 5);
+    a = (a - 2);
+    a = (a << 1);
+    ({ const char* __ps = to_string(a); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

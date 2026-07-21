@@ -1,0 +1,16 @@
+// Golden: payload-free enum, match, to_string.
+enum Color { Red, Green, Blue }
+
+fn name(c: Color) -> string {
+    match c {
+        Color.Red => return "red"
+        Color.Green => return "green"
+        Color.Blue => return "blue"
+    }
+    return "?"
+}
+
+fn main() {
+    println(name(Color.Red))
+    println(Color.Blue.to_string())
+}

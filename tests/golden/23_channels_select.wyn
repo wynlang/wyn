@@ -1,0 +1,16 @@
+// Golden: channel send/recv/close and select over two channels.
+fn main() {
+    var c = channel(4)
+    c.send(10)
+    c.send(20)
+    println(c.recv() + c.recv())
+    c.close()
+
+    var a = channel(2)
+    var b = channel(2)
+    b.send(1)
+    select {
+        v = a.recv() => println("from a")
+        v = b.recv() => println("from b")
+    }
+}

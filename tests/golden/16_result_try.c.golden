@@ -1,0 +1,51 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+__attribute__((hot)) static inline ResultInt parse(const char* s);
+__attribute__((hot)) static inline ResultInt run();
+long long wyn_main();
+
+/* 16_result_try.wyn:2 */ 
+#line 2 "16_result_try.wyn"
+__attribute__((hot)) static inline ResultInt parse(const char* s) {
+    if ((bool)(strcmp(s, "") == 0)) {
+    return ResultInt_Err("empty");
+    }
+    return ResultInt_Ok(42);
+}
+
+/* 16_result_try.wyn:7 */ 
+#line 7 "16_result_try.wyn"
+__attribute__((hot)) static inline ResultInt run() {
+    /* 16_result_try.wyn:8 */ 
+#line 8 "16_result_try.wyn"
+long long v = ({ ResultInt __try_1 = parse("x"); if (__try_1.tag == 1) return __try_1; __try_1.data.ok_value; });
+    return ResultInt_Ok((v + 1));
+}
+
+/* 16_result_try.wyn:12 */ 
+#line 12 "16_result_try.wyn"
+long long wyn_main() {
+        ResultInt __match_val_1 = run();
+if (__match_val_1.tag == 0) {
+        long long v = __match_val_1.data.ok_value;
+        ({ const char* __ps = to_string(v); println(__ps); wyn_rc_release(__ps); });
+    } else if (__match_val_1.tag == 1) {
+        const char* e = __match_val_1.data.err_value;
+        ({ const char* __ps = to_string(e); println(__ps); wyn_rc_release(__ps); });
+    }
+        ResultInt __match_val_2 = parse("");
+if (__match_val_2.tag == 0) {
+        long long v = __match_val_2.data.ok_value;
+        ({ const char* __ps = to_string(v); println(__ps); wyn_rc_release(__ps); });
+    } else if (__match_val_2.tag == 1) {
+        const char* e = __match_val_2.data.err_value;
+        ({ const char* __ps = to_string(e); println(__ps); wyn_rc_release(__ps); });
+    }
+    return 0;
+}
+

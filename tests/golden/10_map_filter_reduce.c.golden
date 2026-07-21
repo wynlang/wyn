@@ -1,0 +1,44 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions
+long long __lambda_1(long long n) {
+    return (n << 1);
+}
+
+long long __lambda_2(long long n) {
+    return (bool)((n % 2) == 0);
+}
+
+long long __lambda_3(long long acc, long long n) {
+    return (acc + n);
+}
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 10_map_filter_reduce.wyn:2 */ 
+#line 2 "10_map_filter_reduce.wyn"
+long long wyn_main() {
+    /* 10_map_filter_reduce.wyn:3 */ 
+#line 3 "10_map_filter_reduce.wyn"
+WynArray nums = ({ WynArray __arr_0 = array_new(); array_push_int(&__arr_0, 1); array_push_int(&__arr_0, 2); array_push_int(&__arr_0, 3); array_push_int(&__arr_0, 4); array_push_int(&__arr_0, 5); __arr_0; });
+    /* 10_map_filter_reduce.wyn:4 */ 
+#line 4 "10_map_filter_reduce.wyn"
+WynArray doubled = wyn_array_map(nums, __lambda_1);
+    ({ print_array_no_nl(doubled); printf("\n"); });
+    /* 10_map_filter_reduce.wyn:6 */ 
+#line 6 "10_map_filter_reduce.wyn"
+WynArray evens = wyn_array_filter(nums, __lambda_2);
+    ({ print_array_no_nl(evens); printf("\n"); });
+    /* 10_map_filter_reduce.wyn:8 */ 
+#line 8 "10_map_filter_reduce.wyn"
+long long total = wyn_array_reduce(nums, __lambda_3, 0);
+    ({ const char* __ps = to_string(total); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

@@ -1,0 +1,10 @@
+// Golden: HOF pipeline - map, filter, reduce with lambdas.
+fn main() {
+    var nums = [1, 2, 3, 4, 5]
+    var doubled = nums.map((n) => n * 2)
+    println(doubled)
+    var evens = nums.filter((n) => n % 2 == 0)
+    println(evens)
+    var total = nums.reduce((acc, n) => acc + n, 0)
+    println(total)
+}

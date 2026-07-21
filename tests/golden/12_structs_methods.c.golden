@@ -1,0 +1,40 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+typedef struct {
+    long long x;
+    long long y;
+} Point;
+
+void Point_cleanup(Point* obj) {
+}
+
+static int __wyn_eq_Point(Point __l, Point __r);
+static int __wyn_eq_Point(Point __l, Point __r) {
+    if (__l.x != __r.x) return 0;
+    if (__l.y != __r.y) return 0;
+    return 1;
+}
+
+// Lambda functions (defined before use)
+long long Point_dist2(Point self) {
+    return ((self.x * self.x) + (self.y * self.y));
+}
+
+long long wyn_main();
+long long Point_dist2(Point self);
+
+/* 12_structs_methods.wyn:10 */ 
+#line 10 "12_structs_methods.wyn"
+long long wyn_main() {
+    /* 12_structs_methods.wyn:11 */ 
+#line 11 "12_structs_methods.wyn"
+Point p = ((Point){.x = 3, .y = 4});
+    ({ const char* __ps = to_string(p.x); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(p.y); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(Point_dist2(p)); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

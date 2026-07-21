@@ -1,0 +1,24 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 06_string_interp.wyn:2 */ 
+#line 2 "06_string_interp.wyn"
+long long wyn_main() {
+    /* 06_string_interp.wyn:3 */ 
+#line 3 "06_string_interp.wyn"
+const char* name = "wyn";
+    /* 06_string_interp.wyn:4 */ 
+#line 4 "06_string_interp.wyn"
+long long version = 2;
+    { const char* __sa0 = ({ const char* __si0 = to_string(name); const char* __si1 = to_string(version); int __n = snprintf(NULL, 0, "lang %s v%s", __si0, __si1); char* __buf = wyn_str_alloc(__n + 1); snprintf(__buf, __n + 1, "lang %s v%s", __si0, __si1); wyn_rc_release(__si1); __buf; }); println(__sa0); wyn_rc_release(__sa0); }
+    { const char* __sa0 = ({ const char* __si0 = to_string(3); int __n = snprintf(NULL, 0, "sum %s", __si0); char* __buf = wyn_str_alloc(__n + 1); snprintf(__buf, __n + 1, "sum %s", __si0); wyn_rc_release(__si0); __buf; }); println(__sa0); wyn_rc_release(__sa0); }
+    { const char* __sa0 = ({ const char* __si0 = to_string(string_upper(name)); int __n = snprintf(NULL, 0, "upper %s", __si0); char* __buf = wyn_str_alloc(__n + 1); snprintf(__buf, __n + 1, "upper %s", __si0); __buf; }); println(__sa0); wyn_rc_release(__sa0); }
+    return 0;
+}
+

@@ -1,0 +1,21 @@
+// Golden: Result Ok/Err, match arms, and the ? try operator.
+fn parse(s: string) -> Result<int, string> {
+    if s == "" { return Err("empty") }
+    return Ok(42)
+}
+
+fn run() -> Result<int, string> {
+    var v = parse("x")?
+    return Ok(v + 1)
+}
+
+fn main() {
+    match run() {
+        Ok(v) => println(v),
+        Err(e) => println(e)
+    }
+    match parse("") {
+        Ok(v) => println(v),
+        Err(e) => println(e)
+    }
+}

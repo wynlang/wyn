@@ -1,0 +1,23 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 02_print_variants.wyn:2 */ 
+#line 2 "02_print_variants.wyn"
+long long wyn_main() {
+    ({ const char* __ps = to_string(42); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(3.5); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string((bool)true); println(__ps); wyn_rc_release(__ps); });
+    println("text");
+    /* 02_print_variants.wyn:7 */ 
+#line 7 "02_print_variants.wyn"
+long long n = 7;
+    { const char* __sa0 = ({ const char* __si0 = to_string(n); int __n = snprintf(NULL, 0, "n is %s", __si0); char* __buf = wyn_str_alloc(__n + 1); snprintf(__buf, __n + 1, "n is %s", __si0); wyn_rc_release(__si0); __buf; }); ({ print_no_nl(__sa0); printf("\n"); }); wyn_rc_release(__sa0); }
+    return 0;
+}
+

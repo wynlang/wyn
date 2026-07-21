@@ -1,0 +1,12 @@
+// Golden: generic struct instantiation and field access.
+struct Pair<T> {
+    first: T
+    second: T
+}
+
+fn main() {
+    var p = Pair { first: 10, second: 20 }
+    println(p.first)
+    println(p.second)
+    println(p.first + p.second)
+}

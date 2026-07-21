@@ -1,0 +1,8 @@
+// Golden: string repeat and slicing/substring.
+fn main() {
+    var s = "ab"
+    println(s.repeat(3))
+    var t = "hello"
+    println(t[1:4])
+    println(t[0:2])
+}

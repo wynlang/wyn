@@ -1,0 +1,25 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 09_arrays_basics.wyn:2 */ 
+#line 2 "09_arrays_basics.wyn"
+long long wyn_main() {
+    /* 09_arrays_basics.wyn:3 */ 
+#line 3 "09_arrays_basics.wyn"
+WynArray xs = ({ WynArray __arr_0 = array_new(); array_push_int(&__arr_0, 10); array_push_int(&__arr_0, 20); array_push_int(&__arr_0, 30); __arr_0; });
+    ({ const char* __ps = to_string(array_get_int(xs, 0)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(array_get_int(xs, -1)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(array_len(xs)); println(__ps); wyn_rc_release(__ps); });
+    array_push(&(xs), (long long)(40));
+    { WynArray* __arr_ptr = &(xs); int __idx = 1; if (__idx >= 0 && __idx < __arr_ptr->count) { if (__arr_ptr->data[__idx].type == WYN_TYPE_STRING && __arr_ptr->data[__idx].data.string_val) { /* ARC release old string */ } __arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = 25; } };
+    ({ const char* __ps = to_string(array_get_int(xs, 1)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(array_len(xs)); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

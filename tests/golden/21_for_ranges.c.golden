@@ -1,0 +1,36 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 21_for_ranges.wyn:2 */ 
+#line 2 "21_for_ranges.wyn"
+long long wyn_main() {
+    /* 21_for_ranges.wyn:3 */ 
+#line 3 "21_for_ranges.wyn"
+long long total = 0;
+    for (long long i = 0; (bool)(i < 5); i = (i + 1)) {
+    total = (total + i);
+    }
+    ({ const char* __ps = to_string(total); println(__ps); wyn_rc_release(__ps); });
+    for (long long i = 1; (bool)(i < 4); i = (i + 1)) {
+    ({ const char* __ps = to_string(i); println(__ps); wyn_rc_release(__ps); });
+    }
+    /* 21_for_ranges.wyn:7 */ 
+#line 7 "21_for_ranges.wyn"
+WynArray xs = ({ WynArray __arr_0 = array_new(); array_push_int(&__arr_0, 7); array_push_int(&__arr_0, 8); __arr_0; });
+    {
+    WynArray __iter_array = xs;
+    for (long long __i = 0; __i < __iter_array.count; __i++) {
+        WynValue __elem = __iter_array.data[__i];
+        long long x = (__elem.type == WYN_TYPE_INT) ? __elem.data.int_val : 0;
+    ({ const char* __ps = to_string(x); println(__ps); wyn_rc_release(__ps); });
+    }
+}
+    return 0;
+}
+

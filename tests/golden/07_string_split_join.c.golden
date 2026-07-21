@@ -1,0 +1,31 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 07_string_split_join.wyn:2 */ 
+#line 2 "07_string_split_join.wyn"
+long long wyn_main() {
+    /* 07_string_split_join.wyn:3 */ 
+#line 3 "07_string_split_join.wyn"
+const char* csv = "a,b,c";
+    /* 07_string_split_join.wyn:4 */ 
+#line 4 "07_string_split_join.wyn"
+WynArray parts = string_split(csv, ",");
+    ({ const char* __ps = to_string(array_len(parts)); println(__ps); wyn_rc_release(__ps); });
+    {
+    WynArray __iter_array = parts;
+    for (long long __i = 0; __i < __iter_array.count; __i++) {
+        WynValue __elem = __iter_array.data[__i];
+        const char* p = (__elem.type == WYN_TYPE_STRING) ? __elem.data.string_val : "";
+    println(p);
+    }
+}
+    println(array_join_str(parts, "-"));
+    return 0;
+}
+

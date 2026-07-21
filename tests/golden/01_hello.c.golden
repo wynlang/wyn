@@ -1,0 +1,16 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 01_hello.wyn:2 */ 
+#line 2 "01_hello.wyn"
+long long wyn_main() {
+    ({ print_no_nl("hello, world"); printf("\n"); });
+    return 0;
+}
+

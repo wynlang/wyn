@@ -1,0 +1,16 @@
+// Golden: Option Some/None construction + match with binder.
+fn find(id: int) -> int? {
+    if id == 1 { return Some(99) }
+    return None()
+}
+
+fn main() {
+    match find(1) {
+        Some(v) => println(v),
+        None => println("missing")
+    }
+    match find(2) {
+        Some(v) => println(v),
+        None => println("missing")
+    }
+}

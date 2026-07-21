@@ -1,0 +1,16 @@
+// Golden: ?. optional chaining through struct fields.
+struct Addr { city: string }
+struct User { name: string, addr: Addr }
+
+fn find(id: int) -> User? {
+    if id == 1 { return Some(User { name: "amy", addr: Addr { city: "NYC" } }) }
+    return None
+}
+
+fn main() {
+    var u = find(1)
+    println((u?.name).unwrap_or("?"))
+    println((u?.addr?.city).unwrap_or("nowhere"))
+    var v = find(2)
+    println((v?.name).unwrap_or("missing"))
+}

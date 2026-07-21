@@ -1,0 +1,40 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 23_channels_select.wyn:2 */ 
+#line 2 "23_channels_select.wyn"
+long long wyn_main() {
+    /* 23_channels_select.wyn:3 */ 
+#line 3 "23_channels_select.wyn"
+long long c = Task_channel(4);
+    Task_send(c, (long long)(intptr_t)(10));
+    Task_send(c, (long long)(intptr_t)(20));
+    ({ const char* __ps = to_string((Task_recv(c) + Task_recv(c))); println(__ps); wyn_rc_release(__ps); });
+    Task_close(c);
+    /* 23_channels_select.wyn:9 */ 
+#line 9 "23_channels_select.wyn"
+long long a = Task_channel(2);
+    /* 23_channels_select.wyn:10 */ 
+#line 10 "23_channels_select.wyn"
+long long b = Task_channel(2);
+    Task_send(b, (long long)(intptr_t)(1));
+    { long long __selch_0[2] = { a, b };
+  long long __sel_0 = Task_select_n(__selch_0, 2);
+     if (__sel_0 == 0) {
+        long long v = Task_recv(a);
+        println("from a");
+    }
+    else if (__sel_0 == 1) {
+        long long v = Task_recv(b);
+        println("from b");
+    }
+}
+    return 0;
+}
+

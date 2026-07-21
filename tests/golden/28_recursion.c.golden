@@ -1,0 +1,36 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+__attribute__((hot)) static inline long long fib(long long n);
+__attribute__((hot)) static inline long long fact(long long n);
+long long wyn_main();
+
+/* 28_recursion.wyn:2 */ 
+#line 2 "28_recursion.wyn"
+__attribute__((hot)) static inline long long fib(long long n) {
+    if ((bool)(n < 2)) {
+    /* 28_recursion.wyn:3 */ 
+#line 3 "28_recursion.wyn"
+return n;
+    }
+    return (fib((n - 1)) + fib((n - 2)));
+}
+
+/* 28_recursion.wyn:7 */ 
+#line 7 "28_recursion.wyn"
+__attribute__((hot)) static inline long long fact(long long n) {
+    return ((bool)(n <= 1) ? 1 : (n * fact((n - 1))));
+}
+
+/* 28_recursion.wyn:9 */ 
+#line 9 "28_recursion.wyn"
+long long wyn_main() {
+    ({ const char* __ps = to_string(fib(10)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(fact(5)); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

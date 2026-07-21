@@ -1,0 +1,56 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+typedef struct {
+    enum { Shape_Circle_TAG, Shape_Rect_TAG } tag;
+    union {
+        int Circle_value;
+        struct { int f0; int f1; } Rect_value;
+    } data;
+} Shape;
+
+
+Shape Shape_Circle(int value) {
+    Shape result;
+    result.tag = Shape_Circle_TAG;
+    result.data.Circle_value = value;
+    return result;
+}
+
+Shape Shape_Rect(int f0, int f1) {
+    Shape result;
+    result.tag = Shape_Rect_TAG;
+    result.data.Rect_value.f0 = f0;
+    result.data.Rect_value.f1 = f1;
+    return result;
+}
+
+const char* Shape_toString(Shape val) {
+    switch(val.tag) {
+        case Shape_Circle_TAG: return "Circle";
+        case Shape_Rect_TAG: return "Rect";
+    }
+    return "Unknown";
+}
+
+
+// Lambda functions (defined before use)
+__attribute__((hot)) static inline long long area(Shape s);
+long long wyn_main();
+
+/* 17_enums_payload.wyn:7 */ 
+#line 7 "17_enums_payload.wyn"
+__attribute__((hot)) static inline long long area(Shape s) {
+    return ({ Shape __match_val_0 = s; long long __match_result_0 = {0}; if (__match_val_0.tag == Shape_Circle_TAG) { int r = __match_val_0.data.Circle_value; __match_result_0 = ((r * r) * 3); } else if (__match_val_0.tag == Shape_Rect_TAG) { int w = __match_val_0.data.Rect_value.f0; int h = __match_val_0.data.Rect_value.f1; __match_result_0 = (w * h); } __match_result_0; });
+}
+
+/* 17_enums_payload.wyn:14 */ 
+#line 14 "17_enums_payload.wyn"
+long long wyn_main() {
+    ({ const char* __ps = to_string(area(Shape_Circle(2))); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(area(Shape_Rect(3, 4))); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

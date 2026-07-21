@@ -1,0 +1,4 @@
+// Golden: minimal program - print + implicit main return.
+fn main() {
+    print("hello, world")
+}

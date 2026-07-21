@@ -1,0 +1,39 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+typedef struct {
+    long long x;
+    long long y;
+} Pt;
+
+void Pt_cleanup(Pt* obj) {
+}
+
+static int __wyn_eq_Pt(Pt __l, Pt __r);
+static int __wyn_eq_Pt(Pt __l, Pt __r) {
+    if (__l.x != __r.x) return 0;
+    if (__l.y != __r.y) return 0;
+    return 1;
+}
+
+// Lambda functions (defined before use)
+__attribute__((hot)) static inline char* classify(Pt p);
+long long wyn_main();
+
+/* 26_struct_destructure.wyn:4 */ 
+#line 4 "26_struct_destructure.wyn"
+__attribute__((hot)) static inline char* classify(Pt p) {
+    return ({ Pt __match_val_0 = p; const char* __match_result_0 = {0}; if (({ long long x = __match_val_0.x; long long y = __match_val_0.y; ((bool)(x == y)); })) { long long x = __match_val_0.x; long long y = __match_val_0.y; __match_result_0 = "diag"; } else if (({ long long x = __match_val_0.x; long long y = __match_val_0.y; ((bool)(x > y)); })) { long long x = __match_val_0.x; long long y = __match_val_0.y; __match_result_0 = "below"; } else if (1) { long long x = __match_val_0.x; long long y = __match_val_0.y; __match_result_0 = "above"; } __match_result_0; });
+}
+
+/* 26_struct_destructure.wyn:12 */ 
+#line 12 "26_struct_destructure.wyn"
+long long wyn_main() {
+    { const char* __sa0 = classify(((Pt){.x = 4, .y = 4})); println(__sa0); wyn_rc_release(__sa0); }
+    { const char* __sa0 = classify(((Pt){.x = 7, .y = 2})); println(__sa0); wyn_rc_release(__sa0); }
+    { const char* __sa0 = classify(((Pt){.x = 1, .y = 9})); println(__sa0); wyn_rc_release(__sa0); }
+    return 0;
+}
+
