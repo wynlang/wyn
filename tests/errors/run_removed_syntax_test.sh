@@ -1,5 +1,5 @@
 #!/bin/bash
-# Negative-syntax regression: removed operators must produce a clean, fast error —
+# Negative-syntax regression: removed operators must produce a clean, fast error -
 # NOT an infinite parser loop (regression for the &&/|| condition hang, 2026-07).
 # Each case: `wyn check` must (a) finish within a timeout, (b) exit non-zero,
 # (c) print the expected "has been removed" guidance.
@@ -29,13 +29,13 @@ check_case() {
     out=$(run_guarded 8 "$WYN" check "$f" 2>&1)
     local code=$?
     if [ "$code" -eq 137 ]; then
-        echo "  FAIL  $name — HUNG (killed after 8s)"; FAIL=$((FAIL+1)); return
+        echo "  FAIL  $name - HUNG (killed after 8s)"; FAIL=$((FAIL+1)); return
     fi
     if [ "$code" -eq 0 ]; then
-        echo "  FAIL  $name — accepted removed syntax (exit 0)"; FAIL=$((FAIL+1)); return
+        echo "  FAIL  $name - accepted removed syntax (exit 0)"; FAIL=$((FAIL+1)); return
     fi
     if ! echo "$out" | grep -q "$needle"; then
-        echo "  FAIL  $name — missing guidance '$needle'"; FAIL=$((FAIL+1)); return
+        echo "  FAIL  $name - missing guidance '$needle'"; FAIL=$((FAIL+1)); return
     fi
     echo "  ok    $name"; PASS=$((PASS+1))
 }

@@ -1,4 +1,4 @@
-// Wyn Spawn Benchmark — measures M:N scheduler performance
+// Wyn Spawn Benchmark - measures M:N scheduler performance
 
 fn tiny(x: int) -> int { return x }
 fn add(a: int, b: int) -> int { return a + b }

@@ -5,7 +5,7 @@
 // (2) codegen: `Color::green` mangled to `_green` (module name dropped) → undefined
 //     reference under gcc (clang tolerated it). Added an explicit Color_ mapping.
 // Assert the wrapped string is longer than the plain text (ANSI codes present =
-// real string, not a stringified pointer) — stable across clang and gcc.
+// real string, not a stringified pointer) - stable across clang and gcc.
 fn main() {
     var g = Color::green("hi")
     println(len(g) > 2)

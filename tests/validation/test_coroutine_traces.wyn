@@ -6,7 +6,7 @@ fn compute(n: int) -> int {
 }
 
 fn main() {
-    // Spawn with await — should track origin
+    // Spawn with await - should track origin
     var f1 = spawn compute(42)
     var r1 = await f1
     println(r1)

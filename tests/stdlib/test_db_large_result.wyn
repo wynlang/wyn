@@ -3,7 +3,7 @@
 //
 // Regression test for a heap-buffer-overflow in Db_query / Db_query_params
 // (wyn_runtime.h). Those functions accumulated all result rows into a FIXED
-// 65536-byte buffer with unbounded strcat — any query returning more than 64KB
+// 65536-byte buffer with unbounded strcat - any query returning more than 64KB
 // of text overflowed the heap (confirmed under AddressSanitizer at the old
 // wyn_runtime.h:3652). They now use a growable WynStrBuf, so results of any
 // size are safe. This query returns ~168KB, 2.5x the old buffer.

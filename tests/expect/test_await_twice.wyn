@@ -8,7 +8,7 @@
 // EXPECT: hello
 // EXPECT: hello
 // Futures are MEMOIZED: awaiting the same future twice returns the same
-// value. future_get used to recycle the slot on first read — the second
+// value. future_get used to recycle the slot on first read - the second
 // await silently returned 0, floats/structs segfaulted (*(double*)NULL),
 // and if the slot had been re-issued to a newer spawn the stale handle
 // STOLE that spawn's result (the 42/540/0 cross-task corruption below).

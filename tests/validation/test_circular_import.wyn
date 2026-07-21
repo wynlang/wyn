@@ -8,7 +8,7 @@ fn main() {
     System_exec("echo 'import a\nfn from_b() -> int { return 2 }' > /tmp/wyn_circ_test/b.wyn")
     System_exec("echo 'import a\nimport b\nfn main() { println(\"hi\") }' > /tmp/wyn_circ_test/main.wyn")
 
-    // Run wyn check — should detect cycle
+    // Run wyn check - should detect cycle
     var output = System_exec("./wyn check /tmp/wyn_circ_test/main.wyn 2>&1")
 
     if output.contains("Circular import") {

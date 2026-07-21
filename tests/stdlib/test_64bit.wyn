@@ -1,5 +1,5 @@
 // Test: 64-bit integers
-// Verifies int is now 64-bit (long long) — no overflow at 2^31
+// Verifies int is now 64-bit (long long) - no overflow at 2^31
 
 fn main() -> int {
     Test.init("64-bit Integers")

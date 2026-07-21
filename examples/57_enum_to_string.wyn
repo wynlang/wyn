@@ -1,4 +1,4 @@
-// Enum to_string() — v1.11 feature
+// Enum to_string() - v1.11 feature
 // Enums now have a .to_string() method that returns the variant name.
 
 enum Color { Red, Green, Blue }

@@ -1,4 +1,4 @@
-// Test: Structs, traits, generics — the type system
+// Test: Structs, traits, generics - the type system
 struct Vec2 { x: int, y: int }
 
 impl Vec2 {

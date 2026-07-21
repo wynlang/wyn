@@ -1,7 +1,7 @@
 // EXPECT: all-20-done
 // Fire-and-forget spawned tasks (coroutine scheduler) each Time.sleep then
 // increment a shared counter. Correctness: all 20 complete. Cooperatively,
-// the sleeps overlap (total wall ~= max, not sum) — see Time_sleep +
+// the sleeps overlap (total wall ~= max, not sum) - see Time_sleep +
 // wyn_io_wait_timer. This test asserts completion; timing is validated
 // separately (measured ~5x faster than the old blocking usleep).
 fn worker(counter: int) -> int {

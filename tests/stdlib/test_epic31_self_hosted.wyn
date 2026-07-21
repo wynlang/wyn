@@ -1,4 +1,4 @@
-// Epic 31: Self-Hosted Compiler — Full TDD
+// Epic 31: Self-Hosted Compiler - Full TDD
 // Tests lexer, parser (AST), codegen, and bootstrap
 
 fn is_alpha(c: string) -> bool { return c >= "a" and c <= "z" or c >= "A" and c <= "Z" or c == "_" }

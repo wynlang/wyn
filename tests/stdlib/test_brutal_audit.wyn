@@ -93,7 +93,7 @@ fn main() -> int {
     Test.assert_eq_int(u.age, 41, "struct field set")
     
     // Enums + match
-    // (tested in separate files — enum codegen works)
+    // (tested in separate files - enum codegen works)
     
     // If/else
     var v = 0

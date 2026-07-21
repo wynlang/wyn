@@ -1,4 +1,4 @@
-// Binary size — hello world
+// Binary size - hello world
 // Tests: minimal binary footprint
 
 fn main() {

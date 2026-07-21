@@ -1,4 +1,4 @@
-// Go equivalent benchmark — run with: go run bench_go.go
+// Go equivalent benchmark - run with: go run bench_go.go
 package main
 
 import (

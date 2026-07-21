@@ -107,7 +107,7 @@ test "multiline string multi interp" {
     assert(s.contains("3"))
 }
 
-// ── Result type (tested via standalone files — TCC test blocks can't handle structs) ──
+// ── Result type (tested via standalone files - TCC test blocks can't handle structs) ──
 
 test "Result type works" {
     // Validated: safe_div(10,2).is_ok() == true, .unwrap() == 5

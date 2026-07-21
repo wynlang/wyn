@@ -1,4 +1,4 @@
-// wyn_webview_win.c — App module for Windows using Edge WebView2
+// wyn_webview_win.c - App module for Windows using Edge WebView2
 // Requires: WebView2Loader.dll from Microsoft Edge WebView2 SDK
 // This is a minimal implementation using the COM API
 
@@ -7,7 +7,7 @@
 #include <windows.h>
 #include <stdio.h>
 
-// WebView2 requires C++ COM — for pure C we use a shell approach:
+// WebView2 requires C++ COM - for pure C we use a shell approach:
 // Create an HTA (HTML Application) window which uses the system IE/Edge engine.
 // This works on all Windows versions without any SDK.
 

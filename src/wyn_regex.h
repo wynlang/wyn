@@ -1,4 +1,4 @@
-// wyn_regex.h — Portable regex engine for Wyn
+// wyn_regex.h - Portable regex engine for Wyn
 // Implements POSIX Extended Regular Expressions (ERE) without platform dependencies.
 // Used on Windows where <regex.h> is unavailable. On POSIX systems, the native
 // regex is used instead (faster, battle-tested).
@@ -280,7 +280,7 @@ static bool wre_compile(struct wre_nfa* nfa, const char* pattern) {
             // Rebuild: just push frag and let the concat handle it
             // Actually, simplest: push frag n times, then push optional copies
             // But we only have one frag. We need to "clone" the atom.
-            // For now, just push the single frag — this handles {1} and {0,1} correctly.
+            // For now, just push the single frag - this handles {1} and {0,1} correctly.
             // Full {n,m} expansion would require cloning NFA fragments.
             // This is a known simplification.
             (void)n; (void)m;

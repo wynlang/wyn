@@ -1,4 +1,4 @@
-// Fibonacci(35) — recursive, no memoization
+// Fibonacci(35) - recursive, no memoization
 // Tests: function call overhead, recursion, integer arithmetic
 
 fn fib(n: int) -> int {

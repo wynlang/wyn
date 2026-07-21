@@ -9,7 +9,7 @@ static const MethodSignature method_signatures[] = {
     {"string", "upper", "string", 0},
     {"string", "lower", "string", 0},
     {"string", "trim", "string", 0},
-    {"string", "to_string", "string", 0}, // identity — supported by codegen (generic to_string path)
+    {"string", "to_string", "string", 0}, // identity - supported by codegen (generic to_string path)
     {"string", "trim_left", "string", 0},
     {"string", "trim_right", "string", 0},
     {"string", "split", "array", 1},     // Returns array of strings

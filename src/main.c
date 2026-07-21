@@ -80,11 +80,11 @@ int create_new_project_with_template(const char* name, const char* template, con
 
 // Wynter encouragement on compilation failure
 static const char* wynter_compile_tips[] = {
-    "Check the error above — the line number points to the problem.",
+    "Check the error above - the line number points to the problem.",
     "Try 'wyn check' to see all type errors without compiling.",
     "Common fix: make sure all variables are declared before use.",
     "Stuck? Simplify the code, get it working, then add complexity.",
-    "String interpolation uses ${expr} — make sure quotes match.",
+    "String interpolation uses ${expr} - make sure quotes match.",
 };
 static int wynter_compile_tip_idx = 0;
 static void wynter_encourage(void) {
@@ -158,13 +158,13 @@ static char* read_file(const char* path) {
 // exe's own directory (source checkout: ./wyn beside src/), then the exe's
 // PARENT (installed layout: ~/.wyn/bin/wyn beside ~/.wyn/src/). The parent
 // probe was missing everywhere, so INSTALLED binaries could never find the
-// runtime header — every release died with "internal codegen error" on
+// runtime header - every release died with "internal codegen error" on
 // hello world. Falls back to the exe dir when nothing probes.
 static void resolve_wyn_root(const char* argv0, char* out, size_t out_sz) {
     // Resolve the REAL executable path from the OS first. argv[0] is only
-    // a directory hint when the binary was invoked with a path — a PATH
+    // a directory hint when the binary was invoked with a path - a PATH
     // lookup (`wyn run x.wyn` after install.sh) gives a bare "wyn", which
-    // used to fall back to "." and probe the USER'S CWD for src/ — so every
+    // used to fall back to "." and probe the USER'S CWD for src/ - so every
     // installed binary failed with an internal codegen error. Caught by the
     // release install-canary on the first tag it ever gated (v1.19.0).
     char exe_path[1024] = "";
@@ -177,7 +177,7 @@ static void resolve_wyn_root(const char* argv0, char* out, size_t out_sz) {
     ssize_t rl = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
     if (rl > 0) exe_path[rl] = '\0'; else exe_path[0] = 0;
 #endif
-    if (!exe_path[0]) {  // OS lookup failed — fall back to argv0
+    if (!exe_path[0]) {  // OS lookup failed - fall back to argv0
         strncpy(exe_path, argv0, sizeof(exe_path) - 1);
         exe_path[sizeof(exe_path) - 1] = 0;
     }
@@ -206,7 +206,7 @@ static void resolve_wyn_root(const char* argv0, char* out, size_t out_sz) {
 // The version is embedded at COMPILE TIME (-DWYN_VERSION, from the VERSION
 // file, wired in the Makefile). The old implementation read a VERSION file
 // relative to the CURRENT WORKING DIRECTORY with a hardcoded "1.10.0"
-// fallback — so every installed binary reported v1.10.0 forever, and a cwd
+// fallback - so every installed binary reported v1.10.0 forever, and a cwd
 // that happened to contain a VERSION file changed what `wyn version` said.
 #ifndef WYN_VERSION
 #define WYN_VERSION "0.0.0-dev"
@@ -288,7 +288,7 @@ int main(int argc, char** argv) {
     char* command = argv[1];
     
     // Handle --version and -v flags
-    // wyn deploy <target> — deploy to server via SSH
+    // wyn deploy <target> - deploy to server via SSH
     if (strcmp(command, "deploy") == 0) {
         if (argc < 3) {
             fprintf(stderr, "Usage: wyn deploy <target> [--dry-run]\n");
@@ -394,7 +394,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     
-    // wyn logs <target> — tail remote logs
+    // wyn logs <target> - tail remote logs
     if (strcmp(command, "logs") == 0 || strcmp(command, "ssh") == 0) {
         if (argc < 3) { fprintf(stderr, "Usage: wyn %s <target>\n", command); return 1; }
         FILE* toml = fopen("wyn.toml", "r");
@@ -459,7 +459,7 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "doctor") == 0) {
-        printf("\033[1mWyn Doctor\033[0m — checking your setup\n\n");
+        printf("\033[1mWyn Doctor\033[0m - checking your setup\n\n");
         int issues = 0;
 #ifdef _WIN32
         const char* devnull = "> NUL 2>&1";
@@ -521,7 +521,7 @@ int main(int argc, char** argv) {
         printf("  %s wyn in PATH\n", in_path ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
         if (!in_path) printf("    Run: wyn install\n");
         
-        // Check git — used to fetch dependencies (`wyn add <name|url>`).
+        // Check git - used to fetch dependencies (`wyn add <name|url>`).
         snprintf(doctor_cmd, sizeof(doctor_cmd), "git --version %s", devnull);
         int has_git = (system(doctor_cmd) == 0);
         printf("  %s git (for `wyn add` dependencies)\n", has_git ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
@@ -536,7 +536,7 @@ int main(int argc, char** argv) {
     
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0 || strcmp(command, "-v") == 0) {
         // Same dragon as the no-args banner, on stdout (version output is
-        // parsed by scripts). An old cat drawing lived here — Wynter is a
+        // parsed by scripts). An old cat drawing lived here - Wynter is a
         // WYVERN; one mascot, one drawing, everywhere.
         print_banner_to(stdout, get_version());
         return 0;
@@ -591,9 +591,9 @@ int main(int argc, char** argv) {
     
     if (strcmp(command, "upgrade") == 0 || strcmp(command, "update") == 0) {
         // Optional version argument: `wyn upgrade 1.18.0` (or v1.18.0) pins
-        // to that release — an explicit version is deliberate, so it may
+        // to that release - an explicit version is deliberate, so it may
         // downgrade. No argument means "latest", which never downgrades.
-        // Anything that isn't a version or --help prints usage — `wyn update
+        // Anything that isn't a version or --help prints usage - `wyn update
         // --help` used to fire the upgrade immediately, and a failed
         // download could brick the binary.
         char target_version[64] = "";
@@ -606,7 +606,7 @@ int main(int argc, char** argv) {
             if (looks_like_version && strlen(a) < sizeof(target_version)) {
                 snprintf(target_version, sizeof(target_version), "%s", a);
             } else {
-                printf("wyn upgrade — replace this binary with a GitHub release\n");
+                printf("wyn upgrade - replace this binary with a GitHub release\n");
                 printf("Usage: wyn upgrade [version]   (also: wyn update)\n");
                 printf("  wyn upgrade          upgrade to the latest release (never downgrades)\n");
                 printf("  wyn upgrade 1.18.0   install exactly v1.18.0 (up or down)\n");
@@ -634,7 +634,7 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
         // Windows: use PowerShell
         char cmd[2048];
-        // Releases ship wyn-windows-x64.zip (bin\wyn.exe + src + runtime) —
+        // Releases ship wyn-windows-x64.zip (bin\wyn.exe + src + runtime) -
         // the old code fetched a bare .exe asset that has never existed, and
         // without -f/ErrorActionPreference the 404 body overwrote the binary.
         snprintf(cmd, sizeof(cmd),
@@ -651,12 +651,12 @@ int main(int argc, char** argv) {
             "$t = Join-Path $env:TEMP ('wyn_up_' + [System.IO.Path]::GetRandomFileName());"
             "New-Item -ItemType Directory -Path $t | Out-Null;"
             "try { Invoke-WebRequest -Uri https://github.com/wynlang/wyn/releases/download/v$latest/wyn-%s.zip -OutFile (Join-Path $t 'wyn.zip') } "
-            "catch { Write-Host '✗ Download failed — install unchanged' -ForegroundColor Red; exit 1 };"
+            "catch { Write-Host '✗ Download failed - install unchanged' -ForegroundColor Red; exit 1 };"
             "Expand-Archive -Path (Join-Path $t 'wyn.zip') -DestinationPath (Join-Path $t 'x');"
             "$newexe = Join-Path $t 'x\\bin\\wyn.exe';"
-            "if (-not (Test-Path $newexe)) { Write-Host '✗ Archive missing bin\\wyn.exe — install unchanged' -ForegroundColor Red; exit 1 };"
+            "if (-not (Test-Path $newexe)) { Write-Host '✗ Archive missing bin\\wyn.exe - install unchanged' -ForegroundColor Red; exit 1 };"
             "& $newexe --version | Out-Null;"
-            "if ($LASTEXITCODE -ne 0) { Write-Host '✗ New binary does not run — install unchanged' -ForegroundColor Red; exit 1 };"
+            "if ($LASTEXITCODE -ne 0) { Write-Host '✗ New binary does not run - install unchanged' -ForegroundColor Red; exit 1 };"
             "$root = Split-Path -Parent (Split-Path -Parent (Get-Command wyn).Source);"
             "Copy-Item -Recurse -Force (Join-Path $t 'x\\*') $root;"
             "Write-Host '✓ Now on v'$latest -ForegroundColor Green\"",
@@ -683,16 +683,16 @@ int main(int argc, char** argv) {
         int need_sudo = (access(dir, W_OK) != 0);
 
         // Safety-hardened rewrite. The old code was doubly broken: it fetched
-        // a bare-binary asset (`wyn-macos-arm64`) that has NEVER existed —
+        // a bare-binary asset (`wyn-macos-arm64`) that has NEVER existed -
         // releases ship `wyn-<platform>.tar.gz` bundles (bin/ + src/ +
-        // runtime/, the install.sh layout contract) — and it curled without
+        // runtime/, the install.sh layout contract) - and it curled without
         // -f, so the guaranteed 404 body ("Not Found") was chmod+x'd and
         // moved OVER the working binary. It also "upgraded" to any version
         // that merely differed (a downgrade counted).
         // Now: sort -V comparison; download the real tarball with curl -f;
         // extract to a temp dir; run the new bin/wyn --version as proof of
         // life; only then sync the whole layout into the install root
-        // (binary alone is not enough — a new compiler with the old
+        // (binary alone is not enough - a new compiler with the old
         // runtime/ lib is the staleness footgun). The running install is
         // never touched until the new one has proven it runs.
         char install_root[1024] = "/usr/local";
@@ -716,19 +716,19 @@ int main(int argc, char** argv) {
             "if [ \"$latest\" = \"$current\" ]; then echo '\\033[32m✓\\033[0m Already on v'$current''; exit 0; fi;"
             "if [ -z \"$pin\" ]; then "
             "newest=$(printf '%%s\\n%%s\\n' \"$latest\" \"$current\" | sort -V | tail -1);"
-            "if [ \"$newest\" = \"$current\" ]; then echo '\\033[32m✓\\033[0m v'$current' is newer than the latest release (v'$latest') — nothing to do'; exit 0; fi; fi;"
+            "if [ \"$newest\" = \"$current\" ]; then echo '\\033[32m✓\\033[0m v'$current' is newer than the latest release (v'$latest') - nothing to do'; exit 0; fi; fi;"
             "echo 'Installing v'$latest' (current: v'$current')...';"
             "tdir=$(mktemp -d /tmp/wyn_up.XXXXXX) || exit 1;"
             "trap 'rm -rf \"$tdir\"' EXIT;"
             "if ! curl -fsSL https://github.com/wynlang/wyn/releases/download/v$latest/wyn-%s.tar.gz -o \"$tdir/wyn.tar.gz\"; then "
-            "  echo '\\033[31m✗\\033[0m Download failed — install unchanged'; exit 1; fi;"
-            "mkdir -p \"$tdir/x\" && tar xzf \"$tdir/wyn.tar.gz\" -C \"$tdir/x\" || { echo '\\033[31m✗\\033[0m Bad archive — install unchanged'; exit 1; };"
+            "  echo '\\033[31m✗\\033[0m Download failed - install unchanged'; exit 1; fi;"
+            "mkdir -p \"$tdir/x\" && tar xzf \"$tdir/wyn.tar.gz\" -C \"$tdir/x\" || { echo '\\033[31m✗\\033[0m Bad archive - install unchanged'; exit 1; };"
             // v1.19+ tarballs put the binary at bin/wyn (the install.sh layout
             // contract); v1.18 and earlier had it at the root. Accept both.
             "if [ -x \"$tdir/x/bin/wyn\" ]; then newbin=\"$tdir/x/bin/wyn\";"
             "elif [ -x \"$tdir/x/wyn\" ]; then newbin=\"$tdir/x/wyn\"; mkdir -p \"$tdir/x/bin\" && mv \"$tdir/x/wyn\" \"$tdir/x/bin/wyn\" && newbin=\"$tdir/x/bin/wyn\";"
-            "else echo '\\033[31m✗\\033[0m Archive missing wyn binary — install unchanged'; exit 1; fi;"
-            "\"$newbin\" --version >/dev/null 2>&1 || { echo '\\033[31m✗\\033[0m New binary does not run — install unchanged'; exit 1; };"
+            "else echo '\\033[31m✗\\033[0m Archive missing wyn binary - install unchanged'; exit 1; fi;"
+            "\"$newbin\" --version >/dev/null 2>&1 || { echo '\\033[31m✗\\033[0m New binary does not run - install unchanged'; exit 1; };"
             "%scp -R \"$tdir/x/.\" '%s/' && "
             "echo '\\033[32m✓\\033[0m Now on v'$latest",
             target_version, get_version(), platform,
@@ -887,9 +887,9 @@ int main(int argc, char** argv) {
         return wyn_pkg_list();
     }
 
-    // `wyn pkg <sub>` — alias namespace for muscle memory / older docs. These map
+    // `wyn pkg <sub>` - alias namespace for muscle memory / older docs. These map
     // to the git-URL dependency engine (add/install/remove/list). Note `wyn pkg
-    // add` is git-deps-only (no C-library dispatch — use top-level `wyn add`).
+    // add` is git-deps-only (no C-library dispatch - use top-level `wyn add`).
     if (strcmp(command, "pkg") == 0) {
         if (argc < 3) {
             fprintf(stderr, "Usage: wyn pkg <command>\n\n");
@@ -900,7 +900,7 @@ int main(int argc, char** argv) {
             fprintf(stderr, "  list                   List declared dependencies\n");
             fprintf(stderr, "  audit [--offline]      Verify lock vs remotes; flag moved tags, mutable pins, ffi deps\n");
             fprintf(stderr, "  search [query]         Discover packages (wynlang org + wyn-package GitHub topic)\n\n");
-            fprintf(stderr, "A dependency is a git repo — there is no central registry.\n");
+            fprintf(stderr, "A dependency is a git repo - there is no central registry.\n");
             fprintf(stderr, "Bare names resolve to github.com/wynlang/<name>; publish by pushing a repo.\n");
             return 1;
         }
@@ -959,7 +959,7 @@ int main(int argc, char** argv) {
             if (strcmp(argv[i], "--shared") == 0) build_flag = " --shared";
             else if (strcmp(argv[i], "--python") == 0) build_flag = " --python";
             else if (strcmp(argv[i], "--release") == 0) build_release = 1;
-            else if (strcmp(argv[i], "--fast") == 0) { /* skip optimizations — default behavior */ }
+            else if (strcmp(argv[i], "--fast") == 0) { /* skip optimizations - default behavior */ }
             else if (strcmp(argv[i], "--pgo") == 0) build_pgo = 1;
             else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) { output_name = argv[++i]; }
             else if (strcmp(argv[i], "--target") == 0 && i + 1 < argc) { build_target = argv[++i]; }
@@ -1051,7 +1051,7 @@ int main(int argc, char** argv) {
         struct timespec _build_t0;
         clock_gettime(CLOCK_MONOTONIC, &_build_t0);
         
-        // Compile only — don't run
+        // Compile only - don't run
         char* source = read_file(entry);
         if (!source) return 1;
         
@@ -1103,7 +1103,7 @@ int main(int argc, char** argv) {
             char* dot = strrchr(bin_path, '.'); if (dot) *dot = 0;
         }
         
-        // Determine wyn_root (shared helper — see resolve_wyn_root).
+        // Determine wyn_root (shared helper - see resolve_wyn_root).
         char wyn_root[1024];
         resolve_wyn_root(argv[0], wyn_root, sizeof(wyn_root));
 
@@ -1126,9 +1126,9 @@ int main(int argc, char** argv) {
         // FFI: pull -l/-L/-I from wyn.toml [ffi] so `wyn build` (not just `wyn run`)
         // links C libraries an `extern fn` calls into. Only read when the source
         // declares an extern fn. IMPORTANT: these go at the END of the link line
-        // (after the .c and runtime) — GNU ld (Linux/mingw) resolves `-l` only
+        // (after the .c and runtime) - GNU ld (Linux/mingw) resolves `-l` only
         // against objects listed BEFORE it, so FFI libs must come last.
-        // Trigger on a direct `extern fn` OR any `import` — an imported C package
+        // Trigger on a direct `extern fn` OR any `import` - an imported C package
         // (`wyn add`) carries the extern fns in its own file, so the user source
         // may only have `import sqlite3` yet still need the [ffi] link flags.
         static char ffi_tail[4096]; ffi_tail[0] = '\0';
@@ -1156,7 +1156,7 @@ int main(int argc, char** argv) {
 
         // Prefer precompiled runtime (fast) over TCC (recompiles all sources)
         if (build_flag[0] == 0 && !build_release && access(rt_lib, R_OK) == 0) {
-            // Skip TCC — use system cc + precompiled runtime
+            // Skip TCC - use system cc + precompiled runtime
         } else if (build_flag[0] == 0 && !build_release && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
             int _p = 0;
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s ", tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, wyn_root, sqlite_flags);
@@ -1188,10 +1188,10 @@ int main(int argc, char** argv) {
 #ifdef __APPLE__
                 // Dev-loop pch: parsing wyn_runtime.h is ~2/3 of the -O0 compile.
                 // Use runtime/wyn_runtime.pch when it's current (built by `make
-                // runtime` with EXACTLY the flags below — clang hard-errors on a
+                // runtime` with EXACTLY the flags below - clang hard-errors on a
                 // stale pch, so only inject it when newer than the header).
                 static char _pch_flag[600]; _pch_flag[0] = '\0';
-                // sqlite_flags adds -D defines — a macro mismatch vs. the pch
+                // sqlite_flags adds -D defines - a macro mismatch vs. the pch
                 // build is a hard clang error, so skip the pch in that case.
                 if (!build_release && sqlite_flags[0] == '\0') {
                     char _pch_path[512], _hdr_path[512];
@@ -1230,7 +1230,7 @@ int main(int argc, char** argv) {
                     }
                 }
             } else {
-                // No precompiled runtime — compile from source files
+                // No precompiled runtime - compile from source files
                 int _p = 0;
                 _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -ffunction-sections -fdata-sections -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, entry);
                 char _src_list[4096]; build_source_list(_src_list, sizeof(_src_list), wyn_root);
@@ -1339,7 +1339,7 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "test") == 0) {
-        // `wyn test [dir-or-filter]` — an existing directory selects the test
+        // `wyn test [dir-or-filter]` - an existing directory selects the test
         // dir; anything else is a name filter (`wyn test math` runs only test
         // files whose path contains "math").
         const char* test_dir = NULL;
@@ -1397,7 +1397,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     
-    // wyn repl — interactive REPL
+    // wyn repl - interactive REPL
     if (strcmp(command, "repl") == 0) {
         printf("\033[1mWyn REPL\033[0m v%s  (type 'exit' to quit)\n\n", get_version());
         char line[4096];
@@ -1410,7 +1410,7 @@ int main(int argc, char** argv) {
             if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) break;
             if (strlen(line) == 0) continue;
             
-            // Check if it's a definition (fn, struct, etc.) — accumulate
+            // Check if it's a definition (fn, struct, etc.) - accumulate
             int is_def = (strncmp(line, "fn ", 3) == 0 || strncmp(line, "struct ", 7) == 0 ||
                          strncmp(line, "enum ", 5) == 0 || strncmp(line, "var ", 4) == 0 ||
                          strncmp(line, "const ", 6) == 0);
@@ -1427,7 +1427,7 @@ int main(int argc, char** argv) {
                 strcat(history, line);
                 strcat(history, "\n");
             } else {
-                // Expression — wrap in println so result is visible
+                // Expression - wrap in println so result is visible
                 // Detect if it looks like a statement (assignment, println, etc.)
                 int is_stmt = (strncmp(line, "println", 7) == 0 || strncmp(line, "print(", 6) == 0 ||
                               strstr(line, " = ") != NULL || strncmp(line, "if ", 3) == 0 ||
@@ -1462,7 +1462,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     
-    // wyn bench <file> — run with timing
+    // wyn bench <file> - run with timing
     if (strcmp(command, "bench") == 0) {
         if (argc < 3) {
             fprintf(stderr, "Usage: wyn bench <file.wyn> [--iterations N] [--compare]\n");
@@ -1572,7 +1572,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     
-    // wyn doc <file> [--html] — generate docs from source
+    // wyn doc <file> [--html] - generate docs from source
     if (strcmp(command, "doc") == 0) {
         extern int cmd_doc(const char* file, int argc, char** argv);
         extern int cmd_doc_project(int argc, char** argv);
@@ -2026,7 +2026,7 @@ int main(int argc, char** argv) {
     }
 
     if (strcmp(command, "bind") == 0) {
-        // wyn bind <header.h> [-o out.wyn] [-I dir]... — generate Wyn `extern fn`
+        // wyn bind <header.h> [-o out.wyn] [-I dir]... - generate Wyn `extern fn`
         // bindings from a C header. Preprocesses with the same C compiler the rest
         // of the toolchain uses (detect_cc → cc/clang/gcc, portable), NOT the
         // arm64-only bundled tcc.
@@ -2054,7 +2054,7 @@ int main(int argc, char** argv) {
         // same way the build will.
         { WynConfig* _c = wyn_config_parse("wyn.toml");
           if (_c && _c->ffi.include_dirs && _c->ffi.include_dirs[0]) {
-              // include_dirs is a comma/space list of bare dirs — turn into -I flags.
+              // include_dirs is a comma/space list of bare dirs - turn into -I flags.
               char dirs[1024]; strncpy(dirs, _c->ffi.include_dirs, sizeof(dirs)-1); dirs[sizeof(dirs)-1]=0;
               char* st=NULL; for (char* d=strtok_r(dirs,", \t",&st); d; d=strtok_r(NULL,", \t",&st)) {
                   size_t n=strlen(iflags); snprintf(iflags+n, sizeof(iflags)-n, "%s-I%s", n?" ":"", d); }
@@ -2071,11 +2071,11 @@ int main(int argc, char** argv) {
     if (strcmp(command, "check") == 0) {
         if (argc < 3) { fprintf(stderr, "Usage: wyn check <file.wyn>\n"); return 1; }
         char* file = argv[2];
-        // A directory used to "read" as empty and print "✓ no errors" —
+        // A directory used to "read" as empty and print "✓ no errors" -
         // a false green for anyone checking a project dir in CI.
         { struct stat _st;
           if (stat(file, &_st) == 0 && S_ISDIR(_st.st_mode)) {
-              fprintf(stderr, "Error: '%s' is a directory — pass a .wyn file (e.g. wyn check src/main.wyn)\n", file);
+              fprintf(stderr, "Error: '%s' is a directory - pass a .wyn file (e.g. wyn check src/main.wyn)\n", file);
               return 1;
           } }
         { extern void set_source_directory(const char*); set_source_directory(file); }
@@ -2198,7 +2198,7 @@ int main(int argc, char** argv) {
                     changed_files, total_files, total_files == 1 ? "" : "s");
         if (pipe_warns > 0)
             fprintf(stderr, "\033[33m!\033[0m %d `|>` pipe%s need manual conversion "
-                            "(rewrite `a |> f` as `f(a)` — needs the AST)\n",
+                            "(rewrite `a |> f` as `f(a)` - needs the AST)\n",
                     pipe_warns, pipe_warns == 1 ? "" : "s");
         if (err > 0) return 1;
         return (check_only && changed_files > 0) ? 1 : 0;
@@ -2210,7 +2210,7 @@ int main(int argc, char** argv) {
         return cmd_debug(argv[2], argc, argv);
     }
     
-    // Unknown command — check if it's a .wyn file or a typo
+    // Unknown command - check if it's a .wyn file or a typo
     if (strcmp(command, "run") != 0) {
         // Check if it looks like a filename
         const char* ext = strrchr(command, '.');
@@ -2316,7 +2316,7 @@ int main(int argc, char** argv) {
                     for (int i = 3; i < argc; i++) { strcat(run_cmd, " "); strcat(run_cmd, argv[i]); }
                     // system() returns the raw WAIT STATUS; returning it from
                     // main truncates to its low byte, so exit(1) programs
-                    // reported 0 on every cached (no-recompile) run — CI
+                    // reported 0 on every cached (no-recompile) run - CI
                     // wrapping `wyn run` never saw the failure.
                     { int _ws = system(run_cmd);
 #ifdef _WIN32
@@ -2331,11 +2331,11 @@ int main(int argc, char** argv) {
             }
         }
         
-        // A directory target is a user error, not an empty program — exit
+        // A directory target is a user error, not an empty program - exit
         // nonzero so scripts wrapping `wyn run $TARGET` can detect it.
         { struct stat _rst;
           if (stat(file, &_rst) == 0 && S_ISDIR(_rst.st_mode)) {
-              fprintf(stderr, "Error: '%s' is a directory — pass a .wyn file (e.g. wyn run src/main.wyn)\n", file);
+              fprintf(stderr, "Error: '%s' is a directory - pass a .wyn file (e.g. wyn run src/main.wyn)\n", file);
               return 1;
           } }
 
@@ -2397,7 +2397,7 @@ int main(int argc, char** argv) {
         fclose(out);
         
         // Get WYN_ROOT or auto-detect (shared helper: env → exe dir → exe
-        // parent, probing for src/wyn_runtime.h — covers the installed
+        // parent, probing for src/wyn_runtime.h - covers the installed
         // ~/.wyn/bin layout). Keep the legacy cwd fallbacks after it.
         char wyn_root[1024];
         resolve_wyn_root(argv[0], wyn_root, sizeof(wyn_root));
@@ -2449,7 +2449,7 @@ int main(int argc, char** argv) {
         // every build). See wyn_config_ffi_flags for the shell-metachar guard.
         static char ffi_flags[4096];   // multi-package projects accumulate long flag lists
         ffi_flags[0] = '\0';
-        // Trigger on a direct `extern fn` OR any `import` — an imported C-binding
+        // Trigger on a direct `extern fn` OR any `import` - an imported C-binding
         // package (`wyn add`) carries the extern fns in its own file, so the user
         // source may only have `import sqlite3` yet still need the [ffi] flags.
         if (strstr(source, "extern fn") || strstr(source, "extern  fn") || strstr(source, "import ")) {
@@ -2474,8 +2474,8 @@ int main(int argc, char** argv) {
             if (strcmp(argv[i], "--node") == 0) { shared_mode = 4; }
         }
         
-        // WASM target — early check
-        // Node.js — build shared lib + JS wrapper
+        // WASM target - early check
+        // Node.js - build shared lib + JS wrapper
         if (shared_mode == 4) { shared_mode = 1; }
         int generate_node = 0;
         int use_release = 0;
@@ -2518,7 +2518,7 @@ int main(int argc, char** argv) {
                         // Keep <file>.out: the incremental fast-path above reuses it
                         // when it's newer than the source (skips recompile on re-run).
                         // Deleting it here made every `wyn run` fully recompile, so the
-                        // cache never hit. Only the intermediate .c is removed — the
+                        // cache never hit. Only the intermediate .c is removed - the
                         // system-cc path below already keeps .out for the same reason.
                         char c_path[512]; snprintf(c_path, 512, "%s.c", file);
                         unlink(c_path);
@@ -2527,7 +2527,7 @@ int main(int argc, char** argv) {
                     if (WIFEXITED(result)) return WEXITSTATUS(result);
                     return result;
                 }
-                // TCC failed — fall through to system cc
+                // TCC failed - fall through to system cc
             }
         }
         
@@ -2597,7 +2597,7 @@ int main(int argc, char** argv) {
                 char py_path[512]; snprintf(py_path, sizeof(py_path), "%s.py", lib_name);
                 FILE* py = fopen(py_path, "w");
                 if (py) {
-                    fprintf(py, "\"\"\"Auto-generated Python wrapper for %s.wyn — created by Wyn\"\"\"\n", lib_name);
+                    fprintf(py, "\"\"\"Auto-generated Python wrapper for %s.wyn - created by Wyn\"\"\"\n", lib_name);
                     fprintf(py, "import ctypes, os, sys\n\n");
                     fprintf(py, "_dir = os.path.dirname(os.path.abspath(__file__))\n");
                     fprintf(py, "if sys.platform == 'darwin':\n    _ext = 'dylib'\nelif sys.platform == 'win32':\n    _ext = 'dll'\nelse:\n    _ext = 'so'\n");
@@ -2698,7 +2698,7 @@ int main(int argc, char** argv) {
                 char js_path[512]; snprintf(js_path, sizeof(js_path), "%s.js", lib_name);
                 FILE* js = fopen(js_path, "w");
                 if (js) {
-                    fprintf(js, "// Auto-generated Node.js wrapper for %s.wyn — created by Wyn\n", lib_name);
+                    fprintf(js, "// Auto-generated Node.js wrapper for %s.wyn - created by Wyn\n", lib_name);
                     fprintf(js, "const ffi = require('ffi-napi');\n");
                     fprintf(js, "const path = require('path');\n\n");
                     fprintf(js, "const ext = process.platform === 'darwin' ? 'dylib' : process.platform === 'win32' ? 'dll' : 'so';\n");
@@ -2824,7 +2824,7 @@ int main(int argc, char** argv) {
         // Cleanup artifacts unless --debug. Keep <file>.out: the incremental
         // fast-path at the top of `run` reuses it when it's newer than the source,
         // skipping recompilation on re-run. Deleting it here made the documented
-        // "62ms cached re-run" impossible — every `wyn run` fully recompiled. Only
+        // "62ms cached re-run" impossible - every `wyn run` fully recompiled. Only
         // the intermediate .c is removed. (The stale-binary risk is already handled
         // by the mtime guard: out_st.st_mtime >= src_st.st_mtime.)
         if (!keep_artifacts) {
@@ -3128,7 +3128,7 @@ int create_new_project_with_template(const char* name, const char* template, con
     f = fopen(cmd, "w");
     if (strcmp(template, "web") == 0) {
         fprintf(f,
-            "// %s — Web app with JSON API, SQLite, and HTML\n\n"
+            "// %s - Web app with JSON API, SQLite, and HTML\n\n"
             "fn init_db() -> int {\n"
             "    var db = Db.open(\"%s.db\")\n"
             "    Db.exec(db, \"CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)\")\n"
@@ -3174,10 +3174,10 @@ int create_new_project_with_template(const char* name, const char* template, con
             "    var port = 8080\n"
             "    println(\"%s running on http://localhost:${port}\")\n"
             "    println(\"\")\n"
-            "    println(\"  GET  /              — home page\")\n"
-            "    println(\"  GET  /api/items     — list items (JSON)\")\n"
-            "    println(\"  POST /api/items     — create item\")\n"
-            "    println(\"  GET  /api/health    — health check\")\n"
+            "    println(\"  GET  /              - home page\")\n"
+            "    println(\"  GET  /api/items     - list items (JSON)\")\n"
+            "    println(\"  POST /api/items     - create item\")\n"
+            "    println(\"  GET  /api/health    - health check\")\n"
             "    println(\"\")\n"
             "    init_db()\n"
             "    var server = Http.serve(port)\n"
@@ -3193,7 +3193,7 @@ int create_new_project_with_template(const char* name, const char* template, con
         f = NULL;
     } else if (strcmp(template, "api") == 0) {
         fprintf(f,
-            "// %s — REST API with JSON, parameterized routes, SQLite\n\n"
+            "// %s - REST API with JSON, parameterized routes, SQLite\n\n"
             "fn init_db() -> int {\n"
             "    var db = Db.open(\"%s.db\")\n"
             "    Db.exec(db, \"CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)\")\n"
@@ -3229,12 +3229,12 @@ int create_new_project_with_template(const char* name, const char* template, con
             "    var port = 8080\n"
             "    println(\"%s running on http://localhost:${port}\")\n"
             "    println(\"\")\n"
-            "    println(\"  GET    /health          — health check\")\n"
-            "    println(\"  GET    /ready           — readiness check\")\n"
-            "    println(\"  GET    /api/items       — list items\")\n"
-            "    println(\"  POST   /api/items       — create item\")\n"
-            "    println(\"  GET    /api/items/:id   — get item\")\n"
-            "    println(\"  DELETE /api/items/:id   — delete item\")\n"
+            "    println(\"  GET    /health          - health check\")\n"
+            "    println(\"  GET    /ready           - readiness check\")\n"
+            "    println(\"  GET    /api/items       - list items\")\n"
+            "    println(\"  POST   /api/items       - create item\")\n"
+            "    println(\"  GET    /api/items/:id   - get item\")\n"
+            "    println(\"  DELETE /api/items/:id   - delete item\")\n"
             "    println(\"\")\n"
             "    init_db()\n"
             "    var server = Http.serve(port)\n"
@@ -3249,7 +3249,7 @@ int create_new_project_with_template(const char* name, const char* template, con
         f = NULL;
     } else if (strcmp(template, "cli") == 0) {
         fprintf(f,
-            "// %s — CLI tool with arg parsing and colored output\n\n"
+            "// %s - CLI tool with arg parsing and colored output\n\n"
             "fn print_help() {\n"
             "    println(\"%s v0.1.0\")\n"
             "    println(\"\")\n"
@@ -3314,9 +3314,9 @@ int create_new_project_with_template(const char* name, const char* template, con
             "}\n", name, name, name, name, name, name, name);
     } else if (strcmp(template, "lib") == 0) {
         if (lib_target && strcmp(lib_target, "wyn") == 0) {
-            // Wyn package — installable via wyn pkg install
+            // Wyn package - installable via wyn pkg install
             fprintf(f,
-                "// %s — a Wyn package\n"
+                "// %s - a Wyn package\n"
                 "// Install: wyn pkg install github.com/yourname/%s\n\n"
                 "pub fn add(a: int, b: int) -> int {\n"
                 "    return a + b\n"
@@ -3326,7 +3326,7 @@ int create_new_project_with_template(const char* name, const char* template, con
                 "}\n", name, name, name);
         } else if (lib_target && strcmp(lib_target, "python") == 0) {
             fprintf(f,
-                "// %s — Python extension module\n"
+                "// %s - Python extension module\n"
                 "// Build: wyn build --python\n"
                 "// Usage: python3 -c \"from %s import add; print(add(2, 3))\"\n\n"
                 "pub fn add(a: int, b: int) -> int {\n"
@@ -3338,7 +3338,7 @@ int create_new_project_with_template(const char* name, const char* template, con
                 "fn main() {}\n", name, name, name);
         } else if (lib_target && strcmp(lib_target, "node") == 0) {
             fprintf(f,
-                "// %s — Node.js native addon (N-API)\n"
+                "// %s - Node.js native addon (N-API)\n"
                 "// Build: wyn build --node\n"
                 "// Usage: const lib = require('./%s'); console.log(lib.add(2, 3));\n\n"
                 "pub fn add(a: int, b: int) -> int {\n"
@@ -3350,7 +3350,7 @@ int create_new_project_with_template(const char* name, const char* template, con
                 "fn main() {}\n", name, name, name);
         } else if (lib_target && strcmp(lib_target, "c") == 0) {
             fprintf(f,
-                "// %s — C shared library\n"
+                "// %s - C shared library\n"
                 "// Build: wyn build --shared\n"
                 "// Produces: lib%s.so (Linux) / lib%s.dylib (macOS)\n\n"
                 "pub fn add(a: int, b: int) -> int {\n"
@@ -3493,19 +3493,19 @@ void print_flight_rules() {
         "  \033[36m✦ Flight Rules ✦\033[0m",
         "",
         "  One language is better than five.",
-        "  Readable code is fast code — you'll optimize it.",
+        "  Readable code is fast code - you'll optimize it.",
         "  Ship the binary, not the runtime.",
         "  If it compiles, it should work.",
         "  The best abstraction is the one you don't notice.",
         "  Concurrency should be a verb, not a thesis.",
         "  Every program starts as a script.",
-        "  Errors are values. Handle them or don't — but know which.",
+        "  Errors are values. Handle them or don't - but know which.",
         "  A tool you don't use is a tool you don't need.",
         "  Simple today, powerful tomorrow.",
         "  The compiler is your first user.",
         "  Deploy on Friday. Your binary doesn't have dependencies.",
         "",
-        "  \033[2m— Wynter\033[0m",
+        "  \033[2m- Wynter\033[0m",
         "",
         NULL
     };

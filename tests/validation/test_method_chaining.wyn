@@ -1,4 +1,4 @@
-// TDD: method chaining — everything is an object
+// TDD: method chaining - everything is an object
 
 fn main() {
     Test.init("Method Chaining")

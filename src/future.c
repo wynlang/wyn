@@ -1,4 +1,4 @@
-// Lightweight Future — recyclable slab, zero malloc
+// Lightweight Future - recyclable slab, zero malloc
 #include <stdlib.h>
 #include <stdatomic.h>
 #ifdef _WIN32
@@ -20,14 +20,14 @@ extern void wyn_sched_enqueue(void* task_ptr);
 typedef struct Future {
     _Atomic int state;
     void* result;
-    _Atomic(void*) waiter;  // Task* waiting on this future — atomic to prevent race
+    _Atomic(void*) waiter;  // Task* waiting on this future - atomic to prevent race
     _Atomic int cancelled;  // S4: set by Task.cancel(h); checked cooperatively at
                             // yield points so the awaitee's task can bail early.
 } Future;
 
 // === Recyclable slab allocator ===
-// Futures are recycled after await — memory stays constant regardless of spawn count
-#define FUTURE_SLAB_SIZE 4096  // 4K futures — enough for most programs
+// Futures are recycled after await - memory stays constant regardless of spawn count
+#define FUTURE_SLAB_SIZE 4096  // 4K futures - enough for most programs
 static Future future_slab[FUTURE_SLAB_SIZE];
 static _Atomic int future_slab_idx = 0;
 
@@ -39,7 +39,7 @@ static _Atomic int free_top = 0;  // number of items in free stack
 
 // Free-stack lock. The old lock-free push CASed the counter up BEFORE storing
 // the index (and pop CASed down before loading), so a concurrent pop could
-// read a stale index and hand out a future still owned by a live spawn —
+// read a stale index and hand out a future still owned by a live spawn -
 // silent cross-task result corruption. A spinlock is contended only on
 // recycle/new, both rare relative to the work a spawn does.
 static atomic_flag free_stack_lock = ATOMIC_FLAG_INIT;
@@ -70,7 +70,7 @@ static inline void future_recycle(Future* f) {
         atomic_store_explicit(&free_stack[top], idx, memory_order_relaxed);
         atomic_store_explicit(&free_top, top + 1, memory_order_relaxed);
     }
-    // else: free stack full — future stays in the slab unreclaimed
+    // else: free stack full - future stays in the slab unreclaimed
     free_stack_release();
 }
 
@@ -105,7 +105,7 @@ Future* future_new(void) {
 }
 
 // S4: request cancellation of the task awaiting/backing this future. Cooperative
-// — sets a flag the awaitee observes at its next yield point (see future_get) and
+// - sets a flag the awaitee observes at its next yield point (see future_get) and
 // which the running task can query via Task.is_cancelled(). Also wakes any waiter
 // so a parked awaiter re-checks promptly. Leak-on-cancel: a cancelled coroutine
 // still owns its stack/RC values (minicoro has no unwind); accepted for v1.
@@ -146,10 +146,10 @@ void future_set(Future* f, void* result) {
 }
 
 // future_get MEMOIZES: the result stays readable, so `await f` twice returns
-// the same value (it used to recycle on first read — the second await silently
+// the same value (it used to recycle on first read - the second await silently
 // returned 0, or 42/540/0-style cross-task corruption if the slot had already
 // been re-issued to another spawn). Single-use consumers (await-of-temporary,
-// parallel joins, await_all) use future_get_consume below, which recycles —
+// parallel joins, await_all) use future_get_consume below, which recycles -
 // that keeps the constant-memory property on the hot paths. A named future
 // that's never consumed leaks its 40-byte slab slot; acceptable until the
 // slab-recycling roadmap item lands a drop pass.
@@ -180,9 +180,9 @@ void* future_get(Future* f) {
                         wyn_io_park();
                         wyn_coro_yield();
                     }
-                    // Result is ready — fall through
+                    // Result is ready - fall through
                 } else {
-                    // Future not ready — park and yield. future_set will wake us.
+                    // Future not ready - park and yield. future_set will wake us.
                     wyn_io_park();
                     wyn_coro_yield();
                 }
@@ -191,19 +191,19 @@ void* future_get(Future* f) {
             // (leak-on-cancel: we abandon the awaited future rather than block).
             if (wyn_current_task_cancelled()) return NULL;
             // CAS failed means someone else set waiter (shouldn't happen in normal use).
-            // Spin-yield until result is visible — or until we're cancelled.
+            // Spin-yield until result is visible - or until we're cancelled.
             while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY) {
                 if (wyn_current_task_cancelled()) return NULL;
                 wyn_coro_yield();
             }
         } else {
-            // No task context (shouldn't happen) — busy yield
+            // No task context (shouldn't happen) - busy yield
             while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY)
                 wyn_coro_yield();
         }
         return f->result;
     }
-    // Help drain queue while waiting — prevents deadlock in recursive spawn
+    // Help drain queue while waiting - prevents deadlock in recursive spawn
     // Safe with mutex pool (no data races unlike Chase-Lev re-entrant pop)
     extern _Atomic int ws_blocked;
     atomic_fetch_add(&ws_blocked, 1);
@@ -219,8 +219,8 @@ void* future_get(Future* f) {
         #endif
     }
     // Help drain queue while waiting. With WYN_ASYNC_CORO the awaited task is a
-    // coroutine on the M:N scheduler, so main must PUMP the scheduler (M1) — run
-    // ready coro tasks itself — otherwise on a low-core box (no idle workers) the
+    // coroutine on the M:N scheduler, so main must PUMP the scheduler (M1) - run
+    // ready coro tasks itself - otherwise on a low-core box (no idle workers) the
     // task would never run and this would deadlock. Fall back to the pool drain
     // when the flag is off (awaited tasks are pool threads then).
     extern int pool_try_run_one(void);
@@ -273,8 +273,8 @@ int future_is_ready(Future* f) {
 }
 
 // Consuming get: wait, read, recycle. For futures that provably have exactly
-// one reader — `await spawn f()` inline temporaries, parallel-block joins,
-// await_all internals — where recycling keeps memory constant.
+// one reader - `await spawn f()` inline temporaries, parallel-block joins,
+// await_all internals - where recycling keeps memory constant.
 void* future_get_consume(Future* f) {
     if (!f) return NULL;
     void* r = future_get(f);
@@ -304,7 +304,7 @@ Future* future_all(Future** futures, int count) {
 }
 
 Future* future_race(Future** futures, int count) {
-    if (count <= 0) return NULL;  // await_any([]) — nothing to wait for (was an infinite hang)
+    if (count <= 0) return NULL;  // await_any([]) - nothing to wait for (was an infinite hang)
     while (1) {
         for (int i = 0; i < count; i++) {
             if (future_is_ready(futures[i])) {

@@ -54,7 +54,7 @@ jobs:
           smoke.exe
         shell: cmd
 
-      # Layout contract (install.sh depends on this — see the canary job):
+      # Layout contract (install.sh depends on this - see the canary job):
       #   bin/wyn            the compiler
       #   src/wyn_runtime.h  runtime sources (bin/../src probe in main.c)
       #   runtime/libwyn_rt.a
@@ -62,7 +62,7 @@ jobs:
       #   VERSION
       # The old packaging had wyn at the tarball ROOT (install.sh expected
       # bin/), nested sources at src/src/ (cp -r src dist/src copies INTO an
-      # existing dir), and no VERSION — so no released binary ever worked.
+      # existing dir), and no VERSION - so no released binary ever worked.
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
@@ -84,7 +84,7 @@ jobs:
           test -f /tmp/verify/runtime/libwyn_rt.a
           test -f /tmp/verify/VERSION
           # The INSTALLED binary must compile and run hello world from a
-          # foreign cwd — this exact path was broken in every prior release.
+          # foreign cwd - this exact path was broken in every prior release.
           cd /tmp && echo 'fn main() { println("install-ok") }' > hello.wyn
           /tmp/verify/bin/wyn run hello.wyn | grep -q "install-ok"
           /tmp/verify/bin/wyn version | grep -vq "1.10.0"
@@ -110,7 +110,7 @@ jobs:
   # just-built artifacts on clean VMs. If a stranger couldn't install and run
   # hello world, the release does not happen. (Every prior release shipped
   # broken: asset-name mismatch vs install.sh, no bin/ layout, src/src/
-  # nesting, missing VERSION — nothing exercised the public path.)
+  # nesting, missing VERSION - nothing exercised the public path.)
   install-canary:
     name: Install canary (${{ matrix.artifact }})
     needs: build

@@ -8,7 +8,7 @@
 // Guards the dual-sentinel magic/magic2 layout: if the three hand-mirrored
 // RC headers ever drift, concat length caching or heap detection corrupts here.
 fn main() -> int {
-    var a = "hello"        // literal — must NOT be treated as heap RC
+    var a = "hello"        // literal - must NOT be treated as heap RC
     var b = "world"        // literal
     var joined = a + " " + b   // heap RC result routed through concat
     println(joined)

@@ -1,7 +1,7 @@
-// Regression: HashMap value access — both m[k] and m.get(k) — must select the
+// Regression: HashMap value access - both m[k] and m.get(k) - must select the
 // getter/type matching the map's VALUE type, not always hashmap_get_string.
 // Before, int/float/bool maps returned garbage/empty (broke shipped
-// examples/06_hashmap.wyn — "Alice's age:" blank) and `if m.get(k) != N`
+// examples/06_hashmap.wyn - "Alice's age:" blank) and `if m.get(k) != N`
 // segfaulted (strcmp on an int). The type flows from the {k:v} literal through
 // index/get/comparison/var-decl. HashMap.new() maps (no inferred value type)
 // keep the historical string default.

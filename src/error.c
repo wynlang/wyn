@@ -11,7 +11,7 @@ static WynError* errors = NULL;
 static int error_count = 0;
 static int error_capacity = 0;
 
-// Source context for error display — set by checker, read by error functions
+// Source context for error display - set by checker, read by error functions
 static const char* _error_source = NULL;
 static const char* _error_filename = NULL;
 void error_set_source(const char* src, const char* fname) { _error_source = src; _error_filename = fname; }
@@ -37,7 +37,7 @@ void report_error_with_suggestion(ErrorCode code, const char* filename, int line
     error->suggestion = suggestion ? strdup(suggestion) : NULL;
 }
 
-// Wynter the Wyvern — hints derived from the ACTUAL error message.
+// Wynter the Wyvern - hints derived from the ACTUAL error message.
 // Returns a hint only when we can say something true about this specific
 // error; returns NULL otherwise (better silent than confidently wrong).
 static const char* wynter_hint_for_message(const char* msg) {
@@ -45,19 +45,19 @@ static const char* wynter_hint_for_message(const char* msg) {
 
     // What was expected tells us what's likely missing/wrong.
     if (strstr(msg, "nterminated string interpolation"))
-        return "The ${ ... } inside this string is never closed — add the } and the closing quote.";
+        return "The ${ ... } inside this string is never closed - add the } and the closing quote.";
     if (strstr(msg, "nterminated multi-line string"))
-        return "This \"\"\" string is never closed — add the closing \"\"\".";
+        return "This \"\"\" string is never closed - add the closing \"\"\".";
     if (strstr(msg, "nterminated string"))
-        return "Strings must close on the same line — use \"\"\" for multi-line text.";
+        return "Strings must close on the same line - use \"\"\" for multi-line text.";
     if (strstr(msg, "'{'"))
-        return "Blocks open with { — add one to start the body.";
+        return "Blocks open with { - add one to start the body.";
     if (strstr(msg, "'}'"))
-        return "Every { needs a matching } — check for an unclosed block.";
+        return "Every { needs a matching } - check for an unclosed block.";
     if (strstr(msg, "')'") || strstr(msg, "'('"))
-        return "Check your parentheses — every ( needs a matching ).";
+        return "Check your parentheses - every ( needs a matching ).";
     if (strstr(msg, "']'") || strstr(msg, "'['"))
-        return "Check your brackets — every [ needs a matching ].";
+        return "Check your brackets - every [ needs a matching ].";
     if (strstr(msg, "parameter name") || strstr(msg, "type name") || strstr(msg, "type after"))
         return "Parameters need a type: fn add(a: int, b: int) -> int";
     if (strstr(msg, "Undefined variable"))
@@ -65,7 +65,7 @@ static const char* wynter_hint_for_message(const char* msg) {
     if (strstr(msg, "Undefined function") || strstr(msg, "Unknown function"))
         return "Define the function before calling it, or check the spelling.";
     if (strstr(msg, "Unknown method"))
-        return "That method doesn't exist for this type — check the docs with 'wyn doc'.";
+        return "That method doesn't exist for this type - check the docs with 'wyn doc'.";
     if (strstr(msg, "Cannot assign to constant"))
         return "Use 'var' instead of 'const' if you need to reassign.";
     if (strstr(msg, "Type mismatch") || strstr(msg, "incompatible"))
@@ -73,12 +73,12 @@ static const char* wynter_hint_for_message(const char* msg) {
     if (strstr(msg, "may not return a value") || strstr(msg, "return type"))
         return "Make sure every path returns, and the value matches the -> type.";
     if (strstr(msg, "semicolon") || strstr(msg, "';'"))
-        return "Wyn doesn't use semicolons — just remove it.";
+        return "Wyn doesn't use semicolons - just remove it.";
 
-    return NULL; // Nothing specific to say — stay quiet.
+    return NULL; // Nothing specific to say - stay quiet.
 }
 
-// Source line cache — read file once, reuse for all errors
+// Source line cache - read file once, reuse for all errors
 static struct { char* filename; char** lines; int count; } src_cache[32];
 static int src_cache_count = 0;
 

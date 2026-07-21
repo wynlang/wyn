@@ -23,12 +23,12 @@ int wyn_pkg_remove(const char* name);
 // `wyn list` / `wyn pkg list`: print the project's declared dependencies.
 int wyn_pkg_list(void);
 
-// `wyn pkg search [query]`: discover packages — the wynlang org (official,
+// `wyn pkg search [query]`: discover packages - the wynlang org (official,
 // bare-name installable) + the `wyn-package` GitHub topic (community). Prints
 // the exact add command per hit. Zero infrastructure: GitHub IS the registry.
 int wyn_pkg_search(const char* query);
 
-// `wyn pkg audit`: supply-chain verification from wyn.lock + git — lock↔remote
+// `wyn pkg audit`: supply-chain verification from wyn.lock + git - lock↔remote
 // (moved tags = error), lock↔cache integrity, pin quality (branch<tag<sha),
 // ffi surface flags. `offline` skips the ls-remote checks. Returns the worst
 // finding: 0 clean, 1 warnings, 2 errors.

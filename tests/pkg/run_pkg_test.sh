@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Git-URL dependency tests. Fully offline: dependencies are served from local
 # bare/working git repos over file://, never the network. Exercises the whole
-# path — spec parsing → clone into cache → manifest+lock → import resolution →
-# compile+run — plus C-binding [ffi] union, remove, and lockfile restore.
+# path - spec parsing → clone into cache → manifest+lock → import resolution →
+# compile+run - plus C-binding [ffi] union, remove, and lockfile restore.
 set -u
 WYN_BIN="${WYN:-./wyn}"
 case "$WYN_BIN" in /*) ;; *) WYN_BIN="$(pwd)/$WYN_BIN" ;; esac

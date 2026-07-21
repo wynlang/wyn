@@ -1,4 +1,4 @@
-// wyn_webview_linux.c — App module for Linux using WebKitGTK
+// wyn_webview_linux.c - App module for Linux using WebKitGTK
 // Compile: gcc -c wyn_webview_linux.c $(pkg-config --cflags gtk+-3.0 webkit2gtk-4.0)
 // Link: $(pkg-config --libs gtk+-3.0 webkit2gtk-4.0)
 

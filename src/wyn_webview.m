@@ -1,4 +1,4 @@
-// wyn_webview.m — App module implementation (Objective-C)
+// wyn_webview.m - App module implementation (Objective-C)
 // macOS: Cocoa + WebKit
 // Compile: clang -ObjC -framework WebKit -framework Cocoa -c wyn_webview.m
 

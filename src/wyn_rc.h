@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdatomic.h>
 
-// Reference counting header — placed before heap-allocated objects.
+// Reference counting header - placed before heap-allocated objects.
 // Layout: [magic(4)][refcount(4)][capacity(4)][length(4)][magic2(4)][user data...]
 // The pointer returned to user code points to user data, not the header.
 // This MUST stay byte-identical to WynRcHeaderFull (wyn_rc.c) and the RcHdr

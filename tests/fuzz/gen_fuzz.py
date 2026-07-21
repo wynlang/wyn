@@ -4,7 +4,7 @@
 Emits syntactically plausible Wyn programs from a weighted grammar, plus
 mutation-based variants (token deletion/duplication/swap) of the generated
 corpus. The harness (run_fuzz.sh) feeds them to `wyn check` / `wyn build`:
-a crash (signal), a hang, or an "internal codegen error" is ALWAYS a bug —
+a crash (signal), a hang, or an "internal codegen error" is ALWAYS a bug -
 the checker must reject bad programs cleanly, and accepted programs must
 compile.
 
@@ -194,7 +194,7 @@ def main():
         g = Gen(random.Random(seed * 100003 + i))
         with open(os.path.join(outdir, "gen_%04d.wyn" % i), "w") as f:
             f.write(g.program())
-    # mutants of the valid corpus — likely-invalid programs the CHECKER must
+    # mutants of the valid corpus - likely-invalid programs the CHECKER must
     # reject cleanly (no crash, no hang, no C-compiler leak-through).
     for i in range(count - n_valid):
         src_i = rng.randrange(n_valid)

@@ -1,4 +1,4 @@
-// Package-spec parsing — see pkgspec.h for the contract.
+// Package-spec parsing - see pkgspec.h for the contract.
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,7 +19,7 @@ static void copy_field(char* dst, size_t cap, const char* src) {
 
 int pkgspec_parse(const char* input, const char* override_name, PkgSpec* spec) {
     if (!input || !*input || !spec) return 1;
-    // A dependency is a git repo, not a filesystem path — reject local-path forms
+    // A dependency is a git repo, not a filesystem path - reject local-path forms
     // so they fail cleanly instead of being mangled into a bogus host.
     if (input[0] == '.' || input[0] == '/' || input[0] == '~') return 1;
     memset(spec, 0, sizeof(*spec));
@@ -28,7 +28,7 @@ int pkgspec_parse(const char* input, const char* override_name, PkgSpec* spec) {
     char work[640];
     copy_field(work, sizeof(work), input);
 
-    // Split off an "@ref" suffix — but not the "@" in a scp-style git@host URL.
+    // Split off an "@ref" suffix - but not the "@" in a scp-style git@host URL.
     // Only an '@' after the last '/' is unambiguously a ref.
     char* last_slash = strrchr(work, '/');
     char* at = strrchr(work, '@');

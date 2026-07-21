@@ -1,7 +1,7 @@
 // Regression: string-valued ternary must not be typed as int (was printing a
 // garbage pointer); valid `else if` chains and `and`-joined range checks work.
 // Companion negative cases (elif hang, chained comparison) are checked
-// separately — they must produce compile errors, not silent/garbage output.
+// separately - they must produce compile errors, not silent/garbage output.
 // EXPECT: big
 // EXPECT: two
 // EXPECT: in

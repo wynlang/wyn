@@ -1,4 +1,4 @@
-// wyn_iter.h — Iterator/Generator runtime support (L3)
+// wyn_iter.h - Iterator/Generator runtime support (L3)
 #ifndef WYN_ITER_H
 #define WYN_ITER_H
 
@@ -15,7 +15,7 @@ typedef struct WynIter {
     void* gen_arg;
 } WynIter;
 
-// The currently yielding iterator — set by trampoline, read by wyn_yield
+// The currently yielding iterator - set by trampoline, read by wyn_yield
 // This works because wyn_yield is called from WITHIN the coroutine that owns the iterator
 static WynIter* _wyn_yielding_iter = NULL;
 

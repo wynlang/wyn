@@ -1,8 +1,8 @@
 # Wyn Programming Language
 
-**1 language for everything — CLI, web, desktop, mobile, games.**
+**1 language for everything - CLI, web, desktop, mobile, games.**
 
-Compiles to native via C. 5 platforms. Zero dependencies. Now with a C FFI —
+Compiles to native via C. 5 platforms. Zero dependencies. Now with a C FFI -
 call any C library.
 
 ## Install
@@ -27,7 +27,7 @@ make && ./wyn install
 ## Quick Start
 
 ```wyn
-// hello.wyn — no main() needed
+// hello.wyn - no main() needed
 println("Hello, World!")
 ```
 
@@ -39,7 +39,7 @@ wyn run -e 'println("or inline")'
 ## Features
 
 ```wyn
-// Variables — bare assignment just works (declares on first use)
+// Variables - bare assignment just works (declares on first use)
 name = "Wyn"
 count = 0
 count = count + 1
@@ -54,7 +54,7 @@ println("${name} v${version}")
 println("${arr[1]}")           // 20
 println("${name.upper()}")     // WYN
 
-// Functions — braces or a one-line => body
+// Functions - braces or a one-line => body
 fn double(x: int) -> int => x * 2
 fn even(x: int) -> bool => x % 2 == 0
 
@@ -75,7 +75,7 @@ struct User {
     fn greet(self) -> string { return "Hi ${self.name}" }
 }
 
-// Closures and higher-order functions — (x) => expr arrow lambdas
+// Closures and higher-order functions - (x) => expr arrow lambdas
 nums = [1, 2, 3, 4, 5]
 doubled = nums.map((x) => x * 2)
 total = nums.reduce((a, b) => a + b, 0)
@@ -106,7 +106,7 @@ println("=" * 40)
 var x: int? = Some(42)
 ```
 
-## Standard Library — 27 Modules
+## Standard Library - 27 Modules
 
 | Category | Modules |
 |----------|---------|
@@ -178,9 +178,9 @@ Flags:
 
 ## Editor Support
 
-- **VS Code**: [wynlang/vscode-wyn](https://github.com/wynlang/vscode-wyn) — syntax highlighting, all keywords and modules
-- **Neovim**: [wynlang/nvim-wyn](https://github.com/wynlang/nvim-wyn) — syntax highlighting + LSP wiring
-- **LSP**: `wyn lsp` — live diagnostics (via `wyn check`, never runs your code), completions, hover, go-to-definition, find references, rename
+- **VS Code**: [wynlang/vscode-wyn](https://github.com/wynlang/vscode-wyn) - syntax highlighting, all keywords and modules
+- **Neovim**: [wynlang/nvim-wyn](https://github.com/wynlang/nvim-wyn) - syntax highlighting + LSP wiring
+- **LSP**: `wyn lsp` - live diagnostics (via `wyn check`, never runs your code), completions, hover, go-to-definition, find references, rename
 
 ## Building
 
@@ -215,7 +215,7 @@ wyn/
 
 ## Documentation
 
-- [wynlang.com](https://wynlang.com) — docs, playground, packages
+- [wynlang.com](https://wynlang.com) - docs, playground, packages
 - [Official Packages](https://github.com/wynlang/awesome-wyn)
 
 ## License

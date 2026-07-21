@@ -1,4 +1,4 @@
-// Indexed Iteration — v1.11 feature
+// Indexed Iteration - v1.11 feature
 // for i, v in arr gives both the index and value.
 
 fn main() -> int {

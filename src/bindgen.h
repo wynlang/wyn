@@ -1,7 +1,7 @@
 // C-header binding generator: `wyn bind <header.h>`.
 //
 // Preprocesses a C header with the system C compiler (`cc -E`, portable across
-// gcc/clang on every platform Wyn supports — NOT the bundled arm64-only tcc),
+// gcc/clang on every platform Wyn supports - NOT the bundled arm64-only tcc),
 // then scans the declaration-level output and emits Wyn `extern fn` declarations,
 // struct aliases, and integer/float/string `#define` constants for the subset the
 // FFI type map can faithfully represent (functions over int/float/bool/string/

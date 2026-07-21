@@ -1,4 +1,4 @@
-// TDD: Concurrency — validates spawn/await correctness and basic scaling
+// TDD: Concurrency - validates spawn/await correctness and basic scaling
 
 fn counter(id: int) -> int {
     return id + 1

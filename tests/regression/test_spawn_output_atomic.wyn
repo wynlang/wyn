@@ -1,8 +1,8 @@
 // Regression: fire-and-forget spawn must not lose or duplicate work. Two prior
 // bugs: (1) the SpawnArgs and WynCoroutine pool free-lists used an unsound
 // index-CAS that could hand the same slot to two coroutines (TSan-confirmed data
-// race → dropped/duplicated tasks); (2) println was print()+printf("\n") — two
-// calls — so concurrent worker threads interleaved the newline mid-line. Now the
+// race → dropped/duplicated tasks); (2) println was print()+printf("\n") - two
+// calls - so concurrent worker threads interleaved the newline mid-line. Now the
 // pools are mutex-guarded and println emits value+\n in one call.
 //
 // A Shared atomic counter makes the check deterministic and order-independent:

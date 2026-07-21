@@ -117,7 +117,7 @@ jobs:
 
       # Prove the whole FFI pipeline on Windows against a header/lib we fully
       # control (mingw's system math.h declares fns via CRT-inline/macro machinery
-      # a naive scanner can't see — that's a bindgen-coverage matter, orthogonal to
+      # a naive scanner can't see - that's a bindgen-coverage matter, orthogonal to
       # the pipeline). This exercises bindgen -> extern fn -> [ffi] link -> build ->
       # run with a hand-written lib.
       - name: FFI pipeline smoke test (Windows)
@@ -139,7 +139,7 @@ jobs:
           echo "Windows FFI pipeline smoke: PASS"
         shell: bash
 
-      # The LSP server shells out to `wyn check` and writes temp files — exactly
+      # The LSP server shells out to `wyn check` and writes temp files - exactly
       # the path/shell-out surface that has broken on Windows before. The Windows
       # job doesn't run `make test`, so drive the LSP protocol test explicitly.
       - name: LSP smoke test (Windows)
@@ -149,7 +149,7 @@ jobs:
         shell: bash
 
   # The RC/string/IO bugs live in the RUNTIME; every real UAF so far was
-  # found by ASan-compiling the runtime and running programs against it —
+  # found by ASan-compiling the runtime and running programs against it -
   # but only when a human remembered to. This job makes it a gate.
   sanitize-runtime:
     name: ASan runtime
@@ -163,7 +163,7 @@ jobs:
       - name: ASan runtime test set
         run: make asan-runtime-test
 
-  # Data races hide in whichever executor a test doesn't exercise — the
+  # Data races hide in whichever executor a test doesn't exercise - the
   # coroutine scheduler (default) or the legacy thread pool (WYN_ASYNC_POOL=1).
   # The tsan-runtime-test target runs every concurrency test under BOTH.
   sanitize-runtime-tsan:
@@ -204,7 +204,7 @@ jobs:
       - name: Cross-compile for Android
         run: |
           echo 'fn main() -> int { return 0 }' > /tmp/android.wyn
-          ./wyn cross android /tmp/android.wyn && echo "✅ Android cross-compilation works" || echo "⚠️ Android NDK not available — skipped"
+          ./wyn cross android /tmp/android.wyn && echo "✅ Android cross-compilation works" || echo "⚠️ Android NDK not available - skipped"
 
   build-runtime-libs:
     name: Build runtime (${{ matrix.target }})

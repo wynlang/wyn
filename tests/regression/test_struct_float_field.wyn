@@ -1,5 +1,5 @@
 // Regression: a `float` struct field used to emit C `float` (32-bit) while every
-// other Wyn `float` is C `double` (64-bit) — so assigning a double value into the
+// other Wyn `float` is C `double` (64-bit) - so assigning a double value into the
 // field TRUNCATED precision, and it broke by-value FFI struct layout (a Wyn struct
 // couldn't match a C struct of `double` fields). Now float fields emit `double`.
 // EXPECT: 3.14159

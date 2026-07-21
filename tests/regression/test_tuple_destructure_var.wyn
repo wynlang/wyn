@@ -1,5 +1,5 @@
 // Regression: destructuring a tuple VARIABLE (`var a, b = p`) truncated the
-// tuple struct to long long (`long long __tdestruct = p`) — a C type error.
+// tuple struct to long long (`long long __tdestruct = p`) - a C type error.
 // Tuple vars are now tracked and copied via __auto_type; `var x = tup.N` uses
 // __auto_type so each binding keeps the element's real C type. Covers tuple-var
 // copy, all-int fn-return unpack, and a string element printed directly.

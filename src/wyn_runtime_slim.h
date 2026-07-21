@@ -1,4 +1,4 @@
-// wyn_runtime_slim.h — types + forward declarations for optimized builds
+// wyn_runtime_slim.h - types + forward declarations for optimized builds
 #ifndef WYN_RUNTIME_SLIM_H
 #define WYN_RUNTIME_SLIM_H
 #include <stdio.h>
@@ -461,7 +461,7 @@ int file_exists(const char* path);
 int file_delete(const char* path);
 int file_copy(const char* src, const char* dst);
 int file_move(const char* src, const char* dst);
-// File module — declared in module declarations block above
+// File module - declared in module declarations block above
 int File_copy(const char* s, const char* d);
 int File_move(const char* s, const char* d);
 long long File_size(const char* p);

@@ -51,7 +51,7 @@ static Type* builtin_int = NULL;
 
 // W9 namespaced imports: names brought in by a WHOLE-module `import m` (as
 // opposed to selective `import { foo } from m`). After a whole-module import,
-// the bare name must NOT be callable — `m.foo()` is the required form. We record
+// the bare name must NOT be callable - `m.foo()` is the required form. We record
 // each such name here so a flat call site can emit a clear "did you mean m.foo()?"
 // error. Selective imports are never recorded (their bare names stay valid).
 typedef struct { char name[128]; char module[128]; } WholeModuleFn;
@@ -95,7 +95,7 @@ static Type* builtin_ptr = NULL;  // opaque C pointer (void*) for FFI
 // Map an `extern fn` C type expression (e.g. `int`, `float`, `bool`, `string`,
 // `void`, or a pointer-ish type) to the Wyn builtin used for type-checking calls.
 // NULL (no `-> T`) maps to void. Unknown types default to int (treated as an
-// opaque machine word — the C prototype in codegen mirrors this).
+// opaque machine word - the C prototype in codegen mirrors this).
 // True if t is the FFI opaque pointer type (`ptr` -> TYPE_STRUCT named "void*").
 static bool is_ptr_type(Type* t) {
     return t && t->kind == TYPE_STRUCT && t->struct_type.name.length == 5 &&
@@ -128,7 +128,7 @@ static Type* extern_map_type(Expr* type_expr) {
         }
     }
     // `char*` written as a pointer type expression (EXPR_UNARY '*' on char, if the
-    // parser produces one) — treat like cstr. Fallback: opaque machine word.
+    // parser produces one) - treat like cstr. Fallback: opaque machine word.
     return builtin_int;
 }
 static bool had_error = false;
@@ -351,7 +351,7 @@ static StructStmt* find_struct_definition(Token struct_name) {
 
 // Field-wise struct equality (`a == b` on struct values): a struct is
 // comparable when every field is int/float/bool/string, an enum, or another
-// comparable struct. Arrays/maps/functions/optionals make it non-comparable —
+// comparable struct. Arrays/maps/functions/optionals make it non-comparable -
 // those get a check-time error instead of the C-level ICE `==` used to hit.
 // On failure, the offending field's name is written to *bad_field.
 static bool struct_fields_comparable(Token struct_name, Token* bad_field, int depth) {
@@ -401,7 +401,7 @@ static bool is_field_of_struct(Token struct_name, Token field) {
     return false;
 }
 
-// True if the struct named `struct_name` declares a method `name` — either in
+// True if the struct named `struct_name` declares a method `name` - either in
 // its body (`struct S { fn name(self) ... }`, held in methods[]) or via an `impl`
 // block / extension method registered as `S_name` in global scope. Struct-body
 // methods are NOT added to the symbol table, so both sources must be consulted.
@@ -521,7 +521,7 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                 }
                 return array_type;
             } else if (field_type_expr->type == EXPR_OPTIONAL_TYPE) {
-                // Optional field `f: T?` — resolve to the Option<T> family type so
+                // Optional field `f: T?` - resolve to the Option<T> family type so
                 // field access (`x.f`) and match on it lower correctly (was falling
                 // through to NULL → default int, breaking match on the field).
                 Expr* inner = field_type_expr->optional_type.inner_type;
@@ -576,7 +576,7 @@ static bool wyn_is_type_compatible(Type* expected, Type* actual) {
     }
 
     // FFI `ptr` interop: an opaque C pointer (`void*`) is freely convertible at
-    // the C boundary with a Wyn `string` (both are char* — passing a string to a
+    // the C boundary with a Wyn `string` (both are char* - passing a string to a
     // `const char*` param), with the null idiom `0` (int), and with a raw machine
     // word. Accept these so `extern fn`s taking/returning `ptr` are callable with
     // string literals and null without a cast. (is_ptr_type: TYPE_STRUCT "void*".)
@@ -590,7 +590,7 @@ static bool wyn_is_type_compatible(Type* expected, Type* actual) {
     }
 
     // Allow channel <-> int (channels are int handles, so they can pass
-    // through int-typed function params — e.g. fn produce(ch: int, ...)).
+    // through int-typed function params - e.g. fn produce(ch: int, ...)).
     if ((expected->kind == TYPE_CHANNEL && actual->kind == TYPE_INT) ||
         (expected->kind == TYPE_INT && actual->kind == TYPE_CHANNEL)) {
         return true;
@@ -732,7 +732,7 @@ static Type* register_option_struct_family(Type* struct_type) {
     if (!struct_type || struct_type->kind != TYPE_STRUCT || struct_type->struct_type.name.length == 0)
         return NULL;
     char sname[96]; token_to_cstr(sname, sizeof(sname), struct_type->struct_type.name);
-    // Family type name "Option<Struct>" — persistent storage for the Token.
+    // Family type name "Option<Struct>" - persistent storage for the Token.
     char* fam = malloc(strlen(sname) + 7);
     sprintf(fam, "Option%s", sname);
     Token fam_tok = {TOKEN_IDENT, fam, (int)strlen(fam), 0};
@@ -789,7 +789,7 @@ void init_checker() {
     // Opaque C pointer type for FFI (`ptr`). A TYPE_STRUCT named "void*" so it
     // flows through codegen_c_type_from_type's struct path to the C type "void*"
     // and is treated as an opaque machine word (not an ARC-managed Wyn struct,
-    // which is keyed off registered struct names — "void*" is never registered).
+    // which is keyed off registered struct names - "void*" is never registered).
     builtin_ptr = make_type(TYPE_STRUCT);
     { Token _pn = {TOKEN_IDENT, "void*", 5, 0}; builtin_ptr->struct_type.name = _pn; }
     builtin_array = make_type(TYPE_ARRAY);
@@ -876,14 +876,14 @@ void init_checker() {
     };
     
     for (int i = 0; i < (int)(sizeof(stdlib_funcs)/sizeof(stdlib_funcs[0])); i++) {
-        // await_all gets a real function type below (returns [int], not int) —
+        // await_all gets a real function type below (returns [int], not int) -
         // find_symbol returns the FIRST match, so it must not be added here.
         if (strcmp(stdlib_funcs[i], "await_all") == 0) continue;
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
     }
     
-    // await_all returns the array of awaited results, not int — the blanket
+    // await_all returns the array of awaited results, not int - the blanket
     // int registration above made `println(await_all(futs))` emit
     // to_string(<WynArray>) and die at the C level (B3, 2026-07-18).
     // Element type is int (the only awaited payload today); re-registering
@@ -1737,7 +1737,7 @@ void init_checker() {
         // {"Json_get_int", 12, 2, json_type, builtin_string, NULL, builtin_int},
         {"Json_stringify", 14, 1, json_type, NULL, NULL, builtin_string},
     };
-    // Iterate the actual array length — two entries were commented out above, so
+    // Iterate the actual array length - two entries were commented out above, so
     // a hardcoded 6 read one past the end (ASan: stack-buffer-overflow here).
     int json_ns_fn_count = (int)(sizeof(json_ns_fns) / sizeof(json_ns_fns[0]));
     for (int i = 0; i < json_ns_fn_count; i++) {
@@ -1809,7 +1809,7 @@ void init_checker() {
     }
 
     // DateTime stdlib
-    // Color namespace — string-returning color functions
+    // Color namespace - string-returning color functions
     const char* color_fn_names[] = {
         "Color_red", "Color_green", "Color_yellow", "Color_blue",
         "Color_magenta", "Color_cyan", "Color_gray", "Color_bold",
@@ -1863,7 +1863,7 @@ void init_checker() {
     Token dt_sleep_tok = {TOKEN_IDENT, "DateTime_sleep", 14, 0};
     add_symbol(global_scope, dt_sleep_tok, dt_sleep_t, false);
 
-    // Http namespace — additional methods
+    // Http namespace - additional methods
     {
         // Http.post(url, data) -> string
         Type* ft = make_type(TYPE_FUNCTION);
@@ -1982,7 +1982,7 @@ void init_checker() {
         add_symbol(global_scope, tok, ft, false);
     }
 
-    // Path namespace — already registered above
+    // Path namespace - already registered above
 
     // System namespace
     {
@@ -2013,7 +2013,7 @@ void init_checker() {
         add_symbol(global_scope, tok, ft, false);
     }
 
-    // Math namespace — already registered above
+    // Math namespace - already registered above
 
     // Net namespace
     {
@@ -2079,7 +2079,7 @@ void init_checker() {
         {"Task_select_3", 13, builtin_int, 3, builtin_int},
         // S4 cooperative cancellation: Task.cancel(handle) requests cancellation
         // of an awaited spawn; Task.is_cancelled() lets a running task check if it
-        // was cancelled (0 args — reads the current coroutine).
+        // was cancelled (0 args - reads the current coroutine).
         {"Task_cancel", 11, builtin_void, 1, builtin_int},
         {"Task_is_cancelled", 17, builtin_bool, 0, builtin_int},
     };
@@ -2094,7 +2094,7 @@ void init_checker() {
         add_symbol(global_scope, tok, ft, false);
     }
 
-    // Ptr namespace — FFI pointer-cell helpers for C out-parameters (`T**`).
+    // Ptr namespace - FFI pointer-cell helpers for C out-parameters (`T**`).
     // Ptr.cell() -> ptr (a heap slot holding one pointer); Ptr.read(cell) -> ptr
     // (the pointer the callee stored); Ptr.write(cell, p); Ptr.free(cell).
     {
@@ -2311,7 +2311,7 @@ void init_checker() {
         Type* ft = make_type(TYPE_FUNCTION);
         ft->fn_type.param_count = new_fns[i].nparams;
         ft->fn_type.param_types = malloc(sizeof(Type*) * (new_fns[i].nparams + 1));
-        // Use generic type for params — C compiler validates actual types
+        // Use generic type for params - C compiler validates actual types
         for (int p = 0; p < new_fns[i].nparams; p++) ft->fn_type.param_types[p] = builtin_int;
         ft->fn_type.is_variadic = true; // Allow flexible arg types for builtins
         ft->fn_type.return_type = new_fns[i].ret;
@@ -2529,7 +2529,7 @@ static int calculate_match_score(Type* fn_type, Type** arg_types, int arg_count)
     // Only check types for the declared parameters
     for (int i = 0; i < func->param_count && i < arg_count; i++) {
         if (!func->param_types || !func->param_types[i] || !arg_types[i]) {
-            score += 1; // Unknown type — allow
+            score += 1; // Unknown type - allow
         } else if (types_equal(func->param_types[i], arg_types[i])) {
             score += 10;  // Exact match
         } else if (can_convert_type(arg_types[i], func->param_types[i])) {
@@ -2632,7 +2632,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return builtin_int;
             }
             
-            // T2.5.1: Handle built-in type names — UNLESS a real variable of that
+            // T2.5.1: Handle built-in type names - UNLESS a real variable of that
             // name is in scope. A user var may be named after a builtin type
             // (int/float/string/str/bool/char/void); codegen emits it with a
             // wynfn_ prefix, so the checker must resolve it as that variable (count
@@ -2721,15 +2721,15 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                 }
                 // Foreign-value table: True/False/null/undefined/self etc. get
-                // a targeted fix instead of "Undefined variable 'True' — did
+                // a targeted fix instead of "Undefined variable 'True' - did
                 // you mean Time?" (edit-distance suggestions were harmful here).
                 if (!_suppress_var_err) {
                     static const struct { const char* kw; const char* fix; } _fkv[] = {
                         {"True",      "booleans are lowercase: true"},
                         {"False",     "booleans are lowercase: false"},
                         {"None",      "Wyn optionals use lowercase 'none' (or Some(x))"},
-                        {"null",      "Wyn has no null — use Option types (none / Some(x))"},
-                        {"undefined", "Wyn has no undefined — use Option types (none / Some(x))"},
+                        {"null",      "Wyn has no null - use Option types (none / Some(x))"},
+                        {"undefined", "Wyn has no undefined - use Option types (none / Some(x))"},
                         {"self",      "'self' only exists inside struct methods"},
                         {"console",   "print with: println(\"...\")"},
                         {"len",       "call it as a function: len(x), or use x.len()"},
@@ -2739,7 +2739,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         size_t _kl = strlen(_fkv[_fi].kw);
                         if ((size_t)expr->token.length == _kl &&
                             memcmp(expr->token.start, _fkv[_fi].kw, _kl) == 0) {
-                            fprintf(stderr, "\nError at line %d: '%.*s' is not Wyn syntax — %s\n",
+                            fprintf(stderr, "\nError at line %d: '%.*s' is not Wyn syntax - %s\n",
                                     expr->token.line, expr->token.length, expr->token.start,
                                     _fkv[_fi].fix);
                             show_source_line(expr->token.line);
@@ -2796,7 +2796,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             
             if (!left || !right) return NULL;
             
-            // Membership `x in c` / `x not in c` — always yields bool. The right
+            // Membership `x in c` / `x not in c` - always yields bool. The right
             // side must be a container (array/map/set/string); the element type
             // isn't constrained here (runtime dispatch handles it).
             if (expr->binary.op.type == TOKEN_IN) {
@@ -2842,7 +2842,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 expr->binary.op.type == TOKEN_LT || expr->binary.op.type == TOKEN_GT ||
                 expr->binary.op.type == TOKEN_LTEQ || expr->binary.op.type == TOKEN_GTEQ) {
                 // Comparing an Option to None/none doesn't lower to C == (the
-                // Option families are structs) — it used to either ICE at the C
+                // Option families are structs) - it used to either ICE at the C
                 // level (`r == None`, struct == struct) or give an unhelpful
                 // "Cannot compare different types" (`r == none`). Reject with
                 // the actual fix. (Python devs write `x == None` on day one.)
@@ -2858,7 +2858,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         expr->binary.right->type == EXPR_NONE;
                     if (left_opt && right_is_none_ident) {
                         const char* m = expr->binary.op.type == TOKEN_EQEQ ? "is_none" : "is_some";
-                        fprintf(stderr, "Error at line %d: Options are not compared with %s none — use .%s()\n",
+                        fprintf(stderr, "Error at line %d: Options are not compared with %s none - use .%s()\n",
                                 expr->binary.op.line,
                                 expr->binary.op.type == TOKEN_EQEQ ? "==" : "!=", m);
                         had_error = true;
@@ -2870,13 +2870,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         right->struct_type.name.length >= 6 &&
                         memcmp(right->struct_type.name.start, "Option", 6) == 0;
                     if (left_opt && right_opt) {
-                        fprintf(stderr, "Error at line %d: Options cannot be compared directly — match on them, or compare .unwrap_or(...) values\n",
+                        fprintf(stderr, "Error at line %d: Options cannot be compared directly - match on them, or compare .unwrap_or(...) values\n",
                                 expr->binary.op.line);
                         had_error = true;
                         return NULL;
                     }
                     // struct == struct: lowered to a generated field-wise
-                    // __wyn_eq_<Name> helper. Gate it here — different struct
+                    // __wyn_eq_<Name> helper. Gate it here - different struct
                     // types can't compare, and structs with non-comparable
                     // fields (arrays/maps/fns) get a real error instead of
                     // the C-level ICE raw `==` used to produce.
@@ -2901,7 +2901,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         }
                         Token bad = {0};
                         if (!struct_fields_comparable(left->struct_type.name, &bad, 0)) {
-                            fprintf(stderr, "Error at line %d: == is not defined for struct '%.*s' (field '%.*s' is not comparable) — compare fields explicitly\n",
+                            fprintf(stderr, "Error at line %d: == is not defined for struct '%.*s' (field '%.*s' is not comparable) - compare fields explicitly\n",
                                     expr->binary.op.line,
                                     left->struct_type.name.length, left->struct_type.name.start,
                                     bad.length, bad.start);
@@ -2913,7 +2913,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                 }
                 // Ordering on structs has no meaning (and raw C < on struct
-                // values doesn't compile) — reject at check time.
+                // values doesn't compile) - reject at check time.
                 if ((left->kind == TYPE_STRUCT || right->kind == TYPE_STRUCT) &&
                     !is_ptr_type(left) && !is_ptr_type(right) &&
                     (expr->binary.op.type == TOKEN_LT || expr->binary.op.type == TOKEN_GT ||
@@ -2923,7 +2923,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     bool r_user = right->kind == TYPE_STRUCT && right->struct_type.name.length > 0 &&
                                   find_struct_definition(right->struct_type.name);
                     if (l_user || r_user) {
-                        fprintf(stderr, "Error at line %d: structs cannot be ordered with %.*s — compare fields explicitly\n",
+                        fprintf(stderr, "Error at line %d: structs cannot be ordered with %.*s - compare fields explicitly\n",
                                 expr->binary.op.line, expr->binary.op.length, expr->binary.op.start);
                         had_error = true;
                         return NULL;
@@ -2946,7 +2946,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                        (right->kind == TYPE_FUNCTION) ||
                                        // FFI opaque pointer (`ptr`, a TYPE_STRUCT named
                                        // "void*"): comparable to another ptr and to the
-                                       // int literal 0 — the C NULL idiom (`if p == 0`).
+                                       // int literal 0 - the C NULL idiom (`if p == 0`).
                                        is_ptr_type(left) || is_ptr_type(right);
                 
                 if (!types_compatible) {
@@ -3019,7 +3019,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 Token ctor_tok = {TOKEN_IDENT, ctor_name, (int)strlen(ctor_name), obj.line};
                 Symbol* ctor_sym = find_symbol(scope, ctor_tok);
                 if (ctor_sym && ctor_sym->type && ctor_sym->type->kind == TYPE_FUNCTION) {
-                    // It's an enum constructor — check args and return enum type
+                    // It's an enum constructor - check args and return enum type
                     for (int i = 0; i < expr->call.arg_count; i++) {
                         check_expr(expr->call.args[i], scope);
                     }
@@ -3088,11 +3088,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     expr->expr_type = builtin_int;
                     return builtin_int;
                 } else if (strcmp(name_buf, "array_push") == 0 || strcmp(name_buf, "array_push_str") == 0) {
-                    // array_push(arr, val) — infer element type from val
+                    // array_push(arr, val) - infer element type from val
                     if (expr->call.arg_count >= 2) {
                         Type* arr_type = check_expr(expr->call.args[0], scope);
                         Type* val_type = check_expr(expr->call.args[1], scope);
-                        // Update array element type — but only if consistent
+                        // Update array element type - but only if consistent
                         if (arr_type && arr_type->kind == TYPE_ARRAY && val_type) {
                             Type* existing = arr_type->array_type.element_type;
                             if (!existing) {
@@ -3407,7 +3407,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 
                 
                 // W9: reject a FLAT call to a function that is only available via
-                // a whole-module `import m` — it must be qualified `m.foo()`.
+                // a whole-module `import m` - it must be qualified `m.foo()`.
                 // Selective imports and locally-defined functions stay flat (see
                 // flat_callable_in_program). Only enforced in the top-level
                 // program (current_module_name empty); a module's own internal
@@ -3522,7 +3522,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     // Stdlib namespaces register their functions under the
                     // `Module_func` underscore name (e.g. Color_green, String_…).
                     // Resolve the qualified `Module::func` callee to that symbol and
-                    // use its REAL return type — otherwise every namespaced stdlib
+                    // use its REAL return type - otherwise every namespaced stdlib
                     // call defaulted to int, so a string-returning one (Color::green)
                     // was concatenated/printed as a raw pointer value. (2026-07)
                     {
@@ -3544,7 +3544,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 
                 if (best_match && best_match->type->kind == TYPE_FUNCTION) {
                     // Mark the callee as used (critical for lambda variables stored
-                    // in locals — without this, `var f = (n) => n+1; f(5)` warns
+                    // in locals - without this, `var f = (n) => n+1; f(5)` warns
                     // "unused variable 'f'" because this path returns early before
                     // the fallback check_expr(callee) which would mark_used).
                     mark_used(scope, expr->call.callee->token);
@@ -3574,7 +3574,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     // Check if function exists but with wrong arg count
                     Symbol* _existing = find_symbol(scope, expr->call.callee->token);
                     if (_existing && _existing->type && _existing->type->kind == TYPE_FUNCTION) {
-                        // Function exists (possibly a lambda variable) — mark it used
+                        // Function exists (possibly a lambda variable) - mark it used
                         mark_used(scope, expr->call.callee->token);
                     } else {
                     // Search scope for similar names (typo detection)
@@ -3677,7 +3677,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // Channel methods: ch.send(v) / ch.recv() / ch.close(). Channels
             // carry ONE element type, inferred from the first send (mirroring
             // array push inference; stored in the union's array_type slot).
-            // Later sends must match — the runtime moves payloads through a
+            // Later sends must match - the runtime moves payloads through a
             // single word, so an unchecked string send used to come back as a
             // pointer number and floats silently truncated. recv() returns
             // the element type so codegen can marshal it back correctly.
@@ -3698,7 +3698,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                    !(elem->kind == TYPE_FLOAT && arg_t->kind == TYPE_INT)) {
                             fprintf(stderr, "Error at line %d: Cannot send %s through a channel of %s\n",
                                     method.line, type_to_string(arg_t), type_to_string(elem));
-                            fprintf(stderr, "  \033[34mHelp:\033[0m A channel carries one type — its first send decides which\n");
+                            fprintf(stderr, "  \033[34mHelp:\033[0m A channel carries one type - its first send decides which\n");
                             had_error = true;
                             return NULL;
                         }
@@ -3771,7 +3771,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         }
                     }
                     // map return type: an int-typed return usually just means
-                    // "no evidence" — identity bodies and float arithmetic
+                    // "no evidence" - identity bodies and float arithmetic
                     // both produce the element type.
                     if (method.length == 3 && memcmp(method.start, "map", 3) == 0 &&
                         lam->expr_type->fn_type.return_type &&
@@ -3795,7 +3795,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 char obj_name[256];
                 token_to_cstr(obj_name, sizeof(obj_name), expr->method_call.object->token);
                 // W9: resolve a module alias (`import m as mm` → mm.foo() means
-                // m.foo()) to the real module name before namespace lookup — but
+                // m.foo()) to the real module name before namespace lookup - but
                 // NOT if a real local/param shadows the alias name.
                 extern const char* resolve_parser_module_alias(const char* name);
                 if (!find_symbol(scope, expr->method_call.object->token)) {
@@ -3862,7 +3862,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     return builtin_string;
                 } else if (strcmp(method_name, "len") == 0) {
                     // NOTE: "length" was accepted here as an alias but codegen only
-                    // supports len — it compiled clean and then failed in C. One
+                    // supports len - it compiled clean and then failed in C. One
                     // name, checked and generated the same way.
                     expr->expr_type = builtin_int;
                     return builtin_int;
@@ -3939,7 +3939,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
             }
             
-            // map.get(k) returns the map's value type — same source-of-truth
+            // map.get(k) returns the map's value type - same source-of-truth
             // approach as index m[k] (see EXPR_INDEX). Without this the getter,
             // var-decl type, and comparisons all defaulted to string and
             // miscompiled (garbage for int/float/bool; strcmp on an int crashed).
@@ -3963,7 +3963,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         return object_type->array_type.element_type;
                     }
                 }
-                // array.push(val) — update element type from pushed value
+                // array.push(val) - update element type from pushed value
                 if (method.length == 4 && memcmp(method.start, "push", 4) == 0 && expr->method_call.arg_count >= 1) {
                     Type* val_type = check_expr(expr->method_call.args[0], scope);
                     if (val_type && !object_type->array_type.element_type) {
@@ -4052,7 +4052,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                 return string_array;
                             }
                         }
-                        // S2: .map()/.filter() on [string] — element type of the
+                        // S2: .map()/.filter() on [string] - element type of the
                         // result follows the LAMBDA's return type for map (a
                         // str->int lambda produces [int]; typing it [string]
                         // made downstream indexing read ints as char* and
@@ -4109,7 +4109,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
 
                 // The method didn't resolve to any known method on this struct.
                 // If the receiver is a USER-DEFINED struct (has a real definition
-                // in this program), that's an error the checker should catch —
+                // in this program), that's an error the checker should catch -
                 // otherwise it slips through to codegen and becomes a confusing
                 // "Unknown method (no type info)" C-compile failure. Restricted to
                 // real struct definitions so built-in/monomorphic struct families
@@ -4192,12 +4192,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             if (expr->list_comp.iter_start) {
                 Type* iter_type = check_expr(expr->list_comp.iter_start, &comp_scope);
                 if (expr->list_comp.iter_end) {
-                    // Range `start..end` / `start..=end` — element is int.
+                    // Range `start..end` / `start..=end` - element is int.
                     check_expr(expr->list_comp.iter_end, &comp_scope);
                     loop_var_type = builtin_int;
                 } else if (iter_type && iter_type->kind == TYPE_ARRAY &&
                            iter_type->array_type.element_type) {
-                    // Iterating an array — element type is the array's element.
+                    // Iterating an array - element type is the array's element.
                     loop_var_type = iter_type->array_type.element_type;
                 }
             }
@@ -4219,7 +4219,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
         case EXPR_HASHMAP_LITERAL: {
             // v1.3.0: {} creates a hashmap. Infer the value type from the first
             // value so index m[k] carries the right element type (int/string/
-            // float/bool) — a literal has homogeneous value types. Without this
+            // float/bool) - a literal has homogeneous value types. Without this
             // every map value typed as int and non-int maps miscompiled.
             Type* map_type = make_type(TYPE_MAP);
             map_type->map_type.key_type = builtin_string;
@@ -4264,7 +4264,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
                 // Return the map's value type so downstream codegen (getter
                 // selection, var-decl type, comparisons, print) all agree.
-                // Default to string when unknown (HashMap.new() maps) — the
+                // Default to string when unknown (HashMap.new() maps) - the
                 // historical, non-crashing default; literals narrow it.
                 Type* vt = array_type->map_type.value_type;
                 if (!vt) vt = builtin_string;
@@ -4279,7 +4279,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
 
                 // AUTHORITATIVE: if the array has a known element type, that's the
                 // result type. This must come BEFORE the name/source heuristics
-                // below — otherwise an int/float array named args/files/names/parts/
+                // below - otherwise an int/float array named args/files/names/parts/
                 // entries was force-typed `string` purely by its name, miscompiling
                 // `var x = parts[1]` (read through array_get_str → crash/garbage).
                 if (array_type && array_type->kind == TYPE_ARRAY &&
@@ -4460,7 +4460,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // S1 lambda rework: infer each param's type from body usage (string if it
             // is concatenated with a string or is a string-method receiver), else int.
             // This lets string-parameter lambdas type-check instead of failing with a
-            // bare "Type mismatch". (Codegen support for non-int params is staged — see
+            // bare "Type mismatch". (Codegen support for non-int params is staged - see
             // the guard after body-checking below and internal-docs/LAMBDA_REWORK.md.)
             Type* param_inferred[16];
             for (int i = 0; i < expr->lambda.param_count && i < 16; i++) {
@@ -4666,7 +4666,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Type* val_t = check_expr(expr->index_assign.value, scope);
             // Enforce element/value type on stores. Codegen picks the insert
             // fn from the VALUE's type but reads decode with the CONTAINER's
-            // declared type — a mismatched store passed check and read back
+            // declared type - a mismatched store passed check and read back
             // as garbage (string stored, int-decoded → 0 or a pointer).
             // int<->float stays permissive (codegen coerces numerics).
             if (obj_t && val_t) {
@@ -4919,7 +4919,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return opt_type;
         }
         case EXPR_TERNARY: {
-            // cond ? a : b — type the branches and return their common type so a
+            // cond ? a : b - type the branches and return their common type so a
             // ternary bound to a var gets the right C type (e.g. a string ternary
             // was declared `long long`, storing the char* as an int -> garbage).
             check_expr(expr->ternary.condition, scope);
@@ -5065,7 +5065,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 if (result_type == NULL) {
                     result_type = arm_type;
                 } else if (!types_equal(result_type, arm_type)) {
-                    // Allow mismatched types — codegen will handle it
+                    // Allow mismatched types - codegen will handle it
                     // Common case: enum destructuring returns different representations of same type
                 }
             }
@@ -5090,7 +5090,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                 covered = true;
                         }
                         if (!covered) {
-                            fprintf(stderr, "Error at line %d: non-exhaustive match — variant '%.*s' is not handled (add it or a wildcard '_ =>' arm)\n",
+                            fprintf(stderr, "Error at line %d: non-exhaustive match - variant '%.*s' is not handled (add it or a wildcard '_ =>' arm)\n",
                                     expr->match.value->token.line, ev.length, ev.start);
                             had_error = true;
                         }
@@ -5245,7 +5245,7 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     if (init_type && actual_type && !types_equal(init_type, actual_type)) {
                         // Allow optional types to accept struct values (OptionInt_Some returns struct)
                         if (init_type->kind == TYPE_OPTIONAL && actual_type->kind == TYPE_STRUCT) {
-                            // Compatible — OptionInt is a struct
+                            // Compatible - OptionInt is a struct
                         } else {
                             char expected_str[128], actual_str[128];
                             snprintf(expected_str, sizeof(expected_str), "%s", type_to_string(init_type));
@@ -5338,7 +5338,7 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     // which violates the "obvious and forgiving" design goal.
                     // The return type of `fn -> int?` is resolved to the monomorphic
                     // Option struct (OptionInt/OptionString/OptionFloat/OptionBool),
-                    // which has kind TYPE_STRUCT — detect it by name prefix.
+                    // which has kind TYPE_STRUCT - detect it by name prefix.
                     if (current_function_return_type->kind == TYPE_STRUCT &&
                         current_function_return_type->struct_type.name.length >= 6 &&
                         memcmp(current_function_return_type->struct_type.name.start, "Option", 6) == 0) {
@@ -5348,7 +5348,7 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                             memcmp(stmt->ret.value->token.start, "none", 4) == 0) {
                             break;
                         }
-                        // Any other value: coerce into Some(value) — the inner type
+                        // Any other value: coerce into Some(value) - the inner type
                         // should match the Optional's wrapped type, but codegen already
                         // handles the wrapping; here we just don't reject it.
                         break;
@@ -5410,7 +5410,7 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
         case STMT_IF:
             // Warn about assignment in condition (= vs ==)
             if (stmt->if_stmt.condition && stmt->if_stmt.condition->type == EXPR_ASSIGN) {
-                fprintf(stderr, "\033[33mWarning\033[0m at line %d: Assignment in if condition — did you mean '=='?\n",
+                fprintf(stderr, "\033[33mWarning\033[0m at line %d: Assignment in if condition - did you mean '=='?\n",
                         stmt->if_stmt.condition->token.line);
                 show_source_line(stmt->if_stmt.condition->token.line);
             }
@@ -5513,7 +5513,7 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                             if (ts && ts->type) param_type = ts->type;
                         }
                     } else if (fn->param_types[j]->type == EXPR_OPTIONAL_TYPE) {
-                        // `b: Struct?` / `b: int?` — resolve to the Option family.
+                        // `b: Struct?` / `b: int?` - resolve to the Option family.
                         Type* ot = check_expr(fn->param_types[j], &fn_scope);
                         if (ot) param_type = ot;
                     }
@@ -5615,7 +5615,7 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
 
             // Type-check struct-body methods (`struct S { fn m(self, ...) {...} }`).
             // Without this, method bodies were never checked, so field accesses on
-            // `self` and typed params never got an expr_type — and codegen then
+            // `self` and typed params never got an expr_type - and codegen then
             // mis-lowered e.g. `self.name + suffix` (string+string) as a raw C `+`
             // instead of wyn_string_concat_safe. Bind `self` to the struct type and
             // each param to its declared type, exactly like impl-block methods.
@@ -5970,7 +5970,7 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         Token var_name = match_case->pattern->option.inner->ident.name;
                         // Look up the variant's data type from the enum definition
                         Type* bound_type = builtin_int; // default
-                        // Option family Some(x): bind x to the PAYLOAD type —
+                        // Option family Some(x): bind x to the PAYLOAD type -
                         // OptionString -> string, OptionOptionInt -> OptionInt
                         // (global-scope lookup), OptionUser -> struct User.
                         // Without this the binder was always int, so a nested
@@ -6144,7 +6144,7 @@ static Type* imported_type_from_expr(Expr* type_expr) {
     return builtin_int;  // structs/enums default to int-sized handle here
 }
 
-// W9: is `name` legitimately flat-callable in `prog` — i.e. defined as a
+// W9: is `name` legitimately flat-callable in `prog` - i.e. defined as a
 // top-level function in the program itself, or brought in by a SELECTIVE import
 // (`import { name } from m`)? Those keep flat calls valid; a name available only
 // via a whole-module `import m` does not (and must be qualified `m.name()`).
@@ -6843,7 +6843,7 @@ void check_program(Program* prog) {
                     char module_name_str[256];
                     token_to_cstr(module_name_str, sizeof(module_name_str), import->module);
                     // W9: if the import is aliased (`import m as mm`), the required
-                    // call form — and the flat-call hint — use the alias.
+                    // call form - and the flat-call hint - use the alias.
                     char hint_name[256];
                     if (import->alias.start != NULL && import->alias.length > 0) {
                         token_to_cstr(hint_name, sizeof(hint_name), import->alias);
@@ -6889,7 +6889,7 @@ void check_program(Program* prog) {
                             // W9: record the bare name as whole-module-only so a
                             // flat `foo()` call errors with a "did you mean
                             // m.foo()?" hint (unless the program itself defines it
-                            // or selectively imports it — checked at the call site).
+                            // or selectively imports it - checked at the call site).
                             {
                                 char bare[128];
                                 token_to_cstr(bare, sizeof(bare), fn->name);
@@ -6903,7 +6903,7 @@ void check_program(Program* prog) {
                 // Symbols are already registered by check_all_modules
                 merge_module_exports(module, prog, import);
             } else {
-                // Error already printed by module loader — suppress duplicate
+                // Error already printed by module loader - suppress duplicate
             }
         }
     }
@@ -6994,7 +6994,7 @@ void check_program(Program* prog) {
                         }
                         param_type = array_type;
                     } else if (fn->param_types[j]->type == EXPR_OPTIONAL_TYPE) {
-                        // `b: Struct?`/`b: int?` — Option family, so the signature
+                        // `b: Struct?`/`b: int?` - Option family, so the signature
                         // validates Some/None arguments (not the bare int default).
                         Type* ot = check_expr(fn->param_types[j], global_scope);
                         if (ot) param_type = ot;
@@ -7061,7 +7061,7 @@ void check_program(Program* prog) {
                         else if (inner->token.length == 4 && memcmp(inner->token.start, "bool", 4) == 0)
                             concrete = (Token){TOKEN_IDENT, "OptionBool", 10, 0};
                         else if (inner->token.length != 3 || memcmp(inner->token.start, "int", 3) != 0) {
-                            // `-> Struct?` — resolve the user struct and make its
+                            // `-> Struct?` - resolve the user struct and make its
                             // monomorphic Option<Struct> family the signature type.
                             Symbol* st = find_symbol(global_scope, inner->token);
                             if (st && st->type && st->type->kind == TYPE_STRUCT)
@@ -7367,7 +7367,7 @@ void check_program(Program* prog) {
                         }
                         param_type = array_type;
                     } else if (fn->param_types[j]->type == EXPR_OPTIONAL_TYPE) {
-                        // `b: Struct?` / `b: int?` — resolve to the Option family so
+                        // `b: Struct?` / `b: int?` - resolve to the Option family so
                         // the fn signature (used for call validation) matches Some/None
                         // arguments instead of defaulting to int.
                         Type* ot = check_expr(fn->param_types[j], &local_scope);
@@ -7399,7 +7399,7 @@ void check_program(Program* prog) {
                 if (inferred_return) {
                     current_function_return_type = inferred_return;
                     // Also synthesize an AST return-type node so codegen (which
-                    // reads fn->return_type) emits the right C signature — this
+                    // reads fn->return_type) emits the right C signature - this
                     // is what makes `fn f(x: int) => x * 2` work without `-> T`.
                     const char* tn = NULL;
                     switch (inferred_return->kind) {
@@ -7578,7 +7578,7 @@ const char* type_to_string(Type* type) {
 
 // TASK-040: Capture analysis for lambda expressions
 // S1 (lambda rework): detect whether a lambda parameter named `pname` is used as a
-// STRING anywhere in `e` — i.e. it participates in string concat (`+` with a string
+// STRING anywhere in `e` - i.e. it participates in string concat (`+` with a string
 // operand) or is the receiver of a string method. Used to infer the param's type so
 // string-parameter lambdas type-check (rather than failing with a bare "Type
 // mismatch"). Conservative: returns false unless there's positive evidence.
@@ -7587,7 +7587,7 @@ static int expr_is_string_literal_or_typed(Expr* e, SymbolTable* scope) {
     if (e->type == EXPR_STRING || e->type == EXPR_STRING_INTERP) return 1;
     if (e->expr_type && e->expr_type->kind == TYPE_STRING) return 1;
     // Inference runs BEFORE the body is checked, so a captured outer variable
-    // has no expr_type yet — resolve identifiers through the enclosing scope
+    // has no expr_type yet - resolve identifiers through the enclosing scope
     // (a string capture used to give no evidence, so `(s) => s + suffix`
     // inferred s as int and emitted pointer garbage).
     if (e->type == EXPR_IDENT && scope) {
@@ -7718,7 +7718,7 @@ void analyze_expr_captures(Expr* expr, LambdaExpr* lambda, SymbolTable* scope) {
             analyze_expr_captures(expr->unary.operand, lambda, scope);
             break;
         case EXPR_STRING_INTERP:
-            // "${n}" segments inside a lambda body capture outer vars too —
+            // "${n}" segments inside a lambda body capture outer vars too -
             // skipping them left the capture untyped (and unemitted).
             for (int i = 0; i < expr->string_interp.count; i++) {
                 analyze_expr_captures(expr->string_interp.expressions[i], lambda, scope);

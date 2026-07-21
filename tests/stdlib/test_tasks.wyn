@@ -1,4 +1,4 @@
-// Test: Tasks — simplified concurrency API
+// Test: Tasks - simplified concurrency API
 // Task.value/get/set/add for shared state between spawns
 // Task.channel/send/recv/close for advanced message passing
 
@@ -17,7 +17,7 @@ fn producer(ch: int) {
 fn main() -> int {
     Test.init("Tasks")
     
-    // Shared value — basic
+    // Shared value - basic
     var counter = Task.value(0)
     Test.assert_eq_int(Task.get(counter), 0, "initial value = 0")
     
@@ -27,7 +27,7 @@ fn main() -> int {
     Task.add(counter, 8)
     Test.assert_eq_int(Task.get(counter), 50, "add 8 = 50")
     
-    // Shared value — with spawns
+    // Shared value - with spawns
     var shared = Task.value(0)
     var f1 = spawn worker_add(shared, 100)
     var f2 = spawn worker_add(shared, 200)
@@ -35,7 +35,7 @@ fn main() -> int {
     await f2
     Test.assert_eq_int(Task.get(shared), 300, "two spawns add to shared = 300")
     
-    // Channel — basic send/recv
+    // Channel - basic send/recv
     var ch = Task.channel(10)
     Task.send(ch, 42)
     Task.send(ch, 100)
@@ -44,7 +44,7 @@ fn main() -> int {
     Test.assert_eq_int(v1, 42, "channel recv 1")
     Test.assert_eq_int(v2, 100, "channel recv 2")
     
-    // Channel — with spawn
+    // Channel - with spawn
     var ch2 = Task.channel(10)
     spawn producer(ch2)
     var a = Task.recv(ch2)

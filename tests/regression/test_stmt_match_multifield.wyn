@@ -1,5 +1,5 @@
 // Regression: statement-form `match x { Variant(a, b) => ... }` on a data enum
-// was broadly broken — the parser rejected multi-field bindings ("Expected ')'"),
+// was broadly broken - the parser rejected multi-field bindings ("Expected ')'"),
 // and codegen misrouted the value into an OptionInt shape / bound only the first
 // field / used `==` on a struct for no-payload variants. Now it works for:
 //  - a function PARAMETER receiver (enum params are registered)

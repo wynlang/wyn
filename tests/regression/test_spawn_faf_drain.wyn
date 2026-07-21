@@ -1,5 +1,5 @@
 // Regression: every fire-and-forget `spawn` must run to completion AND have its
-// output flushed before the process exits — including the numeric println
+// output flushed before the process exits - including the numeric println
 // variants, which (unlike println_str) don't self-flush. wyn_spawn_wait() now
 // fflush()es stdout/stderr on the joining thread after observing task-count
 // parity, so the last task's output can't be dropped by an exit-time flush race.
@@ -18,7 +18,7 @@ fn main() -> int {
         spawn tick(counter)
     }
     // Grace period for fire-and-forget work to drain. 500ms (not 50) so the
-    // deterministic aggregate is reliable on loaded CI runners — the tasks DO all
+    // deterministic aggregate is reliable on loaded CI runners - the tasks DO all
     // complete; a tight 50ms just occasionally lost the tail on slow shared runners.
     Time::sleep(500)
     println("count ${Shared.get(counter)}")

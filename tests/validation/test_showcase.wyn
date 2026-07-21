@@ -1,4 +1,4 @@
-// TDD: Wyn v1.9 comprehensive showcase — every feature working together
+// TDD: Wyn v1.9 comprehensive showcase - every feature working together
 
 struct User {
     name: string

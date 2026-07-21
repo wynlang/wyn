@@ -309,13 +309,13 @@ fn main() -> int {
 ## v1.11 Features
 
 ### 57_enum_to_string.wyn
-Enum `.to_string()` method — returns the variant name as a string. Useful for logging and debugging.
+Enum `.to_string()` method - returns the variant name as a string. Useful for logging and debugging.
 
 ### 58_indexed_iteration.wyn
-Indexed `for i, v in arr` syntax — iterate with both index and value.
+Indexed `for i, v in arr` syntax - iterate with both index and value.
 
 ### 59_optional_types.wyn
-Optional types with `int?` syntax — `OptionInt_Some()`, `OptionInt_None()`, and `OptionInt_unwrap()`.
+Optional types with `int?` syntax - `OptionInt_Some()`, `OptionInt_None()`, and `OptionInt_unwrap()`.
 
 ### 60_string_repeat.wyn
-String repeat operator — `"ha" * 3` produces `"hahaha"`.
+String repeat operator - `"ha" * 3` produces `"hahaha"`.

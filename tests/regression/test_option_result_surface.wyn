@@ -1,6 +1,6 @@
 // Regression: the surface constructors Some/None/Ok/Err must lower to the
 // correct Option*/Result* family for ANY payload type (not just int) and in any
-// context — including `var x: string? = Some(s)` with no function-return context.
+// context - including `var x: string? = Some(s)` with no function-return context.
 // Previously bare Some(string) emitted OptionInt_Some -> C type error.
 // EXPECT: PASS: option/result surface
 

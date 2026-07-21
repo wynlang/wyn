@@ -2,7 +2,7 @@
 // double, …) must compile and behave like any other variable. Codegen emits it
 // under the "wynfn_" namespace (Wyn-visible name unchanged) at BOTH its
 // declaration and every reassignment, and the checker resolves the bare
-// identifier as that variable — not as a builtin type literal — so its real
+// identifier as that variable - not as a builtin type literal - so its real
 // type flows and its uses are counted (no spurious "unused variable" warning,
 // and `int`/`char` holding a float/string round-trip correctly).
 // EXPECT: 15
@@ -22,7 +22,7 @@ fn main() -> int {
     char = char + "!"
     println(char)
 
-    // builtin-type name holding a NON-matching type (float in `int`) — proves
+    // builtin-type name holding a NON-matching type (float in `int`) - proves
     // the checker flows the real type instead of the type-literal it's named for
     var int = 3.0
     int = int * 2.0

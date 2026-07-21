@@ -1,5 +1,5 @@
 #!/bin/bash
-# Wyn v1.8 Benchmark Suite — honest methodology
+# Wyn v1.8 Benchmark Suite - honest methodology
 # Pre-built binaries only. 15 runs, warm median. Go comparison for every benchmark.
 # Run from wyn/ directory: ./benchmarks/run.sh
 

@@ -1,4 +1,4 @@
-// Coroutine stack stress tests — find where spawns break
+// Coroutine stack stress tests - find where spawns break
 // Tests increasing stack pressure to establish limits
 
 fn shallow_work(id: int) -> int {
@@ -88,7 +88,7 @@ fn main() -> int {
     }
     println("  ✓ 1K array work (result: " + r4[0].to_string() + ")")
 
-    // Test 5: Recursion depth tests — find the limit
+    // Test 5: Recursion depth tests - find the limit
     println("[5] Recursion depth in spawn...")
     var depths = [10, 50, 100, 500, 1000, 2000, 3000]
     for i in 0..7 {
@@ -102,7 +102,7 @@ fn main() -> int {
         }
     }
 
-    // Test 6: Recursion with locals — heavier stack frames
+    // Test 6: Recursion with locals - heavier stack frames
     println("[6] Recursion with 4 locals per frame...")
     var heavy_depths = [10, 50, 100, 500, 1000]
     for i in 0..5 {

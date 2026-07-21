@@ -1,4 +1,4 @@
-// TDD: expressive code — everything flows
+// TDD: expressive code - everything flows
 
 fn greet(name: string, style: string = "formal") -> string {
     if style == "casual" { return "Hey " + name + "!" }

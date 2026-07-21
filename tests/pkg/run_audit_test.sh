@@ -78,10 +78,10 @@ if [ -n "$cache_dir" ] && [ -d "$cache_dir/.git" ]; then
   if echo "$out" | grep -q "CACHE MISMATCH"; then
     [ $code -eq 2 ] && ok "cache mismatch detected (exit 2)" || bad "cache mismatch wrong exit: $code"
   else
-    ok "cache mismatch (shallow clone — single commit, skipped)"
+    ok "cache mismatch (shallow clone - single commit, skipped)"
   fi
 else
-  ok "cache mismatch (no cache dir — skipped)"
+  ok "cache mismatch (no cache dir - skipped)"
 fi
 
 echo ""; echo "pkg-audit: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]

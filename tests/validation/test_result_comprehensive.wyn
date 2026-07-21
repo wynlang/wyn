@@ -1,4 +1,4 @@
-// Result type comprehensive tests — standalone (not test blocks)
+// Result type comprehensive tests - standalone (not test blocks)
 // TCC can't handle ResultInt structs in test blocks, so we test via assertions in main
 
 fn safe_div(a: int, b: int) -> Result<int, string> {

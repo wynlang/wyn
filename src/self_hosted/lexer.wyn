@@ -1,4 +1,4 @@
-// Epic 31: Self-Hosted Compiler — Lexer
+// Epic 31: Self-Hosted Compiler - Lexer
 // Tokenizes Wyn source code into an array of tokens
 
 // Token types (matching C compiler's enum)
@@ -141,7 +141,7 @@ fn lex(source: string) -> Array<Token> {
         if c == ";" { array_push(tokens, Token { type: 41, text: ";", line: line }); i = i + 1; continue }
         if c == "." { array_push(tokens, Token { type: 42, text: ".", line: line }); i = i + 1; continue }
 
-        // Unknown character — skip
+        // Unknown character - skip
         i = i + 1
     }
 

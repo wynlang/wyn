@@ -37,7 +37,7 @@ out=$("$WYN" test zzz_no_such_test 2>&1); rc=$?
 cd - >/dev/null
 
 # 6. Malformed wyn.toml line warns (once) instead of silent ignore.
-# (wyn.toml is only parsed when the source needs it — extern fn triggers it.)
+# (wyn.toml is only parsed when the source needs it - extern fn triggers it.)
 mkdir -p "$TMP/mt" && cd "$TMP/mt"
 printf '[package]\nname = "t"\nthis is !! not toml garbage\n[ffi]\nlibs = "m"\n' > wyn.toml
 printf 'extern fn sqrt(x: float) -> float;\nfn main() {\n    println(sqrt(4.0).to_string())\n}\n' > m.wyn

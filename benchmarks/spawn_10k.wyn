@@ -1,4 +1,4 @@
-// Spawn 10K tasks — lightweight concurrency
+// Spawn 10K tasks - lightweight concurrency
 // Tests: task creation overhead, scheduler throughput
 // Pattern: fire-and-forget spawns + Task.recv for collection
 

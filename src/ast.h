@@ -32,7 +32,7 @@ typedef enum {
     EXPR_OK,
     EXPR_ERR,
     EXPR_TRY,           // TASK-026: ? operator for error propagation
-    EXPR_OPT_CHAIN,     // Optional chaining: opt?.field — None-short-circuiting field access
+    EXPR_OPT_CHAIN,     // Optional chaining: opt?.field - None-short-circuiting field access
     EXPR_IF_EXPR,
     EXPR_STRING_INTERP,
     EXPR_RANGE,

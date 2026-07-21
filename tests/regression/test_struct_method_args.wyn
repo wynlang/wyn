@@ -1,4 +1,4 @@
-// Regression: a struct method taking parameters — fn add(self, n: int) — emitted
+// Regression: a struct method taking parameters - fn add(self, n: int) - emitted
 // mismatched C types between its forward declaration (int) and definition
 // (long long), causing "conflicting types for Adder_add". The forward decl now
 // matches the body (long long / const char* / double).

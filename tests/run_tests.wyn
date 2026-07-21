@@ -1,4 +1,4 @@
-// Wyn Test Runner — parallel via spawn/await (batched)
+// Wyn Test Runner - parallel via spawn/await (batched)
 
 fn run_test(path: string) -> int {
     var cmd = "./wyn run " + path + " 2>&1; echo EXIT:$?"
@@ -13,7 +13,7 @@ fn main() -> int {
     println("=== Wyn Test Runner ===")
     var tests: [string] = []
     var lines = read_file_content("tests/test_list.txt")
-    // Parse test list — one path per line
+    // Parse test list - one path per line
     var current = ""
     for i in 0..lines.len() {
         var ch = lines.char_at(i)

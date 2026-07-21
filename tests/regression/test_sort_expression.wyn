@@ -1,6 +1,6 @@
 // Regression: .sort() must be usable as an EXPRESSION (and chainable), not just
 // a bare statement. Emitting the void array_sort(&xs) made print(xs.sort()) /
-// var s = xs.sort() / xs.sort().reverse() fail with "incompatible type void" —
+// var s = xs.sort() / xs.sort().reverse() fail with "incompatible type void" -
 // which broke the project's own test_array_ops/test_showcase. (2026-07)
 fn main() {
     var xs = [3, 1, 2]

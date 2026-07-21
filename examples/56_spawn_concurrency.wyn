@@ -1,4 +1,4 @@
-// Spawn Concurrency — demonstrates concurrent execution patterns
+// Spawn Concurrency - demonstrates concurrent execution patterns
 
 fn worker(id: int) -> int {
     var result = id * 10
@@ -40,7 +40,7 @@ fn main() -> int {
         print("  ✓ All 100 results correct")
     }
 
-    // Shared atomic counter — safe concurrent mutation
+    // Shared atomic counter - safe concurrent mutation
     var counter = Shared.new(0)
     var inc_futures = []
     for i in 0..100 {

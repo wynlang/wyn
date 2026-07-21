@@ -1,4 +1,4 @@
-// generate_api_ref.wyn — Generate API reference from wyn_runtime.h
+// generate_api_ref.wyn - Generate API reference from wyn_runtime.h
 // Usage: wyn run scripts/generate_api_ref.wyn
 
 fn is_module_func(line: string) -> bool {
@@ -52,7 +52,7 @@ fn main() -> int {
     
     output = output + count.to_string() + " public functions found.\n\n"
     
-    // Group by module — output each module's functions
+    // Group by module - output each module's functions
     var modules = ["Args", "Base64", "Crypto", "Csv", "Data", "DateTime", "Db", "Encoding", "Env", "File", "HashMap", "HashSet", "Http", "Json", "Log", "Math", "Net", "Os", "Path", "Process", "Regex", "Socket", "StringBuilder", "System", "Task", "Toml", "Url", "Uuid", "Ws"]
     
     for m in 0..modules.len() {

@@ -1,8 +1,8 @@
 // Regression: a local string handed to a container/wrapper that stores it raw
-// (no retain) must NOT also be released at scope/return exit — that double-frees
+// (no retain) must NOT also be released at scope/return exit - that double-frees
 // the live element (use-after-free / empty reads). Covers struct fields, array
 // push of a call result, and Option/Result via the CLEAN surface constructors
-// (Some/Ok/Err — no mangled OptionString_* names). All were confirmed UAF under
+// (Some/Ok/Err - no mangled OptionString_* names). All were confirmed UAF under
 // AddressSanitizer before the fixes.
 // EXPECT: PASS: string ownership transfer
 

@@ -1,4 +1,4 @@
-// Regression: optional USER STRUCTS — `Struct?` now compiles and works.
+// Regression: optional USER STRUCTS - `Struct?` now compiles and works.
 // Previously only int/string/float/bool had Option families, so a struct payload
 // mis-lowered to OptionInt (`OptionInt_Some((User){...})` → C type error), the fn
 // returned WynOptional*, and match bound the payload as `long long`. Now each user

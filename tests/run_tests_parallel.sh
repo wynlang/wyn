@@ -1,5 +1,5 @@
 #!/bin/bash
-# Parallel unit test runner — runs all 110 tests concurrently
+# Parallel unit test runner - runs all 110 tests concurrently
 set -uo pipefail
 
 WYN="${WYN:-./wyn}"

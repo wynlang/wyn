@@ -1,11 +1,11 @@
 fn main() -> int {
     Test.init("Web Services E2E")
     
-    // 1. HTTP Client — GET
+    // 1. HTTP Client - GET
     var body = Http.get("https://httpbin.org/get")
     Test.assert(body.len() > 0, "HTTPS GET works")
     
-    // 2. HTTP Client — POST
+    // 2. HTTP Client - POST
     var pbody = Http.post("https://httpbin.org/post", "key=value")
     Test.assert(pbody.len() > 0, "HTTPS POST works")
     

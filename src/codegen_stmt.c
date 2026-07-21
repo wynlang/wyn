@@ -69,7 +69,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     }
     
     // Determine return type. No annotation (and nothing synthesized by the
-    // checker's inference) means VOID — the old "long long" default made a
+    // checker's inference) means VOID - the old "long long" default made a
     // module fn with a bare `return` guard emit non-void C ("should return a
     // value", bug M4 2026-07-18). Matches the same-file STMT_FN default.
     const char* return_type = fn_stmt->fn.return_type ? "long long" : "void";
@@ -301,7 +301,7 @@ void codegen_stmt(Stmt* stmt) {
                     // Emit call (args with temp IDs emit __sa{id} instead)
                     codegen_expr(_se);
                     emit("; ");
-                    // Release temps — except one whose ownership transferred to
+                    // Release temps - except one whose ownership transferred to
                     // an array via push (releasing it would double-free the element).
                     for (int si = 0; si < _fc; si++) {
                         if (_fresh[si] != _push_move_arg)
@@ -463,7 +463,7 @@ void codegen_stmt(Stmt* stmt) {
                         extern void register_tuple_var(const char*); register_tuple_var(_vn);
                     }
                 } else if (stmt->var.init->type == EXPR_TUPLE_INDEX) {
-                    // `var x = tup.N` — including the desugaring of tuple
+                    // `var x = tup.N` - including the desugaring of tuple
                     // destructuring `var a, b = tup`. The element can be any type
                     // (int/string/…); __auto_type copies the field's real C type
                     // instead of truncating a string field to long long.
@@ -481,7 +481,7 @@ void codegen_stmt(Stmt* stmt) {
                            stmt->var.init->index.array->type == EXPR_IDENT) {
                     char _ixn[256]; token_to_cstr(_ixn, sizeof(_ixn), stmt->var.init->index.array->token);
                     extern int is_str_array_var(const char*);
-                    // Prefer the array's REAL element type when known — otherwise an
+                    // Prefer the array's REAL element type when known - otherwise an
                     // indexed element (`var d = items[i]`) defaulted to long long even
                     // for a struct/float/string array, so `var d = structArray[i]`
                     // emitted `long long d = array_get_struct(..)` → C type error. Use
@@ -550,7 +550,7 @@ void codegen_stmt(Stmt* stmt) {
                             goto var_type_done;
                         }
                     }
-                    // Check if this is a struct method call — infer return type
+                    // Check if this is a struct method call - infer return type
                     bool _found_method_rt = false;
                     if (stmt->var.init->method_call.object->type == EXPR_IDENT) {
                         // Try expr_type first
@@ -590,7 +590,7 @@ void codegen_stmt(Stmt* stmt) {
                     // Methods that return arrays → WynArray (only when object is array, not string)
                     if (!_found_method_rt) {
                         char _mn2[64]; token_to_cstr(_mn2, sizeof(_mn2), stmt->var.init->method_call.method);
-                        // Check if object is a string — these methods return string, not array
+                        // Check if object is a string - these methods return string, not array
                         bool _obj_is_string = stmt->var.init->method_call.object->expr_type &&
                             stmt->var.init->method_call.object->expr_type->kind == TYPE_STRING;
                         if (!_obj_is_string && (strcmp(_mn2, "sort") == 0 || strcmp(_mn2, "reverse") == 0 ||
@@ -601,7 +601,7 @@ void codegen_stmt(Stmt* stmt) {
                             char _vn2[256]; token_to_cstr(_vn2, sizeof(_vn2), stmt->var.name);
                             extern void register_array_var(const char*); register_array_var(_vn2);
                             // S2: register the RESULT as a string array only
-                            // when the checker typed it [string] — a str->int
+                            // when the checker typed it [string] - a str->int
                             // .map result registered by SOURCE type made
                             // c = b.map((s) => s.len()) read ints as char*.
                             bool _res_is_str_arr =
@@ -640,7 +640,7 @@ void codegen_stmt(Stmt* stmt) {
                             char _vn3[64]; token_to_cstr(_vn3, sizeof(_vn3), _obj->token);
                             extern const char* get_struct_var_type(const char*);
                             _stype = get_struct_var_type(_vn3);
-                            // Static constructor: Type.new() — object is the type name itself
+                            // Static constructor: Type.new() - object is the type name itself
                             if (!_stype) {
                                 extern int is_known_struct(const char*);
                                 if (is_known_struct(_vn3)) _stype = _vn3;
@@ -666,7 +666,7 @@ void codegen_stmt(Stmt* stmt) {
                             if (_frt) { extern int is_known_struct(const char*); if (is_known_struct(_frt)) _stype = _frt; }
                         }
                         if (!_stype && _obj->type == EXPR_METHOD_CALL) {
-                            // Walk deeper — function call at root of chain
+                            // Walk deeper - function call at root of chain
                             Expr* _walk = _obj;
                             while (_walk && _walk->type == EXPR_METHOD_CALL) _walk = _walk->method_call.object;
                             if (_walk && _walk->type == EXPR_CALL && _walk->call.callee->type == EXPR_IDENT) {
@@ -724,7 +724,7 @@ void codegen_stmt(Stmt* stmt) {
                             }
                         }
                     }
-                    // Check if object is a trait — look up method return type from trait decl
+                    // Check if object is a trait - look up method return type from trait decl
                     if (!_found_method_rt && stmt->var.init->method_call.object->type == EXPR_IDENT && current_program) {
                         char _on2[64]; token_to_cstr(_on2, sizeof(_on2), stmt->var.init->method_call.object->token);
                         extern const char* get_struct_var_type(const char*);
@@ -939,7 +939,7 @@ void codegen_stmt(Stmt* stmt) {
                             register_string_future(_vn2);
                         } else if (_srt && strcmp(_srt, "float") == 0) {
                             // Float results are BOXED (a malloc'd double) like
-                            // structs — the word cast truncated them. Register
+                            // structs - the word cast truncated them. Register
                             // so await derefs *(double*) instead.
                             char _vn2[256]; token_to_cstr(_vn2, sizeof(_vn2), stmt->var.name);
                             extern void register_struct_future(const char*, const char*);
@@ -1048,7 +1048,7 @@ void codegen_stmt(Stmt* stmt) {
                     c_type = "WynResult*";
                     needs_arc_management = true;
                 } else if (stmt->var.init->type == EXPR_OPT_CHAIN) {
-                    // `var x = opt?.field` — the checker resolved the result Option
+                    // `var x = opt?.field` - the checker resolved the result Option
                     // family (Option<FieldType>); use it and register for match.
                     if (stmt->var.init->expr_type && stmt->var.init->expr_type->kind == TYPE_STRUCT &&
                         stmt->var.init->expr_type->struct_type.name.length > 0) {
@@ -1127,7 +1127,7 @@ void codegen_stmt(Stmt* stmt) {
                     } else if (stmt->var.init->index.array->expr_type &&
                                stmt->var.init->index.array->expr_type->kind == TYPE_ARRAY &&
                                stmt->var.init->index.array->expr_type->array_type.element_type) {
-                        // The indexed array has a KNOWN element type — use it, rather
+                        // The indexed array has a KNOWN element type - use it, rather
                         // than falling through to the name-substring heuristics below
                         // (which mis-typed e.g. `var x = parts[1]` on an int array as
                         // const char* purely because the var was named "parts").
@@ -1166,7 +1166,7 @@ void codegen_stmt(Stmt* stmt) {
                             }
                         } else if (stmt->var.init->index.array->type == EXPR_IDENT) {
                             // Content-tracked string arrays only. (Removed the old
-                            // args/files/names/parts/entries name-substring list — it
+                            // args/files/names/parts/entries name-substring list - it
                             // mis-typed int/float arrays that happened to share those
                             // names; the real element type above is authoritative.)
                             char _idxvan[256];
@@ -1260,7 +1260,7 @@ void codegen_stmt(Stmt* stmt) {
                                 break;
                             }
                             default: {
-                                // Call returning an Option/Result family — set the
+                                // Call returning an Option/Result family - set the
                                 // concrete struct c_type AND register the var so a
                                 // subsequent match detects the family. Consult the
                                 // fn-return registry (covers int?/string?, Option<>,
@@ -1270,8 +1270,8 @@ void codegen_stmt(Stmt* stmt) {
                                     char _cfn[128]; token_to_cstr(_cfn, sizeof(_cfn), stmt->var.init->call.callee->token);
                                     extern const char* get_function_return_type(const char*);
                                     const char* _frt = get_function_return_type(_cfn);
-                                    // Accept any Option*/Result* family — including a
-                                    // monomorphic OptionStruct (e.g. OptionUser) — not
+                                    // Accept any Option*/Result* family - including a
+                                    // monomorphic OptionStruct (e.g. OptionUser) - not
                                     // just the four builtin scalar families.
                                     if (_frt && (strncmp(_frt,"Option",6)==0 || strncmp(_frt,"Result",6)==0)) {
                                         static char _orbuf[128]; snprintf(_orbuf, sizeof(_orbuf), "%s", _frt);
@@ -1567,7 +1567,7 @@ void codegen_stmt(Stmt* stmt) {
                 if (lambda_var_count < 256) {
                     LambdaVarInfo* _lvi = &lambda_var_info[lambda_var_count];
                     token_to_cstr(_lvi->var_name, sizeof(_lvi->var_name), stmt->var.name);
-                    // name/name_len/is_closure are read at call sites — must be set,
+                    // name/name_len/is_closure are read at call sites - must be set,
                     // not left as stale garbage (an uninitialized is_closure would
                     // mis-route calls through the WynClosure path and emit garbage).
                     token_to_cstr(_lvi->name, sizeof(_lvi->name), stmt->var.name);
@@ -1655,7 +1655,7 @@ void codegen_stmt(Stmt* stmt) {
                 char _vn[512]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
                 // A var whose name is a C keyword/reserved symbol (long/int/char/
                 // double/…) must be emitted with the wynfn_ prefix, and registered
-                // so its later uses (EXPR_IDENT) prefix too — else the C is invalid.
+                // so its later uses (EXPR_IDENT) prefix too - else the C is invalid.
                 { extern int is_c_name_collision(const char*); extern void register_user_collision(const char*);
                   if (is_c_name_collision(_vn)) { register_user_collision(_vn);
                     memmove(_vn + WYN_UFN_PFX_LEN, _vn, strlen(_vn) + 1); memcpy(_vn, WYN_UFN_PFX, WYN_UFN_PFX_LEN); } }
@@ -1735,7 +1735,7 @@ void codegen_stmt(Stmt* stmt) {
                     extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
                     extern int string_var_scope_depth;
                     extern int string_var_releasable_count; extern char* string_var_releasable[];
-                    // Check if source is a top-level (releasable) var — if so, don't move
+                    // Check if source is a top-level (releasable) var - if so, don't move
                     bool _source_is_outer = false;
                     for (int _ri = 0; _ri < string_var_releasable_count; _ri++) {
                         if (strcmp(string_var_releasable[_ri], _ivn) == 0) { _source_is_outer = true; break; }
@@ -1745,23 +1745,23 @@ void codegen_stmt(Stmt* stmt) {
                         extern void unregister_string_var(const char*);
                         unregister_string_var(_ivn);
                     } else {
-                        // Copy: source is still live or from outer scope — retain
+                        // Copy: source is still live or from outer scope - retain
                         emit("wyn_rc_retain(%.*s);\n", stmt->var.name.length, stmt->var.name.start);
                     }
                 }
             }
             // RC: a local string stored into a struct field is aliased by that
             // field, but the field holds the pointer raw (no retain) and struct
-            // _cleanup does not release string fields — so structs do not own
+            // _cleanup does not release string fields - so structs do not own
             // their string fields. If we ALSO release the local at scope/return
             // exit and the struct (or a field of it) escapes the local's scope
             // (e.g. `var p = P{name: s}; return p.name`), the field is left
             // dangling → use-after-free (empty/garbage reads). Fix: MOVE any
-            // dead local string stored into a field — drop it from the string
+            // dead local string stored into a field - drop it from the string
             // release/tracking lists so scope exit skips its release. This only
             // ever REMOVES a release, so it can never cause a double-free or
             // UAF; a still-live local (used after the struct-init in the same
-            // block) is left untouched — its read happens before scope exit, so
+            // block) is left untouched - its read happens before scope exit, so
             // it is already safe.
             if (stmt->var.init && stmt->var.init->type == EXPR_STRUCT_INIT) {
                 extern int is_string_var(const char*);
@@ -1783,16 +1783,16 @@ void codegen_stmt(Stmt* stmt) {
                 }
             }
             // RC: the same raw-store ownership issue applies to the string
-            // Option/Result constructors — OptionString_Some / ResultString_Ok /
+            // Option/Result constructors - OptionString_Some / ResultString_Ok /
             // ResultString_Err store the pointer without retaining, and the
             // wrapper never releases it. `var o = OptionString_Some(s); return
             // OptionString_unwrap(o)` releases s at scope exit while o.value (and
             // the returned pointer) still alias it → use-after-free. MOVE a dead
             // local string argument (drop its scope-exit release). Move-only, so
             // it can only remove a UAF-causing release, never add a double-free.
-            // A local string moved into a constructor that stores it raw — an
+            // A local string moved into a constructor that stores it raw - an
             // Option/Result (Some/Ok/Err, surface or mangled) or a user enum
-            // variant (E.A(s)) — is aliased by the wrapper and released with it;
+            // variant (E.A(s)) - is aliased by the wrapper and released with it;
             // also releasing the local at scope exit would leave the payload
             // dangling (use-after-free / empty reads). Collect every string-var
             // payload argument and MOVE the dead ones (drop scope-exit release).
@@ -1869,7 +1869,7 @@ void codegen_stmt(Stmt* stmt) {
             // RC: a local string moved into a RETURNED enum-variant constructor
             // (e.g. `return E.A(local)`) is stored raw in the enum payload and
             // escapes with it; releasing it before the return would leave the
-            // payload dangling (use-after-free / empty reads) — same class as the
+            // payload dangling (use-after-free / empty reads) - same class as the
             // struct-field / Some-Ok-Err ownership transfer. Unregister such a
             // dead string arg so the release below skips it (MOVE). Move-only, so
             // it can never introduce a double-free.
@@ -1893,10 +1893,10 @@ void codegen_stmt(Stmt* stmt) {
                     }
                 }
             }
-            // RC: release local string variables before return — EXCEPT any
+            // RC: release local string variables before return - EXCEPT any
             // referenced by the return expression itself (an exact-identifier
             // exception wasn't enough: `return "<y>" + t + "</y>"` released t
-            // before the concat read it — use-after-free, bug M3 2026-07-18).
+            // before the concat read it - use-after-free, bug M3 2026-07-18).
             {
                 extern void emit_string_releases_for_return(Expr*);
                 extern int get_string_var_count(void);
@@ -1922,7 +1922,7 @@ void codegen_stmt(Stmt* stmt) {
             } else if (!stmt->ret.value) {
                 // Bare `return;`. If the emitted C function is non-void (e.g.
                 // `long long wyn_main()` for an inferred-void main), a valueless
-                // return is a C error — emit `return 0;` instead.
+                // return is a C error - emit `return 0;` instead.
                 extern bool current_fn_c_nonvoid;
                 emit(current_fn_c_nonvoid ? "return 0;\n" : "return;\n");
             } else {
@@ -2114,8 +2114,8 @@ void codegen_stmt(Stmt* stmt) {
                 Stmt* s = stmt->block.stmts[i];
                 bool is_spawn_var = (s->type == STMT_VAR && s->var.init &&
                                      s->var.init->type == EXPR_SPAWN);
-                // An UNBOUND spawn — bare `spawn f()` inside the block (its own
-                // STMT_SPAWN) — must ALSO be joined at the closing brace, else it
+                // An UNBOUND spawn - bare `spawn f()` inside the block (its own
+                // STMT_SPAWN) - must ALSO be joined at the closing brace, else it
                 // escapes the structured-concurrency barrier (it would lower to a
                 // fire-and-forget wyn_spawn_fast_traced and could outlive the block).
                 // Wrap its call in an EXPR_SPAWN and reuse the joinable expression
@@ -2179,7 +2179,7 @@ void codegen_stmt(Stmt* stmt) {
                 if (has_timeout)
                     snprintf(getcall, sizeof(getcall), "future_get_timeout(%s, __par_to_%d)", joined_futs[j], par_id);
                 else
-                    // Parallel-block futures are hidden temps with one reader —
+                    // Parallel-block futures are hidden temps with one reader -
                     // consume so the slot recycles.
                     snprintf(getcall, sizeof(getcall), "future_get_consume(%s)", joined_futs[j]);
                 if (joined_names[j][0] == '\0')
@@ -2203,7 +2203,7 @@ void codegen_stmt(Stmt* stmt) {
             int sid = select_ctr++;
             if (n == 0) { break; }
             // Task_select_n handles every arity. The old n==1 / n>3 fallback
-            // hardcoded __sel = 0, unconditionally dispatching arm 0 — a
+            // hardcoded __sel = 0, unconditionally dispatching arm 0 - a
             // 4-arm select where only channel 4 had data blocked forever in
             // Task_recv on empty channel 1.
             emit("{ long long __selch_%d[%d] = { ", sid, n);
@@ -2280,7 +2280,7 @@ void codegen_stmt(Stmt* stmt) {
                     // Array type like [int] or [string]
                     return_type = "WynArray";
                 } else if (stmt->fn.return_type->type == EXPR_TUPLE) {
-                    // Tuple return type — typedef already emitted by forward declaration
+                    // Tuple return type - typedef already emitted by forward declaration
                     // Use the same name: _wyn_tup_<fn_name>
                     static char _trt2[256];
                     snprintf(_trt2, sizeof(_trt2), "_wyn_tup_%.*s", stmt->fn.name.length, stmt->fn.name.start);
@@ -2651,7 +2651,7 @@ void codegen_stmt(Stmt* stmt) {
 
             // Function body
             if (is_generator) {
-                // L3: Generator wrapper — allocate args, create iterator, return
+                // L3: Generator wrapper - allocate args, create iterator, return
                 char gn[256]; token_to_cstr(gn, sizeof(gn), stmt->fn.name);
                 if (stmt->fn.param_count > 0) {
                     emit("    typedef struct { ");
@@ -2771,7 +2771,7 @@ void codegen_stmt(Stmt* stmt) {
             // runtime function), emitting our own prototype would conflict
             // ("conflicting types for 'printf'"). is_c_name_collision already
             // tracks that set. In that case skip the prototype entirely and call
-            // the existing declaration — the checker still has the user-declared
+            // the existing declaration - the checker still has the user-declared
             // signature for type-checking the call.
             {
                 char _en[256]; token_to_cstr(_en, sizeof(_en), stmt->extern_fn.name);
@@ -2860,8 +2860,8 @@ void codegen_stmt(Stmt* stmt) {
                         } else if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
                             c_type = "long long";
                         } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
-                            // Wyn `float` is C `double` (64-bit) everywhere — values,
-                            // params, returns — so a struct field must be `double`
+                            // Wyn `float` is C `double` (64-bit) everywhere - values,
+                            // params, returns - so a struct field must be `double`
                             // too. Emitting `float` (32-bit) truncated precision on
                             // assignment and broke by-value FFI struct layout.
                             c_type = "double";
@@ -2880,7 +2880,7 @@ void codegen_stmt(Stmt* stmt) {
                         // Array field type
                         c_type = "WynArray";
                     } else if (stmt->struct_decl.field_types[i]->type == EXPR_OPTIONAL_TYPE) {
-                        // Optional field `f: T?` — emit the Option<T> family type so
+                        // Optional field `f: T?` - emit the Option<T> family type so
                         // Some(...)/None and match work (was defaulting to long long,
                         // which miscompiled struct construction + match on the field).
                         Expr* inner = stmt->struct_decl.field_types[i]->optional_type.inner_type;
@@ -3768,7 +3768,7 @@ void codegen_stmt(Stmt* stmt) {
                          stmt->for_stmt.index_var.length, stmt->for_stmt.index_var.start);
                 }
                 // Register loop var(s) as locals: inside a MODULE function,
-                // EXPR_IDENT prefixes anything it doesn't know is a local — the
+                // EXPR_IDENT prefixes anything it doesn't know is a local - the
                 // declaration above emitted the bare name but every use became
                 // `mod_name` (undeclared identifier, bug M2 2026-07-18).
                 {
@@ -3927,7 +3927,7 @@ void codegen_stmt(Stmt* stmt) {
                                     emit("static ");
                                 }
                                 
-                                // Determine return type — void when unannotated,
+                                // Determine return type - void when unannotated,
                                 // matching the definition emitter (M4 fix: the
                                 // prototype said long long while the definition
                                 // said void → "conflicting types").
@@ -4038,7 +4038,7 @@ void codegen_stmt(Stmt* stmt) {
                                     } else if (var_stmt->init->type == EXPR_ARRAY) {
                                         emit("WynArray %s_%.*s;\n", c_mod_name, var_stmt->name.length, var_stmt->name.start);
                                     } else if (var_stmt->init->type == EXPR_CALL || var_stmt->init->type == EXPR_METHOD_CALL) {
-                                        // HashMap.new() etc — defer init
+                                        // HashMap.new() etc - defer init
                                         if (var_stmt->init->expr_type && var_stmt->init->expr_type->kind == TYPE_MAP) {
                                             emit("WynHashMap* %s_%.*s;\n", c_mod_name, var_stmt->name.length, var_stmt->name.start);
                                         } else {

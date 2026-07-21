@@ -3,7 +3,7 @@
 // ("struct 'P' has no method 'bogus'") instead of slipping through to a codegen
 // "Unknown method (no type info)" C failure. This test exercises the VALID
 // paths that must keep working: struct-body methods (int + string returns) and
-// a field access — proving the new guard doesn't over-fire.
+// a field access - proving the new guard doesn't over-fire.
 struct Vec {
     x: int
     y: int

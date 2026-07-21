@@ -28,7 +28,7 @@ fn main() -> int {
         return 1
     }
 
-    // ? on error path — should propagate
+    // ? on error path - should propagate
     var r2 = double_parsed("abc")
     if ResultInt_is_err(r2) {
         println("err: propagated")

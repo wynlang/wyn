@@ -1,5 +1,5 @@
 // Test: Pipe-style lambda with block body
-// This was broken before — |x| { stmt } didn't work
+// This was broken before - |x| { stmt } didn't work
 fn main() {
     var nums = [1, 2, 3, 4, 5]
 

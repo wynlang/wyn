@@ -1,6 +1,6 @@
 #!/bin/bash
 # Unterminated string literals must report "Unterminated string literal"
-# pointing at the OPENING quote — not a misleading "Expected '}'/')'" at the
+# pointing at the OPENING quote - not a misleading "Expected '}'/')'" at the
 # end of the file (the lexer used to silently swallow the rest of the file
 # and fabricate an EOF token). Also: exactly ONE error per typo (no cascade),
 # and identical consecutive diagnostics are deduped.

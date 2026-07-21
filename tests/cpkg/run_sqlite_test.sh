@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # `wyn add sqlite3` end-to-end dogfood: add the SQLite binding from the curated
 # registry, then build+run a program that opens a DB, creates a table, inserts
-# rows via prepared statements, and queries them back — proving the whole FFI
+# rows via prepared statements, and queries them back - proving the whole FFI
 # pipeline (add → bindgen → import → [ffi] link → opaque handles via Ptr → build
 # → run) against a real, non-trivial C library with opaque out-parameters.
 #

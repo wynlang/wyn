@@ -16,8 +16,8 @@
 extern long long wyn_main(void);
 
 // Test hook: nonzero when any Test.* assertion failed (defined in
-// test_runtime.c, which is in every runtime source list — clang lib, TCC lib,
-// and the per-build list — so a plain extern always links).
+// test_runtime.c, which is in every runtime source list - clang lib, TCC lib,
+// and the per-build list - so a plain extern always links).
 extern int wyn_test_exit_code(void);
 
 // Drain outstanding fire-and-forget `spawn` tasks before the process exits, so

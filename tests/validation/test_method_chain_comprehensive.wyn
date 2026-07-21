@@ -1,4 +1,4 @@
-// Test: Method chaining — the core of Wyn's "flow"
+// Test: Method chaining - the core of Wyn's "flow"
 fn main() {
     // Array chaining
     var data = [5, 3, 8, 1, 9, 2, 7, 4, 6]

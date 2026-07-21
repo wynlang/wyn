@@ -2,10 +2,10 @@
 """Minimal LSP-protocol regression test for `wyn lsp`.
 
 Speaks LSP over stdio to the compiler's built-in language server and asserts the
-core editor features work end to end — the same surface the nvim-wyn / vscode-wyn
+core editor features work end to end - the same surface the nvim-wyn / vscode-wyn
 plugins depend on:
 
-  - initialize returns the advertised capabilities (NOT null — a whitespace bug
+  - initialize returns the advertised capabilities (NOT null - a whitespace bug
     in method parsing once made every request answer null)
   - diagnostics come from `wyn check` (type-check only, no execution) and carry
     the real error MESSAGE, not a bare "--> file:line" location
@@ -71,7 +71,7 @@ class Client:
         time.sleep(seconds)
 
     def wait_response(self, rid, timeout=6.0):
-        """Block until response `rid` arrives (or timeout). Deterministic — avoids
+        """Block until response `rid` arrives (or timeout). Deterministic - avoids
         flaky fixed sleeps."""
         end = time.time() + timeout
         while time.time() < end:
@@ -121,7 +121,7 @@ def main():
     uri = "file://" + os.path.join(workdir, "prog.wyn")
     c = Client()
 
-    # 1. initialize — PRETTY-printed JSON on purpose (regression: the server used
+    # 1. initialize - PRETTY-printed JSON on purpose (regression: the server used
     #    to only match `"method":"x"` with no space and answered null for these).
     c.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": {"capabilities": {}}}, compact=False)
@@ -199,7 +199,7 @@ def main():
         f.write("// Bindings for C package 'm'\n"
                 "extern fn sqrt(a0: float) -> float;\n"
                 "extern fn pow(a0: float, a1: float) -> float;\n"
-                "// TODO: skipme — unsupported\n")
+                "// TODO: skipme - unsupported\n")
     pkg_uri = "file://" + os.path.join(workdir, "usepkg.wyn")
     pkg_src = "import m\nfn main() -> int {\n    var r = m.\n    return 0\n}\n"
     c.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",

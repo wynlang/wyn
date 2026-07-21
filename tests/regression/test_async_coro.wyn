@@ -1,6 +1,6 @@
 // W8: awaited spawn/await_all/parallel produce identical results whether they run
 // on the thread POOL (default) or as COROUTINES on the M:N scheduler
-// (WYN_ASYNC_CORO=1). This file is the deterministic oracle — run_bdd runs it on
+// (WYN_ASYNC_CORO=1). This file is the deterministic oracle - run_bdd runs it on
 // the default (pool) substrate; the suite is also run with WYN_ASYNC_CORO=1 in CI
 // to prove the coroutine substrate is behavior-identical.
 // EXPECT: 49

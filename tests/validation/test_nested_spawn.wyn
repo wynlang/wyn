@@ -1,4 +1,4 @@
-// Test: nested spawn — spawning from inside a coroutine
+// Test: nested spawn - spawning from inside a coroutine
 fn inner(x: int) -> int {
     return x * 10
 }

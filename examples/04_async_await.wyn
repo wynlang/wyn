@@ -1,4 +1,4 @@
-// Concurrency — spawn, await, await_all, await_any, Shared
+// Concurrency - spawn, await, await_all, await_any, Shared
 
 fn fetch_data() -> int {
     return 42
@@ -27,7 +27,7 @@ fn main() -> int {
     var result = await future2
     print("Basic:     fetch -> process = ${result}")
 
-    // await_all — run multiple tasks, collect all results
+    // await_all - run multiple tasks, collect all results
     var futures = []
     for i in 0..5 {
         futures.push(spawn compute(i * 1000))
@@ -35,11 +35,11 @@ fn main() -> int {
     var results = await_all(futures)
     print("await_all: [${results[0]}, ${results[1]}, ${results[2]}, ${results[3]}, ${results[4]}]")
 
-    // await_any — race multiple tasks, get first result
+    // await_any - race multiple tasks, get first result
     var first = await_any([spawn compute(100), spawn compute(200), spawn compute(300)])
     print("await_any: first = ${first}")
 
-    // Shared atomic counter — safe concurrent mutation
+    // Shared atomic counter - safe concurrent mutation
     var counter = Shared.new(0)
     var inc_futures = []
     for i in 0..100 {

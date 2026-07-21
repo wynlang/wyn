@@ -1,7 +1,7 @@
 // Regression: FFI pointer-cell helpers (`Ptr`) + string->ptr arg coercion + a
 // `ptr` parameter on a user function. These are the primitives an opaque C
 // out-parameter needs (e.g. sqlite3_open(path, sqlite3** out)). Uses libc only
-// (malloc/memcpy/free — always linked), so it's hermetic. Exercises:
+// (malloc/memcpy/free - always linked), so it's hermetic. Exercises:
 //   - Ptr.cell()/read()/write()/free() round-trip a pointer through a heap cell
 //   - passing a Wyn `string` where an extern expects `ptr` (const char*)
 //   - a user fn taking a `ptr` parameter (lowers to void*)

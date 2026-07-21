@@ -3,7 +3,7 @@
 // EXPECT: small
 // EXPECT: big
 // EXPECT: mid
-// Match in STATEMENT position (no result binding) — these patterns all worked
+// Match in STATEMENT position (no result binding) - these patterns all worked
 // in expression form but were broken as statements: or-patterns emitted
 // constant 0 (arm silently NEVER matched), guards referenced an undeclared
 // binding (internal codegen error), and range patterns didn't parse at all.

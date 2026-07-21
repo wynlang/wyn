@@ -41,7 +41,7 @@ fn main() {
     Test.assert(ResultInt_is_err(r2), "div by zero err")
 
     // 4: ? operator propagation
-    // (tested indirectly — safe_div returns ResultInt)
+    // (tested indirectly - safe_div returns ResultInt)
 
     // 5: higher-order function with named fn
     var doubled = apply(21, fn(x: int) -> int { return x * 2 })

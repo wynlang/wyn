@@ -48,7 +48,7 @@ CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/
 
 # codegen.c #includes these .c files directly (single translation unit), so they
 # are NOT in CORE_SRCS (compiling them standalone would duplicate symbols). List
-# them here as prerequisites so editing one triggers a rebuild — otherwise make
+# them here as prerequisites so editing one triggers a rebuild - otherwise make
 # sees no changed prerequisite and silently keeps a stale binary.
 CODEGEN_INCLUDED_SRCS = src/codegen_expr.c src/codegen_stmt.c src/codegen_lambda.c src/codegen_program.c
 
@@ -182,7 +182,7 @@ debug-memory: wyn
 # (The old test_unit/test_integration/test_stdlib/... targets referenced C unit
 # sources and shell scripts that no longer exist; they are gone. The separate
 # run_tests_parallel.sh needs a tests/test_list.txt that isn't in the tree, so
-# it's not wired into the default target — run it manually if you regenerate
+# it's not wired into the default target - run it manually if you regenerate
 # the list.)
 test: wyn
 	@echo "=== Running assertion tests (run_bdd.sh) ==="
@@ -505,7 +505,7 @@ RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/wyn_wrapper.c \
           src/test_runtime.c src/file_io_simple.c src/stdlib_enhanced.c
 
 # The runtime library must be rebuilt whenever any runtime source (or a header
-# they include, notably wyn_runtime.h/io_loop.h) changes — otherwise compiled
+# they include, notably wyn_runtime.h/io_loop.h) changes - otherwise compiled
 # programs silently link a stale libwyn_rt.a. Depend on the sources + headers so
 # `make` detects the change instead of reporting "Nothing to be done".
 runtime: runtime/libwyn_rt.a
@@ -521,7 +521,7 @@ runtime/libwyn_rt.a: $(RT_SRCS) $(wildcard src/*.h) | wyn$(EXE_EXT)
 
 # ASan-instrumented runtime: compile RT_SRCS with -fsanitize=address into a
 # separate lib, then build+run a set of representative tests against it. The
-# RC/string/IO bugs live in the RUNTIME — `make debug-memory` only instruments
+# RC/string/IO bugs live in the RUNTIME - `make debug-memory` only instruments
 # the compiler, so this is the check that has caught every real UAF. Used by
 # the sanitizer CI job; run locally with `make asan-runtime-test`.
 runtime-asan: runtime/libwyn_rt_asan.a
@@ -538,7 +538,7 @@ runtime/libwyn_rt_asan.a: $(RT_SRCS) $(wildcard src/*.h)
 
 # Compile a representative test set's generated C against the ASan runtime
 # and run each binary. Any ASan report (UAF, overflow, leak-at-exit is NOT
-# checked — detect_leaks=0 keeps signal high) fails the target.
+# checked - detect_leaks=0 keeps signal high) fails the target.
 ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/expect/test_lambda_typed_variants.wyn \
              tests/expect/test_arrow_lambda.wyn \
@@ -584,7 +584,7 @@ runtime/libwyn_rt_tsan.a: $(RT_SRCS) $(wildcard src/*.h)
 	@echo "Built runtime/libwyn_rt_tsan.a"
 
 # Concurrency-focused test set: spawn/await/parallel/channels are where the
-# two executors interleave threads. Each binary runs twice — default
+# two executors interleave threads. Each binary runs twice - default
 # (coroutine) and WYN_ASYNC_POOL=1 (thread pool). Any TSan report fails.
 TSAN_TESTS = tests/expect/test_channels.wyn \
              tests/expect/test_parallel.wyn \
@@ -614,7 +614,7 @@ tsan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_tsan.a
 	@echo "tsan-runtime: all clean"
 
 # Precompiled header for the dev loop (macOS/clang). Flags MUST match the -O0
-# dev compile in main.c exactly — clang refuses a pch whose flags differ.
+# dev compile in main.c exactly - clang refuses a pch whose flags differ.
 ifeq ($(shell uname),Darwin)
 runtime: runtime/wyn_runtime.pch
 runtime/wyn_runtime.pch: src/wyn_runtime.h
@@ -623,7 +623,7 @@ runtime/wyn_runtime.pch: src/wyn_runtime.h
 		echo "Built runtime/wyn_runtime.pch ($$(du -h runtime/wyn_runtime.pch | cut -f1))" || true
 endif
 
-# TCC runtime — excludes spawn.c, coroutine.c (can't compile macOS headers with TCC)
+# TCC runtime - excludes spawn.c, coroutine.c (can't compile macOS headers with TCC)
 TCC_BIN = vendor/tcc/bin/tcc
 TCC_RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/io_loop.c src/runtime_exports.c src/wyn_wrapper.c src/wyn_interface.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c
 runtime-tcc:

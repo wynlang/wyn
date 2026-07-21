@@ -1,4 +1,4 @@
-// Regression: `for x, y in zip(a, b)` — Pythonic parallel iteration. Binds
+// Regression: `for x, y in zip(a, b)` - Pythonic parallel iteration. Binds
 // x = a[i], y = b[i] for i in 0..min(len(a), len(b)). Both loop variables are
 // VALUES (not index, value). Desugars in the parser to a counted loop over a
 // hidden index with the two element bindings prepended to the body.

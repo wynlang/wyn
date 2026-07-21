@@ -1,4 +1,4 @@
-// Wyn GUI Module — SDL2 backend
+// Wyn GUI Module - SDL2 backend
 // Provides window creation, drawing, and event handling
 // Conditionally compiled when WYN_USE_GUI is defined
 
@@ -99,7 +99,7 @@ void Gui_destroy() {
     gui_window = NULL;
 }
 
-// Text rendering (basic — uses SDL_RenderDrawPoint for pixel font)
+// Text rendering (basic - uses SDL_RenderDrawPoint for pixel font)
 static void gui_draw_char(int x, int y, char c, int scale) {
     // 5x7 bitmap font for ASCII 32-126
     static const unsigned char font[][7] = {
@@ -223,14 +223,14 @@ void Gui_text(long long x, long long y, const char* text, long long scale) {
 }
 
 #else
-// GUI not available — all functions print error on first use
+// GUI not available - all functions print error on first use
 static int _gui_warned = 0;
 static void _gui_warn(void) {
     if (!_gui_warned) {
         fprintf(stderr, "\033[31mError:\033[0m Gui module requires SDL2.\n");
         fprintf(stderr, "  macOS:  brew install sdl2\n");
         fprintf(stderr, "  Linux:  apt install libsdl2-dev\n");
-        fprintf(stderr, "  Or use the App module (webview) instead — no dependencies.\n");
+        fprintf(stderr, "  Or use the App module (webview) instead - no dependencies.\n");
         _gui_warned = 1;
     }
 }
@@ -348,7 +348,7 @@ void Gui_rect_outline(long long x, long long y, long long w, long long h) {
     SDL_RenderDrawRect(gui_renderer, &rect);
 }
 
-// Image loading (BMP only — no SDL_image dependency)
+// Image loading (BMP only - no SDL_image dependency)
 typedef struct { SDL_Texture* tex; int w; int h; } WynSprite;
 #define MAX_SPRITES 64
 static WynSprite sprites[MAX_SPRITES] = {0};

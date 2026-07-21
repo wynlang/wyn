@@ -1,4 +1,4 @@
-// Test: Concurrency patterns — channels, shared state, parallel map
+// Test: Concurrency patterns - channels, shared state, parallel map
 fn worker(id: int) -> int {
     var result = 0
     for i in 0..1000 { result += 1 }

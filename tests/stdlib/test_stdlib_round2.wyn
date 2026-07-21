@@ -97,7 +97,7 @@ fn main() -> int {
     
     // Math round 2
     Test.init("Math Round 2")
-    // lerp and map_range return float — test via string
+    // lerp and map_range return float - test via string
     Test.assert(1 == 1, "math extensions exist")
     Test.summary()
     

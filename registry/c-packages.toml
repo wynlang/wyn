@@ -3,22 +3,22 @@
 # headers to generate bindings from. The portable default is a system library
 # (via -l) resolved by name; bundled-source recipes vendor the .c and build a .a
 # at add-time (works identically on every platform). Fields:
-#   description   — one-line summary (shown by `wyn add`)
-#   version       — recipe/library version string (pinned into wyn.lock)
-#   libs          — library names → -l<name> (written into the user's [ffi].libs)
-#   lib_dirs      — extra -L search dirs (optional)
-#   include_dirs  — extra -I search dirs (optional; also used to find headers to bind)
-#   headers       — comma/space list of header names to run `wyn bind` over
-#   system.<mgr>  — per-OS system package name (informational: install hint)
+#   description   - one-line summary (shown by `wyn add`)
+#   version       - recipe/library version string (pinned into wyn.lock)
+#   libs          - library names → -l<name> (written into the user's [ffi].libs)
+#   lib_dirs      - extra -L search dirs (optional)
+#   include_dirs  - extra -I search dirs (optional; also used to find headers to bind)
+#   headers       - comma/space list of header names to run `wyn bind` over
+#   system.<mgr>  - per-OS system package name (informational: install hint)
 
 [m]
-description = "C math library (libm) — sqrt, pow, sin, cos, …"
+description = "C math library (libm) - sqrt, pow, sin, cos, …"
 version = "system"
 libs = "m"
 headers = "math.h"
 
 [z]
-description = "zlib — DEFLATE compression (compress2, uncompress, crc32)"
+description = "zlib - DEFLATE compression (compress2, uncompress, crc32)"
 version = "system"
 libs = "z"
 headers = "zlib.h"
@@ -27,7 +27,7 @@ system.apt = "zlib1g-dev"
 system.pacman = "zlib"
 
 [curl]
-description = "libcurl — HTTP/URL transfers"
+description = "libcurl - HTTP/URL transfers"
 version = "system"
 libs = "curl"
 headers = "curl/curl.h"
@@ -36,7 +36,7 @@ system.apt = "libcurl4-openssl-dev"
 system.pacman = "curl"
 
 [sqlite3]
-description = "SQLite — embedded SQL database engine (opaque handles + prepared statements)"
+description = "SQLite - embedded SQL database engine (opaque handles + prepared statements)"
 version = "system"
 libs = "sqlite3"
 headers = "sqlite3.h"
@@ -45,7 +45,7 @@ system.apt = "libsqlite3-dev"
 system.pacman = "sqlite"
 
 [crypto]
-description = "OpenSSL libcrypto — hashing (SHA/MD5), ciphers, RSA/EC, random"
+description = "OpenSSL libcrypto - hashing (SHA/MD5), ciphers, RSA/EC, random"
 version = "system"
 libs = "crypto"
 pkgconfig = "libcrypto"
@@ -55,7 +55,7 @@ system.apt = "libssl-dev"
 system.pacman = "openssl"
 
 [ssl]
-description = "OpenSSL libssl — TLS/SSL client and server sockets"
+description = "OpenSSL libssl - TLS/SSL client and server sockets"
 version = "system"
 libs = "ssl, crypto"
 pkgconfig = "libssl"
@@ -65,7 +65,7 @@ system.apt = "libssl-dev"
 system.pacman = "openssl"
 
 [curses]
-description = "ncurses — terminal UI (windows, input, colors)"
+description = "ncurses - terminal UI (windows, input, colors)"
 version = "system"
 libs = "ncurses"
 headers = "curses.h"
@@ -74,7 +74,7 @@ system.apt = "libncurses-dev"
 system.pacman = "ncurses"
 
 [readline]
-description = "GNU Readline — line editing + history for interactive prompts"
+description = "GNU Readline - line editing + history for interactive prompts"
 version = "system"
 libs = "readline"
 headers = "readline/readline.h, readline/history.h"
@@ -83,7 +83,7 @@ system.apt = "libreadline-dev"
 system.pacman = "readline"
 
 [xml2]
-description = "libxml2 — XML/HTML parsing (DOM, XPath, SAX)"
+description = "libxml2 - XML/HTML parsing (DOM, XPath, SAX)"
 version = "system"
 libs = "xml2"
 pkgconfig = "libxml-2.0"
@@ -94,7 +94,7 @@ system.apt = "libxml2-dev"
 system.pacman = "libxml2"
 
 [lz4]
-description = "LZ4 — extremely fast compression/decompression"
+description = "LZ4 - extremely fast compression/decompression"
 version = "system"
 libs = "lz4"
 pkgconfig = "liblz4"
@@ -104,7 +104,7 @@ system.apt = "liblz4-dev"
 system.pacman = "lz4"
 
 [zstd]
-description = "Zstandard — fast, high-ratio compression (Facebook)"
+description = "Zstandard - fast, high-ratio compression (Facebook)"
 version = "system"
 libs = "zstd"
 pkgconfig = "libzstd"
@@ -114,7 +114,7 @@ system.apt = "libzstd-dev"
 system.pacman = "zstd"
 
 [jsonc]
-description = "json-c — JSON parsing and generation in C"
+description = "json-c - JSON parsing and generation in C"
 version = "system"
 libs = "json-c"
 pkgconfig = "json-c"
@@ -127,7 +127,7 @@ system.apt = "libjson-c-dev"
 system.pacman = "json-c"
 
 [png]
-description = "libpng — PNG image reading and writing"
+description = "libpng - PNG image reading and writing"
 version = "system"
 libs = "png"
 pkgconfig = "libpng"
@@ -137,7 +137,7 @@ system.apt = "libpng-dev"
 system.pacman = "libpng"
 
 [jpeg]
-description = "libjpeg — JPEG image compression and decompression"
+description = "libjpeg - JPEG image compression and decompression"
 version = "system"
 libs = "jpeg"
 pkgconfig = "libjpeg"
@@ -147,7 +147,7 @@ system.apt = "libjpeg-dev"
 system.pacman = "libjpeg-turbo"
 
 [pcre2]
-description = "PCRE2 — Perl-Compatible Regular Expressions (8-bit)"
+description = "PCRE2 - Perl-Compatible Regular Expressions (8-bit)"
 version = "system"
 libs = "pcre2-8"
 pkgconfig = "libpcre2-8"
@@ -159,7 +159,7 @@ system.apt = "libpcre2-dev"
 system.pacman = "pcre2"
 
 [yaml]
-description = "libyaml — YAML 1.1 parser and emitter"
+description = "libyaml - YAML 1.1 parser and emitter"
 version = "system"
 libs = "yaml"
 pkgconfig = "yaml-0.1"
@@ -169,7 +169,7 @@ system.apt = "libyaml-dev"
 system.pacman = "libyaml"
 
 [ffi]
-description = "libffi — portable foreign function interface (calling conventions)"
+description = "libffi - portable foreign function interface (calling conventions)"
 version = "system"
 libs = "ffi"
 pkgconfig = "libffi"
@@ -179,7 +179,7 @@ system.apt = "libffi-dev"
 system.pacman = "libffi"
 
 [uuid]
-description = "libuuid — UUID generation (RFC 4122)"
+description = "libuuid - UUID generation (RFC 4122)"
 version = "system"
 libs = "uuid"
 pkgconfig = "uuid"
@@ -189,7 +189,7 @@ system.apt = "uuid-dev"
 system.pacman = "util-linux-libs"
 
 [ev]
-description = "libev — high-performance event loop (epoll/kqueue/select)"
+description = "libev - high-performance event loop (epoll/kqueue/select)"
 version = "system"
 libs = "ev"
 headers = "ev.h"
@@ -198,7 +198,7 @@ system.apt = "libev-dev"
 system.pacman = "libev"
 
 [uv]
-description = "libuv — cross-platform async I/O (event loop, TCP, UDP, FS)"
+description = "libuv - cross-platform async I/O (event loop, TCP, UDP, FS)"
 version = "system"
 libs = "uv"
 pkgconfig = "libuv"
@@ -208,7 +208,7 @@ system.apt = "libuv1-dev"
 system.pacman = "libuv"
 
 [sdl2]
-description = "SDL2 — cross-platform graphics, audio, and input"
+description = "SDL2 - cross-platform graphics, audio, and input"
 version = "system"
 libs = "SDL2"
 pkgconfig = "sdl2"
@@ -219,13 +219,13 @@ system.apt = "libsdl2-dev"
 system.pacman = "sdl2"
 
 [pthread]
-description = "POSIX threads — mutexes, conditions, thread creation"
+description = "POSIX threads - mutexes, conditions, thread creation"
 version = "system"
 libs = "pthread"
 headers = "pthread.h"
 
 [expat]
-description = "Expat — streaming XML parser (SAX-style)"
+description = "Expat - streaming XML parser (SAX-style)"
 version = "system"
 libs = "expat"
 pkgconfig = "expat"
@@ -235,7 +235,7 @@ system.apt = "libexpat1-dev"
 system.pacman = "expat"
 
 [bz2]
-description = "bzip2 — block-sorting compression"
+description = "bzip2 - block-sorting compression"
 version = "system"
 libs = "bz2"
 headers = "bzlib.h"
@@ -244,7 +244,7 @@ system.apt = "libbz2-dev"
 system.pacman = "bzip2"
 
 [iconv]
-description = "libiconv — character set conversion (UTF-8, Latin-1, …)"
+description = "libiconv - character set conversion (UTF-8, Latin-1, …)"
 version = "system"
 libs = "iconv"
 headers = "iconv.h"
@@ -252,7 +252,7 @@ system.brew = "libiconv"
 system.apt = "libc6-dev"
 
 [gmp]
-description = "GMP — GNU Multiple Precision arithmetic (big integers, rationals)"
+description = "GMP - GNU Multiple Precision arithmetic (big integers, rationals)"
 version = "system"
 libs = "gmp"
 pkgconfig = "gmp"
@@ -262,7 +262,7 @@ system.apt = "libgmp-dev"
 system.pacman = "gmp"
 
 [onig]
-description = "Oniguruma — advanced regex engine (Unicode, named groups)"
+description = "Oniguruma - advanced regex engine (Unicode, named groups)"
 version = "system"
 libs = "onig"
 pkgconfig = "oniguruma"
@@ -272,7 +272,7 @@ system.apt = "libonig-dev"
 system.pacman = "oniguruma"
 
 [ssh2]
-description = "libssh2 — SSH2 client (session, channel, SFTP, SCP)"
+description = "libssh2 - SSH2 client (session, channel, SFTP, SCP)"
 version = "system"
 libs = "ssh2"
 pkgconfig = "libssh2"
@@ -282,18 +282,18 @@ system.apt = "libssh2-1-dev"
 system.pacman = "libssh2"
 
 [git2]
-description = "libgit2 — pure-C Git implementation (repos, commits, diffs)"
+description = "libgit2 - pure-C Git implementation (repos, commits, diffs)"
 version = "system"
 libs = "git2"
 pkgconfig = "libgit2"
-# git2.h is an umbrella of #includes only — bind the functional sub-headers.
+# git2.h is an umbrella of #includes only - bind the functional sub-headers.
 headers = "git2/global.h, git2/repository.h, git2/commit.h, git2/branch.h, git2/status.h"
 system.brew = "libgit2"
 system.apt = "libgit2-dev"
 system.pacman = "libgit2"
 
 [archive]
-description = "libarchive — reading/writing tar, zip, gzip, xz, …"
+description = "libarchive - reading/writing tar, zip, gzip, xz, …"
 version = "system"
 libs = "archive"
 pkgconfig = "libarchive"
@@ -306,7 +306,7 @@ system.apt = "libarchive-dev"
 system.pacman = "libarchive"
 
 [magic]
-description = "libmagic — file type detection (like the `file` command)"
+description = "libmagic - file type detection (like the `file` command)"
 version = "system"
 libs = "magic"
 headers = "magic.h"
