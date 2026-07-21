@@ -1,0 +1,14 @@
+// Companion to test_bare_return_main: `return <value>` from an untyped main
+// must keep compiling (main is emitted as `long long wyn_main()` and the value
+// becomes the process exit status). The runner only checks stdout, so behavior
+// is encoded via prints before/after the return. (2026-07)
+fn main() {
+    println("before")
+    if 1 == 1 {
+        println("returning")
+        return 2
+    }
+    println("unreached")
+}
+// EXPECT: before
+// EXPECT: returning
