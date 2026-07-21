@@ -1,6 +1,6 @@
 // Package-spec parsing for the git-URL dependency model.
 //
-// A dependency is identified by a git URL — there is no central registry. A user
+// A dependency is identified by a git URL - there is no central registry. A user
 // types one of:
 //   args                      → github.com/wynlang/args        (bare = "official")
 //   github.com/bob/cool-lib   → that repo                       (third-party)

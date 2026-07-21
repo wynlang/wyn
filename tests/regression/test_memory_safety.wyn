@@ -1,4 +1,4 @@
-// Regression: memory safety — all leak patterns must not crash or leak
+// Regression: memory safety - all leak patterns must not crash or leak
 // Tests concat temps, interpolation temps, split cleanup, reassignment, HashMap cleanup
 // EXPECT: 11
 // EXPECT: hello

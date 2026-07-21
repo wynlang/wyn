@@ -1,4 +1,4 @@
-// Regression: a broad smoke test mirroring the "Learn Wyn in Y Minutes" tour —
+// Regression: a broad smoke test mirroring the "Learn Wyn in Y Minutes" tour -
 // exercises functions, expr-body fns, default args, braceless control flow,
 // slices, negative index, HOF, zip, structs+methods, enums+match, optionals + ?.,
 // generics, closures + closure-copy, and spawn/await/await_all/parallel together.

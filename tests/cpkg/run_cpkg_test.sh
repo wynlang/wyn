@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # `wyn add` integration test: add libm from the curated registry, then build+run
-# a program using the generated bindings — proving add → bindgen → [ffi] link →
+# a program using the generated bindings - proving add → bindgen → [ffi] link →
 # compile → run end to end. Uses libm (always available; linked by default).
 set -u
 WYN_BIN="${WYN:-./wyn}"
@@ -16,7 +16,7 @@ grep -q 'extern fn sqrt' packages/m/m.wyn 2>/dev/null || { echo "cpkg: FAIL (no 
 grep -q '\[ffi\]' wyn.toml 2>/dev/null || { echo "cpkg: FAIL (no [ffi] in wyn.toml)"; exit 1; }
 grep -q 'libs = "m"' wyn.toml 2>/dev/null || { echo "cpkg: FAIL (libm not linked)"; exit 1; }
 
-# Use `import m` (NOT hand-copied externs) — proves add -> import resolution ->
+# Use `import m` (NOT hand-copied externs) - proves add -> import resolution ->
 # [ffi] link -> build -> run works as a whole.
 cat > app.wyn <<'WYN'
 import m

@@ -22,7 +22,7 @@ out=$("$WYN" bind "$TMP/td.h" 2>/dev/null)
 n=$(echo "$out" | grep -c "^extern fn")
 [ "$n" = "3" ] && ok "typedef resolution (3 fns)" || bad "typedef resolution: got $n [$out]"
 
-# 2. Attributed prototype (availability contains '=' — used to be skipped).
+# 2. Attributed prototype (availability contains '=' - used to be skipped).
 cat > "$TMP/attr.h" << 'EOF'
 __attribute__((availability(macos,introduced=10.4)))
 int my_fn(int x);
@@ -42,7 +42,7 @@ out=$("$WYN" bind "$TMP/asm.h" 2>/dev/null)
 echo "$out" | grep -q "extern fn renamed_fn(a0: int) -> int" && ok "trailing __asm ignored" || bad "__asm: [$out]"
 
 # 5. Multi-package [ffi]: repeated sections ACCUMULATE (later used to clobber
-#    earlier — only the last package linked).
+#    earlier - only the last package linked).
 mkdir -p "$TMP/proj" && cd "$TMP/proj"
 cat > wyn.toml << 'EOF'
 [package]

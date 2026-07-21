@@ -142,7 +142,7 @@ void preload_imports(const char* source) {
             }
             
             // Extract module name (including . for nested modules, convert to /).
-            // Digits are part of an identifier (e.g. `sqlite3`) — must match the
+            // Digits are part of an identifier (e.g. `sqlite3`) - must match the
             // lexer's isalnum rule, else a trailing digit is dropped and the name
             // is truncated ("sqlite3" -> "sqlite"), breaking module resolution.
             while (((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
@@ -282,7 +282,7 @@ char* resolve_module_path(const char* module_name) {
         }
     }
 
-    // 5d. Legacy project-local packages: ./packages/<name>/<name>.wyn — where the
+    // 5d. Legacy project-local packages: ./packages/<name>/<name>.wyn - where the
     // curated C-package `wyn add <clib>` still places generated bindings, and
     // pre-git-deps checkouts kept pure-Wyn packages. Both the flat file and the
     // nested <name>/<name> layout are tried (relative to cwd and the source dir).
@@ -356,7 +356,7 @@ Program* load_module(const char* module_name) {
     char* path = resolve_module_path(resolved_name);
     if (!path) {
         // Built-in modules (math, Math, File, System, Http, …) have no .wyn file
-        // — they're provided directly by codegen. `import math` must NOT print a
+        // - they're provided directly by codegen. `import math` must NOT print a
         // spurious "Module not found" error just because there's no source file.
         if (is_builtin_module(resolved_name)) {
             pop_loading_stack();

@@ -1,7 +1,7 @@
 // EXPECT: 7
 // EXPECT: 3.5
 // EXPECT: 3.5
-// Spawn with non-word argument/return types — both used to be corrupted by
+// Spawn with non-word argument/return types - both used to be corrupted by
 // the (void*)(intptr_t) word cast:
 // - struct arg: internal codegen error (struct through a pointer cast)
 // - float arg AND float return: silently truncated (spawn half(7.0) -> 3)

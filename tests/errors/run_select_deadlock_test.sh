@@ -1,5 +1,5 @@
 #!/bin/bash
-# select with no ready arm and NOTHING in flight used to spin forever —
+# select with no ready arm and NOTHING in flight used to spin forever -
 # a silent hang on a plain logic error. The runtime now detects the
 # deadlock (main thread, zero in-flight tasks, no ready/closed channel)
 # and exits with an error instead.

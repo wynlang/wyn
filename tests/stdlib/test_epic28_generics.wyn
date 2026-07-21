@@ -22,15 +22,15 @@ struct Pair<A, B> {
 fn main() -> int {
     Test.init("Epic 28: Generics")
 
-    // 28.3: Generic function — int
+    // 28.3: Generic function - int
     var a = identity(42)
     Test.assert_eq_int(a, 42, "generic fn int")
 
-    // 28.3: Generic function — string
+    // 28.3: Generic function - string
     var b = identity("hello")
     Test.assert_eq_str(b, "hello", "generic fn string")
 
-    // 28.3: Generic function — float
+    // 28.3: Generic function - float
     var c = identity(3.14)
     Test.assert(c > 3.0, "generic fn float")
 
@@ -50,11 +50,11 @@ fn main() -> int {
     m2.insert("key", "val")
     Test.assert_eq_str(m2.get("key"), "val", "HashMap<K,V>")
 
-    // 28.4: Generic struct — int
+    // 28.4: Generic struct - int
     var box_int = Box { value: 42 }
     Test.assert_eq_int(box_int.value, 42, "Box<int> value")
 
-    // 28.4: Generic struct — two type params
+    // 28.4: Generic struct - two type params
     var pair = Pair { first: 1, second: 2 }
     Test.assert_eq_int(pair.first, 1, "Pair first")
     Test.assert_eq_int(pair.second, 2, "Pair second")

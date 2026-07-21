@@ -2,7 +2,7 @@
 // (no exit-time join), and the shutdown path occasionally hung. main now drains
 // outstanding spawns via wyn_spawn_wait() before the process exits (it also pumps
 // the I/O loop so an I/O-parked task can't hang the drain). This test spawns many
-// fire-and-forget tasks and asserts they all complete — and that the program
+// fire-and-forget tasks and asserts they all complete - and that the program
 // neither hangs nor crashes at shutdown.
 // EXPECT: PASS: 50 fire-and-forget spawns completed
 

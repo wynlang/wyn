@@ -33,17 +33,17 @@ make                    # Build the compiler
 
 ```
 src/
-  main.c           — CLI, commands, compilation pipeline
-  lexer.c           — Tokenizer
-  parser.c          — Parser → AST
-  checker.c         — Type checker
-  codegen.c         — Shared codegen state
-  codegen_expr.c    — Expression code generation
-  codegen_stmt.c    — Statement code generation
-  codegen_program.c — Program-level codegen (forward decls, modules)
-  types.c           — Type system, method dispatch tables
-  wyn_runtime.h     — Runtime library (all stdlib implementations)
-  lsp.c             — Language server protocol
+  main.c           - CLI, commands, compilation pipeline
+  lexer.c           - Tokenizer
+  parser.c          - Parser → AST
+  checker.c         - Type checker
+  codegen.c         - Shared codegen state
+  codegen_expr.c    - Expression code generation
+  codegen_stmt.c    - Statement code generation
+  codegen_program.c - Program-level codegen (forward decls, modules)
+  types.c           - Type system, method dispatch tables
+  wyn_runtime.h     - Runtime library (all stdlib implementations)
+  lsp.c             - Language server protocol
 ```
 
 ## Testing

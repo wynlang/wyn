@@ -1,6 +1,6 @@
 // Structured concurrency with parallel { }
 // Every spawn inside runs concurrently, and all tasks are guaranteed to
-// finish before the block exits — no leaked tasks, no manual join.
+// finish before the block exits - no leaked tasks, no manual join.
 
 fn fetch(id: int) -> string => "result-" + id.to_string()
 

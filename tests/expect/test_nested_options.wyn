@@ -15,7 +15,7 @@
 // string payloads).
 
 fn main() {
-    // Some(Some(int)) — the original ICE repro, with lowercase none arms
+    // Some(Some(int)) - the original ICE repro, with lowercase none arms
     x = Some(Some(5))
     match x {
         Some(inner) => match inner {

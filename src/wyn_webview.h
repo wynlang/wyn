@@ -1,4 +1,4 @@
-// wyn_webview.h — App module declarations
+// wyn_webview.h - App module declarations
 #ifndef WYN_WEBVIEW_H
 #define WYN_WEBVIEW_H
 

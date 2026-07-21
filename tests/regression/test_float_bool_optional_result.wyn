@@ -1,5 +1,5 @@
 // Regression: float?/bool? Option payloads and Result<float,_>/Result<bool,_>
-// did not compile — the checker mapped the return type to WynOptional* while
+// did not compile - the checker mapped the return type to WynOptional* while
 // Some/None/Ok/Err and the caller's var-decl lowered to OptionInt/ResultInt, a
 // type mismatch. Fixed by adding OptionFloat/OptionBool/ResultFloat/ResultBool
 // monomorphic families (runtime + checker symbols + codegen family selection at

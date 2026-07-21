@@ -3,7 +3,7 @@
 // and returns early. This test asserts the PATH-INDEPENDENT guarantees (the API
 // compiles/links, is_cancelled() is false on main, a non-cancelled task completes,
 // and a cancel+await round-trips without hanging). The *timing* of cancellation
-// taking effect is coroutine-scheduler semantics (the default) — proven ad hoc,
+// taking effect is coroutine-scheduler semantics (the default) - proven ad hoc,
 // not asserted here since under WYN_ASYNC_POOL a task may finish before the flag
 // is read. Cooperative + leak-on-cancel (bail at a check; no forced unwind).
 // EXPECT: main not cancelled
@@ -38,7 +38,7 @@ fn main() -> int {
     // is_cancelled() is false on the main thread (nothing cancelled it)
     if Task.is_cancelled() { println("main WAS cancelled") } else { println("main not cancelled") }
 
-    // Request cancellation then await — must round-trip cleanly (no hang/crash),
+    // Request cancellation then await - must round-trip cleanly (no hang/crash),
     // whether or not the task observed the flag in time.
     var c1 = Shared.new(0)
     var h1 = spawn cancellable(c1)

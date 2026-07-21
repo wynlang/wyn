@@ -367,7 +367,7 @@ int Socket_send(int sock, const char* data, int len) {
     return (int)send(sock, data, len, 0);
 }
 
-// Receive up to max_len bytes, returns string (caller must not free — arena allocated)
+// Receive up to max_len bytes, returns string (caller must not free - arena allocated)
 char* Socket_recv(int sock, int max_len) {
     if (max_len <= 0) max_len = 4096;
     char* buf = malloc(max_len + 1);

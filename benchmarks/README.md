@@ -1,11 +1,11 @@
 # Wyn v1.7.0 Benchmarks
 
 All benchmarks run on the same machine. Numbers are median of 5 runs.
-Source code included — reproduce with `./benchmarks/run.sh`.
+Source code included - reproduce with `./benchmarks/run.sh`.
 
 ## Results (Apple M4, macOS 15)
 
-### Fibonacci(35) — Recursive
+### Fibonacci(35) - Recursive
 
 | Language | Time | Memory |
 |----------|------|--------|
@@ -15,7 +15,7 @@ Source code included — reproduce with `./benchmarks/run.sh`.
 
 Wyn is ~1.5× slower than Go on raw compute, 60× faster than Python.
 
-### Binary Size — Hello World
+### Binary Size - Hello World
 
 | Language | Size |
 |----------|------|
@@ -73,7 +73,7 @@ Requires: `wyn` built (`make`), optionally `go` for comparison.
 | `fib35.wyn` | Recursive function calls, integer arithmetic |
 | `spawn_10k.wyn` | Task creation, scheduler throughput |
 | `strings.wyn` | String methods, interpolation, allocation |
-| `startup.wyn` | Minimal program — startup overhead |
+| `startup.wyn` | Minimal program - startup overhead |
 | `binary_size.wyn` | Minimal binary footprint |
 | `fib35.go` / `startup.go` | Go equivalents for comparison |
 | `run.sh` | Automated benchmark runner |

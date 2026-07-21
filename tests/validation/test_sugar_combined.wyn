@@ -1,4 +1,4 @@
-// Test: Syntactic sugar combined — flowy code patterns
+// Test: Syntactic sugar combined - flowy code patterns
 struct Point { x: int, y: int }
 
 trait Printable {

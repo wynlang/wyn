@@ -21,7 +21,7 @@ static const char* hashmap_insert_fn_for(Expr* value_expr) {
 
 // A string pushed into an array transfers ownership: array_push_str stores the
 // pointer without retaining, and array_free releases it. So a local string var
-// pushed into an array must NOT also be released at scope exit — that would
+// pushed into an array must NOT also be released at scope exit - that would
 // double-free the live element (UAF on read, or empty-string reads after free).
 // Mirror the return/assignment move idiom: if the pushed value is a tracked
 // string variable, MOVE it (unregister so scope exit skips it) when it's dead
@@ -43,11 +43,11 @@ static void codegen_string_push_transfer(Expr* value) {
         if (strcmp(string_var_releasable[i], _pvn) == 0) { _is_releasable = true; break; }
     if (!_is_releasable && current_block_stmts &&
         !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _pvn)) {
-        // Move: local var is dead after this push — array takes sole ownership.
+        // Move: local var is dead after this push - array takes sole ownership.
         extern void unregister_string_var(const char*);
         unregister_string_var(_pvn);
     } else {
-        // Copy: var is still live (or outer-scope releasable) — array co-owns.
+        // Copy: var is still live (or outer-scope releasable) - array co-owns.
         emit("; wyn_rc_retain((void*)(intptr_t)%s)", _pvn);
     }
 }
@@ -56,8 +56,8 @@ static void codegen_string_push_transfer(Expr* value) {
 // family name used by the runtime: string payload -> "OptionString"/"ResultString",
 // everything else -> "OptionInt"/"ResultInt" (the int family is the catch-all the
 // runtime uses for int/bool/float/struct payloads today). `kind` is "Option" or
-// "Result". Keying off the payload's own type — rather than the node's resolved
-// type — is what makes bare `Some(x)`/`Ok(x)`/`Err(x)` lower correctly outside a
+// "Result". Keying off the payload's own type - rather than the node's resolved
+// type - is what makes bare `Some(x)`/`Ok(x)`/`Err(x)` lower correctly outside a
 // function-return context (e.g. `var o: string? = Some(s)`). Returns a static
 // string constant; NULL only if payload type is unknown.
 static const char* wyn_ctor_family(Type* payload, const char* kind) {
@@ -89,7 +89,7 @@ static const char* wyn_ctor_family(Type* payload, const char* kind) {
 
 // Resolve the concrete Option/Result family for a Some/None/Ok/Err node.
 // Precedence: (1) the assignment-target annotation, (2) the enclosing function
-// return kind — both name the exact declared family and must win over inference;
+// return kind - both name the exact declared family and must win over inference;
 // (3) the payload's own type (so bare `Some(x)`/`Ok(x)`/`Err(x)` work anywhere);
 // (4) the int family as the catch-all default. `kind` is "Option" or "Result".
 static const char* wyn_option_ctor_kind(Expr* e, const char* kind) {
@@ -210,7 +210,7 @@ void codegen_expr(Expr* expr) {
                     break;
                 }
                 
-                // A KNOWN function of this module always gets the prefix — before
+                // A KNOWN function of this module always gets the prefix - before
                 // any name heuristics. `path` is in common_locals below, so a
                 // sibling call to `pub fn path(..)` emitted the bare name and the
                 // C compiler saw an undefined identifier (bug M1, 2026-07-18).
@@ -435,8 +435,8 @@ void codegen_expr(Expr* expr) {
                 extern int is_string_future(const char*);
                 if (is_string_future(vn)) is_string_return = true;
             }
-            // Check for struct return. Floats are boxed like structs — the
-            // (void*)(intptr_t) word cast truncated 3.5 to 3 — so a float
+            // Check for struct return. Floats are boxed like structs - the
+            // (void*)(intptr_t) word cast truncated 3.5 to 3 - so a float
             // return maps to the "double" boxed type here.
             const char* struct_return_type = NULL;
             if (!is_string_return) {
@@ -458,7 +458,7 @@ void codegen_expr(Expr* expr) {
                     struct_return_type = get_struct_future_type(vn2);
                 }
             }
-            // Inline `await spawn f()` temporaries have exactly one reader —
+            // Inline `await spawn f()` temporaries have exactly one reader -
             // consume (get + recycle) to keep future memory constant. Named
             // futures (`await f`) use the memoizing get so awaiting twice
             // returns the same value instead of 0/garbage.
@@ -583,7 +583,7 @@ void codegen_expr(Expr* expr) {
                 if (!left_is_int && expr->binary.left->type == EXPR_INT) left_is_int = true;
                 if (!right_is_int && expr->binary.right->type == EXPR_INT) right_is_int = true;
                 
-                // Check if variable name suggests string type — USE TYPE INFO INSTEAD
+                // Check if variable name suggests string type - USE TYPE INFO INSTEAD
                 if (!left_is_string && expr->binary.left->type == EXPR_IDENT) {
                     if (expr->binary.left->expr_type && expr->binary.left->expr_type->kind == TYPE_STRING) {
                         left_is_string = true;
@@ -663,7 +663,7 @@ void codegen_expr(Expr* expr) {
                 }
                 
                 if (left_is_string || right_is_string) {
-                    // ARC-managed concat — release temporaries after concat
+                    // ARC-managed concat - release temporaries after concat
                     // Left temp: only release if it's a chained concat/call (not reused by realloc)
                     // Right temp: always release (never reused)
                     bool left_is_temp = (left_is_int && !left_is_string) ||
@@ -696,7 +696,7 @@ void codegen_expr(Expr* expr) {
                         if (right_is_temp) emit("__cr");
                         else { if (right_is_int && !right_is_string) { emit("int_to_string("); codegen_expr(expr->binary.right); emit(")"); } else codegen_expr(expr->binary.right); }
                         emit(");");
-                        // Release temps — but only if concat didn't reuse them
+                        // Release temps - but only if concat didn't reuse them
                         // concat reuses left when refcount==1, so check if result != left
                         if (left_is_temp) emit(" if (__cx != __cl) wyn_rc_release(__cl);");
                         if (right_is_temp) emit(" wyn_rc_release(__cr);");
@@ -751,7 +751,7 @@ void codegen_expr(Expr* expr) {
             
             // struct == struct: call the generated field-wise helper. Raw C
             // `==` on struct values doesn't compile (this was an ICE). Detect
-            // via expr_type AND the struct-var registry — the checker often
+            // via expr_type AND the struct-var registry - the checker often
             // doesn't propagate TYPE_STRUCT onto bare ident references.
             if (expr->binary.op.type == TOKEN_EQEQ || expr->binary.op.type == TOKEN_BANGEQ) {
                 const char* _eqsn = NULL;
@@ -817,7 +817,7 @@ void codegen_expr(Expr* expr) {
                             emit(expr->binary.op.type == TOKEN_SLASH ? "wyn_safe_div(" : "wyn_safe_mod(");
                             codegen_expr(expr->binary.left); emit(", 0)");
                         } else {
-                            // Known non-zero constant — skip runtime check, use C division
+                            // Known non-zero constant - skip runtime check, use C division
                             emit("("); codegen_expr(expr->binary.left);
                             emit(expr->binary.op.type == TOKEN_SLASH ? " / " : " %% ");
                             codegen_expr(expr->binary.right); emit(")");
@@ -944,7 +944,7 @@ void codegen_expr(Expr* expr) {
                     emit(")");
                     break;
                 }
-                // HashMap::set(map, key, value) — pick the typed insert_* by the
+                // HashMap::set(map, key, value) - pick the typed insert_* by the
                 // VALUE's type. Without this, the qualified free-function form fell
                 // through to hashmap_set(), which is hardcoded to insert_string and
                 // stored a non-string value AS a char* → the paired read
@@ -1026,7 +1026,7 @@ void codegen_expr(Expr* expr) {
             }
             
             // Special handling for print function. Multi-arg and zero-arg
-            // `println` route through the same path (true alias) — they used to
+            // `println` route through the same path (true alias) - they used to
             // fall through to the raw C println macro, which is single-arg only
             // and died with an "internal codegen error" the checker never saw.
             // Single-arg println keeps its tuned fast path below.
@@ -1125,7 +1125,7 @@ void codegen_expr(Expr* expr) {
                         arg_is_string = true;
                 }
                 
-                // Arrays/maps have no to_string — route to the type-aware
+                // Arrays/maps have no to_string - route to the type-aware
                 // print_array (which prints elements by their real type) plus a
                 // newline, matching print(arr) but with the trailing '\n'.
                 if (!arg_is_string && parg->expr_type &&
@@ -1139,9 +1139,9 @@ void codegen_expr(Expr* expr) {
                 // println(struct): print "Name { field: value, ... }" by
                 // looking up the struct declaration from current_program.
                 // Falling through to to_string(struct) passed a struct by
-                // value to a long long param — an internal codegen error on
+                // value to a long long param - an internal codegen error on
                 // completely reasonable code. Detect via BOTH expr_type
-                // (ideal) and the codegen struct-var registry (fallback —
+                // (ideal) and the codegen struct-var registry (fallback -
                 // the checker often doesn't propagate TYPE_STRUCT onto
                 // bare ident references to struct vars).
                 {
@@ -1159,9 +1159,9 @@ void codegen_expr(Expr* expr) {
                     }
                     // println(Option): print "Some(v)" / "none" from the tag.
                     // Detect via the enum-var registry OR the checker typing
-                    // the ident as an Option* family struct (_psn) — falling
+                    // the ident as an Option* family struct (_psn) - falling
                     // through to to_string(opt) passed the struct by value to
-                    // a long long param — an internal codegen error.
+                    // a long long param - an internal codegen error.
                     if (!arg_is_string && parg->type == EXPR_IDENT) {
                         char _pvn[128]; token_to_cstr(_pvn, sizeof(_pvn), parg->token);
                         extern const char* get_enum_var_type(const char*);
@@ -1447,7 +1447,7 @@ void codegen_expr(Expr* expr) {
                         emit("%d", arg->array.count);
                     } else if ((arg->expr_type && arg->expr_type->kind == TYPE_STRING) ||
                                arg->type == EXPR_STRING) {
-                        // len() on a string is its length — use string_len (matches
+                        // len() on a string is its length - use string_len (matches
                         // the `s.len()` method). Without this, `len(s)` emitted
                         // `(s).count`, treating the char* as a collection struct →
                         // C error "member reference base type 'const char *'…". (2026-07)
@@ -1532,7 +1532,7 @@ void codegen_expr(Expr* expr) {
                     } else {
                         // Regular function call
                         // A callee that names a local lambda variable is a plain
-                        // function pointer — emit its name directly and ignore any
+                        // function pointer - emit its name directly and ignore any
                         // selected_overload the checker may have attached (which can
                         // be a stale/garbage overload symbol for a copied closure).
                         bool _callee_is_lambda_var = false;
@@ -1637,7 +1637,7 @@ void codegen_expr(Expr* expr) {
                 // Captured variables use static globals, not extra call args
                 // (set via ({ __cap_N_var = var; __lambda_N; }) at assignment)
                 
-                // Named argument reordering — swap args/count before emission
+                // Named argument reordering - swap args/count before emission
                 Expr** _orig_args = expr->call.args;
                 int _orig_count = expr->call.arg_count;
                 if (expr->call.arg_names) {
@@ -1680,7 +1680,7 @@ void codegen_expr(Expr* expr) {
                     if ((is_array_push || is_array_pop) && i == 0) {
                         emit("&");
                     }
-                    // No cast needed for array_push second arg — 
+                    // No cast needed for array_push second arg - 
                     // array_push takes long long, array_push_str takes const char*
                     
                     // Check if this argument needs trait object wrapping
@@ -1707,7 +1707,7 @@ void codegen_expr(Expr* expr) {
                 }
                 // Fill in default arguments if fewer args provided (skip if named args handled it)
                 if (expr->call.args != _orig_args) {
-                    // Named args already filled defaults — restore original
+                    // Named args already filled defaults - restore original
                     expr->call.args = _orig_args;
                     expr->call.arg_count = _orig_count;
                 } else if (expr->call.callee->type == EXPR_IDENT) {
@@ -1727,7 +1727,7 @@ void codegen_expr(Expr* expr) {
                     }
                 }
                 emit(")");
-                // array_push_str transfers string ownership to the array — move
+                // array_push_str transfers string ownership to the array - move
                 // or retain the pushed local so scope exit doesn't double-free it.
                 if (is_array_push_str && expr->call.arg_count >= 2)
                     codegen_string_push_transfer(expr->call.args[1]);
@@ -1739,7 +1739,7 @@ void codegen_expr(Expr* expr) {
             // Channel methods: ch.send(v) / ch.recv() / ch.close() lower to the
             // Task_* runtime. The channel value is a long long handle and the
             // payload moves through one word: ints/bools ride it directly,
-            // strings ride it as pointers (recv casts back — the checker now
+            // strings ride it as pointers (recv casts back - the checker now
             // types recv() as the element type), and floats BIT-CAST through
             // the word (a plain double→long long conversion truncated 3.14→3).
             if (expr->method_call.object->expr_type &&
@@ -1790,7 +1790,7 @@ void codegen_expr(Expr* expr) {
             }
 
             // Release intermediate string temps from chained method calls
-            // e.g. "hello".upper().trim() — upper() result leaked without this
+            // e.g. "hello".upper().trim() - upper() result leaked without this
             Expr* _mc_obj = expr->method_call.object;
             bool _mc_chain_wrap = false;
             static int _mc_ctr = 0;
@@ -1811,7 +1811,7 @@ void codegen_expr(Expr* expr) {
                 _mc_obj->_codegen_temp_id = 1000 + _mc_id;
             }
 
-            // L3: Iterator methods — .collect() and .take() are iterator-only
+            // L3: Iterator methods - .collect() and .take() are iterator-only
             // .map() and .filter() only use wyn_iter_* when chained on an iterator
             {
                 Expr* _obj = expr->method_call.object;
@@ -1902,7 +1902,7 @@ void codegen_expr(Expr* expr) {
                 expr->method_call.object->expr_type->kind == TYPE_STRUCT) {
                 Token type_name = expr->method_call.object->expr_type->struct_type.name;
 
-                // Skip type parameters (T, K, V) — let generic dispatch handle
+                // Skip type parameters (T, K, V) - let generic dispatch handle
                 // them. BUT only if the single-letter name isn't an actual struct:
                 // a real `struct P { ... fn f(self) ... }` must dispatch to P_f,
                 // not be mistaken for a generic parameter (that dropped the call
@@ -1933,7 +1933,7 @@ void codegen_expr(Expr* expr) {
                 expr->method_call.object->expr_type->kind == TYPE_STRUCT) {
                 Token type_name = expr->method_call.object->expr_type->struct_type.name;
                 
-                // Check if this is a trait type — use vtable dispatch
+                // Check if this is a trait type - use vtable dispatch
                 if (is_trait_type(type_name.start, type_name.length)) {
                     emit("(");
                     codegen_expr(expr->method_call.object);
@@ -1979,7 +1979,7 @@ void codegen_expr(Expr* expr) {
                     if (current_function_params[pi] && 
                         strlen(current_function_params[pi]) == (size_t)obj.length &&
                         memcmp(current_function_params[pi], obj.start, obj.length) == 0) {
-                        // Found the param — check if its type is a trait
+                        // Found the param - check if its type is a trait
                         // We stored param types during STMT_FN processing
                         extern char current_param_types[64][64];
                         if (current_param_types[pi][0] && is_trait_type(current_param_types[pi], strlen(current_param_types[pi]))) {
@@ -2140,7 +2140,7 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
-            // WynIntArray dispatch — typed [int] arrays
+            // WynIntArray dispatch - typed [int] arrays
             if (expr->method_call.object->type == EXPR_IDENT) {
                 char _ian[128]; token_to_cstr(_ian, sizeof(_ian), expr->method_call.object->token);
                 extern int is_int_array_var(const char*);
@@ -2175,7 +2175,7 @@ void codegen_expr(Expr* expr) {
                         emit("), ");
                         codegen_expr(expr->method_call.args[0]);
                         emit(")");
-                        // Ownership transfers to the array — suppress the scope-exit
+                        // Ownership transfers to the array - suppress the scope-exit
                         // release (move) or retain a shared reference (copy).
                         codegen_string_push_transfer(expr->method_call.args[0]);
                         break;
@@ -2242,7 +2242,7 @@ void codegen_expr(Expr* expr) {
                 Token method = expr->method_call.method;
                 
                 // arr.map(fn): pick the runtime variant from BOTH the element
-                // type and the lambda's RETURN type — a str->int lambda
+                // type and the lambda's RETURN type - a str->int lambda
                 // (`words.map((s) => s.len())`) through the str->str variant
                 // treated returned ints as char* and segfaulted at print.
                 if (method.length == 3 && memcmp(method.start, "map", 3) == 0 && expr->method_call.arg_count == 1) {
@@ -2292,7 +2292,7 @@ void codegen_expr(Expr* expr) {
                 }
                 // arr.reduce(fn, init) -> wyn_array_reduce(arr, fn, init).
                 // Forgiveness: accept reduce(init, fn) too (Python/JS habit) by
-                // putting whichever arg is the lambda in the fn slot — the old
+                // putting whichever arg is the lambda in the fn slot - the old
                 // positional emit called the int initializer as a function
                 // pointer and segfaulted.
                 if (method.length == 6 && memcmp(method.start, "reduce", 6) == 0 && expr->method_call.arg_count == 2) {
@@ -2329,7 +2329,7 @@ void codegen_expr(Expr* expr) {
                     // Sort in place AND evaluate to the array, so `.sort()` works in
                     // expression position too (`print(xs.sort())`, `xs.sort().reverse()`).
                     // Emitting the void `array_sort(&xs)` alone made `.sort()` unusable
-                    // as a value ("incompatible type 'void'") — a regression that broke
+                    // as a value ("incompatible type 'void'") - a regression that broke
                     // the project's own test_array_ops / test_showcase. (2026-07)
                     emit(_is_str_arr ? "({ array_sort_str(&(" : "({ array_sort(&(");
                     codegen_expr(expr->method_call.object);
@@ -2500,10 +2500,10 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
-            // Enum .to_string() — route to generated EnumName_toString function
+            // Enum .to_string() - route to generated EnumName_toString function
             if (method.length == 9 && memcmp(method.start, "to_string", 9) == 0 &&
                 expr->method_call.arg_count == 0) {
-                // Case 1: Color.Red.to_string() — object is field access on enum type
+                // Case 1: Color.Red.to_string() - object is field access on enum type
                 if (expr->method_call.object->type == EXPR_FIELD_ACCESS) {
                     Expr* fa_obj = expr->method_call.object->field_access.object;
                     if (fa_obj->type == EXPR_IDENT) {
@@ -2568,7 +2568,7 @@ void codegen_expr(Expr* expr) {
                 // Trust the checker's type first: `.reverse()`/`.sort()` on a
                 // STRING return a string, on an array return the array. Keying
                 // on the method NAME alone routed `s.reverse().len()` to
-                // array_len(const char*) — an internal codegen error. (2026-07)
+                // array_len(const char*) - an internal codegen error. (2026-07)
                 Type* _inner_t = expr->method_call.object->expr_type;
                 bool _inner_is_string = _inner_t && _inner_t->kind == TYPE_STRING;
                 if (!_inner_is_string &&
@@ -2606,7 +2606,7 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
-            // Tuple element access: result.0.to_string() — element is int
+            // Tuple element access: result.0.to_string() - element is int
             if (!receiver_type && expr->method_call.object->type == EXPR_TUPLE_INDEX)
                 receiver_type = "int";
             
@@ -2628,7 +2628,7 @@ void codegen_expr(Expr* expr) {
                         break;
                     }
                     if (obj->type == EXPR_CALL && obj->call.callee->type == EXPR_IDENT) {
-                        // Function call — look up return type
+                        // Function call - look up return type
                         char _fn[64]; token_to_cstr(_fn, sizeof(_fn), obj->call.callee->token);
                         extern const char* get_function_return_type(const char*);
                         const char* _rt = get_function_return_type(_fn);
@@ -2897,7 +2897,7 @@ void codegen_expr(Expr* expr) {
             }
             
             // Special case: `m.get(k).unwrap_or(default)`. HashMap.get returns the
-            // raw value (not an Option — many programs rely on that), so routing it
+            // raw value (not an Option - many programs rely on that), so routing it
             // through OptionInt_unwrap_or passed a raw int where an OptionInt was
             // expected → C type error. Lower the whole idiom to the runtime's
             // key-or-default lookup (hashmap_get_or_int / _str). (2026-07)
@@ -3138,7 +3138,7 @@ void codegen_expr(Expr* expr) {
                             elem->method_call.object->type == EXPR_IDENT &&
                             ({ char _en[128]; token_to_cstr(_en, sizeof(_en), elem->method_call.object->token);
                                extern int is_data_enum_type(const char*); is_data_enum_type(_en); }))) {
-                    // Data-enum value (a tagged-union struct), e.g. `E.A(5)` — push
+                    // Data-enum value (a tagged-union struct), e.g. `E.A(5)` - push
                     // by value like a struct, using the enum type as the C type.
                     char _en[128];
                     if (elem->expr_type && elem->expr_type->kind == TYPE_ENUM && elem->expr_type->name.length > 0)
@@ -3307,7 +3307,7 @@ void codegen_expr(Expr* expr) {
                     // Content-tracked string arrays (populated when the array is
                     // declared). The old code ALSO force-typed any array literally
                     // named args/files/names/parts/entries as string regardless of
-                    // its real element type — a miscompile (`var x = parts[1]` on an
+                    // its real element type - a miscompile (`var x = parts[1]` on an
                     // int array read through array_get_str). Removed: the real
                     // element type above + this content registry are authoritative.
                     if (is_str_array_var(_van)) is_string_array = true;
@@ -3562,7 +3562,7 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
-            // Simple struct initialization — stack allocated
+            // Simple struct initialization - stack allocated
             // Wrapped in extra parens to protect commas in macro contexts
             {
                 emit("((%.*s){", actual_type_name_len, actual_type_name);
@@ -3684,7 +3684,7 @@ void codegen_expr(Expr* expr) {
             int is_data_enum = 0;
             
             // Check if match value is an enum variable. Only mark it a data
-            // enum if it actually carries payloads — a plain (dataless) enum is
+            // enum if it actually carries payloads - a plain (dataless) enum is
             // a bare C enum and must be matched with `==`, not `.tag ==`.
             if (expr->match.value->type == EXPR_IDENT) {
                 char _mv[128]; token_to_cstr(_mv, sizeof(_mv), expr->match.value->token);
@@ -3697,7 +3697,7 @@ void codegen_expr(Expr* expr) {
                 }
             }
             
-            // Also check match arms — if any arm uses Shape.Variant pattern, detect data enum
+            // Also check match arms - if any arm uses Shape.Variant pattern, detect data enum
             if (!is_data_enum) {
                 for (int _a = 0; _a < expr->match.arm_count; _a++) {
                     Pattern* _p = expr->match.arms[_a].pattern;
@@ -3712,7 +3712,7 @@ void codegen_expr(Expr* expr) {
                                 break;
                             }
                         } else {
-                            // No prefix — look up variant name in all enums
+                            // No prefix - look up variant name in all enums
                             char _vn[128]; token_to_cstr(_vn, sizeof(_vn), _p->option.variant_name);
                             extern const char* find_enum_for_variant(const char*);
                             const char* _found = find_enum_for_variant(_vn);
@@ -3855,7 +3855,7 @@ void codegen_expr(Expr* expr) {
                             if (strcmp(_pv, "Some") == 0 || strcmp(_pv, "Ok") == 0) is_some_arm = 1;
                             else is_some_arm = 0;   // None / Err
                         } else {
-                            // Bare Some(..)/None token — trust the is_some flag.
+                            // Bare Some(..)/None token - trust the is_some flag.
                             is_some_arm = pat->option.is_some ? 1 : 0;
                         }
                     } else if (pat->type == PATTERN_IDENT) {
@@ -3896,7 +3896,7 @@ void codegen_expr(Expr* expr) {
                             register_string_var(_bb);
                         }
                     }
-                    // Emit arm body + result assignment, then close — mirrors the
+                    // Emit arm body + result assignment, then close - mirrors the
                     // generic path's tail. We do it inline and `continue`.
                     {
                         extern void register_string_var(const char*);
@@ -3983,7 +3983,7 @@ void codegen_expr(Expr* expr) {
                         }
                     } else {
                         // Variable binding. Binds the whole matched value, so it
-                        // always matches — unless there's a guard, in which case
+                        // always matches - unless there's a guard, in which case
                         // the binding must be visible to the guard. Emit the guard
                         // as a statement-expression that binds the name first, so
                         // the arm stays a proper `if`/`else if` link in the chain.
@@ -4022,7 +4022,7 @@ void codegen_expr(Expr* expr) {
                 } else if (pat->type == PATTERN_OPTION && pat->option.is_some) {
                     // Enum variant with data: Shape.Circle(r), Some(x), Ok(x)
                     if (!is_data_enum) {
-                        // Simple enum — treat like a plain variant match, ignore inner binding
+                        // Simple enum - treat like a plain variant match, ignore inner binding
                         if (pat->option.enum_name.length > 0) {
                             emit("if (__match_val_%d == %.*s_%.*s) { ",
                                  match_id,
@@ -4080,7 +4080,7 @@ void codegen_expr(Expr* expr) {
                                  pat->option.variant_name.length, pat->option.variant_name.start);
                         }
                     } else if (is_data_enum && pat->option.enum_name.length == 0) {
-                        // Data enum without prefix: Circle(r) — use type_name as prefix
+                        // Data enum without prefix: Circle(r) - use type_name as prefix
                         emit("if (__match_val_%d.tag == %.*s_%.*s_TAG) { ",
                              match_id,
                              type_name_len, type_name,
@@ -4291,7 +4291,7 @@ void codegen_expr(Expr* expr) {
             emit("%s_Some(", _fam);
             // Peel the target family for the payload: inside Some(Some(5)) the
             // inner ctor's target is the OUTER family's payload (OptionOptionInt
-            // → OptionInt), not the outer family itself — without the peel the
+            // → OptionInt), not the outer family itself - without the peel the
             // inner Some also emitted OptionOptionInt_Some (a C type error).
             extern const char* current_assign_target_kind;
             const char* _prev_tk = current_assign_target_kind;
@@ -4303,7 +4303,7 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_NONE: {
-            // No payload to infer from — rely on the target/return annotation,
+            // No payload to infer from - rely on the target/return annotation,
             // defaulting to OptionInt.
             emit("%s_None()", wyn_option_ctor_kind(expr, "Option"));
             break;
@@ -4430,7 +4430,7 @@ void codegen_expr(Expr* expr) {
                 if (expr->string_interp.expressions[i]) {
                     Expr* e = expr->string_interp.expressions[i];
                     // Only release if the expression is NOT already a string
-                    // (to_string on a string returns the same pointer — releasing it frees the original)
+                    // (to_string on a string returns the same pointer - releasing it frees the original)
                     bool is_str_expr = (e->type == EXPR_STRING) ||
                                        (e->expr_type && e->expr_type->kind == TYPE_STRING) ||
                                        (e->type == EXPR_IDENT && e->expr_type && e->expr_type->kind == TYPE_STRING);
@@ -4441,7 +4441,7 @@ void codegen_expr(Expr* expr) {
                 }
             }
             // __buf is already an owned heap RC string (wyn_str_alloc), so both
-            // the skip and non-skip cases just yield it — no extra wyn_strdup copy
+            // the skip and non-skip cases just yield it - no extra wyn_strdup copy
             // (which would leak __buf and double-allocate).
             emit("__buf; })");
             break;
@@ -4564,7 +4564,7 @@ void codegen_expr(Expr* expr) {
                     else
                         emit("), __FILE__, __LINE__)");
                 } else if (arg_count == 1 && _arg1_needs_box) {
-                    // Boxed single arg: same shape as the multi-arg path — the
+                    // Boxed single arg: same shape as the multi-arg path - the
                     // wrapper (which knows the real param type) unpacks it.
                     spawn_id_counter++;
                     int sid = spawn_id_counter;
@@ -4629,7 +4629,7 @@ void codegen_expr(Expr* expr) {
                     is_closure_lambda = true;
                     // Emit closure construction: allocate env, fill captured vars, return WynClosure.
                     // The env is RC-allocated (not plain malloc) so its lifetime can be
-                    // managed by wyn_rc_retain/release on WynClosure.env — see the scope-exit
+                    // managed by wyn_rc_retain/release on WynClosure.env - see the scope-exit
                     // release for non-escaping closure vars in codegen.c pop_scope. wyn_rc_release
                     // is a no-op on non-RC/NULL pointers, so this stays safe even where a closure
                     // env isn't (yet) tracked.
@@ -4740,7 +4740,7 @@ void codegen_expr(Expr* expr) {
                 emit(")");
             } else if (expr->index_assign.object->type == EXPR_INDEX) {
                 // Nested element assign: m[0][1] = v. The object m[0] is an
-                // RVALUE (array_get_* call) — taking its address was a C error.
+                // RVALUE (array_get_* call) - taking its address was a C error.
                 // Reach the inner array THROUGH the WynValue pointer instead.
                 emit("{ WynArray* __arr_ptr = (");
                 codegen_expr(expr->index_assign.object->index.array);

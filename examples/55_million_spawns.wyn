@@ -1,4 +1,4 @@
-// Spawn Scaling — demonstrates spawn throughput via batching
+// Spawn Scaling - demonstrates spawn throughput via batching
 // With 8MB default stacks, ~5-10K concurrent spawns are practical.
 // Higher throughput achieved by batching: spawn, await, recycle.
 

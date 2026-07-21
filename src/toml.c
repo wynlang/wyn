@@ -59,7 +59,7 @@ WynConfig* wyn_config_parse(const char* filename) {
             continue;
         }
 
-        // Key = value. Anything else is malformed — warn ONCE instead of
+        // Key = value. Anything else is malformed - warn ONCE instead of
         // silently ignoring it (a typo'd manifest line was never surfaced).
         char* eq = strchr(trimmed, '=');
         if (!eq) {
@@ -92,7 +92,7 @@ WynConfig* wyn_config_parse(const char* filename) {
             config->dependencies[config->dependency_count].version = value;
             config->dependency_count++;
         } else if (strcmp(current_section, "ffi") == 0) {
-            // ACCUMULATE across repeated [ffi] sections — `wyn add` appends one
+            // ACCUMULATE across repeated [ffi] sections - `wyn add` appends one
             // block per C package, so replacing meant only the LAST package's
             // libs/dirs survived and every earlier package failed to link.
             char** slot = NULL;
@@ -126,7 +126,7 @@ static void append_flag_list(char* buf, int buf_size, const char* flag, const ch
     char tmp[4096];   // accumulated multi-package lists can be long
     strncpy(tmp, list, sizeof(tmp) - 1);
     tmp[sizeof(tmp) - 1] = '\0';
-    // Reject shell metacharacters — an FFI list should be bare lib/dir names,
+    // Reject shell metacharacters - an FFI list should be bare lib/dir names,
     // never a command. This keeps a malicious wyn.toml from injecting shell.
     for (char* c = tmp; *c; c++) {
         if (*c == ';' || *c == '&' || *c == '|' || *c == '`' || *c == '$' ||

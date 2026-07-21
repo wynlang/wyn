@@ -1,4 +1,4 @@
-// I/O event loop — kqueue (macOS) / epoll (Linux)
+// I/O event loop - kqueue (macOS) / epoll (Linux)
 // When a coroutine yields on I/O, it registers the fd + its Task* here.
 // Workers call wyn_io_poll() which re-enqueues tasks whose fds are ready.
 
@@ -226,7 +226,7 @@ void wyn_io_shutdown(void) {
 }
 
 // ============================================================================
-// Fallback: no-op — busy-yield still works
+// Fallback: no-op - busy-yield still works
 // ============================================================================
 #else
 

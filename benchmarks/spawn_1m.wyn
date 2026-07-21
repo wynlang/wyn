@@ -1,4 +1,4 @@
-// Spawn 1M tasks — fire-and-forget
+// Spawn 1M tasks - fire-and-forget
 // Tests: scheduler throughput, memory efficiency at scale
 
 fn work(id: int) -> int {

@@ -1,4 +1,4 @@
-// Wyn coroutine wrapper — thin layer over minicoro.h
+// Wyn coroutine wrapper - thin layer over minicoro.h
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdatomic.h>
@@ -34,7 +34,7 @@ static inline int munmap(void* addr, size_t len) { (void)len; VirtualFree(addr, 
 // 8MB default (same as MCO_DEFAULT_STACK_SIZE above, and the size of a macOS
 // main-thread stack). Stacks are mmap'd anonymous memory: pages are committed
 // lazily on first touch, so a coroutine that uses 10KB of stack costs ~3 pages
-// of RAM regardless of this number — raising it only spends virtual address
+// of RAM regardless of this number - raising it only spends virtual address
 // space. The old 64KB default made ~5000-frame recursion (or deep sort/parse
 // work) die with SIGBUS in awaited spawns (sample-apps/algorithms/sorting, bug
 // H1 2026-07-18); 2MB still overflowed under TCC's unoptimized frames.
@@ -65,7 +65,7 @@ static WynCoroutine* wc_free_stack[WC_POOL_SIZE];
 static int wc_free_top = 0;
 // The old lock-free index CAS was UNSOUND (same bug as spawn_fast.c's sa pool):
 // alloc CAS'd wc_free_top then read wc_free_stack[top-1], but a concurrent
-// dealloc could CAS the index back up and overwrite that slot in between — so
+// dealloc could CAS the index back up and overwrite that slot in between - so
 // two coroutine tasks got the same WynCoroutine, corrupting fn/arg/co and
 // silently dropping fire-and-forget work. A dedicated mutex is obviously correct;
 // coroutine create/destroy is not hot enough to need lock-free.
@@ -105,7 +105,7 @@ static void wc_dealloc(WynCoroutine* wc) {
             return;
         }
         wc_pool_unlock();
-        return;  // pool full — drop (from the fixed arena, can't free())
+        return;  // pool full - drop (from the fixed arena, can't free())
     }
     free(wc);
 }

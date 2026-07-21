@@ -39,7 +39,7 @@ FILE* codegen_get_output(void) { return out; }
 // `is_return` distinguishes a string return (`char*`, caller may own) from a
 // string param (`const char*`). NULL type = void (no `-> T`). A pointer type
 // like `ptr`/`*T` maps to `void*`; anything unrecognized is `long long` (opaque
-// machine word) — matching extern_map_type in checker.c.
+// machine word) - matching extern_map_type in checker.c.
 const char* extern_c_type(Expr* type_expr, bool is_return) {
     if (!type_expr) return "void";
     if (type_expr->type == EXPR_IDENT) {
@@ -48,12 +48,12 @@ const char* extern_c_type(Expr* type_expr, bool is_return) {
         if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return "double";
         if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return "bool";
         if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return is_return ? "char*" : "const char*";
-        // `cstr` — a raw C string; emit a plain `char*` both ways (no const/owned
+        // `cstr` - a raw C string; emit a plain `char*` both ways (no const/owned
         // wrapping), so it round-trips through C funcs taking/returning char*.
         if (t.length == 4 && memcmp(t.start, "cstr", 4) == 0) return "char*";
         if (t.length == 4 && memcmp(t.start, "void", 4) == 0) return "void";
         if (t.length == 3 && memcmp(t.start, "ptr", 3) == 0) return "void*";
-        // A user struct by value — emit the C struct name (Wyn emits the struct
+        // A user struct by value - emit the C struct name (Wyn emits the struct
         // typedef with matching field layout, so it passes/returns by value).
         char sn[96]; int _n = t.length < 95 ? t.length : 95;
         memcpy(sn, t.start, _n); sn[_n] = 0;
@@ -388,14 +388,14 @@ static const char* current_fn_return_kind = NULL;
 
 // True while emitting the body of a function whose C signature is non-void
 // (e.g. `long long wyn_main()`). A bare `return;` there must become `return 0;`
-// or the C compiler rejects "non-void function should return a value" — which
+// or the C compiler rejects "non-void function should return a value" - which
 // bit early-return-without-value in an inferred-void `main`. Set at function
 // emit, saved/restored across nested function codegen.
 static bool current_fn_c_nonvoid = false;
 
 // Track the Option/Result family of the current assignment target (the declared
 // type of a `var x: T? = Some(..)` / `var r: ResultString = Ok(..)`), so a
-// Some/None/Ok/Err initializer lowers to the exact family the annotation names —
+// Some/None/Ok/Err initializer lowers to the exact family the annotation names -
 // even with no enclosing function-return context. Same value domain as
 // current_fn_return_kind; NULL when the target is not an Option/Result.
 static const char* current_assign_target_kind = NULL;
@@ -483,11 +483,11 @@ int is_known_array_var(const char* name) {
     return 0;
 }
 
-// String content array tracking — arrays whose elements are strings
+// String content array tracking - arrays whose elements are strings
 static char* str_array_var_names[64];
 static int str_array_var_count = 0;
 
-// Typed int array tracking — [int] arrays using WynIntArray
+// Typed int array tracking - [int] arrays using WynIntArray
 static char* int_array_var_names[256];
 static int int_array_var_count = 0;
 void register_int_array_var(const char* name) {
@@ -547,7 +547,7 @@ void pop_string_scope_and_release(void) {
             fprintf(out, "wyn_rc_release(%s); ", emit_c_var_name(_cn, sizeof _cn, string_var_names[i]));
         }
     }
-    // Restore count — inner-scope vars are no longer tracked
+    // Restore count - inner-scope vars are no longer tracked
     string_var_count = saved;
 }
 // Emit releases for current block's vars (for continue/break)
@@ -570,7 +570,7 @@ void register_string_var(const char* name) {
     if (string_var_count < 256) string_var_names[string_var_count++] = strdup(name);
 }
 
-// Array scope tracking — parallel to string scope
+// Array scope tracking - parallel to string scope
 static char* array_scope_names[256];
 static int array_scope_count = 0;
 static int array_scope_stack[SCOPE_STACK_MAX];
@@ -626,7 +626,7 @@ void register_hashmap_scope_var(const char* name) {
 }
 void reset_hashmap_scope(void) { hashmap_scope_count = 0; hashmap_scope_top = 0; }
 
-// Closure scope tracking — parallel to array/string scope. A closure-holding
+// Closure scope tracking - parallel to array/string scope. A closure-holding
 // local (WynClosure by value) owns an RC-allocated env (see codegen_expr.c
 // EXPR_LAMBDA). Releasing <var>.env when the var leaves scope reclaims the env.
 // wyn_rc_release is a no-op on non-RC/NULL, so a released-but-not-owned closure
@@ -745,7 +745,7 @@ void emit_string_releases(const char* except_var) {
 
 // Pre-return release that skips every local referenced by the return
 // expression, not just an exact-identifier return. `return "<y>" + t + "</y>"`
-// released t BEFORE the concat evaluated — use-after-free that read as empty
+// released t BEFORE the concat evaluated - use-after-free that read as empty
 // output (bug M3, 2026-07-18; module functions made it visible but the defect
 // is general).
 static int expr_references_var(Expr* e, const char* name);
@@ -787,7 +787,7 @@ static int expr_references_var(Expr* e, const char* name) {
         case EXPR_INDEX:
             return expr_references_var(e->index.array, name) || expr_references_var(e->index.index, name);
         case EXPR_STRING_INTERP:
-            // "${t}" references t — without this the pre-return release freed
+            // "${t}" references t - without this the pre-return release freed
             // interpolated locals (M3's interp variant).
             for (int i = 0; i < e->string_interp.count; i++)
                 if (expr_references_var(e->string_interp.expressions[i], name)) return 1;
@@ -894,7 +894,7 @@ int function_can_inline(const char* name) {
             }
         }
     }
-    return 0; // unknown function — don't inline
+    return 0; // unknown function - don't inline
 }
 
 // If struct `struct_name` has a field `field_name` declared as an optional type
@@ -1137,7 +1137,7 @@ static SpawnWrapper spawn_wrappers[256];
 static int spawn_wrapper_count = 0;
 static int spawn_id_counter = 0;
 
-// Spawn array tracking — arrays that hold Future pointers use WynIntArray
+// Spawn array tracking - arrays that hold Future pointers use WynIntArray
 static char spawn_array_vars[64][256];
 static int spawn_array_count = 0;
 void register_spawn_array(const char* name) {
@@ -1152,7 +1152,7 @@ int is_spawn_array(const char* name) {
     return 0;
 }
 
-// String future tracking — variables that hold futures from string-returning spawns
+// String future tracking - variables that hold futures from string-returning spawns
 static char string_future_vars[64][256];
 static int string_future_count = 0;
 void register_string_future(const char* name) {
@@ -1162,7 +1162,7 @@ void register_string_future(const char* name) {
         strcpy(string_future_vars[string_future_count++], name);
 }
 
-// String spawn array tracking — arrays that hold futures from string-returning spawns
+// String spawn array tracking - arrays that hold futures from string-returning spawns
 static char string_spawn_array_vars[64][256];
 static int string_spawn_array_count = 0;
 void register_string_spawn_array(const char* name) {
@@ -1182,7 +1182,7 @@ int is_string_future(const char* name) {
     return 0;
 }
 
-// Struct future tracking — variables that hold futures from struct-returning spawns
+// Struct future tracking - variables that hold futures from struct-returning spawns
 static char struct_future_vars[64][256];
 static char struct_future_types[64][64];
 static int struct_future_count = 0;
@@ -1501,8 +1501,8 @@ const char* get_struct_var_type(const char* var) {
     }
     return NULL;
 }
-// Track tuple-typed variables (`var p = (1, 2)`), so a copy `var q = p` — as
-// produced by tuple destructuring `var a, b = p` — can use __auto_type instead of
+// Track tuple-typed variables (`var p = (1, 2)`), so a copy `var q = p` - as
+// produced by tuple destructuring `var a, b = p` - can use __auto_type instead of
 // defaulting to long long (which truncated the tuple struct to an int).
 static char tuple_var_names[256][64];
 static int tuple_var_count = 0;
@@ -1722,7 +1722,7 @@ void register_fn_return_type(const char* name, const char* ret_type) {
             return;
         }
     }
-    // Function not yet registered — add it
+    // Function not yet registered - add it
     if (fn_defaults_count < 256) {
         strncpy(fn_defaults[fn_defaults_count].name, name, 127);
         fn_defaults[fn_defaults_count].defaults = NULL;

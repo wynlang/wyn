@@ -1,5 +1,5 @@
 // Regression: a map literal whose value is a typed non-literal expression (a
-// variable, call, etc.) was stored with hashmap_insert_int — the map-literal
+// variable, call, etc.) was stored with hashmap_insert_int - the map-literal
 // codegen only checked the literal node type, not the checker-resolved expr_type,
 // so `{"lang": name}` (name: string) mis-stored the pointer as an int and read
 // back garbage. All three map-store sites now share hashmap_insert_fn_for(), which
@@ -11,7 +11,7 @@
 fn main() -> int {
     var name = "wyn"
     var kind = "compiler"
-    // Values are typed string VARIABLES (non-literal exprs) — previously stored as
+    // Values are typed string VARIABLES (non-literal exprs) - previously stored as
     // int by the map-literal codegen; now resolved via expr_type so they round-trip.
     var m = {"lang": name, "kind": kind}
     print(m["lang"])

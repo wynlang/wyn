@@ -1,4 +1,4 @@
-// Test: For loops — all patterns
+// Test: For loops - all patterns
 fn main() {
     // Range for
     var sum = 0

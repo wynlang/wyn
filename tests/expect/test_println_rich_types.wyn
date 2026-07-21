@@ -4,7 +4,7 @@
 // EXPECT: none
 // EXPECT: 99
 // EXPECT: ["a7", "b7"]
-// println on rich types — every case here used to be an internal codegen
+// println on rich types - every case here used to be an internal codegen
 // error on completely valid code:
 // - println(struct): to_string(p) passed a struct to a long long param
 // - println(option): same for OptionInt/OptionString values

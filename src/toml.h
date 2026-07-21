@@ -17,7 +17,7 @@ typedef struct {
     char* version;
 } WynDependency;
 
-// [ffi] section — how to link C libraries an `extern fn` calls into.
+// [ffi] section - how to link C libraries an `extern fn` calls into.
 // Each is a comma/space-separated list, e.g. libs = "curl, z".
 typedef struct {
     char* libs;          // -l<name> for each

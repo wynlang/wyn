@@ -6,7 +6,7 @@
 fn main() -> int {
     var m = {"a": 1, "b": 2, "c": 3}
 
-    // for k, v — sum values, concat keys length
+    // for k, v - sum values, concat keys length
     var vsum = 0
     var kcount = 0
     for k, v in m {
@@ -16,7 +16,7 @@ fn main() -> int {
     if vsum != 6 { println("FAIL: value sum"); return 1 }
     if kcount != 3 { println("FAIL: key count"); return 1 }
 
-    // for k (single var) — keys
+    // for k (single var) - keys
     var n = 0
     for k in m { n = n + 1 }
     if n != 3 { println("FAIL: keys iteration"); return 1 }

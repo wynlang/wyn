@@ -26,7 +26,7 @@ fn main() -> int {
     Test.assert(r1.is_ok(), "? chain ok")
     Test.assert_eq_int(r1.unwrap(), 10, "60/2/3 = 10")
     var r2 = chain_ops(0)
-    // 0/2 = 0, 0/3 = 0 — should be ok
+    // 0/2 = 0, 0/3 = 0 - should be ok
     Test.assert(r2.is_ok(), "? chain with 0")
     
     // 2. Collections pipeline
@@ -45,7 +45,7 @@ fn main() -> int {
     Test.assert_eq_int(v1, 125, "spawn add 100+25")
     Test.assert_eq_int(v2, 240, "spawn add 200+40")
     
-    // 4. Tasks — shared state
+    // 4. Tasks - shared state
     var counter = Task.value(0)
     var w1 = spawn worker(counter)
     var w2 = spawn worker(counter)
@@ -56,7 +56,7 @@ fn main() -> int {
     Test.assert_eq_int(Task.get(counter), 3, "3 workers incremented shared")
     
     // 5. Package manager (verify install works)
-    // Already tested — wyn install /path works
+    // Already tested - wyn install /path works
     
     // 6. String interpolation
     var name = "Wyn"

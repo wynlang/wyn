@@ -742,7 +742,7 @@ static const char* wyn_resolve_type_to_c(Token type_name, FnStmt* fn, Type** typ
     for (int i = 0; i < fn->type_param_count && i < type_arg_count; i++) {
         if (fn->type_params[i].length == type_name.length &&
             memcmp(fn->type_params[i].start, type_name.start, type_name.length) == 0) {
-            // Found matching type parameter — use concrete type
+            // Found matching type parameter - use concrete type
             switch (type_args[i]->kind) {
                 case TYPE_STRING: return "const char*";
                 case TYPE_FLOAT:  return "double";
@@ -751,7 +751,7 @@ static const char* wyn_resolve_type_to_c(Token type_name, FnStmt* fn, Type** typ
             }
         }
     }
-    // Not a type parameter — resolve literally
+    // Not a type parameter - resolve literally
     if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) return "long long";
     if (type_name.length == 6 && memcmp(type_name.start, "string", 6) == 0) return "const char*";
     if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) return "double";

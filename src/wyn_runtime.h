@@ -38,7 +38,7 @@ struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
 #include <stdio.h>
 #include <stdlib.h>
 
-// Safe allocators — abort on OOM instead of returning NULL
+// Safe allocators - abort on OOM instead of returning NULL
 static inline void* wyn_malloc(size_t n) { void* p = malloc(n); if (!p && n) { fprintf(stderr, "wyn: out of memory (%zu bytes)\n", n); abort(); } return p; }
 static inline void* wyn_calloc(size_t c, size_t n) { void* p = calloc(c, n); if (!p && c && n) { fprintf(stderr, "wyn: out of memory\n"); abort(); } return p; }
 static inline void* wyn_realloc(void* p, size_t n) { void* q = realloc(p, n); if (!q && n) { fprintf(stderr, "wyn: out of memory\n"); abort(); } return q; }
@@ -179,7 +179,7 @@ static inline char* wyn_sb_finish(WynStrBuf* sb) {
 #include "hashset.h"
 
 // === Arena Allocator for string memory management ===
-// Implementation in wyn_arena.c — shared across all compilation units
+// Implementation in wyn_arena.c - shared across all compilation units
 #include "wyn_arena.h"
 
 // Global argc/argv for System::args()
@@ -205,7 +205,7 @@ const char* wyn_string_concat_safe(const char* left, const char* right) {
     if (!left) left = "";
     if (!right) right = "";
     // INVARIANT: this function ALWAYS returns a distinct, freshly heap-allocated
-    // string — never an alias of `left` or `right`. Callers (see codegen) rely on
+    // string - never an alias of `left` or `right`. Callers (see codegen) rely on
     // pointer identity to decide ownership: a returned pointer equal to an operand
     // would be released twice (use-after-free) and, for the old in-place grow path,
     // would also mutate a live caller-owned string. Do not reintroduce aliasing
@@ -213,7 +213,7 @@ const char* wyn_string_concat_safe(const char* left, const char* right) {
     extern int wyn_rc_is_heap(const void*);
     size_t l2 = strlen(right);
     size_t l1;
-    // Mirror of WynRcHeaderFull (wyn_rc.c) — must stay byte-identical. magic2 is
+    // Mirror of WynRcHeaderFull (wyn_rc.c) - must stay byte-identical. magic2 is
     // the complement sentinel appended last so the leading fields keep their offsets.
     typedef struct { unsigned int magic; _Atomic int refcount; unsigned int capacity; unsigned int length; unsigned int magic2; } RcHdr;
     if (wyn_rc_is_heap(left)) {
@@ -637,7 +637,7 @@ void array_push_str(WynArray* restrict arr, const char* value) {
         arr->capacity = new_cap;
     }
     arr->data[arr->count].type = WYN_TYPE_STRING;
-    // Take ownership — caller transfers the string to the array
+    // Take ownership - caller transfers the string to the array
     // array_free will release RC strings
     arr->data[arr->count].data.string_val = (char*)value;
     arr->count++;
@@ -741,7 +741,7 @@ void array_remove_str(WynArray* arr, const char* value) {
         }
     }
 }
-// Lightweight int array — 8 bytes per element (vs 16 for WynArray)
+// Lightweight int array - 8 bytes per element (vs 16 for WynArray)
 // Used internally for spawn future collection
 typedef struct { long long* data; int count; int capacity; } WynIntArray;
 WynIntArray int_array_new() { WynIntArray a = {0}; return a; }
@@ -815,7 +815,7 @@ static int _wyn_cmp_str(const void* a, const void* b) {
     if (!sb) sb = "";
     return strcmp(sa, sb);
 }
-// Inline introsort for raw long long arrays — maximum cache efficiency
+// Inline introsort for raw long long arrays - maximum cache efficiency
 static void _wyn_isort_ll(long long* d, int n) {
     for (int i = 1; i < n; i++) {
         long long key = d[i];
@@ -852,7 +852,7 @@ static void _wyn_qsort_ll(long long* d, int n, int depth) {
     }
     _wyn_isort_ll(d, n);
 }
-// Inline introsort for int arrays — avoids qsort function pointer overhead
+// Inline introsort for int arrays - avoids qsort function pointer overhead
 static inline void _wyn_swap_val(WynValue* a, WynValue* b) {
     WynValue t = *a; *a = *b; *b = t;
 }
@@ -1220,7 +1220,7 @@ char* string_capitalize(const char* str) {
     return result;
 }
 char* string_reverse(const char* str) {
-    // UTF-8 aware: reverse by character, not by byte — byte reversal turned
+    // UTF-8 aware: reverse by character, not by byte - byte reversal turned
     // "héllo" into invalid UTF-8 ("oll??h"). Multibyte sequences are copied
     // intact in reverse character order.
     int len = string_length(str);
@@ -1260,7 +1260,7 @@ int string_index_of(const char* str, const char* substr) {
 char* string_replace(const char* str, const char* old, const char* new) {
     int old_len = strlen(old);
     // Empty needle: strstr matches at every position and the scan cursor never
-    // advances — this hung forever. Match JS-adjacent sanity: return unchanged.
+    // advances - this hung forever. Match JS-adjacent sanity: return unchanged.
     if (old_len == 0) return wyn_strdup(str);
     int count = 0;
     const char* p = str;
@@ -1403,7 +1403,7 @@ const char* wyn_string_charat(const char* str, int index) {
     return result;
 }
 WynArray string_chars(const char* str) {
-    // UTF-8 aware: each element is one character (code point), not one byte —
+    // UTF-8 aware: each element is one character (code point), not one byte -
     // byte-splitting produced 9 invalid fragments for "日本語" instead of 3 chars.
     WynArray arr = array_new();
     const unsigned char* s = (const unsigned char*)str;
@@ -1838,7 +1838,7 @@ char* https_get(const char* url) {
     size_t len = fread(response, 1, 131071, fp);
     response[len] = 0;
     pclose(fp);
-    // Skip HTTP headers — find \r\n\r\n
+    // Skip HTTP headers - find \r\n\r\n
     char* body = strstr(response, "\r\n\r\n");
     if (body) {
         body += 4;
@@ -2079,7 +2079,7 @@ void print_bin(int x) { for(int i = 31; i >= 0; i--) printf("%d", (x >> i) & 1);
 
 // println emits the value AND its trailing newline in ONE printf/fwrite call, so
 // output stays atomic across the M:N scheduler's worker threads (libc locks a
-// single printf per-FILE, but not a print()+printf("\n") pair — concurrent
+// single printf per-FILE, but not a print()+printf("\n") pair - concurrent
 // fire-and-forget spawns otherwise interleave the newline mid-line). Each type
 // gets a dedicated one-call println_* rather than the old two-call macro.
 void println_int(long long x)   { printf("%lld\n", x); }
@@ -2244,7 +2244,7 @@ long long str_parse_int(const char* s) {
 long long str_ascii(const char* s) { return (s && *s) ? (unsigned char)s[0] : 0; }
 const char* String_char_from_int(long long n) { char* r = wyn_str_alloc(2); r[0] = (char)n; r[1] = 0; return r; }
 
-// Data.save/load — forward declared, defined after hashmap functions
+// Data.save/load - forward declared, defined after hashmap functions
 void Data_save(const char* path, WynHashMap* map);
 WynHashMap* Data_load(const char* path);
 extern void hashmap_insert_string(WynHashMap* map, const char* key, const char* value);
@@ -2393,7 +2393,7 @@ char* file_get_cwd();
 // File namespace: the runtime historically grew a MIX of `file_x` and `File_x`
 // names, so `File::x` (→ file_x) and `File.x` (→ File_x) each covered only half the
 // functions. These aliases give every File function BOTH names so both call syntaxes
-// work uniformly. (2026-07 — dot-uniformity, task #31.)
+// work uniformly. (2026-07 - dot-uniformity, task #31.)
 //
 // Forward-declare the file_* functions defined later in this header, so the aliases
 // below (and the File_* twins) can reference them regardless of definition order.
@@ -2513,12 +2513,12 @@ void File_close(long long handle) {
 
 // === HTTP Server ===
 // send() flags/setup so a client that already hung up can't kill the server
-// with SIGPIPE (no handler was installed anywhere — one dead client == dead
+// with SIGPIPE (no handler was installed anywhere - one dead client == dead
 // server under load, found benchmarking 2026-07-19).
 #if defined(__APPLE__)
 #define WYN_HTTP_SEND_FLAGS 0
 // _POSIX_C_SOURCE hides SO_NOSIGPIPE's define on macOS; the kernel constant is
-// stable (0x1022, sys/socket.h) — define it if the header didn't.
+// stable (0x1022, sys/socket.h) - define it if the header didn't.
 #ifndef SO_NOSIGPIPE
 #define SO_NOSIGPIPE 0x1022
 #endif
@@ -2533,10 +2533,10 @@ static void wyn_http_nosigpipe(int fd) { (void)fd; }
 
 // --- Keep-alive state (2026-07-19) -------------------------------------------
 // HTTP/1.1 default is persistent connections; closing after every response
-// forced a fresh TCP handshake per request — measured 5x slower than Go on
+// forced a fresh TCP handshake per request - measured 5x slower than Go on
 // the same endpoint (7k vs 35k rps with ab -k). read_request records whether
 // THIS request wants keep-alive (per fd); respond consults it. Bitset sized
-// by fd — fds above the table always close (correct, just not persistent).
+// by fd - fds above the table always close (correct, just not persistent).
 #define WYN_HTTP_KA_MAX 4096
 static _Atomic unsigned char wyn_http_ka[WYN_HTTP_KA_MAX];
 static void wyn_http_set_ka(int fd, int on) {
@@ -2600,7 +2600,7 @@ void Http_respond(long long client_fd, long long status, const char* content_typ
     // The CLOSE happens in Http_read_request's next iteration, never here:
     // if respond closed the fd while the handler coroutine was still going
     // to loop, the kernel could recycle the fd number to a brand-new
-    // connection and the old handler would read — and close — the new
+    // connection and the old handler would read - and close - the new
     // client's traffic (connection-resets under ab -c 100, 2026-07-19).
     // Single owner: the handler loop. Flag value 2 = "close pending".
     if (!wyn_http_get_ka((int)client_fd)) {
@@ -2782,7 +2782,7 @@ char* Http_accept(int server_fd) {
 
 
 // --- Concurrent-accept API (2026-07-19) -------------------------------------
-// Http_accept does accept+recv+parse on ONE loop — a slow client blocks every
+// Http_accept does accept+recv+parse on ONE loop - a slow client blocks every
 // other connection (head-of-line; found when ab -c 50 wedged the server, stack
 // sample showed main parked in recv inside Http_accept). The fast pattern
 // splits it: the main loop runs accept-only (cheap syscall), and the REQUEST
@@ -2792,7 +2792,7 @@ char* Http_accept(int server_fd) {
 //   while true { var fd = Http.accept_fd(server)  if fd > 0 { spawn handle(fd) } }
 //   fn handle(fd: int) { var req = Http.read_request(fd) ... }
 
-// Accept only — returns the client fd (or -1). Coroutine-aware like Http_accept.
+// Accept only - returns the client fd (or -1). Coroutine-aware like Http_accept.
 long long Http_accept_fd(int server_fd) {
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
@@ -2836,7 +2836,7 @@ char* Http_read_request(long long client_fd_ll) {
     if (client_fd < 0) return "";
     // A previous respond() on this connection answered a close-semantics
     // request (HTTP/1.0 / Connection: close): flag value 2 = close pending.
-    // Close here — the handler loop is the fd's single owner — and end the
+    // Close here - the handler loop is the fd's single owner - and end the
     // loop. (Fresh connections have flag 0 from accept and fall through.)
     if (client_fd < WYN_HTTP_KA_MAX && atomic_load(&wyn_http_ka[client_fd]) == 2) {
         wyn_http_set_ka(client_fd, 0);
@@ -2936,7 +2936,7 @@ char* string_split_to_str(const char* s, const char* delim) {
     return result;
 }
 
-// Array.sort_by(fn) — sort using comparison function
+// Array.sort_by(fn) - sort using comparison function
 void wyn_array_sort_by(WynArray* arr, long long (*cmp)(long long, long long)) {
     // Simple insertion sort (stable, good for small arrays)
     for (int i = 1; i < arr->count; i++) {
@@ -3059,7 +3059,7 @@ void Terminal_show_cursor() { printf("\033[?25h"); }
 // Colored print helpers
 void Terminal_print_color(const char* s, int fg) { printf("\033[%dm%s\033[0m", fg, s); }
 
-// Color module — string-returning color functions
+// Color module - string-returning color functions
 // Usage: Color.red("error"), Color.bold("title"), Color.green("ok")
 static char* _color_wrap(const char* s, const char* code) {
     // \033[CODEm + s + \033[0m + null
@@ -3285,7 +3285,7 @@ char* Env_get(const char* name) {
 
 /* ── Args: simple argument parser ── */
 
-// Args.get(name) — returns value of --name=value or --name value, or ""
+// Args.get(name) - returns value of --name=value or --name value, or ""
 char* Args_get(const char* name) {
     int argc = wyn_get_argc();
     char flag_eq[256]; snprintf(flag_eq, sizeof(flag_eq), "--%s=", name);
@@ -3303,7 +3303,7 @@ char* Args_get(const char* name) {
     return "";
 }
 
-// Args.has(name) — returns true if --name or -n present
+// Args.has(name) - returns true if --name or -n present
 bool Args_has(const char* name) {
     int argc = wyn_get_argc();
     char flag_long[256]; snprintf(flag_long, sizeof(flag_long), "--%s", name);
@@ -3318,7 +3318,7 @@ bool Args_has(const char* name) {
     return false;
 }
 
-// Args.positional() — returns array of non-flag arguments
+// Args.positional() - returns array of non-flag arguments
 WynArray Args_positional() {
     int argc = wyn_get_argc();
     WynArray arr; arr.data = wyn_malloc(argc * sizeof(WynValue)); arr.count = 0; arr.capacity = argc;
@@ -3376,7 +3376,7 @@ long long Math_abs(long long x) { return x < 0 ? -x : x; }
 float Math_max(float a, float b) { return a > b ? a : b; }
 float Math_min(float a, float b) { return a < b ? a : b; }
 
-// Checked arithmetic — returns 0 and prints error on overflow, exits if WYN_STRICT
+// Checked arithmetic - returns 0 and prints error on overflow, exits if WYN_STRICT
 long long Math_checked_add(long long a, long long b) {
     if ((b > 0 && a > LLONG_MAX - b) || (b < 0 && a < LLONG_MIN - b)) {
         fprintf(stderr, "panic: integer overflow in checked_add(%lld, %lld)\n", a, b);
@@ -3429,11 +3429,11 @@ char* DateTime_format(int timestamp, const char* fmt) {
 }
 void DateTime_sleep(int seconds) { sleep(seconds); }
 
-// Time.sleep(ms) — sleep for milliseconds.
+// Time.sleep(ms) - sleep for milliseconds.
 // Inside a coroutine, sleep COOPERATIVELY: arm a one-shot timer, park, and
 // yield so the worker thread runs other tasks meanwhile; the scheduler resumes
-// this task when the timer fires (via wyn_io_poll). Outside a coroutine — or if
-// the timer can't be armed (TCC/fallback stub) — fall back to a blocking sleep.
+// this task when the timer fires (via wyn_io_poll). Outside a coroutine - or if
+// the timer can't be armed (TCC/fallback stub) - fall back to a blocking sleep.
 void Time_sleep(long long ms) {
     if (ms < 0) ms = 0;
 #ifndef _WIN32
@@ -3662,7 +3662,7 @@ WynArray wyn_array_filter_str(WynArray arr, long long (*fn)(const char*)) {
 }
 // [string] -> [int] map: lambda takes a string, returns an int
 // (e.g. words.map((s) => s.len())). Routing this through the str->str
-// variant treated the returned ints as char* — a segfault at print.
+// variant treated the returned ints as char* - a segfault at print.
 WynArray wyn_array_map_str_to_int(WynArray arr, long long (*fn)(const char*)) {
     WynArray result = array_new();
     for (int i = 0; i < arr.count; i++) {
@@ -3875,11 +3875,11 @@ bool ResultBool_unwrap(ResultBool r) { if (r.tag == 1) { fprintf(stderr, "Error:
 const char* ResultBool_unwrap_err(ResultBool r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 bool ResultBool_unwrap_or(ResultBool r, bool def) { return r.tag == 0 ? r.data.ok_value : def; }
 
-// Task — simplified concurrency API
-// Task.all(f1, f2) — wait for multiple spawns
-// Task.race(f1, f2) — first spawn wins
-// Task.value(n) — shared mutable int between spawns
-// Task.get(v) / Task.set(v, n) — read/write shared value
+// Task - simplified concurrency API
+// Task.all(f1, f2) - wait for multiple spawns
+// Task.race(f1, f2) - first spawn wins
+// Task.value(n) - shared mutable int between spawns
+// Task.get(v) / Task.set(v, n) - read/write shared value
 
 // Shared value: thread-safe int with mutex
 typedef struct {
@@ -3947,7 +3947,7 @@ static inline void Task_cancel(void* handle) { (void)handle; }
 static inline long long Task_is_cancelled(void) { return 0; }
 #endif
 
-// Channel API (advanced) — kept for power users
+// Channel API (advanced) - kept for power users
 #define MAX_TASKS 64
 static WynTask* task_registry[MAX_TASKS] = {0};
 
@@ -3961,7 +3961,7 @@ long long Task_channel(long long capacity) {
 }
 void Task_send(long long handle, long long value) {
     if (handle <= 0 || handle >= MAX_TASKS || !task_registry[handle]) return;
-    // Send value directly — no boxing
+    // Send value directly - no boxing
     wyn_task_send(task_registry[handle], (void*)(intptr_t)value);
 }
 long long Task_recv(long long handle) {
@@ -3996,12 +3996,12 @@ long long Task_try_recv(long long handle, long long* out_value) {
 // Returns -1 when every channel is closed (no arm runs).
 //
 // Deadlock detection (main thread only): if no channel is ready, none are
-// closed, and the scheduler has NOTHING in flight, no producer can ever send —
+// closed, and the scheduler has NOTHING in flight, no producer can ever send -
 // spinning would hang forever (this was a real P0: select with no ready arm
 // hung silently). Send-before-complete ordering makes the zero check sound;
 // we re-check once after a pump to dodge any last-instant enqueue. Inside a
 // coroutine the calling task is itself "in flight", so this check can't apply
-// — the coroutine path keeps the yield loop.
+// - the coroutine path keeps the yield loop.
 extern long wyn_sched_inflight(void);
 extern int wyn_sched_pump_one(void);
 long long Task_select_n(const long long* chans, int n) {
@@ -4010,7 +4010,7 @@ long long Task_select_n(const long long* chans, int n) {
         for (int i = 0; i < n; i++) {
             long long ch = chans[i];
             if (ch > 0 && ch < MAX_TASKS && task_registry[ch]) {
-                // Poll under the channel mutex — senders mutate size under it,
+                // Poll under the channel mutex - senders mutate size under it,
                 // and the unlocked read was a real data race (TSan gate).
                 WynTask* t = task_registry[ch];
                 pthread_mutex_lock(&t->mutex);
@@ -4046,7 +4046,7 @@ long long Task_select_n(const long long* chans, int n) {
                 }
                 if (ready) continue;
                 if (wyn_sched_inflight() == 0) {
-                    fprintf(stderr, "wyn: deadlock — select has no ready channel and no live tasks (nothing can ever send)\n");
+                    fprintf(stderr, "wyn: deadlock - select has no ready channel and no live tasks (nothing can ever send)\n");
                     exit(1);
                 }
             }
@@ -4237,7 +4237,7 @@ char* Db_query_one(long long handle, const char* sql) {
     return result;
 }
 
-// Parameterized queries — prevent SQL injection
+// Parameterized queries - prevent SQL injection
 int Db_exec_p(long long handle, const char* sql, WynArray params) {
     if (handle <= 0 || handle >= MAX_DB_HANDLES || !db_handles[handle]) return -1;
     sqlite3_stmt* stmt;
@@ -4295,7 +4295,7 @@ void Db_close(long long handle) {
 }
 
 #else
-// SQLite not available — error on first use
+// SQLite not available - error on first use
 long long Db_open(const char* path) { (void)path; fprintf(stderr, "\033[31mError:\033[0m Db module requires SQLite.\n  macOS:  brew install sqlite3\n  Linux:  apt install libsqlite3-dev\n"); return -1; }
 int Db_exec(long long h, const char* sql) { (void)h;(void)sql; return -1; }
 char* Db_query(long long h, const char* sql) { (void)h;(void)sql; return ""; }
@@ -4305,7 +4305,7 @@ char* Db_error(long long h) { (void)h; return "sqlite not available"; }
 void Db_close(long long h) { (void)h; }
 #endif // WYN_USE_SQLITE
 
-// === StringBuilder — O(1) amortized append ===
+// === StringBuilder - O(1) amortized append ===
 typedef struct {
     char* data;
     int len;
@@ -4656,7 +4656,7 @@ char* Uuid_generate() {
 }
 char* Uuid_v4() { return Uuid_generate(); }
 
-// Bcrypt — password hashing with iterated HMAC-SHA256 + random salt
+// Bcrypt - password hashing with iterated HMAC-SHA256 + random salt
 char* Crypto_hmac_sha256(const char* key, const char* data); // forward decl
 char* Bcrypt_hash(const char* password) {
     char salt[33];
@@ -5381,11 +5381,11 @@ void Csv_write(const char* path, WynArray rows) {
     fclose(f);
 }
 
-// System.gc() — reset arena allocator, freeing all temporary strings
+// System.gc() - reset arena allocator, freeing all temporary strings
 // Call at the end of each request loop iteration in servers
 void System_gc() { wyn_arena_reset(); }
 
-// TOML parser — simple key=value with [section] support
+// TOML parser - simple key=value with [section] support
 typedef struct { char key[256]; char value[1024]; } TomlEntry;
 typedef struct { TomlEntry* entries; int count; int cap; } TomlDoc;
 
@@ -5586,7 +5586,7 @@ char* Template_render_string(const char* tmpl, WynHashMap* ctx) {
                 char* block_tmpl = wyn_malloc(blen + 1);
                 memcpy(block_tmpl, tmpl + block_start, blen);
                 block_tmpl[blen] = 0;
-                // Iterate over comma-separated values — simple string replace
+                // Iterate over comma-separated values - simple string replace
                 if (list_val && list_val[0]) {
                     char* list_copy = strdup(list_val);
                     char* pos = list_copy;

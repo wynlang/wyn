@@ -1,4 +1,4 @@
-// String Repeat Operator — v1.11 feature
+// String Repeat Operator - v1.11 feature
 // Use "str" * n to repeat a string n times.
 
 fn main() -> int {

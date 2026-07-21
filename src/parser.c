@@ -123,29 +123,29 @@ static bool check(WynTokenType type) {
 // before it; returns true (and reports one error + advances) when stuck, so the
 // caller can break. `before` is the parser.current.start pointer pre-statement().
 // Foreign-keyword table: the mistakes Python/JS refugees actually type, each
-// mapped to the Wyn equivalent — modeled on the `&&` → "use and" error, which
+// mapped to the Wyn equivalent - modeled on the `&&` → "use and" error, which
 // testing showed is the single most effective error message in the compiler.
-// Generic "Undefined variable 'True' — did you mean Time?" suggestions were
+// Generic "Undefined variable 'True' - did you mean Time?" suggestions were
 // actively harmful; these fire first.
 static const struct { const char* kw; const char* fix; } foreign_keywords[] = {
     {"def",       "functions are declared with 'fn':  fn add(a, b) { ... }"},
     {"lambda",    "anonymous functions use arrows:  (x) => x + 1"},
     {"True",      "booleans are lowercase:  true"},
     {"False",     "booleans are lowercase:  false"},
-    {"null",      "Wyn has no null — use Option types (none / Some(x))"},
-    {"undefined", "Wyn has no undefined — use Option types (none / Some(x))"},
+    {"null",      "Wyn has no null - use Option types (none / Some(x))"},
+    {"undefined", "Wyn has no undefined - use Option types (none / Some(x))"},
     {"let",       "declare with 'var' or just assign:  x = 5"},
     {"function",  "functions are declared with 'fn':  fn add(a, b) { ... }"},
     {"console",   "print with:  println(\"...\")"},
-    {"try",       "Wyn has no exceptions — return Result (Ok/Err) and use match or '?'"},
-    {"except",    "Wyn has no exceptions — return Result (Ok/Err) and use match or '?'"},
-    {"raise",     "Wyn has no exceptions — return an Err(...) Result"},
-    {"throw",     "Wyn has no exceptions — return an Err(...) Result"},
+    {"try",       "Wyn has no exceptions - return Result (Ok/Err) and use match or '?'"},
+    {"except",    "Wyn has no exceptions - return Result (Ok/Err) and use match or '?'"},
+    {"raise",     "Wyn has no exceptions - return an Err(...) Result"},
+    {"throw",     "Wyn has no exceptions - return an Err(...) Result"},
     {"self",      "'self' only exists inside struct methods"},
     {"elif",      "use 'else if'"},
     {"elseif",    "use 'else if'"},
     {"switch",    "use 'match':  match x { 1 => ..., _ => ... }"},
-    {"do",        "Wyn has no do-while — use 'while' with a condition"},
+    {"do",        "Wyn has no do-while - use 'while' with a condition"},
     {NULL, NULL}
 };
 
@@ -157,7 +157,7 @@ static bool check_foreign_keyword(void) {
         size_t kl = strlen(foreign_keywords[i].kw);
         if ((size_t)parser.current.length == kl &&
             memcmp(parser.current.start, foreign_keywords[i].kw, kl) == 0) {
-            fprintf(stderr, "Error at line %d: '%.*s' is not Wyn syntax — %s\n",
+            fprintf(stderr, "Error at line %d: '%.*s' is not Wyn syntax - %s\n",
                     parser.current.line, parser.current.length, parser.current.start,
                     foreign_keywords[i].fix);
             parser.had_error = true;
@@ -178,7 +178,7 @@ static bool stmt_made_no_progress(const char* before) {
         while (!check(TOKEN_EOF) && parser.current.line == line) advance();
         return true;
     }
-    fprintf(stderr, "Error at line %d: unexpected token '%.*s' — expected a statement\n",
+    fprintf(stderr, "Error at line %d: unexpected token '%.*s' - expected a statement\n",
             parser.current.line, parser.current.length, parser.current.start);
     parser.had_error = true;
     advance();  // force progress so we surface further errors instead of hanging
@@ -208,7 +208,7 @@ static void expect(WynTokenType type, const char* message) {
     }
 
     // At EOF with an error already reported, every enclosing block's expect()
-    // fires in turn (the recovery loop below can't advance past EOF) — one
+    // fires in turn (the recovery loop below can't advance past EOF) - one
     // real error would cascade into 2-3 misleading "Expected '}'" ones.
     if (parser.current.type == TOKEN_EOF && parser.had_error) return;
 
@@ -241,7 +241,7 @@ static Stmt* alloc_stmt() {
 // Parse a control-flow body that is EITHER a braced block `{ ... }` OR a single
 // statement (braceless form, e.g. `for i in 0..n\n  spawn f()`). Always returns a
 // STMT_BLOCK so downstream codegen/checker see a uniform body. The braceless form
-// binds exactly ONE statement — a following statement is NOT part of the body
+// binds exactly ONE statement - a following statement is NOT part of the body
 // (documented footgun, matching C/JS). `ctx` names the construct for errors.
 Stmt* statement();
 static Stmt* parse_block_or_stmt(const char* ctx) {
@@ -561,7 +561,7 @@ static Expr* primary() {
         expr->type = EXPR_IDENT;
         expr->token = name;
         
-        // T2.5.1: Check for optional type suffix '?' — only in type context
+        // T2.5.1: Check for optional type suffix '?' - only in type context
         if (check(TOKEN_QUESTION) && !check_next_is_value() && parser.allow_struct_init == false) {
             advance(); // consume '?'
             Expr* optional_expr = alloc_expr();
@@ -969,7 +969,7 @@ static Expr* primary() {
                 }
                 match(TOKEN_SEMI);
                 // Also handle var declarations
-                if (check(TOKEN_VAR) || check(TOKEN_CONST)) break; // bail — too complex for pipe lambda
+                if (check(TOKEN_VAR) || check(TOKEN_CONST)) break; // bail - too complex for pipe lambda
             }
             
             expect(TOKEN_RBRACE, "Expected '}' after lambda block body");
@@ -1158,7 +1158,7 @@ static Expr* primary() {
             }
             return lambda_expr;
         }
-        // Not an arrow lambda — rewind and parse as grouping/tuple.
+        // Not an arrow lambda - rewind and parse as grouping/tuple.
         restore_parser_state();
         restore_lexer_state();
     }
@@ -1241,7 +1241,7 @@ static Expr* call() {
                             call_expr->call.args[call_expr->call.arg_count++] = expression();
                             continue;
                         }
-                        // Not a named arg — backtrack
+                        // Not a named arg - backtrack
                         restore_lexer_state();
                         parser.current = saved_current;
                         parser.previous = saved_previous;
@@ -1442,7 +1442,7 @@ static Expr* call() {
     }
 
     // `await_all`/`await_any` are call-only. Used bare (no parens) they used to
-    // survive as a dangling identifier and mis-codegen (`await_all;` — undeclared
+    // survive as a dangling identifier and mis-codegen (`await_all;` - undeclared
     // in C). Catch it here with a clear message; the call form parses as EXPR_CALL.
     if (expr && expr->type == EXPR_IDENT && expr->token.length == 9 &&
         (memcmp(expr->token.start, "await_all", 9) == 0 ||
@@ -1547,7 +1547,7 @@ static Expr* comparison() {
         // JS habit: `===`/`!==` lex as `==`+`=` / `!=`+`=`. Left alone, the
         // stray `=` parsed as garbage that segfaulted codegen. Reject clearly.
         if ((op.type == TOKEN_EQEQ || op.type == TOKEN_BANGEQ) && check(TOKEN_EQ)) {
-            fprintf(stderr, "Error at line %d: '%s=' is not an operator — use '%s'\n",
+            fprintf(stderr, "Error at line %d: '%s=' is not an operator - use '%s'\n",
                     parser.current.line,
                     op.type == TOKEN_EQEQ ? "==" : "!=",
                     op.type == TOKEN_EQEQ ? "==" : "!=");
@@ -1560,7 +1560,7 @@ static Expr* comparison() {
         // Python-style chaining; left-associative C evaluation ((0<x)<10) would
         // silently give the wrong answer. Require explicit `0 < x and x < 10`.
         if (is_relational && prev_was_relational) {
-            fprintf(stderr, "Error at line %d: chained comparison is not supported — "
+            fprintf(stderr, "Error at line %d: chained comparison is not supported - "
                     "write it as two comparisons joined with 'and' (e.g. `0 < x and x < 10`)\n",
                     op.line);
             parser.had_error = true;
@@ -1627,18 +1627,18 @@ static Expr* logical_or() {
 static Expr* pipeline() {
     Expr* expr = logical_or();
 
-    // The `|>` pipe operator was removed from Wyn — one obvious way to compose is
+    // The `|>` pipe operator was removed from Wyn - one obvious way to compose is
     // method chaining (`x.f().g()`) or nested calls (`g(f(x))`). Emit a friendly
     // error rather than silently misparsing the `|`/`>` that follows.
     if (check(TOKEN_PIPEGT)) {
-        fprintf(stderr, "Error at line %d: the pipe operator '|>' has been removed — "
+        fprintf(stderr, "Error at line %d: the pipe operator '|>' has been removed - "
                         "use method chaining `x.f().g()` or nested calls `g(f(x))`\n",
                 parser.current.line);
         parser.had_error = true;
         advance(); // consume |> so the no-progress guard doesn't loop
     }
 
-    // The C-style logical operators `&&`/`||` were removed — Wyn uses the words
+    // The C-style logical operators `&&`/`||` were removed - Wyn uses the words
     // `and`/`or` (and `not` for negation). Without this, `logical_or()` returns
     // without consuming the `&&`/`||` token, so an enclosing `if`/`while` condition
     // loop can never advance and the parser hangs. Emit a friendly error and drain
@@ -1646,7 +1646,7 @@ static Expr* pipeline() {
     while (check(TOKEN_AMPAMP) || check(TOKEN_PIPEPIPE)) {
         const char* removed = check(TOKEN_AMPAMP) ? "&&" : "||";
         const char* canonical = check(TOKEN_AMPAMP) ? "and" : "or";
-        fprintf(stderr, "Error at line %d: the operator '%s' has been removed — "
+        fprintf(stderr, "Error at line %d: the operator '%s' has been removed - "
                         "use `%s` instead\n",
                 parser.current.line, removed, canonical);
         parser.had_error = true;
@@ -1830,10 +1830,10 @@ Stmt* statement() {
     // and treat the rest as a var declaration so parsing continues.
     if (check(TOKEN_MUT)) {
         fprintf(stderr, "Error at line %d: 'mut' is only valid on function parameters (fn f(mut x: int)).\n"
-                        "  Local variables are mutable by default — use `var m = ...` or `m = ...`.\n",
+                        "  Local variables are mutable by default - use `var m = ...` or `m = ...`.\n",
                 parser.current.line);
         parser.had_error = true;
-        advance();  // consume 'mut' — never leave the loop stuck on it
+        advance();  // consume 'mut' - never leave the loop stuck on it
     }
 
     if (match(TOKEN_RETURN)) {
@@ -2100,7 +2100,7 @@ Stmt* statement() {
                 rhs[rhs_count++] = assignment();
             }
             stmt->type = STMT_BLOCK;
-            // Fast path: N RHS expressions for N names — bind each directly. Names
+            // Fast path: N RHS expressions for N names - bind each directly. Names
             // are freshly declared, so no aliasing concerns.
             if (rhs_count == name_count) {
                 stmt->block.stmts = malloc(sizeof(Stmt*) * name_count);
@@ -2206,7 +2206,7 @@ Stmt* statement() {
     }
 
     // Structured concurrency: parallel { ... }. Every `spawn` inside runs
-    // concurrently, and all spawned tasks are joined at the closing brace —
+    // concurrently, and all spawned tasks are joined at the closing brace -
     // no task can outlive the block.
     if (match(TOKEN_PARALLEL)) {
         Stmt* stmt = alloc_stmt();
@@ -2233,7 +2233,7 @@ Stmt* statement() {
     }
     
     if (match(TOKEN_IF)) {
-        // `if let <pattern> = <expr> { then } else { else }` — Python/Rust-style
+        // `if let <pattern> = <expr> { then } else { else }` - Python/Rust-style
         // conditional binding. Desugars to a two-arm match: `<pattern> => then`,
         // `_ => else`, so it rides the already-working Option/Result arm lowering.
         // `let` is not a keyword in Wyn (removed in v1.2.3); we detect it as the
@@ -2279,7 +2279,7 @@ Stmt* statement() {
             if (match(TOKEN_ELSE)) {
                 Stmt* else_blk;
                 if (check(TOKEN_IF)) {
-                    // `else if …` — wrap the nested if-statement as the arm body.
+                    // `else if …` - wrap the nested if-statement as the arm body.
                     else_blk = statement();
                 } else {
                     expect(TOKEN_LBRACE, "Expected '{' after else");
@@ -2331,7 +2331,7 @@ Stmt* statement() {
             ((parser.current.length == 4 && memcmp(parser.current.start, "elif", 4) == 0) ||
              (parser.current.length == 6 && memcmp(parser.current.start, "elseif", 6) == 0) ||
              (parser.current.length == 5 && memcmp(parser.current.start, "elsif", 5) == 0))) {
-            fprintf(stderr, "Error at line %d: '%.*s' is not valid in Wyn — use 'else if'\n",
+            fprintf(stderr, "Error at line %d: '%.*s' is not valid in Wyn - use 'else if'\n",
                     parser.current.line, parser.current.length, parser.current.start);
             parser.had_error = true;
         }
@@ -2531,7 +2531,7 @@ Stmt* statement() {
                 // Parse the expression after 'in'
                 Expr* iter_expr = expression();
 
-                // `for x, y in zip(a, b)` — Pythonic parallel iteration. Binds
+                // `for x, y in zip(a, b)` - Pythonic parallel iteration. Binds
                 // x = a[i], y = b[i] for i in 0..min(len(a), len(b)). Requires the
                 // two-variable form; both names are VALUES (not index, value). We
                 // desugar to a counted loop over a hidden index and prepend the two
@@ -2629,7 +2629,7 @@ Stmt* statement() {
                     return stmt;
                 }
 
-                // `for i in range(a, b)` / `range(a, b, step)` — Python-style range.
+                // `for i in range(a, b)` / `range(a, b, step)` - Python-style range.
                 // Desugars to the same C-style counted loop as `a..b`, with the
                 // step wired in. A literal-negative step counts DOWN (`range(10,0,-1)`):
                 // condition flips to `i > end`, and `i += step` decrements.
@@ -2909,7 +2909,7 @@ Stmt* statement() {
             }
             return blk;
         }
-        // Not a multi-assignment — fall through using the already-parsed expr.
+        // Not a multi-assignment - fall through using the already-parsed expr.
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_EXPR;
         stmt->expr = first_target;
@@ -2931,7 +2931,7 @@ static void mark_implicit_return(Stmt* body) {
     }
     
     // Find the last statement in the block. A rejected construct (e.g. a
-    // nested fn) leaves a NULL slot — deref'd here, that was a segfault.
+    // nested fn) leaves a NULL slot - deref'd here, that was a segfault.
     Stmt* last_stmt = body->block.stmts[body->block.count - 1];
     if (!last_stmt) return;
 
@@ -3047,7 +3047,7 @@ Stmt* function() {
                 // self without type - will be filled in by impl_block
                 stmt->fn.param_types[stmt->fn.param_count] = NULL;
             } else if (check(TOKEN_EQ)) {
-                // `name = default` with no type — infer the type from the default
+                // `name = default` with no type - infer the type from the default
                 // value's literal (Pythonic). Filled in after parsing the default.
                 stmt->fn.param_types[stmt->fn.param_count] = NULL;
                 _typeless_default = true;
@@ -3115,7 +3115,7 @@ Stmt* function() {
             body->block.stmts = realloc(body->block.stmts, sizeof(Stmt*) * block_capacity);
         }
         // Progress guard: if statement() consumed nothing (unrecognized
-        // construct), this loop used to spin forever — `lambda x:`, a stray
+        // construct), this loop used to spin forever - `lambda x:`, a stray
         // `!cond`, and `if (x) == 1 {` all hung the compiler here. Same guard
         // parse_block_or_stmt has always had.
         const char* __sp = parser.current.start;
@@ -3126,7 +3126,7 @@ Stmt* function() {
     expect(TOKEN_RBRACE, "Expected '}' after function body");
 
     // Mark last expression as implicit return if function has return type
-    // Skip for main() — it auto-inserts return 0
+    // Skip for main() - it auto-inserts return 0
     bool is_main = (stmt->fn.name.length == 4 && memcmp(stmt->fn.name.start, "main", 4) == 0);
     if (stmt->fn.return_type && !is_main) {
         mark_implicit_return(body);
@@ -3577,12 +3577,12 @@ Stmt* enum_decl() {
             
             if (!check(TOKEN_RPAREN)) {
                 do {
-                    // Type parsing — skip optional "name:" prefix
+                    // Type parsing - skip optional "name:" prefix
                     if (check(TOKEN_IDENT)) {
                         Token first = parser.current;
                         advance();
                         if (match(TOKEN_COLON)) {
-                            // "name: type" format — skip name, parse type
+                            // "name: type" format - skip name, parse type
                             if (!check(TOKEN_IDENT)) { fprintf(stderr, "Error: Expected type after ':'\n"); break; }
                             Expr* type_expr = alloc_expr();
                             type_expr->type = EXPR_IDENT;
@@ -3894,8 +3894,8 @@ Program* parse_program() {
         } else if (check(TOKEN_TRAIT)) {
             prog->stmts[prog->count++] = trait_decl();
         } else if (check(TOKEN_IDENT) && parser.current.length == 4 && memcmp(parser.current.start, "test", 4) == 0) {
-            // T1.6.2: Testing Framework — check if next char after 'test' suggests a test block
-            // test "name" { ... } or test name { ... } — NOT test() or test = ...
+            // T1.6.2: Testing Framework - check if next char after 'test' suggests a test block
+            // test "name" { ... } or test name { ... } - NOT test() or test = ...
             const char* after = parser.current.start + 4;
             while (*after == ' ' || *after == '\t') after++;
             if (*after == '"' || (*after >= 'a' && *after <= 'z') || (*after >= 'A' && *after <= 'Z') || *after == '{') {
@@ -3904,7 +3904,7 @@ Program* parse_program() {
                 prog->stmts[prog->count++] = statement();
             }
         } else if (check(TOKEN_IDENT) && parser.current.length == 11 && memcmp(parser.current.start, "before_each", 11) == 0) {
-            // before_each { } — parsed as test block with special name
+            // before_each { } - parsed as test block with special name
             advance();
             Stmt* stmt = alloc_stmt();
             stmt->type = STMT_TEST;
@@ -3953,7 +3953,7 @@ Program* parse_program() {
             prog->stmts[prog->count++] = statement();
         } else if (check_foreign_keyword()) {
             // Python/JS construct at top level (`def f():`, `function f()`,
-            // `console.log`, ...): targeted error already printed — skip the
+            // `console.log`, ...): targeted error already printed - skip the
             // rest of the construct's line (and a following indented block for
             // def/function) so it doesn't cascade.
             int line = parser.current.line;
@@ -4030,7 +4030,7 @@ bool parser_had_error() {
 }
 
 // T1.4.1: While Loop AST Extension - Control Flow Agent addition
-// (parse_while_statement removed — top-level `while` now routes through
+// (parse_while_statement removed - top-level `while` now routes through
 // statement(), which parses the condition with optional parens like `if`.)
 
 // T1.4.2: Break/Continue Implementation - Control Flow Agent addition
@@ -4105,7 +4105,7 @@ static Stmt* parse_match_statement() {
             pattern->option.is_some = false;
             pattern->option.inner = NULL;
         } else if (check(TOKEN_INT) || check(TOKEN_FLOAT) || check(TOKEN_STRING) || check(TOKEN_TRUE) || check(TOKEN_FALSE)) {
-            // Literal pattern — possibly the start of a RANGE (1..5 / 1..=5).
+            // Literal pattern - possibly the start of a RANGE (1..5 / 1..=5).
             // The expression-form match always parsed ranges; the statement
             // form errored with "Expected '=>' after match pattern".
             Token lit_tok = parser.current;
@@ -4153,7 +4153,7 @@ static Stmt* parse_match_statement() {
                     pattern->option.variant_name = variant_name;
                     pattern->option.enum_name = first_token;  // Store the enum type name
                     
-                    // Parse inner pattern(s) — supports multi-field variants like
+                    // Parse inner pattern(s) - supports multi-field variants like
                     // Shape.Rect(w, h), mirroring parse_pattern()'s inners[] path
                     // so statement-form match matches the expression form.
                     pattern->option.inners = NULL;
@@ -4226,11 +4226,11 @@ static Stmt* parse_match_statement() {
                     expect(TOKEN_RPAREN, "Expected ')' after destructuring pattern");
                 } else if (first_token.length == 4 &&
                            memcmp(first_token.start, "none", 4) == 0) {
-                    // Lowercase `none` — the canonical no-value spelling
+                    // Lowercase `none` - the canonical no-value spelling
                     // everywhere else in the language (values, returns). As a
                     // pattern it used to bind as PATTERN_IDENT, which the
                     // option-match lowering silently dropped (emitted a
-                    // dangling `else` — an ICE).
+                    // dangling `else` - an ICE).
                     pattern->type = PATTERN_OPTION;
                     pattern->option.is_some = false;
                     pattern->option.inner = NULL;
@@ -4485,7 +4485,7 @@ static Pattern* parse_pattern() {
             }
             
             if (match(TOKEN_LPAREN)) {
-                // Shape.Circle(r) or Shape.Rect(w, h) — enum variant with data
+                // Shape.Circle(r) or Shape.Rect(w, h) - enum variant with data
                 pattern->type = PATTERN_OPTION;
                 pattern->option.is_some = true;
                 pattern->option.enum_name = potential_struct;
@@ -4513,7 +4513,7 @@ static Pattern* parse_pattern() {
                 }
                 expect(TOKEN_RPAREN, "Expected ')' after enum variant pattern");
             } else {
-                // Shape.Point — enum variant without data
+                // Shape.Point - enum variant without data
                 pattern->type = PATTERN_OPTION;
                 pattern->option.is_some = false;
                 pattern->option.enum_name = potential_struct;
@@ -4604,7 +4604,7 @@ static Pattern* parse_pattern() {
             return pattern;
         } else if (potential_struct.length == 4 &&
                    memcmp(potential_struct.start, "none", 4) == 0) {
-            // Lowercase `none` pattern — same fix as the statement form:
+            // Lowercase `none` pattern - same fix as the statement form:
             // treat as the None option pattern, not a variable binding.
             pattern->type = PATTERN_OPTION;
             pattern->option.is_some = false;

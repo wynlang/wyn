@@ -28,7 +28,7 @@ address space and 100K VM region entries, which exceeds macOS per-process limits
 
 Options:
 1. **Pool allocator**: Single large mmap, carve out fixed-size slots. Eliminates per-coroutine
-   mmap overhead. Needs careful implementation — minicoro expects to manage the full
+   mmap overhead. Needs careful implementation - minicoro expects to manage the full
    coroutine struct + stack in one allocation.
 
 2. **Stackless coroutines**: Compiler transforms `spawn fn()` into a state machine struct

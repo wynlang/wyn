@@ -29,9 +29,9 @@ printf 'fn main() {\n    println("install-ok")\n}\n' > hello.wyn
 out=$(perl -e 'alarm(60); exec @ARGV' -- "$W" run hello.wyn 2>&1); rc=$?
 if [ $rc -eq 0 ] && echo "$out" | grep -q "install-ok"; then ok "installed binary runs hello world"; else bad "hello: rc=$rc [$(echo "$out" | tail -2)]"; fi
 
-# 1b. Same, but invoked as a bare name through PATH — how install.sh users
+# 1b. Same, but invoked as a bare name through PATH - how install.sh users
 # actually call it. argv[0] is then just "wyn" (no directory), which used to
-# make root resolution fall back to "." and probe the USER'S CWD for src/ —
+# make root resolution fall back to "." and probe the USER'S CWD for src/ -
 # every PATH invocation died with an internal codegen error. The v1.19.0
 # release canary caught this on its first gated tag.
 rm -f hello.wyn.out hello

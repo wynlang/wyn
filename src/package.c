@@ -1,4 +1,4 @@
-// Git-URL dependency management — see package.h for the contract.
+// Git-URL dependency management - see package.h for the contract.
 #define _POSIX_C_SOURCE 200809L
 #include "package.h"
 #include "pkgspec.h"
@@ -58,7 +58,7 @@ static int clone_into_cache(const PkgSpec* spec, char* dir_out, size_t dir_n,
     pkgspec_cache_dir(spec, dir_out, dir_n);
 
     if (dir_exists(dir_out)) {
-        // Already cached — reuse. Report its pinned commit.
+        // Already cached - reuse. Report its pinned commit.
         get_head_sha(dir_out, sha_out, sha_n);
         return 0;
     }
@@ -138,7 +138,7 @@ static int lock_read(LockEntry* out, int max) {
 static void lock_write(const LockEntry* e, int n) {
     FILE* f = fopen("wyn.lock", "w");
     if (!f) return;
-    fprintf(f, "# wyn.lock — resolved dependency graph (do not edit by hand)\n");
+    fprintf(f, "# wyn.lock - resolved dependency graph (do not edit by hand)\n");
     for (int i = 0; i < n; i++)
         fprintf(f, "%s %s %s %s\n", e[i].name, e[i].url, e[i].ref[0] ? e[i].ref : "-", e[i].sha);
     fclose(f);
@@ -363,7 +363,7 @@ int wyn_pkg_list(void) {
             present = dir_exists(dir);
         }
         printf("  %-14s %s  %s\n", cfg->dependencies[i].name, cfg->dependencies[i].version,
-               present ? "\033[32m✓\033[0m" : "\033[33m(not installed — run `wyn install`)\033[0m");
+               present ? "\033[32m✓\033[0m" : "\033[33m(not installed - run `wyn install`)\033[0m");
     }
     printf("\n%d dependenc%s\n", cfg->dependency_count, cfg->dependency_count == 1 ? "y" : "ies");
     wyn_config_free(cfg);
@@ -413,7 +413,7 @@ void wyn_deps_ffi_flags(char* out, size_t out_size) {
 // Supply-chain verification with zero infrastructure: everything comes from
 // wyn.lock + the git cache + `git ls-remote`. Design: SECURITY_DESIGN.md §3b.
 // Output rules: few lines, every line actionable, exit code = worst finding
-// (0 ok / 1 warning / 2 error). No advisory database — an empty one would be
+// (0 ok / 1 warning / 2 error). No advisory database - an empty one would be
 // theater ("0 known vulnerabilities" implying coverage that doesn't exist).
 
 // `git ls-remote <url> <ref>` → sha of what the ref points at NOW (or "" on
@@ -477,7 +477,7 @@ int wyn_pkg_audit(int offline) {
         char short_sha[12]; snprintf(short_sha, sizeof(short_sha), "%.9s", e->sha);
 
         // Cache integrity: does the cached checkout still match the lock?
-        // pkgspec_parse fills host/owner/repo, which cache_dir needs — a raw
+        // pkgspec_parse fills host/owner/repo, which cache_dir needs - a raw
         // field copy computes the wrong path.
         PkgSpec spec; memset(&spec, 0, sizeof(spec));
         char spec_input[700];
@@ -520,22 +520,22 @@ int wyn_pkg_audit(int offline) {
             if (worst < 1) worst = 1;
         } else if (!offline && is_tag && remote_sha[0] && e->sha[0] &&
                    strncmp(remote_sha, e->sha, strlen(e->sha)) != 0) {
-            printf("  \033[31m✗\033[0m %-14s %s@%s  %s  TAG MOVED — now %.9s\n",
+            printf("  \033[31m✗\033[0m %-14s %s@%s  %s  TAG MOVED - now %.9s\n",
                    e->name, e->url, ref, short_sha, remote_sha);
             printf("      a retagged (force-pushed) release can hide code changes. Inspect before updating:\n");
             printf("      git -C %s log --oneline -5\n", dir);
             worst = 2;
         } else if (cached && cache_sha[0] && e->sha[0] &&
                    strcmp(cache_sha, e->sha) != 0) {
-            printf("  \033[31m✗\033[0m %-14s %s@%s  %s  CACHE MISMATCH — checkout is at %.9s\n",
+            printf("  \033[31m✗\033[0m %-14s %s@%s  %s  CACHE MISMATCH - checkout is at %.9s\n",
                    e->name, e->url, ref[0] ? ref : "-", short_sha, cache_sha);
             printf("      the local cache was modified or moved. Re-install: rm -rf %s && wyn pkg install\n", dir);
             worst = 2;
         } else if (ref[0] == '\0' || (!ref_is_sha(ref) && !is_tag && !offline && remote_sha[0])) {
-            // branch pin (or no ref at all): mutable — the same install command
+            // branch pin (or no ref at all): mutable - the same install command
             // gives different code tomorrow.
             const char* what = ref[0] ? "BRANCH PIN" : "NO REF";
-            printf("  \033[33m⚠\033[0m %-14s %s@%s  %s  %s — mutable; pin a tag or sha\n",
+            printf("  \033[33m⚠\033[0m %-14s %s@%s  %s  %s - mutable; pin a tag or sha\n",
                    e->name, e->url, ref[0] ? ref : "-", short_sha, what);
             if (!offline && remote_sha[0] && e->sha[0] &&
                 strncmp(remote_sha, e->sha, strlen(e->sha)) != 0)
@@ -550,7 +550,7 @@ int wyn_pkg_audit(int offline) {
         }
         if (ffi_libs[0]) {
             ffi_count++;
-            printf("      \033[33mffi\033[0m links native code (%s) — capability limits don't apply to C; review this package\n",
+            printf("      \033[33mffi\033[0m links native code (%s) - capability limits don't apply to C; review this package\n",
                    ffi_libs);
         }
     }
@@ -561,7 +561,7 @@ int wyn_pkg_audit(int offline) {
         for (int i = 0; i < n; i++)
             if (strcmp(cfg->dependencies[d].name, locks[i].name) == 0) { found = 1; break; }
         if (!found) {
-            printf("  \033[33m⚠\033[0m %-14s declared in wyn.toml but not in wyn.lock — run: wyn pkg install\n",
+            printf("  \033[33m⚠\033[0m %-14s declared in wyn.toml but not in wyn.lock - run: wyn pkg install\n",
                    cfg->dependencies[d].name);
             if (worst < 1) worst = 1;
         }
@@ -570,7 +570,7 @@ int wyn_pkg_audit(int offline) {
 
     printf("\n");
     if (ffi_count > 0)
-        printf("%d ffi dependenc%s — these link arbitrary native code and carry full trust.\n",
+        printf("%d ffi dependenc%s - these link arbitrary native code and carry full trust.\n",
                ffi_count, ffi_count == 1 ? "y" : "ies");
     if (worst == 0) printf("\033[32m✓ audit clean\033[0m\n");
     else printf("%s\n", worst == 2 ? "\033[31maudit found errors\033[0m (exit 2)"
@@ -642,7 +642,7 @@ static void search_print_repos(const char* json, const char* needle,
                                const char* add_prefix, int* shown) {
     const char* p = json;
     char full[256], name[128], desc[512];
-    // Anchor on "full_name" ("owner/repo") — unique per repo object; a bare
+    // Anchor on "full_name" ("owner/repo") - unique per repo object; a bare
     // "name" key also appears inside nested license/owner objects ("MIT
     // License" showed up as a package before this).
     while ((p = search_json_str(p, "full_name")) != NULL) {

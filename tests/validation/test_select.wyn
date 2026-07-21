@@ -1,4 +1,4 @@
-// Test: Task.select — wait on multiple channels
+// Test: Task.select - wait on multiple channels
 
 fn sender(ch: int, val: int, delay_ms: int) -> int {
     sleep_ms(delay_ms)

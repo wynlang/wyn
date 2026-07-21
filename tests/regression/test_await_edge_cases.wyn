@@ -7,7 +7,7 @@
 // EXPECT: 30
 fn work(n: int) -> int { return n * n }
 fn main() {
-    // empty await_any — must not hang
+    // empty await_any - must not hang
     var empty = []
     println(await_any(empty))          // 0
 

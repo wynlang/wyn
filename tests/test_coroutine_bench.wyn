@@ -1,4 +1,4 @@
-// Coroutine benchmark — honest comparison data
+// Coroutine benchmark - honest comparison data
 // Run: wyn run --mem-stats tests/test_coroutine_bench.wyn
 
 fn empty_work() -> int { return 1 }

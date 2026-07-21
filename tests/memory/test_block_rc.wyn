@@ -7,7 +7,7 @@ fn build(n: int) -> string {
 fn main() {
     Test.init("Block-scoped RC")
 
-    // 1: string var in for loop body — released each iteration
+    // 1: string var in for loop body - released each iteration
     for i in 0..100 {
         var s = build(i)
         // s should be released at end of loop body

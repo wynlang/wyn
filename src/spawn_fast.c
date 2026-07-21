@@ -1,4 +1,4 @@
-// M:N Scheduler for Wyn — coroutine-based (v1.9)
+// M:N Scheduler for Wyn - coroutine-based (v1.9)
 // Architecture: N OS threads (processors), M coroutines (spawns)
 // Per-processor local deque + global queue + work-stealing
 // Each spawn creates a stackful coroutine via minicoro.h
@@ -12,7 +12,7 @@
 #include "io_loop.h"
 
 #ifdef _WIN32
-// Windows: stub implementation — spawn runs synchronously
+// Windows: stub implementation - spawn runs synchronously
 typedef void (*TaskFunc)(void*);
 void wyn_io_park(void) {}
 void* wyn_current_task(void) { return NULL; }
@@ -37,7 +37,7 @@ Future* wyn_spawn_async_traced(void* (*func)(void*), void* arg, const char* f, i
 _Atomic int ws_blocked = 0;
 int pool_try_run_one(void) { return 0; }
 int wyn_sched_pump_one(void) { return 0; }  // no scheduler on Windows (spawns run inline)
-long wyn_sched_inflight(void) { return 0; } // spawns run inline — nothing in flight
+long wyn_sched_inflight(void) { return 0; } // spawns run inline - nothing in flight
 #else
 #include <pthread.h>
 #ifdef _WIN32
@@ -89,7 +89,7 @@ static Task* alloc_task(void) {
 }
 
 static void recycle_task(Task* t) {
-    // Don't recycle — the lock-free global queue uses task->next for linkage,
+    // Don't recycle - the lock-free global queue uses task->next for linkage,
     // and recycling while the task might still be referenced causes ABA problems.
     // The slab allocator provides enough tasks (64K) for most workloads.
     (void)t;
@@ -218,12 +218,12 @@ static inline void wake_processor(void) {
             pthread_mutex_lock(&processors[i].park_lock);
             pthread_cond_signal(&processors[i].park_cond);
             pthread_mutex_unlock(&processors[i].park_lock);
-            return;  // Wake one — it will steal and wake others if needed
+            return;  // Wake one - it will steal and wake others if needed
         }
     }
 }
 
-// Wake all parked processors — used when multiple tasks are enqueued at once
+// Wake all parked processors - used when multiple tasks are enqueued at once
 static inline void wake_all_processors(void) {
     int n = atomic_load_explicit(&num_processors, memory_order_relaxed);
     for (int i = 0; i < n; i++) {
@@ -276,14 +276,14 @@ static inline void execute_task(Task* task) {
     int expected = 0;
     if (!atomic_compare_exchange_strong_explicit(&task->running, &expected, 1,
             memory_order_acq_rel, memory_order_relaxed)) {
-        // Another processor is already running this task — re-enqueue for later
+        // Another processor is already running this task - re-enqueue for later
         enqueue_task(task);
         return;
     }
     // Save/restore the per-thread current_task + io_parked around the resume.
     // On a worker this is just NULL↔task, but the main-thread await pump (M1)
     // can call execute_task from INSIDE a coroutine that another execute_task is
-    // already running — without save/restore the inner return would clear the
+    // already running - without save/restore the inner return would clear the
     // outer coroutine's identity (and its io_parked), corrupting its next
     // yield/park. Saving makes execute_task safely reentrant.
     Task* saved_task = current_task;
@@ -297,7 +297,7 @@ static inline void execute_task(Task* task) {
     atomic_store_explicit(&task->running, 0, memory_order_release);
     if (alive) {
         if (this_io) {
-            // Coroutine is waiting on I/O — don't re-enqueue.
+            // Coroutine is waiting on I/O - don't re-enqueue.
             // The I/O loop will call wyn_sched_enqueue(task) when fd is ready.
         } else {
             enqueue_task(task);
@@ -350,7 +350,7 @@ static void* processor_loop(void* arg) {
         task = try_steal(p->id);
         if (task) { p->steal_hits = (p->steal_hits < 8) ? p->steal_hits + 1 : 8; execute_task(task); continue; }
         
-        // Poll I/O loop — re-enqueues tasks whose fds are ready
+        // Poll I/O loop - re-enqueues tasks whose fds are ready
         wyn_io_poll();
         
         atomic_store(&p->spinning, 1);
@@ -461,7 +461,7 @@ static void enqueue_task(Task* task) {
 // Coroutine body for fire-and-forget spawn
 typedef struct { TaskFunc func; void* arg; } SpawnArgs;
 
-// SpawnArgs pool — avoid malloc per spawn
+// SpawnArgs pool - avoid malloc per spawn
 #define SA_POOL_SIZE (64 * 1024)
 static SpawnArgs sa_pool[SA_POOL_SIZE];
 static int sa_pool_head = 0;
@@ -469,7 +469,7 @@ static SpawnArgs* sa_free_arr[SA_POOL_SIZE];
 static int sa_free_top = 0;
 // The old lock-free index CAS was UNSOUND: alloc CAS'd sa_free_top then read
 // sa_free_arr[top-1], but a concurrent dealloc could CAS the index back up and
-// overwrite that same slot in between — handing the same SpawnArgs to two
+// overwrite that same slot in between - handing the same SpawnArgs to two
 // coroutines (or a torn pointer). That dropped fire-and-forget tasks (~5-9/20).
 // A dedicated mutex makes the free-list obviously correct; SpawnArgs churn is
 // not hot enough for the CAS micro-optimization to matter.
@@ -500,7 +500,7 @@ static void sa_dealloc(SpawnArgs* sa) {
             return;
         }
         pthread_mutex_unlock(&sa_lock);
-        return;  // pool full — drop (came from the fixed arena, can't free())
+        return;  // pool full - drop (came from the fixed arena, can't free())
     }
     free(sa);
 }
@@ -596,7 +596,7 @@ void wyn_spawn_fast_traced(TaskFunc func, void* arg, const char* file, int line)
     long spawned = atomic_fetch_add(&total_spawned, 1);
     t->spawn_id = spawned + 1;
     enqueue_task(t);
-    wake_processor();  // Always wake — ensures tasks run in parallel
+    wake_processor();  // Always wake - ensures tasks run in parallel
 }
 
 Future* wyn_spawn_async(TaskFuncWithReturn func, void* arg) {
@@ -733,7 +733,7 @@ Future* wyn_spawn_async_traced(TaskFuncWithReturn func, void* arg, const char* f
 // W8 S2 (M1 pump): run ONE scheduler task on the calling thread + poll I/O.
 // Called by future_get's main-thread branch when awaiting a coroutine-backed
 // future, so `main` (which can't yield) still drives the M:N scheduler and
-// resolves awaited coro tasks even with no/idle worker processors — this is what
+// resolves awaited coro tasks even with no/idle worker processors - this is what
 // makes WYN_ASYNC_CORO correct on every core count. execute_task is reentrant
 // (saves/restores current_task + io_parked), so pumping from inside main is safe.
 // Returns 1 if a task ran, 0 if the queue was empty (caller should yield/poll).
@@ -748,7 +748,7 @@ int wyn_sched_pump_one(void) {
 // Tasks currently in flight (spawned but not completed) across both spawn
 // paths. Used by select's deadlock detection: if the main thread is blocked
 // in select with no ready channel and nothing in flight, no producer can
-// ever send — error out instead of spinning forever. Send-before-complete
+// ever send - error out instead of spinning forever. Send-before-complete
 // ordering (a task's sends happen before its completed increment) makes a
 // zero reading safe: if it reads 0, every send that will ever happen has
 // already landed and been checked.
@@ -769,7 +769,7 @@ void wyn_spawn_wait(void) {
     // Drain outstanding fire-and-forget tasks. Pump the I/O loop ourselves each
     // iteration: a task may be I/O-parked (e.g. cooperative Time::sleep / socket
     // wait), and if every worker processor is also parked, nothing else would
-    // advance the reactor — the old pure sched_yield() spin could hang there.
+    // advance the reactor - the old pure sched_yield() spin could hang there.
     while (atomic_load(&total_completed) < atomic_load(&total_spawned)) {
         wyn_io_poll();     // wake any tasks whose timers/fds are ready
         wake_all_processors();

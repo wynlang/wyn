@@ -248,7 +248,7 @@ void codegen_program(Program* prog) {
             }
             codegen_stmt(s);
             // If this struct is used elsewhere as `S?`, emit its Option<S> family
-            // right here — after S's typedef (Option embeds S by value) and before
+            // right here - after S's typedef (Option embeds S by value) and before
             // any later struct that has an `S?` field can reference OptionS.
             if (s->type == STMT_STRUCT) {
                 char _sn[96]; token_to_cstr(_sn, sizeof(_sn), s->struct_decl.name);
@@ -287,7 +287,7 @@ void codegen_program(Program* prog) {
         extern const char* option_struct_name(int);
         // Catch-all for any registered family not already emitted next to its
         // base struct above (e.g. the base struct was defined after the use, so
-        // the per-struct hook didn't fire — emit_option_struct_family dedups).
+        // the per-struct hook didn't fire - emit_option_struct_family dedups).
         for (int i = 0; i < option_struct_count(); i++) {
             emit_option_struct_family(option_struct_name(i));
         }
@@ -296,7 +296,7 @@ void codegen_program(Program* prog) {
     // Field-wise == helpers for user structs (after all typedefs exist).
     emit_struct_eq_helpers(prog);
 
-    // Generate module-level constants (only if has main — script mode puts them in wyn_main)
+    // Generate module-level constants (only if has main - script mode puts them in wyn_main)
     if (has_main) {
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_CONST) {
@@ -386,7 +386,7 @@ void codegen_program(Program* prog) {
                 // Fallback: if the AST-shape heuristics above left the default and the
                 // checker inferred a concrete type, use it. This lets top-level (script
                 // mode) declarations infer the same C types as ones inside a function
-                // body — enums, comprehensions (arrays), optionals, match results, etc.
+                // body - enums, comprehensions (arrays), optionals, match results, etc.
                 if (strcmp(c_type, "long long") == 0) {
                     const char* inferred = codegen_c_type_from_type(var_stmt->var.init->expr_type);
                     if (inferred && strcmp(inferred, "long long") != 0) {
@@ -544,7 +544,7 @@ void codegen_program(Program* prog) {
                     char item_name[256]; token_to_cstr(item_name, sizeof(item_name), prog->stmts[i]->import.items[j]);
                     const char* resolved = resolve_module_alias(item_name);
                     if (resolved != item_name && strcmp(resolved, item_name) != 0) {
-                        // Skip enum types — they use typedef, not #define
+                        // Skip enum types - they use typedef, not #define
                         extern int is_enum_type(const char*);
                         extern int is_data_enum_type(const char*);
                         if (!is_enum_type(item_name) && !is_data_enum_type(item_name)) {
@@ -706,7 +706,7 @@ void codegen_program(Program* prog) {
                 }
             }
             
-            // L3: Generator — override return type
+            // L3: Generator - override return type
             extern int fn_is_generator(Stmt*);
             Stmt* _orig = prog->stmts[i]->type == STMT_FN ? prog->stmts[i] : prog->stmts[i]->export.stmt;
             if (fn_is_generator(_orig)) {
@@ -855,7 +855,7 @@ void codegen_program(Program* prog) {
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             param_type = "WynHashSet*";
                         } else if (type_name.length == 3 && memcmp(type_name.start, "ptr", 3) == 0) {
-                            // FFI opaque pointer — a user fn can pass one through.
+                            // FFI opaque pointer - a user fn can pass one through.
                             param_type = "void*";
                         } else if (type_name.length == 4 && memcmp(type_name.start, "cstr", 4) == 0) {
                             param_type = "char*";  // raw C string
@@ -987,7 +987,7 @@ void codegen_program(Program* prog) {
                 
                 emit("void* __spawn_wrapper_%s(void* arg) {\n", spawn_wrappers[i].func_name);
                 if (total_params > 0) {
-                    // Function has params with defaults — fill them in
+                    // Function has params with defaults - fill them in
                     if (spawn_wrappers[i].returns_void) {
                         emit("    (void)arg; %s(", spawn_wrappers[i].func_name);
                         for (int di = 0; di < total_params; di++) {
@@ -1068,7 +1068,7 @@ void codegen_program(Program* prog) {
 
                 emit("void* __spawn_wrapper_%s_1(void* arg) {\n", spawn_wrappers[i].func_name);
                 if (total_params > 1) {
-                    // Function has more params — fill in defaults after the explicit arg
+                    // Function has more params - fill in defaults after the explicit arg
                     if (spawn_wrappers[i].returns_void) {
                         emit("    %s((long long)(intptr_t)arg", spawn_wrappers[i].func_name);
                         for (int di = 1; di < total_params; di++) {
@@ -1106,7 +1106,7 @@ void codegen_program(Program* prog) {
                 }
                 emit("}\n\n");
             } else {
-                // Multi-arg wrapper — also fill in defaults for remaining params
+                // Multi-arg wrapper - also fill in defaults for remaining params
                 extern int get_fn_param_count(const char*);
                 extern Expr* get_fn_default(const char*, int);
                 int total_params = get_fn_param_count(spawn_wrappers[i].func_name);
@@ -1455,7 +1455,7 @@ void codegen_match_statement(Stmt* stmt) {
         }
         
         // Check if this is a Result match (Ok/Err patterns). A user data enum
-        // (is_data_enum_match) is NEVER an Option/Result — the parser marks any
+        // (is_data_enum_match) is NEVER an Option/Result - the parser marks any
         // prefixed data-carrying variant with option.is_some, which otherwise
         // misroutes `match e { A(n) => ... }` into the hardcoded OptionInt shape.
         bool is_result_match = false;
@@ -1500,7 +1500,7 @@ void codegen_match_statement(Stmt* stmt) {
             // Capture the id in a LOCAL: a nested match inside an arm body
             // re-enters this code and bumps the counter; reading the static
             // after that emitted references to the INNER match's (out-of-
-            // scope) temp — an undeclared-variable ICE.
+            // scope) temp - an undeclared-variable ICE.
             static int _smid_ctr = 0; int _smid = ++_smid_ctr;
             emit("    const char* __match_str_%d = ", _smid);
             codegen_expr(stmt->match_stmt.value);
@@ -1522,7 +1522,7 @@ void codegen_match_statement(Stmt* stmt) {
             }
             emit("\n");
         } else if (is_option_match) {
-            // Local id — see the string-match comment above (nested match
+            // Local id - see the string-match comment above (nested match
             // inside an arm body must not clobber this match's temp name).
             static int _omid_ctr = 0; int _omid = ++_omid_ctr;
             // Resolve the concrete Option family from the checker-typed value, so
@@ -1560,7 +1560,7 @@ void codegen_match_statement(Stmt* stmt) {
                     }
                     emit("        ");
                     if (mc->body) codegen_stmt(mc->body);
-                    // Borrowed arm binder — unregister so the enclosing block's
+                    // Borrowed arm binder - unregister so the enclosing block's
                     // release pass doesn't free an out-of-scope name (see the Result
                     // arm below for the full rationale). (2026-07)
                     if (mc->pattern->option.inner &&
@@ -1580,7 +1580,7 @@ void codegen_match_statement(Stmt* stmt) {
                     emit("    }");
                 } else {
                     // Defensive: an arm pattern this lowering doesn't handle
-                    // (e.g. a stray ident binding) must still emit a block —
+                    // (e.g. a stray ident binding) must still emit a block -
                     // a bare ` else ` with no body is a C syntax error.
                     emit("{\n        ");
                     if (mc->body) codegen_stmt(mc->body);
@@ -1589,7 +1589,7 @@ void codegen_match_statement(Stmt* stmt) {
             }
             emit("\n");
         } else if (is_result_match) {
-            // Local id — see the string-match comment above.
+            // Local id - see the string-match comment above.
             static int _rmid_ctr = 0; int _rmid = ++_rmid_ctr;
             // Resolve the concrete Result family from the checker-typed value, so
             // ResultFloat/ResultBool/ResultString lower with the right temp type
@@ -1635,7 +1635,7 @@ void codegen_match_statement(Stmt* stmt) {
                     // __match_val_%d.data), scoped to this arm, and must NOT be
                     // released here. Unregister it so the enclosing block's string-
                     // release pass doesn't emit `wyn_rc_release(<binder>)` AFTER the
-                    // arm's closing brace — which referenced an out-of-scope name
+                    // arm's closing brace - which referenced an out-of-scope name
                     // ("use of undeclared identifier 'e'") when the match sat inside
                     // a loop or other releasing block. (2026-07)
                     if (mc->pattern->option.inner &&
@@ -1793,7 +1793,7 @@ void codegen_match_statement(Stmt* stmt) {
                     emit("1"); // Variable binding always matches
                 }
             } else if (match_case->pattern->type == PATTERN_RANGE) {
-                // Range pattern in STATEMENT position — the expression form
+                // Range pattern in STATEMENT position - the expression form
                 // always supported this; the statement form emitted `0`
                 // (arm silently never matched).
                 emit("(__match_val >= ");
@@ -1803,7 +1803,7 @@ void codegen_match_statement(Stmt* stmt) {
                 emit(")");
             } else if (match_case->pattern->type == PATTERN_OR) {
                 // Or pattern in STATEMENT position: 1 | 3 | 5. Was emitted as
-                // constant 0 — `match n { 1 | 3 | 5 => ... }` NEVER matched.
+                // constant 0 - `match n { 1 | 3 | 5 => ... }` NEVER matched.
                 emit("(");
                 for (int oi = 0; oi < match_case->pattern->or_pat.pattern_count; oi++) {
                     Pattern* sub = match_case->pattern->or_pat.patterns[oi];
@@ -1833,7 +1833,7 @@ void codegen_match_statement(Stmt* stmt) {
             
             // Add guard clause if present. A guard on a binding pattern
             // (`x if x > 2 =>`) references the binding INSIDE the condition,
-            // but the binding declaration is emitted after it — so wrap the
+            // but the binding declaration is emitted after it - so wrap the
             // guard in a statement-expression that declares the binding
             // locally. (Was emitted bare: C error "use of undeclared x".)
             if (match_case->guard) {
@@ -1918,7 +1918,7 @@ void codegen_match_statement(Stmt* stmt) {
                     emit("        __auto_type %.*s = __match_val.data.%.*s_value;\n",
                          var_name.length, var_name.start, vn_len, vn);
                 } else {
-                    // Simple enum — no data to extract
+                    // Simple enum - no data to extract
                     emit("        int %.*s = 0; (void)%.*s;\n",
                          var_name.length, var_name.start,
                          var_name.length, var_name.start);

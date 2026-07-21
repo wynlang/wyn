@@ -25,9 +25,9 @@ static int has_char(const char* s, char c) { return strchr(s, c) != NULL; }
 
 // ---- typedef resolution -----------------------------------------------------
 // Real headers name almost everything through typedefs (png_uint_32,
-// png_structp, uv_file, …). During the scan we record every simple typedef —
+// png_structp, uv_file, …). During the scan we record every simple typedef -
 // from ALL files in the preprocessed unit, since a library's typedefs usually
-// live in a sub-header (pngconf.h) rather than the umbrella target header —
+// live in a sub-header (pngconf.h) rather than the umbrella target header -
 // and map_c_type resolves unknown spellings through this table.
 #define TD_CAP 4096
 static char td_names[TD_CAP][64];
@@ -70,7 +70,7 @@ static const char* map_c_type(const char* c, int is_return) {
         else if (strncmp(s, "static ", 7) == 0)   s = bg_trim(s + 7);
         else if (strncmp(s, "inline ", 7) == 0)   s = bg_trim(s + 7);
         // Calling-convention keywords (MSVC / mingw declare e.g.
-        // `double __cdecl sqrt(double)`) — strip so the base type parses.
+        // `double __cdecl sqrt(double)`) - strip so the base type parses.
         else if (strncmp(s, "__cdecl ", 8) == 0)    s = bg_trim(s + 8);
         else if (strncmp(s, "__stdcall ", 10) == 0) s = bg_trim(s + 10);
         else if (strncmp(s, "__fastcall ", 11) == 0)s = bg_trim(s + 11);
@@ -134,7 +134,7 @@ static const char* map_c_type(const char* c, int is_return) {
             }
         }
     }
-    return NULL; // struct-by-value, unknown typedef, etc. — not representable
+    return NULL; // struct-by-value, unknown typedef, etc. - not representable
 }
 
 // Record `typedef <spelling> <name>;` into the table. Handles the simple
@@ -191,7 +191,7 @@ static char* preprocess(const char* header, const char* cc, const char* iflags) 
 #else
     const char* devnull = "/dev/null";
 #endif
-    // A system header (e.g. "math.h", "curl/curl.h") isn't a file in the cwd —
+    // A system header (e.g. "math.h", "curl/curl.h") isn't a file in the cwd -
     // `cc -E math.h` would look for ./math.h and fail. If `header` isn't an
     // existing path, preprocess a generated stub `#include <header>` instead, so
     // the compiler resolves it on its system include path. (fopen is portable;
@@ -228,7 +228,7 @@ static void emit_defines(FILE* dump, FILE* out, int* emitted_any) {
         char* p = s;
         while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
         if (p == name) continue;
-        if (*p == '(') continue;             // function-like macro — skip
+        if (*p == '(') continue;             // function-like macro - skip
         char saved = *p; *p = '\0';
         // Skip compiler builtins (leading underscore double) and empty bodies.
         int builtin = (name[0] == '_' && name[1] == '_');
@@ -264,26 +264,26 @@ static char* bg_strip_attributes(char* s) {
     for (;;) {
         s = bg_trim(s);
         // Storage-class words may precede the attribute (`extern
-        // __attribute__((visibility(...))) int git_...`) — hop over them so the
+        // __attribute__((visibility(...))) int git_...`) - hop over them so the
         // attribute is found; the type mapper re-strips them later anyway.
         if (strncmp(s, "extern ", 7) == 0) { s += 7; continue; }
         if (strncmp(s, "static ", 7) == 0) { s += 7; continue; }
         if (strncmp(s, "__attribute__", 13) != 0) return s;
         char* p = s + 13;
         while (*p == ' ' || *p == '\t') p++;
-        if (*p != '(') return s;            // malformed — leave it
+        if (*p != '(') return s;            // malformed - leave it
         int depth = 0;
         while (*p) {
             if (*p == '(') depth++;
             else if (*p == ')') { depth--; if (depth == 0) { p++; break; } }
             p++;
         }
-        if (depth != 0) return s;           // unbalanced — bail
+        if (depth != 0) return s;           // unbalanced - bail
         s = p;                              // continue: there may be another
     }
 }
 
-// Remove nullability/restrict annotations in place — macOS SDK headers wrap
+// Remove nullability/restrict annotations in place - macOS SDK headers wrap
 // nearly every pointer in `_Nullable`/`_Nonnull`/`_Null_unspecified`, and many
 // libraries use `restrict`/`__restrict`. They carry no FFI meaning; without
 // stripping, the type mapper sees "pthread_t _Nullable *" and bails.
@@ -306,10 +306,10 @@ static void bg_strip_annotations(char* s) {
 static int emit_prototype(char* decl, FILE* out) {
     decl = bg_strip_attributes(decl);
     bg_strip_annotations(decl);
-    // Unwrap a parenthesized function name: `extern T (name)(args)` — libpng
+    // Unwrap a parenthesized function name: `extern T (name)(args)` - libpng
     // (PNG_FUNCTION) and other export-macro styles emit this. Detect a first
     // paren group that contains a single identifier and is followed by another
-    // '(' — that group is the name, not the parameter list.
+    // '(' - that group is the name, not the parameter list.
     {
         char* lp0 = strchr(decl, '(');
         if (lp0) {
@@ -329,7 +329,7 @@ static int emit_prototype(char* decl, FILE* out) {
             }
         }
     }
-    // Split at the first '(' — everything before is "<ret-and-quals> name".
+    // Split at the first '(' - everything before is "<ret-and-quals> name".
     // The parameter list ends at the MATCHING ')', not the last one in the
     // declaration: macOS/SDK prototypes carry trailing availability/__asm
     // attributes with their own parens (`pthread_t pthread_self(void)
@@ -361,7 +361,7 @@ static int emit_prototype(char* decl, FILE* out) {
     char name[128]; { size_t n = (size_t)(ne - ns); if (n >= sizeof(name)) n = sizeof(name)-1; memcpy(name, ns, n); name[n] = '\0'; }
     char rettype[256]; { size_t n = (size_t)(ns - head); if (n >= sizeof(rettype)) n = sizeof(rettype)-1; memcpy(rettype, head, n); rettype[n] = '\0'; }
     if (!isalpha((unsigned char)name[0]) && name[0] != '_') return 0;
-    // Skip compiler/library internal symbols (`__foo`, `_Foo`) — they're not part
+    // Skip compiler/library internal symbols (`__foo`, `_Foo`) - they're not part
     // of a library's public API and clutter the output with TODOs.
     if (name[0] == '_') return 0;
 
@@ -378,7 +378,7 @@ static int emit_prototype(char* decl, FILE* out) {
       } }
 
     const char* wyn_ret = map_c_type(rettype, 1);
-    if (!wyn_ret) { fprintf(out, "// TODO: %s — unsupported return type '%s'\n", name, bg_trim(rettype)); return 0; }
+    if (!wyn_ret) { fprintf(out, "// TODO: %s - unsupported return type '%s'\n", name, bg_trim(rettype)); return 0; }
 
     // Parse params: comma-split at top level (params here have no nested parens
     // in the representable subset; a '(' means a function-pointer param -> skip).
@@ -389,7 +389,7 @@ static int emit_prototype(char* decl, FILE* out) {
     if (strcmp(ptrim, "void") == 0 || *ptrim == '\0') {
         // no params
     } else if (has_char(ptrim, '(')) {
-        fprintf(out, "// TODO: %s — function-pointer parameter not supported\n", name);
+        fprintf(out, "// TODO: %s - function-pointer parameter not supported\n", name);
         return 0;
     } else {
         for (char* tok = strtok_r(ptrim, ",", &pstate); tok; tok = strtok_r(NULL, ",", &pstate)) {
@@ -421,7 +421,7 @@ static int emit_prototype(char* decl, FILE* out) {
             pidx++;
         }
     }
-    if (skip) { fprintf(out, "// TODO: %s — unsupported parameter type\n", name); return 0; }
+    if (skip) { fprintf(out, "// TODO: %s - unsupported parameter type\n", name); return 0; }
     if (variadic) {
         char one[16]; snprintf(one, sizeof(one), "%s...", pidx ? ", " : "");
         strncat(wyn_params, one, sizeof(wyn_params) - strlen(wyn_params) - 1);
@@ -448,7 +448,7 @@ int wyn_bindgen(const char* header_path, const char* cc, const char* extra_iflag
     const char* base = strrchr(header_path, '/');
     base = base ? base + 1 : header_path;
 
-    fprintf(out, "// Generated by `wyn bind %s` — review before use.\n", header_path);
+    fprintf(out, "// Generated by `wyn bind %s` - review before use.\n", header_path);
     fprintf(out, "// Only functions/structs/#defines representable by Wyn's FFI type map are\n");
     fprintf(out, "// emitted; anything skipped is marked with a `// TODO:` note.\n\n");
 
@@ -458,7 +458,7 @@ int wyn_bindgen(const char* header_path, const char* cc, const char* extra_iflag
     int fn_count = 0, emitted_any = 0;
 
     while (fgets(line, sizeof(line), f)) {
-        // Line marker: `# <num> "file" ...` — track whether "file" is our header.
+        // Line marker: `# <num> "file" ...` - track whether "file" is our header.
         if (line[0] == '#') {
             char* q = strchr(line, '"');
             if (q) {
@@ -479,7 +479,7 @@ int wyn_bindgen(const char* header_path, const char* cc, const char* extra_iflag
         // Drain EVERY ';'-terminated declaration in the buffer, not just the
         // first: macro-generated headers (pcre2.h emits its whole API per
         // code-unit width on a single physical line) pack dozens of decls per
-        // fgets chunk — processing one per read silently truncated the rest.
+        // fgets chunk - processing one per read silently truncated the rest.
         char* semi;
         while ((semi = strchr(decl, ';')) != NULL) {
             *semi = '\0';
@@ -489,7 +489,7 @@ int wyn_bindgen(const char* header_path, const char* cc, const char* extra_iflag
             // availability attributes contain '='
             // (`availability(macos,introduced=10.4)`), which the
             // `!has_char(d, '=')` initializer-filter below would otherwise
-            // reject — silently skipping every attributed prototype in SDK
+            // reject - silently skipping every attributed prototype in SDK
             // headers (all of pthread.h, most of libgit2).
             d = bg_strip_attributes(d);
 
@@ -507,7 +507,7 @@ int wyn_bindgen(const char* header_path, const char* cc, const char* extra_iflag
             // Advance past the processed declaration.
             memmove(decl, semi + 1, strlen(semi + 1) + 1);
         }
-        // No ';' left: a struct/enum/union body spans braces — drop a runaway
+        // No ';' left: a struct/enum/union body spans braces - drop a runaway
         // accumulation (struct bodies are handled in a later bindgen pass).
         if (strlen(decl) > 3000) decl[0] = '\0';
     }

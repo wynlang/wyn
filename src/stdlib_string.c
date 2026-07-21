@@ -125,7 +125,7 @@ char** wyn_string_split(const char* str, const char* delim, int* count) {
     char** result = malloc(sizeof(char*) * parts);
     *count = parts;
     
-    // Split — use malloc for working copy since strtok modifies it
+    // Split - use malloc for working copy since strtok modifies it
     char* str_copy = strdup(str);
     char* token = strtok(str_copy, delim);
     int i = 0;

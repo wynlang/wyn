@@ -1,4 +1,4 @@
-// String operations — method chaining, interpolation
+// String operations - method chaining, interpolation
 // Tests: string allocation, method dispatch, GC pressure
 
 fn main() -> int {

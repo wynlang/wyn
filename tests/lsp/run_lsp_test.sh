@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# `wyn lsp` protocol regression test — drives the language server over stdio and
+# `wyn lsp` protocol regression test - drives the language server over stdio and
 # asserts initialize/diagnostics/hover/completion/definition all work. Skips
 # gracefully if python3 is unavailable (keeps CI green on minimal images).
 set -u

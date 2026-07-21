@@ -1,4 +1,4 @@
-// Wyn LSP Server — real compiler integration
+// Wyn LSP Server - real compiler integration
 // Provides diagnostics, hover, go-to-definition, completions
 #include <stdio.h>
 #include <stdlib.h>
@@ -126,7 +126,7 @@ static char wyn_binary[1024] = "";
 
 static void publish_diagnostics(const char* uri, const char* path) {
     // Write the buffer's current content to a temp file and run `wyn check` on
-    // it. Resolve a portable temp directory — Windows has no /tmp, and hardcoding
+    // it. Resolve a portable temp directory - Windows has no /tmp, and hardcoding
     // it there meant the file was never written and `wyn check` ran on a
     // nonexistent path (no diagnostics ever surfaced on Windows).
     char tmp[1024];
@@ -151,12 +151,12 @@ static void publish_diagnostics(const char* uri, const char* path) {
         snprintf(tmp, sizeof(tmp), "%s", path);
     }
     
-    // Run the compiler in CHECK mode — type-check only, NEVER execute the user's
+    // Run the compiler in CHECK mode - type-check only, NEVER execute the user's
     // program (the old code ran `wyn run`, which compiled AND ran the file on
     // every keystroke: side effects, infinite loops, slow). `wyn check` parses +
     // type-checks and reports the same diagnostics without running anything.
     // Quote both the binary and the file path (the temp dir can contain spaces,
-    // e.g. Windows AppData paths). No trailing "; true" — that's POSIX-shell-only
+    // e.g. Windows AppData paths). No trailing "; true" - that's POSIX-shell-only
     // and breaks cmd.exe, which _popen uses on Windows; the exit code is ignored
     // anyway since we parse stdout.
     char cmd[2048];
@@ -184,7 +184,7 @@ static void publish_diagnostics(const char* uri, const char* path) {
 #endif
     }
 
-    // Strip ANSI colour escapes (\033[...m) in place — the compiler colourises
+    // Strip ANSI colour escapes (\033[...m) in place - the compiler colourises
     // its diagnostics and the raw escape bytes would otherwise leak into the LSP
     // message strings (and break the "Error at line" / "--> " matching below).
     {
@@ -301,7 +301,7 @@ static void publish_diagnostics(const char* uri, const char* path) {
     pos += snprintf(diags + pos, sizeof(diags) - pos, "]}");
     lsp_notify("textDocument/publishDiagnostics", diags);
     
-    // Clean up the staged temp file (only if we created one — never the user's
+    // Clean up the staged temp file (only if we created one - never the user's
     // actual source file).
     if (wrote_tmp) unlink(tmp);
 }
@@ -370,7 +370,7 @@ static int build_completions(char* buf, int max, bool dot_trigger, const char* u
                     int tlen = (int)(te - found);
                     if (tlen > 0 && tlen < 128) { memcpy(receiver_type, found, tlen); receiver_type[tlen] = '\0'; }
                 } else if ((found = strstr(s, pat2)) != NULL) {
-                    // "var name = Type{" — look for struct init
+                    // "var name = Type{" - look for struct init
                     found += strlen(pat2);
                     while (*found == ' ') found++;
                     const char* te = found;
@@ -713,8 +713,8 @@ int lsp_server_start(void) {
 #endif
 
     // Resolve the compiler binary used for `wyn check` diagnostics.
-    //   1. $WYN_LSP_BIN — explicit override (used by tests/CI).
-    //   2. $_ — the invoking shell's path to us, if it mentions wyn (Unix).
+    //   1. $WYN_LSP_BIN - explicit override (used by tests/CI).
+    //   2. $_ - the invoking shell's path to us, if it mentions wyn (Unix).
     //   3. platform default on PATH: "wyn.exe" on Windows, else "./wyn".
     // (On Windows $_ is unset and the binary is wyn.exe, so the old hardcoded
     // "./wyn" never existed → diagnostics silently never ran.)
@@ -743,7 +743,7 @@ int lsp_server_start(void) {
         // immediately followed by `:`), NOT a string VALUE that equals "method":
         // Neovim's initialize params include a semanticTokens tokenTypes array
         // containing the literal string "method", which appears BEFORE the real
-        // "method":"initialize" key — matching the first `"method"` blindly
+        // "method":"initialize" key - matching the first `"method"` blindly
         // parsed garbage → empty method → every request answered with null. Also
         // tolerate optional whitespace after the colon (pretty-printed JSON).
         char method[128] = "";

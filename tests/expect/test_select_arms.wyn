@@ -4,7 +4,7 @@
 // EXPECT: done
 // Select arm dispatch. The old codegen only called Task_select_2/3; one-arm
 // and four-plus-arm selects fell back to a hardcoded `__sel = 0` that
-// unconditionally dispatched arm 0 — a 4-arm select where only channel 4 had
+// unconditionally dispatched arm 0 - a 4-arm select where only channel 4 had
 // data blocked forever in Task_recv on empty channel 1. All arities now go
 // through Task_select_n.
 
@@ -34,7 +34,7 @@ fn main() {
         v = z.recv() => println("from d")
     }
 
-    // select with a live spawned producer — the main thread pumps the
+    // select with a live spawned producer - the main thread pumps the
     // scheduler while waiting, so this resolves on any core count
     p = channel(2)
     q = channel(2)

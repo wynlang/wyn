@@ -1,6 +1,6 @@
 // Regression: a local string pushed into an array transfers ownership to the
 // array. Codegen must NOT also release it at scope exit (that double-freed the
-// live element — UAF under ASan, empty-string reads otherwise). Covers the
+// live element - UAF under ASan, empty-string reads otherwise). Covers the
 // move path (var dead after push) and the copy path (var still live after).
 // EXPECT: PASS: string push move/copy ownership
 
@@ -19,7 +19,7 @@ fn main() -> int {
     if moved[4] != "item_4_x" { println("FAIL: move[4]=${moved[4]}"); return 1 }
 
     // Copy path: `s` is read again after the push (via `last`), so it must be
-    // retained, not moved — and released once at scope exit, no double-free.
+    // retained, not moved - and released once at scope exit, no double-free.
     var copied: [string] = []
     var last = ""
     for j in 0..3 {

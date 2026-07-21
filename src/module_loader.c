@@ -74,7 +74,7 @@ void extract_exports(Program* module, SymbolTable* target_scope, ImportStmt* imp
 // W9 namespaced imports: for a WHOLE-module `import m` (item_count == 0) we do
 // NOT merge the module's functions into the target as bare-named statements.
 // Doing so used to (a) register the bare name globally so flat `foo()` resolved,
-// and (b) emit a bare `foo` C definition — which collides when two modules each
+// and (b) emit a bare `foo` C definition - which collides when two modules each
 // export a `foo`. The qualified `m.foo()` call lowers to the prefixed `m_foo`
 // symbol, which the STMT_IMPORT codegen loop emits directly from the module AST,
 // so dot calls still link. Functions ARE still merged for SELECTIVE imports
@@ -116,7 +116,7 @@ void merge_module_exports(Program* module, Program* target, ImportStmt* import) 
             // C-package bindings (`wyn add`) are `extern fn` declarations. They
             // must merge into the target so their prototypes are emitted and the
             // symbols type-check + link. Extern fns stay FLAT (callable as
-            // `sqlite3_open(...)`), not namespaced — the W9 qualified-only rule
+            // `sqlite3_open(...)`), not namespaced - the W9 qualified-only rule
             // applies to Wyn STMT_FN definitions, not C FFI declarations.
             target->stmts = realloc(target->stmts, sizeof(Stmt*) * (target->count + 1));
             target->stmts[target->count++] = stmt;

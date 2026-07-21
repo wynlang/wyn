@@ -1,4 +1,4 @@
-// tcc_backend.c — Embedded TCC compilation backend for Wyn
+// tcc_backend.c - Embedded TCC compilation backend for Wyn
 // Zero external dependencies. Full runtime. No feature loss.
 
 #include <stdio.h>

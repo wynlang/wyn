@@ -1,4 +1,4 @@
-// Test: Complete flow — real-world patterns combining all sugar
+// Test: Complete flow - real-world patterns combining all sugar
 struct Task { id: int, name: string, done: int }
 
 fn process(id: int) -> int { return id * id }

@@ -549,7 +549,7 @@ int cmd_doc(const char* file, int argc, char** argv) {
     
     fprintf(out, "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">\n");
     fprintf(out, "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n");
-    fprintf(out, "<title>Docs — %s</title>\n<style>\n", file);
+    fprintf(out, "<title>Docs - %s</title>\n<style>\n", file);
     fprintf(out,
         ":root{--bg:#fff;--fg:#1a2332;--sidebar:#f8f9fa;--border:#e2e6ec;--accent:#00d2ff;--code-bg:#f4f3f3;--card:#fff}\n"
         "[data-theme=dark]{--bg:#1a1a2e;--fg:#e0e0e0;--sidebar:#16213e;--border:#2a2a4a;--accent:#4fc3f7;--code-bg:#16213e;--card:#1e1e3f}\n"
@@ -746,9 +746,9 @@ int cmd_debug(const char* program, int argc, char** argv) {
         fclose(init);
     }
     
-    printf("Wyn Debugger — powered by lldb\n");
-    printf("  n — step over   s — step into   c — continue\n");
-    printf("  p <var> — print  b <fn> — breakpoint  bt — backtrace  q — quit\n\n");
+    printf("Wyn Debugger - powered by lldb\n");
+    printf("  n - step over   s - step into   c - continue\n");
+    printf("  p <var> - print  b <fn> - breakpoint  bt - backtrace  q - quit\n\n");
     fflush(stdout);
     
     snprintf(cmd, sizeof(cmd), "lldb -s %s %s", init_path, bin_path);
@@ -1012,7 +1012,7 @@ int cmd_help(const char* command, int argc, char** argv) {
 }
 
 // ---------------------------------------------------------------------------
-// `wyn fix` — automated migrator for removed syntax (R1). The evidence-backed
+// `wyn fix` - automated migrator for removed syntax (R1). The evidence-backed
 // breaking-change strategy (Rust editions + `cargo fix`) says: never hard-break
 // a corpus; ship a semantics-preserving migrator. This rewrites the operators
 // that were removed in favor of words, preserving string literals and comments:

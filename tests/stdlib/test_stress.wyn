@@ -133,7 +133,7 @@ fn main() -> int {
     
     // === EDGE: Map/filter/reduce chains ===
     var data = [1, -2, 3, -4, 5]
-    // Actually reduce(fn(a,b)->int, init) — dbl is wrong. Let me use a proper fn
+    // Actually reduce(fn(a,b)->int, init) - dbl is wrong. Let me use a proper fn
     
     // === EDGE: Spawn correctness ===
     var shared = Task.value(0)

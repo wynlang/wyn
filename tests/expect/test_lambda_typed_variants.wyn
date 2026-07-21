@@ -2,7 +2,7 @@
 // EXPECT: [1, 2, 3]
 // EXPECT: [3, 5]
 // EXPECT: [2.5]
-// Typed lambda variants over arrays — each line used to be a silent wrong
+// Typed lambda variants over arrays - each line used to be a silent wrong
 // answer or a segfault:
 // 1. String lambda capturing an outer string emitted pointer garbage
 //    (capture cells were hardcoded long long).

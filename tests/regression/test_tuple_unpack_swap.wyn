@@ -1,7 +1,7 @@
 // Pythonic tuple unpacking and multi-target assignment / swap.
 //   var a, b = x, y      (declaration, tuple-literal RHS)
 //   var lo, hi = f()     (declaration, tuple-returning RHS)
-//   a, b = b, a          (assignment / swap — RHS evaluated before writes)
+//   a, b = b, a          (assignment / swap - RHS evaluated before writes)
 // EXPECT: PASS: tuple unpack and swap
 
 fn minmax() -> (int, int) { return (3, 9) }

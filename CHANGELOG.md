@@ -2,7 +2,7 @@
 
 ## v1.19.1 (2026-07-21)
 
-Identity and polish patch — no language changes, drop-in upgrade from v1.19.0.
+Identity and polish patch - no language changes, drop-in upgrade from v1.19.0.
 
 - **Clean CLI output**: `wyn`, `wyn version`, and `wyn --help` print a single
   informative line instead of ASCII art. The visual identity (the new
@@ -10,20 +10,20 @@ Identity and polish patch — no language changes, drop-in upgrade from v1.19.0.
   script-friendly. `wyn version` prints to stdout for easy parsing.
 - **Fixed PATH invocation** (also shipped in the re-tagged v1.19.0): the
   installed binary resolves its runtime from the real executable path, so
-  `wyn run x.wyn` works when invoked through PATH — not just as `./wyn`.
+  `wyn run x.wyn` works when invoked through PATH - not just as `./wyn`.
 - Website: new wyvern-W emblem as logo/favicon/social image; WYN block
   wordmark on the homepage and 404 page.
 
-## v1.19.0 — "The DX Release" (2026-07-20)
+## v1.19.0 - "The DX Release" (2026-07-20)
 
 The developer-experience release: a real test runner, working project templates,
 supply-chain auditing, the first official web package, the module-codegen
-fixes that make writing Wyn packages actually pleasant — plus two hardening
+fixes that make writing Wyn packages actually pleasant - plus two hardening
 passes that fixed every known silent-wrong-answer bug and put the compiler
 under continuous fuzzing and sanitizer gates. No breaking changes.
 
 **Correctness: no more silent wrong answers**
-- **Structs compare with `==`**: `if a == b` on struct values works —
+- **Structs compare with `==`**: `if a == b` on struct values works -
   field-wise (strings by content, nested structs recursively). It used to be
   an internal compiler error on day-one code. Structs with non-comparable
   fields (arrays/maps), cross-type compares, and ordering (`<`) give clear
@@ -39,7 +39,7 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
   `push`, `m[k] = v`, `a[i] = v`) are enforced now; `int`↔`float` stays
   permissive.
 - **Awaiting a future twice returns the same value**: results are memoized.
-  The second `await f` used to return 0 silently — or, worse, steal a
+  The second `await f` used to return 0 silently - or, worse, steal a
   *different* spawn's result; float results crashed. Also fixed a race that
   could hand the same future to two spawns, and spawned functions' float
   arguments/returns no longer truncate (`spawn half(7.0)` used to return 3).
@@ -48,15 +48,15 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
   `Some(None)`, triple nesting, and lowercase `none` match arms.
 - **`select` dispatches correctly at every arity**: one-arm and 4+-arm
   selects used to always run the *first* arm (hanging if its channel was
-  empty). A `select` that can never receive — no ready channel, no live
-  tasks — now exits with a deadlock error instead of hanging forever.
+  empty). A `select` that can never receive - no ready channel, no live
+  tasks - now exits with a deadlock error instead of hanging forever.
 - **`println(struct)` prints the fields** (`Point { x: 3, y: 4 }`) and
-  `println(option)` prints `Some(5)` / `none` — both were internal compiler
+  `println(option)` prints `Some(5)` / `none` - both were internal compiler
   errors. Nested array assignment (`m[0][1] = v`) and lambda captures inside
   `"${...}"` interpolation are fixed too.
 
 **Match statements** (statement position now equals expression position)
-- Or-patterns `1 | 3 | 5 =>` work (they used to compile to `if (0)` — the arm
+- Or-patterns `1 | 3 | 5 =>` work (they used to compile to `if (0)` - the arm
   silently *never* matched), guards `x if x > 2 =>` no longer crash the
   compiler, and range patterns `1..5` / `1..=5` parse.
 
@@ -71,7 +71,7 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
 **Error messages that tell the truth**
 - **Unterminated strings point at the opening quote** with "Unterminated
   string literal", instead of a misleading `Expected '}'` at the end of the
-  file — and you get *one* error, not a cascade of three identical ones.
+  file - and you get *one* error, not a cascade of three identical ones.
 - **Python/JS habits get targeted fixes**: `def`, `lambda`, `True`, `null`,
   `let`, `function`, `console`, `try` and friends each produce the exact Wyn
   equivalent (`functions are declared with 'fn': fn add(a, b) {...}`) instead
@@ -84,7 +84,7 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
 **Self-upgrade that works (and can't hurt you)**
 - **`wyn upgrade`** updates to the latest release; **`wyn upgrade 1.18.0`**
   installs an exact version (up or down). The new binary is downloaded to a
-  temp dir, extracted, and proven to run before anything is touched — a
+  temp dir, extracted, and proven to run before anything is touched - a
   failed download can no longer damage the install (previously a 404
   response body could overwrite the binary). Bare `wyn upgrade` never
   downgrades; an explicit version pin is honored exactly.
@@ -92,7 +92,7 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
 **Hardening gates (CI)**
 - Every commit now runs the full suite under **AddressSanitizer** (the
   runtime, where the real memory bugs live) and **ThreadSanitizer** (all
-  concurrency tests, under *both* executor configurations) — plus an
+  concurrency tests, under *both* executor configurations) - plus an
   install-layout canary that blocks any release whose tarball wouldn't
   actually run after `install.sh`. The TSan gate caught and fixed a real
   data race in `select` before this release.
@@ -100,12 +100,12 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
 **New tooling**
 - **`wyn test` is a real test runner for your projects**: discovers
   `tests/test_*.wyn` and `*_test.wyn` (one subdirectory level too), runs them,
-  and — crucially — **failing assertions now fail the run** (they used to exit 0
+  and - crucially - **failing assertions now fail the run** (they used to exit 0
   and count as passed). `wyn test <name>` filters by name; an empty project
   prints a copy-pasteable starter test.
 - **`wyn new <name> --template cli|api|web|lib`** scaffolds a runnable project
   (wyn.toml, src/, a passing test, README, CI workflow). The templates now
-  actually compile — they had shipped with the removed `&&`/`||` syntax — and
+  actually compile - they had shipped with the removed `&&`/`||` syntax - and
   every template is CI-verified to check clean and pass its own tests.
   `http-service` is an alias for `api`.
 - **`wyn pkg audit`** verifies your lockfile against reality: a **moved tag**
@@ -116,7 +116,7 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
 
 **Language: string lambdas** (the biggest expressiveness gap, closed)
 - **String-parameter lambdas work end-to-end**: `words.map((s) => s.upper())`,
-  `names.map((s) => "Hi " + s + "!")`, `words.filter((s) => s.len() > 3)` —
+  `names.map((s) => "Hi " + s + "!")`, `words.filter((s) => s.len() > 3)` -
   string methods, string concat, and identity lambdas on `[string]` arrays all
   compile and run. Lambda bodies now go through the real expression code
   generator instead of a separate int-only mini-emitter, so every expression
@@ -124,15 +124,15 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
   return `[string]` (element types are preserved through the chain).
 
 **Ecosystem**
-- **`wyn pkg add web`** — the first official batteries-included web package
+- **`wyn pkg add web`** - the first official batteries-included web package
   (github.com/wynlang/web): request parsing, JSON/HTML responses, traversal-safe
   static files, an HTML page builder, spawn-per-request concurrency.
 - **Curated C recipes: 12 → 31.** `wyn add png|jpeg|pcre2|yaml|ffi|uuid|ev|uv|
-  sdl2|pthread|expat|bz2|iconv|gmp|onig|ssh2|git2|archive|magic` — each with
+  sdl2|pthread|expat|bz2|iconv|gmp|onig|ssh2|git2|archive|magic` - each with
   headers, pkg-config, and per-OS install hints. Every recipe is verified
   end-to-end (add → bind → link → run).
 - **`wyn bind` handles real-world headers.** Bindgen now resolves typedefs
-  (`png_uint_32`, `uv_file`, opaque handle pointers — recorded from the whole
+  (`png_uint_32`, `uv_file`, opaque handle pointers - recorded from the whole
   preprocessed unit), scans prototypes behind macOS availability/`__asm`
   attributes, handles many declarations per line (pcre2's macro-generated
   API), and strips `_Nullable`/`restrict`. Measured on real libraries:
@@ -140,7 +140,7 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
   OpenSSL crypto 729. Recipes can carry required `-D` defines
   (`wyn bind -D` works too).
 - **Multi-package projects link.** Repeated `[ffi]` sections in wyn.toml
-  (one per `wyn add`) now accumulate — previously only the LAST added
+  (one per `wyn add`) now accumulate - previously only the LAST added
   package's libs survived, so any project using two C packages failed at
   link time.
 
@@ -148,18 +148,18 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
 - Fixed four imported-module codegen bugs: sibling calls to functions with
   common names (`path`, `text`, …) lost their module prefix; `for x in xs` loop
   variables miscompiled; **returning a composed string
-  (`return "a" + t + "b"` or `"${t}"`) released `t` before reading it** — a
+  (`return "a" + t + "b"` or `"${t}"`) released `t` before reading it** - a
   use-after-free that silently produced empty output (this one was general, not
   module-only); unannotated void module functions emitted conflicting C types.
 
 **Concurrency**
-- Coroutine stacks are now 8MB (lazily committed — no RSS cost) instead of
+- Coroutine stacks are now 8MB (lazily committed - no RSS cost) instead of
   64KB: deep recursion and heavy sort/parse workloads inside awaited spawns no
   longer crash with SIGBUS.
 - `println(await_all(futs))` prints the result array (was an internal error).
 
 **Forgiveness & errors**
-- `return x` and `return none` auto-wrap in `fn -> T?` functions — no more
+- `return x` and `return none` auto-wrap in `fn -> T?` functions - no more
   mandatory `Some(x)` / `None()` ceremony.
 - `opt == None` / `!= none` give a targeted "use `.is_none()` / `.is_some()`"
   error instead of a C-level crash.
@@ -173,24 +173,24 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
 
 **Web performance** (with the `web` package)
 - **HTTP/1.1 keep-alive**: persistent connections instead of a TCP handshake
-  per request — measured **22,000+ req/s with zero failed requests at 200
+  per request - measured **22,000+ req/s with zero failed requests at 200
   concurrent connections** on the hello example (3× the previous throughput).
 - **Concurrent accept**: the old accept path read the request on the accept
   loop, so one slow client stalled every other connection (and could wedge
   the server under load). New `Http.accept_fd` + `Http.read_request` split:
   accept-only main loop, request reads park cooperatively in each handler's
   coroutine. One dead client can also no longer kill the server (SIGPIPE
-  protection — none existed).
+  protection - none existed).
 
 **Performance**
-- Code generation no longer flushes per fragment — large builds are ~25%
+- Code generation no longer flushes per fragment - large builds are ~25%
   faster on the frontend side.
-- The checker's symbol table is hashed — `wyn check` on very large files is
+- The checker's symbol table is hashed - `wyn check` on very large files is
   now near-linear instead of O(n²) (name lookups were 95% of checker time).
 - Dev builds are ~40% faster on macOS: the 5,400-line runtime header is
   precompiled once (`make runtime`) instead of re-parsed on every
   `wyn build`/`wyn run` (hello: 830ms → 500ms).
-- Compiled binaries no longer carry a 2.1MB zeroed scheduler-deque block —
+- Compiled binaries no longer carry a 2.1MB zeroed scheduler-deque block -
   the work-stealing deques are allocated at scheduler start, sized to the
   real core count (hello's data segment: 2.1MB → 16KB).
 
@@ -199,12 +199,12 @@ stability, struct equality, collection types, select deadlock, unterminated
 strings, scaffolding, test runner, pkg audit, module codegen, and more) + the
 fuzz invariants + ASan/TSan sanitizer sets, all green on all platforms.
 
-## v1.18.0 — "The Correctness Release" (2026-07-17)
+## v1.18.0 - "The Correctness Release" (2026-07-17)
 
 A focused hardening pass: a batch of real correctness fixes found by dogfooding the
 whole corpus (all 48 sample-apps now build), a memory-safety fix in codegen, a big C-FFI
 reliability win, and the first steps of the lambda + dot-syntax cleanups. No breaking
-changes — a drop-in upgrade from v1.17.
+changes - a drop-in upgrade from v1.17.
 
 **Memory safety**
 - Fixed a heap-use-after-free in codegen's string-var scope tracking: on large programs
@@ -223,7 +223,7 @@ changes — a drop-in upgrade from v1.17.
   `&&`/`||` (clean "use `and`/`or`" error); array-index typing no longer keys off names.
 
 **C FFI / ecosystem**
-- `wyn bind` handles export-macro'd headers (strips `__attribute__((...))`) — unlocking
+- `wyn bind` handles export-macro'd headers (strips `__attribute__((...))`) - unlocking
   real libraries (**lz4 0→44, zstd 0→59** bindings); bare `unsigned` returns map to int.
   New curated recipes: **lz4, zstd, jsonc**.
 - `wyn add` records pkg-config's `-L` dirs into `[ffi].lib_dirs`, so libraries off the
@@ -233,23 +233,23 @@ changes — a drop-in upgrade from v1.17.
 - Lambda parameter types are inferred; a string/float-parameter lambda gives a clear
   "not supported yet" message + workaround (was a cryptic error or silent miscompile).
   Integer lambdas + `.map`/`.filter`/`.reduce` unchanged.
-- The `File` namespace works uniformly via both `File.x` and `File::x` — a step toward
+- The `File` namespace works uniformly via both `File.x` and `File::x` - a step toward
   `.` as the one canonical call syntax.
 
 **Tooling / tests**
 - New `wyn fix` migrator for removed syntax (`&&`→`and`, `||`→`or`, `elseif`→`else if`).
 - De-flaked the fire-and-forget drain test; new regression tests across all of the above.
 
-## v1.17.0 — "The Ecosystem Release" (2026-07-16)
+## v1.17.0 - "The Ecosystem Release" (2026-07-16)
 
 The big one. Wyn gets a real package ecosystem: a **git-URL package manager** (no
-central registry — a dependency is just a git repo), a C FFI that generates
+central registry - a dependency is just a git repo), a C FFI that generates
 bindings from a header and pulls curated C libraries with one command (proven end
 to end against SQLite), and concurrency on a coroutine scheduler by default
 (cooperative I/O everywhere) with cooperative task cancellation. `print()` becomes
 properly Python-style. Plus Pythonic sugar and a long tail of correctness fixes.
 
-**Heads up — breaking changes** (see *Removed / changed* below): the `|>` pipe
+**Heads up - breaking changes** (see *Removed / changed* below): the `|>` pipe
 operator, the `&&`/`||`/`!` operators, and `try`/`catch`/`throw` are gone;
 `import m` now requires qualified calls (`m.foo()`); the `pkg.wynlang.com` registry
 and its `wyn pkg register/login/publish` commands are removed in favour of git
@@ -258,7 +258,7 @@ URLs. Migration is mechanical.
 ### Package manager (git URLs, no registry)
 
 - **A dependency is a git repo.** `wyn add args` expands a bare name to
-  `github.com/wynlang/args` (the "official" convention — org membership is the
+  `github.com/wynlang/args` (the "official" convention - org membership is the
   source of truth); `wyn add github.com/bob/lib@v1.2` takes any repo, any host, at
   an optional tag/branch/commit; `wyn add <url> --as name` overrides the import
   name. `wyn remove`, `wyn list`, and `wyn install` (restore from `wyn.lock`) round
@@ -267,7 +267,7 @@ URLs. Migration is mechanical.
 - **Global content-addressed cache** (`~/.wyn/pkg/<host>/<owner>/<repo>@<ref>`,
   overridable via `WYN_PKG_CACHE`), cloned once and shared across projects, pinned
   by commit in `wyn.lock` for reproducible builds.
-- **Publishing is `git push` + `git tag`** — there is no registry server to talk to.
+- **Publishing is `git push` + `git tag`** - there is no registry server to talk to.
 - **Private repos just work**: the compiler shells out to `git clone`, so your
   ambient git auth (HTTPS credential helper, stored token, or SSH key/agent, incl.
   `git@host:owner/repo` URLs) authenticates with no extra Wyn config.
@@ -276,23 +276,23 @@ URLs. Migration is mechanical.
 
 ### C ecosystem (FFI)
 
-- **`wyn add <lib>` — curated C packages, end to end.** For a curated C library,
+- **`wyn add <lib>` - curated C packages, end to end.** For a curated C library,
   one command resolves it, generates its bindings, links it, and records the flags
   in `wyn.toml`, so you can `import` it and start calling. Nine recipes ship:
   `m` (libm), `z` (zlib), `curl`, `sqlite3`, `crypto`/`ssl` (OpenSSL), `curses`
   (ncurses), `readline`, and `xml2` (libxml2).
-- **`wyn bind <header.h>` — binding generation.** Reads a C header and emits the
+- **`wyn bind <header.h>` - binding generation.** Reads a C header and emits the
   Wyn `extern fn` declarations for everything representable by the FFI type map.
 - **`wyn add` TUI.** Run `wyn add` with no name to browse/filter/preview the
   curated registry interactively (falls back to a plain list when non-interactive).
-- **`Ptr` — pointer cells for C out-parameters.** `Ptr.cell()`/`read()`/`write()`/
+- **`Ptr` - pointer cells for C out-parameters.** `Ptr.cell()`/`read()`/`write()`/
   `free()` give you a heap slot to pass where C wants a `T**` (e.g.
-  `sqlite3_open(path, sqlite3** out)`) and read the handle back — the piece that
+  `sqlite3_open(path, sqlite3** out)`) and read the handle back - the piece that
   makes opaque-handle APIs usable.
 - **By-value FFI structs + typed `cstr`** (raw `char*`), and `ptr` is a first-class
   type consistent across the checker and codegen.
 - **Dogfooded against SQLite:** open a DB, create a table, insert rows, and query
-  them back through prepared statements — all from Wyn (see the C-FFI guide).
+  them back through prepared statements - all from Wyn (see the C-FFI guide).
 - FFI robustness: standard-header symbols (`strlen`, `toupper`, the math library,
   …) no longer clash with the prototypes Wyn emits; `string` coerces to a `ptr`
   parameter; imported C-package bindings link correctly.
@@ -315,35 +315,35 @@ URLs. Migration is mechanical.
 - **`print()` is now Python-style.** `print(a, b, c)` prints its arguments
   space-separated with a trailing newline; `print(x, end: "")` suppresses the
   newline; `print(a, b, sep: "-")` sets the separator. `println` remains as an
-  alias. (Previously `print` was inconsistent — no newline for strings/ints, a
+  alias. (Previously `print` was inconsistent - no newline for strings/ints, a
   newline for arrays, and a silently-dropped second argument.)
-- **Namespaced imports (W9):** `import m` exposes members as `m.foo()` — the
+- **Namespaced imports (W9):** `import m` exposes members as `m.foo()` - the
   canonical, collision-free form. A bare `foo()` after `import m` is now an error
   (selective `import { foo } from m` keeps the flat call).
-- **`?.` optional chaining** — `x?.field` / `x?.method()` short-circuit on `None`.
-- **`zip()` + pair destructuring** — `for x, y in zip(a, b)`.
-- **Optional struct fields** — a `Struct?` (or `int?`/`string?`/…) field now
+- **`?.` optional chaining** - `x?.field` / `x?.method()` short-circuit on `None`.
+- **`zip()` + pair destructuring** - `for x, y in zip(a, b)`.
+- **Optional struct fields** - a `Struct?` (or `int?`/`string?`/…) field now
   compiles and matches correctly.
-- **Closure copy** — `var g = f` where `f` is a closure.
+- **Closure copy** - `var g = f` where `f` is a closure.
 - **Braceless single-statement bodies** for `for`/`if`/`else`/`while`.
 - **`_` as a throwaway for-loop variable.**
 - Variables may be named after C keywords (`int`, `long`, `char`, …).
 
 ### Removed / changed (breaking)
 
-- **`|>` pipe operator removed** — compose with nested calls or intermediate
+- **`|>` pipe operator removed** - compose with nested calls or intermediate
   `var`s.
-- **`&&` / `||` / `!` removed** — use `and` / `or` / `not` (already canonical).
-- **`try` / `catch` / `throw` removed** — use `Result` + `Ok`/`Err` + `match` + `?`.
-- **`import m` requires `m.foo()`** — a flat `foo()` no longer resolves.
-- **The `pkg.wynlang.com` registry is gone** — `wyn pkg register/login/whoami/
+- **`&&` / `||` / `!` removed** - use `and` / `or` / `not` (already canonical).
+- **`try` / `catch` / `throw` removed** - use `Result` + `Ok`/`Err` + `match` + `?`.
+- **`import m` requires `m.foo()`** - a flat `foo()` no longer resolves.
+- **The `pkg.wynlang.com` registry is gone** - `wyn pkg register/login/whoami/
   search/publish/push` are removed; use git URLs (`wyn add <url>`) and publish by
   pushing a repo + tag.
 
 ### Fixes & internals
 
 - Memory-safety: `print()` on an int expression, a module-load use-after-free, and
-  a JSON out-of-bounds read — all fixed and ASan-verified.
+  a JSON out-of-bounds read - all fixed and ASan-verified.
 - Pattern matching / data enums: statement-form match, multi-field variants,
   arrays of enum values, tuple-variable destructuring.
 - Struct methods: `self.other()` dispatch, method params, struct-body method
@@ -354,7 +354,7 @@ URLs. Migration is mechanical.
   autocomplete on C-package bindings.
 - Variables named after C keywords (`int`, `long`, `char`, …) compile correctly.
 - Map literals: `{k: someVar}` with a typed non-literal value stored the wrong type
-  (defaulted to int) and read back garbage — the three map-store paths now share
+  (defaulted to int) and read back garbage - the three map-store paths now share
   one type selector, so store and load agree.
 - FFI: variables/params of type `ptr` and `cstr` lower correctly; `string` coerces
   to a `ptr` parameter; imported C-package `extern fn`s link; an `extern fn` for a
@@ -362,10 +362,10 @@ URLs. Migration is mechanical.
 - Compiler cleanup: dead code removed (`scope.c`, the old registry/semver client),
   runtime source lists de-duplicated; warning-clean.
 
-## v1.16.0 — "The Batteries Release" (2026-07-13)
+## v1.16.0 - "The Batteries Release" (2026-07-13)
 
 Batteries included. This release makes Wyn feel more like Python where it counts
-and — the big one — turns on a real C FFI, so the entire C ecosystem is now
+and - the big one - turns on a real C FFI, so the entire C ecosystem is now
 reachable from Wyn. All backward compatible; no source changes required.
 
 ### C interop (FFI)
@@ -379,7 +379,7 @@ reachable from Wyn. All backward compatible; no source changes required.
   extern fn sqrt(x: float) -> float;
 
   fn main() {
-      println("${sqrt(16.0)}")     // 4.0 — links the C math library
+      println("${sqrt(16.0)}")     // 4.0 - links the C math library
   }
   ```
 
@@ -410,7 +410,7 @@ reachable from Wyn. All backward compatible; no source changes required.
   for i in range(10, 0, -1) { … }   // 10 9 8 … 1
   ```
 
-- **`if let`** conditional binding — match one case inline without a full `match`:
+- **`if let`** conditional binding - match one case inline without a full `match`:
 
   ```wyn
   if let Some(v) = find(key) {
@@ -422,7 +422,7 @@ reachable from Wyn. All backward compatible; no source changes required.
 
   Works on any `Option` or `Result`, with or without an `else`.
 
-## v1.15.0 — "The Payloads Release" (2026-07-13)
+## v1.15.0 - "The Payloads Release" (2026-07-13)
 
 Two correctness fixes that remove long-standing sharp edges: any scalar can now
 ride inside an `Option`/`Result`, and your function names no longer collide with
@@ -431,7 +431,7 @@ the C standard library.
 ### Optionals & Results
 
 - **`float?` / `bool?` and `Result<float, _>` / `Result<bool, _>` now compile.**
-  Previously only `int` and `string` payloads worked — a `-> float?` function
+  Previously only `int` and `string` payloads worked - a `-> float?` function
   failed to compile with an internal type mismatch. Now every form works:
   returning `Some`/`None`/`Ok`/`Err`, statement- and expression-position
   `match`, and the `.is_some()` / `.unwrap()` / `.unwrap_or(default)` methods.
@@ -453,7 +453,7 @@ the C standard library.
 - **Function names can now shadow C standard-library symbols.** A function
   called `connect`, `read`, `write`, `open`, `close`, `socket`, `send`, `link`,
   `index`, and friends used to fail to compile (`static declaration of 'connect'
-  follows non-static declaration`). Those names are now free to use — the
+  follows non-static declaration`). Those names are now free to use - the
   generated C is transparently namespaced, so your Wyn code is unaffected.
 
   ```wyn
@@ -462,7 +462,7 @@ the C standard library.
   }
   ```
 
-## v1.14.0 — "The Polish Release" (2026-07-11)
+## v1.14.0 - "The Polish Release" (2026-07-11)
 
 Follows the Pythonic release with a batch of ergonomics and correctness fixes
 that smooth over the last rough edges in optionals, results, match, and printing.
@@ -487,17 +487,17 @@ that smooth over the last rough edges in optionals, results, match, and printing
 
 ### Printing & indexing
 
-- **`println(array)` works** — arrays and `map.keys()` print their real values
+- **`println(array)` works** - arrays and `map.keys()` print their real values
   with a newline (was a type error; `print(arr)` already worked).
-- **String negative indexing** — `s[-1]` is the last character (matches arrays).
+- **String negative indexing** - `s[-1]` is the last character (matches arrays).
 
 ### Functions
 
-- **Default args infer their type.** `fn greet(who = "world")` works — the
+- **Default args infer their type.** `fn greet(who = "world")` works - the
   parameter type comes from the default value's literal, so you don't have to
   write `who: string = "world"`. Typed defaults are unchanged.
 
-## v1.13.0 — "The Pythonic Release" (2026-07-11)
+## v1.13.0 - "The Pythonic Release" (2026-07-11)
 
 Wyn gets a lot more Python-like, plus a deep batch of codegen correctness and
 memory-safety fixes. All memory fixes verified under AddressSanitizer.
@@ -514,13 +514,13 @@ memory-safety fixes. All memory fixes verified under AddressSanitizer.
 - **Tuple unpacking & multi-assignment.** `var a, b = 10, 20`,
   `var lo, hi = minmax()`, and swap/rotate `a, b = b, a` / `x, y, z = z, x, y`
   (all right-hand values are evaluated before any assignment).
-- **`Some`/`None`/`Ok`/`Err` work for any payload** in any context — you never
+- **`Some`/`None`/`Ok`/`Err` work for any payload** in any context - you never
   need to write a mangled `OptionString_Some(...)` form again.
 
 ### Correctness (codegen type selection)
 
 - **HashMap values are correctly typed.** `m[k]` and `m.get(k)` on int/float/bool
-  maps returned garbage (always used the string getter) — even the shipped
+  maps returned garbage (always used the string getter) - even the shipped
   hashmap example printed a blank value. Now typed from the map's value type;
   also fixed a segfault on `if m.get(k) != n`.
 - **`match` fixes.** Statement-form `match` on a payload enum no longer
@@ -539,7 +539,7 @@ memory-safety fixes. All memory fixes verified under AddressSanitizer.
 - **String ternary** (`cond ? "a" : "b"`) no longer prints a garbage pointer.
 - **Chained comparison** (`0 < x < 10`) is rejected at compile time with a
   message pointing to `0 < x and x < 10` (was silently evaluated as `(0<x)<10`).
-- **`elif` no longer hangs the compiler** — it errors with "use `else if`". A
+- **`elif` no longer hangs the compiler** - it errors with "use `else if`". A
   general no-progress guard now protects every statement-parsing loop from hangs.
 
 ### Memory safety
@@ -548,10 +548,10 @@ memory-safety fixes. All memory fixes verified under AddressSanitizer.
   field, an `Option`/`Result`, or an enum variant, then released at scope exit
   while the container still aliased it. All ASan-verified with regression tests.
 
-## v1.12.0 — "The Hardening Release" (2026-07-09)
+## v1.12.0 - "The Hardening Release" (2026-07-09)
 
 Memory-safety fixes, deeper concurrency, and a warning-clean build. Three of the
-fixes below are genuine bugs that shipped in v1.11.0 — upgrading is recommended.
+fixes below are genuine bugs that shipped in v1.11.0 - upgrading is recommended.
 All memory fixes were verified under AddressSanitizer.
 
 ### Memory safety
@@ -562,7 +562,7 @@ All memory fixes were verified under AddressSanitizer.
 - **print/println double-free fixed.** Printing a fresh interpolated/temp string
   (`println("x=${x}")`) could release it twice.
 - **Database/JSON query heap overflow fixed.** `Db.query` / `Db.query_params` /
-  `Json.keys` wrote unbounded results into fixed 64KB/4KB buffers — any larger
+  `Json.keys` wrote unbounded results into fixed 64KB/4KB buffers - any larger
   result overflowed the heap. They now grow as needed (verified on a ~168KB result).
 - **String interpolation no longer truncates at 512 bytes.** Interpolated strings of
   any length now round-trip intact (previously silently cut to 511 bytes).
@@ -574,16 +574,16 @@ All memory fixes were verified under AddressSanitizer.
 - **Cooperative `Time::sleep`.** Inside the coroutine scheduler (fire-and-forget
   `spawn`), sleeping now yields to other tasks instead of blocking the worker
   thread. In one benchmark, 50 concurrent 200ms sleeps finished in ~0.21s instead of
-  ~1.03s. (Awaited/`parallel` spawns run on the thread pool and still block — see
+  ~1.03s. (Awaited/`parallel` spawns run on the thread pool and still block - see
   the roadmap.)
 
 ### Build & tooling
 
 - **Warning-clean build** under `-Wall -Wextra`.
-- **Runtime library rebuild fixed** — `make` now rebuilds `libwyn_rt.a` when a
+- **Runtime library rebuild fixed** - `make` now rebuilds `libwyn_rt.a` when a
   runtime source or header changes, so programs no longer link a stale runtime.
 
-## v1.11.0 — "The Developer Experience Release" (2026-03-30)
+## v1.11.0 - "The Developer Experience Release" (2026-03-30)
 
 Make developers productive in their first hour. Every change improves error messages, tooling, or language ergonomics.
 
@@ -591,14 +591,14 @@ Make developers productive in their first hour. Every change improves error mess
 
 - **`enum.to_string()`** returns variant name: `Color.Red.to_string()` → `"Red"` (was `"0"`)
 - **`for i, v in arr`** indexed iteration: `for i, v in ["a","b","c"] { println(i.to_string() + ":" + v) }`
-- **`int?` optional syntax**: `var x: int? = OptionInt_Some(42)` — sugar for `OptionInt`
+- **`int?` optional syntax**: `var x: int? = OptionInt_Some(42)` - sugar for `OptionInt`
 - **`"ha" * 3` string repeat**: `"-" * 40` produces a 40-character separator line
 
 ### Compiler Improvements
 
 - **Missing return is now an error**, not a warning: `fn get() -> int { }` fails to compile
 - **Type mismatch errors from Wyn**, not C: `var x: int = "hello"` shows clear Wyn error with line number and suggestion
-- **Typed arrays**: `var arr: [int] = []` uses `WynIntArray` (raw `long long*`) — sum 1M ints 2x faster
+- **Typed arrays**: `var arr: [int] = []` uses `WynIntArray` (raw `long long*`) - sum 1M ints 2x faster
 
 ### Tooling
 
@@ -621,14 +621,14 @@ Make developers productive in their first hour. Every change improves error mess
 | fib(35) | 33ms | 34ms |
 | Official packages | 31 | 36 |
 
-## v1.10.0 — "The Quality Release" (2026-03-28)
+## v1.10.0 - "The Quality Release" (2026-03-28)
 
 No new language features. Every change is about making the existing language faster, safer, and more stable.
 
 ### Performance
 
 - **fib(35)**: 120ms → 33ms (3.6x faster via -O2 release builds)
-- **1M string append**: 12,143ms → 6ms (2,024x faster — RC header caches length + capacity)
+- **1M string append**: 12,143ms → 6ms (2,024x faster - RC header caches length + capacity)
 - **1M `.len()`**: ~100ms → 1ms (O(1) from RC length cache, was O(n) strlen)
 - **Array sort**: 189ms → 1ms for 10K ints (O(n²) bubble sort → O(n log n) inline introsort)
 - **`wyn build`**: ~4s → 411ms (precompiled `libwyn_rt.a` + system cc)
@@ -637,20 +637,20 @@ No new language features. Every change is about making the existing language fas
 - **4x parallel fib(35)**: perfect 4x scaling (33ms, same as sequential)
 - **HashMap**: 17x insert, 23x get (FNV-1a + 4096 buckets)
 
-### Memory Safety — Zero Leaks
+### Memory Safety - Zero Leaks
 
 Every known memory leak pattern is fixed. Verified with AddressSanitizer + UndefinedBehaviorSanitizer.
 
 - **50+ string functions**: raw `malloc` → RC-tracked `wyn_str_alloc`
 - **String concat temps**: left and right temporaries released after concat
-- **Chained concat**: `"a" + x + "b"` — all intermediates released
-- **String interpolation**: `"item ${i}"` — interpolation temps released
-- **String reassignment**: `s = "new" + x` — old value released, ownership transfer
-- **Function argument temps**: `consume("a" + x)` — arg released after call
-- **println/print temps**: `println(x.to_string())` — temp released after print
-- **Method chain intermediates**: `"hello".upper().trim()` — upper() result released
-- **Method object temps**: `("a"+x).split(",")` — concat result released
-- **Unused return values**: `some_fn()` returning string — released
+- **Chained concat**: `"a" + x + "b"` - all intermediates released
+- **String interpolation**: `"item ${i}"` - interpolation temps released
+- **String reassignment**: `s = "new" + x` - old value released, ownership transfer
+- **Function argument temps**: `consume("a" + x)` - arg released after call
+- **println/print temps**: `println(x.to_string())` - temp released after print
+- **Method chain intermediates**: `"hello".upper().trim()` - upper() result released
+- **Method object temps**: `("a"+x).split(",")` - concat result released
+- **Unused return values**: `some_fn()` returning string - released
 - **Array scope cleanup**: `array_free()` at block exit, releases RC strings inside
 - **HashMap scope cleanup**: `hashmap_free()` at block exit
 
@@ -703,4 +703,4 @@ All 64KB fixed buffers replaced with dynamic RC-tracked buffers:
 
 ## v1.9.0 (Previous)
 
-Generators, Debugger, 36 Packages — all roadmap phases complete.
+Generators, Debugger, 36 Packages - all roadmap phases complete.

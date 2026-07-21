@@ -1,7 +1,7 @@
 // EXPECT: 10
 // EXPECT: 10
 // EXPECT: 24
-// .reduce() accepts both argument orders — reduce(fn, init) is canonical, but
+// .reduce() accepts both argument orders - reduce(fn, init) is canonical, but
 // reduce(init, fn) (the Python/JS habit) is detected by which arg is the
 // lambda. The positional emit used to call the int initializer as a function
 // pointer: a guaranteed segfault on the most common form.

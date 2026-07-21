@@ -14,7 +14,7 @@ fn main() {
     var g = add
     println(g(3, 4))
 
-    // copy of a capturing closure — both alias and original see the capture
+    // copy of a capturing closure - both alias and original see the capture
     var base = 100
     var addbase = |x| x + base
     var h = addbase

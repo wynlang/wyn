@@ -13,8 +13,8 @@ out=$(perl -e 'alarm 45; exec @ARGV' "$WYN" pkg search 2>&1); code=$?
 if echo "$out" | grep -q "could not reach api.github.com"; then
   ok "offline: graceful warning (network checks skipped)"
 elif echo "$out" | grep -q "no packages matched"; then
-  # API reachable but empty/rate-limited response — tolerate, but note it
-  ok "API returned no results (rate-limited?) — tolerated"
+  # API reachable but empty/rate-limited response - tolerate, but note it
+  ok "API returned no results (rate-limited?) - tolerated"
 else
   # Real results: contract checks
   echo "$out" | grep -q "wyn pkg add web" && ok "official package listed with add command" || bad "web missing from results"
@@ -26,7 +26,7 @@ else
   if echo "$out2" | grep -q "http-client"; then
     echo "$out2" | grep -q "wyn pkg add web" && bad "filter did not narrow" || ok "query filter narrows results"
   else
-    ok "filtered search (rate-limited?) — tolerated"
+    ok "filtered search (rate-limited?) - tolerated"
   fi
 fi
 

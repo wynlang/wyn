@@ -1,4 +1,4 @@
-// H1 (2026-07-18): deep call stacks inside awaited spawns crashed with SIGBUS —
+// H1 (2026-07-18): deep call stacks inside awaited spawns crashed with SIGBUS -
 // the coroutine stack default was 64KB, so ~5000-frame recursion (or a heavy
 // sort/parse workload) overflowed. Stacks are lazily-committed mmap pages, so
 // the 8MB default costs virtual space only.

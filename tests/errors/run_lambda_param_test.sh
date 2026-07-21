@@ -1,6 +1,6 @@
 #!/bin/bash
 # Lambda param-type tests: int lambdas, int .map/.filter, and string lambdas
-# (S2 rework landed — string params now work end-to-end). (2026-07)
+# (S2 rework landed - string params now work end-to-end). (2026-07)
 set -uo pipefail
 WYN="${WYN:-./wyn}"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT

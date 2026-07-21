@@ -1,4 +1,4 @@
-// wyncc — Self-hosted Wyn compiler (Phase 1)
+// wyncc - Self-hosted Wyn compiler (Phase 1)
 // Compiles a subset of Wyn to C: fn, var, return, println, arithmetic, if/else, strings
 
 fn is_alpha(c: string) -> bool { return c >= "a" && c <= "z" || c >= "A" && c <= "Z" || c == "_" }
@@ -91,7 +91,7 @@ fn main() -> int {
     var nn = 0
     var pos = 0
 
-    // Recursive descent — we use a workaround for the lack of mutual recursion:
+    // Recursive descent - we use a workaround for the lack of mutual recursion:
     // Parse the token stream into AST nodes bottom-up
 
     // Helper: peek/advance
@@ -285,7 +285,7 @@ fn main() -> int {
                 // return
                 var vid = nl[sid]
                 if vid != -1 && nk[vid] == 5 {
-                    // binary expression — inline gen
+                    // binary expression - inline gen
                     var lv = nl[vid]
                     var rv = nr[vid]
                     var op = "" + nv[vid]

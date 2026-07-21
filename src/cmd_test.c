@@ -195,7 +195,7 @@ int cmd_test(const char* test_dir, int argc, char** argv) {
             r.failed++;
             printf("  \033[31m✗\033[0m %s (compile error)\n", files[i]);
             // Re-run `wyn check` WITHOUT output suppression so the user sees
-            // the actual diagnostics — "(compile error)" alone was a dead end.
+            // the actual diagnostics - "(compile error)" alone was a dead end.
 #ifndef _WIN32
             pid_t dp = fork();
             if (dp == 0) {

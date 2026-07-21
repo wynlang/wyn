@@ -1,4 +1,4 @@
-// Test: Tuple destructuring — all patterns
+// Test: Tuple destructuring - all patterns
 fn divmod(a: int, b: int) -> (int, int) { return (a / b, a % b) }
 fn swap_pair(a: int, b: int) -> (int, int) { return (b, a) }
 

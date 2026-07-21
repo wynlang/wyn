@@ -1,6 +1,6 @@
 // Regression: a local string moved into a user enum variant constructor
 // (E.A(s)) is stored raw in the enum payload and escapes with the enum, so it
-// must NOT also be released at scope/return exit — that double-frees the live
+// must NOT also be released at scope/return exit - that double-frees the live
 // payload (use-after-free under ASan, empty reads otherwise). Covers both the
 // direct-return form (return E.A(s)) and the intermediate-var form
 // (var e = E.A(s); return e). A still-live local must be left untouched.

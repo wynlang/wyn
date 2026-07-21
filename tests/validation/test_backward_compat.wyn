@@ -1,4 +1,4 @@
-// Backward compatibility test — v1.7 features that must always work
+// Backward compatibility test - v1.7 features that must always work
 // If this file stops compiling, we've broken backward compat.
 
 struct Point {

@@ -1,6 +1,6 @@
 // Regression: braceless single-statement bodies for for/if/else/while (C/JS-style),
 // e.g. `for i in 0..n\n  stmt`. Previously all control-flow bodies required { }.
-// The braceless form binds EXACTLY ONE statement — a following line is NOT part of
+// The braceless form binds EXACTLY ONE statement - a following line is NOT part of
 // the body (documented footgun). Braced bodies still work; the two forms coexist.
 // EXPECT: 0
 // EXPECT: 1

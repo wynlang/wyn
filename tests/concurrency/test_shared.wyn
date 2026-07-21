@@ -1,7 +1,7 @@
 // TDD: shared atomic values for concurrent access
 
 fn increment(counter: int) -> int {
-    // counter is a shared handle — .add returns old value
+    // counter is a shared handle - .add returns old value
     Shared.add(counter, 1)
 }
 

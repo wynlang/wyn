@@ -6,7 +6,7 @@
 #include <stdatomic.h>
 
 #ifdef _WIN32
-// Windows: stub implementations — spawn runs synchronously
+// Windows: stub implementations - spawn runs synchronously
 WynScheduler* global_scheduler = NULL;
 WynScheduler* wyn_scheduler_init(int n) { (void)n; return NULL; }
 void wyn_scheduler_start(WynScheduler* s) { (void)s; }

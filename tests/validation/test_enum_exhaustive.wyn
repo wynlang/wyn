@@ -1,9 +1,9 @@
-// TDD: enum exhaustiveness — match should warn on missing variants
+// TDD: enum exhaustiveness - match should warn on missing variants
 
 enum Color { Red, Green, Blue }
 
 fn color_code(c: Color) -> int {
-    // Exhaustive match — all variants covered
+    // Exhaustive match - all variants covered
     match c {
         Red => return 1
         Green => return 2

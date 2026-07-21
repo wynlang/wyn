@@ -113,7 +113,7 @@ static void collect_idents(Expr* expr, char idents[][64], int* count, int max) {
     else if (expr->type == EXPR_IF_EXPR) { collect_idents(expr->if_expr.condition, idents, count, max); collect_idents(expr->if_expr.then_expr, idents, count, max); collect_idents(expr->if_expr.else_expr, idents, count, max); }
     else if (expr->type == EXPR_INDEX) { collect_idents(expr->index.array, idents, count, max); collect_idents(expr->index.index, idents, count, max); }
     else if (expr->type == EXPR_ASSIGN) { collect_idents(expr->assign.value, idents, count, max); /* also capture the target */ char name[64]; int len = expr->assign.name.length < 63 ? expr->assign.name.length : 63; memcpy(name, expr->assign.name.start, len); name[len] = '\0'; for (int i = 0; i < *count; i++) if (strcmp(idents[i], name) == 0) return; if (*count < max) { strcpy(idents[*count], name); (*count)++; } }
-    // Interpolation segments reference outer vars too — "${n}" inside a lambda
+    // Interpolation segments reference outer vars too - "${n}" inside a lambda
     // used to skip capture collection entirely (C error: undeclared 'n').
     else if (expr->type == EXPR_STRING_INTERP) { for (int i = 0; i < expr->string_interp.count; i++) collect_idents(expr->string_interp.expressions[i], idents, count, max); }
 }
@@ -312,7 +312,7 @@ static void scan_expr_for_lambdas(Expr* expr) {
             lambda_id_counter++;
             int lambda_id = lambda_id_counter;
             
-            // Detect captured variables — recursively collect all identifiers in body
+            // Detect captured variables - recursively collect all identifiers in body
             char captured_vars[16][64];
             int capture_count = 0;
             {
@@ -454,7 +454,7 @@ static void scan_expr_for_lambdas(Expr* expr) {
             for (int i = 0; i < expr->method_call.arg_count; i++) {
                 scan_expr_for_lambdas(expr->method_call.args[i]);
             }
-            // Detect x.push(spawn ...) — register x as spawn array
+            // Detect x.push(spawn ...) - register x as spawn array
             if (expr->method_call.method.length == 4 &&
                 memcmp(expr->method_call.method.start, "push", 4) == 0 &&
                 expr->method_call.arg_count == 1 &&
@@ -479,7 +479,7 @@ static void scan_expr_for_lambdas(Expr* expr) {
             }
             break;
         case EXPR_SPAWN:
-            // Also scan await expressions — they may contain spawn
+            // Also scan await expressions - they may contain spawn
         case EXPR_AWAIT:
             if (expr->type == EXPR_AWAIT) {
                 scan_expr_for_lambdas(expr->await.expr);
@@ -517,7 +517,7 @@ static void scan_expr_for_lambdas(Expr* expr) {
                         strcmp(_rt, "float") != 0 && strcmp(_rt, "bool") != 0) {
                         strncpy(spawn_wrappers[spawn_wrapper_count].return_type, _rt, 63);
                     }
-                    // A float RETURN can't ride (void*)(intptr_t) either — the
+                    // A float RETURN can't ride (void*)(intptr_t) either - the
                     // double was truncated to its integer part. Box it like a
                     // struct: the wrapper mallocs a double, await derefs it.
                     if (_rt && strcmp(_rt, "float") == 0) {
@@ -568,7 +568,7 @@ static void scan_for_lambdas(Stmt* body) {
 
 // S2: Emit a lambda function using the real codegen_expr pipeline instead of the
 // string-based mini-emitter. This gives string concat, string methods, float ops,
-// and block bodies for free — everything codegen_expr already handles.
+// and block bodies for free - everything codegen_expr already handles.
 static void emit_lambda_via_codegen(LambdaFunction* lf) {
     Expr* expr = lf->ast;
     if (!expr || expr->type != EXPR_LAMBDA) return;
@@ -597,7 +597,7 @@ static void emit_lambda_via_codegen(LambdaFunction* lf) {
     }
 
     // Capture-cell C type: resolve from the checker's recorded capture types
-    // (matched by NAME against the codegen-scan capture list — the two lists
+    // (matched by NAME against the codegen-scan capture list - the two lists
     // are built independently). Hardcoded `long long` cells made a captured
     // string round-trip through an integer: pointer-address output.
     const char* cap_c_types[16];

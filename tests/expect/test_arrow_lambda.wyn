@@ -3,7 +3,7 @@
 // EXPECT: 9
 // EXPECT: diagonal
 // Arrow-function lambdas: (x) => expr and (a, b) => expr, plus the |x| alias.
-// Also guards a struct-pattern match in the same file — the paren-less `x =>`
+// Also guards a struct-pattern match in the same file - the paren-less `x =>`
 // form was dropped precisely because it collided with `pat if cond => result`,
 // so this pins that both coexist.
 struct Point { x: int, y: int }

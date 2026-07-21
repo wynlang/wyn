@@ -1,4 +1,4 @@
-// Optional Types — v1.11 feature
+// Optional Types - v1.11 feature
 // Use int? to declare optional values.
 
 fn main() -> int {
