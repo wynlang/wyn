@@ -673,6 +673,13 @@ void register_closure_scope_var(const char* name) {
         if (strcmp(closure_scope_names[i], name) == 0) return;
     if (closure_scope_count < 256) closure_scope_names[closure_scope_count++] = strdup(name);
 }
+// Query: is this var tracked as an env-owning closure local? Used by
+// EXPR_ASSIGN to emit a balanced retain/release on closure reassignment.
+int is_closure_scope_var(const char* name) {
+    for (int i = 0; i < closure_scope_count; i++)
+        if (strcmp(closure_scope_names[i], name) == 0) return 1;
+    return 0;
+}
 // Remove a closure var from tracking so it is NOT released at scope exit
 // (used when the closure escapes, e.g. it is the return value → ownership moves
 // to the caller).

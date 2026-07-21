@@ -547,6 +547,7 @@ ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/expect/test_match_stmt_patterns.wyn \
              tests/expect/test_println_rich_types.wyn \
              tests/expect/test_closure_env_lifetime.wyn \
+             tests/regression/test_closure_copy_call.wyn \
              tests/expect/test_channels.wyn \
              tests/expect/test_parallel.wyn \
              tests/expect/test_await_twice.wyn \

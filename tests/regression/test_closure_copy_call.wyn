@@ -1,0 +1,65 @@
+// Regression: copying a CLOSURE-typed variable (`var g = f` where f holds a
+// WynClosure returned by a fn returning fn(int) -> int).
+// Previously the copy was mis-typed `long long (*)()` instead of WynClosure,
+// so `g(...)` failed to compile ("initializing 'long long (*)()' with an
+// expression of incompatible type 'WynClosure'").
+// Now the copy is declared WynClosure, the shared env is retained on copy and
+// each holder releases exactly once at scope exit (no double-free, no leak).
+// Reassignment over a closure var releases the old env before taking the new.
+// EXPECT: 15
+// EXPECT: 15
+// EXPECT: 101
+// EXPECT: 102
+// EXPECT: 103
+// EXPECT: 8
+// EXPECT: 9
+// EXPECT: 2
+// EXPECT: 1
+// EXPECT: 12
+fn make_adder(x: int) -> fn(int) -> int {
+    return |y| x + y
+}
+
+fn main() -> int {
+    // 1. plain copy: both alias and original callable, same captured env
+    var f = make_adder(10)
+    var g = f
+    println("${g(5)}")     // 15 - copy called
+    println("${f(5)}")     // 15 - original still works
+
+    // 2. copy chain k = g = f: all three see the same env
+    var a = make_adder(100)
+    var b = a
+    var k = b
+    println("${k(1)}")     // 101
+    println("${b(2)}")     // 102
+    println("${a(3)}")     // 103
+
+    // 3. copy dies in an inner scope; original outlives it and stays valid
+    var h = make_adder(7)
+    if true {
+        var h2 = h
+        println("${h2(1)}") // 8
+    }
+    println("${h(2)}")      // 9 - env not freed by the inner copy's release
+
+    // 4. reassignment over a closure var releases the old env (no leak),
+    //    original keeps its own reference
+    var p = make_adder(1)
+    var q = p
+    q = make_adder(2)
+    println("${q(0)}")      // 2 - q holds the new closure
+    println("${p(0)}")      // 1 - p unaffected
+
+    // 5. copies created and dropped in a loop: retain/release balanced
+    var total = 0
+    var i = 0
+    while i < 3 {
+        var lf = make_adder(i)
+        var lg = lf
+        total = total + lg(1) + lf(1)
+        i = i + 1
+    }
+    println("${total}")     // (1+1)+(2+2)+(3+3) = 12
+    return 0
+}
