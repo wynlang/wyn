@@ -349,6 +349,33 @@ static StructStmt* find_struct_definition(Token struct_name) {
     return NULL;
 }
 
+// Cycle detection for by-value struct fields: returns true when struct `from`
+// can reach a field of struct type `target`, following plain (`B`) and
+// Optional-wrapped (`B?`) struct fields transitively. Arrays and maps add heap
+// indirection, so they are deliberately NOT followed (`kids: [Node]` is fine).
+// `visited` guards against unrelated cycles so the walk stays linear.
+static bool struct_field_reaches(Token from, Token target,
+                                 Token* visited, int* visited_count) {
+    for (int i = 0; i < *visited_count; i++) {
+        if (visited[i].length == from.length &&
+            memcmp(visited[i].start, from.start, from.length) == 0) return false;
+    }
+    if (*visited_count >= 64) return false;
+    visited[(*visited_count)++] = from;
+
+    StructStmt* s = find_struct_definition(from);
+    if (!s) return false;
+    for (int i = 0; i < s->field_count; i++) {
+        Expr* ft = s->field_types[i];
+        if (ft && ft->type == EXPR_OPTIONAL_TYPE) ft = ft->optional_type.inner_type;
+        if (!ft || ft->type != EXPR_IDENT) continue;
+        if (ft->token.length == target.length &&
+            memcmp(ft->token.start, target.start, target.length) == 0) return true;
+        if (struct_field_reaches(ft->token, target, visited, visited_count)) return true;
+    }
+    return false;
+}
+
 // Field-wise struct equality (`a == b` on struct values): a struct is
 // comparable when every field is int/float/bool/string, an enum, or another
 // comparable struct. Arrays/maps/functions/optionals make it non-comparable -
@@ -5599,8 +5626,8 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             for (int i = 0; i < stmt->struct_decl.field_count; i++) {
                 Expr* ft = stmt->struct_decl.field_types[i];
                 if (ft && ft->type == EXPR_OPTIONAL_TYPE) ft = ft->optional_type.inner_type;
-                if (ft && ft->type == EXPR_IDENT &&
-                    ft->token.length == stmt->struct_decl.name.length &&
+                if (!ft || ft->type != EXPR_IDENT) continue;
+                if (ft->token.length == stmt->struct_decl.name.length &&
                     memcmp(ft->token.start, stmt->struct_decl.name.start,
                            ft->token.length) == 0) {
                     fprintf(stderr,
@@ -5610,6 +5637,27 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                             ft->token.line,
                             (int)stmt->struct_decl.name.length, stmt->struct_decl.name.start);
                     had_error = true;
+                } else if (find_struct_definition(ft->token)) {
+                    // Mutually-recursive cycle (A has a B field, B has an A field,
+                    // possibly through more hops). Same infinite-size problem as
+                    // direct self-reference; without this it dies in the generated
+                    // C ("unknown type name") or as a codegen ICE.
+                    Token visited[64];
+                    int visited_count = 0;
+                    if (struct_field_reaches(ft->token, stmt->struct_decl.name,
+                                             visited, &visited_count)) {
+                        fprintf(stderr,
+                                "Error at line %d: struct '%.*s' field '%.*s' creates a recursive"
+                                " struct cycle: '%.*s' contains '%.*s' back"
+                                " (structs are by-value, so a recursive field would be infinite-size).\n"
+                                "  Workaround: store an index into an array of nodes instead of the node itself.\n",
+                                ft->token.line,
+                                (int)stmt->struct_decl.name.length, stmt->struct_decl.name.start,
+                                (int)stmt->struct_decl.fields[i].length, stmt->struct_decl.fields[i].start,
+                                (int)ft->token.length, ft->token.start,
+                                (int)stmt->struct_decl.name.length, stmt->struct_decl.name.start);
+                        had_error = true;
+                    }
                 }
             }
 
