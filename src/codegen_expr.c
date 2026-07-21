@@ -3474,7 +3474,27 @@ void codegen_expr(Expr* expr) {
                 }
                 break;
             }
-            
+            // RC: closure reassignment. The target holds a WynClosure whose env
+            // it owns (registered at declaration); assigning over it must release
+            // the old env or it leaks. Evaluate the RHS first (it may reference
+            // the target), then retain-if-shared / release-old, mirroring the
+            // string assign above. A fresh closure (call returning fn type)
+            // transfers ownership; an ident copy shares the env so retain it.
+            {
+                extern int is_closure_scope_var(const char*);
+                if (is_closure_scope_var(target_name)) {
+                    Expr* rhs = expr->assign.value;
+                    bool rhs_is_shared = (rhs->type == EXPR_IDENT);
+                    emit("({ WynClosure __cc_tmp = ");
+                    codegen_expr(rhs);
+                    if (rhs_is_shared)
+                        emit("; wyn_rc_retain(__cc_tmp.env); wyn_rc_release(%s.env); %s = __cc_tmp; })", target_name, target_name);
+                    else
+                        emit("; if (__cc_tmp.env != %s.env) { wyn_rc_release(%s.env); } %s = __cc_tmp; })", target_name, target_name, target_name);
+                    break;
+                }
+            }
+
             // Check if we need to prefix the assignment target with module name
             
             if (current_module_prefix && !strchr(target_name, ':') && !strchr(target_name, '.')) {

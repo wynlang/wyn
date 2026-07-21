@@ -1581,6 +1581,27 @@ void codegen_stmt(Stmt* stmt) {
                     }
                     lambda_var_count++;
                 }
+                if (lambda_var_info[_cc_src_idx].is_closure) {
+                    // Source holds a WynClosure (e.g. returned by a fn returning
+                    // fn(int)->int). The copy must be WynClosure too - the old
+                    // fn-pointer emission mis-typed it as `long long (*)()` and
+                    // the C compile failed. Both copies share one RC env:
+                    // retain on copy, and register the copy for scope-exit
+                    // release, so f and g each release exactly once (no
+                    // double-free, no leak). Composes with the env-leak fix:
+                    // a returned copy is unregistered at STMT_RETURN (move).
+                    emit("WynClosure %s%.*s = ", is_c_keyword ? WYN_UFN_PFX : "", stmt->var.name.length, stmt->var.name.start);
+                    codegen_expr(stmt->var.init);
+                    emit(";\n");
+                    emit("wyn_rc_retain(%s%.*s.env);\n", is_c_keyword ? WYN_UFN_PFX : "", stmt->var.name.length, stmt->var.name.start);
+                    {
+                        extern void register_closure_scope_var(const char*);
+                        char _rvn[256]; token_to_cstr(_rvn, sizeof(_rvn), stmt->var.name);
+                        register_closure_scope_var(_rvn);
+                        register_local_variable(_rvn);
+                    }
+                    break;
+                }
                 emit("long long (*%s%.*s)(", is_c_keyword ? WYN_UFN_PFX : "", stmt->var.name.length, stmt->var.name.start);
                 for (int i = 0; i < nparams; i++) {
                     if (i > 0) emit(", ");
