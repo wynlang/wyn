@@ -1,0 +1,36 @@
+// Regression guard for the recursive-struct checker fix: legitimate
+// (non-recursive) struct composition must keep compiling and running.
+// Covers: a struct containing a DIFFERENT struct by value, Option of a
+// different struct (chain A -> B? -> C, no cycle), and an array of the
+// struct's OWN type (heap-indirected, so not infinite-size).
+// EXPECT: 7
+// EXPECT: 42
+// EXPECT: 3
+// EXPECT: 9
+struct Point { x: int, y: int }
+struct Line { a: Point, b: Point }
+
+struct C { v: int }
+struct B { c: C? }
+struct A { b: B? }
+
+struct Tree { val: int, kids: [Tree] }
+
+fn main() {
+    var l = Line { a: Point { x: 0, y: 0 }, b: Point { x: 1, y: 7 } }
+    println(l.b.y)
+
+    var chain = A { b: Some(B { c: Some(C { v: 42 }) }) }
+    match chain.b {
+        Some(inner) => match inner.c {
+            Some(leaf) => println(leaf.v),
+            None => println(-1)
+        },
+        None => println(-1)
+    }
+
+    var t = Tree { val: 3, kids: [] }
+    println(t.val)
+    var t2 = Tree { val: 9, kids: [] }
+    println(t2.val)
+}
