@@ -1,0 +1,39 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+__attribute__((hot)) static inline OptionInt find(long long id);
+long long wyn_main();
+
+/* 14_option_match.wyn:2 */ 
+#line 2 "14_option_match.wyn"
+__attribute__((hot)) static inline OptionInt find(long long id) {
+    if ((bool)(id == 1)) {
+    return OptionInt_Some(99);
+    }
+    return OptionInt_None();
+}
+
+/* 14_option_match.wyn:7 */ 
+#line 7 "14_option_match.wyn"
+long long wyn_main() {
+        OptionInt __match_opt_1 = find(1);
+if (__match_opt_1.tag == 1) {
+        long long v = __match_opt_1.value;
+        ({ const char* __ps = to_string(v); println(__ps); wyn_rc_release(__ps); });
+    } else if (__match_opt_1.tag == 0) {
+        println("missing");
+    }
+        OptionInt __match_opt_2 = find(2);
+if (__match_opt_2.tag == 1) {
+        long long v = __match_opt_2.value;
+        ({ const char* __ps = to_string(v); println(__ps); wyn_rc_release(__ps); });
+    } else if (__match_opt_2.tag == 0) {
+        println("missing");
+    }
+    return 0;
+}
+

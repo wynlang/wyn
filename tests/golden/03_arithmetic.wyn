@@ -1,0 +1,14 @@
+// Golden: integer arithmetic, precedence, div/mod, unary minus, compound assign.
+fn main() {
+    var a = 10
+    var b = 3
+    println(a + b * 2)
+    println((a + b) * 2)
+    println(a / b)
+    println(a % b)
+    println(-a)
+    a += 5
+    a -= 2
+    a *= 2
+    println(a)
+}

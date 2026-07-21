@@ -1,0 +1,10 @@
+// Golden: string methods - trim/upper/lower/len/contains.
+fn main() {
+    var s = "  Hello World  "
+    var t = s.trim()
+    println(t)
+    println(t.upper())
+    println(t.lower())
+    println(t.len())
+    println(t.contains("World"))
+}

@@ -1,0 +1,9 @@
+// Golden: println across primitive types, print with interpolation.
+fn main() {
+    println(42)
+    println(3.5)
+    println(true)
+    println("text")
+    var n = 7
+    print("n is ${n}")
+}

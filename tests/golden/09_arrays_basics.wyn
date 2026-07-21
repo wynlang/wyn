@@ -1,0 +1,11 @@
+// Golden: array literal, index (incl. negative), len, push, mutation.
+fn main() {
+    var xs = [10, 20, 30]
+    println(xs[0])
+    println(xs[-1])
+    println(xs.len())
+    xs.push(40)
+    xs[1] = 25
+    println(xs[1])
+    println(xs.len())
+}

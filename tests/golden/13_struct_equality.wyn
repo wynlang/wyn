@@ -1,0 +1,11 @@
+// Golden: struct == / != comparison codegen.
+struct Pt { x: int, y: int }
+
+fn main() {
+    var a = Pt { x: 1, y: 2 }
+    var b = Pt { x: 1, y: 2 }
+    var c = Pt { x: 9, y: 9 }
+    println(a == b)
+    println(a == c)
+    println(a != c)
+}

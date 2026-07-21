@@ -1,0 +1,34 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions
+long long __lambda_1(long long n) {
+    return (bool)((n % 2) == 0);
+}
+
+long long __lambda_2(long long n) {
+    return (n * 10);
+}
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 27_method_chaining.wyn:2 */ 
+#line 2 "27_method_chaining.wyn"
+long long wyn_main() {
+    /* 27_method_chaining.wyn:3 */ 
+#line 3 "27_method_chaining.wyn"
+const char* s = "  a,b,c  ";
+    println(array_join_str(({ const char* __mo0 = string_trim(s); __auto_type __mcr0 = string_split(__mo0, ","); wyn_rc_release(__mo0); __mcr0; }), "|"));
+    /* 27_method_chaining.wyn:5 */ 
+#line 5 "27_method_chaining.wyn"
+WynArray xs = ({ WynArray __arr_0 = array_new(); array_push_int(&__arr_0, 1); array_push_int(&__arr_0, 2); array_push_int(&__arr_0, 3); array_push_int(&__arr_0, 4); array_push_int(&__arr_0, 5); array_push_int(&__arr_0, 6); __arr_0; });
+    ({ print_array_no_nl(wyn_array_map(wyn_array_filter(xs, __lambda_1), __lambda_2)); printf("\n"); });
+    println(({ const char* __mo1 = string_repeat("x", 3); __auto_type __mcr1 = string_upper(__mo1); wyn_rc_release(__mo1); __mcr1; }));
+    return 0;
+}
+

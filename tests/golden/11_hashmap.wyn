@@ -1,0 +1,9 @@
+// Golden: HashMap insert/get/has/keys.
+fn main() {
+    var m = HashMap.new()
+    m.insert("one", "1")
+    m.insert("two", "2")
+    println(m.get("one"))
+    println(m.has("two"))
+    println(m.keys().len())
+}

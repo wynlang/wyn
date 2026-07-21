@@ -1,0 +1,47 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+__attribute__((hot)) long long compute(long long n);
+long long wyn_main();
+
+
+// Spawn wrapper functions
+void* __spawn_wrapper_compute_1(void* arg) {
+    return (void*)(intptr_t)compute((long long)(intptr_t)arg);
+}
+
+/* 22_spawn_await.wyn:2 */ 
+#line 2 "22_spawn_await.wyn"
+__attribute__((hot)) long long compute(long long n) {
+    /* 22_spawn_await.wyn:3 */ 
+#line 3 "22_spawn_await.wyn"
+long long sum = 0;
+    for (long long i = 0; (bool)(i < n); i = (i + 1)) {
+    sum = (sum + i);
+    }
+    /* 22_spawn_await.wyn:5 */ 
+#line 5 "22_spawn_await.wyn"
+return sum;
+}
+
+/* 22_spawn_await.wyn:8 */ 
+#line 8 "22_spawn_await.wyn"
+long long wyn_main() {
+    /* 22_spawn_await.wyn:9 */ 
+#line 9 "22_spawn_await.wyn"
+Future* f = wyn_spawn_inline((TaskFuncWithReturn)__spawn_wrapper_compute_1, (void*)(intptr_t)(100));
+    /* 22_spawn_await.wyn:10 */ 
+#line 10 "22_spawn_await.wyn"
+long long r = (long long)(intptr_t)future_get((Future*)(intptr_t)f);
+    ({ const char* __ps = to_string(r); println(__ps); wyn_rc_release(__ps); });
+    /* 22_spawn_await.wyn:12 */ 
+#line 12 "22_spawn_await.wyn"
+Future* f2 = wyn_spawn_inline((TaskFuncWithReturn)__spawn_wrapper_compute_1, (void*)(intptr_t)(10));
+    println((long long)(intptr_t)future_get((Future*)(intptr_t)f2));
+    return 0;
+}
+

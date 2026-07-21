@@ -1,0 +1,43 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions
+long long __lambda_1(long long a, long long b) {
+    return (a + b);
+}
+
+static long long __cap_2_base;
+long long __lambda_2(long long n) {
+#define base __cap_2_base
+    return (n + base);
+}
+#undef base
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 19_lambdas_closures.wyn:2 */ 
+#line 2 "19_lambdas_closures.wyn"
+long long wyn_main() {
+    /* 19_lambdas_closures.wyn:3 */ 
+#line 3 "19_lambdas_closures.wyn"
+long long (*add)(long long, long long) = __lambda_1;
+    ({ const char* __ps = to_string(add(2, 3)); println(__ps); wyn_rc_release(__ps); });
+    /* 19_lambdas_closures.wyn:5 */ 
+#line 5 "19_lambdas_closures.wyn"
+long long base = 100;
+    /* 19_lambdas_closures.wyn:6 */ 
+#line 6 "19_lambdas_closures.wyn"
+long long (*bump)(long long) = ({ __cap_2_base = base; __lambda_2; });
+    ({ const char* __ps = to_string(bump(5)); println(__ps); wyn_rc_release(__ps); });
+    /* 19_lambdas_closures.wyn:8 */ 
+#line 8 "19_lambdas_closures.wyn"
+long long (*g)(long long) = bump;
+    ({ const char* __ps = to_string(g(11)); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

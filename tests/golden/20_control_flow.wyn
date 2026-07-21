@@ -1,0 +1,15 @@
+// Golden: if/else if/else, while, break, continue.
+fn main() {
+    var n = 7
+    if n > 10 { println("big") }
+    else if n > 5 { println("mid") }
+    else { println("small") }
+
+    var i = 0
+    while i < 10 {
+        i = i + 1
+        if i == 3 { continue }
+        if i > 5 { break }
+        println(i)
+    }
+}

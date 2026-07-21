@@ -1,0 +1,10 @@
+// Golden: split, join, and iteration over parts.
+fn main() {
+    var csv = "a,b,c"
+    var parts = csv.split(",")
+    println(parts.len())
+    for p in parts {
+        println(p)
+    }
+    println(parts.join("-"))
+}

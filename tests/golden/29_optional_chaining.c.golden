@@ -1,0 +1,74 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+typedef struct {
+    const char* city;
+} Addr;
+
+void Addr_cleanup(Addr* obj) {
+}
+
+typedef struct { int tag; Addr value; } OptionAddr;
+static inline OptionAddr OptionAddr_Some(Addr value){ OptionAddr o; o.tag=1; o.value=value; return o; }
+static inline OptionAddr OptionAddr_None(void){ OptionAddr o; o.tag=0; return o; }
+static inline int OptionAddr_is_some(OptionAddr o){ return o.tag==1; }
+static inline int OptionAddr_is_none(OptionAddr o){ return o.tag==0; }
+static inline Addr OptionAddr_unwrap(OptionAddr o){ if(o.tag==0){ fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
+static inline Addr OptionAddr_unwrap_or(OptionAddr o, Addr def){ return o.tag==1 ? o.value : def; }
+typedef struct {
+    const char* name;
+    Addr addr;
+} User;
+
+void User_cleanup(User* obj) {
+}
+
+typedef struct { int tag; User value; } OptionUser;
+static inline OptionUser OptionUser_Some(User value){ OptionUser o; o.tag=1; o.value=value; return o; }
+static inline OptionUser OptionUser_None(void){ OptionUser o; o.tag=0; return o; }
+static inline int OptionUser_is_some(OptionUser o){ return o.tag==1; }
+static inline int OptionUser_is_none(OptionUser o){ return o.tag==0; }
+static inline User OptionUser_unwrap(OptionUser o){ if(o.tag==0){ fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
+static inline User OptionUser_unwrap_or(OptionUser o, User def){ return o.tag==1 ? o.value : def; }
+static int __wyn_eq_Addr(Addr __l, Addr __r);
+static int __wyn_eq_User(User __l, User __r);
+static int __wyn_eq_Addr(Addr __l, Addr __r) {
+    if (strcmp(__l.city ? __l.city : "", __r.city ? __r.city : "") != 0) return 0;
+    return 1;
+}
+static int __wyn_eq_User(User __l, User __r) {
+    if (strcmp(__l.name ? __l.name : "", __r.name ? __r.name : "") != 0) return 0;
+    if (!__wyn_eq_Addr(__l.addr, __r.addr)) return 0;
+    return 1;
+}
+
+// Lambda functions (defined before use)
+__attribute__((hot)) static inline OptionUser find(long long id);
+long long wyn_main();
+
+/* 29_optional_chaining.wyn:5 */ 
+#line 5 "29_optional_chaining.wyn"
+__attribute__((hot)) static inline OptionUser find(long long id) {
+    if ((bool)(id == 1)) {
+    return OptionUser_Some(((User){.name = "amy", .addr = ((Addr){.city = "NYC"})}));
+    }
+    return OptionUser_None();
+}
+
+/* 29_optional_chaining.wyn:10 */ 
+#line 10 "29_optional_chaining.wyn"
+long long wyn_main() {
+    /* 29_optional_chaining.wyn:11 */ 
+#line 11 "29_optional_chaining.wyn"
+OptionUser u = find(1);
+    println(OptionString_unwrap_or(({ OptionUser __oc0 = u; __oc0.tag == 1 ? OptionString_Some(__oc0.value.name) : OptionString_None(); }), "?"));
+    println(OptionString_unwrap_or(({ OptionAddr __oc1 = ({ OptionUser __oc2 = u; __oc2.tag == 1 ? OptionAddr_Some(__oc2.value.addr) : OptionAddr_None(); }); __oc1.tag == 1 ? OptionString_Some(__oc1.value.city) : OptionString_None(); }), "nowhere"));
+    /* 29_optional_chaining.wyn:14 */ 
+#line 14 "29_optional_chaining.wyn"
+OptionUser v = find(2);
+    println(OptionString_unwrap_or(({ OptionUser __oc3 = v; __oc3.tag == 1 ? OptionString_Some(__oc3.value.name) : OptionString_None(); }), "missing"));
+    return 0;
+}
+

@@ -1,0 +1,12 @@
+// Golden: float literals, arithmetic, comparisons.
+// NOTE: int.to_float() is excluded - `println(i.to_float())` segfaults at
+// runtime on current main; tracked separately, not snapshot-worthy.
+fn main() {
+    var x = 2.5
+    var y = 0.5
+    println(x + y)
+    println(x * 2.0)
+    println(x / y)
+    println(x - y)
+    println(x > y)
+}

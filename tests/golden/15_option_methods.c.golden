@@ -1,0 +1,25 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 15_option_methods.wyn:2 */ 
+#line 2 "15_option_methods.wyn"
+long long wyn_main() {
+    /* 15_option_methods.wyn:3 */ 
+#line 3 "15_option_methods.wyn"
+OptionInt a = OptionInt_Some(42);
+    ({ const char* __ps = to_string(OptionInt_unwrap(a)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(OptionInt_is_some(a)); println(__ps); wyn_rc_release(__ps); });
+    /* 15_option_methods.wyn:6 */ 
+#line 6 "15_option_methods.wyn"
+OptionInt b = OptionInt_None();
+    ({ const char* __ps = to_string(OptionInt_is_none(b)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(OptionInt_unwrap_or(b, 7)); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

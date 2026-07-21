@@ -1,0 +1,10 @@
+// Golden: int lambdas, closure capture, function returning closure use.
+fn main() {
+    var add = (a, b) => a + b
+    println(add(2, 3))
+    var base = 100
+    var bump = (n) => n + base
+    println(bump(5))
+    var g = bump
+    println(g(11))
+}

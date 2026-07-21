@@ -1,0 +1,26 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 05_strings_methods.wyn:2 */ 
+#line 2 "05_strings_methods.wyn"
+long long wyn_main() {
+    /* 05_strings_methods.wyn:3 */ 
+#line 3 "05_strings_methods.wyn"
+const char* s = "  Hello World  ";
+    /* 05_strings_methods.wyn:4 */ 
+#line 4 "05_strings_methods.wyn"
+const char* t = string_trim(s);
+    println(t);
+    println(string_upper(t));
+    println(string_lower(t));
+    ({ const char* __ps = to_string(string_len(t)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(string_contains(t, "World")); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

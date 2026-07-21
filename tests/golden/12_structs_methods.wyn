@@ -1,0 +1,15 @@
+// Golden: struct literal, field access, impl method with self.
+struct Point { x: int, y: int }
+
+impl Point {
+    fn dist2(self) -> int {
+        return self.x * self.x + self.y * self.y
+    }
+}
+
+fn main() {
+    var p = Point { x: 3, y: 4 }
+    println(p.x)
+    println(p.y)
+    println(p.dist2())
+}

@@ -1,0 +1,14 @@
+// Golden: spawn + await basics (thread-pool path).
+fn compute(n: int) -> int {
+    var sum = 0
+    for i in 0..n { sum = sum + i }
+    return sum
+}
+
+fn main() {
+    var f = spawn compute(100)
+    var r = await f
+    println(r)
+    var f2 = spawn compute(10)
+    println(await f2)
+}

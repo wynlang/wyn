@@ -1,0 +1,11 @@
+// Golden: bare assignment (no var), expr-body fns, default args, shadowing.
+fn square(n: int) -> int => n * n
+fn greet(who: string = "world") -> string { return "hello, ${who}" }
+
+fn main() {
+    x = 5
+    x = x + 1
+    println(square(x))
+    println(greet())
+    println(greet("wyn"))
+}

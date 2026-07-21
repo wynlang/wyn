@@ -1,0 +1,41 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+typedef struct {
+    long long x;
+    long long y;
+} Pt;
+
+void Pt_cleanup(Pt* obj) {
+}
+
+static int __wyn_eq_Pt(Pt __l, Pt __r);
+static int __wyn_eq_Pt(Pt __l, Pt __r) {
+    if (__l.x != __r.x) return 0;
+    if (__l.y != __r.y) return 0;
+    return 1;
+}
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 13_struct_equality.wyn:4 */ 
+#line 4 "13_struct_equality.wyn"
+long long wyn_main() {
+    /* 13_struct_equality.wyn:5 */ 
+#line 5 "13_struct_equality.wyn"
+Pt a = ((Pt){.x = 1, .y = 2});
+    /* 13_struct_equality.wyn:6 */ 
+#line 6 "13_struct_equality.wyn"
+Pt b = ((Pt){.x = 1, .y = 2});
+    /* 13_struct_equality.wyn:7 */ 
+#line 7 "13_struct_equality.wyn"
+Pt c = ((Pt){.x = 9, .y = 9});
+    ({ const char* __ps = to_string((bool)__wyn_eq_Pt(a, b)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string((bool)__wyn_eq_Pt(a, c)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string((bool)(!__wyn_eq_Pt(a, c))); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

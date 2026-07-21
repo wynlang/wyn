@@ -1,0 +1,23 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 11_hashmap.wyn:2 */ 
+#line 2 "11_hashmap.wyn"
+long long wyn_main() {
+    /* 11_hashmap.wyn:3 */ 
+#line 3 "11_hashmap.wyn"
+WynHashMap* m = hashmap_new();
+    hashmap_insert_string(m, "one", "1");
+    hashmap_insert_string(m, "two", "2");
+    println(hashmap_get_string(m, "one"));
+    ({ const char* __ps = to_string(hashmap_has(m, "two")); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(array_len(hashmap_keys(m))); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

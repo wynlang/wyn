@@ -1,0 +1,12 @@
+// Golden: recursive function calls.
+fn fib(n: int) -> int {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn fact(n: int) -> int => if n <= 1 { 1 } else { n * fact(n - 1) }
+
+fn main() {
+    println(fib(10))
+    println(fact(5))
+}

@@ -1,0 +1,61 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+typedef enum {
+    Red,
+    Green,
+    Blue
+} Color;
+
+#define Color_Red 0
+#define Color_Green 1
+#define Color_Blue 2
+
+const char* Color_toString(Color val) {
+    switch(val) {
+        case Red: return "Red";
+        case Green: return "Green";
+        case Blue: return "Blue";
+    }
+    return "Unknown";
+}
+
+
+// Lambda functions (defined before use)
+__attribute__((hot)) static inline char* name(Color c);
+long long wyn_main();
+
+/* 18_plain_enum.wyn:4 */ 
+#line 4 "18_plain_enum.wyn"
+__attribute__((hot)) static inline char* name(Color c) {
+    {
+    __auto_type __match_val = c;
+    if (__match_val == Color_Red) {
+        /* 18_plain_enum.wyn:6 */ 
+#line 6 "18_plain_enum.wyn"
+return "red";
+    } else if (__match_val == Color_Green) {
+        /* 18_plain_enum.wyn:7 */ 
+#line 7 "18_plain_enum.wyn"
+return "green";
+    } else if (__match_val == Color_Blue) {
+        /* 18_plain_enum.wyn:8 */ 
+#line 8 "18_plain_enum.wyn"
+return "blue";
+    }
+}
+    /* 18_plain_enum.wyn:10 */ 
+#line 10 "18_plain_enum.wyn"
+return "?";
+}
+
+/* 18_plain_enum.wyn:13 */ 
+#line 13 "18_plain_enum.wyn"
+long long wyn_main() {
+    { const char* __sa0 = name(Color_Red); println(__sa0); wyn_rc_release(__sa0); }
+    { const char* __sa0 = Color_toString(Color_Blue); println(__sa0); wyn_rc_release(__sa0); }
+    return 0;
+}
+

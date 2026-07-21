@@ -1,0 +1,26 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+// Lambda functions (defined before use)
+long long wyn_main();
+
+/* 04_floats.wyn:4 */ 
+#line 4 "04_floats.wyn"
+long long wyn_main() {
+    /* 04_floats.wyn:5 */ 
+#line 5 "04_floats.wyn"
+double x = 2.5;
+    /* 04_floats.wyn:6 */ 
+#line 6 "04_floats.wyn"
+double y = 0.5;
+    ({ const char* __ps = to_string((x + y)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string((x * 2.0)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string((x / y)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string((x - y)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string((bool)(x > y)); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+
