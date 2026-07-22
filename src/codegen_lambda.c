@@ -172,7 +172,6 @@ static void scan_expr_for_lambdas(Expr* expr) {
             
             {
                 ensure_lambda_cap();
-                lambda_functions[lambda_count].code = NULL; // legacy mini-emitter retired (S3)
                 lambda_functions[lambda_count].ast = expr;
                 lambda_functions[lambda_count].id = lambda_id;
                 lambda_functions[lambda_count].param_count = expr->lambda.param_count;

@@ -1075,7 +1075,6 @@ static const char* resolve_module_alias(const char* name) {
 
 // Lambda function collection
 typedef struct {
-    char* code;         // legacy: string-built body (NULL when using codegen_expr path)
     Expr* ast;          // S2: pointer to the EXPR_LAMBDA node for codegen_expr emission
     int id;
     int param_count;
