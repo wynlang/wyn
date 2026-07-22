@@ -275,6 +275,8 @@ typedef struct {
     Expr* object;
     Expr* index;
     Expr* value;
+    bool is_compound;   // m[k] += v / xs[i] += v (also ++/--). Map codegen
+                        // panics on a missing key instead of inventing a 0.
 } IndexAssignExpr;
 
 typedef struct {

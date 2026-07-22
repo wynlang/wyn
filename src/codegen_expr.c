@@ -2258,7 +2258,50 @@ void codegen_expr(Expr* expr) {
             // Special handling for array.get() - use type-specific accessor
             if (object_type && object_type->kind == TYPE_ARRAY) {
                 Token method = expr->method_call.method;
-                
+
+                // Float-array numeric ops. The int variants read elements
+                // through array_get_int, which TRUNCATES: [1.5, 2.5].sum()
+                // returned 3, .max() returned 3, .contains(1.9) matched 1.5.
+                // Silent wrong answers (FLOWY_DESIGN F2) - dispatch by element
+                // type like every other language does.
+                if (object_type->array_type.element_type &&
+                    object_type->array_type.element_type->kind == TYPE_FLOAT) {
+                    if (expr->method_call.arg_count == 0) {
+                        const char* _ffn = NULL;
+                        if (method.length == 3 && memcmp(method.start, "sum", 3) == 0) _ffn = "array_sum_float";
+                        else if (method.length == 3 && memcmp(method.start, "min", 3) == 0) _ffn = "array_min_float";
+                        else if (method.length == 3 && memcmp(method.start, "max", 3) == 0) _ffn = "array_max_float";
+                        else if (method.length == 5 && memcmp(method.start, "first", 5) == 0) _ffn = "array_first_float";
+                        else if (method.length == 4 && memcmp(method.start, "last", 4) == 0) _ffn = "array_last_float";
+                        else if (method.length == 7 && memcmp(method.start, "average", 7) == 0) _ffn = "array_average";
+                        if (_ffn) {
+                            emit("%s(", _ffn);
+                            codegen_expr(expr->method_call.object);
+                            emit(")");
+                            break;
+                        }
+                        if (method.length == 3 && memcmp(method.start, "pop", 3) == 0) {
+                            emit("array_pop_float(&(");
+                            codegen_expr(expr->method_call.object);
+                            emit("))");
+                            break;
+                        }
+                    }
+                    if (expr->method_call.arg_count == 1) {
+                        const char* _ffn = NULL;
+                        if (method.length == 8 && memcmp(method.start, "contains", 8) == 0) _ffn = "array_contains_float";
+                        else if (method.length == 8 && memcmp(method.start, "index_of", 8) == 0) _ffn = "array_index_of_float";
+                        if (_ffn) {
+                            emit("%s(", _ffn);
+                            codegen_expr(expr->method_call.object);
+                            emit(", ");
+                            codegen_expr(expr->method_call.args[0]);
+                            emit(")");
+                            break;
+                        }
+                    }
+                }
+
                 // arr.map(fn): pick the runtime variant from BOTH the element
                 // type and the lambda's RETURN type - a str->int lambda
                 // (`words.map((s) => s.len())`) through the str->str variant
@@ -2846,6 +2889,30 @@ void codegen_expr(Expr* expr) {
                     emit(")");
                     break;
                 }
+                // map.get(k, default): Python dict.get - return the default
+                // when the key is missing. This form used to fall through to
+                // the ONE-arg getter with the default silently dropped, so a
+                // missing key returned ""/0/garbage instead of the default
+                // (FLOWY_DESIGN F1). Dispatch the get-or variant by value type.
+                if (strcmp(method_name, "get") == 0 && expr->method_call.arg_count == 2) {
+                    const char* _getter = "hashmap_get_or_str";
+                    if (expr->expr_type) {
+                        switch (expr->expr_type->kind) {
+                            case TYPE_INT:   _getter = "hashmap_get_or_int"; break;
+                            case TYPE_BOOL:  _getter = "hashmap_get_or_bool"; break;
+                            case TYPE_FLOAT: _getter = "hashmap_get_or_float"; break;
+                            case TYPE_STRING: default: _getter = "hashmap_get_or_str"; break;
+                        }
+                    }
+                    emit("%s(", _getter);
+                    codegen_expr(expr->method_call.object);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[0]);
+                    emit(", ");
+                    codegen_expr(expr->method_call.args[1]);
+                    emit(")");
+                    break;
+                }
                 // Json-style methods on map-typed objects
                 if (strcmp(method_name, "set_string") == 0 && expr->method_call.arg_count == 2) {
                     emit("json_set_string(");
@@ -2932,7 +2999,24 @@ void codegen_expr(Expr* expr) {
                     emit(")"); break;
                 }
                 if (strcmp(method_name, "get_or") == 0 && expr->method_call.arg_count == 2) {
-                    emit("hashmap_get_or_int(");
+                    // Same value-type dispatch as get(k, default): the fixed
+                    // _int variant returned a garbage pointer-as-number for
+                    // string maps and truncated float maps to 0.
+                    const char* _gofn = "hashmap_get_or_int";
+                    Type* _mvt = NULL;
+                    if (expr->method_call.object->expr_type &&
+                        expr->method_call.object->expr_type->kind == TYPE_MAP)
+                        _mvt = expr->method_call.object->expr_type->map_type.value_type;
+                    if (!_mvt) _mvt = expr->expr_type;
+                    if (_mvt) {
+                        switch (_mvt->kind) {
+                            case TYPE_STRING: _gofn = "hashmap_get_or_str"; break;
+                            case TYPE_FLOAT:  _gofn = "hashmap_get_or_float"; break;
+                            case TYPE_BOOL:   _gofn = "hashmap_get_or_bool"; break;
+                            default: break;
+                        }
+                    }
+                    emit("%s(", _gofn);
                     codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]);
                     emit(", "); codegen_expr(expr->method_call.args[1]);
@@ -3006,7 +3090,17 @@ void codegen_expr(Expr* expr) {
                 // `.get().unwrap_or` remains routed through the general path (logged).
                 if (inner_is_get && rot && rot->kind == TYPE_MAP &&
                     !(rot->map_type.value_type && rot->map_type.value_type->kind == TYPE_STRING)) {
-                    emit("hashmap_get_or_int(");
+                    // Dispatch by value type: the hardcoded _int variant
+                    // truncated float-map defaults (unwrap_or(9.5) -> 9).
+                    const char* _uofn = "hashmap_get_or_int";
+                    if (rot->map_type.value_type) {
+                        switch (rot->map_type.value_type->kind) {
+                            case TYPE_FLOAT: _uofn = "hashmap_get_or_float"; break;
+                            case TYPE_BOOL:  _uofn = "hashmap_get_or_bool"; break;
+                            default: break;
+                        }
+                    }
+                    emit("%s(", _uofn);
                     codegen_expr(inner->method_call.object);       // the map
                     emit(", ");
                     codegen_expr(inner->method_call.args[0]);      // the key
@@ -4842,6 +4936,19 @@ void codegen_expr(Expr* expr) {
                 // Map assignment: map["key"] = value -> hashmap_insert_*(map, "key", value)
                 // Determine insert function based on value type (shared helper).
                 const char* insert_func = hashmap_insert_fn_for(expr->index_assign.value);
+                // Compound form (m[k] += v): the value re-reads m[k], and the
+                // getters return 0/"" for a missing key - which would silently
+                // conjure a value out of nothing. Python raises KeyError here;
+                // so do we (with a Help line). Plain m[k] = v stays an upsert.
+                if (expr->index_assign.is_compound) {
+                    emit("({ if (!hashmap_has(");
+                    codegen_expr(expr->index_assign.object);
+                    emit(", ");
+                    codegen_expr(expr->index_assign.index);
+                    emit(")) wyn_map_compound_missing_key(");
+                    codegen_expr(expr->index_assign.index);
+                    emit("); ");
+                }
                 emit("%s(", insert_func);
                 codegen_expr(expr->index_assign.object);
                 emit(", ");
@@ -4849,6 +4956,7 @@ void codegen_expr(Expr* expr) {
                 emit(", ");
                 codegen_expr(expr->index_assign.value);
                 emit(")");
+                if (expr->index_assign.is_compound) emit("; })");
             } else if (expr->index_assign.object->type == EXPR_INDEX) {
                 // Nested element assign: m[0][1] = v. The object m[0] is an
                 // RVALUE (array_get_* call) - taking its address was a C error.

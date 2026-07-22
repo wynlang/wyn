@@ -4097,13 +4097,41 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // approach as index m[k] (see EXPR_INDEX). Without this the getter,
             // var-decl type, and comparisons all defaulted to string and
             // miscompiled (garbage for int/float/bool; strcmp on an int crashed).
+            // Two-arg map.get(k, default) is Python's dict.get: the default is
+            // returned when the key is missing, so it must match the value
+            // type. Before this it compiled and returned garbage (the default
+            // was silently DROPPED and a missing key decoded as the wrong
+            // type) - FLOWY_DESIGN F1, the top silent-wrong bug.
             if (object_type && object_type->kind == TYPE_MAP &&
-                method.length == 3 && memcmp(method.start, "get", 3) == 0) {
+                ((method.length == 3 && memcmp(method.start, "get", 3) == 0) ||
+                 (method.length == 6 && memcmp(method.start, "get_or", 6) == 0))) {
+                if (expr->method_call.arg_count > 2) {
+                    fprintf(stderr, "Error at line %d: map.get takes a key and an optional default, got %d arguments\n",
+                            method.line, expr->method_call.arg_count);
+                    had_error = true;
+                    return NULL;
+                }
+                Type* vt = object_type->map_type.value_type;
+                if (expr->method_call.arg_count == 2) {
+                    Type* def_t = expr->method_call.args[1]->expr_type;
+                    if (!def_t) def_t = check_expr(expr->method_call.args[1], scope);
+                    if (vt && def_t && vt->kind != def_t->kind &&
+                        !((vt->kind == TYPE_INT || vt->kind == TYPE_FLOAT) &&
+                          (def_t->kind == TYPE_INT || def_t->kind == TYPE_FLOAT))) {
+                        fprintf(stderr, "Error at line %d: map.get default is %s but the map's values are %s\n",
+                                method.line, type_to_string(def_t), type_to_string(vt));
+                        fprintf(stderr, "  \033[34mHelp:\033[0m The default is returned when the key is missing - it must match the value type\n");
+                        had_error = true;
+                        return NULL;
+                    }
+                    // Untyped map (HashMap.new()): the default tells us the
+                    // value type - better than the historical string guess.
+                    if (!vt && def_t) vt = def_t;
+                }
                 // Default to string when the value type is unknown (e.g.
                 // HashMap.new() maps set no value_type): string is the historical
                 // default and the non-crashing choice. Only a literal {k: v} whose
                 // value type we inferred narrows it to int/float/bool.
-                Type* vt = object_type->map_type.value_type;
                 if (!vt) vt = builtin_string;
                 expr->expr_type = vt;
                 return vt;
@@ -4116,6 +4144,21 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         expr->expr_type = object_type->array_type.element_type;
                         return object_type->array_type.element_type;
                     }
+                }
+                // Float-array reductions return float, not the table's int
+                // default (codegen dispatches array_sum_float etc.). Without
+                // this the result was typed int and downstream var decls /
+                // prints truncated even after the runtime computed correctly.
+                if (object_type->array_type.element_type &&
+                    object_type->array_type.element_type->kind == TYPE_FLOAT &&
+                    ((method.length == 3 && (memcmp(method.start, "sum", 3) == 0 ||
+                                             memcmp(method.start, "min", 3) == 0 ||
+                                             memcmp(method.start, "max", 3) == 0 ||
+                                             memcmp(method.start, "pop", 3) == 0)) ||
+                     (method.length == 5 && memcmp(method.start, "first", 5) == 0) ||
+                     (method.length == 4 && memcmp(method.start, "last", 4) == 0))) {
+                    expr->expr_type = builtin_float;
+                    return builtin_float;
                 }
                 // array.push(val) - update element type from pushed value
                 if (method.length == 4 && memcmp(method.start, "push", 4) == 0 && expr->method_call.arg_count >= 1) {

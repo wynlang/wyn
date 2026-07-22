@@ -949,9 +949,63 @@ int array_sum(WynArray arr) {
     }
     return sum;
 }
-int array_average(WynArray arr) {
-    if (arr.count == 0) return 0;
-    return array_sum(arr) / arr.count;
+// Float-array reductions. The int reducers above read through array_get_int,
+// which TRUNCATES float elements - [1.5, 2.5].sum() returned 3 and
+// [1.5, 3.5].max() returned 3: silent wrong answers. Codegen dispatches
+// float-element arrays here instead (checker types the result float).
+double array_sum_float(WynArray arr) {
+    double sum = 0.0;
+    for (int i = 0; i < arr.count; i++) sum += array_get_float(arr, i);
+    return sum;
+}
+double array_min_float(WynArray arr) {
+    if (arr.count == 0) return 0.0;
+    double m = array_get_float(arr, 0);
+    for (int i = 1; i < arr.count; i++) {
+        double v = array_get_float(arr, i);
+        if (v < m) m = v;
+    }
+    return m;
+}
+double array_max_float(WynArray arr) {
+    if (arr.count == 0) return 0.0;
+    double m = array_get_float(arr, 0);
+    for (int i = 1; i < arr.count; i++) {
+        double v = array_get_float(arr, i);
+        if (v > m) m = v;
+    }
+    return m;
+}
+double array_first_float(WynArray arr) {
+    if (arr.count == 0) return 0.0;
+    return array_get_float(arr, 0);
+}
+double array_last_float(WynArray arr) {
+    if (arr.count == 0) return 0.0;
+    return array_get_float(arr, arr.count - 1);
+}
+double array_pop_float(WynArray* arr) {
+    if (arr->count == 0) return 0.0;
+    arr->count--;
+    if (arr->data[arr->count].type == WYN_TYPE_FLOAT) return arr->data[arr->count].data.float_val;
+    if (arr->data[arr->count].type == WYN_TYPE_INT) return (double)arr->data[arr->count].data.int_val;
+    return 0.0;
+}
+// contains/index_of compared through array_get_int, so the NEEDLE was
+// truncated too: [1.5].contains(1.9) was true. Compare as doubles.
+long long array_contains_float(WynArray arr, double val) {
+    for (int i = 0; i < arr.count; i++) if (array_get_float(arr, i) == val) return 1;
+    return 0;
+}
+long long array_index_of_float(WynArray arr, double val) {
+    for (int i = 0; i < arr.count; i++) if (array_get_float(arr, i) == val) return i;
+    return -1;
+}
+// Mean of any numeric array. Was int division ([1,2,3,4].average() == 2, and
+// float arrays truncated element-wise); every language returns a float mean.
+double array_average(WynArray arr) {
+    if (arr.count == 0) return 0.0;
+    return array_sum_float(arr) / (double)arr.count;
 }
 void array_each(WynArray arr, long long (*fn)(long long)) {
     for (int i = 0; i < arr.count; i++) fn(arr.data[i].data.int_val);
@@ -5061,6 +5115,26 @@ long long hashmap_get_or_int(WynHashMap* map, const char* key, long long default
 char* hashmap_get_or_str(WynHashMap* map, const char* key, const char* default_val) {
     if (!hashmap_has(map, key)) return (char*)default_val;
     return hashmap_get_string(map, key);
+}
+
+double hashmap_get_or_float(WynHashMap* map, const char* key, double default_val) {
+    if (!hashmap_has(map, key)) return default_val;
+    return hashmap_get_float(map, key);
+}
+
+// Compound map assignment (m[k] += v) on a missing key: Python raises
+// KeyError here; silently inventing a 0 hid typos, and the old parser bug
+// made the whole statement a no-op. Panic with the working alternative.
+void wyn_map_compound_missing_key(const char* key) {
+    fprintf(stderr, "panic: map key \"%s\" not found for compound assignment (+=, -=, ...)\n", key ? key : "(null)");
+    fprintf(stderr, "  Help: seed the key first (m[\"%s\"] = 0) or use m.set(\"%s\", m.get(\"%s\", 0) + 1)\n",
+            key ? key : "", key ? key : "", key ? key : "");
+    exit(1);
+}
+
+long long hashmap_get_or_bool(WynHashMap* map, const char* key, long long default_val) {
+    if (!hashmap_has(map, key)) return default_val;
+    return hashmap_get_bool(map, key);
 }
 
 // === Json extensions round 2 ===
