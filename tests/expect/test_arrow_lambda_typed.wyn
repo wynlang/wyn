@@ -1,0 +1,37 @@
+// EXPECT: 4.0
+// EXPECT: false
+// EXPECT: 11
+// EXPECT: id7
+// EXPECT: 3.0
+// EXPECT: 6.0
+// EXPECT: 1.5
+// S3: arrow lambdas with typed params of every newly supported kind - float,
+// bool, struct - plus mixed string/int and float/int param lists, a returned
+// float closure (fn -> fn(float) -> float used to call through the int ABI
+// and print garbage), and a lambda passed to a user fn with an fn-type param
+// (whose body used to fail "Return type mismatch ... got int").
+struct Box { v: int }
+
+fn make_scaler(k: float) -> fn(float) -> float {
+    return (x: float) => x * k
+}
+
+fn apply(f: fn(float) -> float, v: float) -> float {
+    return f(v)
+}
+
+fn main() -> int {
+    println(((x: float) => x * 2.0)(2.0))
+    neg = (b: bool) => not b
+    println(neg(true))
+    unbox = (b: Box) => b.v + 1
+    println(unbox(Box { v: 10 }))
+    tag = (name: string, n: int) => name + n.to_string()
+    println(tag("id", 7))
+    scale = (x: float, n: int) => x * 2.0
+    println(scale(1.5, 3))
+    s = make_scaler(3.0)
+    println(s(2.0))
+    println(apply((x: float) => x + 0.5, 1.0))
+    return 0
+}

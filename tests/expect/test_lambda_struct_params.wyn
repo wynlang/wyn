@@ -1,0 +1,27 @@
+// EXPECT: 7
+// EXPECT: 9
+// EXPECT: [1, 3]
+// EXPECT: 1
+// EXPECT: ["pt1"]
+// EXPECT: [1.5]
+// S3: struct lambda parameters. Annotated ((p: Point) => p.x + p.y) and
+// context-seeded from the receiver array's element type ([Point].map((p) =>
+// p.x) - the param used to default to int and field access emitted invalid C).
+// Struct map/filter emit inline typed loops (array_get_struct/push_struct);
+// map's result element type follows the lambda's return (int/string/float).
+struct Point { x: int, y: int }
+
+fn main() -> int {
+    f = (p: Point) => p.x + p.y
+    println(f(Point { x: 3, y: 4 }))
+
+    k = |p: Point| p.y
+    println(k(Point { x: 1, y: 9 }))
+
+    ps = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+    println(ps.map((p) => p.x))
+    println(ps.filter((p) => p.x > 2).len())
+    println([Point { x: 1, y: 2 }].map((p) => "pt" + p.x.to_string()))
+    println([Point { x: 1, y: 2 }].map((p) => p.x * 1.5))
+    return 0
+}
