@@ -4647,9 +4647,11 @@ char* Base64_decode(const char* data) { return Encoding_base64_decode(data); }
 char* Crypto_sha256(const char* data) {
     unsigned char digest[32];
     wyn_sha256_raw((const unsigned char*)data, strlen(data), digest);
-    char* result = wyn_malloc(65);
+    // RC-managed string: codegen releases string returns inside concat
+    // chains, and wyn_rc_release must find a valid RC header.
+    char* result = wyn_str_alloc(64);
     for (int i = 0; i < 32; i++) snprintf(result + i*2, 3, "%02x", digest[i]);
-    result[64] = 0;
+    wyn_rc_set_length(result, 64);
     return result;
 }
 
@@ -5000,9 +5002,11 @@ char* Process_exec_capture(const char* cmd) {
     snprintf(full_cmd, sizeof(full_cmd), "%s 2>&1", cmd);
     FILE* fp = popen(full_cmd, "r");
     if (!fp) return "";
-    char* result = wyn_malloc(131072);
+    // RC-managed (see File_temp_file note).
+    char* result = wyn_str_alloc(131071);
     size_t len = fread(result, 1, 131071, fp);
     result[len] = 0;
+    wyn_rc_set_length(result, (unsigned int)len);
     pclose(fp);
     return result;
 #endif
@@ -5124,7 +5128,10 @@ char* File_walk_dir(const char* path) {
 
 char* File_temp_file() {
     static int counter = 0;
-    char* path = wyn_malloc(256);
+    // RC-managed: codegen releases string locals in module functions, and
+    // wyn_rc_release reads an RC header before the pointer (bare wyn_malloc
+    // memory has none - caught by ASan as a heap-buffer-overflow read).
+    char* path = wyn_str_alloc(255);
 #ifdef _WIN32
     const char* tmp = getenv("TEMP");
     if (!tmp) tmp = ".";
@@ -5211,9 +5218,9 @@ char* Crypto_hmac_sha256(const char* key, const char* data) {
     unsigned char digest[32];
     wyn_hmac_sha256_raw((const unsigned char*)key, strlen(key),
                         (const unsigned char*)data, strlen(data), digest);
-    char* result = wyn_malloc(65);
+    char* result = wyn_str_alloc(64);
     for (int i = 0; i < 32; i++) snprintf(result + i*2, 3, "%02x", digest[i]);
-    result[64] = 0;
+    wyn_rc_set_length(result, 64);
     return result;
 }
 
@@ -5246,9 +5253,9 @@ char* Crypto_hmac_sha256_hex(const char* hex_key, const char* data) {
     wyn_hmac_sha256_raw(key, keylen,
                         (const unsigned char*)data, strlen(data), digest);
     free(key);
-    char* result = wyn_malloc(65);
+    char* result = wyn_str_alloc(64);
     for (int i = 0; i < 32; i++) snprintf(result + i*2, 3, "%02x", digest[i]);
-    result[64] = 0;
+    wyn_rc_set_length(result, 64);
     return result;
 }
 
