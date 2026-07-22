@@ -131,6 +131,24 @@ void codegen_program(Program* prog) {
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_FN) {
             Stmt* fn_stmt = prog->stmts[i];
+            {
+                // No return type (even after checker inference) - the fn is
+                // emitted as C `void`. Record it so `return f(...)` inside a
+                // non-void C function (like wyn_main) lowers to `f(...); return 0;`
+                // instead of the invalid `return <void expr>;` - the iOS-shim
+                // pattern `fn main() { return wyn_ios_main(0, 0) }` hit this.
+                // main (always long long) and generators (WynIter*) are excluded:
+                // their C signatures are non-void despite the NULL return type.
+                extern int fn_is_generator(Stmt*);
+                bool _is_main = (fn_stmt->fn.name.length == 4 &&
+                                 memcmp(fn_stmt->fn.name.start, "main", 4) == 0);
+                if (!fn_stmt->fn.return_type && !fn_stmt->fn.is_extension &&
+                    !_is_main && !fn_is_generator(fn_stmt)) {
+                    char _vfn[128]; token_to_cstr(_vfn, sizeof(_vfn), fn_stmt->fn.name);
+                    extern void register_void_fn(const char*);
+                    register_void_fn(_vfn);
+                }
+            }
             if (fn_stmt->fn.return_type && fn_stmt->fn.return_type->type == EXPR_IDENT) {
                 char _fn[128]; token_to_cstr(_fn, sizeof(_fn), fn_stmt->fn.name);
                 char _rt[32]; token_to_cstr(_rt, sizeof(_rt), fn_stmt->fn.return_type->token);

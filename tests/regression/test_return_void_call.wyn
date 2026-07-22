@@ -1,0 +1,22 @@
+// Regression: `return f(...)` where f is a void fn (no return type) emitted
+// `return f(...);` inside `long long wyn_main()` → C error "returning 'void'
+// from a function with incompatible result type 'long long'". This is the iOS
+// mobile-shim pattern: `fn main() { return wyn_ios_main(0, 0) }` (sample-apps
+// counter-app and notes-app both failed). Now the call is emitted as a
+// statement followed by `return 0;`. (2026-07)
+
+fn side_effect(a: int, b: int) {
+    println("called ${a} ${b}")
+}
+
+// Same shape inside a plain void fn: `return g()` must also work there
+fn wrapper() {
+    return side_effect(3, 4)
+}
+
+fn main() {
+    wrapper()
+    return side_effect(1, 2)
+}
+// EXPECT: called 3 4
+// EXPECT: called 1 2

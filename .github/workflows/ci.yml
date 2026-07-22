@@ -191,6 +191,12 @@ jobs:
           ./wyn cross ios /tmp/ios.wyn
           file /tmp/ios.wyn.ios | grep -q "arm64"
           echo "✅ iOS cross-compilation works"
+      - name: Cross-compile mobile-shim smoke app (counter-app shape)
+        run: |
+          cp tests/mobile/smoke_mobile_shim.wyn /tmp/shim.wyn
+          ./wyn cross ios /tmp/shim.wyn
+          file /tmp/shim.wyn.ios | grep -q "arm64"
+          echo "✅ iOS mobile-shim app cross-compiles"
 
   cross-compile-android:
     name: Cross-compile (Android)
@@ -205,6 +211,10 @@ jobs:
         run: |
           echo 'fn main() -> int { return 0 }' > /tmp/android.wyn
           ./wyn cross android /tmp/android.wyn && echo "✅ Android cross-compilation works" || echo "⚠️ Android NDK not available - skipped"
+      - name: Cross-compile mobile-shim smoke app (counter-app shape)
+        run: |
+          cp tests/mobile/smoke_mobile_shim.wyn /tmp/shim.wyn
+          ./wyn cross android /tmp/shim.wyn && echo "✅ Android mobile-shim app cross-compiles" || echo "⚠️ Android NDK not available - skipped"
 
   build-runtime-libs:
     name: Build runtime (${{ matrix.target }})

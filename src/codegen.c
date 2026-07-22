@@ -1827,6 +1827,32 @@ int get_fn_param_index(const char* fn_name, const char* param_name) {
     return -1;
 }
 
+// Void user functions - fns with no return type (after checker inference) are
+// emitted with a C `void` signature. `return f(...)` where f is void inside a
+// non-void C function (e.g. `long long wyn_main()`) is a C error - STMT_RETURN
+// consults this registry to lower it to `f(...); return 0;` instead.
+// Kept separate from fn_defaults' return_type: registering "void" there would
+// make spawn-wrapper codegen treat "void" as a struct type name.
+typedef struct { char name[128]; } VoidFnEntry;
+static VoidFnEntry* void_fns = NULL;
+static int void_fn_count = 0;
+static int void_fn_cap = 0;
+
+void register_void_fn(const char* name) {
+    for (int i = 0; i < void_fn_count; i++)
+        if (strcmp(void_fns[i].name, name) == 0) return;
+    WYN_ENSURE_CAP(void_fns, void_fn_count, void_fn_cap);
+    strncpy(void_fns[void_fn_count].name, name, 127);
+    void_fns[void_fn_count].name[127] = '\0';
+    void_fn_count++;
+}
+
+int is_void_fn(const char* name) {
+    for (int i = 0; i < void_fn_count; i++)
+        if (strcmp(void_fns[i].name, name) == 0) return 1;
+    return 0;
+}
+
 void register_fn_return_type(const char* name, const char* ret_type) {
     for (int i = 0; i < fn_defaults_count; i++) {
         if (strcmp(fn_defaults[i].name, name) == 0) {

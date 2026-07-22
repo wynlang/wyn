@@ -1,0 +1,37 @@
+// Mobile-shim smoke test - mirrors sample-apps/mobile/counter-app.
+// This exact shape (void SDK stubs + `return wyn_ios_main(0, 0)` from main)
+// broke codegen in 2026-07 ("returning 'void' from a function with
+// incompatible result type 'long long'"). CI cross-compiles this file for
+// iOS and Android (ci.yml cross-compile jobs). The native-build regression
+// for the same bug lives in tests/regression/test_return_void_call.wyn.
+
+// Mobile SDK stubs - resolved by the platform shell when packaged
+fn wyn_ui_text(ctx: int, text: string, size: int) {}
+fn wyn_ui_spacer(ctx: int, size: int) {}
+fn wyn_ui_button(ctx: int, label: string, id: int) {}
+fn wyn_ios_main(a: int, b: int) {}
+
+var count = 0
+
+fn wyn_app_title() -> string {
+    return "Wyn Smoke"
+}
+
+fn wyn_app_build(ctx: int) {
+    wyn_ui_text(ctx, "Count: ${count}", 32)
+    wyn_ui_button(ctx, "+", 1)
+}
+
+fn wyn_on_button(id: int) {
+    if id == 1 {
+        count = count + 1
+    }
+}
+
+fn main() {
+    wyn_on_button(1)
+    wyn_on_button(1)
+    print("count=${count}")
+    return wyn_ios_main(0, 0)
+}
+// EXPECT: count=2
