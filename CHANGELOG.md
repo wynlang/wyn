@@ -1,9 +1,28 @@
 # Changelog
 
-## v1.20.0 (unreleased)
+## v1.20.0 (2026-07-22)
 
-Correctness and packaging release.
+Correctness release: compiler limits removed, lambdas fully typed, and a
+snapshot suite guarding the generated C.
 
+- **No more silent compiler limits**: every fixed-size compiler registry
+  (lambdas, structs, enums, tuples, modules, match arms, block bodies, and
+  ~40 more) now grows on demand. Previously, programs exceeding a cap
+  (commonly 256) were silently miscompiled - 300 lambdas produced invalid C,
+  the 65th data enum broke match exhaustiveness, and a 40-field struct or
+  40-arm match could crash the compiler outright. All fixed and covered by
+  regression tests.
+- **Typed lambda parameters**: lambda params are no longer limited to
+  int/string. Type annotations work in all three lambda forms
+  (`(x: float) => x * 2.0`, `|b: bool| not b`, `fn(p: Point) => p.x`),
+  float/bool are inferred from the body, and `.map()`/`.filter()` type
+  unannotated params from the array's element type - so
+  `points.map((p) => p.x)` just works. `.map()`/`.filter()` results are now
+  correctly typed for all element types, including structs.
+- **Closure correctness**: closures over float signatures
+  (`fn(float) -> float`) previously returned garbage through the int call
+  path - calls now go through the properly typed signature. Also fixed a
+  compiler crash when calling a function-typed local.
 - **Bare `return` in script mode**: a bare `return` in top-level script code
   (and in the test runner) now compiles to `return 0` instead of producing
   invalid C.
