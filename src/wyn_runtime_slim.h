@@ -769,6 +769,7 @@ static inline char* int_to_string(long long n) { static char __buf[32]; snprintf
 static inline char* float_to_string(double n) { static char __buf[64]; snprintf(__buf, sizeof(__buf), "%g", n); return __buf; }
 static inline char* str_to_string(const char* s) { return (char*)s; }
 static inline char* bool_to_string(bool b) { return b ? "true" : "false"; }
+char* array_to_string(WynArray arr);  // defined in the runtime lib (wyn_runtime.h)
 
 // _Generic macros for type-dispatched print/println/to_string
 #define print_no_nl(x) _Generic((x), \
@@ -802,6 +803,7 @@ static inline char* bool_to_string(bool b) { return b ? "true" : "false"; }
     char*: str_to_string, \
     const char*: str_to_string, \
     bool: bool_to_string, \
+    WynArray: array_to_string, \
     default: int_to_string)(x)
 
 static inline void print_val(const char* s) { if(s) fputs(s, stdout); }

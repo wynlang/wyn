@@ -2308,8 +2308,18 @@ void codegen_expr(Expr* expr) {
                     // S3: [bool].map with a bool-returning lambda keeps elements
                     // typed bool (the int variant printed 0/1 instead of true/false).
                     bool _elem_is_bool = _elem_t && _elem_t->kind == TYPE_BOOL;
+                    // Cross-type maps: the element type picks the lambda's PARAM
+                    // ABI, the checker's lambda return type picks the RESULT ABI.
+                    // [int].map((n) => n.to_float()) rode wyn_array_map and read
+                    // the double return as long long - silent garbage; same in
+                    // reverse for [float].map((f) => f.to_int()).
+                    bool _ret_is_float = _lam_ret && _lam_ret->kind == TYPE_FLOAT;
+                    bool _ret_is_int = _lam_ret && _lam_ret->kind == TYPE_INT;
+                    bool _elem_is_int = _elem_t && _elem_t->kind == TYPE_INT;
                     emit(_elem_is_str ? (_lam_ret_str ? "wyn_array_map_str(" : "wyn_array_map_str_to_int(")
+                         : (_elem_is_float && _ret_is_int) ? "wyn_array_map_float_to_int("
                          : _elem_is_float ? "wyn_array_map_float("
+                         : (_elem_is_int && _ret_is_float) ? "wyn_array_map_int_to_float("
                          : (_elem_is_bool && _lam_ret && _lam_ret->kind == TYPE_BOOL) ? "wyn_array_map_bool("
                          : "wyn_array_map(");
                     codegen_expr(expr->method_call.object);
@@ -2769,13 +2779,22 @@ void codegen_expr(Expr* expr) {
                     receiver_type = "string";
                 }
             }
-            // Also override int type when method is clearly a string method
+            // Also override int type when method is clearly a string method.
+            // Only when the checker did NOT type the object as a number/bool:
+            // this override exists for string objects that were mis-inferred as
+            // int, but firing on a REAL int (`x.to_float()` with x: int) emitted
+            // str_parse_float(x) - an int passed as const char* - and segfaulted.
             if (receiver_type && strcmp(receiver_type, "int") == 0) {
+                Type* _obj_t = expr->method_call.object->expr_type;
+                bool _obj_is_num = _obj_t && (_obj_t->kind == TYPE_INT ||
+                                              _obj_t->kind == TYPE_FLOAT ||
+                                              _obj_t->kind == TYPE_BOOL);
                 char mname[64]; token_to_cstr(mname, sizeof(mname), method);
                 // Only override to string for methods that make sense on both types
                 // (to_int, to_float are valid on strings; upper/lower/trim are NOT valid on int)
-                if (strcmp(mname, "to_int") == 0 || strcmp(mname, "to_float") == 0 ||
-                    strcmp(mname, "split_at") == 0 || strcmp(mname, "split_count") == 0) {
+                if (!_obj_is_num &&
+                    (strcmp(mname, "to_int") == 0 || strcmp(mname, "to_float") == 0 ||
+                    strcmp(mname, "split_at") == 0 || strcmp(mname, "split_count") == 0)) {
                     receiver_type = "string";
                 }
             }

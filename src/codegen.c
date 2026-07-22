@@ -1757,8 +1757,16 @@ const char* codegen_c_type_from_type(Type* t) {
         case TYPE_STRUCT: {
             static char struct_buf[128];
             Token n = t->struct_type.name;
-            // Single upper-case letter is an un-monomorphized type param -> long long.
-            if (n.length == 1 && n.start[0] >= 'A' && n.start[0] <= 'Z') return "long long";
+            // Single upper-case letter is an un-monomorphized type param -> long
+            // long, but ONLY when no user struct of that name exists. A real
+            // one-letter struct (`struct P`) must keep its own C type - the old
+            // unconditional heuristic typed lambda params `fn(p: P)` as long
+            // long and field access on them failed to compile.
+            if (n.length == 1 && n.start[0] >= 'A' && n.start[0] <= 'Z') {
+                char _one[2] = { n.start[0], 0 };
+                extern int is_known_struct(const char*);
+                if (!is_known_struct(_one)) return "long long";
+            }
             if (n.length > 0) {
                 int len = n.length < 127 ? n.length : 127;
                 memcpy(struct_buf, n.start, len);

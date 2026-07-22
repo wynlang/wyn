@@ -1,0 +1,28 @@
+// EXPECT: 7
+// EXPECT: 3
+// EXPECT: 4
+// EXPECT: 12
+// Regression: a single-uppercase-letter struct name (struct P) tripped the
+// "one capital letter = un-monomorphized type param -> long long" heuristic in
+// codegen_c_type_from_type, so a lambda param typed P became long long and
+// p.x failed to compile. The heuristic now consults is_known_struct first.
+// Also covers `var q = pt` (struct copy through the checker-type fallback).
+struct P {
+    x: int,
+    y: int
+}
+
+fn area(p: P) -> int {
+    return p.x * p.y
+}
+
+fn main() -> int {
+    var f = fn(p: P) -> int { return p.x + p.y }
+    var pt = P{x: 3, y: 4}
+    println(f(pt))
+    var q = pt
+    println(q.x)
+    println(q.y)
+    println(area(q))
+    return 0
+}

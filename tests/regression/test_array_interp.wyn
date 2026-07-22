@@ -1,0 +1,21 @@
+// EXPECT: [1, 2, 3]
+// EXPECT: nums=[1, 2, 3]!
+// EXPECT: ["a", "b"]
+// EXPECT: [1.5, 2.5]
+// EXPECT: [true, false]
+// Regression: "${nums}" with an array passed `wyn check` but ICE'd at the C
+// stage (WynArray fed to int_to_string via the to_string _Generic default).
+// The runtime now has array_to_string wired into to_string, matching
+// println(nums) formatting.
+fn main() -> int {
+    var nums = [1, 2, 3]
+    println("${nums}")
+    println("nums=${nums}!")
+    var strs = ["a", "b"]
+    println("${strs}")
+    var fs = [1.5, 2.5]
+    println("${fs}")
+    var bs = [true, false]
+    println("${bs}")
+    return 0
+}
