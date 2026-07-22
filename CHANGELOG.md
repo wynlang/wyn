@@ -2,9 +2,27 @@
 
 ## v1.20.0 (unreleased)
 
-Correctness release: compiler limits removed, lambdas fully typed, and a
-snapshot suite guarding the generated C.
+Correctness release: compiler limits removed, lambdas fully typed, real
+crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C.
 
+- **Real SHA-256 and HMAC-SHA256**: `Crypto.sha256` previously used a
+  non-standard stand-in hash and `Crypto.hmac_sha256` shelled out to
+  openssl with the secret key on the command line. Both are now real,
+  in-process implementations (FIPS 180-4 / RFC 2104), validated against
+  the RFC 4231 test vectors. New `Crypto.hmac_sha256_hex(hex_key, data)`
+  enables chained signing (AWS SigV4). Also fixed heap overflows on
+  strings returned by Crypto, `File.temp_file`, and
+  `Process.exec_capture` when used in concat chains.
+- **AWS from pure Wyn**: `demos/aws/` has a working SigV4 signer plus
+  STS/S3/EC2 demos - call AWS APIs with zero dependencies.
+- **Type-correctness batch**: `print(x.to_float())` no longer segfaults;
+  bools stored in vars or interpolated print `true`/`false` (was `1`/`0`);
+  variables named after C keywords (`long`, `short`) compile; arrays
+  interpolate in strings (`"${nums}"`); a loop variable name can be
+  re-bound after the loop; cross-type maps (`ints.map((n) => n.to_float())`)
+  return correct values; single-letter struct names work as lambda params.
+- **`print` is the canonical output function** in all docs, templates, and
+  examples (`println` still works as an alias).
 - **No more silent compiler limits**: every fixed-size compiler registry
   (lambdas, structs, enums, tuples, modules, match arms, block bodies, and
   ~40 more) now grows on demand. Previously, programs exceeding a cap
