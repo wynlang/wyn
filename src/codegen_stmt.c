@@ -1990,6 +1990,18 @@ void codegen_stmt(Stmt* stmt) {
                 // return is a C error - emit `return 0;` instead.
                 extern bool current_fn_c_nonvoid;
                 emit(current_fn_c_nonvoid ? "return 0;\n" : "return;\n");
+            } else if (stmt->ret.value->type == EXPR_CALL &&
+                       stmt->ret.value->call.callee->type == EXPR_IDENT &&
+                       ({ char _vcn[128]; token_to_cstr(_vcn, sizeof(_vcn), stmt->ret.value->call.callee->token);
+                          extern int is_void_fn(const char*); is_void_fn(_vcn); })) {
+                // `return f(...)` where f is a void fn: C forbids returning a void
+                // expression. Emit the call as a statement, then a plain return
+                // (`return 0;` when the enclosing C function is non-void, e.g. the
+                // iOS-shim pattern `fn main() { return wyn_ios_main(0, 0) }`).
+                codegen_expr(stmt->ret.value);
+                emit(";\n");
+                extern bool current_fn_c_nonvoid;
+                emit(current_fn_c_nonvoid ? "    return 0;\n" : "    return;\n");
             } else {
                 // Auto-wrap bare returns into Option/Result constructors when the
                 // current function returns an Option family type (e.g. `return x` in
