@@ -2206,6 +2206,36 @@ bool char_is_lowercase(char x) { return x >= 'a' && x <= 'z'; }
 char char_to_upper(char x) { return (x >= 'a' && x <= 'z') ? x - 32 : x; }
 char char_to_lower(char x) { return (x >= 'A' && x <= 'Z') ? x + 32 : x; }
 char* str_to_string(const char* x) { return (char*)x; }
+// Array repr as an RC string - mirrors print_array_elem's formatting, so
+// "${nums}" interpolates the same text println(nums) prints. (Interpolating an
+// array used to pass WynArray to int_to_string: check-pass but a C-stage ICE.)
+char* array_to_string(WynArray arr) {
+    size_t cap = 64; size_t len = 0;
+    char* tmp = malloc(cap);
+    if (!tmp) return wyn_strdup("[]");
+    tmp[len++] = '[';
+    for (int i = 0; i < arr.count; i++) {
+        char elem[512];
+        WynValue v = arr.data[i];
+        switch (v.type) {
+            case WYN_TYPE_STRING: snprintf(elem, sizeof(elem), "\"%s\"", v.data.string_val ? v.data.string_val : ""); break;
+            case WYN_TYPE_FLOAT:  snprintf(elem, sizeof(elem), "%g", v.data.float_val); break;
+            case WYN_TYPE_BOOL:   snprintf(elem, sizeof(elem), "%s", v.data.int_val ? "true" : "false"); break;
+            default:              snprintf(elem, sizeof(elem), "%lld", v.data.int_val); break;
+        }
+        size_t elen = strlen(elem);
+        size_t need = len + elen + 4; // elem + ", " + "]" + NUL
+        if (need > cap) { while (need > cap) cap *= 2; char* nt = realloc(tmp, cap); if (!nt) { free(tmp); return wyn_strdup("[]"); } tmp = nt; }
+        if (i > 0) { tmp[len++] = ','; tmp[len++] = ' '; }
+        memcpy(tmp + len, elem, elen); len += elen;
+    }
+    tmp[len++] = ']';
+    char* r = wyn_str_alloc(len + 1);
+    memcpy(r, tmp, len); r[len] = 0;
+    wyn_rc_set_length(r, (unsigned int)len);
+    free(tmp);
+    return r;
+}
 #define to_string(x) _Generic((x), \
     int: int_to_string, \
     long: int_to_string, \
@@ -2214,6 +2244,7 @@ char* str_to_string(const char* x) { return (char*)x; }
     char*: str_to_string, \
     const char*: str_to_string, \
     bool: bool_to_string, \
+    WynArray: array_to_string, \
     default: int_to_string)(x)
 
 typedef struct { const char* message; const char* type; } WynError;
@@ -3667,6 +3698,25 @@ WynArray wyn_array_map_str_to_int(WynArray arr, long long (*fn)(const char*)) {
     WynArray result = array_new();
     for (int i = 0; i < arr.count; i++) {
         array_push_int(&result, fn(array_get_str(arr, i)));
+    }
+    return result;
+}
+// [int] -> [float] map: the lambda returns a double (n.to_float(), n * 2.5).
+// Riding wyn_array_map reinterpreted the double return through the long long
+// ABI - garbage or silent truncation. Elements load as ints, results push as
+// floats.
+WynArray wyn_array_map_int_to_float(WynArray arr, double (*fn)(long long)) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        array_push_float(&result, fn(array_get_int(arr, i)));
+    }
+    return result;
+}
+// [float] -> [int] map: lambda takes a double, returns an int (f.to_int()).
+WynArray wyn_array_map_float_to_int(WynArray arr, long long (*fn)(double)) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        array_push_int(&result, fn(array_get_float(arr, i)));
     }
     return result;
 }

@@ -1,0 +1,31 @@
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 0
+// EXPECT: 3
+// EXPECT: 33
+// EXPECT: 5
+// EXPECT: 9
+// Regression: a bare assignment reusing a loop variable's name after the loop
+// (`for i in 0..3 {...}; i = 0`) ICE'd - the checker put the loop var in the
+// ENCLOSING scope while the emitted C scopes it to the for statement, so the
+// assignment referenced an undeclared C identifier. Loop vars now check in a
+// child scope; the post-loop bare assignment becomes a fresh declaration.
+// Also pins: outer vars stay mutable from loop bodies, and the index var of
+// `for j, v in arr` is likewise free after the loop.
+fn main() -> int {
+    for i in 0..3 { println(i) }
+    i = 0
+    println(i)
+    var total = 0
+    for i in 0..3 { total = total + i }
+    println(total)
+    for x in [10, 20] { total = total + x }
+    println(total)
+    x = 5
+    println(x)
+    for j, v in ["a", "b"] { }
+    j = 9
+    println(j)
+    return 0
+}

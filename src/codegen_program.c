@@ -369,6 +369,19 @@ void codegen_program(Program* prog) {
                             c_type = "const char*";
                         }
                     }
+                } else if (var_stmt->var.init->type == EXPR_BINARY) {
+                    // Same operator-keyed bool decision as the in-function var
+                    // path (codegen_stmt.c STMT_VAR): logical ops/comparisons
+                    // store a truth value, declare bool so it prints true/false.
+                    WynTokenType _tbop = var_stmt->var.init->binary.op.type;
+                    if (_tbop == TOKEN_AND || _tbop == TOKEN_OR ||
+                        _tbop == TOKEN_AMPAMP || _tbop == TOKEN_PIPEPIPE ||
+                        _tbop == TOKEN_EQEQ || _tbop == TOKEN_BANGEQ ||
+                        _tbop == TOKEN_LT || _tbop == TOKEN_GT ||
+                        _tbop == TOKEN_LTEQ || _tbop == TOKEN_GTEQ ||
+                        _tbop == TOKEN_IN) {
+                        c_type = "bool";
+                    }
                 }
                 if (var_stmt->var.type && var_stmt->var.type->type == EXPR_IDENT) {
                     Token tn = var_stmt->var.type->token;
@@ -408,15 +421,27 @@ void codegen_program(Program* prog) {
                 }
             }
             emit("\n");
+            // A top-level var whose name is a C keyword (long/short/double/...)
+            // must be emitted with the collision prefix and registered so later
+            // uses (EXPR_IDENT / assignment targets) prefix too - `long = ...`
+            // used to emit `const char* long;` and ICE at the C stage.
+            char _tvn[512]; token_to_cstr(_tvn, sizeof(_tvn), var_stmt->var.name);
+            { extern int is_c_name_collision(const char*);
+              extern void register_user_collision(const char*);
+              if (is_c_name_collision(_tvn)) {
+                  register_user_collision(_tvn);
+                  memmove(_tvn + WYN_UFN_PFX_LEN, _tvn, strlen(_tvn) + 1);
+                  memcpy(_tvn, WYN_UFN_PFX, WYN_UFN_PFX_LEN);
+              } }
             if (is_simple_init) {
                 // Simple literals can be initialized at file scope
-                emit("%s %.*s", c_type, var_stmt->var.name.length, var_stmt->var.name.start);
+                emit("%s %s", c_type, _tvn);
                 if (var_stmt->var.init) { emit(" = "); codegen_expr(var_stmt->var.init); }
                 else { emit(" = 0"); }
                 emit(";\n");
             } else {
                 // Declare at file scope, initialize in wyn_main
-                emit("%s %.*s;\n", c_type, var_stmt->var.name.length, var_stmt->var.name.start);
+                emit("%s %s;\n", c_type, _tvn);
                 deferred_init_indices[deferred_init_count++] = i;
             }
         }
@@ -428,7 +453,13 @@ void codegen_program(Program* prog) {
         emit("\n__attribute__((constructor)) void __wyn_init_globals(void) {\n");
         for (int d = 0; d < deferred_init_count; d++) {
             Stmt* var_stmt = prog->stmts[deferred_init_indices[d]];
-            emit("    %.*s = ", var_stmt->var.name.length, var_stmt->var.name.start);
+            char _dvn[512]; token_to_cstr(_dvn, sizeof(_dvn), var_stmt->var.name);
+            { extern int is_c_name_collision(const char*);
+              if (is_c_name_collision(_dvn)) {
+                  memmove(_dvn + WYN_UFN_PFX_LEN, _dvn, strlen(_dvn) + 1);
+                  memcpy(_dvn, WYN_UFN_PFX, WYN_UFN_PFX_LEN);
+              } }
+            emit("    %s = ", _dvn);
             codegen_expr(var_stmt->var.init);
             emit(";\n");
         }
@@ -1342,7 +1373,14 @@ void codegen_program(Program* prog) {
                             is_simple = true;
                         }
                         if (!is_simple) {
-                            emit("    %.*s = ", var_stmt->var.name.length, var_stmt->var.name.start);
+                            // Prefix C-keyword names (registered at file-scope decl).
+                            char _svn[512]; token_to_cstr(_svn, sizeof(_svn), var_stmt->var.name);
+                            { extern int is_c_name_collision(const char*);
+                              if (is_c_name_collision(_svn)) {
+                                  memmove(_svn + WYN_UFN_PFX_LEN, _svn, strlen(_svn) + 1);
+                                  memcpy(_svn, WYN_UFN_PFX, WYN_UFN_PFX_LEN);
+                              } }
+                            emit("    %s = ", _svn);
                             codegen_expr(var_stmt->var.init);
                             emit(";\n");
                         }

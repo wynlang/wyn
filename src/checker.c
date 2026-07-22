@@ -2865,12 +2865,15 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 bool right_ok = (right->kind == TYPE_BOOL || right->kind == TYPE_INT);
                 
                 if (!left_ok || !right_ok) {
-                    fprintf(stderr, "Error at line %d: Boolean operation requires bool or int operands\n", 
+                    fprintf(stderr, "Error at line %d: Boolean operation requires bool or int operands\n",
                             expr->binary.op.line);
                     had_error = true;
                     return NULL;
                 }
-                // Return int (which works as bool in C)
+                // Return int (which works as bool in C). NOTE: the lambda and
+                // predicate runtime ABI (long long (*fn)(...)) depends on this;
+                // var decls storing an and/or result special-case the op to
+                // declare bool (see codegen_stmt.c STMT_VAR EXPR_BINARY).
                 expr->expr_type = builtin_int;
                 return builtin_int;
             }
@@ -2993,7 +2996,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     had_error = true;
                     return NULL;
                 }
-                expr->expr_type = builtin_int;  // Return int (works as bool)
+                expr->expr_type = builtin_int;  // Return int (works as bool; see and/or note above)
                 return builtin_int;
             }
             
@@ -5534,28 +5537,43 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             check_stmt(stmt->while_stmt.body, scope);
             break;
         case STMT_FOR: {
+            // The loop variable (and init/index vars) live in a CHILD scope:
+            // the emitted C declares them inside the for statement, so they do
+            // not exist after the loop. Checking them into the enclosing scope
+            // made a post-loop bare assignment (`for i in 0..3 {...}; i = 0`)
+            // look like an assignment to an existing var - which then referenced
+            // an undeclared C identifier and ICE'd at build. With a child scope
+            // the name is free again after the loop and the bare assignment is
+            // rewritten to a fresh declaration, matching the C scoping.
+            SymbolTable for_scope = {0};
+            for_scope.parent = scope;
+            for_scope.capacity = 8;
+            for_scope.symbols = calloc(8, sizeof(Symbol));
+            for_scope.count = 0;
+
             if (stmt->for_stmt.init) {
-                check_stmt(stmt->for_stmt.init, scope);
+                check_stmt(stmt->for_stmt.init, &for_scope);
             }
-            check_expr(stmt->for_stmt.condition, scope);
-            check_expr(stmt->for_stmt.increment, scope);
-            
+            check_expr(stmt->for_stmt.condition, &for_scope);
+            check_expr(stmt->for_stmt.increment, &for_scope);
+
             // For array iteration, add the loop variable to scope
             if (stmt->for_stmt.array_expr) {
                 // Determine element type from array expression
-                Type* array_type = check_expr(stmt->for_stmt.array_expr, scope);
+                Type* array_type = check_expr(stmt->for_stmt.array_expr, &for_scope);
                 Type* elem_type = builtin_int; // default
                 if (array_type && array_type->kind == TYPE_ARRAY && array_type->array_type.element_type) {
                     elem_type = array_type->array_type.element_type;
                 }
-                add_symbol(scope, stmt->for_stmt.loop_var, elem_type, false);
+                add_symbol(&for_scope, stmt->for_stmt.loop_var, elem_type, false);
                 // Add index variable for indexed iteration: for i, v in arr
                 if (stmt->for_stmt.has_index) {
-                    add_symbol(scope, stmt->for_stmt.index_var, builtin_int, false);
+                    add_symbol(&for_scope, stmt->for_stmt.index_var, builtin_int, false);
                 }
             }
-            
-            check_stmt(stmt->for_stmt.body, scope);
+
+            check_stmt(stmt->for_stmt.body, &for_scope);
+            free(for_scope.symbols);
             break;
         }
         case STMT_FN: {

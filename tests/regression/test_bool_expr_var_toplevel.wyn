@@ -1,0 +1,13 @@
+// EXPECT: true
+// EXPECT: false
+// EXPECT: true
+// Regression: top-level (script mode) var decls have their own type-decision
+// path in codegen_program.c - the same and/or/comparison-result-as-long-long
+// bug lived there too. Keys on the operator, mirroring codegen_stmt.c.
+var a = true
+var b = false
+var c = a and b
+var d = 1 < 2
+println(a)
+println(c)
+println(d)

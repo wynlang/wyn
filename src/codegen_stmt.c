@@ -512,8 +512,14 @@ void codegen_stmt(Stmt* stmt) {
                 } else if (stmt->var.init->type == EXPR_BOOL) {
                     c_type = "bool";
                 } else if (stmt->var.init->type == EXPR_UNARY) {
-                    // Handle unary expressions like -3.5
-                    if (stmt->var.init->unary.operand->type == EXPR_FLOAT) {
+                    // `not <expr>` yields a truth value regardless of operand
+                    // shape - `var z = not (a and b)` declared long long and
+                    // printed 1/0. Same operator-keyed rule as EXPR_BINARY below.
+                    if (stmt->var.init->unary.op.type == TOKEN_NOT ||
+                        stmt->var.init->unary.op.type == TOKEN_BANG) {
+                        c_type = "bool";
+                    } else if (stmt->var.init->unary.operand->type == EXPR_FLOAT) {
+                        // Handle unary expressions like -3.5
                         c_type = "double";
                     } else if (stmt->var.init->unary.operand->type == EXPR_INT) {
                         c_type = "long long";
@@ -1364,6 +1370,21 @@ void codegen_stmt(Stmt* stmt) {
                         }
                     }
                 } else if (stmt->var.init->type == EXPR_BINARY) {
+                    // Logical ops and comparisons yield a truth value: declare the
+                    // var bool so it prints true/false. (The checker types these
+                    // int for C interop / the predicate ABI, so keying on the
+                    // OPERATOR here is the one place the decision can be made -
+                    // `var c = a and b` used to declare long long c and print 1/0.)
+                    WynTokenType _bop = stmt->var.init->binary.op.type;
+                    if (_bop == TOKEN_AND || _bop == TOKEN_OR ||
+                        _bop == TOKEN_AMPAMP || _bop == TOKEN_PIPEPIPE ||
+                        _bop == TOKEN_EQEQ || _bop == TOKEN_BANGEQ ||
+                        _bop == TOKEN_LT || _bop == TOKEN_GT ||
+                        _bop == TOKEN_LTEQ || _bop == TOKEN_GTEQ ||
+                        _bop == TOKEN_IN) {
+                        c_type = "bool";
+                        goto var_type_done;
+                    }
                     // Binary expression - check if it's string concatenation or arithmetic
                     if (stmt->var.init->binary.op.type == TOKEN_PLUS) {
                         // Check if either operand is explicitly a string literal
@@ -1422,14 +1443,11 @@ void codegen_stmt(Stmt* stmt) {
                                 c_type = "bool";
                                 break;
                             case TYPE_STRUCT: {
-                                // Use struct type name (resolve type params to long long)
-                                static char struct_type_buf[128];
-                                Token type_name = stmt->var.init->expr_type->struct_type.name;
-                                token_to_cstr(struct_type_buf, sizeof(struct_type_buf), type_name);
-                                if (type_name.length == 1 && type_name.start[0] >= 'A' && type_name.start[0] <= 'Z')
-                                    c_type = "long long";
-                                else
-                                    c_type = struct_type_buf;
+                                // Shared decision point: resolves un-monomorphized
+                                // type params to long long but keeps real
+                                // one-letter user structs (checks is_known_struct).
+                                const char* _st = codegen_c_type_from_type(stmt->var.init->expr_type);
+                                if (_st) c_type = _st;
                                 break;
                             }
                             case TYPE_ENUM: {
@@ -1469,6 +1487,29 @@ void codegen_stmt(Stmt* stmt) {
                 if (stmt->var.init->expr_type->kind == TYPE_BOOL) c_type = "bool";
                 else if (stmt->var.init->expr_type->kind == TYPE_FLOAT) c_type = "double";
                 else if (stmt->var.init->expr_type->kind == TYPE_STRING) { c_type = "const char*"; is_already_const = true; }
+                else if (stmt->var.init->expr_type->kind == TYPE_STRUCT ||
+                         stmt->var.init->expr_type->kind == TYPE_ENUM) {
+                    // Struct/enum value the per-expr branches above missed (e.g.
+                    // `var q = pt` copying a struct var: the EXPR_IDENT branch
+                    // only knows strings/arrays/tuples). Shared decision point:
+                    // codegen_c_type_from_type keeps real one-letter structs and
+                    // resolves un-monomorphized type params to long long.
+                    const char* _fbt = codegen_c_type_from_type(stmt->var.init->expr_type);
+                    if (_fbt && strcmp(_fbt, "long long") != 0) {
+                        static char _fb_buf[128];
+                        snprintf(_fb_buf, sizeof(_fb_buf), "%s", _fbt);
+                        c_type = _fb_buf;
+                        char _fvn[128]; token_to_cstr(_fvn, sizeof(_fvn), stmt->var.name);
+                        if (stmt->var.init->expr_type->kind == TYPE_ENUM ||
+                            strncmp(_fb_buf, "Option", 6) == 0 || strncmp(_fb_buf, "Result", 6) == 0) {
+                            extern void register_enum_var(const char*, const char*);
+                            register_enum_var(_fvn, _fb_buf);
+                        } else {
+                            extern void register_struct_var(const char*, const char*);
+                            register_struct_var(_fvn, _fb_buf);
+                        }
+                    }
+                }
             }
             
             var_type_done:

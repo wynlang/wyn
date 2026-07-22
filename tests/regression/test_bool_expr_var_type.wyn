@@ -1,0 +1,38 @@
+// EXPECT: false
+// EXPECT: true
+// EXPECT: false
+// EXPECT: true
+// EXPECT: false
+// EXPECT: true
+// EXPECT: true
+// EXPECT: true
+// EXPECT: flag=false
+// Regression: `var c = a and b` declared `long long c` (the checker types
+// and/or/comparisons int for the C ABI), so println(c) printed 1/0 instead of
+// true/false. Var decls now key on the OPERATOR and declare bool for logical
+// ops, comparisons, and `in`. Covers and/or/not, </==, and `in`, in both
+// function bodies and top-level script vars (separate decision points).
+fn main() -> int {
+    var a = true
+    var b = false
+    var c = a and b
+    var d = a or b
+    var e = not a
+    var f = 1 < 2
+    var g = 1 == 2
+    println(c)
+    println(d)
+    println(e)
+    println(f)
+    println(g)
+    var xs = [1, 2, 3]
+    var h = 2 in xs
+    println(h)
+    var i = a and (1 < 2)
+    println(i)
+    var j = not (a and b)
+    println(j)
+    var flag = a and b
+    println("flag=${flag}")
+    return 0
+}

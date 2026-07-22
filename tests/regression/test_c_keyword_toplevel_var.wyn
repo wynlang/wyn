@@ -1,0 +1,12 @@
+// EXPECT: a bb ccc
+// EXPECT: 6
+// Regression: a top-level (script mode) var named after a C keyword emitted
+// invalid C (`const char* long;`) and ICE'd - the file-scope decl and the
+// wyn_main init paths in codegen_program.c never consulted the C-keyword
+// collision list that in-function var decls already use. Both now prefix and
+// register the name.
+words = ["a", "bb", "ccc"]
+long = words.join(" ")
+print(long)
+short = 5
+print(short + 1)
