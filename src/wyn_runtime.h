@@ -4734,14 +4734,15 @@ char* Bcrypt_hash(const char* password) {
         if (f) { fread(b, 1, 16, f); fclose(f); } else { srand(time(NULL)); for (int i=0;i<16;i++) b[i]=rand()&0xFF; }
         for (int i=0;i<16;i++) snprintf(salt+i*2, 3, "%02x", b[i]); salt[32]='\0';
     }
-    char* cur = strdup(password);
+    // Crypto_hmac_sha256 returns RC-managed strings: release, never free().
+    char* cur = wyn_strdup(password);
     for (int r = 0; r < 10; r++) {
         char* h = Crypto_hmac_sha256(salt, cur);
-        free(cur); cur = h;
+        wyn_rc_release(cur); cur = h;
     }
     char* result = wyn_malloc(256);
     snprintf(result, 256, "$wyn$10$%s$%s", salt, cur);
-    free(cur);
+    wyn_rc_release(cur);
     return result;
 }
 bool Bcrypt_verify(const char* password, const char* hash) {
@@ -4753,13 +4754,13 @@ bool Bcrypt_verify(const char* password, const char* hash) {
     char salt[64] = {0}; int si = 0;
     while (*p && *p != '$' && si < 63) salt[si++] = *p++;
     if (*p != '$') return false; p++;
-    char* cur = strdup(password);
+    char* cur = wyn_strdup(password);
     for (int r = 0; r < rounds; r++) {
         char* h = Crypto_hmac_sha256(salt, cur);
-        free(cur); cur = h;
+        wyn_rc_release(cur); cur = h;
     }
     bool match = (strcmp(cur, p) == 0);
-    free(cur);
+    wyn_rc_release(cur);
     return match;
 }
 
