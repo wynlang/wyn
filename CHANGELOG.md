@@ -5,6 +5,19 @@
 Correctness release: compiler limits removed, lambdas fully typed, real
 crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C.
 
+- **`pub` visibility is now enforced** (breaking): calling a module
+  function that is not marked `pub` (or `export`) from outside its module
+  is a check-time error. Previously the keyword was accepted but ignored -
+  every module function was callable from anywhere. The error tells you
+  the exact fix:
+  `function 'whisper' in module 'dep' is private` /
+  `Help: Add 'pub' to 'fn whisper' in dep.wyn to export it.`
+  Enforced for dot calls (`m.f()`), qualified calls (`m::f()`), aliased
+  imports (`import m as x`), and selective imports
+  (`import { f } from m`). Same-module calls, main-file functions,
+  stdlib namespaces (Math, File, ...), and C packages are unaffected.
+  Struct and enum `pub` markers are still parsed but not yet enforced
+  (types are not namespaced per module yet).
 - **Real SHA-256 and HMAC-SHA256**: `Crypto.sha256` previously used a
   non-standard stand-in hash and `Crypto.hmac_sha256` shelled out to
   openssl with the secret key on the command line. Both are now real,

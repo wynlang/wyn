@@ -217,6 +217,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_user_test_runner_test.sh
 	@echo "=== Running module-codegen (M1-M4) test ==="
 	@WYN=./wyn bash tests/errors/run_module_codegen_test.sh
+	@echo "=== Running pub-visibility enforcement test ==="
+	@WYN=./wyn bash tests/errors/run_pub_visibility_test.sh
 	@echo "=== Running pkg search test ==="
 	@WYN=./wyn bash tests/errors/run_search_test.sh
 	@echo "=== Running scaffold (wyn new) test ==="

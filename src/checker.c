@@ -146,16 +146,6 @@ static Type* current_self_type = NULL; // receiver type for extension methods
 // Module visibility tracking
 static char current_module_name[256] = "";
 
-typedef struct {
-    char module_name[128];
-    char function_name[128];
-    bool is_public;
-} FunctionVisibility;
-
-static FunctionVisibility* function_registry = NULL;
-static int function_registry_count = 0;
-static int function_registry_cap = 0;
-
 // Module collision tracking
 typedef struct {
     char short_name[128];
@@ -224,31 +214,113 @@ static bool is_ambiguous_module(const char* name, char* first_path, int* first_l
     return false;
 }
 
-static void register_function_visibility(const char* module, const char* func, bool is_public) {
-    WYN_ENSURE_CAP(function_registry, function_registry_count, function_registry_cap);
-    memset(&function_registry[function_registry_count], 0, sizeof(FunctionVisibility));
-    strncpy(function_registry[function_registry_count].module_name, module, 127);
-    strncpy(function_registry[function_registry_count].function_name, func, 127);
-    function_registry[function_registry_count].is_public = is_public;
-    function_registry_count++;
+// --- pub visibility enforcement (2026-07) ---------------------------------
+// `pub` is real: a module function without `pub` (or `export`) cannot be
+// called from outside its module. Visibility is answered straight from the
+// parsed module AST in the module registry - no side registry to populate,
+// so it cannot go stale or miss the normal import path (the old
+// FunctionVisibility table was only filled while checking module bodies and
+// never consulted for dot calls, so everything slipped through).
+
+// Find a loaded module's AST by its registry name, or by short name
+// (last path segment, e.g. "utils" for "lib/utils").
+static Program* find_module_ast(const char* name) {
+    extern Program* get_module(const char* name);
+    extern int get_module_count(void);
+    extern void* get_module_entry_at(int index);
+    Program* m = get_module(name);
+    if (m) return m;
+    int mc = get_module_count();
+    for (int i = 0; i < mc; i++) {
+        typedef struct { char* name; Program* ast; } ME;
+        ME* e = (ME*)get_module_entry_at(i);
+        if (!e) continue;
+        const char* slash = strrchr(e->name, '/');
+        const char* short_name = slash ? slash + 1 : e->name;
+        if (strcmp(short_name, name) == 0) return e->ast;
+    }
+    return NULL;
+}
+
+typedef enum {
+    VIS_MODULE_UNKNOWN,  // module not in registry (builtin/C package) - no check
+    VIS_FN_UNKNOWN,      // module found but no such fn - other paths report it
+    VIS_PRIVATE,
+    VIS_PUBLIC
+} FnVisibility;
+
+static FnVisibility module_fn_visibility(const char* module_name, const char* fn_name) {
+    Program* m = find_module_ast(module_name);
+    if (!m) return VIS_MODULE_UNKNOWN;
+    bool found = false;
+    size_t fn_len = strlen(fn_name);
+    for (int i = 0; i < m->count; i++) {
+        Stmt* s = m->stmts[i];
+        if (!s) continue;
+        bool exported = false;
+        if (s->type == STMT_EXPORT && s->export.stmt) {
+            exported = true;  // `export fn` exports, same as `pub fn`
+            s = s->export.stmt;
+        }
+        if (s->type != STMT_FN) continue;
+        if ((size_t)s->fn.name.length == fn_len &&
+            memcmp(s->fn.name.start, fn_name, fn_len) == 0) {
+            found = true;
+            // Overloads: if any definition is exported, the name is callable.
+            if (exported || s->fn.is_public) return VIS_PUBLIC;
+        }
+    }
+    return found ? VIS_PRIVATE : VIS_FN_UNKNOWN;
+}
+
+// Is the checker currently inside `target` (module calling its own fns)?
+static bool checking_same_module(const char* target) {
+    if (current_module_name[0] == '\0') return false;
+    if (strcmp(current_module_name, target) == 0) return true;
+    // Registry names are full paths ("lib/utils"); calls use short names.
+    const char* slash = strrchr(current_module_name, '/');
+    const char* cur_short = slash ? slash + 1 : current_module_name;
+    if (strcmp(cur_short, target) == 0) return true;
+    const char* tslash = strrchr(target, '/');
+    if (tslash && strcmp(tslash + 1, cur_short) == 0) return true;
+    return false;
+}
+
+static void private_fn_error(int line, const char* fn_name, const char* module_name) {
+    fprintf(stderr, "\nError at line %d: function '%s' in module '%s' is private\n",
+            line, fn_name, module_name);
+    if (current_module_name[0] == '\0') show_source_line(line);
+    // File hint: prefer the registry's full path ("lib/utils" for a call
+    // through the short name "utils") so the Help points at the real file.
+    const char* file_hint = module_name;
+    {
+        extern int get_module_count(void);
+        extern void* get_module_entry_at(int index);
+        extern Program* get_module(const char* name);
+        if (!get_module(module_name)) {
+            int mc = get_module_count();
+            for (int i = 0; i < mc; i++) {
+                typedef struct { char* name; Program* ast; } ME;
+                ME* e = (ME*)get_module_entry_at(i);
+                if (!e) continue;
+                const char* slash = strrchr(e->name, '/');
+                if (slash && strcmp(slash + 1, module_name) == 0) { file_hint = e->name; break; }
+            }
+        }
+    }
+    fprintf(stderr, "  \033[34mHelp:\033[0m Add 'pub' to 'fn %s' in %s.wyn to export it.\n",
+            fn_name, file_hint);
+    had_error = true;
 }
 
 static bool check_function_visibility(const char* module, const char* func) {
-    // If calling from same module, always allowed
-    if (strcmp(current_module_name, module) == 0) {
+    // Calls from inside the same module are always allowed
+    if (checking_same_module(module)) {
         return true;
     }
-    
-    // Check if function is public
-    for (int i = 0; i < function_registry_count; i++) {
-        if (strcmp(function_registry[i].module_name, module) == 0 &&
-            strcmp(function_registry[i].function_name, func) == 0) {
-            return function_registry[i].is_public;
-        }
-    }
-    
-    // Not found - assume public for backwards compatibility
-    return true;
+    // Unknown modules and unknown fns stay permissive - builtin namespaces
+    // and C packages are resolved elsewhere.
+    return module_fn_visibility(module, func) != VIS_PRIVATE;
 }
 
 static void print_type_name(Type* type) {
@@ -3533,10 +3605,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                     
                     if (!check_function_visibility(qual_module, qual_func)) {
-                        fprintf(stderr, "Error at line %d: Function '%s' in module '%s' is private\n",
-                                expr->call.callee->token.line, qual_func, qual_module);
-                        fprintf(stderr, "  Note: Only 'pub' functions can be called from outside the module\n");
-                        had_error = true;
+                        private_fn_error(expr->call.callee->token.line, qual_func, qual_module);
                         free(arg_types);
                         return builtin_int;
                     }
@@ -3892,6 +3961,20 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                 }
                 if (is_known_module) {
+                    // pub enforcement: a dot call into a user module (`m.f()`)
+                    // must target a `pub fn` (or `export fn`). Builtin
+                    // namespaces and C packages are not in the module registry
+                    // and stay permissive. An import registers the module name
+                    // itself as an int-typed placeholder symbol, so a REAL
+                    // variable shadowing the module name is recognized by its
+                    // non-int object type and skips the namespace rule.
+                    if ((!object_type || object_type->kind == TYPE_INT) &&
+                        !checking_same_module(obj_name) &&
+                        module_fn_visibility(obj_name, method_name) == VIS_PRIVATE) {
+                        private_fn_error(method.line, method_name, obj_name);
+                        expr->expr_type = builtin_int;
+                        return builtin_int;
+                    }
                     char ns_method[256];
                     snprintf(ns_method, sizeof(ns_method), "%s_%s", obj_name, method_name);
                     Token ns_tok = {TOKEN_IDENT, ns_method, (int)strlen(ns_method), 0};
@@ -7046,8 +7129,22 @@ void check_program(Program* prog) {
                             }
                         }
                     }
+                } else {
+                    // Selective import: `import { f } from m` may only name
+                    // pub/export fns. Same rule as qualified calls.
+                    char sel_module[256];
+                    token_to_cstr(sel_module, sizeof(sel_module), import->module);
+                    if (!checking_same_module(sel_module)) {
+                        for (int j = 0; j < import->item_count; j++) {
+                            char item_name[128];
+                            token_to_cstr(item_name, sizeof(item_name), import->items[j]);
+                            if (module_fn_visibility(sel_module, item_name) == VIS_PRIVATE) {
+                                private_fn_error(import->module.line, item_name, sel_module);
+                            }
+                        }
+                    }
                 }
-                
+
                 // Merge exported functions into current program for codegen
                 // Symbols are already registered by check_all_modules
                 merge_module_exports(module, prog, import);
@@ -7589,13 +7686,6 @@ void check_program(Program* prog) {
                         fn->return_type = rt;
                     }
                 }
-            }
-            
-            // Register function visibility if in a module
-            if (current_module_name[0] != '\0') {
-                char func_name[128];
-                token_to_cstr(func_name, sizeof(func_name), fn->name);
-                register_function_visibility(current_module_name, func_name, fn->is_public);
             }
             
             // Set self type for extension methods
