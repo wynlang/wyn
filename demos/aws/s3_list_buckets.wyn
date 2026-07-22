@@ -1,0 +1,35 @@
+// S3 ListBuckets - "aws s3 ls" in pure Wyn.
+//
+// Run with credentials in the environment:
+//   eval "$(aws configure export-credentials --profile primary1 --format env)"
+//   wyn run demos/aws/s3_list_buckets.wyn
+import sigv4
+import transport
+
+fn main() -> int {
+    if Env.get("AWS_ACCESS_KEY_ID").len() == 0 {
+        println("error: AWS_ACCESS_KEY_ID not set")
+        return 1
+    }
+    var cfg = sigv4.curl_config("GET", "s3.amazonaws.com", "/", "", "us-east-1", "s3", "")
+    var body = transport.request(cfg)
+    if body.index_of("<ListAllMyBucketsResult") < 0 {
+        println("request failed:")
+        println(body)
+        return 1
+    }
+    var count = 0
+    var rest = body
+    while true {
+        var name = transport.xml_text(rest, "Name")
+        if name.len() == 0 {
+            break
+        }
+        println(name)
+        count = count + 1
+        var pos = rest.index_of("</Name>")
+        rest = rest.substring(pos + 7, rest.len())
+    }
+    println("${count} buckets")
+    return 0
+}
