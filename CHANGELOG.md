@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.20.0 (2026-07-22)
+## v1.20.0 (unreleased)
 
 Correctness release: compiler limits removed, lambdas fully typed, and a
 snapshot suite guarding the generated C.
