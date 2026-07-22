@@ -60,6 +60,7 @@ jobs:
       #   runtime/libwyn_rt.a
       #   vendor/minicoro/
       #   VERSION
+      #   LICENSE
       # The old packaging had wyn at the tarball ROOT (install.sh expected
       # bin/), nested sources at src/src/ (cp -r src dist/src copies INTO an
       # existing dir), and no VERSION - so no released binary ever worked.
@@ -70,6 +71,7 @@ jobs:
           cp wyn dist/bin/
           cp -r src dist/
           cp VERSION dist/
+          cp LICENSE dist/
           [ -d vendor/minicoro ] && cp -r vendor/minicoro dist/vendor/
           make runtime
           cp runtime/libwyn_rt.a dist/runtime/
@@ -83,6 +85,7 @@ jobs:
           test -f /tmp/verify/src/wyn_runtime.h
           test -f /tmp/verify/runtime/libwyn_rt.a
           test -f /tmp/verify/VERSION
+          test -f /tmp/verify/LICENSE
           # The INSTALLED binary must compile and run hello world from a
           # foreign cwd - this exact path was broken in every prior release.
           cd /tmp && echo 'fn main() { println("install-ok") }' > hello.wyn
@@ -97,6 +100,7 @@ jobs:
           copy wyn.exe dist\bin\
           xcopy /E /I src dist\src
           copy VERSION dist\
+          copy LICENSE dist\
           Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip
         shell: pwsh
 
