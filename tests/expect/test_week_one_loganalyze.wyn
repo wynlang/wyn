@@ -1,0 +1,51 @@
+// Week-one stdlib, realistic composition (FLOWY_DESIGN north-star shape):
+// File.read_lines -> parse structs -> filter -> group_by -> max_by, plus
+// flatten and map.get(k, default).
+// EXPECT: errors: 3
+// EXPECT: hosts: 2
+// EXPECT: slowest: h1
+// EXPECT: h1: 2
+// EXPECT: [1, 2, 3, 4, 5]
+// EXPECT: missing: 0
+
+struct Entry { host: string, status: int, ms: float }
+
+fn parse_line(line: string) -> Entry {
+    parts = line.split(" ")
+    return Entry {
+        host: parts[0],
+        status: parts[1].to_int(),
+        ms: parts[2].to_float(),
+    }
+}
+
+fn main() -> int {
+    File.write("/tmp/wyn_week_one_log.txt", "h1 500 12.5\nh2 200 3.0\nh1 503 44.0\nh2 500 9.1\n")
+
+    var entries = []
+    for line in File.read_lines("/tmp/wyn_week_one_log.txt") {
+        entries.push(parse_line(line))
+    }
+
+    var errors = entries.filter((e) => e.status >= 500)
+    println("errors: " + errors.len().to_string())
+
+    var by_host = errors.group_by((e) => e.host)
+    println("hosts: " + by_host.len().to_string())
+
+    var slowest = errors.max_by((e) => e.ms)
+    println("slowest: " + slowest.host)
+
+    var h1 = by_host["h1"]
+    println("h1: " + h1.len().to_string())
+
+    // flatten: [[int]] -> [int]
+    var nested = [[1, 2], [3], [4, 5]]
+    println(nested.flatten())
+
+    // map.get(key, default): missing key yields the default (was FLOWY F1)
+    var counts = {"a": 5}
+    println("missing: " + counts.get("zz", 0).to_string())
+
+    return 0
+}

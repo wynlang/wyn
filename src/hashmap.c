@@ -125,6 +125,29 @@ void hashmap_insert_bool(WynHashMap* map, const char* key, int value) {
     map->buckets[idx] = new_entry;
 }
 
+void hashmap_insert_ptr(WynHashMap* map, const char* key, void* value) {
+    if (!map || !key) return;
+
+    unsigned int idx = hash(key);
+    Entry* entry = map->buckets[idx];
+
+    while (entry) {
+        if (strcmp(entry->key, key) == 0) {
+            entry->value.type = HASHMAP_PTR;
+            entry->value.value.as_ptr = value;
+            return;
+        }
+        entry = entry->next;
+    }
+
+    Entry* new_entry = malloc(sizeof(Entry));
+    new_entry->key = strdup(key);
+    new_entry->value.type = HASHMAP_PTR;
+    new_entry->value.value.as_ptr = value;
+    new_entry->next = map->buckets[idx];
+    map->buckets[idx] = new_entry;
+}
+
 HashMapValue hashmap_get(WynHashMap* map, const char* key) {
     if (!map || !key) {
         HashMapValue default_val;
@@ -180,6 +203,14 @@ int hashmap_get_bool(WynHashMap* map, const char* key) {
         return val.value.as_bool;
     }
     return 0;
+}
+
+void* hashmap_get_ptr(WynHashMap* map, const char* key) {
+    HashMapValue val = hashmap_get(map, key);
+    if (val.type == HASHMAP_PTR) {
+        return val.value.as_ptr;
+    }
+    return NULL;
 }
 
 bool hashmap_has(WynHashMap* map, const char* key) {

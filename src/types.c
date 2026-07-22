@@ -148,6 +148,11 @@ static const MethodSignature method_signatures[] = {
     {"array", "index_of", "int", 1},
     {"array", "reverse", "void", 0},   // Mutates in place
     {"array", "sort", "void", 0},      // Mutates in place
+    {"array", "sorted", "array", 0},   // Non-mutating sorted copy (Python sorted)
+    {"array", "sort_by", "array", 1},  // sort_by(key_fn) - sorted by key, monomorphized
+    {"array", "max_by", "int", 1},     // max_by(key_fn) -> element (type depends on array)
+    {"array", "min_by", "int", 1},     // min_by(key_fn) -> element (type depends on array)
+    {"array", "group_by", "map", 1},   // group_by(key_fn) -> map of key -> [elements]
     {"array", "first", "int", 0},      // Returns first element
     {"array", "last", "int", 0},       // Returns last element
     {"array", "count", "int", 1},      // Count occurrences of value

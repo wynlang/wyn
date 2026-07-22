@@ -6,6 +6,20 @@
 // non-literal value (e.g. `{k: someStringVar}`) inserts with the right function
 // instead of silently defaulting to int. Shared by all three map-store sites
 // (.set/.insert, map literal, m[k]=v) so they can't drift apart. Default int.
+// True if the program defines a user function with this token's name - the
+// str/int/float/sorted builtin call paths must yield to a user definition.
+static bool user_fn_defined(Token name) {
+    extern Program* current_program;
+    if (!current_program) return false;
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* s = current_program->stmts[i];
+        Stmt* fs = (s->type == STMT_EXPORT && s->export.stmt) ? s->export.stmt : s;
+        if (fs->type == STMT_FN && fs->fn.name.length == name.length &&
+            memcmp(fs->fn.name.start, name.start, name.length) == 0) return true;
+    }
+    return false;
+}
+
 static const char* hashmap_insert_fn_for(Expr* value_expr) {
     if (!value_expr) return "hashmap_insert_int";
     if (value_expr->type == EXPR_STRING) return "hashmap_insert_string";
@@ -1481,6 +1495,49 @@ void codegen_expr(Expr* expr) {
                     codegen_expr(expr->call.args[0]);
                     emit(")");
                 }
+            } else if (expr->call.callee->type == EXPR_IDENT &&
+                       expr->call.callee->token.length == 3 &&
+                       memcmp(expr->call.callee->token.start, "str", 3) == 0 &&
+                       expr->call.arg_count == 1 &&
+                       !user_fn_defined(expr->call.callee->token)) {
+                // str(x) builtin - route through the to_string _Generic macro so
+                // int/float/bool/string/array all stringify uniformly. A user fn
+                // named str takes the normal call path instead.
+                emit("to_string(");
+                codegen_expr(expr->call.args[0]);
+                emit(")");
+            } else if (expr->call.callee->type == EXPR_IDENT &&
+                       ((expr->call.callee->token.length == 3 &&
+                         memcmp(expr->call.callee->token.start, "int", 3) == 0) ||
+                        (expr->call.callee->token.length == 5 &&
+                         memcmp(expr->call.callee->token.start, "float", 5) == 0)) &&
+                       expr->call.arg_count == 1 &&
+                       !user_fn_defined(expr->call.callee->token)) {
+                // int(x) / float(x) conversion builtins. Strings parse
+                // (str_to_int/str_to_float); numerics cast.
+                bool _to_int = expr->call.callee->token.length == 3;
+                Expr* _cv = expr->call.args[0];
+                bool _from_str = _cv->type == EXPR_STRING ||
+                                 (_cv->expr_type && _cv->expr_type->kind == TYPE_STRING);
+                if (_from_str) {
+                    emit(_to_int ? "str_to_int(" : "str_to_float(");
+                    codegen_expr(_cv);
+                    emit(")");
+                } else {
+                    emit(_to_int ? "((long long)(" : "((double)(");
+                    codegen_expr(_cv);
+                    emit("))");
+                }
+            } else if (expr->call.callee->type == EXPR_IDENT &&
+                       expr->call.callee->token.length == 6 &&
+                       memcmp(expr->call.callee->token.start, "sorted", 6) == 0 &&
+                       expr->call.arg_count == 1 &&
+                       !user_fn_defined(expr->call.callee->token)) {
+                // sorted(xs) builtin - non-mutating sorted copy (Python sorted).
+                // A user fn named sorted takes the normal call path instead.
+                emit("array_sorted(");
+                codegen_expr(expr->call.args[0]);
+                emit(")");
             } else {
                 // Check for special functions that need address-taking
                 bool is_array_push = (expr->call.callee->type == EXPR_IDENT && 
@@ -2437,13 +2494,17 @@ void codegen_expr(Expr* expr) {
                 }
                 // arr.sort() -> arr_sort(arr.data, arr.count) (in-place)
                 if (method.length == 4 && memcmp(method.start, "sort", 4) == 0 && expr->method_call.arg_count == 0) {
-                    // Check if array contains strings
+                    // Element kind decides the comparator: strings via strcmp,
+                    // floats via double compare (the int introsort misorders
+                    // negative doubles - IEEE sign bit), everything else int.
                     bool _is_str_arr = false;
+                    bool _is_float_arr = false;
                     Expr* _sobj = expr->method_call.object;
                     if (_sobj->expr_type && _sobj->expr_type->kind == TYPE_ARRAY &&
-                        _sobj->expr_type->array_type.element_type &&
-                        _sobj->expr_type->array_type.element_type->kind == TYPE_STRING) {
-                        _is_str_arr = true;
+                        _sobj->expr_type->array_type.element_type) {
+                        TypeKind _ek = _sobj->expr_type->array_type.element_type->kind;
+                        if (_ek == TYPE_STRING) _is_str_arr = true;
+                        else if (_ek == TYPE_FLOAT) _is_float_arr = true;
                     }
                     // Also check if it's a known string array variable
                     if (!_is_str_arr && _sobj->type == EXPR_IDENT) {
@@ -2456,15 +2517,93 @@ void codegen_expr(Expr* expr) {
                     // Emitting the void `array_sort(&xs)` alone made `.sort()` unusable
                     // as a value ("incompatible type 'void'") - a regression that broke
                     // the project's own test_array_ops / test_showcase. (2026-07)
-                    emit(_is_str_arr ? "({ array_sort_str(&(" : "({ array_sort(&(");
+                    emit(_is_str_arr ? "({ array_sort_str(&("
+                         : _is_float_arr ? "({ array_sort_float(&("
+                         : "({ array_sort(&(");
                     codegen_expr(expr->method_call.object);
                     emit(")); ");
                     codegen_expr(expr->method_call.object);
                     emit("; })");
                     goto method_done;
                 }
-                // arr.sort_by(cmp_fn) -> wyn_array_sort_by(&arr, cmp_fn)
+                // arr.sorted() -> array_sorted(arr): non-mutating copy (Python
+                // sorted). Runtime dispatches on the element tag.
+                if (method.length == 6 && memcmp(method.start, "sorted", 6) == 0 && expr->method_call.arg_count == 0) {
+                    emit("array_sorted(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                    break;
+                }
+                // arr.sort_by(...): two forms.
+                //   1. key-fn lambda (Python sorted(key=), Kotlin sortedBy):
+                //      xs.sort_by((p) => p.age) - monomorphized inline insertion
+                //      sort, key type from the lambda's return type. No void*
+                //      boxing: params/returns keep their native C ABI.
+                //   2. legacy 2-arg comparator fn name: xs.sort_by(cmp) where
+                //      fn cmp(a, b) - kept for back-compat (wyn_array_sort_by).
                 if (method.length == 7 && memcmp(method.start, "sort_by", 7) == 0 && expr->method_call.arg_count == 1) {
+                    Expr* _kf = expr->method_call.args[0];
+                    bool _is_keyfn = _kf->type == EXPR_LAMBDA && _kf->lambda.param_count == 1;
+                    if (!_is_keyfn && _kf->expr_type && _kf->expr_type->kind == TYPE_FUNCTION &&
+                        _kf->expr_type->fn_type.param_count == 1)
+                        _is_keyfn = true;
+                    if (_is_keyfn) {
+                        Type* _elem_t = object_type->array_type.element_type;
+                        char _ec[128]; const char* _ecp = _elem_t ? codegen_c_type_from_type(_elem_t) : NULL;
+                        snprintf(_ec, sizeof(_ec), "%s", _ecp ? _ecp : "long long");
+                        Type* _kret = NULL;
+                        if (_kf->expr_type && _kf->expr_type->kind == TYPE_FUNCTION)
+                            _kret = _kf->expr_type->fn_type.return_type;
+                        char _kc[128]; const char* _kcp = _kret ? codegen_c_type_from_type(_kret) : NULL;
+                        snprintf(_kc, sizeof(_kc), "%s", _kcp ? _kcp : "long long");
+                        bool _key_is_str = _kret && _kret->kind == TYPE_STRING;
+                        bool _elem_is_struct = _elem_t && _elem_t->kind == TYPE_STRUCT;
+                        // __get/__cmp are picked per element/key kind; the sort is a
+                        // stable insertion sort over the WynValue slots (keys are
+                        // recomputed per comparison - arrays are small, and this
+                        // avoids a parallel key buffer).
+                        // A named var sorts in place (like .sort()); any other
+                        // receiver (literal, chain result) is not an lvalue, so
+                        // sort a temp copy and yield it.
+                        bool _sb_lvalue = expr->method_call.object->type == EXPR_IDENT;
+                        if (_sb_lvalue) {
+                            emit("({ WynArray* __sa = &(");
+                            codegen_expr(expr->method_call.object);
+                            emit("); ");
+                        } else {
+                            emit("({ WynArray __sc = ");
+                            codegen_expr(expr->method_call.object);
+                            emit("; WynArray* __sa = &__sc; ");
+                        }
+                        emit("%s (*__key)(%s) = ", _kc, _ec);
+                        codegen_expr(_kf);
+                        emit("; for (int __i = 1; __i < __sa->count; __i++) { WynValue __tmp = __sa->data[__i]; int __j = __i - 1; ");
+                        if (_elem_is_struct) {
+                            emit("%s __kv = __key(*(%s*)__tmp.data.struct_val); ", _kc, _ec);
+                        } else if (_elem_t && _elem_t->kind == TYPE_STRING) {
+                            emit("%s __kv = __key(__tmp.data.string_val); ", _kc);
+                        } else if (_elem_t && _elem_t->kind == TYPE_FLOAT) {
+                            emit("%s __kv = __key(__tmp.data.float_val); ", _kc);
+                        } else {
+                            emit("%s __kv = __key(__tmp.data.int_val); ", _kc);
+                        }
+                        const char* _slot =
+                            _elem_is_struct ? "*(%s*)__sa->data[__j].data.struct_val"
+                            : (_elem_t && _elem_t->kind == TYPE_STRING) ? "__sa->data[__j].data.string_val"
+                            : (_elem_t && _elem_t->kind == TYPE_FLOAT) ? "__sa->data[__j].data.float_val"
+                            : "__sa->data[__j].data.int_val";
+                        char _slotbuf[256];
+                        if (_elem_is_struct) snprintf(_slotbuf, sizeof(_slotbuf), _slot, _ec);
+                        else snprintf(_slotbuf, sizeof(_slotbuf), "%s", _slot);
+                        if (_key_is_str) {
+                            emit("while (__j >= 0 && strcmp(__key(%s), __kv) > 0) { __sa->data[__j + 1] = __sa->data[__j]; __j--; } ", _slotbuf);
+                        } else {
+                            emit("while (__j >= 0 && __key(%s) > __kv) { __sa->data[__j + 1] = __sa->data[__j]; __j--; } ", _slotbuf);
+                        }
+                        emit("__sa->data[__j + 1] = __tmp; } *__sa; })");
+                        break;
+                    }
+                    // Legacy comparator form: sort_by(cmp(a, b))
                     emit("({ wyn_array_sort_by(&(");
                     codegen_expr(expr->method_call.object);
                     emit("), ");
@@ -2472,6 +2611,95 @@ void codegen_expr(Expr* expr) {
                     emit("); ");
                     codegen_expr(expr->method_call.object);
                     emit("; })");
+                    break;
+                }
+                // arr.max_by(f) / arr.min_by(f): element with the largest /
+                // smallest key (Kotlin maxBy, Rust max_by_key). Monomorphized
+                // inline loop - key fn keeps its native ABI, result is the
+                // element itself. Empty array yields the zero element.
+                if (method.length == 6 &&
+                    (memcmp(method.start, "max_by", 6) == 0 || memcmp(method.start, "min_by", 6) == 0) &&
+                    expr->method_call.arg_count == 1) {
+                    bool _is_max = memcmp(method.start, "max_by", 6) == 0;
+                    Type* _elem_t = object_type->array_type.element_type;
+                    char _ec[128]; const char* _ecp = _elem_t ? codegen_c_type_from_type(_elem_t) : NULL;
+                    snprintf(_ec, sizeof(_ec), "%s", _ecp ? _ecp : "long long");
+                    Expr* _kf = expr->method_call.args[0];
+                    Type* _kret = NULL;
+                    if (_kf->expr_type && _kf->expr_type->kind == TYPE_FUNCTION)
+                        _kret = _kf->expr_type->fn_type.return_type;
+                    char _kc[128]; const char* _kcp = _kret ? codegen_c_type_from_type(_kret) : NULL;
+                    snprintf(_kc, sizeof(_kc), "%s", _kcp ? _kcp : "long long");
+                    bool _key_is_str = _kret && _kret->kind == TYPE_STRING;
+                    const char* _getexpr =
+                        (_elem_t && _elem_t->kind == TYPE_STRUCT) ? "(*(%s*)__ma.data[__i].data.struct_val)"
+                        : (_elem_t && _elem_t->kind == TYPE_STRING) ? "__ma.data[__i].data.string_val"
+                        : (_elem_t && _elem_t->kind == TYPE_FLOAT) ? "__ma.data[__i].data.float_val"
+                        : "__ma.data[__i].data.int_val";
+                    char _getbuf[256];
+                    if (_elem_t && _elem_t->kind == TYPE_STRUCT) snprintf(_getbuf, sizeof(_getbuf), _getexpr, _ec);
+                    else snprintf(_getbuf, sizeof(_getbuf), "%s", _getexpr);
+                    emit("({ WynArray __ma = ");
+                    codegen_expr(expr->method_call.object);
+                    emit("; %s (*__key)(%s) = ", _kc, _ec);
+                    codegen_expr(_kf);
+                    emit("; %s __best = (%s){0}; ", _ec, _ec);
+                    emit("if (__ma.count > 0) { int __i = 0; __best = %s; %s __bk = __key(__best); ", _getbuf, _kc);
+                    emit("for (__i = 1; __i < __ma.count; __i++) { %s __cand = %s; %s __ck = __key(__cand); ", _ec, _getbuf, _kc);
+                    if (_key_is_str) {
+                        emit("if (strcmp(__ck, __bk) %s 0) { __best = __cand; __bk = __ck; } ", _is_max ? ">" : "<");
+                    } else {
+                        emit("if (__ck %s __bk) { __best = __cand; __bk = __ck; } ", _is_max ? ">" : "<");
+                    }
+                    emit("} } __best; })");
+                    break;
+                }
+                // arr.group_by(f) -> WynHashMap* of key -> [elements] (Kotlin
+                // groupBy). Keys: string directly; int keys stringified. Values
+                // are heap WynArray* buckets (hashmap_group_slot), read back via
+                // hashmap_get_array on the m[k] / for k, v paths.
+                if (method.length == 8 && memcmp(method.start, "group_by", 8) == 0 &&
+                    expr->method_call.arg_count == 1) {
+                    Type* _elem_t = object_type->array_type.element_type;
+                    char _ec[128]; const char* _ecp = _elem_t ? codegen_c_type_from_type(_elem_t) : NULL;
+                    snprintf(_ec, sizeof(_ec), "%s", _ecp ? _ecp : "long long");
+                    Expr* _kf = expr->method_call.args[0];
+                    Type* _kret = NULL;
+                    if (_kf->expr_type && _kf->expr_type->kind == TYPE_FUNCTION)
+                        _kret = _kf->expr_type->fn_type.return_type;
+                    char _kc[128]; const char* _kcp = _kret ? codegen_c_type_from_type(_kret) : NULL;
+                    snprintf(_kc, sizeof(_kc), "%s", _kcp ? _kcp : "long long");
+                    bool _key_is_str = _kret && _kret->kind == TYPE_STRING;
+                    const char* _getexpr =
+                        (_elem_t && _elem_t->kind == TYPE_STRUCT) ? "(*(%s*)__ga.data[__i].data.struct_val)"
+                        : (_elem_t && _elem_t->kind == TYPE_STRING) ? "__ga.data[__i].data.string_val"
+                        : (_elem_t && _elem_t->kind == TYPE_FLOAT) ? "__ga.data[__i].data.float_val"
+                        : "__ga.data[__i].data.int_val";
+                    char _getbuf[256];
+                    if (_elem_t && _elem_t->kind == TYPE_STRUCT) snprintf(_getbuf, sizeof(_getbuf), _getexpr, _ec);
+                    else snprintf(_getbuf, sizeof(_getbuf), "%s", _getexpr);
+                    emit("({ WynArray __ga = ");
+                    codegen_expr(expr->method_call.object);
+                    emit("; %s (*__key)(%s) = ", _kc, _ec);
+                    codegen_expr(_kf);
+                    emit("; WynHashMap* __gm = hashmap_new(); ");
+                    emit("for (int __i = 0; __i < __ga.count; __i++) { %s __el = %s; ", _ec, _getbuf);
+                    if (_key_is_str) {
+                        emit("const char* __k = __key(__el); ");
+                    } else {
+                        emit("char __kbuf[32]; snprintf(__kbuf, sizeof(__kbuf), \"%%lld\", (long long)__key(__el)); const char* __k = __kbuf; ");
+                    }
+                    emit("WynArray* __slot = hashmap_group_slot(__gm, __k); ");
+                    if (_elem_t && _elem_t->kind == TYPE_STRUCT) {
+                        emit("array_push_struct(__slot, __el, %s); ", _ec);
+                    } else if (_elem_t && _elem_t->kind == TYPE_STRING) {
+                        emit("array_push_str(__slot, wyn_strdup(__el)); ");
+                    } else if (_elem_t && _elem_t->kind == TYPE_FLOAT) {
+                        emit("array_push_float(__slot, __el); ");
+                    } else {
+                        emit("array_push_int(__slot, __el); ");
+                    }
+                    emit("} __gm; })");
                     break;
                 }
                 // arr.contains(val)
@@ -2542,6 +2770,10 @@ void codegen_expr(Expr* expr) {
                 // arr.unique()
                 if (method.length == 6 && memcmp(method.start, "unique", 6) == 0 && expr->method_call.arg_count == 0) {
                     emit("array_unique_int("); codegen_expr(expr->method_call.object); emit(")"); break;
+                }
+                // arr.flatten(): [[T]] -> [T]
+                if (method.length == 7 && memcmp(method.start, "flatten", 7) == 0 && expr->method_call.arg_count == 0) {
+                    emit("array_flatten("); codegen_expr(expr->method_call.object); emit(")"); break;
                 }
                 // arr.concat(other)
                 if (method.length == 6 && memcmp(method.start, "concat", 6) == 0 && expr->method_call.arg_count == 1) {
@@ -2879,6 +3111,7 @@ void codegen_expr(Expr* expr) {
                             case TYPE_INT:   _getter = "hashmap_get_int"; break;
                             case TYPE_BOOL:  _getter = "hashmap_get_bool"; break;
                             case TYPE_FLOAT: _getter = "hashmap_get_float"; break;
+                            case TYPE_ARRAY: _getter = "hashmap_get_array"; break;
                             case TYPE_STRING: default: _getter = "hashmap_get_string"; break;
                         }
                     }
@@ -3427,11 +3660,13 @@ void codegen_expr(Expr* expr) {
                 // Map indexing: pick the getter matching the element type the
                 // checker resolved for this index (from the map's value_type),
                 // so int/float/bool maps don't read through hashmap_get_string.
+                // Array values (group_by buckets) read via hashmap_get_array.
                 const char* _getter = "hashmap_get_string";
                 if (expr->expr_type) {
                     switch (expr->expr_type->kind) {
                         case TYPE_INT:   case TYPE_BOOL: _getter = (expr->expr_type->kind == TYPE_BOOL) ? "hashmap_get_bool" : "hashmap_get_int"; break;
                         case TYPE_FLOAT: _getter = "hashmap_get_float"; break;
+                        case TYPE_ARRAY: _getter = "hashmap_get_array"; break;
                         case TYPE_STRING: default: _getter = "hashmap_get_string"; break;
                     }
                 }

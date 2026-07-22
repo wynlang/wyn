@@ -131,6 +131,7 @@ char* Json_to_pretty_string(long long j);
 
 // File
 char* File_read(const char* path);
+WynArray File_read_lines(const char* path);
 int File_write(const char* path, const char* content);
 int File_exists(const char* path);
 int File_delete(const char* path);
@@ -203,6 +204,10 @@ int array_pop(WynArray* arr);
 int array_index_of(WynArray arr, int value);
 void array_reverse(WynArray* arr);
 void array_sort(WynArray* arr);
+void array_sort_str(WynArray* arr);
+void array_sort_float(WynArray* arr);
+WynArray array_sorted(WynArray arr);
+WynArray array_flatten(WynArray arr);
 int array_first(WynArray arr);
 int array_last(WynArray arr);
 int array_count(WynArray arr, int value);
@@ -493,6 +498,8 @@ int Http_serve(int port);
 char* hashmap_keys_str(WynHashMap* map);
 WynArray hashmap_keys(WynHashMap* map);
 WynArray hashmap_values(WynHashMap* map);
+WynArray hashmap_get_array(WynHashMap* map, const char* key);
+WynArray* hashmap_group_slot(WynHashMap* map, const char* key);
 char* string_split_to_str(const char* s, const char* delim);
 WynHashSet* HashSet_new();
 // Json declared in module declarations block above

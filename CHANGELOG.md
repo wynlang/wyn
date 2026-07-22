@@ -18,6 +18,30 @@ crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C.
   stdlib namespaces (Math, File, ...), and C packages are unaffected.
   Struct and enum `pub` markers are still parsed but not yet enforced
   (types are not namespaced per module yet).
+- **Week-one stdlib batch**: the methods a developer reaches for in their
+  first week, designed by precedent (Python/Go/Rust/Kotlin), all
+  monomorphized (no boxing).
+  - `xs.sort_by((x) => key)` - sort structs (or anything) by a key lambda
+    (Python `sorted(key=)`, Kotlin `sortedBy`). Int, float, and string keys.
+    The legacy two-arg comparator form still works.
+  - `xs.max_by(f)` / `xs.min_by(f)` - element with the largest/smallest key
+    (Kotlin `maxBy`, Rust `max_by_key`).
+  - `xs.group_by(f)` - map of key to `[elements]` (Kotlin `groupBy`);
+    string and int keys; buckets read back with `m[k]`, `m.get(k)`, and
+    `for k, vs in m`.
+  - `xs.sorted()` and `sorted(xs)` - non-mutating sorted copy (Python
+    `sorted`); `.sort()` still mutates in place.
+  - `xs.flatten()` - `[[T]]` to `[T]`, one level (Kotlin `flatten`).
+  - `File.read_lines(path)` - returns `[string]` (Python `readlines`);
+    keeps interior blank lines, strips `\n`/`\r\n`, no trailing empty
+    entry.
+  - `str(x)` - uniform to-string builtin (Python `str`), joining
+    `len()`/`int()`; `float(x)` added alongside. `int("42")`, `int(3.9)`,
+    `float("1.5")`, `float(2)` all work.
+  - `m.get(key, default)` - key-or-default lookup (Python `dict.get`);
+    previously compiled but returned garbage.
+  - `.sort()` on `[float]` now compares as doubles - negative floats were
+    ordered wrong (IEEE bit-pattern comparison).
 - **Real SHA-256 and HMAC-SHA256**: `Crypto.sha256` previously used a
   non-standard stand-in hash and `Crypto.hmac_sha256` shelled out to
   openssl with the secret key on the command line. Both are now real,

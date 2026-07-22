@@ -16,9 +16,10 @@ fn test_uuid() -> int {
 fn test_read_lines() -> int {
     // Write test file
     File.write("/tmp/wyn_test_lines.txt", "alpha\nbeta\ngamma")
-    var content = File.read_lines("/tmp/wyn_test_lines.txt")
-    var lines = content.lines()
+    // File.read_lines returns [string] directly (week-one stdlib batch)
+    var lines = File.read_lines("/tmp/wyn_test_lines.txt")
     if lines.len() != 3 { println("FAIL: expected 3 lines, got " + lines.len().to_string()); return 1 }
+    if lines[0] != "alpha" { println("FAIL: first line"); return 1 }
     println("  ✓ File.read_lines() - " + lines.len().to_string() + " lines")
     return 0
 }
