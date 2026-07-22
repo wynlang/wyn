@@ -1,0 +1,27 @@
+// STS GetCallerIdentity - "aws sts get-caller-identity" in pure Wyn.
+//
+// Run with credentials in the environment:
+//   eval "$(aws configure export-credentials --profile primary1 --format env)"
+//   wyn run demos/aws/sts_whoami.wyn
+import sigv4
+import transport
+
+fn main() -> int {
+    if Env.get("AWS_ACCESS_KEY_ID").len() == 0 {
+        println("error: AWS_ACCESS_KEY_ID not set")
+        return 1
+    }
+    var query = "Action=GetCallerIdentity&Version=2011-06-15"
+    var cfg = sigv4.curl_config("GET", "sts.amazonaws.com", "/", query, "us-east-1", "sts", "")
+    var body = transport.request(cfg)
+    var arn = transport.xml_text(body, "Arn")
+    if arn.len() == 0 {
+        println("request failed:")
+        println(body)
+        return 1
+    }
+    println("Account: " + transport.xml_text(body, "Account"))
+    println("Arn:     " + arn)
+    println("UserId:  " + transport.xml_text(body, "UserId"))
+    return 0
+}

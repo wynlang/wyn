@@ -2236,6 +2236,7 @@ void init_checker() {
         {"Crypto_sha1", 11, 1, builtin_string},
         {"Crypto_sha1_base64", 18, 1, builtin_string},
         {"Crypto_hmac_sha256", 18, 2, builtin_string},
+        {"Crypto_hmac_sha256_hex", 22, 2, builtin_string},
         {"Crypto_random_bytes", 19, 1, builtin_string},
         {"Json_to_pretty_string", 21, 1, builtin_string},
         {"Csv_parse", 9, 1, builtin_int},

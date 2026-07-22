@@ -1,0 +1,39 @@
+// EC2 DescribeRegions - list every enabled EC2 region, in pure Wyn.
+//
+// Run with credentials in the environment:
+//   eval "$(aws configure export-credentials --profile primary1 --format env)"
+//   wyn run demos/aws/ec2_regions.wyn
+import sigv4
+import transport
+
+fn main() -> int {
+    if Env.get("AWS_ACCESS_KEY_ID").len() == 0 {
+        println("error: AWS_ACCESS_KEY_ID not set")
+        return 1
+    }
+    var query = "Action=DescribeRegions&Version=2016-11-15"
+    var cfg = sigv4.curl_config("GET", "ec2.us-east-1.amazonaws.com", "/", query, "us-east-1", "ec2", "")
+    var body = transport.request(cfg)
+    if body.index_of("<regionInfo>") < 0 {
+        println("request failed:")
+        println(body)
+        return 1
+    }
+    var count = 0
+    var rest = body
+    while true {
+        var name = transport.xml_text(rest, "regionName")
+        if name.len() == 0 {
+            break
+        }
+        var endpoint = transport.xml_text(rest, "regionEndpoint")
+        println(name.pad_right(17, " ") + endpoint)
+        count = count + 1
+        // Skip past this region's endpoint tag. Skipping "</item>" would land
+        // on the nested geographySet item and re-match the same region.
+        var pos = rest.index_of("</regionEndpoint>")
+        rest = rest.substring(pos + 17, rest.len())
+    }
+    println("${count} regions")
+    return 0
+}

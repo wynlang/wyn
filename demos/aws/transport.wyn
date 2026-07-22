@@ -1,0 +1,36 @@
+// transport - HTTPS via curl driven by a config file.
+//
+// Why curl: this machine has no mbedTLS headers, and the repos/https package
+// client functions are unimplemented stubs, so the demos shell out to curl
+// for TLS. Credential hygiene: the signed headers (including the session
+// token) go into a temp config file created with 0600 permissions BEFORE any
+// content is written; only the config file PATH appears in argv. Nothing
+// secret ever touches a command line or the process list.
+
+pub fn request(cfg: string) -> string {
+    var path = File.temp_file()
+    // Create the file with 0600 perms first (umask 077), then write into it.
+    // File.write on an existing file keeps its permissions.
+    Process.exec_status("umask 077; : > " + path)
+    File.write(path, cfg)
+    var out = Process.exec_capture("curl --config " + path)
+    Process.exec_status("rm -f " + path)
+    return out
+}
+
+// Pull the text of the first <tag>...</tag> out of an XML response.
+// Good enough for the demo responses (no attributes on the target tags).
+pub fn xml_text(xml: string, tag: string) -> string {
+    var otag = "<" + tag + ">"
+    var ctag = "</" + tag + ">"
+    var start = xml.index_of(otag)
+    if start < 0 {
+        return ""
+    }
+    var rest = xml.substring(start + otag.len(), xml.len())
+    var end = rest.index_of(ctag)
+    if end < 0 {
+        return ""
+    }
+    return rest.substring(0, end)
+}

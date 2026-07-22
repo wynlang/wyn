@@ -1,0 +1,85 @@
+// sigv4 - AWS Signature Version 4 request signing in pure Wyn.
+//
+// Builds the canonical request, string-to-sign, and the four-round signing
+// key chain, then assembles the Authorization header. The HMAC rounds chain
+// through Crypto.hmac_sha256_hex: each round's binary digest travels between
+// calls as hex, because Wyn strings are C strings and cannot carry raw bytes.
+//
+// Credentials come from the environment:
+//   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN (optional)
+//
+// Scope of this module: GET requests with a canonical (already sorted and
+// URI-encoded) query string and an optional payload. Signed headers are
+// host, x-amz-content-sha256, x-amz-date, and x-amz-security-token when a
+// session token is present - that set is already in sorted order.
+
+// Current UTC time in AWS "amz-date" form: 20260722T120533Z
+pub fn amz_now() -> string {
+    return DateTime.to_iso(DateTime.now()).replace("-", "").replace(":", "")
+}
+
+// The SigV4 signing key chain (AWS4-HMAC-SHA256), returning the final
+// signature as hex. Round 1 keys with the raw "AWS4" + secret string; every
+// later round keys with the previous round's digest, passed as hex.
+pub fn signature(secret: string, amzdate: string, region: string, service: string, string_to_sign: string) -> string {
+    var kdate = Crypto.hmac_sha256("AWS4" + secret, amzdate.substring(0, 8))
+    var kregion = Crypto.hmac_sha256_hex(kdate, region)
+    var kservice = Crypto.hmac_sha256_hex(kregion, service)
+    var ksigning = Crypto.hmac_sha256_hex(kservice, "aws4_request")
+    return Crypto.hmac_sha256_hex(ksigning, string_to_sign)
+}
+
+// Sign a request and return a curl config file body (url, method, headers).
+// The config file is the transport's job to write with 0600 perms - nothing
+// secret ever goes on a command line.
+//
+//   method  - "GET"
+//   host    - "sts.amazonaws.com"
+//   uri     - canonical path, "/" for root
+//   query   - canonical query string (sorted, URI-encoded), "" for none
+//   region  - "us-east-1"
+//   service - "sts" / "s3" / "ec2"
+//   payload - request body, "" for GET
+pub fn curl_config(method: string, host: string, uri: string, query: string, region: string, service: string, payload: string) -> string {
+    var akid = Env.get("AWS_ACCESS_KEY_ID")
+    var secret = Env.get("AWS_SECRET_ACCESS_KEY")
+    var token = Env.get("AWS_SESSION_TOKEN")
+    var amzdate = amz_now()
+    var datestamp = amzdate.substring(0, 8)
+    var payload_hash = Crypto.sha256(payload)
+
+    // Canonical headers, one per line, lowercase names, sorted.
+    var canon_headers = "host:" + host + "\n"
+    canon_headers = canon_headers + "x-amz-content-sha256:" + payload_hash + "\n"
+    canon_headers = canon_headers + "x-amz-date:" + amzdate + "\n"
+    var signed_hdrs = "host;x-amz-content-sha256;x-amz-date"
+    if token.len() > 0 {
+        canon_headers = canon_headers + "x-amz-security-token:" + token + "\n"
+        signed_hdrs = signed_hdrs + ";x-amz-security-token"
+    }
+
+    var canonical = method + "\n" + uri + "\n" + query + "\n" + canon_headers + "\n" + signed_hdrs + "\n" + payload_hash
+    var scope = datestamp + "/" + region + "/" + service + "/aws4_request"
+    var string_to_sign = "AWS4-HMAC-SHA256\n" + amzdate + "\n" + scope + "\n" + Crypto.sha256(canonical)
+    var sig = signature(secret, amzdate, region, service, string_to_sign)
+
+    var auth = "AWS4-HMAC-SHA256 Credential=" + akid + "/" + scope
+    auth = auth + ", SignedHeaders=" + signed_hdrs + ", Signature=" + sig
+
+    var url = "https://" + host + uri
+    if query.len() > 0 {
+        url = url + "?" + query
+    }
+
+    var cfg = "url = \"" + url + "\"\n"
+    cfg = cfg + "request = \"" + method + "\"\n"
+    cfg = cfg + "silent\n"
+    cfg = cfg + "show-error\n"
+    cfg = cfg + "header = \"Authorization: " + auth + "\"\n"
+    cfg = cfg + "header = \"x-amz-date: " + amzdate + "\"\n"
+    cfg = cfg + "header = \"x-amz-content-sha256: " + payload_hash + "\"\n"
+    if token.len() > 0 {
+        cfg = cfg + "header = \"x-amz-security-token: " + token + "\"\n"
+    }
+    return cfg
+}
