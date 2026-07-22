@@ -28,12 +28,12 @@ make && ./wyn install
 
 ```wyn
 // hello.wyn - no main() needed
-println("Hello, World!")
+print("Hello, World!")
 ```
 
 ```bash
 wyn run hello.wyn       # Compile and run
-wyn run -e 'println("or inline")'
+wyn run -e 'print("or inline")'
 ```
 
 ## Features
@@ -50,9 +50,9 @@ var pi = 3.14                  // mutable
 
 // Full string interpolation
 arr = [10, 20, 30]
-println("${name} v${version}")
-println("${arr[1]}")           // 20
-println("${name.upper()}")     // WYN
+print("${name} v${version}")
+print("${arr[1]}")           // 20
+print("${name.upper()}")     // WYN
 
 // Functions - braces or a one-line => body
 fn double(x: int) -> int => x * 2
@@ -100,9 +100,9 @@ fn divide(a: int, b: int) -> Result<int, string> {
 }
 
 // enum.to_string(), indexed for, string repeat, clean int? / Some
-println(Shape.Circle.to_string())  // "Circle"
-for i, v in ["a", "b", "c"] { println(i.to_string() + ":" + v) }
-println("=" * 40)
+print(Shape.Circle.to_string())  // "Circle"
+for i, v in ["a", "b", "c"] { print(i.to_string() + ":" + v) }
+print("=" * 40)
 var x: int? = Some(42)
 ```
 

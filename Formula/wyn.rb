@@ -23,7 +23,7 @@ class Wyn < Formula
   end
 
   test do
-    (testpath/"hello.wyn").write 'println("Hello from Wyn!")'
+    (testpath/"hello.wyn").write 'print("Hello from Wyn!")'
     assert_match "Hello from Wyn!", shell_output("#{bin}/wyn run hello.wyn 2>&1")
   end
 end

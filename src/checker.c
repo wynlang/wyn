@@ -2769,7 +2769,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         {"null",      "Wyn has no null - use Option types (none / Some(x))"},
                         {"undefined", "Wyn has no undefined - use Option types (none / Some(x))"},
                         {"self",      "'self' only exists inside struct methods"},
-                        {"console",   "print with: println(\"...\")"},
+                        {"console",   "print with: print(\"...\")"},
                         {"len",       "call it as a function: len(x), or use x.len()"},
                         {NULL, NULL}
                     };

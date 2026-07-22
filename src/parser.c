@@ -137,7 +137,7 @@ static const struct { const char* kw; const char* fix; } foreign_keywords[] = {
     {"undefined", "Wyn has no undefined - use Option types (none / Some(x))"},
     {"let",       "declare with 'var' or just assign:  x = 5"},
     {"function",  "functions are declared with 'fn':  fn add(a, b) { ... }"},
-    {"console",   "print with:  println(\"...\")"},
+    {"console",   "print with:  print(\"...\")"},
     {"try",       "Wyn has no exceptions - return Result (Ok/Err) and use match or '?'"},
     {"except",    "Wyn has no exceptions - return Result (Ok/Err) and use match or '?'"},
     {"raise",     "Wyn has no exceptions - return an Err(...) Result"},

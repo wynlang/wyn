@@ -435,8 +435,8 @@ int main(int argc, char** argv) {
         if (argc < 3) { fprintf(stderr, "Usage: wyn explain <error-code>\n"); return 1; }
         const char* code = argv[2];
         struct { const char* code; const char* title; const char* detail; } errors[] = {
-            {"E001", "Undefined variable", "A variable was used before being declared.\n\nFix: Declare the variable with 'var' before using it.\n\n  var x = 42\n  println(x.to_string())"},
-            {"E002", "Undefined function", "A function was called that doesn't exist.\n\nFix: Define the function before calling it, or check for typos.\n\n  fn add(a: int, b: int) -> int { return a + b }\n  println(add(2, 3).to_string())"},
+            {"E001", "Undefined variable", "A variable was used before being declared.\n\nFix: Declare the variable with 'var' before using it.\n\n  var x = 42\n  print(x.to_string())"},
+            {"E002", "Undefined function", "A function was called that doesn't exist.\n\nFix: Define the function before calling it, or check for typos.\n\n  fn add(a: int, b: int) -> int { return a + b }\n  print(add(2, 3).to_string())"},
             {"E003", "Type mismatch", "An expression has the wrong type for the context.\n\nFix: Ensure types match. Use .to_string() for int→string conversion.\n\n  var x: int = 42       // correct\n  var y: string = \"hi\"  // correct"},
             {"E004", "Missing return", "A function with a return type doesn't return a value on all paths.\n\nFix: Add a return statement to every code path.\n\n  fn abs(x: int) -> int {\n    if x < 0 { return -x }\n    return x  // don't forget this!\n  }"},
             {"E005", "Wrong argument count", "A function was called with the wrong number of arguments.\n\nFix: Check the function signature and pass the correct number of arguments."},
@@ -2343,7 +2343,7 @@ int main(int argc, char** argv) {
 
         // Friendly message for empty files
         if (!source || strlen(source) == 0 || (strlen(source) == 1 && source[0] == '\n')) {
-            printf("\033[33m○\033[0m Nothing to run. Try:\n\n  println(\"hello\")\n\n");
+            printf("\033[33m○\033[0m Nothing to run. Try:\n\n  print(\"hello\")\n\n");
             return 0;
         }
         
@@ -2968,7 +2968,7 @@ int create_new_project(const char* project_name) {
         fprintf(stderr, "Error: Failed to create main.wyn\n");
         return 1;
     }
-    fprintf(main_file, "fn main() -> int {\n    println(\"Hello from %s! 🐉\")\n    return 0\n}\n", project_name);
+    fprintf(main_file, "fn main() -> int {\n    print(\"Hello from %s! 🐉\")\n    return 0\n}\n", project_name);
     fclose(main_file);
     
     // Create test file
@@ -3113,7 +3113,7 @@ int create_new_project_with_template(const char* name, const char* template, con
         "## Test\n\n```bash\nwyn test\n```\n", name);
     else if (strcmp(template, "lib") == 0) {
         if (lib_target && strcmp(lib_target, "wyn") == 0)
-            fprintf(f, "A Wyn package.\n\n## Install\n\n```bash\nwyn pkg install github.com/yourname/%s\n```\n\n## Usage\n\n```wyn\nimport %s\nprintln(%s.greet())\n```\n", name, name, name);
+            fprintf(f, "A Wyn package.\n\n## Install\n\n```bash\nwyn pkg install github.com/yourname/%s\n```\n\n## Usage\n\n```wyn\nimport %s\nprint(%s.greet())\n```\n", name, name, name);
         else if (lib_target && strcmp(lib_target, "python") == 0)
             fprintf(f, "A Python extension built with Wyn.\n\n## Build\n\n```bash\nwyn build --python\n```\n\n## Usage\n\n```python\nfrom %s import add, greet\nprint(add(2, 3))    # 5\nprint(greet())       # Hello from %s, world!\n```\n", name, name);
         else if (lib_target && strcmp(lib_target, "node") == 0)
@@ -3172,13 +3172,13 @@ int create_new_project_with_template(const char* name, const char* template, con
             "}\n\n"
             "fn main() {\n"
             "    var port = 8080\n"
-            "    println(\"%s running on http://localhost:${port}\")\n"
-            "    println(\"\")\n"
-            "    println(\"  GET  /              - home page\")\n"
-            "    println(\"  GET  /api/items     - list items (JSON)\")\n"
-            "    println(\"  POST /api/items     - create item\")\n"
-            "    println(\"  GET  /api/health    - health check\")\n"
-            "    println(\"\")\n"
+            "    print(\"%s running on http://localhost:${port}\")\n"
+            "    print(\"\")\n"
+            "    print(\"  GET  /              - home page\")\n"
+            "    print(\"  GET  /api/items     - list items (JSON)\")\n"
+            "    print(\"  POST /api/items     - create item\")\n"
+            "    print(\"  GET  /api/health    - health check\")\n"
+            "    print(\"\")\n"
             "    init_db()\n"
             "    var server = Http.serve(port)\n"
             "    while true {\n"
@@ -3227,15 +3227,15 @@ int create_new_project_with_template(const char* name, const char* template, con
             "}\n\n"
             "fn main() {\n"
             "    var port = 8080\n"
-            "    println(\"%s running on http://localhost:${port}\")\n"
-            "    println(\"\")\n"
-            "    println(\"  GET    /health          - health check\")\n"
-            "    println(\"  GET    /ready           - readiness check\")\n"
-            "    println(\"  GET    /api/items       - list items\")\n"
-            "    println(\"  POST   /api/items       - create item\")\n"
-            "    println(\"  GET    /api/items/:id   - get item\")\n"
-            "    println(\"  DELETE /api/items/:id   - delete item\")\n"
-            "    println(\"\")\n"
+            "    print(\"%s running on http://localhost:${port}\")\n"
+            "    print(\"\")\n"
+            "    print(\"  GET    /health          - health check\")\n"
+            "    print(\"  GET    /ready           - readiness check\")\n"
+            "    print(\"  GET    /api/items       - list items\")\n"
+            "    print(\"  POST   /api/items       - create item\")\n"
+            "    print(\"  GET    /api/items/:id   - get item\")\n"
+            "    print(\"  DELETE /api/items/:id   - delete item\")\n"
+            "    print(\"\")\n"
             "    init_db()\n"
             "    var server = Http.serve(port)\n"
             "    while true {\n"
@@ -3251,39 +3251,39 @@ int create_new_project_with_template(const char* name, const char* template, con
         fprintf(f,
             "// %s - CLI tool with arg parsing and colored output\n\n"
             "fn print_help() {\n"
-            "    println(\"%s v0.1.0\")\n"
-            "    println(\"\")\n"
-            "    println(\"Usage: %s <command> [options]\")\n"
-            "    println(\"\")\n"
-            "    println(\"Commands:\")\n"
-            "    println(\"  run <file>     Process a file\")\n"
-            "    println(\"  list           List items\")\n"
-            "    println(\"  info           Show system info\")\n"
-            "    println(\"  help           Show this help\")\n"
-            "    println(\"  version        Show version\")\n"
+            "    print(\"%s v0.1.0\")\n"
+            "    print(\"\")\n"
+            "    print(\"Usage: %s <command> [options]\")\n"
+            "    print(\"\")\n"
+            "    print(\"Commands:\")\n"
+            "    print(\"  run <file>     Process a file\")\n"
+            "    print(\"  list           List items\")\n"
+            "    print(\"  info           Show system info\")\n"
+            "    print(\"  help           Show this help\")\n"
+            "    print(\"  version        Show version\")\n"
             "}\n\n"
             "fn cmd_info() {\n"
-            "    println(\"%s v0.1.0\")\n"
-            "    println(\"  OS:   \" + System.exec(\"uname -s\").trim())\n"
-            "    println(\"  Arch: \" + System.exec(\"uname -m\").trim())\n"
-            "    println(\"  Dir:  \" + System.exec(\"pwd\").trim())\n"
+            "    print(\"%s v0.1.0\")\n"
+            "    print(\"  OS:   \" + System.exec(\"uname -s\").trim())\n"
+            "    print(\"  Arch: \" + System.exec(\"uname -m\").trim())\n"
+            "    print(\"  Dir:  \" + System.exec(\"pwd\").trim())\n"
             "}\n\n"
             "fn cmd_run(file: string) {\n"
             "    var content = File.read(file)\n"
             "    if content.len() == 0 {\n"
-            "        println(\"Error: could not read: \" + file)\n"
+            "        print(\"Error: could not read: \" + file)\n"
             "        return\n"
             "    }\n"
             "    var lines = content.split(\"\\n\")\n"
-            "    println(\"Processed ${lines.len()} lines from ${file}\")\n"
+            "    print(\"Processed ${lines.len()} lines from ${file}\")\n"
             "}\n\n"
             "fn cmd_list() {\n"
             "    var items = [\"alpha\", \"beta\", \"gamma\"]\n"
             "    for item in items {\n"
-            "        println(\"  - \" + item)\n"
+            "        print(\"  - \" + item)\n"
             "    }\n"
-            "    println(\"\")\n"
-            "    println(\"${items.len()} items\")\n"
+            "    print(\"\")\n"
+            "    print(\"${items.len()} items\")\n"
             "}\n\n"
             "fn main() {\n"
             "    var args = System.args()\n"
@@ -3295,20 +3295,20 @@ int create_new_project_with_template(const char* name, const char* template, con
             "    if cmd == \"help\" or cmd == \"--help\" or cmd == \"-h\" {\n"
             "        print_help()\n"
             "    } else if cmd == \"version\" or cmd == \"--version\" or cmd == \"-v\" {\n"
-            "        println(\"%s v0.1.0\")\n"
+            "        print(\"%s v0.1.0\")\n"
             "    } else if cmd == \"info\" {\n"
             "        cmd_info()\n"
             "    } else if cmd == \"list\" {\n"
             "        cmd_list()\n"
             "    } else if cmd == \"run\" {\n"
             "        if args.len() < 3 {\n"
-            "            println(\"Usage: %s run <file>\")\n"
+            "            print(\"Usage: %s run <file>\")\n"
             "            return 1\n"
             "        }\n"
             "        cmd_run(args[2])\n"
             "    } else {\n"
-            "        println(\"Unknown command: \" + cmd)\n"
-            "        println(\"Run '%s --help' for usage\")\n"
+            "        print(\"Unknown command: \" + cmd)\n"
+            "        print(\"Run '%s --help' for usage\")\n"
             "        return 1\n"
             "    }\n"
             "}\n", name, name, name, name, name, name, name);
