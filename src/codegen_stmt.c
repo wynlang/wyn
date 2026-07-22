@@ -504,6 +504,11 @@ void codegen_stmt(Stmt* stmt) {
                         c_type = "double";
                     } else if (_elt && _elt->kind == TYPE_BOOL) {
                         c_type = "bool";
+                    } else if (_elt && _elt->kind == TYPE_ARRAY) {
+                        // Map-of-arrays value (group_by bucket): m[k] is a WynArray
+                        c_type = "WynArray";
+                        char _avn[256]; token_to_cstr(_avn, sizeof(_avn), stmt->var.name);
+                        register_array_var(_avn);
                     } else if (is_str_array_var(_ixn)) {
                         c_type = "const char*"; is_already_const = true;
                     }
@@ -771,7 +776,7 @@ void codegen_stmt(Stmt* stmt) {
                         extern int is_known_array_var(const char*);
                         if (is_known_array_var(_vn)) {
                             char _mn[64]; token_to_cstr(_mn, sizeof(_mn), stmt->var.init->method_call.method);
-                            if (strcmp(_mn, "slice") == 0 || strcmp(_mn, "reverse") == 0 || strcmp(_mn, "filter") == 0 || strcmp(_mn, "map") == 0 || strcmp(_mn, "concat") == 0 || strcmp(_mn, "unique") == 0 || strcmp(_mn, "sort") == 0 || strcmp(_mn, "sort_by") == 0) {
+                            if (strcmp(_mn, "slice") == 0 || strcmp(_mn, "reverse") == 0 || strcmp(_mn, "filter") == 0 || strcmp(_mn, "map") == 0 || strcmp(_mn, "concat") == 0 || strcmp(_mn, "unique") == 0 || strcmp(_mn, "sort") == 0 || strcmp(_mn, "sort_by") == 0 || strcmp(_mn, "sorted") == 0) {
                                 c_type = "WynArray";
                                 needs_arc_management = false;
                                 { char vn2[256]; token_to_cstr(vn2, sizeof(vn2), stmt->var.name); register_array_var(vn2); }
@@ -908,6 +913,8 @@ void codegen_stmt(Stmt* stmt) {
                                 c_type = "void";
                             } else if (strcmp(return_type, "json") == 0) {
                                 c_type = "WynJson*";
+                            } else if (strcmp(return_type, "map") == 0) {
+                                c_type = "WynHashMap*";  // group_by result
                             }
                         }
                     }
@@ -1120,6 +1127,11 @@ void codegen_stmt(Stmt* stmt) {
                                 break;
                             case TYPE_MAP:
                                 c_type = "WynHashMap*";
+                                break;
+                            case TYPE_ARRAY:
+                                // Map-of-arrays value (group_by bucket): m[k] is a WynArray
+                                c_type = "WynArray";
+                                { char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name); register_array_var(_vn); }
                                 break;
                             case TYPE_STRUCT: {
                                 // Use the struct type name
@@ -3636,6 +3648,7 @@ void codegen_stmt(Stmt* stmt) {
                             case TYPE_INT:   vget = "hashmap_get_int";    vcty = "long long"; break;
                             case TYPE_BOOL:  vget = "hashmap_get_bool";   vcty = "bool"; break;
                             case TYPE_FLOAT: vget = "hashmap_get_float";  vcty = "double"; break;
+                            case TYPE_ARRAY: vget = "hashmap_get_array";  vcty = "WynArray"; break;
                             default: break;
                         }
                     }
@@ -3658,6 +3671,12 @@ void codegen_stmt(Stmt* stmt) {
                         if (strcmp(vcty, "const char*") == 0) {
                             char _vb[256]; token_to_cstr(_vb, sizeof(_vb), stmt->for_stmt.loop_var);
                             extern void register_string_var(const char*); register_string_var(_vb);
+                        }
+                        // Register an array value binding (group_by buckets) so
+                        // the body's .len()/.map()/indexing treat it as WynArray.
+                        if (strcmp(vcty, "WynArray") == 0) {
+                            char _vb[256]; token_to_cstr(_vb, sizeof(_vb), stmt->for_stmt.loop_var);
+                            register_array_var(_vb);
                         }
                     }
                     if (stmt->for_stmt.body) codegen_stmt(stmt->for_stmt.body);

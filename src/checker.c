@@ -1813,6 +1813,21 @@ void init_checker() {
         add_symbol(global_scope, tok, ft, false);
     }
 
+    // File.read_lines(path) -> [string] (week-one stdlib, P5). Registered with
+    // its real array return type so downstream len()/for/indexing all see
+    // [string] instead of the old builtin_string placeholder.
+    {
+        Type* lines_ret = make_type(TYPE_ARRAY);
+        lines_ret->array_type.element_type = builtin_string;
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_string;
+        ft->fn_type.return_type = lines_ret;
+        Token tok = {TOKEN_IDENT, "File_read_lines", 15, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
     // HashMap namespace: HashMap.new() -> HashMap_new()
     Type* map_type = make_type(TYPE_MAP);
     {
@@ -2283,7 +2298,9 @@ void init_checker() {
         {"Log_set_level", 13, 1, builtin_void},
         {"Process_exec_capture", 20, 1, builtin_string},
         {"Process_exec_status", 19, 1, builtin_int},
-        {"File_read_lines", 15, 1, builtin_string},
+        // File_read_lines registered with its real [string] return type next to
+        // the other File namespace fns (find_symbol returns the FIRST match, so
+        // a builtin_string entry here would shadow the typed one).
         {"Http_timeout", 12, 1, builtin_int},
         {"Http_listen", 11, 1, builtin_int},
         {"Http_accept", 11, 1, builtin_string},
@@ -3312,6 +3329,46 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     check_expr(expr->call.args[0], scope);
                     expr->expr_type = builtin_int;
                     return builtin_int;
+                } else if (strcmp(name_buf, "str") == 0 && !find_symbol(scope, func_name)) {
+                    // str(x) - uniform to-string (Python str), week-one P5.
+                    // Same silent-forgiveness family as len(): the function form
+                    // aliases .to_string(). Skipped when a user fn named str exists.
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'str' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_string;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                } else if ((strcmp(name_buf, "int") == 0 || strcmp(name_buf, "float") == 0) &&
+                           !find_symbol(scope, func_name)) {
+                    // int(x) / float(x) - numeric conversion builtins (Python).
+                    // int("42")/int(3.9) truncates; float("1.5")/float(2) widens.
+                    Type* conv_ret = name_buf[0] == 'i' ? builtin_int : builtin_float;
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: '%s' expects 1 argument, got %d\n",
+                                func_name.line, name_buf, expr->call.arg_count);
+                        had_error = true;
+                        return conv_ret;
+                    }
+                    check_expr(expr->call.args[0], scope);
+                    expr->expr_type = conv_ret;
+                    return conv_ret;
+                } else if (strcmp(name_buf, "sorted") == 0 && !find_symbol(scope, func_name)) {
+                    // sorted(xs) - non-mutating sort (Python sorted), the
+                    // function spelling of xs.sorted(). Returns the array type.
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'sorted' expects 1 argument, got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_array;
+                    }
+                    Type* arr_t = check_expr(expr->call.args[0], scope);
+                    Type* ret_t = (arr_t && arr_t->kind == TYPE_ARRAY) ? arr_t : builtin_array;
+                    expr->expr_type = ret_t;
+                    return ret_t;
                 } else if (strcmp(name_buf, "typeof") == 0) {
                     // typeof(value) - returns string
                     if (expr->call.arg_count != 1) {
@@ -3869,14 +3926,25 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // Seed it before body checking so field access on struct elements
             // ((p) => p.x) and bool/float bodies resolve with real types instead
             // of the int default that S2 patched after the fact.
+            // The week-one key-fn methods (sort_by/max_by/min_by/group_by) take
+            // the same element-typed single-param lambda, so they share the seed.
             if (object_type && object_type->kind == TYPE_ARRAY &&
                 object_type->array_type.element_type &&
                 expr->method_call.arg_count == 1 &&
                 expr->method_call.args[0]->type == EXPR_LAMBDA &&
+                expr->method_call.args[0]->lambda.param_count == 1 &&
                 ((expr->method_call.method.length == 3 &&
                   memcmp(expr->method_call.method.start, "map", 3) == 0) ||
                  (expr->method_call.method.length == 6 &&
-                  memcmp(expr->method_call.method.start, "filter", 6) == 0))) {
+                  memcmp(expr->method_call.method.start, "filter", 6) == 0) ||
+                 (expr->method_call.method.length == 7 &&
+                  memcmp(expr->method_call.method.start, "sort_by", 7) == 0) ||
+                 (expr->method_call.method.length == 6 &&
+                  memcmp(expr->method_call.method.start, "max_by", 6) == 0) ||
+                 (expr->method_call.method.length == 6 &&
+                  memcmp(expr->method_call.method.start, "min_by", 6) == 0) ||
+                 (expr->method_call.method.length == 8 &&
+                  memcmp(expr->method_call.method.start, "group_by", 8) == 0))) {
                 lambda_ctx_param_seed = object_type->array_type.element_type;
             }
             for (int i = 0; i < expr->method_call.arg_count; i++) {
@@ -4203,6 +4271,50 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     (method.length == 7 && memcmp(method.start, "reverse", 7) == 0)) {
                     expr->expr_type = object_type;
                     return object_type;
+                }
+                // Week-one stdlib batch (P5): key-fn methods.
+                // xs.sort_by(key) yields the receiver array type (sorted copy);
+                // xs.sorted() is the non-mutating sibling of .sort().
+                if (((method.length == 7 && memcmp(method.start, "sort_by", 7) == 0) &&
+                     expr->method_call.arg_count == 1) ||
+                    ((method.length == 6 && memcmp(method.start, "sorted", 6) == 0) &&
+                     expr->method_call.arg_count == 0)) {
+                    expr->expr_type = object_type;
+                    return object_type;
+                }
+                // xs.max_by(f) / xs.min_by(f) yield an ELEMENT (Kotlin maxBy).
+                if ((method.length == 6 &&
+                     (memcmp(method.start, "max_by", 6) == 0 ||
+                      memcmp(method.start, "min_by", 6) == 0)) &&
+                    expr->method_call.arg_count == 1) {
+                    Type* elem = object_type->array_type.element_type;
+                    if (!elem) elem = builtin_int;
+                    expr->expr_type = elem;
+                    return elem;
+                }
+                // xs.flatten(): [[T]] -> [T] (one level).
+                if ((method.length == 7 && memcmp(method.start, "flatten", 7) == 0) &&
+                    expr->method_call.arg_count == 0) {
+                    Type* elem = object_type->array_type.element_type;
+                    Type* flat = make_type(TYPE_ARRAY);
+                    flat->array_type.element_type =
+                        (elem && elem->kind == TYPE_ARRAY) ? elem->array_type.element_type : elem;
+                    expr->expr_type = flat;
+                    return flat;
+                }
+                // xs.group_by(f) yields a map from the key-fn's return type to
+                // arrays of elements (Kotlin groupBy). Keys must be strings for
+                // now (the hashmap is string-keyed); the codegen stringifies
+                // int keys, so the checker accepts string- or int-keyed fns.
+                if ((method.length == 8 && memcmp(method.start, "group_by", 8) == 0) &&
+                    expr->method_call.arg_count == 1) {
+                    Type* val_arr = make_type(TYPE_ARRAY);
+                    val_arr->array_type.element_type = object_type->array_type.element_type;
+                    Type* map_t = make_type(TYPE_MAP);
+                    map_t->map_type.key_type = builtin_string;
+                    map_t->map_type.value_type = val_arr;
+                    expr->expr_type = map_t;
+                    return map_t;
                 }
             }
 

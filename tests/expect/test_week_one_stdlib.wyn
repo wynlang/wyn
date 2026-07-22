@@ -1,0 +1,75 @@
+// Week-one stdlib batch (FLOWY_DESIGN P5): sort_by / max_by / min_by /
+// group_by / sorted / File.read_lines / str() / float() builtins.
+// EXPECT: al bob cy
+// EXPECT: ["a", "bb", "ccc"]
+// EXPECT: cy
+// EXPECT: al
+// EXPECT: 9.75
+// EXPECT: a=2 b=1 c=2
+// EXPECT: [1, 2, 3]
+// EXPECT: [3, 1, 2]
+// EXPECT: [-2.5, -0.1, 0.5, 1.5]
+// EXPECT: 4
+// EXPECT: alpha
+// EXPECT: [gamma]
+// EXPECT: n=7 f=3.5 t=true
+// EXPECT: 43
+// EXPECT: 2.5
+
+struct P { name: string, age: int }
+
+fn main() -> int {
+    // sort_by with a key lambda on a struct array (monomorphized, no boxing)
+    var people = [P { name: "bob", age: 30 }, P { name: "al", age: 25 }, P { name: "cy", age: 41 }]
+    people.sort_by((p) => p.age)
+    println(people[0].name + " " + people[1].name + " " + people[2].name)
+
+    // sort_by with a computed key on strings
+    var words = ["ccc", "a", "bb"]
+    words.sort_by((w) => w.len())
+    println(words)
+
+    // max_by / min_by return the ELEMENT with the extreme key
+    var oldest = people.max_by((p) => p.age)
+    println(oldest.name)
+    var youngest = people.min_by((p) => p.age)
+    println(youngest.name)
+    var fs = [3.5, 1.25, 9.75]
+    println(fs.max_by((x) => x))
+
+    // group_by -> map of key -> [elements]; keys() order follows insertion
+    var fruit = ["apple", "banana", "avocado", "cherry", "cranberry"]
+    var groups = fruit.group_by((w) => w[0])
+    var ka = groups["a"]
+    var kb = groups["b"]
+    var kc = groups["c"]
+    println("a=" + ka.len().to_string() + " b=" + kb.len().to_string() + " c=" + kc.len().to_string())
+
+    // sorted() returns a new array, receiver untouched
+    var nums = [3, 1, 2]
+    var snums = nums.sorted()
+    println(snums)
+    println(nums)
+
+    // float .sort() compares as doubles (negatives ordered correctly)
+    var floats = [1.5, -2.5, 0.5, -0.1]
+    floats.sort()
+    println(floats)
+
+    // File.read_lines -> [string], keeps interior blanks, strips terminators
+    File.write("/tmp/wyn_week_one_lines.txt", "alpha\nbeta\n\ngamma\n")
+    var lines = File.read_lines("/tmp/wyn_week_one_lines.txt")
+    // 4 lines: alpha, beta, empty, gamma (trailing newline adds no tail)
+    println(lines.len())
+    println(lines[0])
+    println("[" + lines[3] + "]")
+
+    // str() builtin - uniform to-string
+    println("n=" + str(7) + " f=" + str(3.5) + " t=" + str(true))
+
+    // int()/float() conversion builtins
+    println(int("42") + 1)
+    println(float("1.5") + 1.0)
+
+    return 0
+}

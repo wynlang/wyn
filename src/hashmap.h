@@ -11,7 +11,8 @@ typedef enum {
     HASHMAP_INT,
     HASHMAP_FLOAT,
     HASHMAP_STRING,
-    HASHMAP_BOOL
+    HASHMAP_BOOL,
+    HASHMAP_PTR
 } HashMapValueType;
 
 // Tagged union for HashMap values
@@ -22,6 +23,7 @@ typedef struct {
         double as_float;
         char* as_string;
         int as_bool;
+        void* as_ptr;
     } value;
 } HashMapValue;
 
@@ -32,6 +34,7 @@ void hashmap_insert_int(WynHashMap* map, const char* key, int value);
 void hashmap_insert_float(WynHashMap* map, const char* key, double value);
 void hashmap_insert_string(WynHashMap* map, const char* key, const char* value);
 void hashmap_insert_bool(WynHashMap* map, const char* key, int value);
+void hashmap_insert_ptr(WynHashMap* map, const char* key, void* value);
 
 // Generic get (returns HashMapValue)
 HashMapValue hashmap_get(WynHashMap* map, const char* key);
@@ -41,6 +44,7 @@ int hashmap_get_int(WynHashMap* map, const char* key);
 double hashmap_get_float(WynHashMap* map, const char* key);
 char* hashmap_get_string(WynHashMap* map, const char* key);
 int hashmap_get_bool(WynHashMap* map, const char* key);
+void* hashmap_get_ptr(WynHashMap* map, const char* key);
 
 void hashmap_remove(WynHashMap* map, const char* key);
 bool hashmap_has(WynHashMap* map, const char* key);

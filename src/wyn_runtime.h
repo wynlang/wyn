@@ -905,6 +905,39 @@ void array_sort(WynArray* arr) {
 void array_sort_str(WynArray* arr) {
     if (arr->count > 1) qsort(arr->data, arr->count, sizeof(WynValue), _wyn_cmp_str);
 }
+// Float arrays must compare as doubles: the int introsort above reads
+// data.int_val, which happens to order POSITIVE doubles correctly (IEEE bit
+// pattern) but reverses negatives ([1.5,-2.5,0.5,-0.1] sorted to
+// [-0.1,-2.5,...]). Cousin of the P0 float-reduction bugs.
+static int _wyn_cmp_float(const void* a, const void* b) {
+    double va = ((const WynValue*)a)->data.float_val;
+    double vb = ((const WynValue*)b)->data.float_val;
+    return (va > vb) - (va < vb);
+}
+void array_sort_float(WynArray* arr) {
+    if (arr->count > 1) qsort(arr->data, arr->count, sizeof(WynValue), _wyn_cmp_float);
+}
+// arr.sorted() / sorted(arr): non-mutating sibling of .sort() (Python sorted).
+// Dispatches on the runtime value tag, so one function covers [int]/[float]/
+// [string]/[bool]; strings are retained via wyn_strdup so the copy owns its
+// elements (array_sort_copy shared pointers - double-release risk).
+WynArray array_sorted(WynArray arr) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        if (arr.data[i].type == WYN_TYPE_STRING)
+            array_push_str(&result, wyn_strdup(arr.data[i].data.string_val ? arr.data[i].data.string_val : ""));
+        else if (arr.data[i].type == WYN_TYPE_FLOAT)
+            array_push_float(&result, arr.data[i].data.float_val);
+        else
+            array_push_int(&result, arr.data[i].data.int_val);
+    }
+    if (result.count > 1) {
+        if (result.data[0].type == WYN_TYPE_STRING) array_sort_str(&result);
+        else if (result.data[0].type == WYN_TYPE_FLOAT) array_sort_float(&result);
+        else array_sort(&result);
+    }
+    return result;
+}
 
 int array_first(WynArray arr) {
     if (arr.count == 0) return 0;
@@ -2529,7 +2562,32 @@ static inline int   file_write_line(long long h, const char* d) { return File_wr
 
 // File namespace aliases: File.read(path) -> File_read(path)
 char* File_read(const char* p) { return file_read(p); }
-char* File_read_lines(const char* p) { return file_read(p); }
+// File.read_lines(path) -> [string] (Python readlines / Go bufio.Scanner).
+// Keeps interior empty lines (unlike string_lines' strtok, which collapses
+// them), strips the line terminator, tolerates \r\n, and drops the empty
+// tail a trailing newline would produce.
+WynArray File_read_lines(const char* p) {
+    WynArray arr = array_new();
+    char* content = file_read(p);
+    if (!content || !content[0]) return arr;
+    const char* start = content;
+    const char* s = content;
+    for (;; s++) {
+        if (*s == '\n' || *s == '\0') {
+            size_t len = (size_t)(s - start);
+            if (len > 0 && start[len - 1] == '\r') len--;
+            if (*s == '\0' && len == 0 && s == start) break;  // trailing-newline tail
+            char* line = wyn_str_alloc(len + 1);
+            memcpy(line, start, len);
+            line[len] = '\0';
+            wyn_rc_set_length(line, (unsigned int)len);
+            array_push_str(&arr, line);
+            if (*s == '\0') break;
+            start = s + 1;
+        }
+    }
+    return arr;
+}
 int File_write(const char* p, const char* d) { return file_write(p, d); }
 bool File_exists(const char* p) { return file_exists(p) ? true : false; }
 int File_delete(const char* p) { return file_delete(p); }
@@ -2996,6 +3054,29 @@ WynArray hashmap_keys(WynHashMap* map) {
     while (line) { if (line[0]) array_push_str(&arr, wyn_strdup(line)); line = strtok(NULL, "\n"); }
     free(copy);
     return arr;
+}
+// group_by support: map values that are arrays live behind hashmap_insert_ptr /
+// hashmap_get_ptr (heap WynArray*). hashmap_get_array dereferences for the
+// `m[k]` / `for k, v in m` read paths; a missing key reads as an empty array.
+WynArray hashmap_get_array(WynHashMap* map, const char* key) {
+    extern void* hashmap_get_ptr(WynHashMap* map, const char* key);
+    WynArray* p = (WynArray*)hashmap_get_ptr(map, key);
+    if (p) return *p;
+    WynArray empty = {0};
+    return empty;
+}
+// Fetch-or-create the bucket array for a group_by key. The codegen'd loop
+// pushes the (monomorphized) element into the returned array in place.
+WynArray* hashmap_group_slot(WynHashMap* map, const char* key) {
+    extern void* hashmap_get_ptr(WynHashMap* map, const char* key);
+    extern void hashmap_insert_ptr(WynHashMap* map, const char* key, void* value);
+    WynArray* p = (WynArray*)hashmap_get_ptr(map, key);
+    if (!p) {
+        p = (WynArray*)wyn_malloc(sizeof(WynArray));
+        p->data = NULL; p->count = 0; p->capacity = 0;
+        hashmap_insert_ptr(map, key, p);
+    }
+    return p;
 }
 WynArray hashmap_values(WynHashMap* map) {
     WynArray arr = array_new();
@@ -4825,6 +4906,36 @@ long long array_pop_int(WynArray* arr) {
     return arr->data[arr->count].data.int_val;
 }
 
+
+// xs.flatten(): [[T]] -> [T], one level (Kotlin flatten, Python chain).
+// Non-array elements pass through unchanged; nested elements are copied by
+// tag (strings retained so the result owns its elements).
+WynArray array_flatten(WynArray arr) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        if (arr.data[i].type == WYN_TYPE_ARRAY && arr.data[i].data.array_val) {
+            WynArray inner = *arr.data[i].data.array_val;
+            for (int j = 0; j < inner.count; j++) {
+                if (inner.data[j].type == WYN_TYPE_STRING)
+                    array_push_str(&result, wyn_strdup(inner.data[j].data.string_val ? inner.data[j].data.string_val : ""));
+                else if (inner.data[j].type == WYN_TYPE_FLOAT)
+                    array_push_float(&result, inner.data[j].data.float_val);
+                else if (inner.data[j].type == WYN_TYPE_ARRAY) {
+                    // keep one level: push the nested array (push copies it)
+                    array_push_array(&result, inner.data[j].data.array_val);
+                } else
+                    array_push_int(&result, inner.data[j].data.int_val);
+            }
+        } else if (arr.data[i].type == WYN_TYPE_STRING) {
+            array_push_str(&result, wyn_strdup(arr.data[i].data.string_val ? arr.data[i].data.string_val : ""));
+        } else if (arr.data[i].type == WYN_TYPE_FLOAT) {
+            array_push_float(&result, arr.data[i].data.float_val);
+        } else {
+            array_push_int(&result, arr.data[i].data.int_val);
+        }
+    }
+    return result;
+}
 
 WynArray array_reverse_copy(WynArray arr) {
     WynArray result = array_new();
