@@ -44,7 +44,13 @@ void check_stmt(Stmt* stmt, SymbolTable* scope);
 Type* check_expr(Expr* expr, SymbolTable* scope);
 void analyze_lambda_captures(LambdaExpr* lambda, Expr* body, SymbolTable* scope);
 static int lambda_param_is_string(const char* pname, Expr* e, SymbolTable* scope);
+static int lambda_param_is_float(const char* pname, Expr* e, SymbolTable* scope);
+static int lambda_param_is_bool(const char* pname, Expr* e, SymbolTable* scope);
 void analyze_expr_captures(Expr* expr, LambdaExpr* lambda, SymbolTable* scope);
+
+// S3: element type of the receiver array while checking a map/filter lambda
+// argument - unannotated lambda params default to this instead of int.
+static Type* lambda_ctx_param_seed = NULL;
 
 static SymbolTable* global_scope = NULL;
 static Program* current_program = NULL;  // For looking up struct definitions
@@ -3594,9 +3600,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         had_error = true;
                     }
                     
-                    // Store the selected overload for code generation
-                    expr->call.selected_overload = (void*)best_match;
+                    // Store the selected overload for code generation - but ONLY
+                    // for real (global) functions. A fn-typed local/param (S3:
+                    // `f: fn(float) -> float`) also resolves here, and its Symbol
+                    // lives in a stack-allocated scope that is gone by codegen -
+                    // dereferencing it read a garbage mangled_name and crashed.
+                    {
+                        Symbol* _g = find_symbol(global_scope, expr->call.callee->token);
+                        while (_g && _g != best_match) _g = _g->next_overload;
+                        if (_g == best_match && _g != NULL) {
+                            expr->call.selected_overload = (void*)best_match;
+                        }
+                    }
                     expr->expr_type = best_match->type->fn_type.return_type;
+                    // S3: record the callee's own function type too - codegen
+                    // uses it to pick the closure-call ABI (float vs int).
+                    expr->call.callee->expr_type = best_match->type;
                     free(arg_types);
                     return best_match->type->fn_type.return_type;
                 } else if (!best_match) {
@@ -3773,9 +3792,24 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
 
             Type* object_type = check_expr(expr->method_call.object, scope);
+            // S3 pre-seed: a map/filter lambda's parameter IS the element type.
+            // Seed it before body checking so field access on struct elements
+            // ((p) => p.x) and bool/float bodies resolve with real types instead
+            // of the int default that S2 patched after the fact.
+            if (object_type && object_type->kind == TYPE_ARRAY &&
+                object_type->array_type.element_type &&
+                expr->method_call.arg_count == 1 &&
+                expr->method_call.args[0]->type == EXPR_LAMBDA &&
+                ((expr->method_call.method.length == 3 &&
+                  memcmp(expr->method_call.method.start, "map", 3) == 0) ||
+                 (expr->method_call.method.length == 6 &&
+                  memcmp(expr->method_call.method.start, "filter", 6) == 0))) {
+                lambda_ctx_param_seed = object_type->array_type.element_type;
+            }
             for (int i = 0; i < expr->method_call.arg_count; i++) {
                 check_expr(expr->method_call.args[i], scope);
             }
+            lambda_ctx_param_seed = NULL;
 
             Token method = expr->method_call.method;
             char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
@@ -4085,22 +4119,21 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                 return string_array;
                             }
                         }
-                        // S2: .map()/.filter() on [string] - element type of the
-                        // result follows the LAMBDA's return type for map (a
-                        // str->int lambda produces [int]; typing it [string]
+                        // S2/S3: .map()/.filter() on a typed array - the result's
+                        // element type follows the LAMBDA's return type for map
+                        // (a str->int lambda produces [int]; typing it [string]
                         // made downstream indexing read ints as char* and
-                        // crash); filter always preserves [string].
+                        // crash); filter always preserves the element type.
                         if (object_type && object_type->kind == TYPE_ARRAY &&
                             object_type->array_type.element_type &&
-                            object_type->array_type.element_type->kind == TYPE_STRING &&
                             (strcmp(method_name, "map") == 0 || strcmp(method_name, "filter") == 0)) {
-                            Type* elem = builtin_string;
+                            Type* elem = object_type->array_type.element_type;
                             if (strcmp(method_name, "map") == 0 &&
                                 expr->method_call.arg_count == 1 &&
                                 expr->method_call.args[0]->expr_type &&
                                 expr->method_call.args[0]->expr_type->kind == TYPE_FUNCTION &&
                                 expr->method_call.args[0]->expr_type->fn_type.return_type &&
-                                expr->method_call.args[0]->expr_type->fn_type.return_type->kind != TYPE_STRING) {
+                                expr->method_call.args[0]->expr_type->fn_type.return_type->kind != elem->kind) {
                                 elem = expr->method_call.args[0]->expr_type->fn_type.return_type;
                             }
                             Type* res_arr = make_type(TYPE_ARRAY);
@@ -4493,14 +4526,57 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // S1 lambda rework: infer each param's type from body usage (string if it
             // is concatenated with a string or is a string-method receiver), else int.
             // This lets string-parameter lambdas type-check instead of failing with a
-            // bare "Type mismatch". (Codegen support for non-int params is staged - see
-            // the guard after body-checking below and internal-docs/LAMBDA_REWORK.md.)
+            // bare "Type mismatch".
+            // S3: an explicit annotation ((x: float) => ..., |p: Point| ...) wins
+            // over inference and supports float/bool/struct params directly.
+            // A map/filter context seed (receiver's element type) beats the int
+            // default for unannotated params - consumed once so nested lambdas
+            // inside this body do not inherit it.
+            Type* ctx_seed = lambda_ctx_param_seed;
+            lambda_ctx_param_seed = NULL;
             Type* param_inferred[16];
             for (int i = 0; i < expr->lambda.param_count && i < 16; i++) {
+                Expr* ann = expr->lambda.param_types ? expr->lambda.param_types[i] : NULL;
+                if (ann && ann->type == EXPR_IDENT) {
+                    Token tn = ann->token;
+                    if (tn.length == 3 && memcmp(tn.start, "int", 3) == 0) {
+                        param_inferred[i] = builtin_int;
+                    } else if ((tn.length == 6 && memcmp(tn.start, "string", 6) == 0) ||
+                               (tn.length == 3 && memcmp(tn.start, "str", 3) == 0)) {
+                        param_inferred[i] = builtin_string;
+                    } else if (tn.length == 5 && memcmp(tn.start, "float", 5) == 0) {
+                        param_inferred[i] = builtin_float;
+                    } else if (tn.length == 4 && memcmp(tn.start, "bool", 4) == 0) {
+                        param_inferred[i] = builtin_bool;
+                    } else {
+                        // User struct/enum annotation: resolve via the global scope,
+                        // falling back to a struct type keyed by the name.
+                        Symbol* ts = find_symbol(global_scope, tn);
+                        if (ts && ts->type) {
+                            param_inferred[i] = ts->type;
+                        } else if (find_struct_definition(tn)) {
+                            Type* st = make_type(TYPE_STRUCT);
+                            st->struct_type.name = tn;
+                            param_inferred[i] = st;
+                        } else {
+                            param_inferred[i] = builtin_int;
+                        }
+                    }
+                    continue;
+                }
                 char pn[64]; int pl = expr->lambda.params[i].length < 63 ? expr->lambda.params[i].length : 63;
                 memcpy(pn, expr->lambda.params[i].start, pl); pn[pl] = '\0';
-                int is_str = expr->lambda.body && lambda_param_is_string(pn, expr->lambda.body, scope);
-                param_inferred[i] = is_str ? builtin_string : builtin_int;
+                if (expr->lambda.body && lambda_param_is_string(pn, expr->lambda.body, scope)) {
+                    param_inferred[i] = builtin_string;
+                } else if (ctx_seed) {
+                    param_inferred[i] = ctx_seed;
+                } else if (expr->lambda.body && lambda_param_is_float(pn, expr->lambda.body, scope)) {
+                    param_inferred[i] = builtin_float;   // (x) => x * 2.5
+                } else if (expr->lambda.body && lambda_param_is_bool(pn, expr->lambda.body, scope)) {
+                    param_inferred[i] = builtin_bool;    // (b) => not b
+                } else {
+                    param_inferred[i] = builtin_int;
+                }
             }
             // Add parameters to lambda scope with their inferred types
             for (int i = 0; i < expr->lambda.param_count; i++) {
@@ -7147,6 +7223,12 @@ void check_program(Program* prog) {
                         }
                     }
                     fn_type->fn_type.return_type = array_type;
+                } else if (fn->return_type->type == EXPR_FN_TYPE) {
+                    // S3: `-> fn(T) -> R` - register the function type so a
+                    // closure-holding var (s = make_scaler(3.0)) carries its
+                    // real signature and the call site uses the right ABI.
+                    Type* rt = check_expr(fn->return_type, global_scope);
+                    if (rt) fn_type->fn_type.return_type = rt;
                 } else if (fn->return_type->type == EXPR_IDENT) {
                     Token type_name = fn->return_type->token;
                     if (type_name.length == 3 && memcmp(type_name.start, "int", 3) == 0) {
@@ -7426,6 +7508,12 @@ void check_program(Program* prog) {
                         // arguments instead of defaulting to int.
                         Type* ot = check_expr(fn->param_types[j], &local_scope);
                         if (ot) param_type = ot;
+                    } else if (fn->param_types[j]->type == EXPR_FN_TYPE) {
+                        // S3: `f: fn(float) -> float` - the param was defaulting to
+                        // int inside the body, so `return f(v)` in an fn -> float
+                        // was rejected with "Return type mismatch ... got int".
+                        Type* ft = check_expr(fn->param_types[j], &local_scope);
+                        if (ft) param_type = ft;
                     }
                 }
 
@@ -7649,6 +7737,99 @@ static int expr_is_string_literal_or_typed(Expr* e, SymbolTable* scope) {
         if (sym && sym->type && sym->type->kind == TYPE_STRING) return 1;
     }
     return 0;
+}
+// S3: same idea for floats - a param that participates in arithmetic or a
+// comparison with a float operand is a float ((x) => x * 2.5). Conservative:
+// no evidence means "not float", the int default stays.
+static int expr_is_float_literal_or_typed(Expr* e, SymbolTable* scope) {
+    if (!e) return 0;
+    if (e->type == EXPR_FLOAT) return 1;
+    if (e->expr_type && e->expr_type->kind == TYPE_FLOAT) return 1;
+    if (e->type == EXPR_IDENT && scope) {
+        Symbol* sym = find_symbol(scope, e->token);
+        if (sym && sym->type && sym->type->kind == TYPE_FLOAT) return 1;
+    }
+    return 0;
+}
+static int lambda_param_is_float(const char* pname, Expr* e, SymbolTable* scope) {
+    if (!e || !pname) return 0;
+    switch (e->type) {
+        case EXPR_BINARY: {
+            WynTokenType op = e->binary.op.type;
+            if (op == TOKEN_PLUS || op == TOKEN_MINUS || op == TOKEN_STAR ||
+                op == TOKEN_SLASH || op == TOKEN_LT || op == TOKEN_GT ||
+                op == TOKEN_LTEQ || op == TOKEN_GTEQ ||
+                op == TOKEN_EQEQ || op == TOKEN_BANGEQ) {
+                Expr* l = e->binary.left; Expr* r = e->binary.right;
+                int l_is_p = (l && l->type == EXPR_IDENT && l->token.length == (int)strlen(pname) &&
+                              memcmp(l->token.start, pname, l->token.length) == 0);
+                int r_is_p = (r && r->type == EXPR_IDENT && r->token.length == (int)strlen(pname) &&
+                              memcmp(r->token.start, pname, r->token.length) == 0);
+                if (l_is_p && expr_is_float_literal_or_typed(r, scope)) return 1;
+                if (r_is_p && expr_is_float_literal_or_typed(l, scope)) return 1;
+            }
+            return lambda_param_is_float(pname, e->binary.left, scope) ||
+                   lambda_param_is_float(pname, e->binary.right, scope);
+        }
+        case EXPR_CALL:
+            for (int i = 0; i < e->call.arg_count; i++)
+                if (lambda_param_is_float(pname, e->call.args[i], scope)) return 1;
+            return 0;
+        case EXPR_METHOD_CALL:
+            if (lambda_param_is_float(pname, e->method_call.object, scope)) return 1;
+            for (int i = 0; i < e->method_call.arg_count; i++)
+                if (lambda_param_is_float(pname, e->method_call.args[i], scope)) return 1;
+            return 0;
+        case EXPR_IF_EXPR:
+            return lambda_param_is_float(pname, e->if_expr.condition, scope) ||
+                   lambda_param_is_float(pname, e->if_expr.then_expr, scope) ||
+                   lambda_param_is_float(pname, e->if_expr.else_expr, scope);
+        case EXPR_UNARY:
+            return lambda_param_is_float(pname, e->unary.operand, scope);
+        default:
+            return 0;
+    }
+}
+// S3: bool evidence - the param is negated with `not`, or compared with a
+// bool literal, or is directly a logical (and/or) operand.
+static int lambda_param_is_bool(const char* pname, Expr* e, SymbolTable* scope) {
+    if (!e || !pname) return 0;
+    switch (e->type) {
+        case EXPR_UNARY: {
+            Expr* o = e->unary.operand;
+            if (e->unary.op.type == TOKEN_NOT && o && o->type == EXPR_IDENT &&
+                o->token.length == (int)strlen(pname) &&
+                memcmp(o->token.start, pname, o->token.length) == 0) return 1;
+            return lambda_param_is_bool(pname, o, scope);
+        }
+        case EXPR_BINARY: {
+            WynTokenType op = e->binary.op.type;
+            Expr* l = e->binary.left; Expr* r = e->binary.right;
+            int l_is_p = (l && l->type == EXPR_IDENT && l->token.length == (int)strlen(pname) &&
+                          memcmp(l->token.start, pname, l->token.length) == 0);
+            int r_is_p = (r && r->type == EXPR_IDENT && r->token.length == (int)strlen(pname) &&
+                          memcmp(r->token.start, pname, r->token.length) == 0);
+            if (op == TOKEN_AND || op == TOKEN_OR) {
+                if (l_is_p || r_is_p) return 1;
+            }
+            if (op == TOKEN_EQEQ || op == TOKEN_BANGEQ) {
+                if (l_is_p && r && r->type == EXPR_BOOL) return 1;
+                if (r_is_p && l && l->type == EXPR_BOOL) return 1;
+            }
+            return lambda_param_is_bool(pname, l, scope) ||
+                   lambda_param_is_bool(pname, r, scope);
+        }
+        case EXPR_CALL:
+            for (int i = 0; i < e->call.arg_count; i++)
+                if (lambda_param_is_bool(pname, e->call.args[i], scope)) return 1;
+            return 0;
+        case EXPR_IF_EXPR:
+            return lambda_param_is_bool(pname, e->if_expr.condition, scope) ||
+                   lambda_param_is_bool(pname, e->if_expr.then_expr, scope) ||
+                   lambda_param_is_bool(pname, e->if_expr.else_expr, scope);
+        default:
+            return 0;
+    }
 }
 static int lambda_param_is_string(const char* pname, Expr* e, SymbolTable* scope) {
     if (!e || !pname) return 0;

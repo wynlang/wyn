@@ -915,22 +915,28 @@ static Expr* primary() {
     if (match(TOKEN_PIPE)) {
         Expr* lambda_expr = alloc_expr();
         lambda_expr->type = EXPR_LAMBDA;
-        
+
         // Parse parameters
         lambda_expr->lambda.param_count = 0;
         lambda_expr->lambda.params = malloc(sizeof(Token) * 8);
-        
+        lambda_expr->lambda.param_types = calloc(8, sizeof(Expr*)); // S3: keep annotations
+
         if (!check(TOKEN_PIPE)) {
             do {
                 expect(TOKEN_IDENT, "Expected parameter name");
                 lambda_expr->lambda.params[lambda_expr->lambda.param_count++] = parser.previous;
-                
-                // Skip optional type annotation
+
+                // Optional type annotation - keep simple IDENT types (S3),
+                // skip anything fancier (parse_type would consume | for unions)
                 if (match(TOKEN_COLON)) {
-                    // Skip type without using parse_type (which would consume | for union types)
-                    // Just skip the type identifier
                     if (check(TOKEN_IDENT)) {
-                        advance(); // Skip type name like 'int', 'string', etc.
+                        advance(); // type name like 'int', 'float', 'P', etc.
+                        if (lambda_expr->lambda.param_count <= 8) {
+                            Expr* te = alloc_expr();
+                            te->type = EXPR_IDENT;
+                            te->token = parser.previous;
+                            lambda_expr->lambda.param_types[lambda_expr->lambda.param_count - 1] = te;
+                        }
                         // Skip generic parameters if present
                         if (match(TOKEN_LT)) {
                             int depth = 1;
@@ -1013,21 +1019,27 @@ static Expr* primary() {
         lambda_expr->type = EXPR_LAMBDA;
         
         expect(TOKEN_LPAREN, "Expected '(' after 'fn'");
-        
+
         // Parse parameters
         lambda_expr->lambda.param_count = 0;
         lambda_expr->lambda.params = malloc(sizeof(Token) * 8);
-        
+        lambda_expr->lambda.param_types = calloc(8, sizeof(Expr*)); // S3: keep annotations
+
         if (!check(TOKEN_RPAREN)) {
             do {
                 expect(TOKEN_IDENT, "Expected parameter name");
                 lambda_expr->lambda.params[lambda_expr->lambda.param_count++] = parser.previous;
-                
-                // Parse optional type annotation
+
+                // Optional type annotation - keep simple IDENT types (S3)
                 if (match(TOKEN_COLON)) {
-                    // Skip type annotation for now (simplified)
                     if (check(TOKEN_IDENT)) {
-                        advance(); // Skip type name
+                        advance(); // type name
+                        if (lambda_expr->lambda.param_count <= 8) {
+                            Expr* te = alloc_expr();
+                            te->type = EXPR_IDENT;
+                            te->token = parser.previous;
+                            lambda_expr->lambda.param_types[lambda_expr->lambda.param_count - 1] = te;
+                        }
                     }
                 }
             } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
@@ -1127,6 +1139,7 @@ static Expr* primary() {
         save_parser_state();
         bool is_arrow_lambda = false;
         Token lam_params[16];
+        Expr* lam_param_types[16] = {0};   // S3: keep annotations ((x: float) => ...)
         int lam_param_count = 0;
         advance(); // consume '('
         bool params_ok = true;
@@ -1136,7 +1149,7 @@ static Expr* primary() {
                 advance();
                 lam_params[lam_param_count++] = parser.previous;
                 if (match(TOKEN_COLON)) {          // optional type annotation
-                    parse_type();
+                    lam_param_types[lam_param_count - 1] = parse_type();
                 }
             } while (match(TOKEN_COMMA) && !check(TOKEN_RPAREN));
         }
@@ -1152,7 +1165,11 @@ static Expr* primary() {
             lambda_expr->type = EXPR_LAMBDA;
             lambda_expr->lambda.param_count = lam_param_count;
             lambda_expr->lambda.params = malloc(sizeof(Token) * (lam_param_count > 0 ? lam_param_count : 1));
-            for (int i = 0; i < lam_param_count; i++) lambda_expr->lambda.params[i] = lam_params[i];
+            lambda_expr->lambda.param_types = calloc(lam_param_count > 0 ? lam_param_count : 1, sizeof(Expr*));
+            for (int i = 0; i < lam_param_count; i++) {
+                lambda_expr->lambda.params[i] = lam_params[i];
+                lambda_expr->lambda.param_types[i] = lam_param_types[i];
+            }
             lambda_expr->lambda.body_stmts = NULL;
             lambda_expr->lambda.body_stmt_count = 0;
             lambda_expr->lambda.captured_count = 0;

@@ -64,6 +64,7 @@ LambdaExpr* wyn_create_lambda(Token* params, int param_count, Expr* body, Symbol
     
     lambda->params = params;
     lambda->param_count = param_count;
+    lambda->param_types = NULL;
     lambda->body = body;
     lambda->captured_vars = NULL;
     lambda->captured_count = 0;

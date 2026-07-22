@@ -37,6 +37,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
 typedef struct LambdaExpr {
     Token* params;
     int param_count;
+    Expr** param_types;       // S3: optional per-param type annotation exprs
+                              // ((x: float) => ...); NULL entries mean "infer".
+                              // Whole pointer NULL when no annotations at all.
     Expr* body;
     // Multiline lambda: statements before the return expression
     struct Stmt** body_stmts;
