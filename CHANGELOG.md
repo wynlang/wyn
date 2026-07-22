@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.20.0 (unreleased)
+
+Correctness and packaging release.
+
+- **Bare `return` in script mode**: a bare `return` in top-level script code
+  (and in the test runner) now compiles to `return 0` instead of producing
+  invalid C.
+- **Recursive struct cycles rejected cleanly**: mutually-recursive struct
+  fields are now a proper check-time error instead of a C compile error or
+  internal compiler error.
+- **Closure copies work**: assigning a closure-typed variable
+  (`var g = f`) now compiles and safely shares the environment; a leak on
+  closure reassignment was fixed along the way.
+- **Golden-C snapshot suite**: 30 representative programs now have their
+  generated C snapshotted and diffed on every `make test`, catching silent
+  codegen changes.
+- **LICENSE shipped in release artifacts**: the MIT license file is now
+  included in every platform tarball/zip.
+
 ## v1.19.1 (2026-07-21)
 
 Identity and polish patch - no language changes, drop-in upgrade from v1.19.0.
