@@ -980,11 +980,27 @@ void codegen_expr(Expr* expr) {
                     }
                 }
                 if (is_closure_var && expr->call.arg_count == 1) {
-                    emit("wyn_closure_call_int(");
+                    // S3: call through the checker-typed signature. The old
+                    // wyn_closure_call_int forced the int ABI, so a float
+                    // closure (fn(float) -> float) returned garbage bits.
+                    const char* _crc = "long long";
+                    const char* _cpc = "long long";
+                    Type* _ct = expr->call.callee->expr_type;
+                    if (_ct && _ct->kind == TYPE_FUNCTION) {
+                        if (_ct->fn_type.return_type) {
+                            const char* t = codegen_c_type_from_type(_ct->fn_type.return_type);
+                            if (t) _crc = t;
+                        }
+                        if (_ct->fn_type.param_count >= 1 && _ct->fn_type.param_types[0]) {
+                            const char* t = codegen_c_type_from_type(_ct->fn_type.param_types[0]);
+                            if (t) _cpc = t;
+                        }
+                    }
+                    emit("({ WynClosure __c = ");
                     codegen_expr(expr->call.callee);
-                    emit(", ");
+                    emit("; ((%s(*)(void*,%s))__c.fn)(__c.env, ", _crc, _cpc);
                     codegen_expr(expr->call.args[0]);
-                    emit(")");
+                    emit("); })");
                     break;
                 }
             }
@@ -2248,23 +2264,53 @@ void codegen_expr(Expr* expr) {
                 // (`words.map((s) => s.len())`) through the str->str variant
                 // treated returned ints as char* and segfaulted at print.
                 if (method.length == 3 && memcmp(method.start, "map", 3) == 0 && expr->method_call.arg_count == 1) {
-                    bool _elem_is_str = object_type->array_type.element_type &&
-                        object_type->array_type.element_type->kind == TYPE_STRING;
+                    Type* _elem_t = object_type->array_type.element_type;
+                    bool _elem_is_str = _elem_t && _elem_t->kind == TYPE_STRING;
                     if (!_elem_is_str && expr->method_call.object->type == EXPR_IDENT) {
                         char _vn[256]; token_to_cstr(_vn, sizeof(_vn), expr->method_call.object->token);
                         extern int is_str_array_var(const char*);
                         if (is_str_array_var(_vn)) _elem_is_str = true;
                     }
-                    bool _elem_is_float = object_type->array_type.element_type &&
-                        object_type->array_type.element_type->kind == TYPE_FLOAT;
-                    bool _lam_ret_str = true;   // default matches element type
+                    bool _elem_is_float = _elem_t && _elem_t->kind == TYPE_FLOAT;
                     Expr* _fn_arg0 = expr->method_call.args[0];
-                    if (_fn_arg0->expr_type && _fn_arg0->expr_type->kind == TYPE_FUNCTION &&
-                        _fn_arg0->expr_type->fn_type.return_type) {
-                        _lam_ret_str = _fn_arg0->expr_type->fn_type.return_type->kind == TYPE_STRING;
+                    Type* _lam_ret = NULL;
+                    if (_fn_arg0->expr_type && _fn_arg0->expr_type->kind == TYPE_FUNCTION)
+                        _lam_ret = _fn_arg0->expr_type->fn_type.return_type;
+                    bool _lam_ret_str = _lam_ret ? _lam_ret->kind == TYPE_STRING : true;
+                    // S3: [Struct].map(fn) - no generic runtime variant can take a
+                    // struct by value, so emit an inline typed loop instead.
+                    if (_elem_t && _elem_t->kind == TYPE_STRUCT) {
+                        char _ec[128]; const char* _ecp = codegen_c_type_from_type(_elem_t);
+                        snprintf(_ec, sizeof(_ec), "%s", _ecp ? _ecp : "long long");
+                        char _rc[128]; const char* _rcp = _lam_ret ? codegen_c_type_from_type(_lam_ret) : NULL;
+                        snprintf(_rc, sizeof(_rc), "%s", _rcp ? _rcp : "long long");
+                        emit("({ WynArray __src = ");
+                        codegen_expr(expr->method_call.object);
+                        emit("; %s (*__fn)(%s) = ", _rc, _ec);
+                        codegen_expr(_fn_arg0);
+                        emit("; WynArray __dst = array_new(); ");
+                        emit("for (int __i = 0; __i < __src.count; __i++) { ");
+                        if (_lam_ret && _lam_ret->kind == TYPE_STRUCT) {
+                            emit("array_push_struct(&__dst, __fn(array_get_struct(__src, __i, %s)), %s); ", _ec, _rc);
+                        } else if (_lam_ret && _lam_ret->kind == TYPE_STRING) {
+                            emit("const char* __m = __fn(array_get_struct(__src, __i, %s)); ", _ec);
+                            emit("array_push_str(&__dst, __m ? wyn_strdup(__m) : wyn_strdup(\"\")); ");
+                        } else if (_lam_ret && _lam_ret->kind == TYPE_FLOAT) {
+                            emit("array_push_float(&__dst, __fn(array_get_struct(__src, __i, %s))); ", _ec);
+                        } else if (_lam_ret && _lam_ret->kind == TYPE_BOOL) {
+                            emit("array_push_bool(&__dst, __fn(array_get_struct(__src, __i, %s))); ", _ec);
+                        } else {
+                            emit("array_push_int(&__dst, __fn(array_get_struct(__src, __i, %s))); ", _ec);
+                        }
+                        emit("} __dst; })");
+                        break;
                     }
+                    // S3: [bool].map with a bool-returning lambda keeps elements
+                    // typed bool (the int variant printed 0/1 instead of true/false).
+                    bool _elem_is_bool = _elem_t && _elem_t->kind == TYPE_BOOL;
                     emit(_elem_is_str ? (_lam_ret_str ? "wyn_array_map_str(" : "wyn_array_map_str_to_int(")
                          : _elem_is_float ? "wyn_array_map_float("
+                         : (_elem_is_bool && _lam_ret && _lam_ret->kind == TYPE_BOOL) ? "wyn_array_map_bool("
                          : "wyn_array_map(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
@@ -2272,19 +2318,43 @@ void codegen_expr(Expr* expr) {
                     emit(")");
                     break;
                 }
-                // arr.filter(fn) -> element-typed variant ([string]/[float]/int)
+                // arr.filter(fn) -> element-typed variant ([string]/[float]/[bool]/[Struct]/int)
                 if (method.length == 6 && memcmp(method.start, "filter", 6) == 0 && expr->method_call.arg_count == 1) {
-                    bool _elem_is_str = object_type->array_type.element_type &&
-                        object_type->array_type.element_type->kind == TYPE_STRING;
-                    bool _elem_is_float = object_type->array_type.element_type &&
-                        object_type->array_type.element_type->kind == TYPE_FLOAT;
+                    Type* _elem_t = object_type->array_type.element_type;
+                    bool _elem_is_str = _elem_t && _elem_t->kind == TYPE_STRING;
+                    bool _elem_is_float = _elem_t && _elem_t->kind == TYPE_FLOAT;
+                    bool _elem_is_bool = _elem_t && _elem_t->kind == TYPE_BOOL;
                     if (!_elem_is_str && expr->method_call.object->type == EXPR_IDENT) {
                         char _vn[256]; token_to_cstr(_vn, sizeof(_vn), expr->method_call.object->token);
                         extern int is_str_array_var(const char*);
                         if (is_str_array_var(_vn)) _elem_is_str = true;
                     }
+                    // S3: [Struct].filter(fn) - inline typed loop (see map above).
+                    if (_elem_t && _elem_t->kind == TYPE_STRUCT) {
+                        char _ec[128]; const char* _ecp = codegen_c_type_from_type(_elem_t);
+                        snprintf(_ec, sizeof(_ec), "%s", _ecp ? _ecp : "long long");
+                        // __fn's return C type must match the emitted lambda's
+                        // (the checker types the predicate body - bool or int).
+                        Type* _flr = NULL;
+                        if (expr->method_call.args[0]->expr_type &&
+                            expr->method_call.args[0]->expr_type->kind == TYPE_FUNCTION)
+                            _flr = expr->method_call.args[0]->expr_type->fn_type.return_type;
+                        char _frc[128]; const char* _frcp = _flr ? codegen_c_type_from_type(_flr) : NULL;
+                        snprintf(_frc, sizeof(_frc), "%s", _frcp ? _frcp : "long long");
+                        emit("({ WynArray __src = ");
+                        codegen_expr(expr->method_call.object);
+                        emit("; %s (*__fn)(%s) = ", _frc, _ec);
+                        codegen_expr(expr->method_call.args[0]);
+                        emit("; WynArray __dst = array_new(); ");
+                        emit("for (int __i = 0; __i < __src.count; __i++) { ");
+                        emit("%s __v = array_get_struct(__src, __i, %s); ", _ec, _ec);
+                        emit("if (__fn(__v)) array_push_struct(&__dst, __v, %s); ", _ec);
+                        emit("} __dst; })");
+                        break;
+                    }
                     emit(_elem_is_str ? "wyn_array_filter_str("
                          : _elem_is_float ? "wyn_array_filter_float("
+                         : _elem_is_bool ? "wyn_array_filter_bool("
                          : "wyn_array_filter(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");

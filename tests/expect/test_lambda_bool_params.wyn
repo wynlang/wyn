@@ -1,0 +1,19 @@
+// EXPECT: false
+// EXPECT: true
+// EXPECT: [false, true, false]
+// EXPECT: [true, true]
+// S3: bool lambda parameters - annotated ((b: bool) => ...) and inferred from a
+// `not b` body. [bool].map keeps elements typed bool (the int path printed
+// 0/1 instead of true/false), and filter preserves the bool elements.
+fn main() -> int {
+    f = (b: bool) => not b
+    println(f(true))
+
+    g = (b) => not b
+    println(g(false))
+
+    bs = [true, false, true]
+    println(bs.map((b) => not b))
+    println(bs.filter((b) => b))
+    return 0
+}

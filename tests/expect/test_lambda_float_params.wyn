@@ -1,0 +1,28 @@
+// EXPECT: 3.0
+// EXPECT: 3.5
+// EXPECT: 5.0
+// EXPECT: 2.5
+// EXPECT: [3, 5]
+// EXPECT: [2.5]
+// S3: float lambda parameters - annotated ((x: float) => ...), inferred from a
+// float-literal body ((x) => x * 2.5), multi-param, and pipe-form (|x: float|).
+// Before S3 every one of these failed the checker with "Type mismatch:
+// Expected int, Got float" or rode the int ABI and printed garbage bits.
+fn main() -> int {
+    f = (x: float) => x * 2.0
+    println(f(1.5))
+
+    g = (x) => x + 1.5
+    println(g(2.0))
+
+    h = (x: float, y: float) => x + y
+    println(h(2.0, 3.0))
+
+    k = |x: float| x / 2.0
+    println(k(5.0))
+
+    nums = [1.5, 2.5]
+    println(nums.map((v) => v * 2.0))
+    println(nums.filter((v) => v > 2.0))
+    return 0
+}

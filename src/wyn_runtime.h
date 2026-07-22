@@ -3687,6 +3687,23 @@ WynArray wyn_array_filter_float(WynArray arr, long long (*fn)(double)) {
     }
     return result;
 }
+// S3: [bool] map/filter - keep the elements typed as bool so the result
+// prints true/false (riding the int variant printed 0/1).
+WynArray wyn_array_map_bool(WynArray arr, bool (*fn)(bool)) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        array_push_bool(&result, fn((bool)array_get_int(arr, i)));
+    }
+    return result;
+}
+WynArray wyn_array_filter_bool(WynArray arr, bool (*fn)(bool)) {
+    WynArray result = array_new();
+    for (int i = 0; i < arr.count; i++) {
+        bool v = (bool)array_get_int(arr, i);
+        if (fn(v)) array_push_bool(&result, v);
+    }
+    return result;
+}
 int random_int(int min, int max) { return min + rand() % (max - min + 1); }
 int random_range(int min, int max) { return min + rand() % (max - min + 1); }
 double random_float() { return (double)rand() / RAND_MAX; }
