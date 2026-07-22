@@ -418,8 +418,28 @@ static Expr* primary() {
                         init_lexer(expr_str);
                         advance(); // prime the parser
                         Expr* parsed_expr = expression();
+                        // Anything left after the expression is unsupported
+                        // syntax - typically a Python-style format spec
+                        // (${pi:.2}). It used to be SILENTLY dropped (the
+                        // value printed unformatted, or nothing) - FLOWY_DESIGN
+                        // F3. Reject at compile time until format specs land.
+                        bool interp_leftover = (parser.current.type != TOKEN_SEMI &&
+                                                parser.current.type != TOKEN_EOF);
+                        bool leftover_is_spec = interp_leftover &&
+                                                (parser.current.type == TOKEN_COLON);
                         restore_parser_state();
                         restore_lexer_state();
+                        if (interp_leftover) {
+                            fprintf(stderr, "Error at line %d: Unsupported syntax in string interpolation: '${%.*s}'\n",
+                                    str_token.line, expr_len, expr_str);
+                            if (leftover_is_spec) {
+                                fprintf(stderr, "  \033[34mHelp:\033[0m Format specs (:.2 etc.) are not supported yet.\n");
+                                fprintf(stderr, "        To round a float, use Math.round(x * 100.0) / 100.0\n");
+                            } else {
+                                fprintf(stderr, "  \033[34mHelp:\033[0m Only a single expression is allowed inside ${...}\n");
+                            }
+                            parser.had_error = true;
+                        }
                         
                         expr->string_interp.expressions[expr->string_interp.count] = parsed_expr;
                         expr->string_interp.count++;
@@ -1723,6 +1743,34 @@ static Expr* assignment() {
         return NULL;
     }
     
+    // ++/-- on an index target (xs[i]++, m[k]++): same silent-no-op family as
+    // the compound-assign fall-through below - the operator was consumed and
+    // the statement became a bare read. Desugar to x[i] = x[i] +/- 1.
+    if (expr->type == EXPR_INDEX && (check(TOKEN_PLUSPLUS) || check(TOKEN_MINUSMINUS))) {
+        advance();
+        Token op = parser.previous;
+        Expr* binary = alloc_expr();
+        binary->type = EXPR_BINARY;
+        binary->binary.left = expr;
+        binary->binary.right = alloc_expr();
+        binary->binary.right->type = EXPR_INT;
+        Token one = {TOKEN_INT, "1", 1, op.line};
+        binary->binary.right->token = one;
+        Token bin_op = {0};
+        if (op.type == TOKEN_PLUSPLUS) { bin_op.type = TOKEN_PLUS; bin_op.start = "+"; bin_op.length = 1; }
+        else { bin_op.type = TOKEN_MINUS; bin_op.start = "-"; bin_op.length = 1; }
+        bin_op.line = op.line;
+        binary->binary.op = bin_op;
+
+        Expr* index_assign = alloc_expr();
+        index_assign->type = EXPR_INDEX_ASSIGN;
+        index_assign->index_assign.object = expr->index.array;
+        index_assign->index_assign.index = expr->index.index;
+        index_assign->index_assign.value = binary;
+        index_assign->index_assign.is_compound = true;
+        return index_assign;
+    }
+
     // Check for ++ and --
     if (match(TOKEN_PLUSPLUS)) {
         if (expr->type == EXPR_IDENT) {
@@ -1774,6 +1822,41 @@ static Expr* assignment() {
         index_assign->index_assign.object = expr->index.array;
         index_assign->index_assign.index = expr->index.index;
         index_assign->index_assign.value = assignment();
+        return index_assign;
+    }
+
+    // Compound index assignment: m[k] += v, xs[i] -= v (and *= /= %=).
+    // This used to fall through to the ident-only compound block below, which
+    // consumed the operator, dropped the right-hand side, and returned the
+    // bare index read - `counts["a"] += 1` compiled and did NOTHING (F1b in
+    // FLOWY_DESIGN). Desugar to read-modify-write like Python; the map form
+    // panics at runtime when the key is missing (Python KeyError semantics).
+    if (expr->type == EXPR_INDEX &&
+        (check(TOKEN_PLUSEQ) || check(TOKEN_MINUSEQ) || check(TOKEN_STAREQ) ||
+         check(TOKEN_SLASHEQ) || check(TOKEN_PERCENTEQ))) {
+        advance();
+        Token op = parser.previous;
+        Expr* right = assignment();
+
+        Expr* binary = alloc_expr();
+        binary->type = EXPR_BINARY;
+        binary->binary.left = expr;   // re-reads m[k] / xs[i]
+        binary->binary.right = right;
+        Token bin_op = {0};
+        if (op.type == TOKEN_PLUSEQ) { bin_op.type = TOKEN_PLUS; bin_op.start = "+"; bin_op.length = 1; }
+        else if (op.type == TOKEN_MINUSEQ) { bin_op.type = TOKEN_MINUS; bin_op.start = "-"; bin_op.length = 1; }
+        else if (op.type == TOKEN_STAREQ) { bin_op.type = TOKEN_STAR; bin_op.start = "*"; bin_op.length = 1; }
+        else if (op.type == TOKEN_SLASHEQ) { bin_op.type = TOKEN_SLASH; bin_op.start = "/"; bin_op.length = 1; }
+        else if (op.type == TOKEN_PERCENTEQ) { bin_op.type = TOKEN_PERCENT; bin_op.start = "%"; bin_op.length = 1; }
+        bin_op.line = op.line;
+        binary->binary.op = bin_op;
+
+        Expr* index_assign = alloc_expr();
+        index_assign->type = EXPR_INDEX_ASSIGN;
+        index_assign->index_assign.object = expr->index.array;
+        index_assign->index_assign.index = expr->index.index;
+        index_assign->index_assign.value = binary;
+        index_assign->index_assign.is_compound = true;
         return index_assign;
     }
     

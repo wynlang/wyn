@@ -1,0 +1,45 @@
+// map.get(key, default) must return the default when the key is missing
+// (Python dict.get semantics). It used to compile and return garbage: the
+// default was silently dropped and the missing key decoded as the wrong
+// type (FLOWY_DESIGN F1). Covers int/string/float/bool value maps, plus
+// get_or (previously hardwired to the int variant - garbage for strings).
+// EXPECT: 5
+// EXPECT: 42
+// EXPECT: hello
+// EXPECT: fallback
+// EXPECT: 1.5
+// EXPECT: 9.5
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: hi
+// EXPECT: dflt
+// EXPECT: 0.5
+// EXPECT: 7.5
+// EXPECT: 3.25
+
+counts = {"a": 5}
+print(counts.get("a", 0))
+print(counts.get("missing", 42))
+
+names = {"x": "hello"}
+print(names.get("x", "fallback"))
+print(names.get("nope", "fallback"))
+
+floats = {"f": 1.5}
+print(floats.get("f", 0.0))
+print(floats.get("nope", 9.5))
+
+flags = {"on": true}
+print(flags.get("on", false))
+print(flags.get("off", false))
+
+// get_or is the same operation under its older name
+s = {"k": "hi"}
+print(s.get_or("k", "dflt"))
+print(s.get_or("zz", "dflt"))
+fm = {"a": 0.5}
+print(fm.get_or("a", 7.5))
+print(fm.get_or("zz", 7.5))
+
+// .get(k).unwrap_or(d) on a float map used to truncate the default
+print(fm.get("zz").unwrap_or(3.25))

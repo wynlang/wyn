@@ -1,0 +1,43 @@
+// Compound assignment through an index: m[k] += v and xs[i] += v.
+// The parser used to consume the operator, drop the right-hand side, and
+// emit a bare read - `counts["a"] += 1` compiled and did NOTHING
+// (FLOWY_DESIGN F1b). Now it desugars to read-modify-write. Also covers
+// xs[i]++ / xs[i]-- which fell through the same hole.
+// EXPECT: 6
+// EXPECT: 12
+// EXPECT: 11
+// EXPECT: 1
+// EXPECT: 9
+// EXPECT: 11
+// EXPECT: 9
+// EXPECT: 1.75
+// EXPECT: abcd
+
+counts = {"a": 5}
+counts["a"] += 1
+print(counts["a"])
+counts["a"] *= 2
+print(counts["a"])
+
+arr = [1, 2, 3]
+arr[0] += 10
+print(arr[0])
+arr[1] -= 1
+print(arr[1])
+arr[2] *= 3
+print(arr[2])
+
+xs = [10]
+xs[0]++
+print(xs[0])
+xs[0]--
+xs[0]--
+print(xs[0])
+
+f = [1.5]
+f[0] += 0.25
+print(f[0])
+
+s = {"x": "ab"}
+s["x"] += "cd"
+print(s["x"])

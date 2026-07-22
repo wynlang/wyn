@@ -1,0 +1,46 @@
+// Numeric reductions on float arrays must return floats. They used to read
+// elements through the int accessor and TRUNCATE: [1.5, 2.5].sum() == 3,
+// [1.5, 3.5, 2.0].max() == 3 (FLOWY_DESIGN F2, silent wrong answers).
+// Also: average() was int division even for int arrays, first/last/pop
+// truncated, and contains/index_of truncated the NEEDLE, so
+// [1.5].contains(1.9) was true.
+// EXPECT: 4
+// EXPECT: 3.5
+// EXPECT: 1.5
+// EXPECT: 2.33333
+// EXPECT: 1.5
+// EXPECT: 2
+// EXPECT: 3
+// EXPECT: 2.5
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: -1
+// EXPECT: 0.5
+
+xs = [1.5, 2.5]
+print(xs.sum())
+
+ys = [1.5, 3.5, 2.0]
+print(ys.max())
+print(ys.min())
+print(ys.average())
+print(ys.first())
+print(ys.last())
+
+ints = [1, 2, 3, 2]
+print(ints.max())
+
+zs = [1.5, 2.5]
+print(zs.pop())
+
+c = [2.5, 0.5]
+print(c.contains(0.5))
+print(c.contains(0.9))
+print(c.index_of(0.5))
+print(c.index_of(2.4))
+
+// int array average is a float mean now (was int division: 2)
+a = [1, 2]
+avg = a.average()
+if avg > 1.4 and avg < 1.6 { print(0.5) }

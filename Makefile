@@ -235,6 +235,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_select_deadlock_test.sh
 	@echo "=== Running collection type-safety test ==="
 	@WYN=./wyn bash tests/errors/run_collection_type_test.sh
+	@echo "=== Running silent-wrong-answer test ==="
+	@WYN=./wyn bash tests/errors/run_silent_wrong_test.sh
 	@echo "=== Running CLI DX test ==="
 	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
 	@echo "=== Running install-layout canary ==="
@@ -555,7 +557,10 @@ ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/expect/test_channels.wyn \
              tests/expect/test_parallel.wyn \
              tests/expect/test_await_twice.wyn \
-             tests/expect/test_select_arms.wyn
+             tests/expect/test_select_arms.wyn \
+             tests/regression/test_map_get_default.wyn \
+             tests/regression/test_index_compound_assign.wyn \
+             tests/regression/test_float_array_reductions.wyn
 
 asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a
 	@echo "=== ASan runtime test (representative set) ==="
