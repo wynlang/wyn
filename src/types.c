@@ -1041,7 +1041,8 @@ const char* lookup_module_fn_return_type(const char* fn_name) {
     // These match the checker's return type registry
     struct { const char* name; const char* ret; } fns[] = {
         {"Crypto_sha256", "string"}, {"Crypto_md5", "string"},
-        {"Crypto_hmac_sha256", "string"}, {"Crypto_random_bytes", "string"},
+        {"Crypto_hmac_sha256", "string"}, {"Crypto_hmac_sha256_hex", "string"},
+        {"Crypto_random_bytes", "string"},
         {"Encoding_base64_encode", "string"}, {"Encoding_base64_decode", "string"},
         {"Encoding_hex_encode", "string"}, {"Encoding_hex_decode", "string"},
         {"Base64_encode", "string"}, {"Base64_decode", "string"},

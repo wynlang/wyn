@@ -152,6 +152,7 @@ void System_gc(void);
 // Crypto / Encoding
 char* Crypto_sha256(const char* data);
 char* Crypto_hmac_sha256(const char* key, const char* data);
+char* Crypto_hmac_sha256_hex(const char* hex_key, const char* data);
 char* Encoding_base64_encode(const char* data);
 char* Encoding_base64_decode(const char* data);
 
@@ -740,6 +741,7 @@ long long DateTime_second(long long timestamp);
 char* Encoding_hex_decode(const char* hex);
 char* Encoding_csv_parse(const char* csv);
 char* Crypto_hmac_sha256(const char* key, const char* data);
+char* Crypto_hmac_sha256_hex(const char* hex_key, const char* data);
 char* Crypto_random_bytes(long long n);
 void StringBuilder_append_int(long long handle, long long val);
 void StringBuilder_append_line(long long handle, const char* s);

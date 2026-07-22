@@ -1,0 +1,36 @@
+// Native HMAC-SHA256 (RFC 2104) validated against RFC 4231 test vectors,
+// plus the hex-key variant used by SigV4 signing-key chaining and real
+// SHA-256 (FIPS 180-4) known answers. The old implementation shelled out to
+// openssl with the secret key on the command line; these vectors pin the
+// native replacement.
+
+fn main() -> int {
+    // SHA-256 known answers
+    println(Crypto.sha256("abc"))
+    println(Crypto.sha256(""))
+
+    // RFC 4231 test case 2 (ASCII key and data)
+    println(Crypto.hmac_sha256("Jefe", "what do ya want for nothing?"))
+
+    // RFC 4231 test case 1 via the hex-key variant: key = 0x0b repeated 20x
+    println(Crypto.hmac_sha256_hex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "Hi There"))
+
+    // Chaining property: hex output of one round feeds the next as a key.
+    // Equivalent to HMAC(HMAC("Jefe", "a") as raw-bytes-from-hex, "b").
+    var r1 = Crypto.hmac_sha256("Jefe", "a")
+    println(Crypto.hmac_sha256_hex(r1, "b").len().to_string())
+
+    // Keys containing shell metacharacters (broke the old popen version)
+    println(Crypto.hmac_sha256("k'ey\"$(reboot)", "data").len().to_string())
+
+    // Invalid hex key is rejected
+    println(Crypto.hmac_sha256_hex("zz", "data").len().to_string())
+    return 0
+}
+// EXPECT: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+// EXPECT: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+// EXPECT: 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
+// EXPECT: b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+// EXPECT: 64
+// EXPECT: 64
+// EXPECT: 0

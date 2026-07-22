@@ -515,6 +515,10 @@ uint32_t wyn_crypto_hash32(const char* data, size_t len);
 uint64_t wyn_crypto_hash64(const char* data, size_t len);
 void wyn_crypto_md5(const char* data, size_t len, char* output);
 void wyn_crypto_sha256(const char* data, size_t len, char* output);
+void wyn_sha256_raw(const unsigned char* data, size_t len, unsigned char* out32);
+void wyn_hmac_sha256_raw(const unsigned char* key, size_t keylen,
+                         const unsigned char* data, size_t datalen,
+                         unsigned char* out32);
 char* wyn_crypto_base64_encode(const char* data, size_t len);
 char* wyn_crypto_base64_decode(const char* data, size_t* out_len);
 void wyn_crypto_random_bytes(char* buffer, size_t len);
@@ -4638,18 +4642,14 @@ char* Base64_encode(const char* data) { return Encoding_base64_encode(data); }
 char* Base64_decode(const char* data) { return Encoding_base64_decode(data); }
 
 // === Crypto (SHA-256) ===
+// Native in-process SHA-256 (was: popen("openssl dgst ...") with the data
+// interpolated into a shell command - broken on special chars and slow).
 char* Crypto_sha256(const char* data) {
-    // Use openssl command (POSIX)
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd), "printf '%%s' '%s' | openssl dgst -sha256 -hex 2>/dev/null | awk '{print $NF}'", data);
-    FILE* fp = popen(cmd, "r");
-    if (!fp) return "";
-    char* result = wyn_malloc(65); result[0] = 0;
-    fgets(result, 65, fp);
-    pclose(fp);
-    // Trim newline
-    int len = strlen(result);
-    if (len > 0 && result[len-1] == '\n') result[len-1] = 0;
+    unsigned char digest[32];
+    wyn_sha256_raw((const unsigned char*)data, strlen(data), digest);
+    char* result = wyn_malloc(65);
+    for (int i = 0; i < 32; i++) snprintf(result + i*2, 3, "%02x", digest[i]);
+    result[64] = 0;
     return result;
 }
 
@@ -5204,15 +5204,51 @@ char* Encoding_csv_parse(const char* csv) {
 }
 
 // === Crypto extensions round 2 ===
+// Native in-process HMAC-SHA256 (RFC 2104). The old implementation piped the
+// SECRET KEY through a shell command line (visible in the process list, broken
+// on quotes/special chars, and unable to chain over binary digests for SigV4).
 char* Crypto_hmac_sha256(const char* key, const char* data) {
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd), "printf '%%s' '%s' | openssl dgst -sha256 -hmac '%s' -hex 2>/dev/null | awk '{print $NF}'", data, key);
-    FILE* fp = popen(cmd, "r");
-    if (!fp) return "";
-    char* result = wyn_malloc(65); result[0] = 0;
-    fgets(result, 65, fp); pclose(fp);
-    int len = strlen(result);
-    if (len > 0 && result[len-1] == '\n') result[len-1] = 0;
+    unsigned char digest[32];
+    wyn_hmac_sha256_raw((const unsigned char*)key, strlen(key),
+                        (const unsigned char*)data, strlen(data), digest);
+    char* result = wyn_malloc(65);
+    for (int i = 0; i < 32; i++) snprintf(result + i*2, 3, "%02x", digest[i]);
+    result[64] = 0;
+    return result;
+}
+
+// HMAC-SHA256 with the KEY given as a hex string (decoded to raw bytes before
+// use). This is what lets SigV4 chain signing rounds: each round's binary
+// digest travels between Wyn calls as hex (Wyn strings are C strings, so raw
+// binary bytes cannot pass through a string return safely).
+//   round1 = Crypto.hmac_sha256("AWS4" + secret, date)          // hex out
+//   round2 = Crypto.hmac_sha256_hex(round1, region)             // hex key in
+// Odd-length or non-hex input in hex_key is rejected (returns "").
+char* Crypto_hmac_sha256_hex(const char* hex_key, const char* data) {
+    size_t hexlen = strlen(hex_key);
+    if (hexlen % 2 != 0) return "";
+    size_t keylen = hexlen / 2;
+    unsigned char* key = wyn_malloc(keylen ? keylen : 1);
+    for (size_t i = 0; i < keylen; i++) {
+        int hi, lo;
+        char a = hex_key[i*2], b = hex_key[i*2 + 1];
+        if (a >= '0' && a <= '9') hi = a - '0';
+        else if (a >= 'a' && a <= 'f') hi = a - 'a' + 10;
+        else if (a >= 'A' && a <= 'F') hi = a - 'A' + 10;
+        else { free(key); return ""; }
+        if (b >= '0' && b <= '9') lo = b - '0';
+        else if (b >= 'a' && b <= 'f') lo = b - 'a' + 10;
+        else if (b >= 'A' && b <= 'F') lo = b - 'A' + 10;
+        else { free(key); return ""; }
+        key[i] = (unsigned char)((hi << 4) | lo);
+    }
+    unsigned char digest[32];
+    wyn_hmac_sha256_raw(key, keylen,
+                        (const unsigned char*)data, strlen(data), digest);
+    free(key);
+    char* result = wyn_malloc(65);
+    for (int i = 0; i < 32; i++) snprintf(result + i*2, 3, "%02x", digest[i]);
+    result[64] = 0;
     return result;
 }
 
