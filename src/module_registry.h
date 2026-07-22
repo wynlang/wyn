@@ -9,8 +9,9 @@ typedef struct {
 } ModuleEntry;
 
 typedef struct {
-    ModuleEntry* modules[64];
+    ModuleEntry** modules;  // growable (realloc-doubling)
     int count;
+    int capacity;
 } ModuleRegistry;
 
 // Global module registry
@@ -37,5 +38,9 @@ Program* get_module_at(int index);
 
 // Get all loaded modules
 int get_all_modules(ModuleEntry** out_modules, int max_count);
+
+// Direct access to a module entry (name + ast) by index; NULL if out of range.
+// Preferred over get_all_modules_raw: no fixed-size caller buffer needed.
+void* get_module_entry_at(int index);
 
 #endif

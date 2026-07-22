@@ -16,6 +16,7 @@
 #include "json.h"
 #include "module_registry.h"
 #include "module_aliases.h"
+#include "growable.h"
 
 // Forward declarations
 void codegen_stmt(Stmt* stmt);
@@ -273,17 +274,19 @@ static const char* module_to_c_ident(const char* module_name) {
     return c_ident;
 }
 
-// Simple function registry for current module
-static char* module_functions[256];
+// Simple function registry for current module (growable)
+static char** module_functions = NULL;
 static int module_function_count = 0;
+static int module_function_cap = 0;
 
-// Track user-defined function names that collide with runtime
-static char* user_collision_fns[512];
+// Track user-defined function names that collide with runtime (growable)
+static char** user_collision_fns = NULL;
 static int user_collision_fn_count = 0;
+static int user_collision_fn_cap = 0;
 
 void register_user_collision(const char* name) {
-    if (user_collision_fn_count < 512)
-        user_collision_fns[user_collision_fn_count++] = strdup(name);
+    WYN_ENSURE_CAP(user_collision_fns, user_collision_fn_count, user_collision_fn_cap);
+    user_collision_fns[user_collision_fn_count++] = strdup(name);
 }
 
 int is_user_collision(const char* name) {
@@ -292,23 +295,25 @@ int is_user_collision(const char* name) {
     return 0;
 }
 
-// Map short module names to full paths (http -> network/http)
-static struct {
+// Map short module names to full paths (http -> network/http) (growable)
+typedef struct {
     char short_name[64];
     char full_path[256];
-} module_short_names[64];
+} ModuleShortName;
+static ModuleShortName* module_short_names = NULL;
 static int module_short_name_count = 0;
+static int module_short_name_cap = 0;
 
 static void register_module_short_name(const char* full_path) {
     // Extract short name (last part after /)
     const char* last_slash = strrchr(full_path, '/');
     const char* short_name = last_slash ? last_slash + 1 : full_path;
-    
-    if (module_short_name_count < 64) {
-        strncpy(module_short_names[module_short_name_count].short_name, short_name, 63);
-        strncpy(module_short_names[module_short_name_count].full_path, full_path, 255);
-        module_short_name_count++;
-    }
+
+    WYN_ENSURE_CAP(module_short_names, module_short_name_count, module_short_name_cap);
+    memset(&module_short_names[module_short_name_count], 0, sizeof(ModuleShortName));
+    strncpy(module_short_names[module_short_name_count].short_name, short_name, 63);
+    strncpy(module_short_names[module_short_name_count].full_path, full_path, 255);
+    module_short_name_count++;
 }
 
 static const char* resolve_short_module_name(const char* short_name) {
@@ -320,20 +325,35 @@ static const char* resolve_short_module_name(const char* short_name) {
     return short_name;  // Not found, return as-is
 }
 
-// Parameter tracking for current function
-static char* current_function_params[64];
-static bool current_param_mut[64];
+// Parameter tracking for current function (growable parallel arrays)
+static char** current_function_params = NULL;
+static bool* current_param_mut = NULL;
 static int current_param_count = 0;
-char current_param_types[64][64];
+static int current_param_cap = 0;
+char (*current_param_types)[64] = NULL;
 
-// Trait name tracking for vtable dispatch
-static char trait_names[64][64];
-static int trait_name_count = 0;
-static void register_trait_name(const char* name, int len) {
-    if (trait_name_count < 64) {
-        snprintf(trait_names[trait_name_count], 64, "%.*s", len, name);
-        trait_name_count++;
+// Grow all three parallel param arrays together (they share one count).
+static void ensure_param_cap(void) {
+    if (current_param_count < current_param_cap) return;
+    int newcap = current_param_cap > 0 ? current_param_cap * 2 : 64;
+    current_function_params = realloc(current_function_params, (size_t)newcap * sizeof *current_function_params);
+    current_param_mut = realloc(current_param_mut, (size_t)newcap * sizeof *current_param_mut);
+    current_param_types = realloc(current_param_types, (size_t)newcap * sizeof *current_param_types);
+    if (!current_function_params || !current_param_mut || !current_param_types) {
+        fprintf(stderr, "wyn: out of memory growing parameter registry\n");
+        exit(1);
     }
+    current_param_cap = newcap;
+}
+
+// Trait name tracking for vtable dispatch (growable)
+static char (*trait_names)[64] = NULL;
+static int trait_name_count = 0;
+static int trait_name_cap = 0;
+static void register_trait_name(const char* name, int len) {
+    WYN_ENSURE_CAP(trait_names, trait_name_count, trait_name_cap);
+    snprintf(trait_names[trait_name_count], 64, "%.*s", len, name);
+    trait_name_count++;
 }
 static int is_trait_type(const char* name, int len) {
     for (int i = 0; i < trait_name_count; i++) {
@@ -342,15 +362,16 @@ static int is_trait_type(const char* name, int len) {
     return 0;
 }
 
-// Trait impl tracking: which struct implements which trait
-static struct { char struct_name[64]; char trait_name[64]; } trait_impls[128];
+// Trait impl tracking: which struct implements which trait (growable)
+typedef struct { char struct_name[64]; char trait_name[64]; } TraitImplEntry;
+static TraitImplEntry* trait_impls = NULL;
 static int trait_impl_count = 0;
+static int trait_impl_cap = 0;
 static void register_trait_impl(const char* sname, int slen, const char* tname, int tlen) {
-    if (trait_impl_count < 128) {
-        snprintf(trait_impls[trait_impl_count].struct_name, 64, "%.*s", slen, sname);
-        snprintf(trait_impls[trait_impl_count].trait_name, 64, "%.*s", tlen, tname);
-        trait_impl_count++;
-    }
+    WYN_ENSURE_CAP(trait_impls, trait_impl_count, trait_impl_cap);
+    snprintf(trait_impls[trait_impl_count].struct_name, 64, "%.*s", slen, sname);
+    snprintf(trait_impls[trait_impl_count].trait_name, 64, "%.*s", tlen, tname);
+    trait_impl_count++;
 }
 static const char* find_trait_for_struct(const char* sname) {
     for (int i = 0; i < trait_impl_count; i++) {
@@ -359,16 +380,17 @@ static const char* find_trait_for_struct(const char* sname) {
     return NULL;
 }
 
-// Function trait param tracking: fn_name -> param_index -> trait_name
-static struct { char fn_name[64]; int param_idx; char trait_name[64]; } fn_trait_params[128];
+// Function trait param tracking: fn_name -> param_index -> trait_name (growable)
+typedef struct { char fn_name[64]; int param_idx; char trait_name[64]; } FnTraitParam;
+static FnTraitParam* fn_trait_params = NULL;
 static int fn_trait_param_count = 0;
+static int fn_trait_param_cap = 0;
 static void register_fn_trait_param(const char* fn, const char* trait, int idx) {
-    if (fn_trait_param_count < 128) {
-        snprintf(fn_trait_params[fn_trait_param_count].fn_name, 64, "%s", fn);
-        snprintf(fn_trait_params[fn_trait_param_count].trait_name, 64, "%s", trait);
-        fn_trait_params[fn_trait_param_count].param_idx = idx;
-        fn_trait_param_count++;
-    }
+    WYN_ENSURE_CAP(fn_trait_params, fn_trait_param_count, fn_trait_param_cap);
+    snprintf(fn_trait_params[fn_trait_param_count].fn_name, 64, "%s", fn);
+    snprintf(fn_trait_params[fn_trait_param_count].trait_name, 64, "%s", trait);
+    fn_trait_params[fn_trait_param_count].param_idx = idx;
+    fn_trait_param_count++;
 }
 static const char* get_fn_trait_param(const char* fn, int idx) {
     for (int i = 0; i < fn_trait_param_count; i++) {
@@ -378,9 +400,10 @@ static const char* get_fn_trait_param(const char* fn, int idx) {
     return NULL;
 }
 
-// Local variable tracking for current function
-static char* current_function_locals[256];
+// Local variable tracking for current function (growable)
+static char** current_function_locals = NULL;
 static int current_local_count = 0;
+static int current_local_cap = 0;
 
 // Track current function return type for Ok/Err/Some/None resolution
 // Values: "ResultInt", "ResultString", "OptionInt", "OptionString", or NULL
@@ -401,9 +424,8 @@ static bool current_fn_c_nonvoid = false;
 static const char* current_assign_target_kind = NULL;
 
 static void register_module_function(const char* name) {
-    if (module_function_count < 256) {
-        module_functions[module_function_count++] = strdup(name);
-    }
+    WYN_ENSURE_CAP(module_functions, module_function_count, module_function_cap);
+    module_functions[module_function_count++] = strdup(name);
 }
 
 static bool is_module_function(const char* name) {
@@ -423,20 +445,18 @@ static void clear_module_functions() {
 }
 
 static void register_parameter_mut(const char* name, bool is_mut) {
-    if (current_param_count < 64) {
-        current_param_mut[current_param_count] = is_mut;
-        current_param_types[current_param_count][0] = 0;
-        current_function_params[current_param_count++] = strdup(name);
-    }
+    ensure_param_cap();
+    current_param_mut[current_param_count] = is_mut;
+    current_param_types[current_param_count][0] = 0;
+    current_function_params[current_param_count++] = strdup(name);
 }
 
 static void register_parameter_typed(const char* name, const char* type_name, bool is_mut) {
-    if (current_param_count < 64) {
-        current_param_mut[current_param_count] = is_mut;
-        if (type_name) snprintf(current_param_types[current_param_count], 64, "%s", type_name);
-        else current_param_types[current_param_count][0] = 0;
-        current_function_params[current_param_count++] = strdup(name);
-    }
+    ensure_param_cap();
+    current_param_mut[current_param_count] = is_mut;
+    if (type_name) snprintf(current_param_types[current_param_count], 64, "%s", type_name);
+    else current_param_types[current_param_count][0] = 0;
+    current_function_params[current_param_count++] = strdup(name);
 }
 
 static bool is_parameter(const char* name) {
@@ -465,16 +485,17 @@ static void clear_parameters() {
 }
 
 static void register_local_variable(const char* name) {
-    if (current_local_count < 256) {
-        current_function_locals[current_local_count++] = strdup(name);
-    }
+    WYN_ENSURE_CAP(current_function_locals, current_local_count, current_local_cap);
+    current_function_locals[current_local_count++] = strdup(name);
 }
 
-// Track which local variables are arrays (for method dispatch)
-static char* array_var_names[256];
+// Track which local variables are arrays (for method dispatch) (growable)
+static char** array_var_names = NULL;
 static int array_var_count = 0;
+static int array_var_cap = 0;
 static void register_array_var(const char* name) {
-    if (array_var_count < 256) array_var_names[array_var_count++] = strdup(name);
+    WYN_ENSURE_CAP(array_var_names, array_var_count, array_var_cap);
+    array_var_names[array_var_count++] = strdup(name);
 }
 int is_known_array_var(const char* name) {
     for (int i = 0; i < array_var_count; i++) {
@@ -483,15 +504,18 @@ int is_known_array_var(const char* name) {
     return 0;
 }
 
-// String content array tracking - arrays whose elements are strings
-static char* str_array_var_names[64];
+// String content array tracking - arrays whose elements are strings (growable)
+static char** str_array_var_names = NULL;
 static int str_array_var_count = 0;
+static int str_array_var_cap = 0;
 
-// Typed int array tracking - [int] arrays using WynIntArray
-static char* int_array_var_names[256];
+// Typed int array tracking - [int] arrays using WynIntArray (growable)
+static char** int_array_var_names = NULL;
 static int int_array_var_count = 0;
+static int int_array_var_cap = 0;
 void register_int_array_var(const char* name) {
-    if (int_array_var_count < 256) int_array_var_names[int_array_var_count++] = strdup(name);
+    WYN_ENSURE_CAP(int_array_var_names, int_array_var_count, int_array_var_cap);
+    int_array_var_names[int_array_var_count++] = strdup(name);
 }
 int is_int_array_var(const char* name) {
     for (int i = 0; i < int_array_var_count; i++) {
@@ -502,7 +526,8 @@ int is_int_array_var(const char* name) {
 void register_str_array_var(const char* name) {
     for (int i = 0; i < str_array_var_count; i++)
         if (strcmp(str_array_var_names[i], name) == 0) return;
-    if (str_array_var_count < 64) str_array_var_names[str_array_var_count++] = strdup(name);
+    WYN_ENSURE_CAP(str_array_var_names, str_array_var_count, str_array_var_cap);
+    str_array_var_names[str_array_var_count++] = strdup(name);
 }
 int is_str_array_var(const char* name) {
     for (int i = 0; i < str_array_var_count; i++)
@@ -522,19 +547,20 @@ static const char* emit_c_var_name(char* buf, size_t bufsz, const char* name) {
     return name;
 }
 
-// String variable tracking for RC release on reassignment
-static char* string_var_names[256];
+// String variable tracking for RC release on reassignment (growable)
+static char** string_var_names = NULL;
 static int string_var_count = 0;
+static int string_var_cap = 0;
 static int string_var_scope_depth = 0;
 
-// Scope stack: tracks string_var_count at each scope entry for block-scoped release
-#define SCOPE_STACK_MAX 64
-static int scope_var_count_stack[SCOPE_STACK_MAX];
+// Scope stack: tracks string_var_count at each scope entry for block-scoped release (growable)
+static int* scope_var_count_stack = NULL;
 static int scope_stack_top = 0;
+static int scope_stack_cap = 0;
 
 void push_string_scope(void) {
-    if (scope_stack_top < SCOPE_STACK_MAX)
-        scope_var_count_stack[scope_stack_top++] = string_var_count;
+    WYN_ENSURE_CAP(scope_var_count_stack, scope_stack_top, scope_stack_cap);
+    scope_var_count_stack[scope_stack_top++] = string_var_count;
 }
 void pop_string_scope_and_release(void) {
     if (scope_stack_top <= 0) return;
@@ -567,18 +593,21 @@ void register_string_var(const char* name) {
     // Always register for type detection (used by + operator)
     for (int i = 0; i < string_var_count; i++)
         if (strcmp(string_var_names[i], name) == 0) return;
-    if (string_var_count < 256) string_var_names[string_var_count++] = strdup(name);
+    WYN_ENSURE_CAP(string_var_names, string_var_count, string_var_cap);
+    string_var_names[string_var_count++] = strdup(name);
 }
 
-// Array scope tracking - parallel to string scope
-static char* array_scope_names[256];
+// Array scope tracking - parallel to string scope (growable)
+static char** array_scope_names = NULL;
 static int array_scope_count = 0;
-static int array_scope_stack[SCOPE_STACK_MAX];
+static int array_scope_cap = 0;
+static int* array_scope_stack = NULL;
 static int array_scope_top = 0;
+static int array_scope_stack_cap = 0;
 
 void push_array_scope(void) {
-    if (array_scope_top < SCOPE_STACK_MAX)
-        array_scope_stack[array_scope_top++] = array_scope_count;
+    WYN_ENSURE_CAP(array_scope_stack, array_scope_top, array_scope_stack_cap);
+    array_scope_stack[array_scope_top++] = array_scope_count;
 }
 void pop_array_scope_and_release(void) {
     if (array_scope_top <= 0) return;
@@ -594,19 +623,22 @@ void pop_array_scope_and_release(void) {
 void register_array_scope_var(const char* name) {
     for (int i = 0; i < array_scope_count; i++)
         if (strcmp(array_scope_names[i], name) == 0) return;
-    if (array_scope_count < 256) array_scope_names[array_scope_count++] = strdup(name);
+    WYN_ENSURE_CAP(array_scope_names, array_scope_count, array_scope_cap);
+    array_scope_names[array_scope_count++] = strdup(name);
 }
 void reset_array_scope(void) { array_scope_count = 0; array_scope_top = 0; }
 
-// HashMap scope tracking
-static char* hashmap_scope_names[256];
+// HashMap scope tracking (growable)
+static char** hashmap_scope_names = NULL;
 static int hashmap_scope_count = 0;
-static int hashmap_scope_stack[SCOPE_STACK_MAX];
+static int hashmap_scope_cap = 0;
+static int* hashmap_scope_stack = NULL;
 static int hashmap_scope_top = 0;
+static int hashmap_scope_stack_cap = 0;
 
 void push_hashmap_scope(void) {
-    if (hashmap_scope_top < SCOPE_STACK_MAX)
-        hashmap_scope_stack[hashmap_scope_top++] = hashmap_scope_count;
+    WYN_ENSURE_CAP(hashmap_scope_stack, hashmap_scope_top, hashmap_scope_stack_cap);
+    hashmap_scope_stack[hashmap_scope_top++] = hashmap_scope_count;
 }
 void pop_hashmap_scope_and_release(void) {
     if (hashmap_scope_top <= 0) return;
@@ -622,7 +654,8 @@ void pop_hashmap_scope_and_release(void) {
 void register_hashmap_scope_var(const char* name) {
     for (int i = 0; i < hashmap_scope_count; i++)
         if (strcmp(hashmap_scope_names[i], name) == 0) return;
-    if (hashmap_scope_count < 256) hashmap_scope_names[hashmap_scope_count++] = strdup(name);
+    WYN_ENSURE_CAP(hashmap_scope_names, hashmap_scope_count, hashmap_scope_cap);
+    hashmap_scope_names[hashmap_scope_count++] = strdup(name);
 }
 void reset_hashmap_scope(void) { hashmap_scope_count = 0; hashmap_scope_top = 0; }
 
@@ -632,14 +665,16 @@ void reset_hashmap_scope(void) { hashmap_scope_count = 0; hashmap_scope_top = 0;
 // wyn_rc_release is a no-op on non-RC/NULL, so a released-but-not-owned closure
 // (e.g. one that was moved out via return) is harmless. Escape is handled by
 // unregistering a closure var before its scope pops when it is returned.
-static char* closure_scope_names[256];
+static char** closure_scope_names = NULL;
 static int closure_scope_count = 0;
-static int closure_scope_stack[SCOPE_STACK_MAX];
+static int closure_scope_cap = 0;
+static int* closure_scope_stack = NULL;
 static int closure_scope_top = 0;
+static int closure_scope_stack_cap = 0;
 
 void push_closure_scope(void) {
-    if (closure_scope_top < SCOPE_STACK_MAX)
-        closure_scope_stack[closure_scope_top++] = closure_scope_count;
+    WYN_ENSURE_CAP(closure_scope_stack, closure_scope_top, closure_scope_stack_cap);
+    closure_scope_stack[closure_scope_top++] = closure_scope_count;
 }
 void pop_closure_scope_and_release(void) {
     if (closure_scope_top <= 0) return;
@@ -671,7 +706,8 @@ void emit_block_closure_releases(void) {
 void register_closure_scope_var(const char* name) {
     for (int i = 0; i < closure_scope_count; i++)
         if (strcmp(closure_scope_names[i], name) == 0) return;
-    if (closure_scope_count < 256) closure_scope_names[closure_scope_count++] = strdup(name);
+    WYN_ENSURE_CAP(closure_scope_names, closure_scope_count, closure_scope_cap);
+    closure_scope_names[closure_scope_count++] = strdup(name);
 }
 // Query: is this var tracked as an env-owning closure local? Used by
 // EXPR_ASSIGN to emit a balanced retain/release on closure reassignment.
@@ -696,14 +732,16 @@ void reset_closure_scope(void) {
     for (int i = 0; i < closure_scope_count; i++) free(closure_scope_names[i]);
     closure_scope_count = 0; closure_scope_top = 0;
 }
-// Only top-level string vars are released at scope exit
-static char* string_var_releasable[256];
+// Only top-level string vars are released at scope exit (growable)
+static char** string_var_releasable = NULL;
 static int string_var_releasable_count = 0;
+static int string_var_releasable_cap = 0;
 void register_releasable_string_var(const char* name) {
     if (string_var_scope_depth > 0) return;
     for (int i = 0; i < string_var_releasable_count; i++)
         if (strcmp(string_var_releasable[i], name) == 0) return;
-    if (string_var_releasable_count < 256) string_var_releasable[string_var_releasable_count++] = strdup(name);
+    WYN_ENSURE_CAP(string_var_releasable, string_var_releasable_count, string_var_releasable_cap);
+    string_var_releasable[string_var_releasable_count++] = strdup(name);
 }
 int is_string_var(const char* name) {
     for (int i = 0; i < string_var_count; i++)
@@ -939,16 +977,20 @@ int get_struct_field_option_family(const char* struct_name, const char* field_na
     return 0;
 }
 
-static char* sb_var_names[64];
+static char** sb_var_names = NULL;
 static int sb_var_count = 0;
+static int sb_var_cap = 0;
 static void register_sb_var(const char* name) {
-    if (sb_var_count < 64) { sb_var_names[sb_var_count++] = strdup(name); }
+    WYN_ENSURE_CAP(sb_var_names, sb_var_count, sb_var_cap);
+    sb_var_names[sb_var_count++] = strdup(name);
 }
 
-static char* float_var_names[256];
+static char** float_var_names = NULL;
 static int float_var_count = 0;
+static int float_var_cap = 0;
 void register_float_var(const char* name) {
-    if (float_var_count < 256) float_var_names[float_var_count++] = strdup(name);
+    WYN_ENSURE_CAP(float_var_names, float_var_count, float_var_cap);
+    float_var_names[float_var_count++] = strdup(name);
 }
 int is_known_float_var(const char* name) {
     for (int i = 0; i < float_var_count; i++) {
@@ -966,8 +1008,9 @@ int is_known_sb_var(const char* name) {
 // Variable shadowing: track declared names and return shadow suffix
 // count = current scope level (saved/restored at block boundaries)
 // next  = monotonically increasing suffix counter (never restored)
-static struct { char name[64]; int count; int next; } shadow_vars[512];
+static struct ShadowVar { char name[64]; int count; int next; } *shadow_vars = NULL;
 static int shadow_var_count = 0;
+static int shadow_var_cap = 0;
 
 void reset_shadow_vars(void) { shadow_var_count = 0; }
 
@@ -980,13 +1023,12 @@ int get_shadow_suffix(const char* name) {
             return shadow_vars[i].count;
         }
     }
-    if (shadow_var_count < 512) {
-        strncpy(shadow_vars[shadow_var_count].name, name, 63);
-        shadow_vars[shadow_var_count].name[63] = 0;
-        shadow_vars[shadow_var_count].count = 0;
-        shadow_vars[shadow_var_count].next = 0;
-        shadow_var_count++;
-    }
+    WYN_ENSURE_CAP(shadow_vars, shadow_var_count, shadow_var_cap);
+    strncpy(shadow_vars[shadow_var_count].name, name, 63);
+    shadow_vars[shadow_var_count].name[63] = 0;
+    shadow_vars[shadow_var_count].count = 0;
+    shadow_vars[shadow_var_count].next = 0;
+    shadow_var_count++;
     return 0;
 }
 
@@ -1006,19 +1048,20 @@ static void clear_local_variables() {
     current_local_count = 0;
 }
 
-// Module alias tracking
-static struct {
+// Module alias tracking (growable)
+typedef struct {
     char alias[64];
     char module[64];
-} module_aliases[32];
+} CodegenModuleAlias;
+static CodegenModuleAlias* module_aliases = NULL;
 static int module_alias_count = 0;
+static int module_alias_cap = 0;
 
 static void register_module_alias(const char* alias, const char* module) {
-    if (module_alias_count < 32) {
-        snprintf(module_aliases[module_alias_count].alias, 64, "%s", alias);
-        snprintf(module_aliases[module_alias_count].module, 64, "%s", module);
-        module_alias_count++;
-    }
+    WYN_ENSURE_CAP(module_aliases, module_alias_count, module_alias_cap);
+    snprintf(module_aliases[module_alias_count].alias, 64, "%s", alias);
+    snprintf(module_aliases[module_alias_count].module, 64, "%s", module);
+    module_alias_count++;
 }
 
 static const char* resolve_module_alias(const char* name) {
@@ -1041,8 +1084,13 @@ typedef struct {
     bool is_closure; // true if this lambda is returned (uses WynClosure)
 } LambdaFunction;
 
-static LambdaFunction lambda_functions[256];
+static LambdaFunction* lambda_functions = NULL;
 static int lambda_count = 0;
+static int lambda_cap = 0;
+// Grow lambda_functions so lambda_functions[lambda_count] is writable.
+static void ensure_lambda_cap(void) {
+    WYN_ENSURE_CAP(lambda_functions, lambda_count, lambda_cap);
+}
 static int lambda_id_counter = 0;
 static int lambda_ref_counter = 0;
 static bool in_return_lambda = false;
@@ -1110,8 +1158,14 @@ typedef struct {
 // Look up a lambda variable's info by name; returns index or -1.
 int find_lambda_var(const char* name);
 
-static LambdaVarInfo lambda_var_info[256];
+static LambdaVarInfo* lambda_var_info = NULL;
 static int lambda_var_count = 0;
+static int lambda_var_cap = 0;
+// Grow lambda_var_info so lambda_var_info[lambda_var_count] is writable.
+static void ensure_lambda_var_cap(void) {
+    WYN_ENSURE_CAP(lambda_var_info, lambda_var_count, lambda_var_cap);
+    memset(&lambda_var_info[lambda_var_count], 0, sizeof(LambdaVarInfo));
+}
 
 int find_lambda_var(const char* name) {
     for (int i = 0; i < lambda_var_count; i++) {
@@ -1140,18 +1194,25 @@ typedef struct {
                         // never through the truncating (void*)(intptr_t) cast
 } SpawnWrapper;
 
-static SpawnWrapper spawn_wrappers[256];
+static SpawnWrapper* spawn_wrappers = NULL;
 static int spawn_wrapper_count = 0;
+static int spawn_wrapper_cap = 0;
+// Grow spawn_wrappers so spawn_wrappers[spawn_wrapper_count] is writable.
+static void ensure_spawn_wrapper_cap(void) {
+    WYN_ENSURE_CAP(spawn_wrappers, spawn_wrapper_count, spawn_wrapper_cap);
+    memset(&spawn_wrappers[spawn_wrapper_count], 0, sizeof(SpawnWrapper));
+}
 static int spawn_id_counter = 0;
 
-// Spawn array tracking - arrays that hold Future pointers use WynIntArray
-static char spawn_array_vars[64][256];
+// Spawn array tracking - arrays that hold Future pointers use WynIntArray (growable)
+static char (*spawn_array_vars)[256] = NULL;
 static int spawn_array_count = 0;
+static int spawn_array_cap = 0;
 void register_spawn_array(const char* name) {
     for (int i = 0; i < spawn_array_count; i++)
         if (strcmp(spawn_array_vars[i], name) == 0) return;
-    if (spawn_array_count < 64)
-        strcpy(spawn_array_vars[spawn_array_count++], name);
+    WYN_ENSURE_CAP(spawn_array_vars, spawn_array_count, spawn_array_cap);
+    snprintf(spawn_array_vars[spawn_array_count++], 256, "%s", name);
 }
 int is_spawn_array(const char* name) {
     for (int i = 0; i < spawn_array_count; i++)
@@ -1159,24 +1220,26 @@ int is_spawn_array(const char* name) {
     return 0;
 }
 
-// String future tracking - variables that hold futures from string-returning spawns
-static char string_future_vars[64][256];
+// String future tracking - variables that hold futures from string-returning spawns (growable)
+static char (*string_future_vars)[256] = NULL;
 static int string_future_count = 0;
+static int string_future_cap = 0;
 void register_string_future(const char* name) {
     for (int i = 0; i < string_future_count; i++)
         if (strcmp(string_future_vars[i], name) == 0) return;
-    if (string_future_count < 64)
-        strcpy(string_future_vars[string_future_count++], name);
+    WYN_ENSURE_CAP(string_future_vars, string_future_count, string_future_cap);
+    snprintf(string_future_vars[string_future_count++], 256, "%s", name);
 }
 
-// String spawn array tracking - arrays that hold futures from string-returning spawns
-static char string_spawn_array_vars[64][256];
+// String spawn array tracking - arrays that hold futures from string-returning spawns (growable)
+static char (*string_spawn_array_vars)[256] = NULL;
 static int string_spawn_array_count = 0;
+static int string_spawn_array_cap = 0;
 void register_string_spawn_array(const char* name) {
     for (int i = 0; i < string_spawn_array_count; i++)
         if (strcmp(string_spawn_array_vars[i], name) == 0) return;
-    if (string_spawn_array_count < 64)
-        strcpy(string_spawn_array_vars[string_spawn_array_count++], name);
+    WYN_ENSURE_CAP(string_spawn_array_vars, string_spawn_array_count, string_spawn_array_cap);
+    snprintf(string_spawn_array_vars[string_spawn_array_count++], 256, "%s", name);
 }
 int is_string_spawn_array(const char* name) {
     for (int i = 0; i < string_spawn_array_count; i++)
@@ -1189,39 +1252,46 @@ int is_string_future(const char* name) {
     return 0;
 }
 
-// Struct future tracking - variables that hold futures from struct-returning spawns
-static char struct_future_vars[64][256];
-static char struct_future_types[64][64];
+// Struct future tracking - variables that hold futures from struct-returning spawns (growable)
+typedef struct { char var[256]; char type[64]; } StructFutureVar;
+static StructFutureVar* struct_future_vars_tbl = NULL;
 static int struct_future_count = 0;
+static int struct_future_cap = 0;
 void register_struct_future(const char* name, const char* type_name) {
     for (int i = 0; i < struct_future_count; i++)
-        if (strcmp(struct_future_vars[i], name) == 0) { strncpy(struct_future_types[i], type_name, 63); return; }
-    if (struct_future_count < 64) {
-        strcpy(struct_future_vars[struct_future_count], name);
-        strncpy(struct_future_types[struct_future_count], type_name, 63);
-        struct_future_count++;
-    }
+        if (strcmp(struct_future_vars_tbl[i].var, name) == 0) {
+            snprintf(struct_future_vars_tbl[i].type, 64, "%s", type_name);
+            return;
+        }
+    WYN_ENSURE_CAP(struct_future_vars_tbl, struct_future_count, struct_future_cap);
+    snprintf(struct_future_vars_tbl[struct_future_count].var, 256, "%s", name);
+    snprintf(struct_future_vars_tbl[struct_future_count].type, 64, "%s", type_name);
+    struct_future_count++;
 }
 const char* get_struct_future_type(const char* name) {
     for (int i = 0; i < struct_future_count; i++)
-        if (strcmp(struct_future_vars[i], name) == 0) return struct_future_types[i];
+        if (strcmp(struct_future_vars_tbl[i].var, name) == 0) return struct_future_vars_tbl[i].type;
     return NULL;
 }
 
 // Forward declaration
 static void emit(const char* fmt, ...);
 
-// Scope tracking for automatic cleanup with ARC integration
+// Scope tracking for automatic cleanup with ARC integration (growable in both
+// depth and per-scope entry count)
 typedef struct {
-    char* vars[256];
-    char* types[256];  // Track type for proper cleanup
-    WynObject* string_objects[256];  // Track ARC string objects
+    char** vars;
+    char** types;                 // Track type for proper cleanup
+    WynObject** string_objects;   // Track ARC string objects
     int count;
+    int cap;
     int string_count;
+    int string_cap;
 } Scope;
 
-static Scope scopes[32];
+static Scope* scopes = NULL;
 static int scope_depth = 0;
+static int scope_cap = 0;
 
 void init_codegen(FILE* output) {
     out = output;
@@ -1229,19 +1299,21 @@ void init_codegen(FILE* output) {
 }
 
 static void push_scope() {
-    if (scope_depth < 32) {
-        scopes[scope_depth].count = 0;
-        scopes[scope_depth].string_count = 0;
-        // Initialize arrays to NULL
-        for (int i = 0; i < 256; i++) {
-            scopes[scope_depth].vars[i] = NULL;
-            scopes[scope_depth].types[i] = NULL;
+    if (scope_depth >= scope_cap) {
+        int newcap = scope_cap > 0 ? scope_cap * 2 : 32;
+        Scope* tmp = realloc(scopes, (size_t)newcap * sizeof *scopes);
+        if (!tmp) {
+            fprintf(stderr, "wyn: out of memory growing scope stack\n");
+            exit(1);
         }
-        for (int i = 0; i < 64; i++) {
-            scopes[scope_depth].string_objects[i] = NULL;
-        }
-        scope_depth++;
+        scopes = tmp;
+        // Zero the newly added slots so vars/types/string_objects start NULL
+        memset(scopes + scope_cap, 0, (size_t)(newcap - scope_cap) * sizeof *scopes);
+        scope_cap = newcap;
     }
+    scopes[scope_depth].count = 0;
+    scopes[scope_depth].string_count = 0;
+    scope_depth++;
 }
 
 static void pop_scope() {
@@ -1286,17 +1358,22 @@ static void track_var_with_type(const char* name, int len, const char* type) {
         fprintf(stderr, "WARNING: track_var_with_type called with scope_depth=0\n");
         return;
     }
-    if (scope_depth > 32) {
-        fprintf(stderr, "ERROR: scope_depth=%d exceeds maximum (32)\n", scope_depth);
-        return;
-    }
-    
+
     int scope_idx = scope_depth - 1;
-    if (scopes[scope_idx].count >= 256) {
-        fprintf(stderr, "WARNING: scope %d has %d vars (max 256)\n", scope_idx, scopes[scope_idx].count);
-        return;
+    // Grow the per-scope vars/types arrays together (shared count/cap)
+    if (scopes[scope_idx].count >= scopes[scope_idx].cap) {
+        int newcap = scopes[scope_idx].cap > 0 ? scopes[scope_idx].cap * 2 : 64;
+        char** nv = realloc(scopes[scope_idx].vars, (size_t)newcap * sizeof(char*));
+        char** nt = realloc(scopes[scope_idx].types, (size_t)newcap * sizeof(char*));
+        if (!nv || !nt) {
+            fprintf(stderr, "wyn: out of memory growing scope var registry\n");
+            exit(1);
+        }
+        scopes[scope_idx].vars = nv;
+        scopes[scope_idx].types = nt;
+        scopes[scope_idx].cap = newcap;
     }
-    
+
     char* var = malloc(len + 1);
     if (!var) {
         fprintf(stderr, "ERROR: malloc failed for var name\n");
@@ -1432,19 +1509,25 @@ void remove_shadow_entry(const char* name) {
     }
 }
 
-// Defer stack
-static Expr* defer_stack[64];
+// Defer stack (growable)
+static Expr** defer_stack = NULL;
 static int defer_count = 0;
-void push_defer(Expr* e) { if (defer_count < 64) defer_stack[defer_count++] = e; }
+static int defer_cap = 0;
+void push_defer(Expr* e) {
+    WYN_ENSURE_CAP(defer_stack, defer_count, defer_cap);
+    defer_stack[defer_count++] = e;
+}
 int get_defer_count() { return defer_count; }
 Expr* get_defer(int i) { return defer_stack[i]; }
 void reset_defers() { defer_count = 0; }
 
-// Enum name tracking for constructor detection
-static char* enum_type_names[64];
+// Enum name tracking for constructor detection (growable)
+static char** enum_type_names = NULL;
 static int enum_type_count = 0;
+static int enum_type_cap = 0;
 void register_enum_type(const char* name) {
-    if (enum_type_count < 64) enum_type_names[enum_type_count++] = strdup(name);
+    WYN_ENSURE_CAP(enum_type_names, enum_type_count, enum_type_cap);
+    enum_type_names[enum_type_count++] = strdup(name);
 }
 int is_enum_type(const char* name) {
     for (int i = 0; i < enum_type_count; i++) {
@@ -1453,11 +1536,13 @@ int is_enum_type(const char* name) {
     return 0;
 }
 
-// Data enum tracking (enums with variant data)
-static char* data_enum_names[64];
+// Data enum tracking (enums with variant data) (growable)
+static char** data_enum_names = NULL;
 static int data_enum_count = 0;
+static int data_enum_cap = 0;
 void register_data_enum_type(const char* name) {
-    if (data_enum_count < 64) data_enum_names[data_enum_count++] = strdup(name);
+    WYN_ENSURE_CAP(data_enum_names, data_enum_count, data_enum_cap);
+    data_enum_names[data_enum_count++] = strdup(name);
 }
 int is_data_enum_type(const char* name) {
     for (int i = 0; i < data_enum_count; i++) {
@@ -1470,13 +1555,14 @@ int is_data_enum_type(const char* name) {
 // (`OptionUser` for a `User?`). Populated as struct-payload optionals are seen in
 // codegen; the concrete families are emitted into the generated C right after the
 // user struct typedefs (they cannot live in wyn_runtime.h, which precedes them).
-static char* needed_option_structs[128];
+static char** needed_option_structs = NULL;
 static int needed_option_struct_count = 0;
+static int needed_option_struct_cap = 0;
 void register_option_struct(const char* struct_name) {
     for (int i = 0; i < needed_option_struct_count; i++)
         if (strcmp(needed_option_structs[i], struct_name) == 0) return;
-    if (needed_option_struct_count < 128)
-        needed_option_structs[needed_option_struct_count++] = strdup(struct_name);
+    WYN_ENSURE_CAP(needed_option_structs, needed_option_struct_count, needed_option_struct_cap);
+    needed_option_structs[needed_option_struct_count++] = strdup(struct_name);
 }
 int option_struct_count(void) { return needed_option_struct_count; }
 const char* option_struct_name(int i) {
@@ -1488,19 +1574,23 @@ int is_registered_option_struct(const char* struct_name) {
     return 0;
 }
 
-// Track variables that hold data-carrying enum types
-static struct { char var_name[64]; char enum_name[64]; } enum_var_map[128];
+// Track variables that hold data-carrying enum types (growable)
+typedef struct { char var_name[64]; char enum_name[64]; } EnumVarEntry;
+static EnumVarEntry* enum_var_map = NULL;
 static int enum_var_count = 0;
+static int enum_var_cap = 0;
 
-// Track variables that hold struct types
-static struct { char var_name[64]; char struct_name[64]; } struct_var_map[128];
+// Track variables that hold struct types (growable)
+typedef struct { char var_name[64]; char struct_name[64]; } StructVarEntry;
+static StructVarEntry* struct_var_map = NULL;
 static int struct_var_count = 0;
+static int struct_var_cap = 0;
 void register_struct_var(const char* var, const char* struct_type) {
-    if (struct_var_count < 128) {
-        strncpy(struct_var_map[struct_var_count].var_name, var, 63);
-        strncpy(struct_var_map[struct_var_count].struct_name, struct_type, 63);
-        struct_var_count++;
-    }
+    WYN_ENSURE_CAP(struct_var_map, struct_var_count, struct_var_cap);
+    memset(&struct_var_map[struct_var_count], 0, sizeof(StructVarEntry));
+    strncpy(struct_var_map[struct_var_count].var_name, var, 63);
+    strncpy(struct_var_map[struct_var_count].struct_name, struct_type, 63);
+    struct_var_count++;
 }
 const char* get_struct_var_type(const char* var) {
     for (int i = struct_var_count - 1; i >= 0; i--) {
@@ -1511,11 +1601,14 @@ const char* get_struct_var_type(const char* var) {
 // Track tuple-typed variables (`var p = (1, 2)`), so a copy `var q = p` - as
 // produced by tuple destructuring `var a, b = p` - can use __auto_type instead of
 // defaulting to long long (which truncated the tuple struct to an int).
-static char tuple_var_names[256][64];
+static char (*tuple_var_names)[64] = NULL;
 static int tuple_var_count = 0;
+static int tuple_var_cap = 0;
 void register_tuple_var(const char* var) {
-    if (tuple_var_count < 256) { strncpy(tuple_var_names[tuple_var_count], var, 63);
-        tuple_var_names[tuple_var_count][63] = '\0'; tuple_var_count++; }
+    WYN_ENSURE_CAP(tuple_var_names, tuple_var_count, tuple_var_cap);
+    strncpy(tuple_var_names[tuple_var_count], var, 63);
+    tuple_var_names[tuple_var_count][63] = '\0';
+    tuple_var_count++;
 }
 int is_tuple_var(const char* var) {
     for (int i = tuple_var_count - 1; i >= 0; i--)
@@ -1537,15 +1630,17 @@ int is_known_struct(const char* name) {
     return 0;
 }
 
-// Track enum variant data types: "EnumName.VariantName" -> C type
-static struct { char key[128]; char c_type[64]; } enum_variant_types[256];
+// Track enum variant data types: "EnumName.VariantName" -> C type (growable)
+typedef struct { char key[128]; char c_type[64]; } EnumVariantType;
+static EnumVariantType* enum_variant_types = NULL;
 static int enum_variant_type_count = 0;
+static int enum_variant_type_cap = 0;
 void register_enum_variant_type(const char* enum_name, const char* variant_name, const char* c_type) {
-    if (enum_variant_type_count < 256) {
-        snprintf(enum_variant_types[enum_variant_type_count].key, 128, "%s.%s", enum_name, variant_name);
-        strncpy(enum_variant_types[enum_variant_type_count].c_type, c_type, 63);
-        enum_variant_type_count++;
-    }
+    WYN_ENSURE_CAP(enum_variant_types, enum_variant_type_count, enum_variant_type_cap);
+    memset(&enum_variant_types[enum_variant_type_count], 0, sizeof(EnumVariantType));
+    snprintf(enum_variant_types[enum_variant_type_count].key, 128, "%s.%s", enum_name, variant_name);
+    strncpy(enum_variant_types[enum_variant_type_count].c_type, c_type, 63);
+    enum_variant_type_count++;
 }
 const char* get_enum_variant_c_type(const char* enum_name, const char* variant_name) {
     char key[128];
@@ -1560,15 +1655,16 @@ const char* get_enum_variant_c_type(const char* enum_name, const char* variant_n
 // Keyed "Enum.Variant.fN". get_enum_variant_c_type only stores one type per
 // variant; a multi-field match arm needs each field's real C type instead of a
 // hardcoded guess.
-static struct { char key[160]; char c_type[64]; } enum_variant_field_types[512];
+typedef struct { char key[160]; char c_type[64]; } EnumVariantFieldType;
+static EnumVariantFieldType* enum_variant_field_types = NULL;
 static int enum_variant_field_type_count = 0;
+static int enum_variant_field_type_cap = 0;
 void register_enum_variant_field_type(const char* enum_name, const char* variant_name, int idx, const char* c_type) {
-    if (enum_variant_field_type_count < 512) {
-        snprintf(enum_variant_field_types[enum_variant_field_type_count].key, 160, "%s.%s.f%d", enum_name, variant_name, idx);
-        strncpy(enum_variant_field_types[enum_variant_field_type_count].c_type, c_type, 63);
-        enum_variant_field_types[enum_variant_field_type_count].c_type[63] = '\0';
-        enum_variant_field_type_count++;
-    }
+    WYN_ENSURE_CAP(enum_variant_field_types, enum_variant_field_type_count, enum_variant_field_type_cap);
+    snprintf(enum_variant_field_types[enum_variant_field_type_count].key, 160, "%s.%s.f%d", enum_name, variant_name, idx);
+    strncpy(enum_variant_field_types[enum_variant_field_type_count].c_type, c_type, 63);
+    enum_variant_field_types[enum_variant_field_type_count].c_type[63] = '\0';
+    enum_variant_field_type_count++;
 }
 // Returns the field's C type, or "long long" if unknown.
 const char* get_enum_variant_field_type(const char* enum_name, const char* variant_name, int idx) {
@@ -1609,11 +1705,11 @@ const char* find_enum_for_variant(const char* variant_name) {
 }
 
 void register_enum_var(const char* var, const char* enum_type) {
-    if (enum_var_count < 128) {
-        strncpy(enum_var_map[enum_var_count].var_name, var, 63);
-        strncpy(enum_var_map[enum_var_count].enum_name, enum_type, 63);
-        enum_var_count++;
-    }
+    WYN_ENSURE_CAP(enum_var_map, enum_var_count, enum_var_cap);
+    memset(&enum_var_map[enum_var_count], 0, sizeof(EnumVarEntry));
+    strncpy(enum_var_map[enum_var_count].var_name, var, 63);
+    strncpy(enum_var_map[enum_var_count].enum_name, enum_type, 63);
+    enum_var_count++;
 }
 const char* get_enum_var_type(const char* var) {
     for (int i = enum_var_count - 1; i >= 0; i--) {
@@ -1676,9 +1772,11 @@ const char* codegen_c_type_from_type(Type* t) {
     }
 }
 
-// Function default parameter registry
-static struct { char name[128]; Expr** defaults; int param_count; char return_type[32]; char param_names[16][64]; } fn_defaults[256];
+// Function default parameter registry (growable)
+typedef struct { char name[128]; Expr** defaults; int param_count; char return_type[32]; char param_names[16][64]; } FnDefaultsEntry;
+static FnDefaultsEntry* fn_defaults = NULL;
 static int fn_defaults_count = 0;
+static int fn_defaults_cap = 0;
 
 void register_fn_defaults(const char* name, Expr** defaults, int param_count) {
     // Update existing entry if present
@@ -1689,13 +1787,13 @@ void register_fn_defaults(const char* name, Expr** defaults, int param_count) {
             return;
         }
     }
-    if (fn_defaults_count < 256) {
-        strncpy(fn_defaults[fn_defaults_count].name, name, 127);
-        fn_defaults[fn_defaults_count].defaults = defaults;
-        fn_defaults[fn_defaults_count].param_count = param_count;
-        fn_defaults[fn_defaults_count].return_type[0] = '\0';
-        fn_defaults_count++;
-    }
+    WYN_ENSURE_CAP(fn_defaults, fn_defaults_count, fn_defaults_cap);
+    memset(&fn_defaults[fn_defaults_count], 0, sizeof(FnDefaultsEntry));
+    strncpy(fn_defaults[fn_defaults_count].name, name, 127);
+    fn_defaults[fn_defaults_count].defaults = defaults;
+    fn_defaults[fn_defaults_count].param_count = param_count;
+    fn_defaults[fn_defaults_count].return_type[0] = '\0';
+    fn_defaults_count++;
 }
 
 void register_fn_param_names(const char* name, Token* params, int count) {
@@ -1730,13 +1828,13 @@ void register_fn_return_type(const char* name, const char* ret_type) {
         }
     }
     // Function not yet registered - add it
-    if (fn_defaults_count < 256) {
-        strncpy(fn_defaults[fn_defaults_count].name, name, 127);
-        fn_defaults[fn_defaults_count].defaults = NULL;
-        fn_defaults[fn_defaults_count].param_count = 0;
-        strncpy(fn_defaults[fn_defaults_count].return_type, ret_type, 31);
-        fn_defaults_count++;
-    }
+    WYN_ENSURE_CAP(fn_defaults, fn_defaults_count, fn_defaults_cap);
+    memset(&fn_defaults[fn_defaults_count], 0, sizeof(FnDefaultsEntry));
+    strncpy(fn_defaults[fn_defaults_count].name, name, 127);
+    fn_defaults[fn_defaults_count].defaults = NULL;
+    fn_defaults[fn_defaults_count].param_count = 0;
+    strncpy(fn_defaults[fn_defaults_count].return_type, ret_type, 31);
+    fn_defaults_count++;
 }
 
 const char* get_function_return_type(const char* name) {

@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include "common.h"
 #include "error.h"
+#include "growable.h"
 
 typedef struct {
     const char* start;
@@ -20,11 +21,13 @@ static const char* lexer_source_begin = NULL;
 static const char* lexer_err_msg = NULL;
 const char* lexer_error_msg(void) { return lexer_err_msg; }
 int lexer_error_col = 1;
-static Lexer lexer_stack[16];
+static Lexer* lexer_stack = NULL;
 static int lexer_stack_depth = 0;
+static int lexer_stack_cap = 0;
 
 void save_lexer_state() {
-    if (lexer_stack_depth < 16) lexer_stack[lexer_stack_depth++] = lexer;
+    WYN_ENSURE_CAP(lexer_stack, lexer_stack_depth, lexer_stack_cap);
+    lexer_stack[lexer_stack_depth++] = lexer;
 }
 void restore_lexer_state() {
     if (lexer_stack_depth > 0) lexer = lexer_stack[--lexer_stack_depth];

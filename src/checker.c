@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "common.h"
+#include "growable.h"
 
 // Source context for error messages
 static const char* checker_source = NULL;
@@ -55,8 +56,9 @@ static Type* builtin_int = NULL;
 // each such name here so a flat call site can emit a clear "did you mean m.foo()?"
 // error. Selective imports are never recorded (their bare names stay valid).
 typedef struct { char name[128]; char module[128]; } WholeModuleFn;
-static WholeModuleFn whole_module_fns[512];
+static WholeModuleFn* whole_module_fns = NULL;
 static int whole_module_fn_count = 0;
+static int whole_module_fn_cap = 0;
 
 static void register_whole_module_fn(const char* module, const char* fn) {
     // De-dupe: if a later selective import (or a local definition) also provides
@@ -65,7 +67,7 @@ static void register_whole_module_fn(const char* module, const char* fn) {
     for (int i = 0; i < whole_module_fn_count; i++) {
         if (strcmp(whole_module_fns[i].name, fn) == 0) return;
     }
-    if (whole_module_fn_count >= 512) return;
+    WYN_ENSURE_CAP(whole_module_fns, whole_module_fn_count, whole_module_fn_cap);
     strncpy(whole_module_fns[whole_module_fn_count].name, fn, 127);
     whole_module_fns[whole_module_fn_count].name[127] = '\0';
     strncpy(whole_module_fns[whole_module_fn_count].module, module, 127);
@@ -144,8 +146,9 @@ typedef struct {
     bool is_public;
 } FunctionVisibility;
 
-static FunctionVisibility function_registry[512];
+static FunctionVisibility* function_registry = NULL;
 static int function_registry_count = 0;
+static int function_registry_cap = 0;
 
 // Module collision tracking
 typedef struct {
@@ -154,8 +157,9 @@ typedef struct {
     int line_number;
 } ImportedModule;
 
-static ImportedModule imported_modules[128];
+static ImportedModule* imported_modules = NULL;
 static int imported_modules_count = 0;
+static int imported_modules_cap = 0;
 
 void set_current_module(const char* name) {
     if (name) {
@@ -173,12 +177,12 @@ static void register_import(const char* full_path, int line) {
     
     // Just register - don't error yet
     // Error will happen at call site if short name is used ambiguously
-    if (imported_modules_count < 128) {
-        strncpy(imported_modules[imported_modules_count].short_name, short_name, 127);
-        strncpy(imported_modules[imported_modules_count].full_path, full_path, 255);
-        imported_modules[imported_modules_count].line_number = line;
-        imported_modules_count++;
-    }
+    WYN_ENSURE_CAP(imported_modules, imported_modules_count, imported_modules_cap);
+    memset(&imported_modules[imported_modules_count], 0, sizeof(ImportedModule));
+    strncpy(imported_modules[imported_modules_count].short_name, short_name, 127);
+    strncpy(imported_modules[imported_modules_count].full_path, full_path, 255);
+    imported_modules[imported_modules_count].line_number = line;
+    imported_modules_count++;
 }
 
 static bool is_ambiguous_module(const char* name, char* first_path, int* first_line, char* second_path, int* second_line) {
@@ -215,12 +219,12 @@ static bool is_ambiguous_module(const char* name, char* first_path, int* first_l
 }
 
 static void register_function_visibility(const char* module, const char* func, bool is_public) {
-    if (function_registry_count < 512) {
-        strncpy(function_registry[function_registry_count].module_name, module, 127);
-        strncpy(function_registry[function_registry_count].function_name, func, 127);
-        function_registry[function_registry_count].is_public = is_public;
-        function_registry_count++;
-    }
+    WYN_ENSURE_CAP(function_registry, function_registry_count, function_registry_cap);
+    memset(&function_registry[function_registry_count], 0, sizeof(FunctionVisibility));
+    strncpy(function_registry[function_registry_count].module_name, module, 127);
+    strncpy(function_registry[function_registry_count].function_name, func, 127);
+    function_registry[function_registry_count].is_public = is_public;
+    function_registry_count++;
 }
 
 static bool check_function_visibility(const char* module, const char* func) {
@@ -1683,11 +1687,12 @@ void init_checker() {
     
     // Register loaded user modules as namespace symbols
     {
-        extern int get_all_modules_raw(void** out, int max);
-        void* mods[64]; int mc = get_all_modules_raw(mods, 64);
+        extern int get_module_count(void);
+        extern void* get_module_entry_at(int index);
+        int mc = get_module_count();
         for (int mi = 0; mi < mc; mi++) {
             typedef struct { char* name; void* ast; } ME;
-            ME* mod = (ME*)mods[mi];
+            ME* mod = (ME*)get_module_entry_at(mi);
             // Register short name (last segment after /)
             char* slash = strrchr(mod->name, '/');
             const char* short_name = slash ? slash + 1 : mod->name;
@@ -3836,11 +3841,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 bool is_known_module = is_builtin_module(obj_name) || is_module_loaded(obj_name);
                 // Also check if it's a short name of a loaded module (e.g., "utils" for "lib/utils")
                 if (!is_known_module) {
-                    extern int get_all_modules_raw(void** out, int max);
-                    void* mods[64]; int mc = get_all_modules_raw(mods, 64);
+                    extern int get_module_count(void);
+                    extern void* get_module_entry_at(int index);
+                    int mc = get_module_count();
                     for (int mi = 0; mi < mc; mi++) {
                         typedef struct { char* name; void* ast; } ME;
-                        ME* mod = (ME*)mods[mi];
+                        ME* mod = (ME*)get_module_entry_at(mi);
                         // Check if obj_name matches the last segment of the module path
                         char* slash = strrchr(mod->name, '/');
                         const char* short_name = slash ? slash + 1 : mod->name;
