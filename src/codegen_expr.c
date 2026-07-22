@@ -3101,22 +3101,6 @@ void codegen_expr(Expr* expr) {
                     break;
                 }
                 
-                // map.get(k, default): key-or-default lookup (Python d.get).
-                // Was FLOWY F1: this compiled through the 1-arg getter with the
-                // default silently dropped into garbage. Routes by value type.
-                if (strcmp(method_name, "get") == 0 && expr->method_call.arg_count == 2) {
-                    const char* _gfn = "hashmap_get_or_int";
-                    if (expr->expr_type && expr->expr_type->kind == TYPE_STRING) _gfn = "hashmap_get_or_str";
-                    else if (expr->method_call.args[1]->type == EXPR_STRING) _gfn = "hashmap_get_or_str";
-                    emit("%s(", _gfn);
-                    codegen_expr(expr->method_call.object);
-                    emit(", ");
-                    codegen_expr(expr->method_call.args[0]);
-                    emit(", ");
-                    codegen_expr(expr->method_call.args[1]);
-                    emit(")");
-                    break;
-                }
                 // map.get(k): pick the getter matching the value type the checker
                 // resolved onto this node (from the map's value_type). Mirrors the
                 // index m[k] path so getter/var-decl/comparison all agree.
