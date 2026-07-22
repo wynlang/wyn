@@ -4,8 +4,9 @@
 // Track which Option<Struct> family typedefs have already been emitted this
 // compilation, so the per-struct emission (below) and the standalone catch-all
 // block don't emit the same family twice. Reset at the top of codegen_program.
-static char* emitted_opt_struct[256];
+static char** emitted_opt_struct = NULL;
 static int emitted_opt_struct_count = 0;
+static int emitted_opt_struct_cap = 0;
 static int opt_struct_already_emitted(const char* s) {
     for (int i = 0; i < emitted_opt_struct_count; i++)
         if (strcmp(emitted_opt_struct[i], s) == 0) return 1;
@@ -16,7 +17,8 @@ static int opt_struct_already_emitted(const char* s) {
 // (the Option embeds an `s value` by value). Returns without emitting if already done.
 static void emit_option_struct_family(const char* s) {
     if (opt_struct_already_emitted(s)) return;
-    if (emitted_opt_struct_count < 256) emitted_opt_struct[emitted_opt_struct_count++] = strdup(s);
+    WYN_ENSURE_CAP(emitted_opt_struct, emitted_opt_struct_count, emitted_opt_struct_cap);
+    emitted_opt_struct[emitted_opt_struct_count++] = strdup(s);
     emit("typedef struct { int tag; %s value; } Option%s;\n", s, s);
     emit("static inline Option%s Option%s_Some(%s value){ Option%s o; o.tag=1; o.value=value; return o; }\n", s, s, s, s);
     emit("static inline Option%s Option%s_None(void){ Option%s o; o.tag=0; return o; }\n", s, s, s);
@@ -308,7 +310,12 @@ void codegen_program(Program* prog) {
     // Generate global variables
     // Emit declarations at file scope, initializations in wyn_main
     int deferred_init_count = 0;
-    int deferred_init_indices[256];
+    // Growable: one slot per top-level var stmt is enough
+    int* deferred_init_indices = malloc((size_t)(prog->count > 0 ? prog->count : 1) * sizeof(int));
+    if (!deferred_init_indices) {
+        fprintf(stderr, "wyn: out of memory allocating deferred-init table\n");
+        exit(1);
+    }
     {
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_VAR) {
@@ -410,7 +417,7 @@ void codegen_program(Program* prog) {
             } else {
                 // Declare at file scope, initialize in wyn_main
                 emit("%s %.*s;\n", c_type, var_stmt->var.name.length, var_stmt->var.name.start);
-                if (deferred_init_count < 256) deferred_init_indices[deferred_init_count++] = i;
+                deferred_init_indices[deferred_init_count++] = i;
             }
         }
     }
@@ -427,7 +434,9 @@ void codegen_program(Program* prog) {
         }
         emit("}\n");
     }
-    
+    free(deferred_init_indices);
+    deferred_init_indices = NULL;
+
     // Generate forward declarations for struct methods
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_STRUCT) {

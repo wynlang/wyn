@@ -3,9 +3,10 @@
 
 static void scan_expr_for_lambdas(Expr* expr);
 
-// Track array vars found during scan (for type-aware lambda captures)
-static char scan_array_vars[64][64];
+// Track array vars found during scan (for type-aware lambda captures) (growable)
+static char (*scan_array_vars)[64] = NULL;
 static int scan_array_var_count = 0;
+static int scan_array_var_cap = 0;
 static int is_scan_array_var(const char* name) {
     for (int i = 0; i < scan_array_var_count; i++)
         if (strcmp(scan_array_vars[i], name) == 0) return 1;
@@ -20,7 +21,8 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
             if (stmt->var.init) {
                 scan_expr_for_lambdas(stmt->var.init);
                 // Track array vars for type-aware captures
-                if (stmt->var.init->type == EXPR_ARRAY && scan_array_var_count < 64) {
+                if (stmt->var.init->type == EXPR_ARRAY) {
+                    WYN_ENSURE_CAP(scan_array_vars, scan_array_var_count, scan_array_var_cap);
                     int len = stmt->var.name.length < 63 ? stmt->var.name.length : 63;
                     memcpy(scan_array_vars[scan_array_var_count], stmt->var.name.start, len);
                     scan_array_vars[scan_array_var_count][len] = '\0';
@@ -83,7 +85,8 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                         break;
                     }
                 }
-                if (!already_added && spawn_wrapper_count < 256) {
+                if (!already_added) {
+                    ensure_spawn_wrapper_cap();
                     strcpy(spawn_wrappers[spawn_wrapper_count].func_name, func_name);
                     spawn_wrappers[spawn_wrapper_count].arg_count = arg_count;
                     spawn_wrappers[spawn_wrapper_count].returns_void = 1;
@@ -426,7 +429,8 @@ static void scan_expr_for_lambdas(Expr* expr) {
                     pos += snprintf(func_code + pos, 8192 - pos, "#undef %s\n", captured_vars[i]);
             }
             
-            if (lambda_count < 256) {
+            {
+                ensure_lambda_cap();
                 lambda_functions[lambda_count].code = func_code;
                 lambda_functions[lambda_count].ast = expr;
                 lambda_functions[lambda_count].id = lambda_id;
@@ -505,7 +509,8 @@ static void scan_expr_for_lambdas(Expr* expr) {
                         break;
                     }
                 }
-                if (!already_added && spawn_wrapper_count < 256) {
+                if (!already_added) {
+                    ensure_spawn_wrapper_cap();
                     strcpy(spawn_wrappers[spawn_wrapper_count].func_name, func_name);
                     spawn_wrappers[spawn_wrapper_count].arg_count = arg_count;
                     spawn_wrappers[spawn_wrapper_count].returns_void = 0;

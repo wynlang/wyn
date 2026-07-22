@@ -33,7 +33,7 @@ static void codegen_string_push_transfer(Expr* value) {
     char _pvn[256]; token_to_cstr(_pvn, sizeof(_pvn), value->token);
     extern int is_string_var(const char*);
     if (!is_string_var(_pvn)) return;
-    extern int string_var_releasable_count; extern char* string_var_releasable[];
+    // string_var_releasable/_count are statics from codegen.c (this file is #included there)
     extern int var_is_live_after(Stmt**, int, int, const char*);
     extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
     // A releasable (top-level/outer) var is co-owned: retain so the scope-exit
@@ -1981,7 +1981,8 @@ void codegen_expr(Expr* expr) {
                         memcmp(current_function_params[pi], obj.start, obj.length) == 0) {
                         // Found the param - check if its type is a trait
                         // We stored param types during STMT_FN processing
-                        extern char current_param_types[64][64];
+                        // (current_param_types is the growable array defined in codegen.c;
+                        // this file is #included into codegen.c so it is in scope)
                         if (current_param_types[pi][0] && is_trait_type(current_param_types[pi], strlen(current_param_types[pi]))) {
                             emit("(");
                             codegen_expr(expr->method_call.object);
@@ -2024,11 +2025,12 @@ void codegen_expr(Expr* expr) {
                 }
                 if (!is_loaded_module && !is_local && resolved_mod_name[0] == '\0') {
                     // Check short names: "utils" might be "lib/utils"
-                    extern int get_all_modules_raw(void** out, int max);
-                    void* _mods[64]; int _mc = get_all_modules_raw(_mods, 64);
+                    extern int get_module_count(void);
+                    extern void* get_module_entry_at(int index);
+                    int _mc = get_module_count();
                     for (int _mi = 0; _mi < _mc; _mi++) {
                         typedef struct { char* name; void* ast; } _ME;
-                        _ME* _mod = (_ME*)_mods[_mi];
+                        _ME* _mod = (_ME*)get_module_entry_at(_mi);
                         char* _sl = strrchr(_mod->name, '/');
                         const char* _sn = _sl ? _sl + 1 : _mod->name;
                         if (strcmp(_sn, module_name) == 0) {

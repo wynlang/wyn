@@ -3,19 +3,18 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "module_registry.h"
+#include "growable.h"
 
 ModuleRegistry global_module_registry = {0};
 
 void init_module_registry() {
     global_module_registry.count = 0;
-    for (int i = 0; i < 64; i++) {
-        global_module_registry.modules[i] = NULL;
-    }
 }
 
 void register_module(const char* name, Program* ast) {
-    if (global_module_registry.count >= 64) return;
-    
+    WYN_ENSURE_CAP(global_module_registry.modules, global_module_registry.count,
+                   global_module_registry.capacity);
+
     ModuleEntry* entry = malloc(sizeof(ModuleEntry));
     entry->name = strdup(name);
     entry->ast = ast;
@@ -84,4 +83,11 @@ Program* get_module_at(int index) {
         return NULL;
     }
     return global_module_registry.modules[index]->ast;
+}
+
+void* get_module_entry_at(int index) {
+    if (index < 0 || index >= global_module_registry.count) {
+        return NULL;
+    }
+    return global_module_registry.modules[index];
 }

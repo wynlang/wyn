@@ -7,6 +7,7 @@
 #include "security.h"
 #include "test.h"
 #include "error.h"
+#include "growable.h"
 
 extern void init_lexer(const char* source);
 extern Token next_token();
@@ -22,9 +23,10 @@ typedef struct {
 static Parser parser;
 static const char* current_source_file = NULL;  // Global for error reporting
 
-// Parser state stack for module loading
-static Parser parser_stack[16];
+// Parser state stack for module loading (growable)
+static Parser* parser_stack = NULL;
 static int parser_stack_depth = 0;
+static int parser_stack_cap = 0;
 
 // Module alias registry (shared with checker/codegen)
 typedef struct {
@@ -32,15 +34,15 @@ typedef struct {
     char module[64];
 } ModuleAlias;
 
-static ModuleAlias global_module_aliases[32];
+static ModuleAlias* global_module_aliases = NULL;
 static int global_module_alias_count = 0;
+static int global_module_alias_cap = 0;
 
 void register_parser_module_alias(const char* alias, const char* module) {
-    if (global_module_alias_count < 32) {
-        snprintf(global_module_aliases[global_module_alias_count].alias, 64, "%s", alias);
-        snprintf(global_module_aliases[global_module_alias_count].module, 64, "%s", module);
-        global_module_alias_count++;
-    }
+    WYN_ENSURE_CAP(global_module_aliases, global_module_alias_count, global_module_alias_cap);
+    snprintf(global_module_aliases[global_module_alias_count].alias, 64, "%s", alias);
+    snprintf(global_module_aliases[global_module_alias_count].module, 64, "%s", module);
+    global_module_alias_count++;
 }
 
 const char* resolve_parser_module_alias(const char* name) {
@@ -53,9 +55,8 @@ const char* resolve_parser_module_alias(const char* name) {
 }
 
 void save_parser_state() {
-    if (parser_stack_depth < 16) {
-        parser_stack[parser_stack_depth++] = parser;
-    }
+    WYN_ENSURE_CAP(parser_stack, parser_stack_depth, parser_stack_cap);
+    parser_stack[parser_stack_depth++] = parser;
 }
 
 void restore_parser_state() {
@@ -247,10 +248,15 @@ Stmt* statement();
 static Stmt* parse_block_or_stmt(const char* ctx) {
     Stmt* body = alloc_stmt();
     body->type = STMT_BLOCK;
-    body->block.stmts = malloc(sizeof(Stmt*) * 256);
+    int _blk_cap = 256;
+    body->block.stmts = malloc(sizeof(Stmt*) * _blk_cap);
     body->block.count = 0;
     if (match(TOKEN_LBRACE)) {
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+            if (body->block.count >= _blk_cap) {
+                _blk_cap *= 2;
+                body->block.stmts = realloc(body->block.stmts, sizeof(Stmt*) * _blk_cap);
+            }
             const char* __sp = parser.current.start;
             body->block.stmts[body->block.count++] = statement();
             if (stmt_made_no_progress(__sp)) break;
@@ -475,28 +481,35 @@ static Expr* primary() {
             Expr* expr = alloc_expr();
             expr->type = EXPR_STRUCT_INIT;
             expr->struct_init.type_name = name;
-            expr->struct_init.field_names = malloc(sizeof(Token) * 16);
-            expr->struct_init.field_values = malloc(sizeof(Expr*) * 16);
+            int _si_cap = 16;
+            expr->struct_init.field_names = malloc(sizeof(Token) * _si_cap);
+            expr->struct_init.field_values = malloc(sizeof(Expr*) * _si_cap);
             expr->struct_init.field_count = 0;
-            
+
             if (!check(TOKEN_RBRACE)) {
                 do {
+                    // Grow field arrays as needed (struct literals are not capped)
+                    if (expr->struct_init.field_count >= _si_cap) {
+                        _si_cap *= 2;
+                        expr->struct_init.field_names = realloc(expr->struct_init.field_names, sizeof(Token) * _si_cap);
+                        expr->struct_init.field_values = realloc(expr->struct_init.field_values, sizeof(Expr*) * _si_cap);
+                    }
                     // Parse field name
                     expect(TOKEN_IDENT, "Expected field name");
                     expr->struct_init.field_names[expr->struct_init.field_count] = parser.previous;
-                    
+
                     expect(TOKEN_COLON, "Expected ':' after field name");
-                    
+
                     // Parse field value
                     expr->struct_init.field_values[expr->struct_init.field_count] = expression();
                     expr->struct_init.field_count++;
                 } while (match(TOKEN_COMMA) && !check(TOKEN_RBRACE));
             }
-            
+
             expect(TOKEN_RBRACE, "Expected '}' after struct fields");
             return expr;
         }
-        
+
         // Not a struct init, treat as regular identifier
         if (false && check(TOKEN_LBRACE) && name.start[0] >= 'A' && name.start[0] <= 'Z') {
             // OLD CODE - DISABLED
@@ -643,9 +656,15 @@ static Expr* primary() {
         expect(TOKEN_LBRACE, "Expected '{' after match value");
         
         expr->match.arm_count = 0;
-        expr->match.arms = malloc(sizeof(MatchArm) * 32);
-        
+        int _ma_cap = 32;
+        expr->match.arms = malloc(sizeof(MatchArm) * _ma_cap);
+
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+            // Grow the arms array so match expressions are not capped at 32 arms
+            if (expr->match.arm_count >= _ma_cap) {
+                _ma_cap *= 2;
+                expr->match.arms = realloc(expr->match.arms, sizeof(MatchArm) * _ma_cap);
+            }
             // Parse pattern using full pattern parser
             Pattern* pat = parse_pattern();
             if (!pat) {
@@ -671,11 +690,13 @@ static Expr* primary() {
                 advance(); // consume '{'
                 Expr* block_expr = alloc_expr();
                 block_expr->type = EXPR_BLOCK;
-                block_expr->block.stmts = malloc(sizeof(Stmt*) * 256);
+                int _be_cap = 256;
+                block_expr->block.stmts = malloc(sizeof(Stmt*) * _be_cap);
                 block_expr->block.stmt_count = 0;
                 block_expr->block.result = NULL;
-                
+
                 while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                    if (block_expr->block.stmt_count >= _be_cap) { _be_cap *= 2; block_expr->block.stmts = realloc(block_expr->block.stmts, sizeof(Stmt*) * _be_cap); }
                     // Try to parse as statement first
                     if (check(TOKEN_VAR) || check(TOKEN_CONST)) {
                         block_expr->block.stmts[block_expr->block.stmt_count++] = statement();
@@ -1369,12 +1390,18 @@ static Expr* call() {
                 combined_token.length = strlen(combined_name);
                 
                 struct_expr->struct_init.type_name = combined_token;
-                struct_expr->struct_init.field_names = malloc(sizeof(Token) * 16);
-                struct_expr->struct_init.field_values = malloc(sizeof(Expr*) * 16);
+                int _si2_cap = 16;
+                struct_expr->struct_init.field_names = malloc(sizeof(Token) * _si2_cap);
+                struct_expr->struct_init.field_values = malloc(sizeof(Expr*) * _si2_cap);
                 struct_expr->struct_init.field_count = 0;
-                
+
                 if (!check(TOKEN_RBRACE)) {
                     do {
+                        if (struct_expr->struct_init.field_count >= _si2_cap) {
+                            _si2_cap *= 2;
+                            struct_expr->struct_init.field_names = realloc(struct_expr->struct_init.field_names, sizeof(Token) * _si2_cap);
+                            struct_expr->struct_init.field_values = realloc(struct_expr->struct_init.field_values, sizeof(Expr*) * _si2_cap);
+                        }
                         expect(TOKEN_IDENT, "Expected field name");
                         struct_expr->struct_init.field_names[struct_expr->struct_init.field_count] = parser.previous;
                         expect(TOKEN_COLON, "Expected ':' after field name");
@@ -2223,9 +2250,11 @@ Stmt* statement() {
             expect(TOKEN_RPAREN, "Expected ')' after parallel timeout");
         }
         expect(TOKEN_LBRACE, "Expected '{' after 'parallel'");
-        stmt->block.stmts = malloc(sizeof(Stmt*) * 256);
+        int _par_cap = 256;
+        stmt->block.stmts = malloc(sizeof(Stmt*) * _par_cap);
         stmt->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+            if (stmt->block.count >= _par_cap) { _par_cap *= 2; stmt->block.stmts = realloc(stmt->block.stmts, sizeof(Stmt*) * _par_cap); }
             const char* __sp = parser.current.start; stmt->block.stmts[stmt->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
         }
         expect(TOKEN_RBRACE, "Expected '}' after parallel block");
@@ -2262,9 +2291,11 @@ Stmt* statement() {
             expect(TOKEN_LBRACE, "Expected '{' after 'if let'");
             Stmt* then_blk = alloc_stmt();
             then_blk->type = STMT_BLOCK;
-            then_blk->block.stmts = malloc(sizeof(Stmt*) * 256);
+            int _then_cap = 256;
+            then_blk->block.stmts = malloc(sizeof(Stmt*) * _then_cap);
             then_blk->block.count = 0;
             while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                if (then_blk->block.count >= _then_cap) { _then_cap *= 2; then_blk->block.stmts = realloc(then_blk->block.stmts, sizeof(Stmt*) * _then_cap); }
                 const char* __sp = parser.current.start;
                 then_blk->block.stmts[then_blk->block.count++] = statement();
                 if (stmt_made_no_progress(__sp)) break;
@@ -2285,9 +2316,11 @@ Stmt* statement() {
                     expect(TOKEN_LBRACE, "Expected '{' after else");
                     else_blk = alloc_stmt();
                     else_blk->type = STMT_BLOCK;
-                    else_blk->block.stmts = malloc(sizeof(Stmt*) * 256);
+                    int _else_cap = 256;
+                    else_blk->block.stmts = malloc(sizeof(Stmt*) * _else_cap);
                     else_blk->block.count = 0;
                     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+                        if (else_blk->block.count >= _else_cap) { _else_cap *= 2; else_blk->block.stmts = realloc(else_blk->block.stmts, sizeof(Stmt*) * _else_cap); }
                         const char* __sp = parser.current.start;
                         else_blk->block.stmts[else_blk->block.count++] = statement();
                         if (stmt_made_no_progress(__sp)) break;
@@ -2848,9 +2881,11 @@ Stmt* statement() {
     if (match(TOKEN_LBRACE)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_BLOCK;
-        stmt->block.stmts = malloc(sizeof(Stmt*) * 256);
+        int _bb_cap = 256;
+        stmt->block.stmts = malloc(sizeof(Stmt*) * _bb_cap);
         stmt->block.count = 0;
         while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+            if (stmt->block.count >= _bb_cap) { _bb_cap *= 2; stmt->block.stmts = realloc(stmt->block.stmts, sizeof(Stmt*) * _bb_cap); }
             const char* __sp = parser.current.start; stmt->block.stmts[stmt->block.count++] = statement(); if (stmt_made_no_progress(__sp)) break;
         }
         expect(TOKEN_RBRACE, "Expected '}' after block");
@@ -3224,13 +3259,26 @@ Stmt* struct_decl() {
     expect(TOKEN_LBRACE, "Expected '{' after struct name");
     
     stmt->struct_decl.field_count = 0;
-    stmt->struct_decl.fields = malloc(sizeof(Token) * 32);
-    stmt->struct_decl.field_types = malloc(sizeof(Expr*) * 32);
-    stmt->struct_decl.field_arc_managed = malloc(sizeof(bool) * 32); // T2.5.3: ARC integration
+    int _field_cap = 32;
+    int _method_cap = 32;
+    stmt->struct_decl.fields = malloc(sizeof(Token) * _field_cap);
+    stmt->struct_decl.field_types = malloc(sizeof(Expr*) * _field_cap);
+    stmt->struct_decl.field_arc_managed = malloc(sizeof(bool) * _field_cap); // T2.5.3: ARC integration
     stmt->struct_decl.method_count = 0;
-    stmt->struct_decl.methods = malloc(sizeof(FnStmt*) * 32);
-    
+    stmt->struct_decl.methods = malloc(sizeof(FnStmt*) * _method_cap);
+
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+        // Grow field/method arrays as needed (structs are not capped)
+        if (stmt->struct_decl.field_count >= _field_cap) {
+            _field_cap *= 2;
+            stmt->struct_decl.fields = realloc(stmt->struct_decl.fields, sizeof(Token) * _field_cap);
+            stmt->struct_decl.field_types = realloc(stmt->struct_decl.field_types, sizeof(Expr*) * _field_cap);
+            stmt->struct_decl.field_arc_managed = realloc(stmt->struct_decl.field_arc_managed, sizeof(bool) * _field_cap);
+        }
+        if (stmt->struct_decl.method_count >= _method_cap) {
+            _method_cap *= 2;
+            stmt->struct_decl.methods = realloc(stmt->struct_decl.methods, sizeof(FnStmt*) * _method_cap);
+        }
         // Check if this is a method (fn keyword) or a field
         if (match(TOKEN_FN)) {
             // Parse method
@@ -3386,9 +3434,14 @@ Stmt* impl_block() {
     expect(TOKEN_LBRACE, "Expected '{' after impl type name");
     
     stmt->impl.method_count = 0;
-    stmt->impl.methods = malloc(sizeof(FnStmt*) * 32);
-    
+    int _impl_method_cap = 32;
+    stmt->impl.methods = malloc(sizeof(FnStmt*) * _impl_method_cap);
+
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+        if (stmt->impl.method_count >= _impl_method_cap) {
+            _impl_method_cap *= 2;
+            stmt->impl.methods = realloc(stmt->impl.methods, sizeof(FnStmt*) * _impl_method_cap);
+        }
         if (check(TOKEN_FN) || check(TOKEN_PUB)) {
             // Don't consume TOKEN_FN - let function() do it
             Stmt* method = function();
@@ -3454,10 +3507,16 @@ Stmt* trait_decl() {
     
     // Parse trait methods (declarations only, no bodies)
     stmt->trait_decl.method_count = 0;
-    stmt->trait_decl.methods = malloc(sizeof(FnStmt*) * 32);
-    stmt->trait_decl.method_has_default = malloc(sizeof(bool) * 32);
-    
+    int _trait_method_cap = 32;
+    stmt->trait_decl.methods = malloc(sizeof(FnStmt*) * _trait_method_cap);
+    stmt->trait_decl.method_has_default = malloc(sizeof(bool) * _trait_method_cap);
+
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+        if (stmt->trait_decl.method_count >= _trait_method_cap) {
+            _trait_method_cap *= 2;
+            stmt->trait_decl.methods = realloc(stmt->trait_decl.methods, sizeof(FnStmt*) * _trait_method_cap);
+            stmt->trait_decl.method_has_default = realloc(stmt->trait_decl.method_has_default, sizeof(bool) * _trait_method_cap);
+        }
         if (check(TOKEN_FN)) {
             advance(); // consume 'fn'
             
@@ -3557,11 +3616,18 @@ Stmt* enum_decl() {
     expect(TOKEN_LBRACE, "Expected '{' after enum name");
     
     stmt->enum_decl.variant_count = 0;
-    stmt->enum_decl.variants = malloc(sizeof(Token) * 32);
-    stmt->enum_decl.variant_types = malloc(sizeof(Expr**) * 32);
-    stmt->enum_decl.variant_type_counts = malloc(sizeof(int) * 32);
-    
+    int _variant_cap = 32;
+    stmt->enum_decl.variants = malloc(sizeof(Token) * _variant_cap);
+    stmt->enum_decl.variant_types = malloc(sizeof(Expr**) * _variant_cap);
+    stmt->enum_decl.variant_type_counts = malloc(sizeof(int) * _variant_cap);
+
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+        if (stmt->enum_decl.variant_count >= _variant_cap) {
+            _variant_cap *= 2;
+            stmt->enum_decl.variants = realloc(stmt->enum_decl.variants, sizeof(Token) * _variant_cap);
+            stmt->enum_decl.variant_types = realloc(stmt->enum_decl.variant_types, sizeof(Expr**) * _variant_cap);
+            stmt->enum_decl.variant_type_counts = realloc(stmt->enum_decl.variant_type_counts, sizeof(int) * _variant_cap);
+        }
         // Accept identifiers and keywords that are commonly used as variant names
         if (check(TOKEN_IDENT) || check(TOKEN_NONE) || check(TOKEN_SOME) || check(TOKEN_OK) || check(TOKEN_ERR) || check(TOKEN_TRUE) || check(TOKEN_FALSE)) {
             advance();
@@ -4076,9 +4142,15 @@ static Stmt* parse_match_statement() {
     
     // Parse match cases
     stmt->match_stmt.case_count = 0;
-    stmt->match_stmt.cases = safe_malloc(sizeof(MatchCase) * 16); // Initial capacity
-    
+    int _mc_cap = 16;
+    stmt->match_stmt.cases = safe_malloc(sizeof(MatchCase) * _mc_cap); // Initial capacity
+
     while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF)) {
+        // Grow the cases array so match statements are not capped at 16 arms
+        if (stmt->match_stmt.case_count >= _mc_cap) {
+            _mc_cap *= 2;
+            stmt->match_stmt.cases = safe_realloc(stmt->match_stmt.cases, sizeof(MatchCase) * _mc_cap);
+        }
         MatchCase* current_case = &stmt->match_stmt.cases[stmt->match_stmt.case_count];
         
         // Parse pattern - enhanced to support literal, wildcard, and Some/None patterns

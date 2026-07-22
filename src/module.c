@@ -5,13 +5,16 @@
 #include <sys/stat.h>
 #include "module.h"
 #include "package.h"
+#include "growable.h"
 
-static char* module_paths[16];
+static char** module_paths = NULL;
 static int module_path_count = 0;
+static int module_path_cap = 0;
 
-// Circular import detection
-static char* loading_stack[32];
+// Circular import detection (growable)
+static char** loading_stack = NULL;
 static int loading_stack_count = 0;
+static int loading_stack_cap = 0;
 static bool circular_import_detected = false;
 
 bool has_circular_import(void) {
@@ -19,9 +22,8 @@ bool has_circular_import(void) {
 }
 
 void add_module_path(const char* path) {
-    if (module_path_count < 16) {
-        module_paths[module_path_count++] = strdup(path);
-    }
+    WYN_ENSURE_CAP(module_paths, module_path_count, module_path_cap);
+    module_paths[module_path_count++] = strdup(path);
 }
 
 static bool is_in_loading_stack(const char* module_name) {
@@ -34,9 +36,8 @@ static bool is_in_loading_stack(const char* module_name) {
 }
 
 static void push_loading_stack(const char* module_name) {
-    if (loading_stack_count < 32) {
-        loading_stack[loading_stack_count++] = strdup(module_name);
-    }
+    WYN_ENSURE_CAP(loading_stack, loading_stack_count, loading_stack_cap);
+    loading_stack[loading_stack_count++] = strdup(module_name);
 }
 
 static void pop_loading_stack() {

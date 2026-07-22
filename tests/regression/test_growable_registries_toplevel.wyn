@@ -1,0 +1,807 @@
+// Regression: growable top-level registries.
+// Old fixed caps silently broke big programs: fn return-type registry (256)
+// dropped later functions (string returns treated as int), data-enum registry
+// (64) broke matches on the 65th enum, enum-variant type registry (256)
+// dropped payload C types, and struct-var registry (128) lost method dispatch.
+fn get0() -> string { return "s0" }
+fn get1() -> string { return "s1" }
+fn get2() -> string { return "s2" }
+fn get3() -> string { return "s3" }
+fn get4() -> string { return "s4" }
+fn get5() -> string { return "s5" }
+fn get6() -> string { return "s6" }
+fn get7() -> string { return "s7" }
+fn get8() -> string { return "s8" }
+fn get9() -> string { return "s9" }
+fn get10() -> string { return "s10" }
+fn get11() -> string { return "s11" }
+fn get12() -> string { return "s12" }
+fn get13() -> string { return "s13" }
+fn get14() -> string { return "s14" }
+fn get15() -> string { return "s15" }
+fn get16() -> string { return "s16" }
+fn get17() -> string { return "s17" }
+fn get18() -> string { return "s18" }
+fn get19() -> string { return "s19" }
+fn get20() -> string { return "s20" }
+fn get21() -> string { return "s21" }
+fn get22() -> string { return "s22" }
+fn get23() -> string { return "s23" }
+fn get24() -> string { return "s24" }
+fn get25() -> string { return "s25" }
+fn get26() -> string { return "s26" }
+fn get27() -> string { return "s27" }
+fn get28() -> string { return "s28" }
+fn get29() -> string { return "s29" }
+fn get30() -> string { return "s30" }
+fn get31() -> string { return "s31" }
+fn get32() -> string { return "s32" }
+fn get33() -> string { return "s33" }
+fn get34() -> string { return "s34" }
+fn get35() -> string { return "s35" }
+fn get36() -> string { return "s36" }
+fn get37() -> string { return "s37" }
+fn get38() -> string { return "s38" }
+fn get39() -> string { return "s39" }
+fn get40() -> string { return "s40" }
+fn get41() -> string { return "s41" }
+fn get42() -> string { return "s42" }
+fn get43() -> string { return "s43" }
+fn get44() -> string { return "s44" }
+fn get45() -> string { return "s45" }
+fn get46() -> string { return "s46" }
+fn get47() -> string { return "s47" }
+fn get48() -> string { return "s48" }
+fn get49() -> string { return "s49" }
+fn get50() -> string { return "s50" }
+fn get51() -> string { return "s51" }
+fn get52() -> string { return "s52" }
+fn get53() -> string { return "s53" }
+fn get54() -> string { return "s54" }
+fn get55() -> string { return "s55" }
+fn get56() -> string { return "s56" }
+fn get57() -> string { return "s57" }
+fn get58() -> string { return "s58" }
+fn get59() -> string { return "s59" }
+fn get60() -> string { return "s60" }
+fn get61() -> string { return "s61" }
+fn get62() -> string { return "s62" }
+fn get63() -> string { return "s63" }
+fn get64() -> string { return "s64" }
+fn get65() -> string { return "s65" }
+fn get66() -> string { return "s66" }
+fn get67() -> string { return "s67" }
+fn get68() -> string { return "s68" }
+fn get69() -> string { return "s69" }
+fn get70() -> string { return "s70" }
+fn get71() -> string { return "s71" }
+fn get72() -> string { return "s72" }
+fn get73() -> string { return "s73" }
+fn get74() -> string { return "s74" }
+fn get75() -> string { return "s75" }
+fn get76() -> string { return "s76" }
+fn get77() -> string { return "s77" }
+fn get78() -> string { return "s78" }
+fn get79() -> string { return "s79" }
+fn get80() -> string { return "s80" }
+fn get81() -> string { return "s81" }
+fn get82() -> string { return "s82" }
+fn get83() -> string { return "s83" }
+fn get84() -> string { return "s84" }
+fn get85() -> string { return "s85" }
+fn get86() -> string { return "s86" }
+fn get87() -> string { return "s87" }
+fn get88() -> string { return "s88" }
+fn get89() -> string { return "s89" }
+fn get90() -> string { return "s90" }
+fn get91() -> string { return "s91" }
+fn get92() -> string { return "s92" }
+fn get93() -> string { return "s93" }
+fn get94() -> string { return "s94" }
+fn get95() -> string { return "s95" }
+fn get96() -> string { return "s96" }
+fn get97() -> string { return "s97" }
+fn get98() -> string { return "s98" }
+fn get99() -> string { return "s99" }
+fn get100() -> string { return "s100" }
+fn get101() -> string { return "s101" }
+fn get102() -> string { return "s102" }
+fn get103() -> string { return "s103" }
+fn get104() -> string { return "s104" }
+fn get105() -> string { return "s105" }
+fn get106() -> string { return "s106" }
+fn get107() -> string { return "s107" }
+fn get108() -> string { return "s108" }
+fn get109() -> string { return "s109" }
+fn get110() -> string { return "s110" }
+fn get111() -> string { return "s111" }
+fn get112() -> string { return "s112" }
+fn get113() -> string { return "s113" }
+fn get114() -> string { return "s114" }
+fn get115() -> string { return "s115" }
+fn get116() -> string { return "s116" }
+fn get117() -> string { return "s117" }
+fn get118() -> string { return "s118" }
+fn get119() -> string { return "s119" }
+fn get120() -> string { return "s120" }
+fn get121() -> string { return "s121" }
+fn get122() -> string { return "s122" }
+fn get123() -> string { return "s123" }
+fn get124() -> string { return "s124" }
+fn get125() -> string { return "s125" }
+fn get126() -> string { return "s126" }
+fn get127() -> string { return "s127" }
+fn get128() -> string { return "s128" }
+fn get129() -> string { return "s129" }
+fn get130() -> string { return "s130" }
+fn get131() -> string { return "s131" }
+fn get132() -> string { return "s132" }
+fn get133() -> string { return "s133" }
+fn get134() -> string { return "s134" }
+fn get135() -> string { return "s135" }
+fn get136() -> string { return "s136" }
+fn get137() -> string { return "s137" }
+fn get138() -> string { return "s138" }
+fn get139() -> string { return "s139" }
+fn get140() -> string { return "s140" }
+fn get141() -> string { return "s141" }
+fn get142() -> string { return "s142" }
+fn get143() -> string { return "s143" }
+fn get144() -> string { return "s144" }
+fn get145() -> string { return "s145" }
+fn get146() -> string { return "s146" }
+fn get147() -> string { return "s147" }
+fn get148() -> string { return "s148" }
+fn get149() -> string { return "s149" }
+fn get150() -> string { return "s150" }
+fn get151() -> string { return "s151" }
+fn get152() -> string { return "s152" }
+fn get153() -> string { return "s153" }
+fn get154() -> string { return "s154" }
+fn get155() -> string { return "s155" }
+fn get156() -> string { return "s156" }
+fn get157() -> string { return "s157" }
+fn get158() -> string { return "s158" }
+fn get159() -> string { return "s159" }
+fn get160() -> string { return "s160" }
+fn get161() -> string { return "s161" }
+fn get162() -> string { return "s162" }
+fn get163() -> string { return "s163" }
+fn get164() -> string { return "s164" }
+fn get165() -> string { return "s165" }
+fn get166() -> string { return "s166" }
+fn get167() -> string { return "s167" }
+fn get168() -> string { return "s168" }
+fn get169() -> string { return "s169" }
+fn get170() -> string { return "s170" }
+fn get171() -> string { return "s171" }
+fn get172() -> string { return "s172" }
+fn get173() -> string { return "s173" }
+fn get174() -> string { return "s174" }
+fn get175() -> string { return "s175" }
+fn get176() -> string { return "s176" }
+fn get177() -> string { return "s177" }
+fn get178() -> string { return "s178" }
+fn get179() -> string { return "s179" }
+fn get180() -> string { return "s180" }
+fn get181() -> string { return "s181" }
+fn get182() -> string { return "s182" }
+fn get183() -> string { return "s183" }
+fn get184() -> string { return "s184" }
+fn get185() -> string { return "s185" }
+fn get186() -> string { return "s186" }
+fn get187() -> string { return "s187" }
+fn get188() -> string { return "s188" }
+fn get189() -> string { return "s189" }
+fn get190() -> string { return "s190" }
+fn get191() -> string { return "s191" }
+fn get192() -> string { return "s192" }
+fn get193() -> string { return "s193" }
+fn get194() -> string { return "s194" }
+fn get195() -> string { return "s195" }
+fn get196() -> string { return "s196" }
+fn get197() -> string { return "s197" }
+fn get198() -> string { return "s198" }
+fn get199() -> string { return "s199" }
+fn get200() -> string { return "s200" }
+fn get201() -> string { return "s201" }
+fn get202() -> string { return "s202" }
+fn get203() -> string { return "s203" }
+fn get204() -> string { return "s204" }
+fn get205() -> string { return "s205" }
+fn get206() -> string { return "s206" }
+fn get207() -> string { return "s207" }
+fn get208() -> string { return "s208" }
+fn get209() -> string { return "s209" }
+fn get210() -> string { return "s210" }
+fn get211() -> string { return "s211" }
+fn get212() -> string { return "s212" }
+fn get213() -> string { return "s213" }
+fn get214() -> string { return "s214" }
+fn get215() -> string { return "s215" }
+fn get216() -> string { return "s216" }
+fn get217() -> string { return "s217" }
+fn get218() -> string { return "s218" }
+fn get219() -> string { return "s219" }
+fn get220() -> string { return "s220" }
+fn get221() -> string { return "s221" }
+fn get222() -> string { return "s222" }
+fn get223() -> string { return "s223" }
+fn get224() -> string { return "s224" }
+fn get225() -> string { return "s225" }
+fn get226() -> string { return "s226" }
+fn get227() -> string { return "s227" }
+fn get228() -> string { return "s228" }
+fn get229() -> string { return "s229" }
+fn get230() -> string { return "s230" }
+fn get231() -> string { return "s231" }
+fn get232() -> string { return "s232" }
+fn get233() -> string { return "s233" }
+fn get234() -> string { return "s234" }
+fn get235() -> string { return "s235" }
+fn get236() -> string { return "s236" }
+fn get237() -> string { return "s237" }
+fn get238() -> string { return "s238" }
+fn get239() -> string { return "s239" }
+fn get240() -> string { return "s240" }
+fn get241() -> string { return "s241" }
+fn get242() -> string { return "s242" }
+fn get243() -> string { return "s243" }
+fn get244() -> string { return "s244" }
+fn get245() -> string { return "s245" }
+fn get246() -> string { return "s246" }
+fn get247() -> string { return "s247" }
+fn get248() -> string { return "s248" }
+fn get249() -> string { return "s249" }
+fn get250() -> string { return "s250" }
+fn get251() -> string { return "s251" }
+fn get252() -> string { return "s252" }
+fn get253() -> string { return "s253" }
+fn get254() -> string { return "s254" }
+fn get255() -> string { return "s255" }
+fn get256() -> string { return "s256" }
+fn get257() -> string { return "s257" }
+fn get258() -> string { return "s258" }
+fn get259() -> string { return "s259" }
+fn get260() -> string { return "s260" }
+fn get261() -> string { return "s261" }
+fn get262() -> string { return "s262" }
+fn get263() -> string { return "s263" }
+fn get264() -> string { return "s264" }
+fn get265() -> string { return "s265" }
+fn get266() -> string { return "s266" }
+fn get267() -> string { return "s267" }
+fn get268() -> string { return "s268" }
+fn get269() -> string { return "s269" }
+fn get270() -> string { return "s270" }
+fn get271() -> string { return "s271" }
+fn get272() -> string { return "s272" }
+fn get273() -> string { return "s273" }
+fn get274() -> string { return "s274" }
+fn get275() -> string { return "s275" }
+fn get276() -> string { return "s276" }
+fn get277() -> string { return "s277" }
+fn get278() -> string { return "s278" }
+fn get279() -> string { return "s279" }
+fn get280() -> string { return "s280" }
+fn get281() -> string { return "s281" }
+fn get282() -> string { return "s282" }
+fn get283() -> string { return "s283" }
+fn get284() -> string { return "s284" }
+fn get285() -> string { return "s285" }
+fn get286() -> string { return "s286" }
+fn get287() -> string { return "s287" }
+fn get288() -> string { return "s288" }
+fn get289() -> string { return "s289" }
+fn get290() -> string { return "s290" }
+fn get291() -> string { return "s291" }
+fn get292() -> string { return "s292" }
+fn get293() -> string { return "s293" }
+fn get294() -> string { return "s294" }
+fn get295() -> string { return "s295" }
+fn get296() -> string { return "s296" }
+fn get297() -> string { return "s297" }
+fn get298() -> string { return "s298" }
+fn get299() -> string { return "s299" }
+enum E000 { A000(int), B000 }
+enum E001 { A001(int), B001 }
+enum E002 { A002(int), B002 }
+enum E003 { A003(int), B003 }
+enum E004 { A004(int), B004 }
+enum E005 { A005(int), B005 }
+enum E006 { A006(int), B006 }
+enum E007 { A007(int), B007 }
+enum E008 { A008(int), B008 }
+enum E009 { A009(int), B009 }
+enum E010 { A010(int), B010 }
+enum E011 { A011(int), B011 }
+enum E012 { A012(int), B012 }
+enum E013 { A013(int), B013 }
+enum E014 { A014(int), B014 }
+enum E015 { A015(int), B015 }
+enum E016 { A016(int), B016 }
+enum E017 { A017(int), B017 }
+enum E018 { A018(int), B018 }
+enum E019 { A019(int), B019 }
+enum E020 { A020(int), B020 }
+enum E021 { A021(int), B021 }
+enum E022 { A022(int), B022 }
+enum E023 { A023(int), B023 }
+enum E024 { A024(int), B024 }
+enum E025 { A025(int), B025 }
+enum E026 { A026(int), B026 }
+enum E027 { A027(int), B027 }
+enum E028 { A028(int), B028 }
+enum E029 { A029(int), B029 }
+enum E030 { A030(int), B030 }
+enum E031 { A031(int), B031 }
+enum E032 { A032(int), B032 }
+enum E033 { A033(int), B033 }
+enum E034 { A034(int), B034 }
+enum E035 { A035(int), B035 }
+enum E036 { A036(int), B036 }
+enum E037 { A037(int), B037 }
+enum E038 { A038(int), B038 }
+enum E039 { A039(int), B039 }
+enum E040 { A040(int), B040 }
+enum E041 { A041(int), B041 }
+enum E042 { A042(int), B042 }
+enum E043 { A043(int), B043 }
+enum E044 { A044(int), B044 }
+enum E045 { A045(int), B045 }
+enum E046 { A046(int), B046 }
+enum E047 { A047(int), B047 }
+enum E048 { A048(int), B048 }
+enum E049 { A049(int), B049 }
+enum E050 { A050(int), B050 }
+enum E051 { A051(int), B051 }
+enum E052 { A052(int), B052 }
+enum E053 { A053(int), B053 }
+enum E054 { A054(int), B054 }
+enum E055 { A055(int), B055 }
+enum E056 { A056(int), B056 }
+enum E057 { A057(int), B057 }
+enum E058 { A058(int), B058 }
+enum E059 { A059(int), B059 }
+enum E060 { A060(int), B060 }
+enum E061 { A061(int), B061 }
+enum E062 { A062(int), B062 }
+enum E063 { A063(int), B063 }
+enum E064 { A064(int), B064 }
+enum E065 { A065(int), B065 }
+enum E066 { A066(int), B066 }
+enum E067 { A067(int), B067 }
+enum E068 { A068(int), B068 }
+enum E069 { A069(int), B069 }
+struct S0 { v: int }
+struct S1 { v: int }
+struct S2 { v: int }
+struct S3 { v: int }
+struct S4 { v: int }
+struct S5 { v: int }
+struct S6 { v: int }
+struct S7 { v: int }
+struct S8 { v: int }
+struct S9 { v: int }
+struct S10 { v: int }
+struct S11 { v: int }
+struct S12 { v: int }
+struct S13 { v: int }
+struct S14 { v: int }
+struct S15 { v: int }
+struct S16 { v: int }
+struct S17 { v: int }
+struct S18 { v: int }
+struct S19 { v: int }
+struct S20 { v: int }
+struct S21 { v: int }
+struct S22 { v: int }
+struct S23 { v: int }
+struct S24 { v: int }
+struct S25 { v: int }
+struct S26 { v: int }
+struct S27 { v: int }
+struct S28 { v: int }
+struct S29 { v: int }
+struct S30 { v: int }
+struct S31 { v: int }
+struct S32 { v: int }
+struct S33 { v: int }
+struct S34 { v: int }
+struct S35 { v: int }
+struct S36 { v: int }
+struct S37 { v: int }
+struct S38 { v: int }
+struct S39 { v: int }
+struct S40 { v: int }
+struct S41 { v: int }
+struct S42 { v: int }
+struct S43 { v: int }
+struct S44 { v: int }
+struct S45 { v: int }
+struct S46 { v: int }
+struct S47 { v: int }
+struct S48 { v: int }
+struct S49 { v: int }
+struct S50 { v: int }
+struct S51 { v: int }
+struct S52 { v: int }
+struct S53 { v: int }
+struct S54 { v: int }
+struct S55 { v: int }
+struct S56 { v: int }
+struct S57 { v: int }
+struct S58 { v: int }
+struct S59 { v: int }
+struct S60 { v: int }
+struct S61 { v: int }
+struct S62 { v: int }
+struct S63 { v: int }
+struct S64 { v: int }
+struct S65 { v: int }
+struct S66 { v: int }
+struct S67 { v: int }
+struct S68 { v: int }
+struct S69 { v: int }
+struct S70 { v: int }
+struct S71 { v: int }
+struct S72 { v: int }
+struct S73 { v: int }
+struct S74 { v: int }
+struct S75 { v: int }
+struct S76 { v: int }
+struct S77 { v: int }
+struct S78 { v: int }
+struct S79 { v: int }
+struct S80 { v: int }
+struct S81 { v: int }
+struct S82 { v: int }
+struct S83 { v: int }
+struct S84 { v: int }
+struct S85 { v: int }
+struct S86 { v: int }
+struct S87 { v: int }
+struct S88 { v: int }
+struct S89 { v: int }
+struct S90 { v: int }
+struct S91 { v: int }
+struct S92 { v: int }
+struct S93 { v: int }
+struct S94 { v: int }
+struct S95 { v: int }
+struct S96 { v: int }
+struct S97 { v: int }
+struct S98 { v: int }
+struct S99 { v: int }
+struct S100 { v: int }
+struct S101 { v: int }
+struct S102 { v: int }
+struct S103 { v: int }
+struct S104 { v: int }
+struct S105 { v: int }
+struct S106 { v: int }
+struct S107 { v: int }
+struct S108 { v: int }
+struct S109 { v: int }
+struct S110 { v: int }
+struct S111 { v: int }
+struct S112 { v: int }
+struct S113 { v: int }
+struct S114 { v: int }
+struct S115 { v: int }
+struct S116 { v: int }
+struct S117 { v: int }
+struct S118 { v: int }
+struct S119 { v: int }
+struct S120 { v: int }
+struct S121 { v: int }
+struct S122 { v: int }
+struct S123 { v: int }
+struct S124 { v: int }
+struct S125 { v: int }
+struct S126 { v: int }
+struct S127 { v: int }
+struct S128 { v: int }
+struct S129 { v: int }
+struct S130 { v: int }
+struct S131 { v: int }
+struct S132 { v: int }
+struct S133 { v: int }
+struct S134 { v: int }
+struct S135 { v: int }
+struct S136 { v: int }
+struct S137 { v: int }
+struct S138 { v: int }
+struct S139 { v: int }
+fn main() {
+    println(get299())
+    var e = E069.A069(42)
+    match e {
+        E069.A069(x) => println(x),
+        E069.B069 => println(0)
+    }
+    var x0 = S0 { v: 0 }
+    var _v0 = x0.v
+    var x1 = S1 { v: 1 }
+    var _v1 = x1.v
+    var x2 = S2 { v: 2 }
+    var _v2 = x2.v
+    var x3 = S3 { v: 3 }
+    var _v3 = x3.v
+    var x4 = S4 { v: 4 }
+    var _v4 = x4.v
+    var x5 = S5 { v: 5 }
+    var _v5 = x5.v
+    var x6 = S6 { v: 6 }
+    var _v6 = x6.v
+    var x7 = S7 { v: 7 }
+    var _v7 = x7.v
+    var x8 = S8 { v: 8 }
+    var _v8 = x8.v
+    var x9 = S9 { v: 9 }
+    var _v9 = x9.v
+    var x10 = S10 { v: 10 }
+    var _v10 = x10.v
+    var x11 = S11 { v: 11 }
+    var _v11 = x11.v
+    var x12 = S12 { v: 12 }
+    var _v12 = x12.v
+    var x13 = S13 { v: 13 }
+    var _v13 = x13.v
+    var x14 = S14 { v: 14 }
+    var _v14 = x14.v
+    var x15 = S15 { v: 15 }
+    var _v15 = x15.v
+    var x16 = S16 { v: 16 }
+    var _v16 = x16.v
+    var x17 = S17 { v: 17 }
+    var _v17 = x17.v
+    var x18 = S18 { v: 18 }
+    var _v18 = x18.v
+    var x19 = S19 { v: 19 }
+    var _v19 = x19.v
+    var x20 = S20 { v: 20 }
+    var _v20 = x20.v
+    var x21 = S21 { v: 21 }
+    var _v21 = x21.v
+    var x22 = S22 { v: 22 }
+    var _v22 = x22.v
+    var x23 = S23 { v: 23 }
+    var _v23 = x23.v
+    var x24 = S24 { v: 24 }
+    var _v24 = x24.v
+    var x25 = S25 { v: 25 }
+    var _v25 = x25.v
+    var x26 = S26 { v: 26 }
+    var _v26 = x26.v
+    var x27 = S27 { v: 27 }
+    var _v27 = x27.v
+    var x28 = S28 { v: 28 }
+    var _v28 = x28.v
+    var x29 = S29 { v: 29 }
+    var _v29 = x29.v
+    var x30 = S30 { v: 30 }
+    var _v30 = x30.v
+    var x31 = S31 { v: 31 }
+    var _v31 = x31.v
+    var x32 = S32 { v: 32 }
+    var _v32 = x32.v
+    var x33 = S33 { v: 33 }
+    var _v33 = x33.v
+    var x34 = S34 { v: 34 }
+    var _v34 = x34.v
+    var x35 = S35 { v: 35 }
+    var _v35 = x35.v
+    var x36 = S36 { v: 36 }
+    var _v36 = x36.v
+    var x37 = S37 { v: 37 }
+    var _v37 = x37.v
+    var x38 = S38 { v: 38 }
+    var _v38 = x38.v
+    var x39 = S39 { v: 39 }
+    var _v39 = x39.v
+    var x40 = S40 { v: 40 }
+    var _v40 = x40.v
+    var x41 = S41 { v: 41 }
+    var _v41 = x41.v
+    var x42 = S42 { v: 42 }
+    var _v42 = x42.v
+    var x43 = S43 { v: 43 }
+    var _v43 = x43.v
+    var x44 = S44 { v: 44 }
+    var _v44 = x44.v
+    var x45 = S45 { v: 45 }
+    var _v45 = x45.v
+    var x46 = S46 { v: 46 }
+    var _v46 = x46.v
+    var x47 = S47 { v: 47 }
+    var _v47 = x47.v
+    var x48 = S48 { v: 48 }
+    var _v48 = x48.v
+    var x49 = S49 { v: 49 }
+    var _v49 = x49.v
+    var x50 = S50 { v: 50 }
+    var _v50 = x50.v
+    var x51 = S51 { v: 51 }
+    var _v51 = x51.v
+    var x52 = S52 { v: 52 }
+    var _v52 = x52.v
+    var x53 = S53 { v: 53 }
+    var _v53 = x53.v
+    var x54 = S54 { v: 54 }
+    var _v54 = x54.v
+    var x55 = S55 { v: 55 }
+    var _v55 = x55.v
+    var x56 = S56 { v: 56 }
+    var _v56 = x56.v
+    var x57 = S57 { v: 57 }
+    var _v57 = x57.v
+    var x58 = S58 { v: 58 }
+    var _v58 = x58.v
+    var x59 = S59 { v: 59 }
+    var _v59 = x59.v
+    var x60 = S60 { v: 60 }
+    var _v60 = x60.v
+    var x61 = S61 { v: 61 }
+    var _v61 = x61.v
+    var x62 = S62 { v: 62 }
+    var _v62 = x62.v
+    var x63 = S63 { v: 63 }
+    var _v63 = x63.v
+    var x64 = S64 { v: 64 }
+    var _v64 = x64.v
+    var x65 = S65 { v: 65 }
+    var _v65 = x65.v
+    var x66 = S66 { v: 66 }
+    var _v66 = x66.v
+    var x67 = S67 { v: 67 }
+    var _v67 = x67.v
+    var x68 = S68 { v: 68 }
+    var _v68 = x68.v
+    var x69 = S69 { v: 69 }
+    var _v69 = x69.v
+    var x70 = S70 { v: 70 }
+    var _v70 = x70.v
+    var x71 = S71 { v: 71 }
+    var _v71 = x71.v
+    var x72 = S72 { v: 72 }
+    var _v72 = x72.v
+    var x73 = S73 { v: 73 }
+    var _v73 = x73.v
+    var x74 = S74 { v: 74 }
+    var _v74 = x74.v
+    var x75 = S75 { v: 75 }
+    var _v75 = x75.v
+    var x76 = S76 { v: 76 }
+    var _v76 = x76.v
+    var x77 = S77 { v: 77 }
+    var _v77 = x77.v
+    var x78 = S78 { v: 78 }
+    var _v78 = x78.v
+    var x79 = S79 { v: 79 }
+    var _v79 = x79.v
+    var x80 = S80 { v: 80 }
+    var _v80 = x80.v
+    var x81 = S81 { v: 81 }
+    var _v81 = x81.v
+    var x82 = S82 { v: 82 }
+    var _v82 = x82.v
+    var x83 = S83 { v: 83 }
+    var _v83 = x83.v
+    var x84 = S84 { v: 84 }
+    var _v84 = x84.v
+    var x85 = S85 { v: 85 }
+    var _v85 = x85.v
+    var x86 = S86 { v: 86 }
+    var _v86 = x86.v
+    var x87 = S87 { v: 87 }
+    var _v87 = x87.v
+    var x88 = S88 { v: 88 }
+    var _v88 = x88.v
+    var x89 = S89 { v: 89 }
+    var _v89 = x89.v
+    var x90 = S90 { v: 90 }
+    var _v90 = x90.v
+    var x91 = S91 { v: 91 }
+    var _v91 = x91.v
+    var x92 = S92 { v: 92 }
+    var _v92 = x92.v
+    var x93 = S93 { v: 93 }
+    var _v93 = x93.v
+    var x94 = S94 { v: 94 }
+    var _v94 = x94.v
+    var x95 = S95 { v: 95 }
+    var _v95 = x95.v
+    var x96 = S96 { v: 96 }
+    var _v96 = x96.v
+    var x97 = S97 { v: 97 }
+    var _v97 = x97.v
+    var x98 = S98 { v: 98 }
+    var _v98 = x98.v
+    var x99 = S99 { v: 99 }
+    var _v99 = x99.v
+    var x100 = S100 { v: 100 }
+    var _v100 = x100.v
+    var x101 = S101 { v: 101 }
+    var _v101 = x101.v
+    var x102 = S102 { v: 102 }
+    var _v102 = x102.v
+    var x103 = S103 { v: 103 }
+    var _v103 = x103.v
+    var x104 = S104 { v: 104 }
+    var _v104 = x104.v
+    var x105 = S105 { v: 105 }
+    var _v105 = x105.v
+    var x106 = S106 { v: 106 }
+    var _v106 = x106.v
+    var x107 = S107 { v: 107 }
+    var _v107 = x107.v
+    var x108 = S108 { v: 108 }
+    var _v108 = x108.v
+    var x109 = S109 { v: 109 }
+    var _v109 = x109.v
+    var x110 = S110 { v: 110 }
+    var _v110 = x110.v
+    var x111 = S111 { v: 111 }
+    var _v111 = x111.v
+    var x112 = S112 { v: 112 }
+    var _v112 = x112.v
+    var x113 = S113 { v: 113 }
+    var _v113 = x113.v
+    var x114 = S114 { v: 114 }
+    var _v114 = x114.v
+    var x115 = S115 { v: 115 }
+    var _v115 = x115.v
+    var x116 = S116 { v: 116 }
+    var _v116 = x116.v
+    var x117 = S117 { v: 117 }
+    var _v117 = x117.v
+    var x118 = S118 { v: 118 }
+    var _v118 = x118.v
+    var x119 = S119 { v: 119 }
+    var _v119 = x119.v
+    var x120 = S120 { v: 120 }
+    var _v120 = x120.v
+    var x121 = S121 { v: 121 }
+    var _v121 = x121.v
+    var x122 = S122 { v: 122 }
+    var _v122 = x122.v
+    var x123 = S123 { v: 123 }
+    var _v123 = x123.v
+    var x124 = S124 { v: 124 }
+    var _v124 = x124.v
+    var x125 = S125 { v: 125 }
+    var _v125 = x125.v
+    var x126 = S126 { v: 126 }
+    var _v126 = x126.v
+    var x127 = S127 { v: 127 }
+    var _v127 = x127.v
+    var x128 = S128 { v: 128 }
+    var _v128 = x128.v
+    var x129 = S129 { v: 129 }
+    var _v129 = x129.v
+    var x130 = S130 { v: 130 }
+    var _v130 = x130.v
+    var x131 = S131 { v: 131 }
+    var _v131 = x131.v
+    var x132 = S132 { v: 132 }
+    var _v132 = x132.v
+    var x133 = S133 { v: 133 }
+    var _v133 = x133.v
+    var x134 = S134 { v: 134 }
+    var _v134 = x134.v
+    var x135 = S135 { v: 135 }
+    var _v135 = x135.v
+    var x136 = S136 { v: 136 }
+    var _v136 = x136.v
+    var x137 = S137 { v: 137 }
+    var _v137 = x137.v
+    var x138 = S138 { v: 138 }
+    var _v138 = x138.v
+    var x139 = S139 { v: 139 }
+    var _v139 = x139.v
+    println(x139.v)
+}
+// EXPECT: s299
+// EXPECT: 42
+// EXPECT: 139

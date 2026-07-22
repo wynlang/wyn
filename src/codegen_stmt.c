@@ -1333,16 +1333,17 @@ void codegen_stmt(Stmt* stmt) {
                     }
                     }
                     // Track if this variable holds a closure (from a function returning fn type)
-                    if (stmt->var.init->call.callee->type == EXPR_IDENT && lambda_var_count < 256) {
+                    if (stmt->var.init->call.callee->type == EXPR_IDENT) {
                         Token call_name = stmt->var.init->call.callee->token;
                         if (current_program) {
                             for (int fi = 0; fi < current_program->count; fi++) {
                                 Stmt* fs = current_program->stmts[fi];
-                                if (fs->type == STMT_FN && 
+                                if (fs->type == STMT_FN &&
                                     fs->fn.name.length == call_name.length &&
                                     memcmp(fs->fn.name.start, call_name.start, call_name.length) == 0 &&
                                     fs->fn.return_type && fs->fn.return_type->type == EXPR_FN_TYPE) {
                                     // This function returns a closure!
+                                    ensure_lambda_var_cap();
                                     token_to_cstr(lambda_var_info[lambda_var_count].var_name, sizeof(lambda_var_info[lambda_var_count].var_name), stmt->var.name);
                                     token_to_cstr(lambda_var_info[lambda_var_count].name, sizeof(lambda_var_info[lambda_var_count].name), stmt->var.name);
                                     lambda_var_info[lambda_var_count].name_len = stmt->var.name.length;
@@ -1564,7 +1565,8 @@ void codegen_stmt(Stmt* stmt) {
                 if (nparams < 0) nparams = 0;
                 // Register g as a lambda var, copying the source's captures so
                 // call-site injection works identically through the alias.
-                if (lambda_var_count < 256) {
+                {
+                    ensure_lambda_var_cap();
                     LambdaVarInfo* _lvi = &lambda_var_info[lambda_var_count];
                     token_to_cstr(_lvi->var_name, sizeof(_lvi->var_name), stmt->var.name);
                     // name/name_len/is_closure are read at call sites - must be set,
@@ -1641,7 +1643,8 @@ void codegen_stmt(Stmt* stmt) {
                 }
                 
                 // Store lambda variable info for call site injection
-                if (lambda_idx >= 0 && lambda_var_count < 256) {
+                if (lambda_idx >= 0) {
+                    ensure_lambda_var_cap();
                     token_to_cstr(lambda_var_info[lambda_var_count].var_name, sizeof(lambda_var_info[lambda_var_count].var_name), stmt->var.name);
                     lambda_var_info[lambda_var_count].capture_count = lambda_functions[lambda_idx].capture_count;
                     lambda_var_info[lambda_var_count].param_count = total_params;
@@ -1755,7 +1758,7 @@ void codegen_stmt(Stmt* stmt) {
                     extern int var_is_live_after(Stmt**, int, int, const char*);
                     extern Stmt** current_block_stmts; extern int current_block_count; extern int current_stmt_idx;
                     extern int string_var_scope_depth;
-                    extern int string_var_releasable_count; extern char* string_var_releasable[];
+                    // string_var_releasable/_count are statics from codegen.c (this file is #included there)
                     // Check if source is a top-level (releasable) var - if so, don't move
                     bool _source_is_outer = false;
                     for (int _ri = 0; _ri < string_var_releasable_count; _ri++) {
@@ -3865,13 +3868,13 @@ void codegen_stmt(Stmt* stmt) {
                 if (!modules_emitted_this_compilation) {
                     modules_emitted_this_compilation = true;
                     
-                    extern int get_all_modules_raw(void** out_modules, int max_count);
-                    void* all_modules_raw[64];
-                    int module_count = get_all_modules_raw(all_modules_raw, 64);
-                    
+                    extern int get_module_count(void);
+                    extern void* get_module_entry_at(int index);
+                    int module_count = get_module_count();
+
                     for (int m = 0; m < module_count; m++) {
                         typedef struct { char* name; Program* ast; } ModuleEntry;
-                        ModuleEntry* mod = (ModuleEntry*)all_modules_raw[m];
+                        ModuleEntry* mod = (ModuleEntry*)get_module_entry_at(m);
                         
                         // Register short name mapping for nested modules
                         register_module_short_name(mod->name);
