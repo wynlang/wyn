@@ -3090,6 +3090,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return builtin_int;
             }
             
+            // Bit shifts: int-only (C semantics; no float/string shifting)
+            if (expr->binary.op.type == TOKEN_LSHIFT || expr->binary.op.type == TOKEN_RSHIFT) {
+                if (left->kind != TYPE_INT || right->kind != TYPE_INT) {
+                    fprintf(stderr, "Error at line %d: '%.*s' requires int operands\n",
+                            expr->binary.op.line, expr->binary.op.length, expr->binary.op.start);
+                    had_error = true;
+                    return NULL;
+                }
+                expr->expr_type = builtin_int;
+                return builtin_int;
+            }
+
             // String repeat: "ha" * 3 → string
             if (expr->binary.op.type == TOKEN_STAR && left->kind == TYPE_STRING && right->kind == TYPE_INT) {
                 expr->expr_type = builtin_string;

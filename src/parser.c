@@ -1571,8 +1571,58 @@ static Expr* addition() {
     return expr;
 }
 
-static Expr* comparison() {
+// Bit shifts. C-conventional slot: tighter than comparisons, looser than
+// + and - (so `a << 2 + 1` is `a << 3`, like C). `<<` arrives as one token
+// from the lexer. `>>` cannot be lexed as one token (nested generic closers
+// like `HashMap<string, int>>` need two GTs), so two ADJACENT `>` tokens in
+// expression position are joined here into a right shift. A spaced `> >`
+// stays two comparisons and falls through to comparison()'s chained-
+// comparison error.
+static Expr* shift() {
     Expr* expr = addition();
+
+    for (;;) {
+        Token op;
+        if (check(TOKEN_LSHIFT)) {
+            advance();
+            op = parser.previous;
+            // `x <<= 2` lexes as LSHIFT then '='; reject it clearly instead of
+            // parsing garbage (compound shift-assign is not supported).
+            if (check(TOKEN_EQ)) {
+                fprintf(stderr, "Error at line %d: '<<=' is not an operator - "
+                        "write `x = x << n`\n", op.line);
+                parser.had_error = true;
+                advance();  // consume the stray '=' so parsing can continue
+            }
+        } else if (check(TOKEN_GT) && parser.current.length == 1 &&
+                   parser.current.start[1] == '>') {
+            advance();               // first '>'
+            op = parser.previous;
+            advance();               // adjacent second '>' (or '>=' from '>>=')
+            if (parser.previous.type != TOKEN_GT) {
+                fprintf(stderr, "Error at line %d: '>>=' is not an operator - "
+                        "write `x = x >> n`\n", op.line);
+                parser.had_error = true;
+            }
+            op.type = TOKEN_RSHIFT;
+            op.length = 2;           // token text ">>"
+        } else {
+            break;
+        }
+        Expr* right = addition();
+        Expr* binary = alloc_expr();
+        binary->type = EXPR_BINARY;
+        binary->binary.left = expr;
+        binary->binary.op = op;
+        binary->binary.right = right;
+        expr = binary;
+    }
+
+    return expr;
+}
+
+static Expr* comparison() {
+    Expr* expr = shift();
     bool prev_was_relational = false;  // last op was < > <= >= ?
 
     while (check(TOKEN_LT) || check(TOKEN_GT) || check(TOKEN_LTEQ) || check(TOKEN_GTEQ) ||
@@ -1595,7 +1645,7 @@ static Expr* comparison() {
         }
         if (check(TOKEN_IN)) {
             advance();  // consume 'in'
-            Expr* container = addition();
+            Expr* container = shift();
             Expr* membership = alloc_expr();
             membership->type = EXPR_BINARY;
             membership->binary.left = expr;
@@ -1629,7 +1679,7 @@ static Expr* comparison() {
                     op.line);
             parser.had_error = true;
         }
-        Expr* right = addition();
+        Expr* right = shift();
         Expr* binary = alloc_expr();
         binary->type = EXPR_BINARY;
         binary->binary.left = expr;
