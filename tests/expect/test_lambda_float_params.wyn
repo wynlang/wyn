@@ -2,7 +2,7 @@
 // EXPECT: 3.5
 // EXPECT: 5.0
 // EXPECT: 2.5
-// EXPECT: [3, 5]
+// EXPECT: [3.0, 5.0]
 // EXPECT: [2.5]
 // S3: float lambda parameters - annotated ((x: float) => ...), inferred from a
 // float-literal body ((x) => x * 2.5), multi-param, and pipe-form (|x: float|).

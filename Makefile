@@ -237,6 +237,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_collection_type_test.sh
 	@echo "=== Running silent-wrong-answer test ==="
 	@WYN=./wyn bash tests/errors/run_silent_wrong_test.sh
+	@echo "=== Running crucible-P0 (fatal-by-default) test ==="
+	@WYN=./wyn bash tests/errors/run_crucible_p0_test.sh
 	@echo "=== Running CLI DX test ==="
 	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
 	@echo "=== Running wyn ui coverage test ==="
@@ -562,7 +564,9 @@ ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/expect/test_select_arms.wyn \
              tests/regression/test_map_get_default.wyn \
              tests/regression/test_index_compound_assign.wyn \
-             tests/regression/test_float_array_reductions.wyn
+             tests/regression/test_float_array_reductions.wyn \
+             tests/regression/test_map_value_overwrite_read.wyn \
+             tests/regression/test_stringbuilder_many.wyn
 
 asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a
 	@echo "=== ASan runtime test (representative set) ==="

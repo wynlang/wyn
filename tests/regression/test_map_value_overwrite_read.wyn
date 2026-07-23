@@ -1,0 +1,32 @@
+// Use-after-free reading a map string value across an overwrite of the same
+// key (HN crucible P0-4, ASan-confirmed): hashmap_insert_string freed the old
+// value although a live read (v = m["a"]) had escaped the interior pointer.
+// Overwritten values are now kept alive until the map is freed (same lifetime
+// discipline as array element overwrite). v must still be the ORIGINAL value.
+// EXPECT: x
+// EXPECT: yz
+// EXPECT: first
+// EXPECT: third
+// EXPECT: gone
+
+fn main() {
+    var m = {"a": "x"}
+    v = m["a"]
+    m["a"] = "y" + "z"
+    print(v)
+    print(m["a"])
+
+    // Multiple overwrites: every escaped read stays valid.
+    var n = {"k": "first"}
+    r1 = n["k"]
+    n["k"] = "second"
+    n["k"] = "third"
+    print(r1)
+    print(n["k"])
+
+    // Removed-key value read after remove is also kept alive.
+    var p = {"d": "gone"}
+    r2 = p["d"]
+    p.remove("d")
+    print(r2)
+}

@@ -1,0 +1,33 @@
+// StringBuilder pool is growable (HN crucible P2-3): the old fixed cap of 32
+// made the 33rd live builder silently return handle -1 and every method on it
+// silently no-op ("" / 0), dropping data. 100 concurrently-live builders must
+// all work; freed handles are reused.
+// EXPECT: 100
+// EXPECT: 100
+// EXPECT: ok
+
+fn main() {
+    var handles: [int] = []
+    for i in 0..100 {
+        var sb = StringBuilder.new()
+        StringBuilder.append(sb, "x")
+        handles.push(sb)
+    }
+    var good = 0
+    var live = 0
+    for i in 0..100 {
+        h = handles[i]
+        if StringBuilder.to_string(h) == "x" { good = good + 1 }
+        if StringBuilder.len(h) == 1 { live = live + 1 }
+    }
+    print(good)
+    print(live)
+    for i in 0..100 {
+        StringBuilder.free(handles[i])
+    }
+    // Reuse after free still works.
+    var sb2 = StringBuilder.new()
+    StringBuilder.append(sb2, "ok")
+    print(StringBuilder.to_string(sb2))
+    StringBuilder.free(sb2)
+}

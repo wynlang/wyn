@@ -1,6 +1,6 @@
 // EXPECT: ["x!", "y!"]
 // EXPECT: [1, 2, 3]
-// EXPECT: [3, 5]
+// EXPECT: [3.0, 5.0]
 // EXPECT: [2.5]
 // Typed lambda variants over arrays - each line used to be a silent wrong
 // answer or a segfault:
