@@ -570,15 +570,21 @@ static inline void wyn_concurrent_mutation_panic(void) {
     fprintf(stderr, "panic: concurrent array mutation detected - plain arrays are not thread-safe; use a channel or Shared to coordinate writers\n");
     exit(1);
 }
+// Panic ONLY when the previous value is exactly 1 (the locked value): a
+// WynArray built by a field-by-field initializer that predates the flag can
+// carry malloc garbage in `writing` (glibc exposed this: single-threaded
+// group_by false-panicked on Linux while macOS handed back zeroed pages).
+// Garbage is neither 0 nor 1, so it self-heals on the first mutation instead
+// of killing a correct program; real concurrent writers still see 1 and die.
 #if defined(__TINYC__)
 #define WYN_ARR_WRITE_ENTER(arr) do { \
-    if ((arr)->writing) wyn_concurrent_mutation_panic(); \
+    if ((arr)->writing == 1) wyn_concurrent_mutation_panic(); \
     (arr)->writing = 1; \
 } while (0)
 #define WYN_ARR_WRITE_EXIT(arr) ((arr)->writing = 0)
 #else
 #define WYN_ARR_WRITE_ENTER(arr) do { \
-    if (__atomic_exchange_n(&(arr)->writing, 1, __ATOMIC_RELAXED)) \
+    if (__atomic_exchange_n(&(arr)->writing, 1, __ATOMIC_RELAXED) == 1) \
         wyn_concurrent_mutation_panic(); \
 } while (0)
 #define WYN_ARR_WRITE_EXIT(arr) __atomic_store_n(&(arr)->writing, 0, __ATOMIC_RELAXED)
@@ -689,6 +695,7 @@ void array_push_array(WynArray* restrict arr, WynArray* nested) {
     // Heap-allocate a copy so the nested array outlives the stack frame
     WynArray* copy = wyn_malloc(sizeof(WynArray));
     *copy = *nested;
+    copy->writing = 0;  // a copy is a fresh value; never inherit the mutation flag
     arr->data[arr->count].data.array_val = copy;
     arr->count++;
     WYN_ARR_WRITE_EXIT(arr);
@@ -3156,7 +3163,11 @@ WynArray hashmap_keys(WynHashMap* map) {
 WynArray hashmap_get_array(WynHashMap* map, const char* key) {
     extern void* hashmap_get_ptr(WynHashMap* map, const char* key);
     WynArray* p = (WynArray*)hashmap_get_ptr(map, key);
-    if (p) return *p;
+    if (p) {
+        WynArray copy = *p;
+        copy.writing = 0;  // a by-value read never inherits the mutation flag
+        return copy;
+    }
     WynArray empty = {0};
     return empty;
 }
@@ -3168,7 +3179,10 @@ WynArray* hashmap_group_slot(WynHashMap* map, const char* key) {
     WynArray* p = (WynArray*)hashmap_get_ptr(map, key);
     if (!p) {
         p = (WynArray*)wyn_malloc(sizeof(WynArray));
-        p->data = NULL; p->count = 0; p->capacity = 0;
+        // Zero ALL fields including the `writing` mutation flag - malloc
+        // garbage in the flag false-panicked single-threaded group_by on
+        // Linux/glibc (macOS malloc happened to return zeroed pages).
+        *p = (WynArray){0};
         hashmap_insert_ptr(map, key, p);
     }
     return p;
@@ -3531,7 +3545,7 @@ int System_set_env(const char* key, const char* value) {
 }
 
 WynArray System_args() {
-    WynArray arr;
+    WynArray arr = {0};  // zero `writing` flag too
     arr.data = wyn_malloc(__wyn_argc * sizeof(WynValue));
     arr.count = __wyn_argc;
     arr.capacity = __wyn_argc;
@@ -3586,7 +3600,7 @@ bool Args_has(const char* name) {
 // Args.positional() - returns array of non-flag arguments
 WynArray Args_positional() {
     int argc = wyn_get_argc();
-    WynArray arr; arr.data = wyn_malloc(argc * sizeof(WynValue)); arr.count = 0; arr.capacity = argc;
+    WynArray arr = {0}; arr.data = wyn_malloc(argc * sizeof(WynValue)); arr.count = 0; arr.capacity = argc;
     for (int i = 1; i < argc; i++) {
         const char* arg = wyn_get_argv(i);
         if (arg[0] == '-') {
@@ -3611,7 +3625,7 @@ int Env_set(const char* name, const char* value) {
 }
 WynArray Env_all() {
     extern char **environ;
-    WynArray arr;
+    WynArray arr = {0};  // zero `writing` flag too
     int count = 0;
     for (char** env = environ; *env; env++) count++;
     arr.data = wyn_malloc(count * sizeof(WynValue));
@@ -3721,9 +3735,7 @@ typedef struct { WynArray arr; } Queue;
 
 Queue* Queue_new() {
     Queue* q = wyn_malloc(sizeof(Queue));
-    q->arr.data = NULL;
-    q->arr.count = 0;
-    q->arr.capacity = 0;
+    q->arr = (WynArray){0};  // zero `writing` flag too
     return q;
 }
 
@@ -3764,9 +3776,7 @@ typedef struct { WynArray arr; } Stack;
 
 Stack* Stack_new() {
     Stack* s = wyn_malloc(sizeof(Stack));
-    s->arr.data = NULL;
-    s->arr.count = 0;
-    s->arr.capacity = 0;
+    s->arr = (WynArray){0};  // zero `writing` flag too
     return s;
 }
 
