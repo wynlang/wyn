@@ -4427,6 +4427,50 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                 }
 
+                // Struct-BODY methods (`struct S { fn m(self) -> T {...} }`) are
+                // not in the symbol table, so resolve their declared return type
+                // straight from the struct definition. Without this, a method
+                // call on any non-variable receiver (struct literal `B{v:0}
+                // .add(5)`, nested call result, ...) fell through and typed as
+                // int, breaking the documented builder idiom - variable-rooted
+                // chains only worked via codegen-side registries.
+                {
+                    StructStmt* sdef = find_struct_definition(type_name);
+                    if (sdef) {
+                        for (int mi = 0; mi < sdef->method_count; mi++) {
+                            FnStmt* m = sdef->methods[mi];
+                            if (m->name.length != method.length ||
+                                memcmp(m->name.start, method.start, method.length) != 0)
+                                continue;
+                            Expr* rt = m->return_type;
+                            if (rt && rt->type == EXPR_IDENT) {
+                                Token tn = rt->token;
+                                if (tn.length == 3 && memcmp(tn.start, "int", 3) == 0) {
+                                    expr->expr_type = builtin_int; return builtin_int;
+                                }
+                                if (tn.length == 6 && memcmp(tn.start, "string", 6) == 0) {
+                                    expr->expr_type = builtin_string; return builtin_string;
+                                }
+                                if (tn.length == 5 && memcmp(tn.start, "float", 5) == 0) {
+                                    expr->expr_type = builtin_float; return builtin_float;
+                                }
+                                if (tn.length == 4 && memcmp(tn.start, "bool", 4) == 0) {
+                                    expr->expr_type = builtin_bool; return builtin_bool;
+                                }
+                                Symbol* ts = find_symbol(global_scope, tn);
+                                if (ts && ts->type &&
+                                    (ts->type->kind == TYPE_STRUCT || ts->type->kind == TYPE_ENUM)) {
+                                    expr->expr_type = ts->type; return ts->type;
+                                }
+                            }
+                            // Declared method with no/unresolvable return type:
+                            // keep the historical int fallback.
+                            expr->expr_type = builtin_int;
+                            return builtin_int;
+                        }
+                    }
+                }
+
                 // The method didn't resolve to any known method on this struct.
                 // If the receiver is a USER-DEFINED struct (has a real definition
                 // in this program), that's an error the checker should catch -
