@@ -95,8 +95,7 @@ jobs:
       - name: Run test suite (Windows)
         if: runner.os == 'Windows'
         run: |
-          printf 'fn main() -> int { var s = "hello"; println(s.upper()); println(s.len().to_string()); var arr: [int] = [3,1,2]; arr.sort(); println(arr[0].to_string()); return 0 }\n' > wintest.wyn
-          ./wyn.exe build wintest.wyn
+          ./wyn.exe build tests/smoke/wintest.wyn -o wintest
           ./wintest.exe
         shell: bash
 
