@@ -985,11 +985,44 @@ void init_checker() {
     };
     
     for (int i = 0; i < (int)(sizeof(stdlib_funcs)/sizeof(stdlib_funcs[0])); i++) {
-        // await_all gets a real function type below (returns [int], not int) -
-        // find_symbol returns the FIRST match, so it must not be added here.
+        // await_all and the string-returning http builtins get real function
+        // types below - find_symbol returns the FIRST match, so they must not
+        // be added here.
         if (strcmp(stdlib_funcs[i], "await_all") == 0) continue;
+        if (strncmp(stdlib_funcs[i], "http_", 5) == 0 ||
+            strncmp(stdlib_funcs[i], "https_", 6) == 0) continue;
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
+    }
+
+    // Bare http builtins with real types. The runtime returns char* from
+    // http_get/http_post/http_put/http_delete/https_get/https_post and
+    // http_error; the blanket int registration above made them type int in
+    // return position while Http.get/Http.post correctly typed string.
+    {
+        struct { const char* name; int pc; Type* ret; } http_fns[] = {
+            {"http_get", 1, builtin_string},
+            {"http_post", 2, builtin_string},
+            {"http_put", 2, builtin_string},
+            {"http_delete", 1, builtin_string},
+            {"https_get", 1, builtin_string},
+            {"https_post", 2, builtin_string},
+            {"http_set_header", 2, builtin_void},
+            {"http_clear_headers", 0, builtin_void},
+            {"http_status", 0, builtin_int},
+            {"http_error", 0, builtin_string},
+        };
+        for (int i = 0; i < (int)(sizeof(http_fns)/sizeof(http_fns[0])); i++) {
+            Type* ft = make_type(TYPE_FUNCTION);
+            ft->fn_type.param_count = http_fns[i].pc;
+            ft->fn_type.param_types = http_fns[i].pc
+                ? malloc(sizeof(Type*) * http_fns[i].pc) : NULL;
+            for (int p = 0; p < http_fns[i].pc; p++)
+                ft->fn_type.param_types[p] = builtin_string;
+            ft->fn_type.return_type = http_fns[i].ret;
+            Token tok = {TOKEN_IDENT, http_fns[i].name, (int)strlen(http_fns[i].name), 0};
+            add_symbol(global_scope, tok, ft, false);
+        }
     }
     
     // await_all returns the array of awaited results, not int - the blanket

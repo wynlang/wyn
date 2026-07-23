@@ -2104,6 +2104,13 @@ void wyn_http_clear_headers() {
 
 int wyn_http_status() { return http_last_status; }
 char* wyn_http_error() { return http_last_error[0] ? http_last_error : NULL; }
+// Bare-builtin aliases: the checker registers http_status/http_error/
+// http_clear_headers (documented builtins), but only the wyn_-prefixed
+// implementations existed - calls compiled clean in Wyn then died at the C
+// stage with "undeclared function".
+static inline int http_status(void) { return wyn_http_status(); }
+static inline char* http_error(void) { return wyn_http_error(); }
+static inline void http_clear_headers(void) { wyn_http_clear_headers(); }
 char* last_error_get() { return last_error[0] ? last_error : NULL; }
 
 char* url_encode(const char* str) {
