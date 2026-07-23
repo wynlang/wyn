@@ -1,0 +1,8 @@
+
+[31m[1mError:[0m Type mismatch at line 2:0
+  --> cj_bad_type.wyn:2:0
+     2 |     var x: int = "hello"
+       | ^
+  [1mExpected:[0m int (integer)
+  [1mGot:[0m      string (text string)
+  [33mSuggestion:[0m use .to_int() to parse the string

@@ -1,0 +1,6 @@
+
+Error at line 3: Undefined variable 'totl'
+  [2m   3 |[0m     print(totl)
+       [31m^^^^^^^^^^^^^^^[0m
+  [33mDid you mean:[0m total?
+[33mWarning:[0m unused variable 'total' (line 2)
