@@ -20,6 +20,8 @@
 //   wyn_gpu_available()                  -> 1 if a Metal device exists
 //   wyn_gpu_map_f32_begin(n, &in_ptr)    -> 0 ok; caller packs into in_ptr
 //   wyn_gpu_map_f32_run(n, src, &out)    -> 0 ok; result readable at out
+//   wyn_gpu_map_i64_begin / _run         -> same shape, int64 elements (MSL
+//                                           `long` is 64-bit: exact results)
 //   (buffers are cached and reused across calls; nothing to free per call)
 
 #ifdef __APPLE__
@@ -40,9 +42,10 @@ static struct { const char* src; void* pso; } _gpu_psos[WYN_GPU_PSO_CACHE];
 static int _gpu_pso_count = 0;
 
 // Cached shared-storage buffers, grown as needed and reused across calls.
+// Sized in BYTES so the float32 and int64 paths share the same pair.
 static id<MTLBuffer> _gpu_in_buf = nil;
 static id<MTLBuffer> _gpu_out_buf = nil;
-static int _gpu_buf_cap = 0;      // capacity in floats
+static size_t _gpu_buf_cap = 0;   // capacity in bytes
 
 static int _gpu_init(void) {
     if (_gpu_init_state != 0) return _gpu_init_state;

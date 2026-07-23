@@ -25,11 +25,16 @@ typedef struct {
     char* include_dirs;  // -I<dir> for each
 } WynFfi;
 
-// [gpu] section - transparent GPU dispatch for builtin array methods (spike).
-// enabled = true opts the project in; eligible map lambdas then compile with
-// a dual CPU/GPU path picked by a runtime cost model. Off by default.
+// [gpu] section - transparent GPU dispatch for builtin array methods.
+// `enabled` is a global kill-switch: it defaults to TRUE (also when the
+// section or the whole wyn.toml is absent); `enabled = false` turns every
+// GPU path off. Exact-result int dispatch is automatic under the switch.
+// Float dispatch (float32 on Metal, a real precision contract) additionally
+// needs an explicit opt-in - see main.c's wyn_gpu_flags_from_toml.
 typedef struct {
-    int enabled;
+    int enabled;         // kill-switch; parser defaults this to 1
+    int enabled_set;     // 1 when the `enabled` key appeared in the file
+    int float_enabled;   // [gpu] float = true - opt in to f32 float dispatch
 } WynGpu;
 
 typedef struct {
