@@ -151,7 +151,17 @@ void codegen_expr(Expr* expr) {
                     }
                 }
             }
-            // Regular int
+            // Regular int. Strip leading zeros: Wyn has no octal syntax, but C
+            // treats `017` as octal (= 15). Emit the decimal value by skipping
+            // leading zeros (keep at least one digit for the literal `0`). Hex
+            // (0x) and binary (0b) are handled above. (L5)
+            else if (expr->token.length > 1 && expr->token.start[0] == '0' &&
+                     expr->token.start[1] >= '0' && expr->token.start[1] <= '9') {
+                // Leading-zero decimal: skip zeros, emit rest
+                int skip = 0;
+                while (skip < expr->token.length - 1 && expr->token.start[skip] == '0') skip++;
+                emit("%.*s", expr->token.length - skip, expr->token.start + skip);
+            }
             else {
                 emit("%.*s", expr->token.length, expr->token.start);
             }
@@ -427,6 +437,17 @@ void codegen_expr(Expr* expr) {
                 emit("(bool)!");
             } else {
                 emit("%.*s", expr->unary.op.length, expr->unary.op.start);
+                // Prevent adjacent unary-minus from fusing into C's `--`
+                // (predecrement): `- - 5` used to emit `--5` → "not assignable"
+                // error (L7). Parenthesize the inner expression to be safe.
+                if (expr->unary.op.type == TOKEN_MINUS &&
+                    expr->unary.operand->type == EXPR_UNARY &&
+                    expr->unary.operand->unary.op.type == TOKEN_MINUS) {
+                    emit("(");
+                    codegen_expr(expr->unary.operand);
+                    emit(")");
+                    break;
+                }
             }
             codegen_expr(expr->unary.operand);
             break;
