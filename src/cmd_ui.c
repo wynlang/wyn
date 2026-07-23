@@ -16,6 +16,12 @@
 //     interactive UI prints a friendly message - raw Win32 console support
 //     is not wired yet.
 
+// glibc hides POSIX symbols (strtok_r, sigaction) under -std=c11 without
+// these; _DEFAULT_SOURCE/_DARWIN_C_SOURCE keep BSD extras (SIGWINCH) visible.
+#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
+#define _DARWIN_C_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -602,7 +608,7 @@ static void picker_load(const char* ext) {
                     if (!dot || strcmp(dot, ext) != 0) continue;
                 }
             }
-            snprintf(g_picker_names[g_picker_n], sizeof(g_picker_names[0]), "%s", e->d_name);
+            snprintf(g_picker_names[g_picker_n], sizeof(g_picker_names[0]), "%.159s", e->d_name);
             g_picker_isdir[g_picker_n++] = isdir;
         }
         // insertion sort this pass's slice
@@ -806,7 +812,7 @@ static void draw_picker(void) {
     fbf("\033[%d;%dH\xE2\x94\x8C", y, x);
     fb_hline_titled("Select file", bw - 2);
     fbf("\xE2\x94\x90");
-    snprintf(line, sizeof(line), " \033[2m%s/\033[0m", g_picker_dir);
+    snprintf(line, sizeof(line), " \033[2m%.490s/\033[0m", g_picker_dir);
     fbf("\033[%d;%dH\xE2\x94\x82", y + 1, x);
     fb_pad(line, bw - 2);
     fbf("\xE2\x94\x82");
