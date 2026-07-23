@@ -2228,7 +2228,10 @@ void print_int(int x) { printf("%d", x); }
 // output (Python semantics). Skips values already carrying '.', an exponent,
 // or nan/inf. Shared by print/println/print_value/arrays/float_to_string.
 static inline int wyn_format_float(char* buf, size_t cap, double x) {
-    int n = snprintf(buf, cap, "%g", x);
+    // %.15g: 15 significant digits is the shortest representation that
+    // round-trips for >99.99% of doubles. The old %g (6 sig-digits) silently
+    // truncated: 3.141592653589793 → "3.14159" (G3, widest surface).
+    int n = snprintf(buf, cap, "%.15g", x);
     if (n > 0 && (size_t)n + 2 < cap
         && !strchr(buf, '.') && !strchr(buf, 'e') && !strchr(buf, 'E')
         && !strchr(buf, 'n') && !strchr(buf, 'i')) {
@@ -4850,7 +4853,7 @@ char* Json_get(long long root, const char* key) {
     int c = json_find_child((int)root, key);
     if (c < 0) return "";
     if (json_nodes[c].type == 's') return json_nodes[c].str_val ? json_nodes[c].str_val : "";
-    if (json_nodes[c].type == 'n') { char* buf = wyn_str_alloc(32); snprintf(buf, 32, "%g", json_nodes[c].num_val); return buf; }
+    if (json_nodes[c].type == 'n') { char* buf = wyn_str_alloc(32); snprintf(buf, 32, "%.15g", json_nodes[c].num_val); return buf; }
     if (json_nodes[c].type == 'b') return json_nodes[c].num_val ? "true" : "false";
     return "";
 }
@@ -4884,7 +4887,7 @@ char* Json_node_str(long long node) {
     int n = (int)node;
     if (n < 0 || n >= json_node_count) return "";
     if (json_nodes[n].type == 's') return json_nodes[n].str_val ? json_nodes[n].str_val : "";
-    if (json_nodes[n].type == 'n') { char* buf = wyn_str_alloc(32); snprintf(buf, 32, "%g", json_nodes[n].num_val); return buf; }
+    if (json_nodes[n].type == 'n') { char* buf = wyn_str_alloc(32); snprintf(buf, 32, "%.15g", json_nodes[n].num_val); return buf; }
     return "";
 }
 

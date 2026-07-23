@@ -5,12 +5,12 @@
 // and fractional forms are unchanged.
 // EXPECT: 1.0
 // EXPECT: 2.0
-// EXPECT: 0.333333
+// EXPECT: 0.333333333333333
 // EXPECT: x = 4.0
 // EXPECT: 4.0
 // EXPECT: 4.0
 // EXPECT: [1.0, 2.5]
-// EXPECT: 1e+10
+// EXPECT: 10000000000.0
 // EXPECT: -3.0
 
 fn main() {
