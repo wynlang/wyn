@@ -268,6 +268,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mpkg\033[0m <command>           Package manager (add, remove, list, install)\n");
         
         fprintf(stderr, "\n\033[1mTools:\033[0m\n");
+        fprintf(stderr, "  \033[32mui\033[0m                      Interactive command browser\n");
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
         fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
         fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
@@ -782,6 +783,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mpkg\033[0m <command>           Package manager (add, remove, list, install)\n");
         
         fprintf(stderr, "\n\033[1mTools:\033[0m\n");
+        fprintf(stderr, "  \033[32mui\033[0m                      Interactive command browser\n");
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
         fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
         fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
@@ -867,6 +869,12 @@ int main(int argc, char** argv) {
         // wyn lsp - start LSP server
         extern int lsp_server_start();
         return lsp_server_start();
+    }
+
+    if (strcmp(command, "ui") == 0 || strcmp(command, "tui") == 0) {
+        // wyn ui - full-screen interactive command browser (src/cmd_ui.c)
+        extern int cmd_ui(int argc, char** argv, const char* version);
+        return cmd_ui(argc, argv, get_version());
     }
     
     // ── Dependency commands (git-URL model; no central registry) ──
