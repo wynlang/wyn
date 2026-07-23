@@ -1,0 +1,9 @@
+[project]
+name = "gpu_map_demo"
+version = "0.1.0"
+
+# Transparent GPU dispatch (spike): eligible [float].map lambdas compile with
+# a dual CPU/GPU path; a runtime cost model picks per call. Delete this
+# section (or set false) and the exact same source runs CPU-only.
+[gpu]
+enabled = true

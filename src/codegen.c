@@ -1547,6 +1547,11 @@ static const char* c_type_from_expr(Expr* type_expr) {
 // included codegen_*.c translation units above.
 const char* codegen_c_type_from_type(Type* t);
 
+// GPU dispatch spike: eligibility + MSL emission for [float].map (must be
+// included before codegen_expr.c, which calls gpu_try_emit_map_dispatch).
+void codegen_expr(Expr* expr);
+#include "codegen_gpu.c"
+
 // Expression code generation
 #include "codegen_expr.c"
 

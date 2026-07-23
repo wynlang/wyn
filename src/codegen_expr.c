@@ -2518,6 +2518,14 @@ void codegen_expr(Expr* expr) {
                     if (_fn_arg0->expr_type && _fn_arg0->expr_type->kind == TYPE_FUNCTION)
                         _lam_ret = _fn_arg0->expr_type->fn_type.return_type;
                     bool _lam_ret_str = _lam_ret ? _lam_ret->kind == TYPE_STRING : true;
+                    // GPU dispatch spike: [float].map with a GPU-eligible pure
+                    // arithmetic lambda AND [gpu] enabled = true in wyn.toml
+                    // emits a dual path (Metal runtime with cost model, CPU
+                    // fallback). No-op when the flag is off - emission below
+                    // is untouched (golden-C proves it).
+                    if (_elem_is_float && !_elem_is_str &&
+                        _fn_arg0->type == EXPR_LAMBDA &&
+                        gpu_try_emit_map_dispatch(expr)) break;
                     // S3: [Struct].map(fn) - no generic runtime variant can take a
                     // struct by value, so emit an inline typed loop instead.
                     if (_elem_t && _elem_t->kind == TYPE_STRUCT) {

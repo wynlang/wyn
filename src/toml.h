@@ -25,11 +25,19 @@ typedef struct {
     char* include_dirs;  // -I<dir> for each
 } WynFfi;
 
+// [gpu] section - transparent GPU dispatch for builtin array methods (spike).
+// enabled = true opts the project in; eligible map lambdas then compile with
+// a dual CPU/GPU path picked by a runtime cost model. Off by default.
+typedef struct {
+    int enabled;
+} WynGpu;
+
 typedef struct {
     WynProject project;
     WynDependency* dependencies;
     int dependency_count;
     WynFfi ffi;
+    WynGpu gpu;
 } WynConfig;
 
 // Parse wyn.toml file
