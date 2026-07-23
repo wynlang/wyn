@@ -5,6 +5,56 @@
 Correctness release: compiler limits removed, lambdas fully typed, real
 crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C.
 
+- **Out-of-bounds is fatal by default** (breaking): `a[10]` on a 3-element
+  array (and `s[10]` on a 3-char string) now panics and exits 1 instead of
+  printing a warning and continuing with `0`/`""`. A memory-safe language
+  must not substitute a value and keep running after an OOB read (Go
+  panics, Rust panics, Python raises IndexError). The same fatal-by-default
+  posture now applies to `Math.checked_add/sub/mul` overflow. Set
+  `WYN_LENIENT=1` to restore the old print-and-continue behavior;
+  `WYN_STRICT` is accepted as a no-op alias of the new default.
+- **`.to_int()` / `.to_float()` reject garbage and overflow** (breaking):
+  `"abc".to_int()` and `"99999999999999999999".to_int()` returned a silent
+  `0` - indistinguishable from parsing `"0"`. Both now panic with the
+  offending value in the message (Python raises ValueError, Go strconv
+  returns an error). Trailing junk (`"12x"`) and empty strings also panic;
+  trailing whitespace is tolerated. `int("...")` / `float("...")` go
+  through the same checked parse. `WYN_LENIENT=1` restores silent zeros.
+- **Fixed use-after-free reading a map string value across an overwrite**
+  (memory safety, ASan-verified): `v = m["a"]; m["a"] = "new"; print(v)`
+  read freed memory - the insert freed the old value even though a live
+  read had escaped. Overwritten and removed string values now stay alive
+  until the map itself is freed, matching the array element-overwrite
+  discipline.
+- **Concurrent array mutation panics instead of corrupting the heap**:
+  two awaited `spawn`s pushing to the same plain array raced the realloc
+  and died with malloc heap corruption (SIGABRT). Mutating pushes now
+  carry a one-relaxed-atomic-exchange write flag (the Go map race detector
+  approach) and panic with "concurrent array mutation detected - use a
+  channel or Shared to coordinate writers". Note: plain variables are NOT
+  synchronized across awaited spawns (racing `total = total + 1` loses
+  updates) - use the atomic `Shared` type (`Shared.new/get/set/add`) or a
+  channel for cross-task counters.
+- **Floats always print with a decimal point**: `print(1.0)` printed `1`,
+  indistinguishable from an int (Python, the advertised mental model,
+  prints `1.0`). `print`, `println`, `${x}` interpolation, `.to_string()`,
+  `str()`, and array rendering all agree: integral floats get `.0`,
+  fractional and scientific forms are unchanged.
+- **Scientific-notation float literals parse**: `1.0e10`, `1e-6`, `2E+8`
+  are now valid literals. Wyn already printed large floats as `1e+10` but
+  could not read its own output back.
+- **StringBuilder pool is growable**: the fixed cap of 32 live builders
+  made the 33rd `StringBuilder.new()` silently return a dead handle that
+  dropped every append. The pool now grows on demand (same
+  realloc-doubling pattern as the compiler registries); freed slots are
+  reused.
+- **Stack overflow is diagnosed by name**: 1M-deep recursion died with a
+  silent SIGILL/SIGSEGV (exit 132, no output). The crash handler's
+  alternate signal stack was below MINSIGSTKSZ, so it could never run for
+  a stack fault; it now installs correctly and faults near the stack guard
+  page report "panic: stack overflow (recursion too deep?)" with a hint,
+  like Rust.
+
 - **`pub` visibility is now enforced** (breaking): calling a module
   function that is not marked `pub` (or `export`) from outside its module
   is a check-time error. Previously the keyword was accepted but ignored -
