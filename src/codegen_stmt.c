@@ -1,6 +1,119 @@
 // codegen_stmt.c - Statement code generation
 // Included from codegen.c - shares all statics
 
+// Bare-assignment hoisting. The checker rewrites a first bare `x = expr` into
+// a STMT_VAR and shares ONE scope across if/while/block/parallel bodies, so
+// `x` is function-scoped in Wyn. But codegen used to emit the C declaration
+// wherever the STMT_VAR sat - a first assignment inside a nested block
+// declared `x` in that C scope and a later outer use failed with
+// "use of undeclared identifier". Fix: before emitting a function body, walk
+// the constructs whose bodies the checker checks in the SAME scope and, for
+// each from_bare_assign STMT_VAR found below the top level, emit the
+// declaration at function scope and demote the nested statement to a plain
+// assignment. For-loop bodies and match arms use child scopes in the checker
+// (the name is free again afterwards), so they are deliberately NOT walked.
+static void hoist_collect(Stmt* s, int depth, Stmt** out, int* out_count, int max);
+static void hoist_walk_block(Stmt* body, int depth, Stmt** out, int* out_count, int max) {
+    if (!body) return;
+    if (body->type == STMT_BLOCK) {
+        for (int i = 0; i < body->block.count; i++)
+            hoist_collect(body->block.stmts[i], depth, out, out_count, max);
+    } else {
+        hoist_collect(body, depth, out, out_count, max);
+    }
+}
+static void hoist_collect(Stmt* s, int depth, Stmt** out, int* out_count, int max) {
+    if (!s || *out_count >= max) return;
+    switch (s->type) {
+        case STMT_VAR:
+            if (depth > 0 && s->var.from_bare_assign && !s->var.uses_pattern && s->var.init)
+                out[(*out_count)++] = s;
+            break;
+        case STMT_IF:
+            hoist_walk_block(s->if_stmt.then_branch, depth + 1, out, out_count, max);
+            hoist_walk_block(s->if_stmt.else_branch, depth + 1, out, out_count, max);
+            break;
+        case STMT_WHILE:
+            hoist_walk_block(s->while_stmt.body, depth + 1, out, out_count, max);
+            break;
+        case STMT_BLOCK:
+        case STMT_UNSAFE:
+            for (int i = 0; i < s->block.count; i++)
+                hoist_collect(s->block.stmts[i], depth + 1, out, out_count, max);
+            break;
+        // STMT_PARALLEL is deliberately NOT walked. Its spawn-bound bare
+        // assignments (`a = spawn f()`) have dedicated codegen: they hold the
+        // joined VALUE and are already made visible after the block by the
+        // parallel lowering. Hoisting them to function scope and demoting to a
+        // plain assignment corrupts that path (reads uninitialized futures).
+        default:
+            break;
+    }
+}
+// Emit hoisted declarations for a function body's statement list and demote
+// the nested STMT_VARs to assignments. Must run after parameter registration
+// and before body emission.
+static void codegen_hoist_nested_bare_assigns(Stmt** stmts, int count) {
+    enum { HOIST_MAX = 64 };
+    Stmt* found[HOIST_MAX];
+    int n = 0;
+    for (int i = 0; i < count; i++)
+        hoist_collect(stmts[i], 0, found, &n, HOIST_MAX);
+    for (int i = 0; i < n; i++) {
+        Stmt* vs = found[i];
+        // Dedup by name (e.g. assigned in both if branches: only the first
+        // was rewritten to STMT_VAR, but stay defensive).
+        bool dup = false;
+        for (int j = 0; j < i; j++) {
+            if (found[j]->var.name.length == vs->var.name.length &&
+                memcmp(found[j]->var.name.start, vs->var.name.start,
+                       vs->var.name.length) == 0) { dup = true; break; }
+        }
+        char vn[256]; token_to_cstr(vn, sizeof(vn), vs->var.name);
+        { extern int is_c_name_collision(const char*);
+          extern void register_user_collision(const char*);
+          if (is_c_name_collision(vn)) {
+              register_user_collision(vn);
+              memmove(vn + WYN_UFN_PFX_LEN, vn, strlen(vn) + 1);
+              memcpy(vn, WYN_UFN_PFX, WYN_UFN_PFX_LEN);
+          } }
+        const char* ct = NULL;
+        if (vs->var.init->expr_type)
+            ct = codegen_c_type_from_type(vs->var.init->expr_type);
+        if (!ct) ct = "long long";
+        if (!dup) {
+            if (strchr(ct, '*')) {
+                emit("    %s %s = NULL;\n", ct, vn);
+            } else if (strcmp(ct, "long long") == 0 || strcmp(ct, "double") == 0 ||
+                       strcmp(ct, "bool") == 0) {
+                emit("    %s %s = 0;\n", ct, vn);
+            } else {
+                emit("    %s %s = {0};\n", ct, vn);
+            }
+            register_local_variable(vn);
+            if (strcmp(ct, "const char*") == 0) {
+                extern void register_string_var(const char*);
+                extern void register_releasable_string_var(const char*);
+                register_string_var(vn);
+                register_releasable_string_var(vn);
+            } else if (strcmp(ct, "WynArray") == 0) {
+                extern void register_array_var(const char*);
+                register_array_var(vn);
+            }
+        }
+        // Demote the nested declaration to a plain assignment in place.
+        Expr* as = (Expr*)calloc(1, sizeof(Expr));
+        as->type = EXPR_ASSIGN;
+        as->_codegen_temp_id = -1;  // calloc'd 0 would mean "emit __sa0"
+        as->token = vs->var.name;
+        as->expr_type = vs->var.init->expr_type;
+        as->assign.name = vs->var.name;
+        as->assign.value = vs->var.init;
+        vs->type = STMT_EXPR;
+        vs->expr = as;
+    }
+}
+
 // Check if expression produces a fresh RC string that needs release
 // Conservative: only match patterns known to allocate new strings
 static bool is_fresh_string_temp(Expr* e) {
@@ -2801,6 +2914,14 @@ void codegen_stmt(Stmt* stmt) {
                         register_enum_var(_pn, _pt);
                     }
                 }
+            }
+
+            // Hoist bare-assignment declarations that sit in nested blocks up
+            // to function scope, matching the checker's scoping (see
+            // codegen_hoist_nested_bare_assigns above).
+            if (stmt->fn.body && stmt->fn.body->type == STMT_BLOCK) {
+                codegen_hoist_nested_bare_assigns(stmt->fn.body->block.stmts,
+                                                  stmt->fn.body->block.count);
             }
 
             if (_is_tco) emit("    __tco_start: ;\n");

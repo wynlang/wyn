@@ -412,6 +412,10 @@ typedef struct {
     bool is_const;
     bool is_mutable;     // Whether variable is declared with 'mut'
     bool uses_pattern;   // T3.3.2: Whether this uses pattern matching
+    bool from_bare_assign; // Rewritten from a bare `x = expr` by the checker.
+                           // Codegen hoists these to function scope when they
+                           // sit in a nested if/while/block, matching the
+                           // checker's function-wide bare-assignment scoping.
 } VarStmt;
 
 typedef struct {

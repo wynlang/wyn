@@ -5750,6 +5750,7 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 stmt->var.is_const = false;    // bare bindings are mutable
                 stmt->var.is_mutable = true;
                 stmt->var.uses_pattern = false;
+                stmt->var.from_bare_assign = true; // codegen hoists nested ones
                 check_stmt(stmt, scope);       // re-check as a var declaration
                 break;
             }
