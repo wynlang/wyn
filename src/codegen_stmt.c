@@ -754,6 +754,20 @@ void codegen_stmt(Stmt* stmt) {
                             c_type = "const char*"; is_already_const = true;
                             goto var_type_done;
                         }
+                        // Float-reduce: `.reduce()` on a [float] returns double.
+                        // The int path is fine for int arrays; only float needs the
+                        // override because wyn_array_reduce_float returns double (G2).
+                        if (strcmp(_mn2, "reduce") == 0 || strcmp(_mn2, "sum") == 0 ||
+                            strcmp(_mn2, "average") == 0 || strcmp(_mn2, "min") == 0 ||
+                            strcmp(_mn2, "max") == 0) {
+                            Type* _obt = stmt->var.init->method_call.object->expr_type;
+                            if (_obt && _obt->kind == TYPE_ARRAY &&
+                                _obt->array_type.element_type &&
+                                _obt->array_type.element_type->kind == TYPE_FLOAT) {
+                                c_type = "double";
+                                goto var_type_done;
+                            }
+                        }
                     }
                     // Struct method chain return type
                     if (!_found_method_rt && stmt->var.init->type == EXPR_METHOD_CALL) {
@@ -1686,6 +1700,20 @@ void codegen_stmt(Stmt* stmt) {
                         }
                     }
                     var_type_done2: ;
+                }
+            }
+            // Universal fallback: if heuristics still left c_type as the default
+            // long long, consult the checker's resolved expr_type. This catches
+            // all cases where a method/call returns float/string/bool/array but the
+            // heuristic chain above didn't have a specific branch for it (G2: .reduce
+            // on a [float]; any future newly-typed method). Safe because the checker
+            // is the authoritative type source.
+            if (strcmp(c_type, "long long") == 0 && stmt->var.init && stmt->var.init->expr_type) {
+                extern const char* codegen_c_type_from_type(Type*);
+                const char* _ct = codegen_c_type_from_type(stmt->var.init->expr_type);
+                if (_ct && strcmp(_ct, "long long") != 0) {
+                    c_type = _ct;
+                    if (strcmp(c_type, "const char*") == 0) is_already_const = true;
                 }
             }
             // Emit variable declaration - avoid double const

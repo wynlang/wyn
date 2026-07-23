@@ -2292,6 +2292,20 @@ void codegen_expr(Expr* expr) {
                         emit(")");
                         break;
                     }
+                    // Float-element push must store as a double. The default
+                    // path below casts the value to (long long), so `.push(1.5)`
+                    // on a [float] array silently truncated to 1.0 - a wrong
+                    // answer that read back through array_get_float (G1). Dispatch
+                    // to array_push_float, matching the float .get()/numeric-op
+                    // handling directly below.
+                    if (elem_type && elem_type->kind == TYPE_FLOAT) {
+                        emit("array_push_float(&(");
+                        codegen_expr(expr->method_call.object);
+                        emit("), (double)(");
+                        codegen_expr(expr->method_call.args[0]);
+                        emit("))");
+                        break;
+                    }
                     // Default: int/pointer push with cast
                     // Check if this is a spawn array (WynIntArray)
                     if (expr->method_call.object->type == EXPR_IDENT) {
@@ -2485,7 +2499,16 @@ void codegen_expr(Expr* expr) {
                     if (_fn_arg->type != EXPR_LAMBDA && _init_arg->type == EXPR_LAMBDA) {
                         Expr* _sw = _fn_arg; _fn_arg = _init_arg; _init_arg = _sw;
                     }
-                    emit("wyn_array_reduce(");
+                    // Use float reduce when the array has float elements, so the
+                    // accumulator and element values stay as doubles. The int variant
+                    // truncated at every step (G2: [1.5,2.5,3.5].reduce(1.0,+) = 7).
+                    bool _reduce_float = false;
+                    if (expr->method_call.object->expr_type &&
+                        expr->method_call.object->expr_type->kind == TYPE_ARRAY &&
+                        expr->method_call.object->expr_type->array_type.element_type &&
+                        expr->method_call.object->expr_type->array_type.element_type->kind == TYPE_FLOAT)
+                        _reduce_float = true;
+                    emit(_reduce_float ? "wyn_array_reduce_float(" : "wyn_array_reduce(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
                     codegen_expr(_fn_arg);
@@ -3750,10 +3773,26 @@ void codegen_expr(Expr* expr) {
                 
                 // Check if this is chained indexing (matrix[0][1])
                 if (expr->index.array->type == EXPR_INDEX) {
-                    // This is chained indexing: arr[i][j]
+                    // Chained indexing: arr[i][j]. Pick the nested getter by the
+                    // resolved element type of the whole index expression, so a
+                    // [[float]] reads via array_get_nested_float instead of
+                    // truncating through _int (G4), and [[bool]] formats as
+                    // true/false.
+                    const char* _nest2 = "array_get_nested_int";
+                    const char* _nest3 = "array_get_nested3_int";
+                    if (expr->expr_type) {
+                        if (expr->expr_type->kind == TYPE_FLOAT) {
+                            _nest2 = "array_get_nested_float";
+                            _nest3 = "array_get_nested3_float";
+                        } else if (expr->expr_type->kind == TYPE_BOOL) {
+                            _nest2 = "array_get_nested_bool";
+                            // no triple-bool getter yet; _int is a safe fallback
+                            // (bool is stored in int_val) - only formatting differs.
+                        }
+                    }
                     if (expr->index.array->index.array->type == EXPR_INDEX) {
                         // Triple chained: arr[i][j][k]
-                        emit("array_get_nested3_int(");
+                        emit("%s(", _nest3);
                         codegen_expr(expr->index.array->index.array->index.array);
                         emit(", ");
                         codegen_expr(expr->index.array->index.array->index.index);
@@ -3764,7 +3803,7 @@ void codegen_expr(Expr* expr) {
                         emit(")");
                     } else {
                         // Double chained: arr[i][j]
-                        emit("array_get_nested_int(");
+                        emit("%s(", _nest2);
                         codegen_expr(expr->index.array->index.array);
                         emit(", ");
                         codegen_expr(expr->index.array->index.index);
@@ -3777,8 +3816,9 @@ void codegen_expr(Expr* expr) {
                     // Check element type from type annotation
                     bool is_struct_array = false;
                     bool is_float_array = false;
+                    bool is_bool_array = false;
                     Type* elem_type = NULL;
-                    if (expr->index.array->expr_type && 
+                    if (expr->index.array->expr_type &&
                         expr->index.array->expr_type->kind == TYPE_ARRAY) {
                         elem_type = expr->index.array->expr_type->array_type.element_type;
                         if (elem_type) {
@@ -3788,6 +3828,8 @@ void codegen_expr(Expr* expr) {
                                 is_string_array = true;
                             } else if (elem_type->kind == TYPE_FLOAT) {
                                 is_float_array = true;
+                            } else if (elem_type->kind == TYPE_BOOL) {
+                                is_bool_array = true;
                             }
                         }
                     }
@@ -3800,8 +3842,19 @@ void codegen_expr(Expr* expr) {
                             is_float_array = true;
                     }
                     
+                    // Array-of-arrays: a single index yields the inner array by
+                    // value. Reading it through array_get_int returned long long
+                    // and failed to compile (`WynArray row = array_get_int(...)`,
+                    // G6). Deref array_get_array's WynArray*.
+                    if (elem_type && elem_type->kind == TYPE_ARRAY) {
+                        emit("(*array_get_array(");
+                        codegen_expr(expr->index.array);
+                        emit(", ");
+                        codegen_expr(expr->index.index);
+                        emit("))");
+                    }
                     // Map array: cast result to WynHashMap*
-                    if (elem_type && elem_type->kind == TYPE_MAP) {
+                    else if (elem_type && elem_type->kind == TYPE_MAP) {
                         emit("(WynHashMap*)array_get_int(");
                         codegen_expr(expr->index.array);
                         emit(", ");
@@ -3840,6 +3893,15 @@ void codegen_expr(Expr* expr) {
                         emit(")");
                     } else if (is_float_array) {
                         emit("array_get_float(");
+                        codegen_expr(expr->index.array);
+                        emit(", ");
+                        codegen_expr(expr->index.index);
+                        emit(")");
+                    } else if (is_bool_array) {
+                        // Read as bool so to_string()/interpolation format it as
+                        // true/false, not 1/0 (G5). array_get_int would pick
+                        // int_to_string via _Generic.
+                        emit("array_get_bool(");
                         codegen_expr(expr->index.array);
                         emit(", ");
                         codegen_expr(expr->index.index);

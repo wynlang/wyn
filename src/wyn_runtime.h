@@ -670,6 +670,14 @@ static inline double array_get_float_impl(WynArray arr, int index, const char* f
     if (arr.data[index].type == WYN_TYPE_INT) return (double)arr.data[index].data.int_val;
     return 0.0;
 }
+// Bool element getter. Returns `bool` so to_string()'s _Generic dispatch picks
+// bool_to_string -> "true"/"false" rather than int_to_string -> "1"/"0" (G5).
+#define array_get_bool(arr, idx) array_get_bool_impl(arr, idx, __FILE__, __LINE__)
+static inline bool array_get_bool_impl(WynArray arr, int index, const char* file, int line) {
+    if (index < 0) index += arr.count;
+    if (index < 0 || index >= arr.count) { wyn_oob_panic(index, arr.count, file, line); return false; }
+    return arr.data[index].data.int_val ? true : false;
+}
 void array_push_str(WynArray* restrict arr, const char* value) {
     WYN_ARR_WRITE_ENTER(arr);
     if (arr->count >= arr->capacity) {
@@ -765,6 +773,25 @@ int array_get_nested3_int(WynArray arr, int index1, int index2, int index3) {
     WynArray* nested2 = array_get_array(*nested1, index2);
     if (nested2 == NULL) return 0;
     return array_get_int(*nested2, index3);
+}
+// Float/bool nested getters: without these, fg[1][1] on a [[float]] read the
+// inner element through array_get_nested_int and TRUNCATED (G5 -> 4 not 4.5).
+double array_get_nested_float(WynArray arr, int index1, int index2) {
+    WynArray* nested = array_get_array(arr, index1);
+    if (nested == NULL) return 0.0;
+    return array_get_float(*nested, index2);
+}
+double array_get_nested3_float(WynArray arr, int index1, int index2, int index3) {
+    WynArray* nested1 = array_get_array(arr, index1);
+    if (nested1 == NULL) return 0.0;
+    WynArray* nested2 = array_get_array(*nested1, index2);
+    if (nested2 == NULL) return 0.0;
+    return array_get_float(*nested2, index3);
+}
+bool array_get_nested_bool(WynArray arr, int index1, int index2) {
+    WynArray* nested = array_get_array(arr, index1);
+    if (nested == NULL) return false;
+    return array_get_bool(*nested, index2);
 }
 
 int array_len(WynArray arr) { return arr.count; }
@@ -3921,6 +3948,17 @@ long long wyn_array_reduce(WynArray arr, long long (*fn)(long long, long long), 
     long long result = initial;
     for (int i = 0; i < arr.count; i++) {
         long long val = array_get_int(arr, i);
+        result = fn(result, val);
+    }
+    return result;
+}
+// Float-element reduce: without this, `.reduce(1.0, (a,b)=>a+b)` on a [float]
+// cast the double accumulator and elements through long long at every step,
+// truncating each intermediate result (G2).
+double wyn_array_reduce_float(WynArray arr, double (*fn)(double, double), double initial) {
+    double result = initial;
+    for (int i = 0; i < arr.count; i++) {
+        double val = array_get_float(arr, i);
         result = fn(result, val);
     }
     return result;
