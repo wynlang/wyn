@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE 1
 #define _XOPEN_SOURCE 700
+#define _DARWIN_C_SOURCE 1  // pthread_get_stackaddr_np/stacksize_np on macOS
 #include <stdio.h>
 #include <stdlib.h>
 #if !defined(__wasi__) && !defined(__EMSCRIPTEN__)
@@ -9,6 +10,7 @@
 #endif
 #if !defined(__wasi__) && !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 #include <unistd.h>
+#include <pthread.h>
 #endif
 #include "wyn_interface.h"
 
@@ -34,18 +36,43 @@ extern const char* wyn_spawn_origin_file(void);
 extern int wyn_spawn_origin_line(void);
 extern long wyn_spawn_origin_id(void);
 
-#ifndef SIGSTKSZ
-#define SIGSTKSZ 8192
-#endif
-static char wyn_sigstack_buf[8192];
+// Alternate signal stack for the crash handler. Must be >= MINSIGSTKSZ or
+// sigaltstack() fails SILENTLY and a stack-overflow SIGSEGV can never be
+// handled (the thread stack is exhausted, so the process just dies with no
+// message - the old 8KB buffer was below macOS's 32KB MINSIGSTKSZ).
+static char wyn_sigstack_buf[64 * 1024];
 
-static void wyn_crash_handler(int sig) {
+// Main-thread stack bounds, captured at startup, so the SIGSEGV handler can
+// tell a stack overflow (fault just past the guard page) from a stray pointer.
+static char* wyn_stack_low = 0;
+static char* wyn_stack_high = 0;
+
+#if defined(_WIN32) || defined(__wasi__) || defined(__EMSCRIPTEN__)
+typedef void wyn_siginfo_t;  // no siginfo_t on these targets
+#else
+typedef siginfo_t wyn_siginfo_t;
+#endif
+
+static void wyn_crash_handler_info(int sig, wyn_siginfo_t* info, void* uctx) {
+    (void)uctx;
 #if !defined(_WIN32) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
     const char* spawn_file = wyn_spawn_origin_file();
     int spawn_line = wyn_spawn_origin_line();
     long spawn_id = wyn_spawn_origin_id();
-    
+
     if (sig == SIGSEGV || sig == SIGBUS) {
+        // Fault address within 64KB below the stack floor = the guard page:
+        // report a stack overflow by name (like Rust), not a bare segfault.
+        char* addr = info ? (char*)info->si_addr : 0;
+        if (wyn_stack_low && addr
+            && addr < wyn_stack_high
+            && addr >= wyn_stack_low - 64 * 1024) {
+            const char msg[] = "\npanic: stack overflow (recursion too deep?)\n"
+                               "  Each recursive call uses stack space; a loop or an accumulator\n"
+                               "  parameter avoids unbounded recursion depth.\n";
+            write(STDERR_FILENO, msg, sizeof(msg) - 1);
+            _exit(128 + sig);
+        }
         const char msg[] = "\n\033[31m✗ Segmentation fault\033[0m\n";
         write(STDERR_FILENO, msg, sizeof(msg) - 1);
         if (spawn_file && spawn_line > 0) {
@@ -71,17 +98,32 @@ static void wyn_crash_handler(int sig) {
     } else if (sig == SIGABRT) {
         const char msg[] = "\npanic: abort\n";
         write(STDERR_FILENO, msg, sizeof(msg) - 1);
+    } else if (sig == SIGILL) {
+        // Deep recursion blows the stack and (on macOS arm64 at -O2) lands on
+        // an illegal instruction rather than a guard-page SIGSEGV, so it used
+        // to die with exit 132 and zero output. Name the likely cause.
+        const char msg[] = "\npanic: stack overflow (recursion too deep?)\n"
+                           "  Each recursive call uses stack space; a loop or an accumulator\n"
+                           "  parameter avoids unbounded recursion depth.\n";
+        write(STDERR_FILENO, msg, sizeof(msg) - 1);
     } else {
         const char msg[] = "\npanic: unexpected signal\n";
         write(STDERR_FILENO, msg, sizeof(msg) - 1);
     }
     _exit(128 + sig);
 #else
-    (void)sig;
+    (void)sig; (void)info;
     fprintf(stderr, "\nCrash detected\n");
     exit(1);
 #endif
 }
+
+#if defined(_WIN32)
+// Plain-signature shim for platforms that install via signal().
+static void wyn_crash_handler(int sig) {
+    wyn_crash_handler_info(sig, NULL, NULL);
+}
+#endif
 
 #if defined(__wasi__) || defined(__EMSCRIPTEN__)
 int main(int argc, char** argv) {
@@ -97,6 +139,7 @@ __attribute__((flatten))
 int main(int argc, char** argv) {
     signal(SIGSEGV, wyn_crash_handler);
     signal(SIGABRT, wyn_crash_handler);
+    signal(SIGILL, wyn_crash_handler);
     wyn_init_args(argc, argv);
     __wyn_argc = argc;
     __wyn_argv = argv;
@@ -116,14 +159,33 @@ int main(int argc, char** argv) {
     ss.ss_flags = 0;
     sigaltstack(&ss, NULL);
 
+    // Record the main-thread stack bounds so the handler can classify a
+    // fault at the guard page as a stack overflow.
+#if defined(__APPLE__)
+    wyn_stack_high = (char*)pthread_get_stackaddr_np(pthread_self());
+    wyn_stack_low = wyn_stack_high - pthread_get_stacksize_np(pthread_self());
+#elif defined(__linux__)
+    {
+        pthread_attr_t attr;
+        if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+            void* lo = NULL; size_t sz = 0;
+            pthread_attr_getstack(&attr, &lo, &sz);
+            wyn_stack_low = (char*)lo;
+            wyn_stack_high = (char*)lo + sz;
+            pthread_attr_destroy(&attr);
+        }
+    }
+#endif
+
     struct sigaction sa;
-    sa.sa_handler = wyn_crash_handler;
+    sa.sa_sigaction = wyn_crash_handler_info;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_ONSTACK;
+    sa.sa_flags = SA_ONSTACK | SA_SIGINFO;
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
     sigaction(SIGABRT, &sa, NULL);
     sigaction(SIGFPE, &sa, NULL);
+    sigaction(SIGILL, &sa, NULL);  // stack overflow can land on SIGILL (macOS arm64)
     
     // Initialize arguments for Wyn interface
     wyn_init_args(argc, argv);

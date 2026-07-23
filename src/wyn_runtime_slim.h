@@ -43,7 +43,8 @@ typedef struct {
         void* struct_val;
     } data;
 } WynValue;
-typedef struct WynArray { WynValue* restrict data; int count; int capacity; } WynArray;
+// Layout mirror of wyn_runtime.h WynArray (incl. the `writing` mutation flag) - keep in sync.
+typedef struct WynArray { WynValue* restrict data; int count; int capacity; int writing; } WynArray;
 typedef struct { int start; int end; int current; } WynRange;
 typedef struct { const char* message; const char* type; } WynError;
 typedef struct { WynArray arr; } Queue;
@@ -786,7 +787,18 @@ void System_load_env(const char* path);
 
 // Inline codegen helpers
 static inline char* int_to_string(long long n) { static char __buf[32]; snprintf(__buf, sizeof(__buf), "%lld", n); return __buf; }
-static inline char* float_to_string(double n) { static char __buf[64]; snprintf(__buf, sizeof(__buf), "%g", n); return __buf; }
+// Canonical float text (matches wyn_format_float in the full runtime):
+// integral floats keep a trailing ".0" so they don't read as ints.
+static inline char* float_to_string(double n) {
+    static char __buf[64];
+    int __n = snprintf(__buf, sizeof(__buf), "%g", n);
+    if (__n > 0 && (size_t)__n + 2 < sizeof(__buf)
+        && !strchr(__buf, '.') && !strchr(__buf, 'e') && !strchr(__buf, 'E')
+        && !strchr(__buf, 'n') && !strchr(__buf, 'i')) {
+        __buf[__n] = '.'; __buf[__n + 1] = '0'; __buf[__n + 2] = 0;
+    }
+    return __buf;
+}
 static inline char* str_to_string(const char* s) { return (char*)s; }
 static inline char* bool_to_string(bool b) { return b ? "true" : "false"; }
 char* array_to_string(WynArray arr);  // defined in the runtime lib (wyn_runtime.h)

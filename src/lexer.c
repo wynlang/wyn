@@ -133,12 +133,26 @@ static Token number() {
     
     // Regular numbers with optional underscores
     while (isdigit(peek()) || peek() == '_') advance();
+    bool is_float = false;
     if (peek() == '.' && isdigit(peek_next())) {
         advance();
         while (isdigit(peek()) || peek() == '_') advance();
-        return make_token(TOKEN_FLOAT);
+        is_float = true;
     }
-    return make_token(TOKEN_INT);
+    // Scientific notation: 1e10, 1.5e-6, 2E+8. Only consume the 'e' when a
+    // valid exponent follows, so `5.elements` style member access still lexes.
+    if (peek() == 'e' || peek() == 'E') {
+        const char* save = lexer.current;
+        advance();
+        if (peek() == '+' || peek() == '-') advance();
+        if (isdigit(peek())) {
+            while (isdigit(peek())) advance();
+            is_float = true;
+        } else {
+            lexer.current = save;
+        }
+    }
+    return make_token(is_float ? TOKEN_FLOAT : TOKEN_INT);
 }
 
 static WynTokenType keyword_type(const char* start, int length) {
