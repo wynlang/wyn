@@ -1201,7 +1201,7 @@ void codegen_expr(Expr* expr) {
                             const char* _fam = _oet + 6;
                             const char* _fmt =
                                 strcmp(_fam, "String") == 0 ? "printf(\"Some(\\\"%%s\\\")\\n\", %s.value);"
-                              : strcmp(_fam, "Float") == 0  ? "printf(\"Some(%%g)\\n\", %s.value);"
+                              : strcmp(_fam, "Float") == 0  ? "printf(\"Some(\"); print_float_no_nl(%s.value); printf(\")\\n\");"
                               : strcmp(_fam, "Bool") == 0   ? "printf(\"Some(%%s)\\n\", %s.value ? \"true\" : \"false\");"
                               : "printf(\"Some(%%lld)\\n\", (long long)%s.value);";
                             emit("({ if (%s.tag == 1) { ", _pvn);
@@ -1237,7 +1237,7 @@ void codegen_expr(Expr* expr) {
                                 emit(" printf(\"%.*s: \\\"%%s\\\"\", %s.%.*s);",
                                      fn.length, fn.start, _tmpn, fn.length, fn.start);
                             } else if (strcmp(cft, "double") == 0) {
-                                emit(" printf(\"%.*s: %%g\", %s.%.*s);",
+                                emit(" printf(\"%.*s: \"); print_float_no_nl(%s.%.*s);",
                                      fn.length, fn.start, _tmpn, fn.length, fn.start);
                             } else if (strcmp(cft, "int") == 0 && ftype && ftype->type == EXPR_IDENT &&
                                        ftype->token.length == 4 && memcmp(ftype->token.start, "bool", 4) == 0) {

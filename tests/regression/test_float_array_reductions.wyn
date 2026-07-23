@@ -4,12 +4,12 @@
 // Also: average() was int division even for int arrays, first/last/pop
 // truncated, and contains/index_of truncated the NEEDLE, so
 // [1.5].contains(1.9) was true.
-// EXPECT: 4
+// EXPECT: 4.0
 // EXPECT: 3.5
 // EXPECT: 1.5
 // EXPECT: 2.33333
 // EXPECT: 1.5
-// EXPECT: 2
+// EXPECT: 2.0
 // EXPECT: 3
 // EXPECT: 2.5
 // EXPECT: 1

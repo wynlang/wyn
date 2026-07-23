@@ -558,7 +558,37 @@ typedef struct {
     } data;
 } WynValue;
 
-typedef struct WynArray { WynValue* restrict data; int count; int capacity; } WynArray;
+// `writing` is a mutation flag (Go map race detector style): concurrent
+// structural mutation of a plain array corrupts the heap via racing realloc,
+// so mutators take the flag and panic if it is already held. One relaxed
+// atomic exchange per mutation - negligible next to the store itself. Plain
+// `int` keeps the layout identical across compilers; TCC (dev loop) lacks the
+// __atomic builtins, so it falls back to a best-effort non-atomic check.
+// Layout is mirrored in wyn_runtime_slim.h and wyn_interface.c - keep in sync.
+typedef struct WynArray { WynValue* restrict data; int count; int capacity; int writing; } WynArray;
+static inline void wyn_concurrent_mutation_panic(void) {
+    fprintf(stderr, "panic: concurrent array mutation detected - plain arrays are not thread-safe; use a channel or Shared to coordinate writers\n");
+    exit(1);
+}
+// Panic ONLY when the previous value is exactly 1 (the locked value): a
+// WynArray built by a field-by-field initializer that predates the flag can
+// carry malloc garbage in `writing` (glibc exposed this: single-threaded
+// group_by false-panicked on Linux while macOS handed back zeroed pages).
+// Garbage is neither 0 nor 1, so it self-heals on the first mutation instead
+// of killing a correct program; real concurrent writers still see 1 and die.
+#if defined(__TINYC__)
+#define WYN_ARR_WRITE_ENTER(arr) do { \
+    if ((arr)->writing == 1) wyn_concurrent_mutation_panic(); \
+    (arr)->writing = 1; \
+} while (0)
+#define WYN_ARR_WRITE_EXIT(arr) ((arr)->writing = 0)
+#else
+#define WYN_ARR_WRITE_ENTER(arr) do { \
+    if (__atomic_exchange_n(&(arr)->writing, 1, __ATOMIC_RELAXED) == 1) \
+        wyn_concurrent_mutation_panic(); \
+} while (0)
+#define WYN_ARR_WRITE_EXIT(arr) __atomic_store_n(&(arr)->writing, 0, __ATOMIC_RELAXED)
+#endif
 // Aligned realloc for better cache/SIMD behavior
 static inline WynValue* wyn_array_realloc(WynValue* old, int old_cap, int new_cap) {
     size_t size = sizeof(WynValue) * new_cap;
@@ -596,6 +626,7 @@ void array_free(WynArray* arr) {
 }
 static inline void wyn_oob_panic(int index, int count, const char* file, int line);
 void array_push_int(WynArray* restrict arr, long long value) {
+    WYN_ARR_WRITE_ENTER(arr);
     if (arr->count >= arr->capacity) {
         int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
         arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
@@ -604,8 +635,10 @@ void array_push_int(WynArray* restrict arr, long long value) {
     arr->data[arr->count].type = WYN_TYPE_INT;
     arr->data[arr->count].data.int_val = value;
     arr->count++;
+    WYN_ARR_WRITE_EXIT(arr);
 }
 void array_push_float(WynArray* restrict arr, double value) {
+    WYN_ARR_WRITE_ENTER(arr);
     if (arr->count >= arr->capacity) {
         int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
         arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
@@ -614,8 +647,10 @@ void array_push_float(WynArray* restrict arr, double value) {
     arr->data[arr->count].type = WYN_TYPE_FLOAT;
     arr->data[arr->count].data.float_val = value;
     arr->count++;
+    WYN_ARR_WRITE_EXIT(arr);
 }
 void array_push_bool(WynArray* restrict arr, int value) {
+    WYN_ARR_WRITE_ENTER(arr);
     if (arr->count >= arr->capacity) {
         int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
         arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
@@ -624,6 +659,7 @@ void array_push_bool(WynArray* restrict arr, int value) {
     arr->data[arr->count].type = WYN_TYPE_BOOL;
     arr->data[arr->count].data.int_val = value ? 1 : 0;
     arr->count++;
+    WYN_ARR_WRITE_EXIT(arr);
 }
 // Float/bool element getters (mirror array_get_int/str with negative-index support).
 #define array_get_float(arr, idx) array_get_float_impl(arr, idx, __FILE__, __LINE__)
@@ -635,6 +671,7 @@ static inline double array_get_float_impl(WynArray arr, int index, const char* f
     return 0.0;
 }
 void array_push_str(WynArray* restrict arr, const char* value) {
+    WYN_ARR_WRITE_ENTER(arr);
     if (arr->count >= arr->capacity) {
         int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
         arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
@@ -645,8 +682,10 @@ void array_push_str(WynArray* restrict arr, const char* value) {
     // array_free will release RC strings
     arr->data[arr->count].data.string_val = (char*)value;
     arr->count++;
+    WYN_ARR_WRITE_EXIT(arr);
 }
 void array_push_array(WynArray* restrict arr, WynArray* nested) {
+    WYN_ARR_WRITE_ENTER(arr);
     if (arr->count >= arr->capacity) {
         int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
         arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
@@ -656,15 +695,27 @@ void array_push_array(WynArray* restrict arr, WynArray* nested) {
     // Heap-allocate a copy so the nested array outlives the stack frame
     WynArray* copy = wyn_malloc(sizeof(WynArray));
     *copy = *nested;
+    copy->writing = 0;  // a copy is a fresh value; never inherit the mutation flag
     arr->data[arr->count].data.array_val = copy;
     arr->count++;
+    WYN_ARR_WRITE_EXIT(arr);
+}
+// Lenient-mode gate: panics that guard silent wrong answers (OOB index,
+// bad numeric parses, checked-arithmetic overflow) are FATAL by default.
+// WYN_LENIENT=1 restores the old print-and-continue-with-0 behavior for
+// programs that depended on it. WYN_STRICT is accepted as a no-op alias of
+// the default so existing "strict" invocations keep working.
+static inline int wyn_lenient_mode(void) {
+    static int cached = -1;
+    if (cached < 0) cached = getenv("WYN_LENIENT") != NULL;
+    return cached;
 }
 static inline void wyn_oob_panic(int index, int count, const char* file, int line) {
     if (file && line > 0)
         fprintf(stderr, "panic at %s:%d: array index out of bounds: index %d, length %d\n", file, line, index, count);
     else
         fprintf(stderr, "panic: array index out of bounds: index %d, length %d\n", index, count);
-    if (getenv("WYN_STRICT")) exit(1);
+    if (!wyn_lenient_mode()) exit(1);
 }
 #define array_get_int(arr, idx) array_get_int_impl(arr, idx, __FILE__, __LINE__)
 static inline long long array_get_int_impl(WynArray arr, int index, const char* file, int line) {
@@ -769,6 +820,7 @@ static int _int_array_cmp(const void* a, const void* b) { long long x = *(const 
 void int_array_sort(WynIntArray* a) { if (a->count > 1) qsort(a->data, a->count, sizeof(long long), _int_array_cmp); }
 
 void array_push(WynArray* arr, long long value) {
+    WYN_ARR_WRITE_ENTER(arr);
     if (arr->count >= arr->capacity) {
         int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
         arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
@@ -777,9 +829,11 @@ void array_push(WynArray* arr, long long value) {
     arr->data[arr->count].type = WYN_TYPE_INT;
     arr->data[arr->count].data.int_val = value;
     arr->count++;
+    WYN_ARR_WRITE_EXIT(arr);
 }
 #define array_push_struct(arr, value, StructType) do { \
     StructType __temp_val = (value); \
+    WYN_ARR_WRITE_ENTER(arr); \
     if ((arr)->count >= (arr)->capacity) { \
         (arr)->capacity = (arr)->capacity == 0 ? 4 : (arr)->capacity * 2; \
         (arr)->data = wyn_realloc((arr)->data, sizeof(WynValue) * (arr)->capacity); \
@@ -788,6 +842,7 @@ void array_push(WynArray* arr, long long value) {
     (arr)->data[(arr)->count].data.struct_val = wyn_malloc(sizeof(StructType)); \
     memcpy((arr)->data[(arr)->count].data.struct_val, &__temp_val, sizeof(StructType)); \
     (arr)->count++; \
+    WYN_ARR_WRITE_EXIT(arr); \
 } while(0)
 int array_pop(WynArray* arr) {
     if (arr->count == 0) return 0;
@@ -1486,8 +1541,14 @@ WynArray string_split(const char* str, const char* delim) {
 }
 const char* wyn_string_charat(const char* str, int index) {
     int len = strlen(str);
+    int orig = index;
     if (index < 0) index += len;   // Python-style negative index: s[-1] == last char
-    if (index < 0 || index >= len) return "";
+    if (index < 0 || index >= len) {
+        // Same fatal-by-default posture as array OOB (Python raises IndexError).
+        fprintf(stderr, "panic: string index out of bounds: index %d, length %d\n", orig, len);
+        if (!wyn_lenient_mode()) exit(1);
+        return "";
+    }
     char* result = wyn_str_alloc(1);
     result[0] = str[index];
     result[1] = '\0';
@@ -2128,11 +2189,24 @@ void print_args_impl(int count, ...) {
 }
 
 void print_int(int x) { printf("%d", x); }
-void print_float(double x) { printf("%g\n", x); }
+// Canonical float formatting: %g, but integral values keep a trailing ".0"
+// (print(1.0) -> "1.0", not "1") so float output is distinguishable from int
+// output (Python semantics). Skips values already carrying '.', an exponent,
+// or nan/inf. Shared by print/println/print_value/arrays/float_to_string.
+static inline int wyn_format_float(char* buf, size_t cap, double x) {
+    int n = snprintf(buf, cap, "%g", x);
+    if (n > 0 && (size_t)n + 2 < cap
+        && !strchr(buf, '.') && !strchr(buf, 'e') && !strchr(buf, 'E')
+        && !strchr(buf, 'n') && !strchr(buf, 'i')) {
+        buf[n] = '.'; buf[n + 1] = '0'; buf[n + 2] = 0; n += 2;
+    }
+    return n;
+}
+void print_float(double x) { char b[40]; wyn_format_float(b, sizeof(b), x); printf("%s\n", b); }
 void print_str(const char* s) { printf("%s", s); fflush(stdout); }
 void print_bool(bool b) { printf("%s", b ? "true" : "false"); }
 void print_int_no_nl(long long x) { printf("%lld", x); }
-void print_float_no_nl(double x) { printf("%g", x); }
+void print_float_no_nl(double x) { char b[40]; wyn_format_float(b, sizeof(b), x); printf("%s", b); }
 void print_str_no_nl(const char* s) { printf("%s", s); }
 void print_bool_no_nl(bool b) { printf("%s", b ? "true" : "false"); }
 // Print one array element by its actual stored type (was always %lld, so string
@@ -2140,7 +2214,7 @@ void print_bool_no_nl(bool b) { printf("%s", b ? "true" : "false"); }
 static void print_array_elem(WynValue v) {
     switch (v.type) {
         case WYN_TYPE_STRING: printf("\"%s\"", v.data.string_val ? v.data.string_val : ""); break;
-        case WYN_TYPE_FLOAT:  printf("%g", v.data.float_val); break;
+        case WYN_TYPE_FLOAT:  { char b[40]; wyn_format_float(b, sizeof(b), v.data.float_val); fputs(b, stdout); } break;
         case WYN_TYPE_BOOL:   printf("%s", v.data.int_val ? "true" : "false"); break;
         case WYN_TYPE_INT:    printf("%lld", v.data.int_val); break;
         default:              printf("%lld", v.data.int_val); break;
@@ -2151,7 +2225,7 @@ void print_array_no_nl(WynArray arr) { printf("["); for(int i = 0; i < arr.count
 void print_value(WynValue v) {
     switch(v.type) {
         case WYN_TYPE_INT: printf("%lld\n", v.data.int_val); break;
-        case WYN_TYPE_FLOAT: printf("%g\n", v.data.float_val); break;
+        case WYN_TYPE_FLOAT: { char b[40]; wyn_format_float(b, sizeof(b), v.data.float_val); printf("%s\n", b); } break;
         case WYN_TYPE_STRING: printf("%s\n", v.data.string_val); break;
         default: printf("<value>\n"); break;
     }
@@ -2174,7 +2248,7 @@ void print_bin(int x) { for(int i = 31; i >= 0; i--) printf("%d", (x >> i) & 1);
 // fire-and-forget spawns otherwise interleave the newline mid-line). Each type
 // gets a dedicated one-call println_* rather than the old two-call macro.
 void println_int(long long x)   { printf("%lld\n", x); }
-void println_float(double x)    { printf("%g\n", x); }
+void println_float(double x)    { char b[40]; wyn_format_float(b, sizeof(b), x); printf("%s\n", b); }
 void println_str(const char* s) { printf("%s\n", s ? s : ""); fflush(stdout); }
 void println_bool(bool b)       { printf("%s\n", b ? "true" : "false"); }
 void println_array(WynArray arr){ char c='['; fwrite(&c,1,1,stdout); for(int i=0;i<arr.count;i++){ if(i>0) fputs(", ",stdout); print_array_elem(arr.data[i]); } fputs("]\n",stdout); }
@@ -2253,7 +2327,7 @@ const char* Fs_read_file(const char* path) {
 char* str_repeat(const char* s, int count) { size_t len = string_length(s); size_t total = len * count; char* r = wyn_str_alloc(total + 1); for(int i = 0; i < count; i++) memcpy(r + i * len, s, len); r[total] = 0; wyn_rc_set_length(r, (unsigned int)total); return r; }
 char* str_reverse(const char* s) { int len = string_length(s); char* r = wyn_str_alloc(len + 1); for(int i = 0; i < len; i++) r[i] = s[len-1-i]; r[len] = 0; wyn_rc_set_length(r, len); return r; }
 char* int_to_string(long long x) { char* r = wyn_str_alloc(32); int n = snprintf(r, 32, "%lld", x); wyn_rc_set_length(r, (unsigned int)n); return r; }
-char* float_to_string(double x) { char* r = wyn_str_alloc(32); snprintf(r, 32, "%g", x); if (!strchr(r, '.') && !strchr(r, 'e') && !strchr(r, 'E') && !strchr(r, 'n') && !strchr(r, 'i')) { size_t l = strlen(r); r[l] = '.'; r[l+1] = '0'; r[l+2] = 0; } wyn_rc_set_length(r, (unsigned int)strlen(r)); return r; }
+char* float_to_string(double x) { char* r = wyn_str_alloc(40); int n = wyn_format_float(r, 40, x); wyn_rc_set_length(r, (unsigned int)n); return r; }
 char* bool_to_string(bool x) { return (char*)(x ? "true" : "false"); }
 int bool_to_int(bool x) { return x ? 1 : 0; }
 bool bool_not(bool x) { return !x; }
@@ -2310,7 +2384,7 @@ char* array_to_string(WynArray arr) {
         WynValue v = arr.data[i];
         switch (v.type) {
             case WYN_TYPE_STRING: snprintf(elem, sizeof(elem), "\"%s\"", v.data.string_val ? v.data.string_val : ""); break;
-            case WYN_TYPE_FLOAT:  snprintf(elem, sizeof(elem), "%g", v.data.float_val); break;
+            case WYN_TYPE_FLOAT:  wyn_format_float(elem, sizeof(elem), v.data.float_val); break;
             case WYN_TYPE_BOOL:   snprintf(elem, sizeof(elem), "%s", v.data.int_val ? "true" : "false"); break;
             default:              snprintf(elem, sizeof(elem), "%lld", v.data.int_val); break;
         }
@@ -2355,12 +2429,26 @@ char* str_center(const char* s, int width) { int len = strlen(s); if(len >= widt
 char** str_lines(const char* s) { char** lines = wyn_malloc(sizeof(char*)); lines[0] = wyn_malloc(strlen(s) + 1); strcpy(lines[0], s); return lines; }
 char** str_words(const char* s) { char** words = wyn_malloc(sizeof(char*)); words[0] = wyn_malloc(strlen(s) + 1); strcpy(words[0], s); return words; }
 void str_free(char* s) { if(s) free(s); }
+// Fatal-by-default parse (Python int() raises ValueError; Go strconv returns
+// an error). Garbage ("abc"), trailing junk ("12x"), empty, and overflow all
+// panic with the offending value - silently returning 0 hid all four.
+// WYN_LENIENT=1 restores the old return-0 behavior.
 long long str_parse_int(const char* s) {
-    if(!s || !*s) return 0;
+    const char* raw = s ? s : "";
     char* end;
     errno = 0;
-    long long val = strtoll(s, &end, 10);
-    if(errno != 0 || end == s) return 0;
+    long long val = strtoll(raw, &end, 10);
+    if (errno == ERANGE) {
+        fprintf(stderr, "panic: to_int overflow: \"%s\" does not fit in a 64-bit int\n", raw);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0;
+    }
+    while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') end++;
+    if (end == raw || *end != '\0') {
+        fprintf(stderr, "panic: to_int parse error: \"%s\" is not a valid integer\n", raw);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0;
+    }
     return val;
 }
 long long str_ascii(const char* s) { return (s && *s) ? (unsigned char)s[0] : 0; }
@@ -2373,7 +2461,21 @@ extern void hashmap_insert_string(WynHashMap* map, const char* key, const char* 
 int str_parse_int_failed(int result) {
     return result == 0;
 }
-double str_parse_float(const char* s) { return atof(s); }
+// Same fatal-by-default posture as str_parse_int (used by .to_float()).
+// strtod handles inf/nan/scientific; garbage and trailing junk panic.
+double str_parse_float(const char* s) {
+    const char* raw = s ? s : "";
+    char* end;
+    errno = 0;
+    double val = strtod(raw, &end);
+    while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') end++;
+    if (end == raw || *end != '\0') {
+        fprintf(stderr, "panic: to_float parse error: \"%s\" is not a valid number\n", raw);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0.0;
+    }
+    return val;
+}
 int abs_val(int x) { return x < 0 ? -x : x; }
 static inline int wyn_min(int a, int b) { return a < b ? a : b; }
 static inline int wyn_max(int a, int b) { return a > b ? a : b; }
@@ -3061,7 +3163,11 @@ WynArray hashmap_keys(WynHashMap* map) {
 WynArray hashmap_get_array(WynHashMap* map, const char* key) {
     extern void* hashmap_get_ptr(WynHashMap* map, const char* key);
     WynArray* p = (WynArray*)hashmap_get_ptr(map, key);
-    if (p) return *p;
+    if (p) {
+        WynArray copy = *p;
+        copy.writing = 0;  // a by-value read never inherits the mutation flag
+        return copy;
+    }
     WynArray empty = {0};
     return empty;
 }
@@ -3073,7 +3179,10 @@ WynArray* hashmap_group_slot(WynHashMap* map, const char* key) {
     WynArray* p = (WynArray*)hashmap_get_ptr(map, key);
     if (!p) {
         p = (WynArray*)wyn_malloc(sizeof(WynArray));
-        p->data = NULL; p->count = 0; p->capacity = 0;
+        // Zero ALL fields including the `writing` mutation flag - malloc
+        // garbage in the flag false-panicked single-threaded group_by on
+        // Linux/glibc (macOS malloc happened to return zeroed pages).
+        *p = (WynArray){0};
         hashmap_insert_ptr(map, key, p);
     }
     return p;
@@ -3436,7 +3545,7 @@ int System_set_env(const char* key, const char* value) {
 }
 
 WynArray System_args() {
-    WynArray arr;
+    WynArray arr = {0};  // zero `writing` flag too
     arr.data = wyn_malloc(__wyn_argc * sizeof(WynValue));
     arr.count = __wyn_argc;
     arr.capacity = __wyn_argc;
@@ -3491,7 +3600,7 @@ bool Args_has(const char* name) {
 // Args.positional() - returns array of non-flag arguments
 WynArray Args_positional() {
     int argc = wyn_get_argc();
-    WynArray arr; arr.data = wyn_malloc(argc * sizeof(WynValue)); arr.count = 0; arr.capacity = argc;
+    WynArray arr = {0}; arr.data = wyn_malloc(argc * sizeof(WynValue)); arr.count = 0; arr.capacity = argc;
     for (int i = 1; i < argc; i++) {
         const char* arg = wyn_get_argv(i);
         if (arg[0] == '-') {
@@ -3516,7 +3625,7 @@ int Env_set(const char* name, const char* value) {
 }
 WynArray Env_all() {
     extern char **environ;
-    WynArray arr;
+    WynArray arr = {0};  // zero `writing` flag too
     int count = 0;
     for (char** env = environ; *env; env++) count++;
     arr.data = wyn_malloc(count * sizeof(WynValue));
@@ -3546,11 +3655,12 @@ long long Math_abs(long long x) { return x < 0 ? -x : x; }
 float Math_max(float a, float b) { return a > b ? a : b; }
 float Math_min(float a, float b) { return a < b ? a : b; }
 
-// Checked arithmetic - returns 0 and prints error on overflow, exits if WYN_STRICT
+// Checked arithmetic - panics (fatal) on overflow by default; WYN_LENIENT=1
+// prints the panic and returns 0 instead (legacy behavior).
 long long Math_checked_add(long long a, long long b) {
     if ((b > 0 && a > LLONG_MAX - b) || (b < 0 && a < LLONG_MIN - b)) {
         fprintf(stderr, "panic: integer overflow in checked_add(%lld, %lld)\n", a, b);
-        if (getenv("WYN_STRICT")) exit(1);
+        if (!wyn_lenient_mode()) exit(1);
         return 0;
     }
     return a + b;
@@ -3558,7 +3668,7 @@ long long Math_checked_add(long long a, long long b) {
 long long Math_checked_sub(long long a, long long b) {
     if ((b < 0 && a > LLONG_MAX + b) || (b > 0 && a < LLONG_MIN + b)) {
         fprintf(stderr, "panic: integer overflow in checked_sub(%lld, %lld)\n", a, b);
-        if (getenv("WYN_STRICT")) exit(1);
+        if (!wyn_lenient_mode()) exit(1);
         return 0;
     }
     return a - b;
@@ -3567,7 +3677,7 @@ long long Math_checked_mul(long long a, long long b) {
     if (a != 0 && b != 0) {
         if ((a > 0) == (b > 0) ? (a > LLONG_MAX / b) : (a < LLONG_MIN / b)) {
             fprintf(stderr, "panic: integer overflow in checked_mul(%lld, %lld)\n", a, b);
-            if (getenv("WYN_STRICT")) exit(1);
+            if (!wyn_lenient_mode()) exit(1);
             return 0;
         }
     }
@@ -3625,9 +3735,7 @@ typedef struct { WynArray arr; } Queue;
 
 Queue* Queue_new() {
     Queue* q = wyn_malloc(sizeof(Queue));
-    q->arr.data = NULL;
-    q->arr.count = 0;
-    q->arr.capacity = 0;
+    q->arr = (WynArray){0};  // zero `writing` flag too
     return q;
 }
 
@@ -3668,9 +3776,7 @@ typedef struct { WynArray arr; } Stack;
 
 Stack* Stack_new() {
     Stack* s = wyn_malloc(sizeof(Stack));
-    s->arr.data = NULL;
-    s->arr.count = 0;
-    s->arr.capacity = 0;
+    s->arr = (WynArray){0};  // zero `writing` flag too
     return s;
 }
 
@@ -3989,8 +4095,8 @@ int str_count(const char* s, const char* substr) { if (!s || !substr || !*substr
 int str_contains_substr(const char* s, const char* substr) { return strstr(s, substr) != NULL; }
 char* str_join(char** arr, int len, const char* sep) { int total = 0; int seplen = strlen(sep); for(int i = 0; i < len; i++) total += strlen(arr[i]); total += (len - 1) * seplen + 1; char* r = wyn_str_alloc(total); char* p = r; for(int i = 0; i < len; i++) { if(i > 0) { memcpy(p, sep, seplen); p += seplen; } int slen = strlen(arr[i]); memcpy(p, arr[i], slen); p += slen; } *p = 0; return r; }
 char* int_to_str(int n) { char* r = wyn_str_alloc(12); snprintf(r, 12, "%d", n); return r; }
-long long str_to_int(const char* s) { return atoll(s); }
-double str_to_float(const char* s) { return atof(s); }
+long long str_to_int(const char* s) { return str_parse_int(s); }  // int("...") - same checked parse as .to_int()
+double str_to_float(const char* s) { return str_parse_float(s); }  // float("...") - same checked parse as .to_float()
 void swap(int* a, int* b) { int t = *a; *a = *b; *b = t; }
 double clamp_float(double x, double min_val, double max_val) { return x < min_val ? min_val : (x > max_val ? max_val : x); }
 double lerp(double a, double b, double t) { return a + t * (b - a); }
@@ -4518,11 +4624,21 @@ typedef struct {
     int cap;
 } WynStringBuilder;
 
-#define MAX_STRING_BUILDERS 32
-static WynStringBuilder sb_pool[MAX_STRING_BUILDERS] = {0};
+// Growable pool (WYN_ENSURE_CAP pattern from the growable-registries work):
+// the old fixed cap of 32 made the 33rd live builder silently return -1 and
+// every method on it silently no-op, dropping data. Slot 0 is reserved so 0
+// stays an invalid handle. Freed slots are reused before the pool grows.
+static WynStringBuilder* sb_pool = NULL;
+static int sb_pool_count = 0;   // high-water slot count (including slot 0)
+static int sb_pool_cap = 0;
+
+static inline int sb_handle_ok(long long handle) {
+    return handle > 0 && handle < sb_pool_count && sb_pool[(int)handle].data;
+}
 
 long long StringBuilder_new() {
-    for (int i = 1; i < MAX_STRING_BUILDERS; i++) {
+    // Reuse a freed slot first.
+    for (int i = 1; i < sb_pool_count; i++) {
         if (!sb_pool[i].data) {
             sb_pool[i].cap = 256;
             sb_pool[i].data = wyn_malloc(256);
@@ -4531,11 +4647,28 @@ long long StringBuilder_new() {
             return i;
         }
     }
-    return -1;
+    if (sb_pool_count >= sb_pool_cap) {
+        int new_cap = sb_pool_cap > 0 ? sb_pool_cap * 2 : 64;
+        WynStringBuilder* np = realloc(sb_pool, (size_t)new_cap * sizeof(WynStringBuilder));
+        if (!np) {
+            fprintf(stderr, "panic: out of memory growing StringBuilder pool\n");
+            exit(1);
+        }
+        memset(np + sb_pool_cap, 0, (size_t)(new_cap - sb_pool_cap) * sizeof(WynStringBuilder));
+        sb_pool = np;
+        sb_pool_cap = new_cap;
+    }
+    if (sb_pool_count == 0) sb_pool_count = 1;  // reserve slot 0 as invalid
+    int i = sb_pool_count++;
+    sb_pool[i].cap = 256;
+    sb_pool[i].data = wyn_malloc(256);
+    sb_pool[i].data[0] = 0;
+    sb_pool[i].len = 0;
+    return i;
 }
 
 void StringBuilder_append(long long handle, const char* s) {
-    if (handle <= 0 || handle >= MAX_STRING_BUILDERS || !sb_pool[handle].data) return;
+    if (!sb_handle_ok(handle)) return;
     WynStringBuilder* sb = &sb_pool[handle];
     int slen = strlen(s);
     while (sb->len + slen + 1 > sb->cap) {
@@ -4548,23 +4681,23 @@ void StringBuilder_append(long long handle, const char* s) {
 }
 
 char* StringBuilder_to_string(long long handle) {
-    if (handle <= 0 || handle >= MAX_STRING_BUILDERS || !sb_pool[handle].data) return "";
+    if (!sb_handle_ok(handle)) return "";
     return sb_pool[handle].data;
 }
 
 long long StringBuilder_len(long long handle) {
-    if (handle <= 0 || handle >= MAX_STRING_BUILDERS) return 0;
+    if (!sb_handle_ok(handle)) return 0;
     return sb_pool[handle].len;
 }
 
 void StringBuilder_clear(long long handle) {
-    if (handle <= 0 || handle >= MAX_STRING_BUILDERS || !sb_pool[handle].data) return;
+    if (!sb_handle_ok(handle)) return;
     sb_pool[handle].len = 0;
     sb_pool[handle].data[0] = 0;
 }
 
 void StringBuilder_free(long long handle) {
-    if (handle <= 0 || handle >= MAX_STRING_BUILDERS || !sb_pool[handle].data) return;
+    if (!sb_handle_ok(handle)) return;
     free(sb_pool[handle].data);
     sb_pool[handle].data = NULL;
     sb_pool[handle].len = 0;

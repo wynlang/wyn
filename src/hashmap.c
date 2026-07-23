@@ -12,9 +12,30 @@ typedef struct Entry {
     struct Entry* next;
 } Entry;
 
+// Overwritten/removed string values are NOT freed immediately: a read
+// (v = m[k]) hands out the interior pointer without a refcount, so an eager
+// free is a use-after-free at the read site. Instead the old pointer is
+// "buried" on this per-map list and freed with the map. Bounded by the number
+// of overwrites on one map, and reclaimed at map free - same lifetime
+// discipline the array element-overwrite path uses.
+typedef struct Grave {
+    char* ptr;
+    struct Grave* next;
+} Grave;
+
 struct WynHashMap {
     Entry* buckets[HASHMAP_SIZE];
+    Grave* graveyard;
 };
+
+static void hashmap_bury_string(WynHashMap* map, char* old) {
+    if (!old) return;
+    Grave* g = malloc(sizeof(Grave));
+    if (!g) return;  // OOM: leak the value rather than crash or UAF
+    g->ptr = old;
+    g->next = map->graveyard;
+    map->graveyard = g;
+}
 
 static unsigned int hash(const char* key) {
     unsigned int h = 2166136261u;  // FNV-1a
@@ -84,8 +105,15 @@ void hashmap_insert_string(WynHashMap* map, const char* key, const char* value) 
     
     while (entry) {
         if (strcmp(entry->key, key) == 0) {
+            // Do NOT free the old value here. A prior read (v = m[k]) returns
+            // the interior pointer without a retain, so freeing on overwrite
+            // is a use-after-free at the read site (ASan-confirmed, HN
+            // crucible P0-4). The array element-overwrite path already leaves
+            // the old string alive for exactly this reason - mirror it. The
+            // stale value is reclaimed when the map itself is freed at scope
+            // end (kept on a per-map graveyard list below).
             if (entry->value.type == HASHMAP_STRING) {
-                free(entry->value.value.as_string);
+                hashmap_bury_string(map, entry->value.value.as_string);
             }
             entry->value.type = HASHMAP_STRING;
             entry->value.value.as_string = strdup(value);
@@ -245,7 +273,8 @@ void hashmap_remove(WynHashMap* map, const char* key) {
             }
             free(entry->key);
             if (entry->value.type == HASHMAP_STRING) {
-                free(entry->value.value.as_string);
+                // Bury, don't free: a live read of this value may have escaped.
+                hashmap_bury_string(map, entry->value.value.as_string);
             }
             free(entry);
             return;
@@ -283,6 +312,14 @@ void hashmap_free(WynHashMap* map) {
             free(entry);
             entry = next;
         }
+    }
+    // Drain buried (overwritten/removed) string values.
+    Grave* g = map->graveyard;
+    while (g) {
+        Grave* next = g->next;
+        free(g->ptr);
+        free(g);
+        g = next;
     }
     free(map);
 }
@@ -334,7 +371,8 @@ void hashmap_clear(WynHashMap* map) {
         while (entry) {
             Entry* next = entry->next;
             free(entry->key);
-            if (entry->value.type == HASHMAP_STRING) free(entry->value.value.as_string);
+            // Bury, don't free: reads of these values may have escaped.
+            if (entry->value.type == HASHMAP_STRING) hashmap_bury_string(map, entry->value.value.as_string);
             free(entry);
             entry = next;
         }

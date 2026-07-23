@@ -1,0 +1,29 @@
+// Floats print with a decimal point even when integral (HN crucible P1-2):
+// print(1.0) printed "1", indistinguishable from int output (Python prints
+// 1.0; that is the advertised mental model). Covers print, println,
+// interpolation, to_string, str(), and array element rendering. Scientific
+// and fractional forms are unchanged.
+// EXPECT: 1.0
+// EXPECT: 2.0
+// EXPECT: 0.333333
+// EXPECT: x = 4.0
+// EXPECT: 4.0
+// EXPECT: 4.0
+// EXPECT: [1.0, 2.5]
+// EXPECT: 1e+10
+// EXPECT: -3.0
+
+fn main() {
+    print(1.0)
+    println(2.0)
+    print(1.0 / 3.0)
+    x = 4.0
+    print("x = ${x}")
+    print(x.to_string())
+    print(str(x))
+    xs = [1.0, 2.5]
+    print(xs)
+    big = 10000000000.0
+    print(big)
+    print(-3.0)
+}

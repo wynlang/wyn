@@ -163,7 +163,8 @@ long _now(void) {
 }
 
 // Additional stubs for file explorer example
-struct WynArray { void* data; int count; int capacity; };
+// Layout mirror of wyn_runtime.h WynArray (incl. the `writing` mutation flag) - keep in sync.
+struct WynArray { void* data; int count; int capacity; int writing; };
 
 struct WynArray _list_dir(const char* path) {
     (void)path;
