@@ -48,4 +48,32 @@ printf '\xef\xbb\xbffn main() {\n    println("bom-ok")\n}\n' > "$TMP/g.wyn"
 out=$(perl -e 'alarm(15); exec @ARGV' -- "$WYN" run "$TMP/g.wyn" 2>&1); rc=$?
 if [ $rc -eq 0 ] && echo "$out" | grep -q "bom-ok"; then ok "UTF-8 BOM skipped, program runs"; else bad "BOM: rc=$rc [$out]"; fi
 
+# 8. Leading binary operator (no left operand) - used to SEGFAULT `wyn check`
+#    itself: primary() returned NULL and multiplication() dereferenced it. Now a
+#    clean "Expected an expression" error. (2026-07 crash-safety batch)
+printf 'fn main() {\n    x = * 5\n    println("hi")\n}\n' > "$TMP/h.wyn"
+expect_clean_error "leading * no longer segfaults check" "$TMP/h.wyn"
+printf 'fn main() {\n    x = / 5\n    println("hi")\n}\n' > "$TMP/i.wyn"
+expect_clean_error "leading / no longer segfaults check" "$TMP/i.wyn"
+
+# 9. Doubled binary operator - passed check then SEGFAULTED `wyn build` (NULL
+#    right operand). Now rejected cleanly at check.
+printf 'fn main() {\n    x = 2 ** 3\n    println("${x}")\n}\n' > "$TMP/j.wyn"
+expect_clean_error "2 ** 3 no longer segfaults build" "$TMP/j.wyn"
+printf 'fn main() {\n    x = 1 << << 2\n    println("${x}")\n}\n' > "$TMP/k.wyn"
+expect_clean_error "1 << << 2 no longer segfaults build" "$TMP/k.wyn"
+
+# 10. Empty string interpolation ${} - passed check AND build, then SEGFAULTED at
+#     RUNTIME (null/empty interp expr). Now rejected cleanly at check.
+printf 'fn main() {\n    println("x${}y")\n}\n' > "$TMP/l.wyn"
+expect_clean_error "empty \${} no longer segfaults at runtime" "$TMP/l.wyn"
+printf 'fn main() {\n    println("x${ }y")\n}\n' > "$TMP/m.wyn"
+expect_clean_error "whitespace \${ } no longer segfaults at runtime" "$TMP/m.wyn"
+
+# 11. Bare `return` (no value) inside a function stays valid - guard against the
+#     crash-safety fix over-rejecting the value-less return form.
+printf 'fn main() {\n    var x = 5\n    if x > 3 {\n        return\n    }\n    println("small")\n}\n' > "$TMP/n.wyn"
+out=$(perl -e 'alarm(10); exec @ARGV' -- "$WYN" check "$TMP/n.wyn" 2>&1); rc=$?
+if [ $rc -eq 0 ]; then ok "bare return still accepted"; else bad "bare return rejected: rc=$rc [$out]"; fi
+
 echo ""; echo "parser-stability: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]

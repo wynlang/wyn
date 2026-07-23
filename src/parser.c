@@ -427,8 +427,17 @@ static Expr* primary() {
                                                 parser.current.type != TOKEN_EOF);
                         bool leftover_is_spec = interp_leftover &&
                                                 (parser.current.type == TOKEN_COLON);
+                        // An empty interpolation (`${}` / `${ }`) parses to the
+                        // placeholder emitted by primary()'s fall-through and
+                        // sets had_error. restore_parser_state() below reverts
+                        // the whole parser struct - including had_error - so
+                        // capture the sub-parse's error flag and re-raise it
+                        // after the restore. Without this, empty ${} slipped
+                        // through `check` and segfaulted at runtime.
+                        bool interp_sub_error = parser.had_error;
                         restore_parser_state();
                         restore_lexer_state();
+                        if (interp_sub_error) parser.had_error = true;
                         if (interp_leftover) {
                             fprintf(stderr, "Error at line %d: Unsupported syntax in string interpolation: '${%.*s}'\n",
                                     str_token.line, expr_len, expr_str);
@@ -1249,8 +1258,41 @@ static Expr* primary() {
             return first_expr;
         }
     }
-    
-    return NULL;
+
+    // No primary production matched. A binary-only operator with no left operand
+    // (`x = * 5`, `2 ** 3`, `1 << << 2`) lands here: the operator token has no
+    // expression to its left/right. Returning NULL let callers like
+    // multiplication()/addition() build a binary node with a NULL child, which
+    // segfaulted the checker/codegen (`wyn check` and `wyn build` crashed on
+    // trivial malformed input). Report a clean parse error and return a benign
+    // placeholder instead - `parser.had_error` aborts before codegen, so the
+    // placeholder's value never reaches output.
+    // A lexer-level error (e.g. unterminated string) already had its own
+    // diagnostic printed in advance(), which then rewrites the token to EOF -
+    // so a bare TOKEN_ERROR never reaches here, but the converted EOF does.
+    // Either way, don't stack a second "Expected an expression" on top of an
+    // already-reported error; just record it and recover with the placeholder.
+    if (!check(TOKEN_ERROR) && !(check(TOKEN_EOF) && parser.had_error)) {
+        if (current_source_file) {
+            show_error_context(current_source_file, parser.current.line, 1,
+                               "Expected an expression", NULL);
+        } else {
+            fprintf(stderr, "Error at line %d: expected an expression before '%.*s'\n",
+                    parser.current.line, parser.current.length,
+                    parser.current.start ? parser.current.start : "");
+        }
+    }
+    parser.had_error = true;
+    // Force progress if we're not at a natural stopping point, so we don't spin
+    // on the same offending token (e.g. a leading binary operator).
+    if (!check(TOKEN_EOF) && !check(TOKEN_RBRACE) && !check(TOKEN_SEMI) &&
+        !check(TOKEN_RPAREN) && !check(TOKEN_RBRACKET)) {
+        advance();
+    }
+    Expr* placeholder = alloc_expr();
+    placeholder->type = EXPR_INT;
+    placeholder->token = parser.previous;
+    return placeholder;
 }
 
 static Expr* call() {
@@ -2016,15 +2058,28 @@ Stmt* statement() {
     if (match(TOKEN_RETURN)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_RETURN;
-        stmt->ret.value = expression();
+        // A bare `return` (no value) is valid: `return` followed by `}`, `;`,
+        // or EOF. Previously expression()->primary() returned NULL here and
+        // codegen read NULL as "bare return". Now that primary() reports an
+        // error on a missing expression, we must detect the value-less form up
+        // front rather than calling expression() on a non-expression token.
+        if (check(TOKEN_RBRACE) || check(TOKEN_SEMI) || check(TOKEN_EOF)) {
+            stmt->ret.value = NULL;
+        } else {
+            stmt->ret.value = expression();
+        }
         match(TOKEN_SEMI);
         return stmt;
     }
-    
+
     if (match(TOKEN_YIELD)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_YIELD;
-        stmt->yield_stmt.value = expression();
+        if (check(TOKEN_RBRACE) || check(TOKEN_SEMI) || check(TOKEN_EOF)) {
+            stmt->yield_stmt.value = NULL;
+        } else {
+            stmt->yield_stmt.value = expression();
+        }
         match(TOKEN_SEMI);
         return stmt;
     }
