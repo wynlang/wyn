@@ -571,6 +571,47 @@ static EnumStmt* find_enum_definition(Token enum_name) {
     return NULL;
 }
 
+// Resolve an array-element type annotation Expr* to a Type*. Handles builtin
+// names, user struct/enum names, AND nested array annotations (`[[float]]`),
+// which the inline STMT_VAR resolver did not: it only looked at EXPR_IDENT, so
+// the inner element_type of a [[float]] was left NULL and every fg[i][j] read
+// truncated through array_get_nested_int (G4). Returns NULL when the annotation
+// names nothing recognizable (caller leaves element_type unset, as before).
+static Type* resolve_array_elem_annotation(Expr* elem_type_expr) {
+    if (!elem_type_expr) return NULL;
+    if (elem_type_expr->type == EXPR_ARRAY) {
+        // Nested array: `[[T]]`. Build an inner TYPE_ARRAY and recurse for its
+        // element type so the leaf (int/float/bool/...) is preserved.
+        Type* inner = make_type(TYPE_ARRAY);
+        if (elem_type_expr->array.count > 0) {
+            inner->array_type.element_type =
+                resolve_array_elem_annotation(elem_type_expr->array.elements[0]);
+        }
+        return inner;
+    }
+    if (elem_type_expr->type != EXPR_IDENT) return NULL;
+    Token n = elem_type_expr->token;
+    StructStmt* struct_def = find_struct_definition(n);
+    if (struct_def) {
+        Type* t = make_type(TYPE_STRUCT);
+        t->struct_type.name = n;
+        return t;
+    }
+    EnumStmt* enum_def = find_enum_definition(n);
+    if (enum_def) {
+        Type* t = make_type(TYPE_ENUM);
+        t->name = n;
+        t->enum_type.variants = enum_def->variants;
+        t->enum_type.variant_count = enum_def->variant_count;
+        return t;
+    }
+    if (n.length == 3 && memcmp(n.start, "int", 3) == 0) return builtin_int;
+    if (n.length == 6 && memcmp(n.start, "string", 6) == 0) return builtin_string;
+    if (n.length == 5 && memcmp(n.start, "float", 5) == 0) return builtin_float;
+    if (n.length == 4 && memcmp(n.start, "bool", 4) == 0) return builtin_bool;
+    return NULL;
+}
+
 // Helper function to get field type from struct definition
 static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
     if (!struct_def) return NULL;
@@ -4041,6 +4082,39 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
             }
 
+            // S2 context-propagation for .reduce(): the lambda takes TWO params
+            // (accumulator and element) and returns the same type. On a [float],
+            // the checker defaulted both to int → codegen emitted long long params/
+            // return → ABI mismatch with wyn_array_reduce_float's `double(*)(double,
+            // double)`. Also set the whole method-call's expr_type so STMT_VAR picks
+            // `double` for the result variable (G2). Also applies to sum/min/max/
+            // average which are reduce variants.
+            if (object_type && object_type->kind == TYPE_ARRAY &&
+                object_type->array_type.element_type &&
+                object_type->array_type.element_type->kind == TYPE_FLOAT &&
+                (method.length == 6 && memcmp(method.start, "reduce", 6) == 0)) {
+                Type* elem_t = object_type->array_type.element_type;
+                // Find the lambda argument (may be swapped by forgiveness)
+                for (int ai = 0; ai < expr->method_call.arg_count; ai++) {
+                    Expr* lam = expr->method_call.args[ai];
+                    if (lam->type != EXPR_LAMBDA) continue;
+                    if (lam->expr_type && lam->expr_type->kind == TYPE_FUNCTION) {
+                        for (int pi = 0; pi < lam->expr_type->fn_type.param_count; pi++) {
+                            if (lam->expr_type->fn_type.param_types[pi] &&
+                                lam->expr_type->fn_type.param_types[pi]->kind == TYPE_INT) {
+                                lam->expr_type->fn_type.param_types[pi] = elem_t;
+                            }
+                        }
+                        if (lam->expr_type->fn_type.return_type &&
+                            lam->expr_type->fn_type.return_type->kind == TYPE_INT) {
+                            lam->expr_type->fn_type.return_type = elem_t;
+                        }
+                    }
+                }
+                // The method call itself returns the element type.
+                expr->expr_type = elem_t;
+            }
+
             // Check for namespace method calls: File.read() -> File_read
             // Only for known namespaces, not regular variables
             if (expr->method_call.object->type == EXPR_IDENT) {
@@ -5615,39 +5689,12 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     // Handle typed array annotation like [ASTNode], [Token], etc.
                     Type* array_type = make_type(TYPE_ARRAY);
                     if (stmt->var.type->array.count > 0) {
-                        // Get element type from array type annotation
-                        Expr* elem_type_expr = stmt->var.type->array.elements[0];
-                        if (elem_type_expr->type == EXPR_IDENT) {
-                            Token elem_type_name = elem_type_expr->token;
-                            // Look up the struct type
-                            StructStmt* struct_def = find_struct_definition(elem_type_name);
-                            if (struct_def) {
-                                Type* elem_type = make_type(TYPE_STRUCT);
-                                elem_type->struct_type.name = elem_type_name;
-                                array_type->array_type.element_type = elem_type;
-                            } else {
-                                // Try enum types
-                                EnumStmt* enum_def = find_enum_definition(elem_type_name);
-                                if (enum_def) {
-                                    Type* elem_type = make_type(TYPE_ENUM);
-                                    elem_type->name = elem_type_name;
-                                    elem_type->enum_type.variants = enum_def->variants;
-                                    elem_type->enum_type.variant_count = enum_def->variant_count;
-                                    array_type->array_type.element_type = elem_type;
-                                } else {
-                                    // Try built-in types
-                                    if (elem_type_name.length == 3 && memcmp(elem_type_name.start, "int", 3) == 0) {
-                                        array_type->array_type.element_type = builtin_int;
-                                    } else if (elem_type_name.length == 6 && memcmp(elem_type_name.start, "string", 6) == 0) {
-                                        array_type->array_type.element_type = builtin_string;
-                                    } else if (elem_type_name.length == 5 && memcmp(elem_type_name.start, "float", 5) == 0) {
-                                        array_type->array_type.element_type = builtin_float;
-                                    } else if (elem_type_name.length == 4 && memcmp(elem_type_name.start, "bool", 4) == 0) {
-                                        array_type->array_type.element_type = builtin_bool;
-                                    }
-                                }
-                            }
-                        }
+                        // Get element type from array type annotation. Handles
+                        // builtins, structs/enums, AND nested arrays ([[float]])
+                        // via the recursive resolver, so the leaf element type is
+                        // preserved for typed accessors.
+                        array_type->array_type.element_type =
+                            resolve_array_elem_annotation(stmt->var.type->array.elements[0]);
                     }
                     init_type = array_type;
                 } else if (stmt->var.type->type == EXPR_CALL && 
