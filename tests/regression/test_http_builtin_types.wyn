@@ -1,0 +1,30 @@
+// Regression: bare http_get/http_post builtins typed int in return
+// position (the blanket stdlib registration), while Http.get/Http.post
+// typed string. The runtime fns return char*. Also, http_status/
+// http_error/http_clear_headers had no bare C symbol (only wyn_-prefixed)
+// and died at the C stage. No network needed: the calls sit behind a
+// never-true guard; this test locks in checker typing + C linkage.
+
+fn fetch(url: string) -> string {
+    return http_get(url)
+}
+
+fn post(url: string, body: string) -> string {
+    return http_post(url, body)
+}
+
+fn main() {
+    var flag = 1
+    if flag == 2 {
+        var a: string = fetch("http://unreachable.invalid")
+        var b: string = post("http://unreachable.invalid", "{}")
+        var st: int = http_status()
+        var err: string = http_error()
+        http_clear_headers()
+        println(a + b + err)
+        println(st)
+    }
+    println("http builtins typed ok")
+}
+
+// EXPECT: http builtins typed ok

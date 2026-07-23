@@ -985,11 +985,44 @@ void init_checker() {
     };
     
     for (int i = 0; i < (int)(sizeof(stdlib_funcs)/sizeof(stdlib_funcs[0])); i++) {
-        // await_all gets a real function type below (returns [int], not int) -
-        // find_symbol returns the FIRST match, so it must not be added here.
+        // await_all and the string-returning http builtins get real function
+        // types below - find_symbol returns the FIRST match, so they must not
+        // be added here.
         if (strcmp(stdlib_funcs[i], "await_all") == 0) continue;
+        if (strncmp(stdlib_funcs[i], "http_", 5) == 0 ||
+            strncmp(stdlib_funcs[i], "https_", 6) == 0) continue;
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
+    }
+
+    // Bare http builtins with real types. The runtime returns char* from
+    // http_get/http_post/http_put/http_delete/https_get/https_post and
+    // http_error; the blanket int registration above made them type int in
+    // return position while Http.get/Http.post correctly typed string.
+    {
+        struct { const char* name; int pc; Type* ret; } http_fns[] = {
+            {"http_get", 1, builtin_string},
+            {"http_post", 2, builtin_string},
+            {"http_put", 2, builtin_string},
+            {"http_delete", 1, builtin_string},
+            {"https_get", 1, builtin_string},
+            {"https_post", 2, builtin_string},
+            {"http_set_header", 2, builtin_void},
+            {"http_clear_headers", 0, builtin_void},
+            {"http_status", 0, builtin_int},
+            {"http_error", 0, builtin_string},
+        };
+        for (int i = 0; i < (int)(sizeof(http_fns)/sizeof(http_fns[0])); i++) {
+            Type* ft = make_type(TYPE_FUNCTION);
+            ft->fn_type.param_count = http_fns[i].pc;
+            ft->fn_type.param_types = http_fns[i].pc
+                ? malloc(sizeof(Type*) * http_fns[i].pc) : NULL;
+            for (int p = 0; p < http_fns[i].pc; p++)
+                ft->fn_type.param_types[p] = builtin_string;
+            ft->fn_type.return_type = http_fns[i].ret;
+            Token tok = {TOKEN_IDENT, http_fns[i].name, (int)strlen(http_fns[i].name), 0};
+            add_symbol(global_scope, tok, ft, false);
+        }
     }
     
     // await_all returns the array of awaited results, not int - the blanket
@@ -3090,6 +3123,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return builtin_int;
             }
             
+            // Bit shifts: int-only (C semantics; no float/string shifting)
+            if (expr->binary.op.type == TOKEN_LSHIFT || expr->binary.op.type == TOKEN_RSHIFT) {
+                if (left->kind != TYPE_INT || right->kind != TYPE_INT) {
+                    fprintf(stderr, "Error at line %d: '%.*s' requires int operands\n",
+                            expr->binary.op.line, expr->binary.op.length, expr->binary.op.start);
+                    had_error = true;
+                    return NULL;
+                }
+                expr->expr_type = builtin_int;
+                return builtin_int;
+            }
+
             // String repeat: "ha" * 3 → string
             if (expr->binary.op.type == TOKEN_STAR && left->kind == TYPE_STRING && right->kind == TYPE_INT) {
                 expr->expr_type = builtin_string;
@@ -4415,6 +4460,50 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                 }
 
+                // Struct-BODY methods (`struct S { fn m(self) -> T {...} }`) are
+                // not in the symbol table, so resolve their declared return type
+                // straight from the struct definition. Without this, a method
+                // call on any non-variable receiver (struct literal `B{v:0}
+                // .add(5)`, nested call result, ...) fell through and typed as
+                // int, breaking the documented builder idiom - variable-rooted
+                // chains only worked via codegen-side registries.
+                {
+                    StructStmt* sdef = find_struct_definition(type_name);
+                    if (sdef) {
+                        for (int mi = 0; mi < sdef->method_count; mi++) {
+                            FnStmt* m = sdef->methods[mi];
+                            if (m->name.length != method.length ||
+                                memcmp(m->name.start, method.start, method.length) != 0)
+                                continue;
+                            Expr* rt = m->return_type;
+                            if (rt && rt->type == EXPR_IDENT) {
+                                Token tn = rt->token;
+                                if (tn.length == 3 && memcmp(tn.start, "int", 3) == 0) {
+                                    expr->expr_type = builtin_int; return builtin_int;
+                                }
+                                if (tn.length == 6 && memcmp(tn.start, "string", 6) == 0) {
+                                    expr->expr_type = builtin_string; return builtin_string;
+                                }
+                                if (tn.length == 5 && memcmp(tn.start, "float", 5) == 0) {
+                                    expr->expr_type = builtin_float; return builtin_float;
+                                }
+                                if (tn.length == 4 && memcmp(tn.start, "bool", 4) == 0) {
+                                    expr->expr_type = builtin_bool; return builtin_bool;
+                                }
+                                Symbol* ts = find_symbol(global_scope, tn);
+                                if (ts && ts->type &&
+                                    (ts->type->kind == TYPE_STRUCT || ts->type->kind == TYPE_ENUM)) {
+                                    expr->expr_type = ts->type; return ts->type;
+                                }
+                            }
+                            // Declared method with no/unresolvable return type:
+                            // keep the historical int fallback.
+                            expr->expr_type = builtin_int;
+                            return builtin_int;
+                        }
+                    }
+                }
+
                 // The method didn't resolve to any known method on this struct.
                 // If the receiver is a USER-DEFINED struct (has a real definition
                 // in this program), that's an error the checker should catch -
@@ -5661,6 +5750,7 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 stmt->var.is_const = false;    // bare bindings are mutable
                 stmt->var.is_mutable = true;
                 stmt->var.uses_pattern = false;
+                stmt->var.from_bare_assign = true; // codegen hoists nested ones
                 check_stmt(stmt, scope);       // re-check as a var declaration
                 break;
             }

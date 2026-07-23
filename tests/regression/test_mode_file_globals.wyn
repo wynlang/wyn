@@ -1,0 +1,16 @@
+// Regression: test-mode codegen used to re-emit file-level globals inside
+// the synthesized runner, producing C "redefinition" errors for any test
+// file with a top-level const/var. Consts were also skipped entirely
+// (undeclared identifier). https://github.com/wynlang/wyn P1 batch.
+const K = 5
+var NAME = "wyn"
+var COMPUTED = 2 + 3
+
+test "file-level globals visible in tests" {
+    assert_eq(K, 5)
+    assert_eq(COMPUTED, 5)
+    assert_eq(NAME, "wyn")
+    println("globals ok")
+}
+
+// EXPECT: globals ok

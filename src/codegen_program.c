@@ -1288,14 +1288,40 @@ void codegen_program(Program* prog) {
     if (!has_main) current_fn_c_nonvoid = true;
 
     if (!has_main && test_count > 0) {
-        // Emit global variables before test runner
+        // File-level consts: script mode emits these inside wyn_main, but the
+        // test runner synthesizes its own main, so emit them at file scope here.
         for (int i = 0; i < prog->count; i++) {
-            if (prog->stmts[i]->type == STMT_VAR) {
+            if (prog->stmts[i]->type == STMT_CONST) {
                 codegen_stmt(prog->stmts[i]);
             }
         }
-        // Generate test runner main
+        // Generate test runner main. File-level globals were already declared
+        // at file scope above (simple literals initialized there, the rest
+        // deferred) - re-emitting them here used to produce C "redefinition"
+        // errors for any test file with a top-level var/const.
         emit("long long wyn_main() {\n");
+        // Initialize deferred (non-literal) globals before running tests,
+        // mirroring the script-mode branch below.
+        for (int i = 0; i < prog->count; i++) {
+            if (prog->stmts[i]->type != STMT_VAR) continue;
+            Stmt* var_stmt = prog->stmts[i];
+            if (!var_stmt->var.init) continue;
+            bool is_simple = var_stmt->var.init->type == EXPR_STRING ||
+                             var_stmt->var.init->type == EXPR_FLOAT ||
+                             var_stmt->var.init->type == EXPR_BOOL ||
+                             var_stmt->var.init->type == EXPR_INT ||
+                             var_stmt->var.init->type == EXPR_STRUCT_INIT;
+            if (is_simple) continue;
+            char _tvn[512]; token_to_cstr(_tvn, sizeof(_tvn), var_stmt->var.name);
+            { extern int is_c_name_collision(const char*);
+              if (is_c_name_collision(_tvn)) {
+                  memmove(_tvn + WYN_UFN_PFX_LEN, _tvn, strlen(_tvn) + 1);
+                  memcpy(_tvn, WYN_UFN_PFX, WYN_UFN_PFX_LEN);
+              } }
+            emit("    %s = ", _tvn);
+            codegen_expr(var_stmt->var.init);
+            emit(";\n");
+        }
         emit("    int __test_pass = 0, __test_fail = 0;\n");
         
         // Find before_each/after_each (parsed as test blocks with special names)

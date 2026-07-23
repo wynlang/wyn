@@ -1,0 +1,35 @@
+// Regression: `<<` and `>>` used to misparse as chained comparisons
+// ("chained comparison is not supported"), making bit shifts unusable.
+// Shifts are int-only and sit between + and comparisons (C conventions):
+// `1 << 4 + 1` is `1 << 5`; `1 << 3 > 4` is `(1 << 3) > 4`.
+// Nested generic closers (`HashMap<string, HashMap<string, int>>`) must
+// still parse: `>>` is joined from two adjacent GTs only in expression
+// position.
+
+fn shl(x: int, n: int) -> int {
+    return x << n
+}
+
+fn main() {
+    println(1 << 4)          // 16
+    println(256 >> 2)        // 64
+    println(1 << 4 + 1)      // 32 (+ binds tighter)
+    println(1024 >> 2 >> 3)  // 32 (left associative)
+    var t = 1 << 3 > 4       // (1 << 3) > 4
+    println(t)               // true
+    println(shl(3, 4))       // 48
+    var x = 7
+    println(x << 1)          // 14 (variables, not just literals)
+    println(x >> 1)          // 3
+    var m: HashMap<string, HashMap<string, int>> = { }
+    m = m
+}
+
+// EXPECT: 16
+// EXPECT: 64
+// EXPECT: 32
+// EXPECT: 32
+// EXPECT: true
+// EXPECT: 48
+// EXPECT: 14
+// EXPECT: 3

@@ -1,0 +1,38 @@
+// Regression: a method call on a struct-LITERAL receiver typed as int in
+// the checker (struct-body methods are not in the symbol table), so the
+// documented builder idiom `B{v: 0}.add(5)` failed C compilation with
+// "Unknown method ... for type 'int'". Variable-rooted chains only worked
+// via codegen-side registries.
+
+struct B {
+    v: int
+
+    fn add(self, n: int) -> B {
+        return B{v: self.v + n}
+    }
+
+    fn label(self) -> string {
+        return "v=" + self.v.to_string()
+    }
+
+    fn value(self) -> int {
+        return self.v
+    }
+}
+
+fn main() {
+    // literal receiver, struct-returning method, chained
+    println(B{v: 0}.add(5).value())
+    // literal receiver assigned to a var, then used
+    var r = B{v: 1}.add(2)
+    println(r.value())
+    // literal receiver, string-returning method
+    println(B{v: 9}.label())
+    // literal receiver, int-returning method direct
+    println(B{v: 4}.value())
+}
+
+// EXPECT: 5
+// EXPECT: 3
+// EXPECT: v=9
+// EXPECT: 4

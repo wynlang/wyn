@@ -442,7 +442,15 @@ Token next_token() {
             if (match('=')) return make_token(TOKEN_EQEQ);
             if (match('>')) return make_token(TOKEN_FATARROW);
             return make_token(TOKEN_EQ);
-        case '<': return match('=') ? make_token(TOKEN_LTEQ) : make_token(TOKEN_LT);
+        case '<':
+            if (match('=')) return make_token(TOKEN_LTEQ);
+            // `<<` never appears in type syntax (generic opens are `<Ident`),
+            // so lexing it as one token is safe. `>>` is NOT lexed as one
+            // token: nested generic closers like `HashMap<string, int>>` need
+            // two separate GT tokens; the parser joins adjacent GTs into a
+            // right-shift in expression position instead.
+            if (match('<')) return make_token(TOKEN_LSHIFT);
+            return make_token(TOKEN_LT);
         case '>': return match('=') ? make_token(TOKEN_GTEQ) : make_token(TOKEN_GT);
         case '?': 
             if (match('.')) return make_token(TOKEN_QUESTION_DOT);

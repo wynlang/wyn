@@ -1,0 +1,48 @@
+// Regression: a bare `x = expr` first-assigned inside a NESTED block
+// (an if/while below the top level of a function) is function-scoped in
+// Wyn per the checker, which shares one scope across those bodies. Codegen
+// used to emit the C declaration wherever the STMT_VAR sat, so a later use
+// at the outer scope failed ("use of undeclared identifier" / internal
+// codegen error). Fix: hoist from_bare_assign STMT_VARs out of nested
+// if/while/block bodies to function scope and demote them to assignments.
+//
+// Single-level nesting already worked; the breaks were two-level nesting
+// and a nested string binding used after the block. Both are locked in here.
+
+fn two_level() -> int {
+    i = 0
+    while i < 3 {
+        if i == 1 {
+            found = i        // two levels deep, used after both blocks
+        }
+        i = i + 1
+    }
+    return found
+}
+
+fn string_after_while() -> string {
+    while true {
+        msg = "hi"           // string binding in a nested block
+        break
+    }
+    return msg
+}
+
+fn if_else_branches() -> string {
+    if false {
+        label = "then"
+    } else {
+        label = "else"       // first STMT_VAR is in the else arm
+    }
+    return label
+}
+
+fn main() {
+    println(two_level())
+    println(string_after_while())
+    println(if_else_branches())
+}
+
+// EXPECT: 1
+// EXPECT: hi
+// EXPECT: else

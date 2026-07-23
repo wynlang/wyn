@@ -550,6 +550,8 @@ void codegen_expr(Expr* expr) {
                     case TOKEN_LTEQ: result = l <= r; break;
                     case TOKEN_GT: result = l > r; break;
                     case TOKEN_GTEQ: result = l >= r; break;
+                    case TOKEN_LSHIFT: if (r < 0 || r >= 64) folded = false; else result = l << r; break;
+                    case TOKEN_RSHIFT: if (r < 0 || r >= 64) folded = false; else result = l >> r; break;
                     default: folded = false; break;
                 }
                 if (folded) { emit("%lld", result); break; }
