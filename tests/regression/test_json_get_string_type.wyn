@@ -1,0 +1,21 @@
+// EXPECT: Wyn
+// EXPECT: got: Wyn
+// EXPECT: n=7
+// Regression: json_get_string() must infer type `string` in EVERY position, not
+// just as a direct print/interp arg. Previously a blanket-int builtin registration
+// shadowed its real string signature, so `s = json_get_string(..)` inferred int
+// (type error / pointer printed). json_get_int still returns int everywhere.
+fn use_str(x: string) {
+    println("got: " + x)
+}
+fn main() {
+    doc = json_parse("{\"name\": \"Wyn\", \"age\": 7}")
+    // stored in a var, then printed
+    s = json_get_string(doc, "name")
+    println(s)
+    // passed as a string-typed function argument
+    use_str(s)
+    // json_get_int keeps working everywhere
+    n = json_get_int(doc, "age")
+    println("n=" + int_to_string(n))
+}

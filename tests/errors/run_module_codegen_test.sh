@@ -5,6 +5,8 @@
 #  M3 pre-return release fired on locals REFERENCED by the return expression
 #     (use-after-free: `return "<y>" + t + "</y>"` read freed t → empty output)
 #  M4 unannotated void module fn defaulted to long long (prototype vs def conflict)
+#  M5 builtin int_to_string() called in an imported module was mangled to
+#     <mod>_<mod>_int_to_string -> undeclared C fn -> internal codegen error
 set -uo pipefail
 WYN="${WYN:-./wyn}"
 WYN_ABS="$(cd "$(dirname "$WYN")" && pwd)/$(basename "$WYN")"
@@ -40,6 +42,7 @@ pub fn voidy(s: string) {
 }
 pub fn path(s: string) -> string { return s + "/p" }
 pub fn outer(s: string) -> string { return path(s) }
+pub fn label(n: int) -> string { return "n=" + int_to_string(n) }
 EOF
 ln -sf ../src/m.wyn "$TMP/proj/tests/m.wyn"
 cat > "$TMP/proj/tests/test_m.wyn" <<'EOF'
@@ -52,6 +55,7 @@ fn main() {
     Test.assert_eq_str(m.interp("A<B"), "w A&lt;B w", "M3: interp of sibling-call result")
     m.voidy("ok")
     Test.assert(1 == 1, "M4: void module fn with early return compiled")
+    Test.assert_eq_str(m.label(42), "n=42", "M5: int_to_string builtin in imported module (no mod prefix)")
     Test.summary()
 }
 EOF

@@ -1101,6 +1101,12 @@ void init_checker() {
         if (strcmp(stdlib_funcs[i], "await_all") == 0) continue;
         if (strncmp(stdlib_funcs[i], "http_", 5) == 0 ||
             strncmp(stdlib_funcs[i], "https_", 6) == 0) continue;
+        // json_get_string returns char*; the blanket int registration made it
+        // type `int` in return position (works only in print/interp where the
+        // arg is coerced), so `s = json_get_string(..)` inferred int. The real
+        // string-typed entry is added in the JSON stdlib loop below - find_symbol
+        // returns the FIRST match, so this one must not shadow it.
+        if (strcmp(stdlib_funcs[i], "json_get_string") == 0) continue;
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
     }
@@ -1878,7 +1884,12 @@ void init_checker() {
         {"json_new", 8, 0, NULL, NULL, NULL, json_obj_type},
         {"json_set_string", 15, 3, json_obj_type, builtin_string, builtin_string, builtin_void},
         {"json_set_int", 12, 3, json_obj_type, builtin_string, builtin_int, builtin_void},
-        {"json_get_string", 15, 2, json_obj_type, builtin_string, NULL, builtin_string},
+        // param0 is the JSON handle. json_parse() is registered (blanket loop) as
+        // a plain int handle, so accept int here (not json_obj_type) or a var
+        // holding a parsed doc fails the arg check. Return type MUST be string so
+        // `s = json_get_string(..)` infers string everywhere, not just in
+        // print/interp position (json_get_int stays shadowed as unchecked int).
+        {"json_get_string", 15, 2, builtin_int, builtin_string, NULL, builtin_string},
         {"json_get_int", 12, 2, json_obj_type, builtin_string, NULL, builtin_int},
         {"json_stringify", 14, 1, json_obj_type, NULL, NULL, builtin_string},
         {"Regex_match", 11, 2, builtin_string, builtin_string, NULL, builtin_bool},
