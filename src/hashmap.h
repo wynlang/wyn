@@ -46,6 +46,13 @@ char* hashmap_get_string(WynHashMap* map, const char* key);
 int hashmap_get_bool(WynHashMap* map, const char* key);
 void* hashmap_get_ptr(WynHashMap* map, const char* key);
 
+// Index-read getters for `m[k]`: panic (with file/line/key) on a missing key,
+// rather than silently returning 0/"". `.get`/`.has` do NOT use these.
+int    hashmap_index_int_impl(WynHashMap* map, const char* key, const char* file, int line);
+double hashmap_index_float_impl(WynHashMap* map, const char* key, const char* file, int line);
+char*  hashmap_index_string_impl(WynHashMap* map, const char* key, const char* file, int line);
+int    hashmap_index_bool_impl(WynHashMap* map, const char* key, const char* file, int line);
+
 void hashmap_remove(WynHashMap* map, const char* key);
 bool hashmap_has(WynHashMap* map, const char* key);
 int hashmap_len(WynHashMap* map);

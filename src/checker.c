@@ -2070,6 +2070,19 @@ void init_checker() {
         add_symbol(global_scope, tok, ft, false);
     }
 
+    // Json.keys(j) -> [string] (real array return type, so for/len/index work).
+    {
+        Type* keys_ret = make_type(TYPE_ARRAY);
+        keys_ret->array_type.element_type = builtin_string;
+        Type* ft = make_type(TYPE_FUNCTION);
+        ft->fn_type.param_count = 1;
+        ft->fn_type.param_types = malloc(sizeof(Type*));
+        ft->fn_type.param_types[0] = builtin_int;  // json handle
+        ft->fn_type.return_type = keys_ret;
+        Token tok = {TOKEN_IDENT, "Json_keys", 9, 0};
+        add_symbol(global_scope, tok, ft, false);
+    }
+
     // HashMap namespace: HashMap.new() -> HashMap_new()
     Type* map_type = make_type(TYPE_MAP);
     {
@@ -2507,7 +2520,9 @@ void init_checker() {
         {"Json_get_string", 15, 2, builtin_string},
         {"Json_get_int", 12, 2, builtin_int},
         {"Json_has", 8, 2, builtin_int},
-        {"Json_keys", 9, 1, builtin_string},
+        // Json_keys registered separately below with its real [string] return
+        // type (find_symbol returns the first match, so no builtin_string entry
+        // here may shadow it).
         {"Json_array_len", 14, 1, builtin_int},
         {"Json_array_get", 14, 2, builtin_int},
         {"Json_node_str", 13, 1, builtin_string},
@@ -3336,27 +3351,38 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
                 // Allow comparing compatible types
                 // Int, bool, and enum are all compatible for comparison
-                bool types_compatible = (left->kind == right->kind) ||
-                                       (left->kind == TYPE_INT && right->kind == TYPE_BOOL) ||
-                                       (left->kind == TYPE_BOOL && right->kind == TYPE_INT) ||
-                                       (left->kind == TYPE_ENUM && right->kind == TYPE_INT) ||
-                                       (left->kind == TYPE_INT && right->kind == TYPE_ENUM) ||
-                                       (left->kind == TYPE_ENUM && right->kind == TYPE_ENUM) ||
-                                       (left->kind == TYPE_INT && right->kind == TYPE_FLOAT) ||
-                                       (left->kind == TYPE_FLOAT && right->kind == TYPE_INT) ||
-                                       (left->kind == TYPE_STRING && right->kind == TYPE_STRING) ||
-                                       (left->kind == TYPE_STRING) ||
-                                       (right->kind == TYPE_STRING) ||
-                                       (left->kind == TYPE_FUNCTION) ||
-                                       (right->kind == TYPE_FUNCTION) ||
-                                       // FFI opaque pointer (`ptr`, a TYPE_STRUCT named
-                                       // "void*"): comparable to another ptr and to the
-                                       // int literal 0 - the C NULL idiom (`if p == 0`).
-                                       is_ptr_type(left) || is_ptr_type(right);
-                
+                // Only operands in the SAME comparable family may compare.
+                // A blanket "either side is a string/function is OK" used to
+                // let `int == string` type-check and then SIGSEGV at runtime
+                // (codegen emits strcmp((char*)5, ...)). Require:
+                //   - numeric family: int/float/bool/enum interoperate (C
+                //     numeric ==; int<->float promotion, bool/enum are ints)
+                //   - string == string only
+                //   - ptr == ptr, or ptr == int (the C NULL idiom `if p == 0`)
+                //   - generic type params (T): unknown, stay permissive so
+                //     `a == b` inside a generic fn still checks
+                // struct == struct and struct ordering are handled above.
+                bool left_num  = left->kind == TYPE_INT || left->kind == TYPE_FLOAT ||
+                                 left->kind == TYPE_BOOL || left->kind == TYPE_ENUM;
+                bool right_num = right->kind == TYPE_INT || right->kind == TYPE_FLOAT ||
+                                 right->kind == TYPE_BOOL || right->kind == TYPE_ENUM;
+                bool types_compatible =
+                    (left_num && right_num) ||
+                    (left->kind == TYPE_STRING && right->kind == TYPE_STRING) ||
+                    // FFI opaque pointer (`ptr`, a TYPE_STRUCT named "void*"):
+                    // comparable to another ptr and to the int literal 0.
+                    (is_ptr_type(left) && is_ptr_type(right)) ||
+                    (is_ptr_type(left) && right->kind == TYPE_INT) ||
+                    (is_ptr_type(right) && left->kind == TYPE_INT) ||
+                    // Generic type params can't be resolved statically.
+                    (left->kind == TYPE_GENERIC) || (right->kind == TYPE_GENERIC);
+
                 if (!types_compatible) {
-                    fprintf(stderr, "Error at line %d: Cannot compare different types\n", 
-                            expr->binary.op.line);
+                    char lt[256], rt[256];
+                    snprintf(lt, sizeof(lt), "%s", type_to_string(left));
+                    snprintf(rt, sizeof(rt), "%s", type_to_string(right));
+                    fprintf(stderr, "Error at line %d: Cannot compare %s with %s - operands are not the same comparable type\n",
+                            expr->binary.op.line, lt, rt);
                     had_error = true;
                     return NULL;
                 }
@@ -5488,6 +5514,23 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         expr->expr_type = field_type;
                         return field_type;
                     }
+                    // Genuinely-absent field on a KNOWN user struct. A typo like
+                    // `u.namee` used to pass check and then leak a raw C error
+                    // ("no member named 'namee'") at build. Mirror the method
+                    // validation path and reject at check. Guard: only fire when
+                    // the name is neither a field nor a method (bare `u.method`
+                    // references stay valid), so method calls and builtin
+                    // receivers are untouched.
+                    if (!struct_has_method(global_scope, struct_name, field_name)) {
+                        char sname[128]; token_to_cstr(sname, sizeof(sname), struct_name);
+                        fprintf(stderr, "\nError at line %d: struct '%s' has no field '%.*s'\n",
+                                field_name.line, sname,
+                                (int)field_name.length, field_name.start);
+                        show_source_line(field_name.line);
+                        had_error = true;
+                        expr->expr_type = builtin_int;
+                        return builtin_int;
+                    }
                 }
             }
             
@@ -5970,16 +6013,31 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         } else if (pat->option.inner->type == PATTERN_IDENT) {
                             // Look up variant data type from enum definition
                             Type* bound_type = builtin_int;
-                            // Option<Struct> Some(x): bind x to the payload struct type
-                            // (family name "OptionUser" -> struct "User").
+                            // Option<T> Some(x): bind x to the payload type.
+                            // Primitive families (OptionString/OptionInt/
+                            // OptionFloat/OptionBool) bind their scalar; struct
+                            // families (e.g. "OptionUser" -> struct "User") bind
+                            // the payload struct type. Without the primitive
+                            // arm, `Some(v)` on a `string?`/`float?` mis-typed v
+                            // as int, so a later `v == "..."` false-rejected
+                            // (and used to silently rely on the unsound blanket
+                            // string-compare rule).
                             if (match_value_type && match_value_type->kind == TYPE_STRUCT &&
                                 match_value_type->struct_type.name.length > 6 &&
                                 memcmp(match_value_type->struct_type.name.start, "Option", 6) == 0 &&
                                 pat->option.is_some) {
                                 Token pl = match_value_type->struct_type.name;
-                                Token payload_name = {TOKEN_IDENT, pl.start + 6, pl.length - 6, 0};
-                                Symbol* ps = find_symbol(global_scope, payload_name);
-                                if (ps && ps->type && ps->type->kind == TYPE_STRUCT) bound_type = ps->type;
+                                int plen = pl.length - 6;
+                                const char* pstart = pl.start + 6;
+                                if (plen == 6 && memcmp(pstart, "String", 6) == 0) bound_type = builtin_string;
+                                else if (plen == 3 && memcmp(pstart, "Int", 3) == 0) bound_type = builtin_int;
+                                else if (plen == 5 && memcmp(pstart, "Float", 5) == 0) bound_type = builtin_float;
+                                else if (plen == 4 && memcmp(pstart, "Bool", 4) == 0) bound_type = builtin_bool;
+                                else {
+                                    Token payload_name = {TOKEN_IDENT, pl.start + 6, plen, 0};
+                                    Symbol* ps = find_symbol(global_scope, payload_name);
+                                    if (ps && ps->type && ps->type->kind == TYPE_STRUCT) bound_type = ps->type;
+                                }
                             }
                             if (match_value_type && match_value_type->kind == TYPE_ENUM) {
                                 Token variant_name = pat->option.variant_name;
@@ -6434,10 +6492,28 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 if (array_type && array_type->kind == TYPE_ARRAY && array_type->array_type.element_type) {
                     elem_type = array_type->array_type.element_type;
                 }
-                add_symbol(&for_scope, stmt->for_stmt.loop_var, elem_type, false);
-                // Add index variable for indexed iteration: for i, v in arr
-                if (stmt->for_stmt.has_index) {
-                    add_symbol(&for_scope, stmt->for_stmt.index_var, builtin_int, false);
+                // Map iteration: `for k in m` binds k to the KEY (string);
+                // `for k, v in m` binds k=key(string), v=value(map's value type).
+                // Without this the value var typed as int, so `v == "..."` on a
+                // string-valued map false-rejected after the comparison-soundness
+                // fix (it used to lean on the now-removed blanket string rule).
+                if (array_type && array_type->kind == TYPE_MAP) {
+                    if (stmt->for_stmt.has_index) {
+                        // key in index_var (string), value in loop_var.
+                        Type* vt = array_type->map_type.value_type;
+                        if (!vt) vt = builtin_string;
+                        add_symbol(&for_scope, stmt->for_stmt.index_var, builtin_string, false);
+                        add_symbol(&for_scope, stmt->for_stmt.loop_var, vt, false);
+                    } else {
+                        // single var is the key (string)
+                        add_symbol(&for_scope, stmt->for_stmt.loop_var, builtin_string, false);
+                    }
+                } else {
+                    add_symbol(&for_scope, stmt->for_stmt.loop_var, elem_type, false);
+                    // Add index variable for indexed iteration: for i, v in arr
+                    if (stmt->for_stmt.has_index) {
+                        add_symbol(&for_scope, stmt->for_stmt.index_var, builtin_int, false);
+                    }
                 }
             }
 

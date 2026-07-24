@@ -1,0 +1,21 @@
+// Regression: valid struct field access across multiple structs still checks
+// and runs after the missing-field validation fix. Also exercises a method
+// call (must not be mistaken for a missing field) and nested field access.
+// EXPECT: alice
+// EXPECT: 30
+// EXPECT: 7
+// EXPECT: inner
+struct User { name: string, age: int }
+struct Box { label: string, u: User }
+struct Counter { n: int
+    fn bump(self) -> int { return self.n + 1 }
+}
+fn main() {
+    var u = User{name: "alice", age: 30}
+    println(u.name)
+    println("${u.age}")
+    var c = Counter{n: 6}
+    println("${c.bump()}")
+    var b = Box{label: "inner", u: u}
+    println(b.label)
+}

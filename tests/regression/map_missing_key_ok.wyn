@@ -1,0 +1,15 @@
+// Regression: after making m[k] panic on a missing key, PRESENT keys (including
+// a stored 0) still read correctly, and .get(k,default)/.has(k) are unchanged.
+// EXPECT: 0
+// EXPECT: 5
+// EXPECT: 99
+// EXPECT: false
+// EXPECT: true
+fn main() {
+    var m = {"a": 0, "b": 5}
+    println("${m["a"]}")
+    println("${m["b"]}")
+    println("${m.get("zzz", 99)}")
+    println("${m.has("zzz")}")
+    println("${m.has("a")}")
+}

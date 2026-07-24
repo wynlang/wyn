@@ -11,7 +11,7 @@ fn main() -> int {
 
     // Get string value
     var name = json_get_string(json, "name")
-    if (name != 0) {
+    if (name != "") {
         print("Name: ")
         print(name)
         print("\n")

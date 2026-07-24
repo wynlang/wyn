@@ -178,6 +178,13 @@ static inline char* wyn_sb_finish(WynStrBuf* sb) {
 #include "hashmap.h"
 #include "hashset.h"
 
+// `m[k]` index reads capture the call site so a missing-key panic can name the
+// source location (mirrors array_get_int's __FILE__/__LINE__ machinery).
+#define hashmap_index_int(map, key)    hashmap_index_int_impl(map, key, __FILE__, __LINE__)
+#define hashmap_index_float(map, key)  hashmap_index_float_impl(map, key, __FILE__, __LINE__)
+#define hashmap_index_string(map, key) hashmap_index_string_impl(map, key, __FILE__, __LINE__)
+#define hashmap_index_bool(map, key)   hashmap_index_bool_impl(map, key, __FILE__, __LINE__)
+
 // === Arena Allocator for string memory management ===
 // Implementation in wyn_arena.c - shared across all compilation units
 #include "wyn_arena.h"
@@ -2285,6 +2292,7 @@ void print_value(WynValue v) {
 }
 #define print_no_nl(x) _Generic((x), \
     int: print_int_no_nl, \
+    float: print_float_no_nl, \
     double: print_float_no_nl, \
     char*: print_str_no_nl, \
     const char*: print_str_no_nl, \
@@ -2458,6 +2466,7 @@ char* array_to_string(WynArray arr) {
     int: int_to_string, \
     long: int_to_string, \
     long long: int_to_string, \
+    float: float_to_string, \
     double: float_to_string, \
     char*: str_to_string, \
     const char*: str_to_string, \
@@ -4880,6 +4889,14 @@ long long Json_get_int(long long root, const char* key) {
     return (long long)json_nodes[c].num_val;
 }
 
+// Json.get_string(j, k): the string value for a key (numbers/bools stringified,
+// missing key -> ""). Mirrors Json_get; declared here (was only in
+// json_runtime.c with a different WynJson* ABI, so run/build's inline JSON
+// engine had no matching definition -> "call to undeclared function").
+char* Json_get_string(long long root, const char* key) {
+    return Json_get(root, key);
+}
+
 long long Json_has(long long root, const char* key) {
     return json_find_child((int)root, key) >= 0 ? 1 : 0;
 }
@@ -4907,14 +4924,17 @@ char* Json_node_str(long long node) {
     return "";
 }
 
-char* Json_keys(long long root) {
-    WynStrBuf sb; wyn_sb_init(&sb);
+// Json.keys(j) -> [string]: the object's keys as a real array, so
+// `for k in Json.keys(j)`, len(), and indexing all work. (Previously returned a
+// newline-joined string, which the for-loop path can't iterate.)
+WynArray Json_keys(long long root) {
+    WynArray arr = array_new();
     int c = json_nodes[(int)root].first_child;
     while (c >= 0) {
-        if (json_nodes[c].key) { wyn_sb_append(&sb, json_nodes[c].key); wyn_sb_append(&sb, "\n"); }
+        if (json_nodes[c].key) array_push_str(&arr, wyn_strdup(json_nodes[c].key));
         c = json_nodes[c].next_sibling;
     }
-    return wyn_sb_finish(&sb);
+    return arr;
 }
 
 // === Base64 ===

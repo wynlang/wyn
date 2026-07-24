@@ -23,6 +23,14 @@ typedef struct {
 static Parser parser;
 static const char* current_source_file = NULL;  // Global for error reporting
 
+// Recursive-descent nesting guards. Defined here (before primary()) so the
+// unary-operand path can share the expression depth counter; expression()
+// below reuses the same `expr_depth`. `stmt_depth` bounds nested blocks / `if`.
+int expr_depth = 0;
+#define WYN_MAX_EXPR_DEPTH 500
+static int stmt_depth = 0;
+#define WYN_MAX_STMT_DEPTH 500
+
 // Parser state stack for module loading (growable)
 static Parser* parser_stack = NULL;
 static int parser_stack_depth = 0;
@@ -319,7 +327,23 @@ static Expr* primary() {
     // bitwise-not, address-of.
     if (match(TOKEN_NOT) || match(TOKEN_MINUS) || match(TOKEN_TILDE) || match(TOKEN_AMP)) {
         Token op = parser.previous;
+        // A prefix-unary operand recurses through call()->primary() WITHOUT
+        // going back through expression(), so `not not not ... true` (or 500x
+        // unary `-`) bypasses the expression() depth guard and overflows the C
+        // stack. Fence it with the same counter.
+        if (++expr_depth > WYN_MAX_EXPR_DEPTH) {
+            if (current_source_file)
+                show_error_context(current_source_file, parser.current.line, 1,
+                    "unary operator nesting too deep (limit 500) - simplify the expression", NULL);
+            parser.had_error = true;
+            expr_depth--;
+            Expr* e = alloc_expr();
+            e->type = EXPR_INT; e->token.start = "0"; e->token.length = 1;
+            if (!check(TOKEN_EOF)) advance();
+            return e;
+        }
         Expr* operand = call();
+        expr_depth--;
         Expr* unary = alloc_expr();
         unary->type = EXPR_UNARY;
         unary->unary.op = op;
@@ -2014,9 +2038,6 @@ static Expr* assignment() {
 // expression() via primary(), so guarding here fences all paths. ~500 levels *
 // ~10 C frames each stays well under an 8MB stack; the observed crash points
 // were ~3000 parens / ~800 arrays, so 500 clears real code by a wide margin.
-static int expr_depth = 0;
-#define WYN_MAX_EXPR_DEPTH 500
-
 Expr* expression() {
     if (++expr_depth > WYN_MAX_EXPR_DEPTH) {
         if (current_source_file)
@@ -2039,8 +2060,34 @@ Expr* expression() {
 }
 
 Stmt* statement();
+static Stmt* statement_impl();
 
+// Bound nested-statement recursion (deeply nested blocks / `if`). Each nested
+// `{ ... }` or `if ... { }` re-enters statement()->block()->statement(), so a
+// pathological ~1500-deep nest overflowed the C stack and SIGSEGV-ed the
+// compiler. Fence it with a clean diagnostic, mirroring the expression guard.
 Stmt* statement() {
+    if (++stmt_depth > WYN_MAX_STMT_DEPTH) {
+        if (current_source_file)
+            show_error_context(current_source_file, parser.current.line, 1,
+                "statement/block nesting too deep (limit 500) - simplify the code", NULL);
+        parser.had_error = true;
+        stmt_depth--;
+        // Benign empty block + forced progress so the parser winds down cleanly.
+        Stmt* empty = alloc_stmt();
+        empty->type = STMT_BLOCK;
+        empty->block.stmts = NULL;
+        empty->block.count = 0;
+        empty->block.timeout = NULL;
+        if (!check(TOKEN_EOF)) advance();
+        return empty;
+    }
+    Stmt* s = statement_impl();
+    stmt_depth--;
+    return s;
+}
+
+static Stmt* statement_impl() {
     // Semicolons are optional statement separators (equivalent to newlines).
     // A `;` in statement position - whether a separator that was left in front
     // of the next statement, a doubled/empty `;;`, or a trailing `;` - parses
@@ -3986,6 +4033,7 @@ Stmt* type_alias() {
 
 Program* parse_program() {
     expr_depth = 0;  // reset so a prior aborted parse can't leak the counter
+    stmt_depth = 0;  // same for the statement/block nesting guard
     Program* prog = safe_calloc(1, sizeof(Program));
     prog->stmts = safe_malloc(sizeof(Stmt*) * 256);
     prog->count = 0;

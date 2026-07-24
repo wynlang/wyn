@@ -1,0 +1,25 @@
+// Regression: same-family comparisons still type-check AND run correctly
+// after the cross-type-comparison soundness fix (int==string used to segfault).
+// EXPECT: ii
+// EXPECT: if
+// EXPECT: ff
+// EXPECT: ss
+// EXPECT: bb
+// EXPECT: ee
+// EXPECT: st
+enum Color { Red, Green }
+struct P { x: int, y: int }
+fn main() {
+    if 1 == 1 { println("ii") }
+    var a = 1
+    var b = 2.0
+    if a == b { println("no") } else { println("if") }
+    if 1.0 < 2.0 { println("ff") }
+    if "a" == "a" { println("ss") }
+    if true == false { println("no") } else { println("bb") }
+    var c = Color::Red
+    if c == Color::Red { println("ee") }
+    var p1 = P{x: 1, y: 2}
+    var p2 = P{x: 1, y: 2}
+    if p1 == p2 { println("st") }
+}

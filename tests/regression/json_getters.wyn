@@ -1,0 +1,26 @@
+// Regression: Json.get_string used to pass check then fail to LINK ("call to
+// undeclared function 'Json_get_string'"). Also Json.keys now returns [string]
+// so it can be iterated / len'd. get_int/get_bool/get_float still work.
+// EXPECT: alice
+// EXPECT: 30
+// EXPECT: 1
+// EXPECT: 9.5
+// EXPECT: 4
+// EXPECT: name
+// EXPECT: age
+// EXPECT: active
+// EXPECT: true
+fn main() {
+    var j = Json.parse("{\"name\": \"alice\", \"age\": 30, \"active\": true, \"score\": 9.5}")
+    var n = Json.get_string(j, "name")
+    println(n)
+    println("${Json.get_int(j, "age")}")
+    println("${Json.get_bool(j, "active")}")
+    println("${Json.get_float(j, "score")}")
+    var ks = Json.keys(j)
+    println("${ks.len()}")
+    for k in ks {
+        if k != "score" { println(k) }
+    }
+    println("${ks.contains("name")}")
+}

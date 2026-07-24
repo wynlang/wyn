@@ -116,17 +116,24 @@ static Token make_token(WynTokenType type) {
     return token;
 }
 
+static Token error_token(const char* msg, const char* open_quote, int open_line);
+
 static Token number() {
-    // Hex literals: 0xFF
+    // Hex literals: 0xFF - require at least one hex digit after the prefix.
+    // An empty `0x` used to lex as a 0-value INT and then ICE in codegen.
     if (*(lexer.current - 1) == '0' && (peek() == 'x' || peek() == 'X')) {
         advance();
+        if (!isxdigit(peek()))
+            return error_token("hex literal '0x' needs at least one digit (e.g. 0xFF)", lexer.start, lexer.line);
         while (isxdigit(peek())) advance();
         return make_token(TOKEN_INT);
     }
-    
-    // Binary literals: 0b1010
+
+    // Binary literals: 0b1010 - require at least one binary digit after prefix.
     if (*(lexer.current - 1) == '0' && (peek() == 'b' || peek() == 'B')) {
         advance();
+        if (peek() != '0' && peek() != '1')
+            return error_token("binary literal '0b' needs at least one digit (e.g. 0b1010)", lexer.start, lexer.line);
         while (peek() == '0' || peek() == '1') advance();
         return make_token(TOKEN_INT);
     }

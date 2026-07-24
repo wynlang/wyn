@@ -388,3 +388,44 @@ void hashmap_set(WynHashMap* map, const char* key, const char* value) {
 char* HashMap_get_str(WynHashMap* map, const char* key) {
     return hashmap_get_string(map, key);
 }
+
+// --- Missing-key panic for `m[k]` index reads ---
+// A missing key on `m[k]` used to silently read as 0 / "" - indistinguishable
+// from a stored zero, and inconsistent with array OOB (which panics). These
+// index-read getters panic with the missing key, file, and line, matching the
+// language's fatal-by-default safety. `.get(k)`/`.get(k, default)`/`.has(k)`
+// keep the lenient path and do NOT route here.
+#include <stdio.h>
+static void wyn_map_missing_key_panic(const char* key, const char* file, int line) {
+    // Trim a trailing ".wyn.c" -> ".wyn" so we never leak the generated seam.
+    char fbuf[1024];
+    const char* f = file;
+    if (file) {
+        size_t n = strlen(file);
+        if (n >= 6 && n < sizeof(fbuf) && strcmp(file + n - 6, ".wyn.c") == 0) {
+            memcpy(fbuf, file, n - 2); fbuf[n - 2] = '\0'; f = fbuf;
+        }
+    }
+    if (f && line > 0)
+        fprintf(stderr, "panic at %s:%d: missing map key: \"%s\"\n", f, line, key ? key : "");
+    else
+        fprintf(stderr, "panic: missing map key: \"%s\"\n", key ? key : "");
+    if (getenv("WYN_LENIENT") == NULL) exit(1);
+}
+
+int hashmap_index_int_impl(WynHashMap* map, const char* key, const char* file, int line) {
+    if (!hashmap_has(map, key)) wyn_map_missing_key_panic(key, file, line);
+    return hashmap_get_int(map, key);
+}
+double hashmap_index_float_impl(WynHashMap* map, const char* key, const char* file, int line) {
+    if (!hashmap_has(map, key)) wyn_map_missing_key_panic(key, file, line);
+    return hashmap_get_float(map, key);
+}
+char* hashmap_index_string_impl(WynHashMap* map, const char* key, const char* file, int line) {
+    if (!hashmap_has(map, key)) wyn_map_missing_key_panic(key, file, line);
+    return hashmap_get_string(map, key);
+}
+int hashmap_index_bool_impl(WynHashMap* map, const char* key, const char* file, int line) {
+    if (!hashmap_has(map, key)) wyn_map_missing_key_panic(key, file, line);
+    return hashmap_get_bool(map, key);
+}

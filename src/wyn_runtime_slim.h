@@ -501,6 +501,15 @@ WynArray hashmap_keys(WynHashMap* map);
 WynArray hashmap_values(WynHashMap* map);
 WynArray hashmap_get_array(WynHashMap* map, const char* key);
 WynArray* hashmap_group_slot(WynHashMap* map, const char* key);
+// `m[k]` index reads: panic on a missing key (see hashmap.c).
+int    hashmap_index_int_impl(WynHashMap* map, const char* key, const char* file, int line);
+double hashmap_index_float_impl(WynHashMap* map, const char* key, const char* file, int line);
+char*  hashmap_index_string_impl(WynHashMap* map, const char* key, const char* file, int line);
+int    hashmap_index_bool_impl(WynHashMap* map, const char* key, const char* file, int line);
+#define hashmap_index_int(map, key)    hashmap_index_int_impl(map, key, __FILE__, __LINE__)
+#define hashmap_index_float(map, key)  hashmap_index_float_impl(map, key, __FILE__, __LINE__)
+#define hashmap_index_string(map, key) hashmap_index_string_impl(map, key, __FILE__, __LINE__)
+#define hashmap_index_bool(map, key)   hashmap_index_bool_impl(map, key, __FILE__, __LINE__)
 char* string_split_to_str(const char* s, const char* delim);
 WynHashSet* HashSet_new();
 // Json declared in module declarations block above
@@ -695,7 +704,7 @@ long long Json_get_int(long long root, const char* key);
 long long Json_array_len(long long node);
 long long Json_array_get(long long node, long long index);
 char* Json_node_str(long long node);
-char* Json_keys(long long root);
+WynArray Json_keys(long long root);
 char* Encoding_base64_encode(const char* data);
 char* Encoding_base64_decode(const char* data);
 char* Encoding_hex_encode(const char* data);
@@ -806,6 +815,7 @@ char* array_to_string(WynArray arr);  // defined in the runtime lib (wyn_runtime
 // _Generic macros for type-dispatched print/println/to_string
 #define print_no_nl(x) _Generic((x), \
     int: print_int_no_nl, \
+    float: print_float_no_nl, \
     double: print_float_no_nl, \
     char*: print_str_no_nl, \
     const char*: print_str_no_nl, \
@@ -831,6 +841,7 @@ char* array_to_string(WynArray arr);  // defined in the runtime lib (wyn_runtime
     int: int_to_string, \
     long: int_to_string, \
     long long: int_to_string, \
+    float: float_to_string, \
     double: float_to_string, \
     char*: str_to_string, \
     const char*: str_to_string, \
