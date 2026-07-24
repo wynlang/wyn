@@ -28,6 +28,34 @@ static void emit_option_struct_family(const char* s) {
     emit("static inline %s Option%s_unwrap_or(Option%s o, %s def){ return o.tag==1 ? o.value : def; }\n", s, s, s, s);
 }
 
+// Parallel tracking + emission for the monomorphic Result<Struct, string> family.
+// Mirrors emit_option_struct_family: a `Result<Name>` typedef (tag + a union of an
+// `s ok_value` struct payload and a `const char* err_value`) plus the 7 inline
+// members (Ok/Err/is_ok/is_err/unwrap/unwrap_err/unwrap_or). The error type is
+// always `const char*` (string), matching the builtin ResultInt/ResultString.
+// Idempotent; the base struct `s` MUST already be emitted.
+static char** emitted_res_struct = NULL;
+static int emitted_res_struct_count = 0;
+static int emitted_res_struct_cap = 0;
+static int res_struct_already_emitted(const char* s) {
+    for (int i = 0; i < emitted_res_struct_count; i++)
+        if (strcmp(emitted_res_struct[i], s) == 0) return 1;
+    return 0;
+}
+static void emit_result_struct_family(const char* s) {
+    if (res_struct_already_emitted(s)) return;
+    WYN_ENSURE_CAP(emitted_res_struct, emitted_res_struct_count, emitted_res_struct_cap);
+    emitted_res_struct[emitted_res_struct_count++] = strdup(s);
+    emit("typedef struct { int tag; union { %s ok_value; const char* err_value; } data; } Result%s;\n", s, s);
+    emit("static inline Result%s Result%s_Ok(%s value){ Result%s r; r.tag=0; r.data.ok_value=value; return r; }\n", s, s, s, s);
+    emit("static inline Result%s Result%s_Err(const char* msg){ Result%s r; r.tag=1; r.data.err_value=msg; return r; }\n", s, s, s);
+    emit("static inline int Result%s_is_ok(Result%s r){ return r.tag==0; }\n", s, s);
+    emit("static inline int Result%s_is_err(Result%s r){ return r.tag==1; }\n", s, s);
+    emit("static inline %s Result%s_unwrap(Result%s r){ if(r.tag==1){ fprintf(stderr, \"Error: unwrap() called on Err: %%s\\n\", r.data.err_value); exit(1); } return r.data.ok_value; }\n", s, s, s);
+    emit("static inline const char* Result%s_unwrap_err(Result%s r){ if(r.tag==0){ fprintf(stderr, \"Error: unwrap_err() called on Ok\\n\"); exit(1); } return r.data.err_value; }\n", s, s);
+    emit("static inline %s Result%s_unwrap_or(Result%s r, %s def){ return r.tag==0 ? r.data.ok_value : def; }\n", s, s, s, s);
+}
+
 // --- Field-wise struct equality helpers (`a == b` on struct values) ---
 // The checker gates which structs are comparable; codegen emits one
 // `static int __wyn_eq_<Name>(Name, Name)` per comparable struct so
@@ -122,6 +150,9 @@ void codegen_program(Program* prog) {
     // Reset Option<Struct> emission tracking for this compilation
     for (int _i = 0; _i < emitted_opt_struct_count; _i++) free(emitted_opt_struct[_i]);
     emitted_opt_struct_count = 0;
+    // Reset Result<Struct> emission tracking for this compilation
+    for (int _i = 0; _i < emitted_res_struct_count; _i++) free(emitted_res_struct[_i]);
+    emitted_res_struct_count = 0;
     
     // Reset spawn wrapper collection
     spawn_wrapper_count = 0;
@@ -274,6 +305,8 @@ void codegen_program(Program* prog) {
                 char _sn[96]; token_to_cstr(_sn, sizeof(_sn), s->struct_decl.name);
                 extern int is_registered_option_struct(const char*);
                 if (is_registered_option_struct(_sn)) emit_option_struct_family(_sn);
+                extern int is_registered_result_struct(const char*);
+                if (is_registered_result_struct(_sn)) emit_result_struct_family(_sn);
             }
             // For imported enums, emit module-prefixed typedef and constructor aliases
             if (s->type == STMT_ENUM && prog->stmts[i]->type == STMT_EXPORT) {
@@ -310,6 +343,15 @@ void codegen_program(Program* prog) {
         // the per-struct hook didn't fire - emit_option_struct_family dedups).
         for (int i = 0; i < option_struct_count(); i++) {
             emit_option_struct_family(option_struct_name(i));
+        }
+    }
+
+    // Same catch-all for monomorphic Result<Struct, string> families.
+    {
+        extern int result_struct_count(void);
+        extern const char* result_struct_name(int);
+        for (int i = 0; i < result_struct_count(); i++) {
+            emit_result_struct_family(result_struct_name(i));
         }
     }
 
@@ -690,7 +732,16 @@ void codegen_program(Program* prog) {
                                     return_type = "ResultFloat";
                                 else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
                                     return_type = "ResultBool";
-                                else return_type = "ResultInt";
+                                else {
+                                    // `Result<Struct, E>` -> the monomorphic
+                                    // Result<Struct> family (ResultPoint, …).
+                                    char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
+                                    extern int is_known_struct(const char*);
+                                    if (is_known_struct(_stn)) {
+                                        snprintf(return_type_buf, sizeof(return_type_buf), "Result%s", _stn);
+                                        return_type = return_type_buf;
+                                    } else return_type = "ResultInt";
+                                }
                             } else return_type = "ResultInt";
                         }
                     }
@@ -1692,12 +1743,19 @@ void codegen_match_statement(Stmt* stmt) {
             // ResultFloat/ResultBool/ResultString lower with the right temp type
             // and Ok-payload binding (Err is always a string).
             const char* _rfam = "ResultInt"; const char* _rcty = "long long"; int _rok_str = 0;
+            static char _rfam_buf[128]; static char _rcty_buf[96];
             Type* _rvt = stmt->match_stmt.value ? stmt->match_stmt.value->expr_type : NULL;
             if (_rvt && _rvt->kind == TYPE_STRUCT && _rvt->struct_type.name.length > 0) {
-                char _n[64]; token_to_cstr(_n, sizeof(_n), _rvt->struct_type.name);
+                char _n[96]; token_to_cstr(_n, sizeof(_n), _rvt->struct_type.name);
                 if (strcmp(_n, "ResultString") == 0) { _rfam = "ResultString"; _rcty = "const char*"; _rok_str = 1; }
                 else if (strcmp(_n, "ResultFloat") == 0) { _rfam = "ResultFloat"; _rcty = "double"; }
                 else if (strcmp(_n, "ResultBool") == 0) { _rfam = "ResultBool"; _rcty = "bool"; }
+                else if (strncmp(_n, "Result", 6) == 0 && strcmp(_n, "ResultInt") != 0) {
+                    // Monomorphic Result<Struct> (e.g. ResultPoint): Ok payload is the
+                    // struct value, bound by value (Err stays a string).
+                    snprintf(_rfam_buf, sizeof(_rfam_buf), "%s", _n); _rfam = _rfam_buf;
+                    snprintf(_rcty_buf, sizeof(_rcty_buf), "%s", _n + 6); _rcty = _rcty_buf;
+                }
             }
             emit("    %s __match_val_%d = ", _rfam, _rmid);
             codegen_expr(stmt->match_stmt.value);

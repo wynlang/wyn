@@ -1,0 +1,36 @@
+// Regression: a function returning `Result<Struct, E>` compiles and runs.
+//
+// Previously `Result<Struct, E>` monomorphized to `ResultInt` (ok payload `int`),
+// so `return Ok(Point{...})` emitted `ResultInt_Ok((Point){...})` (Point coerced
+// to int) and the match arm read `long long p = __match_val.data.ok_value`, giving
+// "member reference base type 'long long' is not a structure or union".
+//
+// Fixed by mirroring the Option<Struct> family machinery for Result: a per-struct
+// `Result<Name>` typedef + Ok/Err/is_ok/is_err/unwrap/unwrap_err/unwrap_or members,
+// a checker registration pass (register_result_struct_family), a codegen registry,
+// and Result resolution sites that route a struct ok-payload to the per-struct
+// family instead of ResultInt. Error type is `string` (the common case).
+//
+// EXPECT: found x=3
+// EXPECT: err: no
+struct Point { x: int, y: int }
+
+fn find(ok: bool) -> Result<Point, string> {
+    if ok {
+        return Ok(Point{x: 3, y: 4})
+    }
+    return Err("no")
+}
+
+fn main() {
+    r = find(true)
+    match r {
+        Ok(p) => println("found x=" + int_to_string(p.x)),
+        Err(e) => println("err: " + e)
+    }
+    r2 = find(false)
+    match r2 {
+        Ok(p) => println("found x=" + int_to_string(p.x)),
+        Err(e) => println("err: " + e)
+    }
+}

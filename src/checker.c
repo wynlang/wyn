@@ -991,6 +991,56 @@ static Type* register_option_struct_family(Type* struct_type) {
     return opt_type;
 }
 
+// Lazily register a monomorphic Result<Struct, string> family for a user-struct
+// ok-payload (e.g. `Point` -> `ResultPoint`): the fake struct type symbol + the 7
+// member functions (_Ok/_Err/_is_ok/_is_err/_unwrap/_unwrap_err/_unwrap_or),
+// mirroring the builtin ResultInt/ResultString families and the Option<Struct>
+// analogue above. The error type is always `string` (const char*), matching the
+// builtin Result families. Idempotent. Also records the struct in codegen's
+// registry so the concrete C family is emitted after the struct typedef.
+// Returns the Result<Struct> Type (a TYPE_STRUCT named "Result<Struct>").
+static Type* register_result_struct_family(Type* struct_type) {
+    if (!struct_type || struct_type->kind != TYPE_STRUCT || struct_type->struct_type.name.length == 0)
+        return NULL;
+    char sname[96]; token_to_cstr(sname, sizeof(sname), struct_type->struct_type.name);
+    char* fam = malloc(strlen(sname) + 7);
+    sprintf(fam, "Result%s", sname);
+    Token fam_tok = {TOKEN_IDENT, fam, (int)strlen(fam), 0};
+
+    Symbol* existing = find_symbol(global_scope, fam_tok);
+    if (existing) { free(fam); return existing->type; }
+
+    Type* res_type = make_type(TYPE_STRUCT);
+    res_type->struct_type.name = fam_tok;
+    add_symbol(global_scope, fam_tok, res_type, false);
+
+    #define REG_RES_FN(suffix, npar, p0, p1, ret) do {                      \
+        Type* ft = make_type(TYPE_FUNCTION);                                \
+        ft->fn_type.param_count = (npar);                                   \
+        ft->fn_type.param_types = (npar) ? malloc(sizeof(Type*) * (npar)) : NULL; \
+        if ((npar) >= 1) ft->fn_type.param_types[0] = (p0);                 \
+        if ((npar) >= 2) ft->fn_type.param_types[1] = (p1);                 \
+        ft->fn_type.return_type = (ret);                                    \
+        char* fn = malloc(strlen(fam) + strlen(suffix) + 2);                \
+        sprintf(fn, "%s%s", fam, suffix);                                   \
+        Token ftok = {TOKEN_IDENT, fn, (int)strlen(fn), 0};                 \
+        add_symbol(global_scope, ftok, ft, false);                          \
+    } while (0)
+
+    REG_RES_FN("_Ok", 1, struct_type, NULL, res_type);
+    REG_RES_FN("_Err", 1, builtin_string, NULL, res_type);
+    REG_RES_FN("_is_ok", 1, res_type, NULL, builtin_bool);
+    REG_RES_FN("_is_err", 1, res_type, NULL, builtin_bool);
+    REG_RES_FN("_unwrap", 1, res_type, NULL, struct_type);
+    REG_RES_FN("_unwrap_err", 1, res_type, NULL, builtin_string);
+    REG_RES_FN("_unwrap_or", 2, res_type, struct_type, struct_type);
+    #undef REG_RES_FN
+
+    extern void register_result_struct(const char*);
+    register_result_struct(sname);
+    return res_type;
+}
+
 void init_checker() {
     global_scope = calloc(1, sizeof(SymbolTable));
     global_scope->capacity = 128;
@@ -5630,6 +5680,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             Type* value_type = check_expr(expr->option.value, scope);
             if (!value_type) return NULL;
+            // A user-struct ok-payload gets its own monomorphic family
+            // Result<Struct> (e.g. `Ok(Point{...})` -> ResultPoint), registered
+            // on demand - mirroring Some(Struct) -> OptionStruct.
+            if (value_type->kind == TYPE_STRUCT && value_type->struct_type.name.length > 0) {
+                Type* res_type = register_result_struct_family(value_type);
+                if (res_type) { expr->expr_type = res_type; return res_type; }
+            }
             // Resolve to concrete ResultInt or ResultString
             Token concrete_name;
             if (value_type == builtin_string) {
@@ -5692,6 +5749,16 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
                 if (name.length == 10 && memcmp(name.start, "ResultBool", 10) == 0) {
                     expr->expr_type = builtin_bool;  return builtin_bool;
+                }
+                // Monomorphic Result<Struct> (e.g. ResultPoint): `?` unwraps to the
+                // underlying struct. The family name is "Result" + the struct name,
+                // so look up that struct symbol and yield its type.
+                if (name.length > 6 && memcmp(name.start, "Result", 6) == 0) {
+                    Token sname = {TOKEN_IDENT, name.start + 6, name.length - 6, name.line};
+                    Symbol* st = find_symbol(global_scope, sname);
+                    if (st && st->type && st->type->kind == TYPE_STRUCT) {
+                        expr->expr_type = st->type; return st->type;
+                    }
                 }
             }
 
@@ -7946,6 +8013,7 @@ void check_program(Program* prog) {
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
                             // Resolve Result<int, string> -> ResultInt, Result<string, string> -> ResultString
                             Token concrete = {TOKEN_IDENT, "ResultInt", 9, 0};
+                            Type* struct_res = NULL;
                             if (fn->return_type->call.arg_count > 0 &&
                                 fn->return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = fn->return_type->call.args[0]->token;
@@ -7955,9 +8023,21 @@ void check_program(Program* prog) {
                                     concrete = (Token){TOKEN_IDENT, "ResultFloat", 11, 0};
                                 else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
                                     concrete = (Token){TOKEN_IDENT, "ResultBool", 10, 0};
+                                else if (inner.length != 3 || memcmp(inner.start, "int", 3) != 0) {
+                                    // `Result<Struct, E>` - resolve the user struct and
+                                    // make its monomorphic Result<Struct> family the
+                                    // signature type (mirrors the `-> Struct?` path).
+                                    Symbol* st = find_symbol(global_scope, inner);
+                                    if (st && st->type && st->type->kind == TYPE_STRUCT)
+                                        struct_res = register_result_struct_family(st->type);
+                                }
                             }
-                            Symbol* sym = find_symbol(global_scope, concrete);
-                            fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
+                            if (struct_res) {
+                                fn_type->fn_type.return_type = struct_res;
+                            } else {
+                                Symbol* sym = find_symbol(global_scope, concrete);
+                                fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
+                            }
                         }
                     }
                 } else if (fn->return_type->type == EXPR_OPTIONAL_TYPE) {

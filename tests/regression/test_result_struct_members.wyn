@@ -1,0 +1,32 @@
+// Regression: the monomorphic Result<Struct, string> family exposes the same
+// members as the builtin Result families - is_ok/is_err/unwrap/unwrap_err/
+// unwrap_or - and both match arms (Ok binds the struct by value, Err binds the
+// error string) lower correctly.
+//
+// EXPECT: ok name=ada age=30
+// EXPECT: err: not found
+// EXPECT: default name=nobody
+struct User { name: string, age: int }
+
+fn lookup(found: bool) -> Result<User, string> {
+    if found {
+        return Ok(User{name: "ada", age: 30})
+    }
+    return Err("not found")
+}
+
+fn main() {
+    r = lookup(true)
+    if r.is_ok() {
+        u = r.unwrap()
+        println("ok name=" + u.name + " age=" + int_to_string(u.age))
+    }
+    r2 = lookup(false)
+    match r2 {
+        Ok(u) => println("ok name=" + u.name),
+        Err(e) => println("err: " + e)
+    }
+    r3 = lookup(false)
+    d = r3.unwrap_or(User{name: "nobody", age: 0})
+    println("default name=" + d.name)
+}

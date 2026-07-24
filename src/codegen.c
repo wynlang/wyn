@@ -1589,6 +1589,31 @@ int is_registered_option_struct(const char* struct_name) {
     return 0;
 }
 
+// Parallel registry for Result<Struct, string> families (`ResultUser` for a
+// `Result<User, string>`). Mirrors the Option<Struct> registry above: populated
+// as struct-payload Results are seen (checker + codegen), the concrete C family
+// is emitted right after the user struct typedefs (it names a user struct, so it
+// cannot live in wyn_runtime.h). Error type is always `const char*` (string),
+// matching the builtin Result families.
+static char** needed_result_structs = NULL;
+static int needed_result_struct_count = 0;
+static int needed_result_struct_cap = 0;
+void register_result_struct(const char* struct_name) {
+    for (int i = 0; i < needed_result_struct_count; i++)
+        if (strcmp(needed_result_structs[i], struct_name) == 0) return;
+    WYN_ENSURE_CAP(needed_result_structs, needed_result_struct_count, needed_result_struct_cap);
+    needed_result_structs[needed_result_struct_count++] = strdup(struct_name);
+}
+int result_struct_count(void) { return needed_result_struct_count; }
+const char* result_struct_name(int i) {
+    return (i >= 0 && i < needed_result_struct_count) ? needed_result_structs[i] : NULL;
+}
+int is_registered_result_struct(const char* struct_name) {
+    for (int i = 0; i < needed_result_struct_count; i++)
+        if (strcmp(needed_result_structs[i], struct_name) == 0) return 1;
+    return 0;
+}
+
 // Track variables that hold data-carrying enum types (growable)
 typedef struct { char var_name[64]; char enum_name[64]; } EnumVarEntry;
 static EnumVarEntry* enum_var_map = NULL;

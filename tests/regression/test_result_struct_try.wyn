@@ -1,0 +1,28 @@
+// Regression: the `?` operator propagates a monomorphic Result<Struct, string>.
+// `find(ok)?` in a Result<Struct>-returning fn returns the Err on failure and
+// binds the unwrapped struct on success.
+//
+// EXPECT: x=8
+// EXPECT: err: bad
+struct Point { x: int, y: int }
+
+fn find(ok: bool) -> Result<Point, string> {
+    if ok { return Ok(Point{x: 7, y: 8}) }
+    return Err("bad")
+}
+
+fn use_try(ok: bool) -> Result<Point, string> {
+    p = find(ok)?
+    return Ok(Point{x: p.x + 1, y: p.y})
+}
+
+fn main() {
+    match use_try(true) {
+        Ok(p) => println("x=" + int_to_string(p.x)),
+        Err(e) => println("err: " + e)
+    }
+    match use_try(false) {
+        Ok(p) => println("x=" + int_to_string(p.x)),
+        Err(e) => println("err: " + e)
+    }
+}
