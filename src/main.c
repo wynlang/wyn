@@ -203,13 +203,21 @@ static void resolve_wyn_root(const char* argv0, char* out, size_t out_sz) {
     snprintf(out, out_sz, "%s", exe_dir);
 }
 
-// GPU dispatch spike: read [gpu] enabled from the project's wyn.toml. Called
-// before codegen so eligible [float].map sites can emit the dual CPU/GPU
-// path. Returns 0 (off) when there is no wyn.toml - transparent by default.
+// GPU dispatch: decide whether eligible [float].map sites emit the dual
+// CPU/GPU path, based on the project's wyn.toml [gpu] section. Called before
+// codegen.
+//
+// The only implemented GPU path is a float32 [float].map, which is LOSSY vs
+// Wyn's float64 CPU semantics (Metal has no double). So it stays off unless
+// the user EXPLICITLY asks for it: BOTH `enabled = true` (master switch) AND
+// `float32 = true` (accept-the-precision-loss opt-in) must be set. `enabled`
+// alone runs float maps on the CPU (exact doubles). Missing wyn.toml, missing
+// [gpu] section, or `enabled = false` all mean off - transparent by default.
+// See docs/GPU_DESIGN.md for the precision contract.
 static int wyn_gpu_flag_from_toml(void) {
     WynConfig* cfg = wyn_config_parse("wyn.toml");
     if (!cfg) return 0;
-    int on = cfg->gpu.enabled;
+    int on = cfg->gpu.enabled && cfg->gpu.float_enabled;
     wyn_config_free(cfg);
     return on;
 }

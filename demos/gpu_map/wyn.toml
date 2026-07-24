@@ -2,8 +2,12 @@
 name = "gpu_map_demo"
 version = "0.1.0"
 
-# Transparent GPU dispatch (spike): eligible [float].map lambdas compile with
-# a dual CPU/GPU path; a runtime cost model picks per call. Delete this
-# section (or set false) and the exact same source runs CPU-only.
+# Transparent GPU dispatch (experimental, macOS/Metal only). Eligible
+# [float].map lambdas compile with a dual CPU/GPU path; a runtime cost model
+# picks per call. The GPU path computes in float32, which is LOSSY vs Wyn's
+# float64 CPU semantics - so it stays off until you explicitly opt in with
+# BOTH keys below. Remove `float32` (or set it false) and the same source runs
+# CPU-only with exact doubles. See docs/GPU_DESIGN.md for the precision contract.
 [gpu]
 enabled = true
+float32 = true

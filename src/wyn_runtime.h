@@ -4092,12 +4092,13 @@ WynArray wyn_array_map_float(WynArray arr, double (*fn)(double)) {
     }
     return result;
 }
-// GPU dispatch spike: try to run a [float].map on the GPU (Metal). Returns 1
+// GPU dispatch: try to run a [float].map on the GPU (Metal). Returns 1
 // and fills *out on success, 0 to tell the call site to run the normal CPU
-// map. Emitted by codegen ONLY when the project's wyn.toml has [gpu]
-// enabled = true and the lambda is compile-time GPU-eligible; the CPU
-// fallback argument at the call site is the exact same lambda, so behavior
-// is identical modulo float32 rounding (see internal-docs/GPU_DESIGN.md).
+// map. Emitted by codegen ONLY when the project's wyn.toml explicitly opts in
+// with [gpu] enabled = true AND [gpu] float32 = true and the lambda is
+// compile-time GPU-eligible; the CPU fallback argument at the call site is the
+// exact same lambda, so behavior is identical modulo float32 rounding (a
+// deliberate, opted-into precision loss - see docs/GPU_DESIGN.md).
 // WYN_GPU_METAL is defined on the compile line (with gpu_metal.o linked)
 // only for such projects on macOS; everywhere else the stub says "no".
 #if defined(__APPLE__) && defined(WYN_GPU_METAL)

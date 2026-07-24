@@ -5,23 +5,26 @@
 // only into programs whose generated C actually references it. Everything
 // here is plain-C ABI so the generated C and wyn_runtime.h can call it.
 //
-// Spike scope and honest limitations:
+// Scope and honest limitations (see docs/GPU_DESIGN.md):
 //   - Kernels are compiled AT RUNTIME with newLibraryWithSource. First use of
-//     a kernel pays device init + MSL compile (measured ~8-40 ms). Production
-//     path: precompile to a .metallib at wyn-build time and load that.
-//   - Metal has NO double type (probed on M3 Pro: "'double' is not supported
-//     in Metal"). Wyn float is a C double, so this path computes in float32.
-//     That is a semantic difference (precision), not just a perf trade.
-//     int64 (`long`) IS supported by MSL, so a [int] path can be exact.
-//   - Single in-flight job, not thread-safe (static state). Fine for a spike;
-//     production wants a per-thread or pooled job context.
+//     a kernel pays device init + MSL compile (measured ~8-40 ms). A future
+//     path could precompile to a .metallib at wyn-build time - NOT done here.
+//   - Metal has NO double type (probed on Apple Silicon: "'double' is not
+//     supported in Metal"). Wyn float is a C double, so this path computes in
+//     float32. That is a semantic difference (precision), not just a perf
+//     trade - hence the explicit `[gpu] float32 = true` opt-in in wyn.toml.
+//   - float32 [float].map ONLY. There is no int64 path: MSL `long` could carry
+//     an exact [int] map, but it is NOT implemented (noted in KNOWN
+//     LIMITATIONS). This file exposes float32 entry points only.
+//   - Single in-flight job, not thread-safe (static state). Concurrent GPU
+//     dispatches from multiple threads are unsafe; a per-thread or pooled job
+//     context is future work, out of scope here.
 //
 // API (called from wyn_runtime.h's dispatch wrapper and the benchmark):
 //   wyn_gpu_available()                  -> 1 if a Metal device exists
+//   wyn_gpu_should_dispatch(n, src)      -> 1 if the cost model wants the GPU
 //   wyn_gpu_map_f32_begin(n, &in_ptr)    -> 0 ok; caller packs into in_ptr
 //   wyn_gpu_map_f32_run(n, src, &out)    -> 0 ok; result readable at out
-//   wyn_gpu_map_i64_begin / _run         -> same shape, int64 elements (MSL
-//                                           `long` is 64-bit: exact results)
 //   (buffers are cached and reused across calls; nothing to free per call)
 
 #ifdef __APPLE__
@@ -41,8 +44,8 @@ static int _gpu_init_state = 0;   // 0 = not tried, 1 = ok, -1 = unavailable
 static struct { const char* src; void* pso; } _gpu_psos[WYN_GPU_PSO_CACHE];
 static int _gpu_pso_count = 0;
 
-// Cached shared-storage buffers, grown as needed and reused across calls.
-// Sized in BYTES so the float32 and int64 paths share the same pair.
+// Cached shared-storage buffers (float32), grown as needed and reused across
+// calls.
 static id<MTLBuffer> _gpu_in_buf = nil;
 static id<MTLBuffer> _gpu_out_buf = nil;
 static size_t _gpu_buf_cap = 0;   // capacity in bytes
@@ -64,7 +67,7 @@ int wyn_gpu_available(void) {
 }
 
 // Cost model. Constants measured on this machine (M3 Pro, macOS, Metal 4,
-// 2026-07; see internal-docs/GPU_DESIGN.md for the raw benchmark tables):
+// 2026-07; see docs/GPU_DESIGN.md for the raw benchmark tables):
 //   - steady state (kernel pipeline cached): GPU beats the existing CPU map
 //     loop from roughly N = 250K-300K floats up (measured crossover between
 //     200K and 300K for both a 2-flop and a 20-flop lambda). Per-element
@@ -120,6 +123,16 @@ static long long _gpu_pending_add(const char* src, int n) {
 
 int wyn_gpu_should_dispatch(int n, const char* kernel_src) {
     if (_gpu_init() != 1) return 0;
+    // WYN_GPU_FORCE=1 bypasses the cost model and dispatches ANY eligible map
+    // to the GPU (subject to a usable Metal device). It exists for tests and
+    // debugging - it lets the float32 path be exercised on small arrays so
+    // correctness can be checked without allocating tens of millions of
+    // elements. It never changes results, only whether the GPU is used.
+    if (getenv("WYN_GPU_FORCE") && n > 0) {
+        if (getenv("WYN_GPU_DEBUG"))
+            fprintf(stderr, "[wyn-gpu] n=%d FORCE -> GPU\n", n);
+        return 1;
+    }
     int yes;
     int cached = _gpu_kernel_cached(kernel_src);
     if (cached) {

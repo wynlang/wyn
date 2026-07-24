@@ -26,15 +26,18 @@ typedef struct {
 } WynFfi;
 
 // [gpu] section - transparent GPU dispatch for builtin array methods.
-// `enabled` is a global kill-switch: it defaults to TRUE (also when the
-// section or the whole wyn.toml is absent); `enabled = false` turns every
-// GPU path off. Exact-result int dispatch is automatic under the switch.
-// Float dispatch (float32 on Metal, a real precision contract) additionally
-// needs an explicit opt-in - see main.c's wyn_gpu_flags_from_toml.
+// GPU dispatch is OFF by default: it turns on only when BOTH keys below are
+// present and true. Absent section / absent wyn.toml => off. `enabled = false`
+// is the kill-switch (turns everything off regardless of `float32`).
+//
+// The ONLY GPU path implemented today is a float32 `[float].map`, which is
+// LOSSY relative to Wyn's float64 CPU semantics (Metal has no double). Because
+// it changes results, it is not covered by `enabled` alone: it demands the
+// separate, explicit `float32 = true` opt-in. See main.c's
+// wyn_gpu_flag_from_toml and docs/GPU_DESIGN.md for the precision contract.
 typedef struct {
-    int enabled;         // kill-switch; parser defaults this to 1
-    int enabled_set;     // 1 when the `enabled` key appeared in the file
-    int float_enabled;   // [gpu] float = true - opt in to f32 float dispatch
+    int enabled;         // [gpu] enabled = true - master switch (default off)
+    int float_enabled;   // [gpu] float32 = true - opt in to lossy f32 [float].map
 } WynGpu;
 
 typedef struct {

@@ -114,6 +114,10 @@ WynConfig* wyn_config_parse(const char* filename) {
         } else if (strcmp(current_section, "gpu") == 0) {
             if (strcmp(key, "enabled") == 0) {
                 config->gpu.enabled = (strcmp(value, "true") == 0);
+            } else if (strcmp(key, "float32") == 0 || strcmp(key, "float") == 0) {
+                // Explicit opt-in to the LOSSY float32 [float].map GPU path.
+                // Accepted under either spelling; `float32` is canonical.
+                config->gpu.float_enabled = (strcmp(value, "true") == 0);
             }
             free(value);
         } else {

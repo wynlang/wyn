@@ -1,5 +1,5 @@
 // bench_gpu_map.c - honest GPU-vs-CPU benchmark for the transparent GPU
-// dispatch spike (see internal-docs/GPU_DESIGN.md).
+// dispatch spike (see docs/GPU_DESIGN.md).
 //
 // CPU side replicates the REAL runtime path a Wyn program takes today:
 // a WynArray of 16-byte tagged WynValue cells, walked with a function

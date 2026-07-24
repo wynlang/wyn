@@ -1,13 +1,15 @@
 // codegen_gpu.c - GPU dispatch spike: eligibility check + MSL kernel emission.
 // Included from codegen.c - shares all statics (emit, lambda tables).
 //
-// Scope (see internal-docs/GPU_DESIGN.md): when the project's wyn.toml has
-// [gpu] enabled = true, an ELIGIBLE [float].map(lambda) call site compiles to
-// a dual path - try the Metal runtime (wyn_gpu_try_map_float, cost model
-// inside), fall back to the existing wyn_array_map_float. With the flag off
-// (the default, and always when no wyn.toml is present) codegen here is
-// bypassed entirely and emitted C is byte-identical to before - the golden-C
-// snapshot suite proves that.
+// Scope (see docs/GPU_DESIGN.md): when the project's wyn.toml explicitly opts
+// in with BOTH [gpu] enabled = true AND [gpu] float32 = true (the lossy-f32
+// opt-in - main.c's wyn_gpu_flag_from_toml gates on both), an ELIGIBLE
+// [float].map(lambda) call site compiles to a dual path - try the Metal
+// runtime (wyn_gpu_try_map_float, cost model inside), fall back to the
+// existing wyn_array_map_float. With the opt-in absent (the default, always
+// when no wyn.toml is present, and whenever float32 is not set) codegen here
+// is bypassed entirely and emitted C is byte-identical to a non-GPU build -
+// the golden-C snapshot suite and the GPU flag-off test prove that.
 //
 // Eligibility (spike-minimal, deliberately conservative):
 //   - single-parameter, single-expression lambda (no body statements)
