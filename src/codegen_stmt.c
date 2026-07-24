@@ -2502,7 +2502,15 @@ void codegen_stmt(Stmt* stmt) {
                                     return_type = "ResultFloat";
                                 else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
                                     return_type = "ResultBool";
-                                else return_type = "ResultInt";
+                                else {
+                                    // `Result<Struct, E>` -> monomorphic Result<Struct>.
+                                    char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
+                                    extern int is_known_struct(const char*);
+                                    if (is_known_struct(_stn)) {
+                                        snprintf(return_type_buf, sizeof(return_type_buf), "Result%s", _stn);
+                                        return_type = return_type_buf;
+                                    } else return_type = "ResultInt";
+                                }
                             } else return_type = "ResultInt";
                         }
                     }
@@ -2814,8 +2822,19 @@ void codegen_stmt(Stmt* stmt) {
                             current_fn_return_kind = "ResultFloat";
                         else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
                             current_fn_return_kind = "ResultBool";
-                        else
-                            current_fn_return_kind = "ResultInt";
+                        else {
+                            // `Result<Struct, E>` -> the monomorphic Result<Struct>
+                            // family, so Ok(Struct{...})/Err(...) in the body lower
+                            // to Result<Struct>_Ok/_Err (not the ResultInt default).
+                            char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
+                            extern int is_known_struct(const char*);
+                            if (is_known_struct(_stn)) {
+                                static char _rfk_buf[128];
+                                snprintf(_rfk_buf, sizeof(_rfk_buf), "Result%s", _stn);
+                                current_fn_return_kind = _rfk_buf;
+                            } else
+                                current_fn_return_kind = "ResultInt";
+                        }
                     }
                 } else if (rt.length == 6 && memcmp(rt.start, "Option", 6) == 0) {
                     if (stmt->fn.return_type->call.arg_count > 0 &&
