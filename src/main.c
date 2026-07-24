@@ -629,7 +629,11 @@ int main(int argc, char** argv) {
 #elif _WIN32
         const char* platform = "windows-x64";
 #else
+#ifdef __aarch64__
+        const char* platform = "linux-arm64";
+#else
         const char* platform = "linux-x64";
+#endif
 #endif
 
 #ifdef _WIN32

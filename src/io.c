@@ -1,4 +1,6 @@
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #define _DEFAULT_SOURCE
 #include "io.h"
 #include <stdio.h>

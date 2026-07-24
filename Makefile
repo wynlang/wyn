@@ -29,7 +29,7 @@ else
     PLATFORM_CFLAGS := -DWYN_PLATFORM_UNKNOWN
 endif
 
-CFLAGS=-Wall -Wextra -std=c11 -g $(PLATFORM_CFLAGS) -DWYN_VERSION=\"$(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)\"
+CFLAGS=-Wall -Wextra -std=c11 -D_GNU_SOURCE -g $(PLATFORM_CFLAGS) -DWYN_VERSION=\"$(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)\"
 OPTFLAGS=-O2
 
 all: wyn$(EXE_EXT) runtime
@@ -44,7 +44,12 @@ platform-info:
 	@echo "Platform flags: $(PLATFORM_CFLAGS)"
 
 # C-based compiler
-CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/cmd_ui.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c src/closures.c  src/toml.c src/file_watch.c src/package.c src/pkgspec.c src/lsp.c src/spawn.c src/bindgen.c src/cpkg.c src/tcc_backend.c src/wyn_arena.c src/wyn_rc.c src/coroutine.c
+CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/cmd_ui.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c src/closures.c  src/toml.c src/file_watch.c src/package.c src/pkgspec.c src/lsp.c src/bindgen.c src/cpkg.c src/tcc_backend.c src/wyn_arena.c src/wyn_rc.c src/coroutine.c
+# NOTE: src/spawn.c is deliberately NOT linked into the compiler. The compiler
+# only registers Task_send/Task_recv/etc. as builtin NAME strings (checker.c) -
+# it never calls the spawn runtime in-process; compiled programs get it from
+# runtime/libwyn_rt.a. Linking spawn.c here forced the whole thread-pool
+# scheduler (spawn_fast.c: wyn_sched_pump_one/inflight) into the compiler too.
 
 # codegen.c #includes these .c files directly (single translation unit), so they
 # are NOT in CORE_SRCS (compiling them standalone would duplicate symbols). List
@@ -233,6 +238,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_struct_eq_test.sh
 	@echo "=== Running select-deadlock test ==="
 	@WYN=./wyn bash tests/errors/run_select_deadlock_test.sh
+	@echo "=== Running channel-deadlock test ==="
+	@WYN=./wyn bash tests/errors/run_channel_deadlock_test.sh
 	@echo "=== Running collection type-safety test ==="
 	@WYN=./wyn bash tests/errors/run_collection_type_test.sh
 	@echo "=== Running silent-wrong-answer test ==="

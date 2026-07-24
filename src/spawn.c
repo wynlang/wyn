@@ -2,6 +2,7 @@
 #include "spawn.h"
 #include "coroutine.h"
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdatomic.h>
 
@@ -287,17 +288,38 @@ void wyn_task_send(WynTask* task, void* value) {
             wyn_coro_yield();
         }
     }
-    // Main thread / OS thread: blocking wait
-    pthread_mutex_lock(&task->mutex);
-    while (task->size == task->capacity && !task->closed) {
-        pthread_cond_wait(&task->not_full, &task->mutex);
+    // Main thread / OS thread: poll + pump instead of blocking forever, so a
+    // send on a full channel that no live task can ever drain is reported as a
+    // deadlock rather than hanging silently (mirrors Task_select_n's backstop).
+    extern long wyn_sched_inflight(void);
+    extern int  wyn_sched_pump_one(void);
+    for (;;) {
+        pthread_mutex_lock(&task->mutex);
+        if (task->closed) { pthread_mutex_unlock(&task->mutex); return; }
+        if (task->size < task->capacity) {
+            task->buffer[task->write_pos] = value;
+            task->write_pos = (task->write_pos + 1) % task->capacity;
+            task->size++;
+            pthread_cond_signal(&task->not_empty);
+            pthread_mutex_unlock(&task->mutex);
+            return;
+        }
+        pthread_mutex_unlock(&task->mutex);
+        int did = wyn_sched_pump_one();
+        if (!did && wyn_sched_inflight() == 0) {
+            // Double-check: one more pump + rescan before declaring death, to
+            // dodge a last-instant receiver enqueue.
+            wyn_sched_pump_one();
+            pthread_mutex_lock(&task->mutex);
+            int ready = task->size < task->capacity || task->closed;
+            pthread_mutex_unlock(&task->mutex);
+            if (!ready && wyn_sched_inflight() == 0) {
+                fprintf(stderr, "wyn: deadlock - send() on a full channel with no receiver and no live tasks (nothing can ever receive)\n");
+                exit(1);
+            }
+        }
+        if (!did) sched_yield();
     }
-    if (task->closed) { pthread_mutex_unlock(&task->mutex); return; }
-    task->buffer[task->write_pos] = value;
-    task->write_pos = (task->write_pos + 1) % task->capacity;
-    task->size++;
-    pthread_cond_signal(&task->not_empty);
-    pthread_mutex_unlock(&task->mutex);
 }
 
 void* wyn_task_recv(WynTask* task) {
@@ -318,18 +340,38 @@ void* wyn_task_recv(WynTask* task) {
             wyn_coro_yield();
         }
     }
-    // Main thread / OS thread: blocking wait
-    pthread_mutex_lock(&task->mutex);
-    while (task->size == 0 && !task->closed) {
-        pthread_cond_wait(&task->not_empty, &task->mutex);
+    // Main thread / OS thread: poll + pump instead of blocking forever, so a
+    // recv on a channel that no live task can ever feed is reported as a
+    // deadlock rather than hanging silently (mirrors Task_select_n's backstop).
+    extern long wyn_sched_inflight(void);
+    extern int  wyn_sched_pump_one(void);
+    for (;;) {
+        pthread_mutex_lock(&task->mutex);
+        if (task->size > 0) {
+            void* value = task->buffer[task->read_pos];
+            task->read_pos = (task->read_pos + 1) % task->capacity;
+            task->size--;
+            pthread_cond_signal(&task->not_full);
+            pthread_mutex_unlock(&task->mutex);
+            return value;
+        }
+        if (task->closed) { pthread_mutex_unlock(&task->mutex); return NULL; }
+        pthread_mutex_unlock(&task->mutex);
+        int did = wyn_sched_pump_one();
+        if (!did && wyn_sched_inflight() == 0) {
+            // Double-check: one more pump + rescan before declaring death, to
+            // dodge a last-instant sender enqueue.
+            wyn_sched_pump_one();
+            pthread_mutex_lock(&task->mutex);
+            int ready = task->size > 0 || task->closed;
+            pthread_mutex_unlock(&task->mutex);
+            if (!ready && wyn_sched_inflight() == 0) {
+                fprintf(stderr, "wyn: deadlock - recv() on a channel with no sender and no live tasks (nothing can ever send)\n");
+                exit(1);
+            }
+        }
+        if (!did) sched_yield();
     }
-    if (task->size == 0 && task->closed) { pthread_mutex_unlock(&task->mutex); return NULL; }
-    void* value = task->buffer[task->read_pos];
-    task->read_pos = (task->read_pos + 1) % task->capacity;
-    task->size--;
-    pthread_cond_signal(&task->not_full);
-    pthread_mutex_unlock(&task->mutex);
-    return value;
 }
 
 void wyn_task_close(WynTask* task) {

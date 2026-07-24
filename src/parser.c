@@ -1997,8 +1997,34 @@ static Expr* assignment() {
     return expr;
 }
 
+// Bound recursive-descent nesting so pathological input (thousands of nested
+// `(` or `[`) reports a clean diagnostic instead of overflowing the C stack and
+// SIGSEGV-ing the compiler. Every nested grouping/array/call re-enters
+// expression() via primary(), so guarding here fences all paths. ~500 levels *
+// ~10 C frames each stays well under an 8MB stack; the observed crash points
+// were ~3000 parens / ~800 arrays, so 500 clears real code by a wide margin.
+static int expr_depth = 0;
+#define WYN_MAX_EXPR_DEPTH 500
+
 Expr* expression() {
-    return assignment();
+    if (++expr_depth > WYN_MAX_EXPR_DEPTH) {
+        if (current_source_file)
+            show_error_context(current_source_file, parser.current.line, 1,
+                "expression nesting too deep (limit 500) - simplify the expression", NULL);
+        parser.had_error = true;
+        expr_depth--;
+        // Benign placeholder + force forward progress so the parser winds down
+        // without cascading (matches the primary()/expect() NULL-safety pattern).
+        Expr* e = alloc_expr();
+        e->type = EXPR_INT;
+        e->token.start = "0";
+        e->token.length = 1;
+        if (!check(TOKEN_EOF)) advance();
+        return e;
+    }
+    Expr* r = assignment();
+    expr_depth--;
+    return r;
 }
 
 Stmt* statement();
@@ -3918,6 +3944,7 @@ Stmt* type_alias() {
 }
 
 Program* parse_program() {
+    expr_depth = 0;  // reset so a prior aborted parse can't leak the counter
     Program* prog = safe_calloc(1, sizeof(Program));
     prog->stmts = safe_malloc(sizeof(Stmt*) * 256);
     prog->count = 0;

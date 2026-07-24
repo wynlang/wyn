@@ -457,6 +457,18 @@ Token next_token() {
             if (match('?')) return make_token(TOKEN_QUESTION_QUESTION);
             return make_token(TOKEN_QUESTION);
     }
-    
-    return make_token(TOKEN_EOF);
+
+    // Any character not matched above is illegal. Reporting a premature EOF here
+    // made the parser blame the enclosing block ("Expected '}'") at the wrong
+    // line; instead surface the offending char through the lexer error channel
+    // so the caret lands on it.
+    {
+        static char _msg[48];
+        unsigned char bad = (unsigned char)c;
+        if (bad >= 0x20 && bad < 0x7f)
+            snprintf(_msg, sizeof _msg, "unexpected character '%c'", bad);
+        else
+            snprintf(_msg, sizeof _msg, "unexpected byte 0x%02x", bad);
+        return error_token(_msg, lexer.start, lexer.line);
+    }
 }
