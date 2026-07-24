@@ -1,0 +1,314 @@
+// wyntest — the Wyn BDD + regression test runner, written in Wyn (dogfooding).
+//
+// Reproduces tests/run_bdd.sh's core semantics:
+//   * discover tests/expect/*.wyn + tests/regression/*.wyn
+//   * parse the `// EXPECT:` lines out of each file
+//   * SKIP files with no EXPECT line
+//   * build each test to a unique path, verify the binary is present+executable
+//     (a real build failure => FAIL "BUILD FAILED", never a silent empty-output),
+//     retrying only transient (resource-exhaustion / empty-diagnostic) failures
+//   * run the binary, filter the compiler-noise lines, compare line-by-line to the
+//     EXPECT lines (first N actual lines vs N expected)
+//   * print `  ✓ name` / `  ✗ name` per test, `expected:`/`actual:` on failure,
+//     and a final `Results: N pass, M fail`
+//   * exit nonzero (= fail count) so CI can gate on it
+//
+// Concurrency: the per-test build+run runs on the THREAD-POOL path via
+// `await_all` over `spawn`ed workers, in BOUNDED batches (~2x CPU, override with
+// $WYN_TEST_JOBS) to avoid the posix_spawn EAGAIN fork-storm the shell runner hit.
+// Each worker does the whole build+run+compare and writes its verdict to a
+// per-index result file; await_all's int return is used only for synchronization
+// (see the "language limitation" note at the bottom of this file).
+//
+// Run from the repo root:  ./wyn run tools/wyntest/wyntest.wyn
+
+// ---- config ------------------------------------------------------------------
+
+fn cpu_count() -> int {
+    var s = System::exec("getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4").trim()
+    var n = s.to_int()
+    if n < 1 { n = 4 }
+    return n
+}
+
+fn max_jobs() -> int {
+    var override = System::env("WYN_TEST_JOBS").trim()
+    if override.len() > 0 {
+        var j = override.to_int()
+        if j >= 1 { return j }
+    }
+    var m = cpu_count() * 2
+    if m < 1 { m = 4 }
+    return m
+}
+
+// ---- helpers -----------------------------------------------------------------
+
+fn basename(path: string) -> string {
+    var parts = path.split("/")
+    return parts[parts.len() - 1]
+}
+
+// True if a run-output line is compiler noise that run_bdd.sh filters out.
+fn is_noise(line: string) -> int {
+    if line.contains("Building") { return 1 }
+    if line.contains("Built") { return 1 }
+    if line.contains("Compiled in") { return 1 }
+    if line.contains("Warning:") { return 1 }
+    return 0
+}
+
+// Parse the `// EXPECT:` expectation lines from a test file's contents.
+// Mirrors:  grep '// EXPECT:' file | sed 's|// EXPECT: ||'
+fn parse_expected(content: string) -> [string] {
+    var expected: [string] = []
+    var lines = content.split("\n")
+    var i = 0
+    while i < lines.len() {
+        var line = lines[i]
+        var pos = line.index_of("// EXPECT:")
+        if pos >= 0 {
+            // "// EXPECT:" is 10 chars; drop the single trailing marker space too.
+            var after = line.substring(pos + 10, line.len())
+            if after.starts_with(" ") {
+                after = after.substring(1, after.len())
+            }
+            expected.push(after)
+        }
+        i = i + 1
+    }
+    return expected
+}
+
+// ---- the worker: build + run + compare one test, write a verdict file ---------
+//
+// Verdict file format (${results_dir}/<idx>.result):
+//   line 1: PASS | FAIL | SKIP
+//   remaining lines (FAIL only): the "    expected:" / "    actual:" detail block
+//
+// Returns 0 on pass/skip, 1 on fail — used only to make await_all block on it.
+fn run_one(file: string, idx: int, dir: string) -> int {
+    var rfile = "${dir}/${idx}.result"
+    var content = File::read(file)
+    var expected = parse_expected(content)
+
+    if expected.len() == 0 {
+        File::write(rfile, "SKIP")
+        return 0
+    }
+
+    // Build to a unique path so parallel workers never collide.
+    var bin = "${dir}/bin_${idx}"
+    System::exec_code("rm -f ${bin}")
+
+    // Build with transient-failure retry (resource exhaustion / empty diagnostic),
+    // matching run_bdd.sh. A real compiler diagnostic is reported, never retried.
+    var build_diag = ""
+    var attempt = 0
+    var built = 0
+    while attempt < 5 {
+        build_diag = System::exec("./wyn build ${file} -o ${bin} 2>&1")
+        if System::exec_code("test -x ${bin}") == 0 {
+            built = 1
+            attempt = 5
+        } else {
+            var transient = 0
+            if build_diag.contains("Resource temporarily unavailable") { transient = 1 }
+            if build_diag.contains("posix_spawn") { transient = 1 }
+            if build_diag.contains("unable to fork") { transient = 1 }
+            if build_diag.contains("Cannot allocate memory") { transient = 1 }
+            if build_diag.contains("too many open files") { transient = 1 }
+            if build_diag.trim().len() == 0 { transient = 1 }
+            if transient == 1 {
+                System::exec_code("sleep 0.3")
+                attempt = attempt + 1
+            } else {
+                // Genuine build error — stop and report.
+                attempt = 5
+            }
+        }
+    }
+    // Keep the source tree clean: `wyn build -o` drops a <src>.wyn.c beside it.
+    System::exec_code("rm -f ${file}.c")
+
+    if built == 0 {
+        var diag = build_diag.trim()
+        File::write(rfile, "FAIL\n    BUILD FAILED: ${diag}\n")
+        return 1
+    }
+
+    // Run & capture (stdout+stderr), filtering compiler-noise lines.
+    var raw = System::exec("${bin} 2>&1")
+    System::exec_code("rm -f ${bin}")
+    var raw_lines = raw.split("\n")
+    var out_lines: [string] = []
+    var k = 0
+    while k < raw_lines.len() {
+        var ln = raw_lines[k]
+        if is_noise(ln) == 0 {
+            out_lines.push(ln)
+        }
+        k = k + 1
+    }
+
+    // Compare the first N actual lines to the N expected lines.
+    var failed = 0
+    var errs = ""
+    var j = 0
+    while j < expected.len() {
+        var exp = expected[j]
+        var act = ""
+        if j < out_lines.len() {
+            act = out_lines[j]
+        }
+        if act != exp {
+            failed = 1
+            errs = errs + "    expected: ${exp}\n    actual:   ${act}\n"
+        }
+        j = j + 1
+    }
+
+    if failed == 0 {
+        File::write(rfile, "PASS")
+        return 0
+    }
+    File::write(rfile, "FAIL\n${errs}")
+    return 1
+}
+
+// ---- discovery ---------------------------------------------------------------
+
+fn list_wyn(glob: string) -> [string] {
+    var out = System::exec("ls ${glob} 2>/dev/null").trim()
+    var files: [string] = []
+    if out.len() == 0 {
+        return files
+    }
+    var lines = out.split("\n")
+    var i = 0
+    while i < lines.len() {
+        var f = lines[i].trim()
+        if f.len() > 0 {
+            files.push(f)
+        }
+        i = i + 1
+    }
+    return files
+}
+
+// ---- reporting ---------------------------------------------------------------
+
+// Print one section's results; returns [pass, fail] contributed by this section.
+// Reads back each verdict file by index. Mutates the running totals via return.
+fn report_section(title: string, files: [string], base_idx: int, dir: string) -> [int] {
+    println("=== ${title} ===")
+    var pass = 0
+    var fail = 0
+    var fail_details = ""
+    var i = 0
+    while i < files.len() {
+        var name = basename(files[i])
+        var idx = base_idx + i
+        var content = File::read("${dir}/${idx}.result")
+        var lines = content.split("\n")
+        var status = lines[0]
+        if status == "SKIP" {
+            i = i + 1
+        } else {
+            if status == "PASS" {
+                pass = pass + 1
+                println("  ✓ ${name}")
+            } else {
+                fail = fail + 1
+                println("  ✗ ${name}")
+                var detail = content.substring(status.len() + 1, content.len())
+                fail_details = fail_details + "\n  FAIL: ${name}\n" + detail
+            }
+            i = i + 1
+        }
+    }
+    var out: [int] = []
+    out.push(pass)
+    out.push(fail)
+    // Failure detail is printed after the summary; stash it on disk keyed by title.
+    File::write("${dir}/_details_${title}.txt", fail_details)
+    return out
+}
+
+// ---- main --------------------------------------------------------------------
+
+fn main() -> int {
+    // Unique per-run scratch dir so concurrent wyntest invocations never collide
+    // (mirrors run_bdd.sh's `mktemp -d`).
+    var dir = System::exec("mktemp -d /tmp/wyntest.XXXXXX").trim()
+
+    var expect_files = list_wyn("tests/expect/*.wyn")
+    var regr_files = list_wyn("tests/regression/*.wyn")
+
+    // Combined index space: expect files first [0..E), then regression [E..E+R).
+    var all: [string] = []
+    var i = 0
+    while i < expect_files.len() { all.push(expect_files[i]); i = i + 1 }
+    i = 0
+    while i < regr_files.len() { all.push(regr_files[i]); i = i + 1 }
+
+    var n = all.len()
+    var batch = max_jobs()
+    println("wyntest: ${n} test files, up to ${batch} concurrent build+run workers")
+    println("")
+
+    // Bounded-concurrency thread-pool execution: spawn a batch, await_all, repeat.
+    var start = 0
+    while start < n {
+        var end = start + batch
+        if end > n { end = n }
+        var futures = []
+        var j = start
+        while j < end {
+            futures.push(spawn run_one(all[j], j, dir))
+            j = j + 1
+        }
+        await_all(futures)
+        start = end
+    }
+
+    // Report, preserving run_bdd.sh's two-section layout.
+    var e = report_section("Expect Tests", expect_files, 0, dir)
+    println("")
+    var r = report_section("Regression Tests", regr_files, expect_files.len(), dir)
+    println("")
+
+    var pass = e[0] + r[0]
+    var fail = e[1] + r[1]
+    println("Results: ${pass} pass, ${fail} fail")
+
+    var d1 = File::read("${dir}/_details_Expect Tests.txt")
+    var d2 = File::read("${dir}/_details_Regression Tests.txt")
+    var all_details = d1 + d2
+    if all_details.trim().len() > 0 {
+        println("")
+        println("Failures:${all_details}")
+    }
+
+    System::exec_code("rm -rf ${dir}")
+    return fail
+}
+
+// ---- language limitation note ------------------------------------------------
+//
+// LIMITATION (drove the design above): `await_all(futures)` types its result
+// elements as `int` in the checker, regardless of the spawned function's actual
+// return type. So `spawn work()` where `work() -> string` and then indexing the
+// await_all result gives you a value the checker treats as `int`, and calling any
+// string method on it (`.split`, `.substring`, …) fails to type-check, e.g.:
+//
+//     Type mismatch: Expected string, Got int
+//
+// (A single `var r = await (spawn work())` where work returns a struct/string DOES
+// type-check correctly — the bug is specific to arrays of futures / await_all.)
+//
+// That is why each worker does the whole build+run+compare itself and persists its
+// verdict to a per-index result file via File::write, and await_all's int return
+// is used ONLY as a join barrier. If await_all preserved element types, workers
+// could return a richer value directly and we'd skip the result-file round-trip.
+// Minimal repro of the limitation lives in tools/wyntest/repro_await_all_type.wyn.

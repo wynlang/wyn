@@ -1,0 +1,33 @@
+// Minimal repro: await_all() does not preserve the spawned function's return
+// type — it types every result element as `int`, so string methods on the
+// results fail to type-check.
+//
+// Expected: this program prints  t0  t1  t2
+// Actual (compiler as of 2026-07-24):
+//   Type mismatch at line 12: Expected: string, Got: int
+//
+// Contrast: a SINGLE spawn+await of a string/struct-returning fn type-checks fine
+// (see the two commented lines at the bottom). The defect is specific to
+// arrays-of-futures / await_all.
+
+fn work(n: int) -> string {
+    return "t${n}"
+}
+
+fn main() -> int {
+    var futures = []
+    for i in 0..3 { futures.push(spawn work(i)) }
+    var results = await_all(futures)
+    var i = 0
+    while i < results.len() {
+        var r: string = results[i]   // <-- checker error: Got int
+        println(r.split("x")[0])     // <-- string method on an "int"
+        i = i + 1
+    }
+    return 0
+
+    // These, by contrast, DO compile:
+    //   var f = spawn work(3)
+    //   var r = await f            // r is correctly typed string
+    //   println(r.split("x")[0])
+}
