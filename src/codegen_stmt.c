@@ -2503,11 +2503,13 @@ void codegen_stmt(Stmt* stmt) {
                                 else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
                                     return_type = "ResultBool";
                                 else {
-                                    // `Result<Struct, E>` -> monomorphic Result<Struct>.
+                                    // `Result<Struct, E>` -> monomorphic Result<Struct,E>.
                                     char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
                                     extern int is_known_struct(const char*);
+                                    extern const char* result_family_err_suffix(Expr*);
                                     if (is_known_struct(_stn)) {
-                                        snprintf(return_type_buf, sizeof(return_type_buf), "Result%s", _stn);
+                                        snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
+                                                 _stn, result_family_err_suffix(stmt->fn.return_type));
                                         return_type = return_type_buf;
                                     } else return_type = "ResultInt";
                                 }
@@ -2823,14 +2825,18 @@ void codegen_stmt(Stmt* stmt) {
                         else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
                             current_fn_return_kind = "ResultBool";
                         else {
-                            // `Result<Struct, E>` -> the monomorphic Result<Struct>
-                            // family, so Ok(Struct{...})/Err(...) in the body lower
-                            // to Result<Struct>_Ok/_Err (not the ResultInt default).
+                            // `Result<Struct, E>` -> the monomorphic Result<Struct,E>
+                            // family, so Ok(Struct{...})/Err(...) in the body lower to
+                            // that family's _Ok/_Err (not the ResultInt default). The
+                            // family name encodes E (bare for string, "_<ErrTag>"
+                            // otherwise) — see register_result_family_for_types.
                             char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
                             extern int is_known_struct(const char*);
+                            extern const char* result_family_err_suffix(Expr*);
                             if (is_known_struct(_stn)) {
-                                static char _rfk_buf[128];
-                                snprintf(_rfk_buf, sizeof(_rfk_buf), "Result%s", _stn);
+                                static char _rfk_buf[192];
+                                snprintf(_rfk_buf, sizeof(_rfk_buf), "Result%s%s",
+                                         _stn, result_family_err_suffix(stmt->fn.return_type));
                                 current_fn_return_kind = _rfk_buf;
                             } else
                                 current_fn_return_kind = "ResultInt";

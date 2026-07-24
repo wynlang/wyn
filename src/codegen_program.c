@@ -42,18 +42,30 @@ static int res_struct_already_emitted(const char* s) {
         if (strcmp(emitted_res_struct[i], s) == 0) return 1;
     return 0;
 }
-static void emit_result_struct_family(const char* s) {
-    if (res_struct_already_emitted(s)) return;
+// Emit a monomorphic Result<Ok, Err> family. `fam` is the C family name (e.g.
+// "ResultPoint" or "ResultPoint_Fail"); the concrete ok/err payload C types come
+// from the registry (register_result_family), so the err payload is no longer
+// pinned to `const char*` — it is whatever E lowered to (a struct, `long long`,
+// `double`, `bool`, or `const char*`). The unwrap() diagnostic prints the err with
+// a format chosen from err_is_str (a struct/scalar err has no printable %s).
+static void emit_result_struct_family(const char* fam) {
+    if (res_struct_already_emitted(fam)) return;
+    extern int result_family_lookup(const char*, const char**, const char**, int*);
+    const char* ok = NULL; const char* err = "const char*"; int err_is_str = 1;
+    if (!result_family_lookup(fam, &ok, &err, &err_is_str) || !ok) return;
     WYN_ENSURE_CAP(emitted_res_struct, emitted_res_struct_count, emitted_res_struct_cap);
-    emitted_res_struct[emitted_res_struct_count++] = strdup(s);
-    emit("typedef struct { int tag; union { %s ok_value; const char* err_value; } data; } Result%s;\n", s, s);
-    emit("static inline Result%s Result%s_Ok(%s value){ Result%s r; r.tag=0; r.data.ok_value=value; return r; }\n", s, s, s, s);
-    emit("static inline Result%s Result%s_Err(const char* msg){ Result%s r; r.tag=1; r.data.err_value=msg; return r; }\n", s, s, s);
-    emit("static inline int Result%s_is_ok(Result%s r){ return r.tag==0; }\n", s, s);
-    emit("static inline int Result%s_is_err(Result%s r){ return r.tag==1; }\n", s, s);
-    emit("static inline %s Result%s_unwrap(Result%s r){ if(r.tag==1){ fprintf(stderr, \"Error: unwrap() called on Err: %%s\\n\", r.data.err_value); exit(1); } return r.data.ok_value; }\n", s, s, s);
-    emit("static inline const char* Result%s_unwrap_err(Result%s r){ if(r.tag==0){ fprintf(stderr, \"Error: unwrap_err() called on Ok\\n\"); exit(1); } return r.data.err_value; }\n", s, s);
-    emit("static inline %s Result%s_unwrap_or(Result%s r, %s def){ return r.tag==0 ? r.data.ok_value : def; }\n", s, s, s, s);
+    emitted_res_struct[emitted_res_struct_count++] = strdup(fam);
+    emit("typedef struct { int tag; union { %s ok_value; %s err_value; } data; } %s;\n", ok, err, fam);
+    emit("static inline %s %s_Ok(%s value){ %s r; r.tag=0; r.data.ok_value=value; return r; }\n", fam, fam, ok, fam);
+    emit("static inline %s %s_Err(%s msg){ %s r; r.tag=1; r.data.err_value=msg; return r; }\n", fam, fam, err, fam);
+    emit("static inline int %s_is_ok(%s r){ return r.tag==0; }\n", fam, fam);
+    emit("static inline int %s_is_err(%s r){ return r.tag==1; }\n", fam, fam);
+    if (err_is_str)
+        emit("static inline %s %s_unwrap(%s r){ if(r.tag==1){ fprintf(stderr, \"Error: unwrap() called on Err: %%s\\n\", r.data.err_value); exit(1); } return r.data.ok_value; }\n", ok, fam, fam);
+    else
+        emit("static inline %s %s_unwrap(%s r){ if(r.tag==1){ fprintf(stderr, \"Error: unwrap() called on Err\\n\"); exit(1); } return r.data.ok_value; }\n", ok, fam, fam);
+    emit("static inline %s %s_unwrap_err(%s r){ if(r.tag==0){ fprintf(stderr, \"Error: unwrap_err() called on Ok\\n\"); exit(1); } return r.data.err_value; }\n", err, fam, fam);
+    emit("static inline %s %s_unwrap_or(%s r, %s def){ return r.tag==0 ? r.data.ok_value : def; }\n", ok, fam, fam, ok);
 }
 
 // --- Field-wise struct equality helpers (`a == b` on struct values) ---
@@ -734,11 +746,15 @@ void codegen_program(Program* prog) {
                                     return_type = "ResultBool";
                                 else {
                                     // `Result<Struct, E>` -> the monomorphic
-                                    // Result<Struct> family (ResultPoint, …).
+                                    // Result<Struct,E> family (ResultPoint,
+                                    // ResultPoint_Fail, …). The err suffix keeps this
+                                    // C signature name in lockstep with the family.
                                     char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
                                     extern int is_known_struct(const char*);
+                                    extern const char* result_family_err_suffix(Expr*);
                                     if (is_known_struct(_stn)) {
-                                        snprintf(return_type_buf, sizeof(return_type_buf), "Result%s", _stn);
+                                        snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
+                                                 _stn, result_family_err_suffix(fn->return_type));
                                         return_type = return_type_buf;
                                     } else return_type = "ResultInt";
                                 }
@@ -1743,7 +1759,10 @@ void codegen_match_statement(Stmt* stmt) {
             // ResultFloat/ResultBool/ResultString lower with the right temp type
             // and Ok-payload binding (Err is always a string).
             const char* _rfam = "ResultInt"; const char* _rcty = "long long"; int _rok_str = 0;
-            static char _rfam_buf[128]; static char _rcty_buf[96];
+            // Err payload C type/string-ness for the Err arm binding (defaults to
+            // the #181 string err; overridden from the family registry for structs).
+            const char* _rerr_cty = "const char*"; int _rerr_str = 1;
+            static char _rfam_buf[192]; static char _rcty_buf[96];
             Type* _rvt = stmt->match_stmt.value ? stmt->match_stmt.value->expr_type : NULL;
             if (_rvt && _rvt->kind == TYPE_STRUCT && _rvt->struct_type.name.length > 0) {
                 char _n[96]; token_to_cstr(_n, sizeof(_n), _rvt->struct_type.name);
@@ -1751,10 +1770,18 @@ void codegen_match_statement(Stmt* stmt) {
                 else if (strcmp(_n, "ResultFloat") == 0) { _rfam = "ResultFloat"; _rcty = "double"; }
                 else if (strcmp(_n, "ResultBool") == 0) { _rfam = "ResultBool"; _rcty = "bool"; }
                 else if (strncmp(_n, "Result", 6) == 0 && strcmp(_n, "ResultInt") != 0) {
-                    // Monomorphic Result<Struct> (e.g. ResultPoint): Ok payload is the
-                    // struct value, bound by value (Err stays a string).
+                    // Monomorphic Result<Struct,E> (ResultPoint / ResultPoint_Fail):
+                    // Ok payload is the struct, bound by value; the Err payload C type
+                    // comes from the family registry (string/scalar/struct).
                     snprintf(_rfam_buf, sizeof(_rfam_buf), "%s", _n); _rfam = _rfam_buf;
-                    snprintf(_rcty_buf, sizeof(_rcty_buf), "%s", _n + 6); _rcty = _rcty_buf;
+                    extern int result_family_lookup(const char*, const char**, const char**, int*);
+                    const char* _ro = NULL; const char* _re = NULL; int _reis = 1;
+                    if (result_family_lookup(_n, &_ro, &_re, &_reis) && _ro) {
+                        snprintf(_rcty_buf, sizeof(_rcty_buf), "%s", _ro); _rcty = _rcty_buf;
+                        _rerr_cty = _re; _rerr_str = _reis;
+                    } else {
+                        snprintf(_rcty_buf, sizeof(_rcty_buf), "%s", _n + 6); _rcty = _rcty_buf;
+                    }
                 }
             }
             emit("    %s __match_val_%d = ", _rfam, _rmid);
@@ -1774,13 +1801,14 @@ void codegen_match_statement(Stmt* stmt) {
                             if (_rok_str) { char _sv[256]; token_to_cstr(_sv, sizeof(_sv), mc->pattern->option.inner->ident.name);
                                 extern void register_string_var(const char*); register_string_var(_sv); }
                         } else {
-                            emit("        const char* %.*s = __match_val_%d.data.err_value;\n",
+                            emit("        %s %.*s = __match_val_%d.data.err_value;\n", _rerr_cty,
                                 mc->pattern->option.inner->ident.name.length,
                                 mc->pattern->option.inner->ident.name.start, _rmid);
-                            // Err payload is a string; register the binding so the
-                            // arm body treats it as one (else `"..." + e` defaults
-                            // to int and emits int_to_string(e) -> garbage).
-                            { char _ev[256]; token_to_cstr(_ev, sizeof(_ev), mc->pattern->option.inner->ident.name);
+                            // If the Err payload is a string, register the binding so
+                            // the arm body treats it as one (else `"..." + e` defaults
+                            // to int and emits int_to_string(e) -> garbage). A struct/
+                            // scalar err is NOT a string var.
+                            if (_rerr_str) { char _ev[256]; token_to_cstr(_ev, sizeof(_ev), mc->pattern->option.inner->ident.name);
                               extern void register_string_var(const char*); register_string_var(_ev); }
                         }
                     }

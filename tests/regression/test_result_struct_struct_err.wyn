@@ -1,0 +1,38 @@
+// Regression: `Result<Struct, StructErr>` — a Result whose ERROR type is itself a
+// user struct — compiles, runs, and matches (both Ok and Err arms).
+//
+// This was DEFERRED by #181: that PR added the per-struct Result family for
+// `Result<Struct, string>`, but hardcoded the err payload as `const char*`, so a
+// struct error type emitted `ResultPoint_Err((Fail){...})` against a `const char*`
+// parameter — a C type error / internal codegen error.
+//
+// Fixed by generalizing the per-struct Result family to a (ok-type, err-type)
+// pairing: the family is keyed/named by BOTH types (`Result<Ok>` for a string err,
+// `Result<Ok>_<ErrTag>` — e.g. `ResultPoint_Fail`, `ResultPoint_int` — otherwise),
+// the union's `err_value` is emitted with the real err C type, and the Ok/Err
+// constructors, unwrap/unwrap_err, `?`, and the match Err-arm binding all route the
+// err payload the same way the ok payload is routed. `Result<Point,string>` and
+// `Result<Point,Fail>` are now distinct families that never collide.
+//
+// EXPECT: x=1
+// EXPECT: err code=9
+struct Point { x: int, y: int }
+struct Fail { code: int }
+
+fn find(ok: bool) -> Result<Point, Fail> {
+    if ok {
+        return Ok(Point{x: 1, y: 2})
+    }
+    return Err(Fail{code: 9})
+}
+
+fn main() {
+    match find(true) {
+        Ok(p) => println("x=" + int_to_string(p.x)),
+        Err(e) => println("err code=" + int_to_string(e.code))
+    }
+    match find(false) {
+        Ok(p) => println("x=" + int_to_string(p.x)),
+        Err(e) => println("err code=" + int_to_string(e.code))
+    }
+}
