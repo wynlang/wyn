@@ -42,15 +42,31 @@ run_test() {
     local bin="$sandbox/$(basename "${file%.wyn}")"
 
     # Step 1: build to a unique output path. Keep the source tree clean.
-    local build_err
-    build_err=$("$WYN" build "$file" -o "$bin" 2>&1 >/dev/null)
-    local build_rc=$?
-    rm -f "${file%.wyn}" "${file}.c" 2>/dev/null
+    # A build that fails with NO diagnostic text is a transient toolchain flake
+    # (observed on the macos-15 runner: `wyn build` -> clang intermittently exits
+    # nonzero under parallel load with empty stderr and no binary). Retry those up
+    # to 3x. A build that fails WITH real error text is a genuine error and is
+    # reported immediately — never retried away.
+    local build_err build_rc build_diag
+    local battempt=0
+    while [ "$battempt" -lt 3 ]; do
+        build_err=$("$WYN" build "$file" -o "$bin" 2>&1 >/dev/null)
+        build_rc=$?
+        rm -f "${file%.wyn}" "${file}.c" 2>/dev/null
+        # Present + executable => build succeeded, proceed.
+        [ "$build_rc" -eq 0 ] && [ -x "$bin" ] && break
+        build_diag="$(echo "$build_err" | grep -v '^Building\|^Built\|^Compiled in\|Warning:' | head -3 | tr '\n' ' ')"
+        # Real diagnostic => genuine build error, stop and report.
+        [ -n "$build_diag" ] && break
+        # Empty diagnostic => transient flake, retry.
+        rm -f "$bin" 2>/dev/null
+        battempt=$((battempt + 1))
+        sleep 0.2
+    done
 
     # Step 2: verify the binary is present and executable before running it.
     if [ "$build_rc" -ne 0 ] || [ ! -x "$bin" ]; then
-        printf "FAIL\n    BUILD FAILED (rc=%s): %s\n" "$build_rc" \
-            "$(echo "$build_err" | grep -v '^Building\|^Built\|^Compiled in\|Warning:' | head -3 | tr '\n' ' ')" \
+        printf "FAIL\n    BUILD FAILED (rc=%s): %s\n" "$build_rc" "$build_diag" \
             > "$result_file"
         rm -rf "$sandbox"
         return
