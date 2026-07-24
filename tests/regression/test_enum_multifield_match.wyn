@@ -2,8 +2,9 @@
 // bind each payload field with its real type in match arms. Previously the
 // unprefixed pattern emitted `void w = ...Rect_value` and referenced an
 // undeclared second binder -> codegen error; a string field was int_to_string'd.
-// Also: a non-exhaustive match must not read uninitialized memory (result is
-// zero-initialized), so an unmatched value yields a deterministic 0, not garbage.
+// Also: a match that does not cover every variant needs a `_ =>` fall-through
+// (the checker's soundness gate now rejects a bare non-exhaustive match rather
+// than reading uninitialized memory); the wildcard yields a deterministic 0.
 // EXPECT: 12
 // EXPECT: 0
 // EXPECT: answer:42
@@ -23,8 +24,8 @@ fn describe(it: Item) -> string {
 }
 
 fn non_exhaustive(c: Color) -> int {
-    // Only two of three arms; unmatched Blue must be a deterministic 0.
-    return match c { Red => 1, Green => 2 }
+    // Two named arms plus a wildcard; unmatched Blue falls through to 0.
+    return match c { Red => 1, Green => 2, _ => 0 }
 }
 
 fn main() {

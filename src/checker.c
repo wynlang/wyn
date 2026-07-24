@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include "common.h"
 #include "growable.h"
 
@@ -870,6 +871,43 @@ void add_symbol(SymbolTable* scope, Token name, Type* type, bool is_mutable) {
 static void mark_used(SymbolTable* scope, Token name) {
     Symbol* sym = find_symbol(scope, name);
     if (sym) sym->is_used = true;
+}
+
+// K7: does this call target a genuinely non-callable value - i.e. a LOCAL
+// variable holding a non-function (`var x = 5; x(3)`)? We must NOT reject calls
+// to global names: the stdlib registers many callable builtins as `int`
+// PLACEHOLDERS (sleep_ms, await_any, clamp, sign, input, ...) that codegen
+// resolves by name, and a user function can also shadow such a placeholder as a
+// separate global symbol entry. So we only diagnose when the name resolves to a
+// non-function in a LOCAL scope (strictly below global_scope) and no function
+// of that name shadows it in the local chain. Returns the offending local
+// symbol, or NULL if the target is callable / global / a real function.
+static bool token_name_eq(Token a, Token b) {
+    return a.length == b.length && a.length > 0 &&
+           memcmp(a.start, b.start, a.length) == 0;
+}
+static Symbol* find_local_noncallable(SymbolTable* scope, Token name) {
+    for (SymbolTable* s = scope; s && s != global_scope; s = s->parent) {
+        for (int i = 0; i < s->count; i++) {
+            Symbol* sym = &s->symbols[i];
+            if (!token_name_eq(sym->name, name)) continue;
+            // Found the name in a local scope. If any overload here is a
+            // function (e.g. a lambda-typed local), it's callable.
+            for (Symbol* o = sym; o; o = o->next_overload) {
+                if (o->type && o->type->kind == TYPE_FUNCTION) return NULL;
+            }
+            if (sym->type && (sym->type->kind == TYPE_INT ||
+                              sym->type->kind == TYPE_FLOAT ||
+                              sym->type->kind == TYPE_BOOL ||
+                              sym->type->kind == TYPE_STRING ||
+                              sym->type->kind == TYPE_ARRAY ||
+                              sym->type->kind == TYPE_MAP)) {
+                return sym;
+            }
+            return NULL; // some other kind - don't touch
+        }
+    }
+    return NULL;
 }
 
 // Lazily register a monomorphic Option<Struct> family for a user-struct payload
@@ -2689,17 +2727,19 @@ static Symbol* find_function_overload(SymbolTable* scope, Token name, Type** arg
     if (!symbol) {
         return NULL;
     }
-    if (symbol->type->kind != TYPE_FUNCTION) {
-        return symbol;
-    }
-    
+
     Symbol* best_match = NULL;
     int best_score = -1;
-    
-    // Check all overloads
+
+    // Check all overloads. The head symbol may be a NON-function (e.g. a stdlib
+    // placeholder registered as `int` for a name a user later defines a real
+    // function under, like `clamp`/`sign`/`input`) - a real function overload
+    // can still live further down the chain, so we must scan past a non-function
+    // head rather than bailing on it. If NO function is found, fall back to
+    // returning the head so callers can diagnose a non-callable value (K7).
     Symbol* current = symbol;
     while (current) {
-        if (current->type->kind == TYPE_FUNCTION) {
+        if (current->type && current->type->kind == TYPE_FUNCTION) {
             int score = calculate_match_score(current->type, arg_types, arg_count);
             if (score > best_score) {
                 best_score = score;
@@ -2708,8 +2748,8 @@ static Symbol* find_function_overload(SymbolTable* scope, Token name, Type** arg
         }
         current = current->next_overload;
     }
-    
-    return best_match;
+
+    return best_match ? best_match : symbol;
 }
 
 // T1.5.3: Calculate how well a function signature matches the arguments
@@ -2798,9 +2838,39 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
     }
     
     switch (expr->type) {
-        case EXPR_INT:
+        case EXPR_INT: {
+            // K8: reject integer literals that don't fit in Wyn's 64-bit int.
+            // Without this, an oversized literal (9999999999999999999999) passed
+            // check and hit an opaque codegen ICE with no diagnostic. Normalize
+            // out underscores and any 0x/0b/0o prefix, then parse in the right
+            // base with strtoull and flag ERANGE. Negative literals are a
+            // separate unary-minus node, so the magnitude here is non-negative.
+            {
+                const char* p = expr->token.start;
+                int n = expr->token.length;
+                char buf[80]; int bi = 0; int base = 10;
+                int start = 0;
+                if (n >= 2 && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { base = 16; start = 2; }
+                else if (n >= 2 && p[0] == '0' && (p[1] == 'b' || p[1] == 'B')) { base = 2; start = 2; }
+                else if (n >= 2 && p[0] == '0' && (p[1] == 'o' || p[1] == 'O')) { base = 8; start = 2; }
+                for (int i = start; i < n && bi < (int)sizeof(buf) - 1; i++) {
+                    if (p[i] != '_') buf[bi++] = p[i];
+                }
+                buf[bi] = '\0';
+                if (bi > 0) {
+                    errno = 0;
+                    char* endp = NULL;
+                    unsigned long long v = strtoull(buf, &endp, base);
+                    if (errno == ERANGE || v > 9223372036854775807ULL) {
+                        fprintf(stderr, "Error at line %d: integer literal '%.*s' is too large for a 64-bit int (max 9223372036854775807)\n",
+                                expr->token.line, n, p);
+                        had_error = true;
+                    }
+                }
+            }
             expr->expr_type = builtin_int;
             return builtin_int;
+        }
         case EXPR_FLOAT:
             expr->expr_type = builtin_float;
             return builtin_float;
@@ -3834,6 +3904,25 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     expr->call.callee->expr_type = best_match->type;
                     free(arg_types);
                     return best_match->type->fn_type.return_type;
+                } else if (find_local_noncallable(scope, expr->call.callee->token)) {
+                    // K7: the callee is a LOCAL variable holding a non-function
+                    // value (e.g. `var x = 5; x(3)`). Without this gate the call
+                    // silently fell through to the int fallback and then hit an
+                    // opaque codegen ICE. Reject at check time. We deliberately
+                    // scope this to LOCALS: the stdlib registers many callable
+                    // builtins as global `int` placeholders (sleep_ms, await_any,
+                    // clamp, sign, input) that codegen resolves by name, and a user
+                    // function may shadow such a placeholder as a separate global
+                    // symbol - neither is a K7 error.
+                    char nc_name[256];
+                    token_to_cstr(nc_name, sizeof(nc_name), expr->call.callee->token);
+                    fprintf(stderr, "Error at line %d: '%s' is not a function and cannot be called\n",
+                            expr->call.callee->token.line, nc_name);
+                    had_error = true;
+                    mark_used(scope, expr->call.callee->token);
+                    free(arg_types);
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
                 } else if (!best_match) {
                     char func_name[256];
                     token_to_cstr(func_name, sizeof(func_name), expr->call.callee->token);
@@ -4079,6 +4168,26 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                 lam->expr_type->fn_type.return_type = builtin_float;
                         }
                     }
+                }
+            }
+
+            // K10: .filter()'s predicate must return bool. An int predicate was
+            // accepted (C truthiness by accident) and a string predicate silently
+            // no-oped (returned the whole array). The return type is only checked
+            // after the S2 propagation above (which never touches filter's bool
+            // return). Only enforce when the lambda's return type is known and is
+            // a concrete non-bool scalar - unknown/void stays permissive.
+            if (object_type && object_type->kind == TYPE_ARRAY &&
+                method.length == 6 && memcmp(method.start, "filter", 6) == 0 &&
+                expr->method_call.arg_count == 1 &&
+                expr->method_call.args[0]->type == EXPR_LAMBDA) {
+                Expr* lam = expr->method_call.args[0];
+                Type* rt = (lam->expr_type && lam->expr_type->kind == TYPE_FUNCTION)
+                               ? lam->expr_type->fn_type.return_type : NULL;
+                if (rt && (rt->kind == TYPE_STRING || rt->kind == TYPE_FLOAT)) {
+                    fprintf(stderr, "Error at line %d: .filter() predicate must return bool, got %s\n",
+                            method.line, type_to_string(rt));
+                    had_error = true;
                 }
             }
 
@@ -4437,11 +4546,58 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
             }
 
+            // K4: `.unwrap_or(default)` on an Option/Result - the default is the
+            // fallback VALUE, so it must match the wrapped type. Before this the
+            // method-call path never checked the arg, so `int?.unwrap_or("x")`
+            // emitted `OptionInt_unwrap_or(g(), "x")` - a string pointer passed
+            // where a `long long` is expected. It compiled; on the None/Err path
+            // the pointer was printed as an integer (silent garbage).
+            if (object_type && expr->method_call.arg_count == 1 &&
+                method.length == 9 && memcmp(method.start, "unwrap_or", 9) == 0) {
+                // Wrapped value type, from either the structured Option/Result
+                // type or the monomorphic struct family name (OptionInt/…).
+                Type* wrapped = NULL;
+                if (object_type->kind == TYPE_OPTIONAL) wrapped = object_type->optional_type.inner_type;
+                else if (object_type->kind == TYPE_RESULT) wrapped = object_type->result_type.ok_type;
+                else if (object_type->kind == TYPE_STRUCT && object_type->struct_type.name.length > 0) {
+                    Token n = object_type->struct_type.name;
+                    const char* s = n.start; int len = n.length;
+                    #define _SUF(fam, lit) (len == (int)(strlen(fam)+strlen(lit)) && \
+                        memcmp(s, fam, strlen(fam)) == 0 && \
+                        memcmp(s + strlen(fam), lit, strlen(lit)) == 0)
+                    if (_SUF("Option","Int") || _SUF("Result","Int")) wrapped = builtin_int;
+                    else if (_SUF("Option","String") || _SUF("Result","String")) wrapped = builtin_string;
+                    else if (_SUF("Option","Float") || _SUF("Result","Float")) wrapped = builtin_float;
+                    else if (_SUF("Option","Bool") || _SUF("Result","Bool")) wrapped = builtin_bool;
+                    #undef _SUF
+                }
+                if (wrapped) {
+                    Type* def_t = expr->method_call.args[0]->expr_type;
+                    if (!def_t) def_t = check_expr(expr->method_call.args[0], scope);
+                    // Only enforce for SCALAR mismatches (both sides scalar) - the
+                    // same conservative rule K2 uses for struct-init; int<->float
+                    // is coerced by wyn_is_type_compatible. Struct/array/unknown
+                    // wrapped types stay permissive.
+                    bool wrapped_scalar = (wrapped->kind == TYPE_INT || wrapped->kind == TYPE_FLOAT ||
+                                           wrapped->kind == TYPE_BOOL || wrapped->kind == TYPE_STRING);
+                    bool def_scalar = def_t && (def_t->kind == TYPE_INT || def_t->kind == TYPE_FLOAT ||
+                                                def_t->kind == TYPE_BOOL || def_t->kind == TYPE_STRING);
+                    if (wrapped_scalar && def_scalar && !wyn_is_type_compatible(wrapped, def_t)) {
+                        fprintf(stderr, "Error at line %d: unwrap_or default is %s but the value is %s\n",
+                                method.line, type_to_string(def_t), type_to_string(wrapped));
+                        fprintf(stderr, "  \033[34mHelp:\033[0m The default is returned when empty - it must match the wrapped type\n");
+                        had_error = true;
+                        expr->expr_type = wrapped;
+                        return wrapped;
+                    }
+                }
+            }
+
             // Use method signature table for type inference (Phase 1)
             const char* receiver_type = get_receiver_type_string(object_type);
             if (receiver_type) {
                 token_to_cstr(method_name, sizeof(method_name), method);
-                
+
                 const char* return_type_str = lookup_method_return_type(receiver_type, method_name);
                 if (return_type_str) {
                     // Map return type string to Type*
@@ -4731,6 +4887,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // Map indexing - allow string keys
                 if (idx_type && idx_type->kind != TYPE_STRING) {
                     fprintf(stderr, "Error: Map index must be string\n");
+                    had_error = true;
                     return NULL;
                 }
                 // Return the map's value type so downstream codegen (getter
@@ -4745,6 +4902,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // Array indexing - require int indices
                 if (idx_type && idx_type->kind != TYPE_INT) {
                     fprintf(stderr, "Error: Array index must be int\n");
+                    had_error = true;
                     return NULL;
                 }
 
@@ -5248,8 +5406,70 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return struct_type;
             } else {
                 // Regular struct initialization
+                StructStmt* sdef = find_struct_definition(struct_name);
                 for (int i = 0; i < expr->struct_init.field_count; i++) {
-                    check_expr(expr->struct_init.field_values[i], scope);
+                    Type* provided = check_expr(expr->struct_init.field_values[i], scope);
+                    // K5/K2: validate each provided field against the definition -
+                    // an unknown field name used to reach codegen and ICE ("no
+                    // member named"), and a wrong-typed field was stored and read
+                    // back as garbage. Only enforce when we can see the struct's
+                    // definition (skips FFI/opaque types).
+                    if (sdef && expr->struct_init.field_names) {
+                        Token fname = expr->struct_init.field_names[i];
+                        if (fname.length > 0) {
+                            bool found = false;
+                            for (int k = 0; k < sdef->field_count; k++) {
+                                if (token_name_eq(sdef->fields[k], fname)) { found = true; break; }
+                            }
+                            if (!found) {
+                                fprintf(stderr, "Error at line %d: struct '%.*s' has no field '%.*s'\n",
+                                        struct_name.line, struct_name.length, struct_name.start,
+                                        fname.length, fname.start);
+                                had_error = true;
+                            } else {
+                                // K2: only type-check scalar fields. get_struct_field_type
+                                // reliably resolves int/float/bool/string; for enum
+                                // (fabricated as a bare struct here), struct, array and map
+                                // field types it is not authoritative, so checking those
+                                // over-rejects legit values (e.g. an enum-typed field
+                                // initialized with an enum value). Name/presence checks
+                                // (K5/K11) remain reliable for every field kind.
+                                Type* expected = get_struct_field_type(sdef, fname);
+                                bool expected_is_scalar = expected &&
+                                    (expected->kind == TYPE_INT || expected->kind == TYPE_FLOAT ||
+                                     expected->kind == TYPE_BOOL || expected->kind == TYPE_STRING);
+                                bool provided_is_scalar = provided &&
+                                    (provided->kind == TYPE_INT || provided->kind == TYPE_FLOAT ||
+                                     provided->kind == TYPE_BOOL || provided->kind == TYPE_STRING);
+                                if (expected_is_scalar && provided_is_scalar &&
+                                    !wyn_is_type_compatible(expected, provided)) {
+                                    fprintf(stderr, "Error at line %d: field '%.*s' of struct '%.*s' expects %s, got %s\n",
+                                            struct_name.line, fname.length, fname.start,
+                                            struct_name.length, struct_name.start,
+                                            type_to_string(expected), type_to_string(provided));
+                                    had_error = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                // K11: every declared field must be initialized. A missing field
+                // silently read back 0/null with no diagnostic.
+                if (sdef && expr->struct_init.field_names) {
+                    for (int k = 0; k < sdef->field_count; k++) {
+                        bool present = false;
+                        for (int i = 0; i < expr->struct_init.field_count; i++) {
+                            if (token_name_eq(expr->struct_init.field_names[i], sdef->fields[k])) {
+                                present = true; break;
+                            }
+                        }
+                        if (!present) {
+                            fprintf(stderr, "Error at line %d: struct '%.*s' is missing field '%.*s'\n",
+                                    struct_name.line, struct_name.length, struct_name.start,
+                                    sdef->fields[k].length, sdef->fields[k].start);
+                            had_error = true;
+                        }
+                    }
                 }
                 // Create struct type with name
                 Type* struct_type = make_type(TYPE_STRUCT);
@@ -5367,20 +5587,36 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return value_type->result_type.ok_type;
             }
             
-            // Also accept ResultInt/ResultString struct types
+            // Also accept the monomorphic Result struct families by name. Each
+            // unwraps to its own ok-type - returning int for all of them (the old
+            // behavior) mistyped ResultString/Float/Bool downstream.
             if (value_type && value_type->kind == TYPE_STRUCT) {
                 Token name = value_type->struct_type.name;
-                if ((name.length == 9 && memcmp(name.start, "ResultInt", 9) == 0)) {
-                    expr->expr_type = builtin_int;
-                    return builtin_int;
+                if (name.length == 9 && memcmp(name.start, "ResultInt", 9) == 0) {
+                    expr->expr_type = builtin_int;   return builtin_int;
                 }
-                if ((name.length == 12 && memcmp(name.start, "ResultString", 12) == 0)) {
-                    expr->expr_type = builtin_string;
-                    return builtin_string;
+                if (name.length == 12 && memcmp(name.start, "ResultString", 12) == 0) {
+                    expr->expr_type = builtin_string; return builtin_string;
+                }
+                if (name.length == 11 && memcmp(name.start, "ResultFloat", 11) == 0) {
+                    expr->expr_type = builtin_float; return builtin_float;
+                }
+                if (name.length == 10 && memcmp(name.start, "ResultBool", 10) == 0) {
+                    expr->expr_type = builtin_bool;  return builtin_bool;
                 }
             }
-            
-            // Fallback: allow ? on any type (returns int)
+
+            // K6: `?` is only sound on a Result value - codegen unwraps a Result
+            // struct. Applying it to an Option, scalar, or plain struct used to be
+            // accepted here (forced to int) and then ICE'd in the C compiler
+            // ("initializing 'ResultInt' with an expression of incompatible type").
+            // Reject it with a clear message. (`?.` optional chaining is a distinct
+            // construct - TOKEN_QUESTION_DOT - and is unaffected.)
+            fprintf(stderr, "Error at line %d: the '?' operator can only be applied to a Result value, but got ",
+                    expr->token.line);
+            print_type_name(value_type);
+            fprintf(stderr, "\n");
+            had_error = true;
             expr->expr_type = builtin_int;
             return builtin_int;
         }
@@ -5584,6 +5820,57 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
             }
             
+            // K3: a match EXPRESSION on a scalar (int/string) without a wildcard
+            // is never exhaustive - you cannot enumerate every int or string - so
+            // codegen has no arm for the fall-through and yields uninitialized
+            // memory (silent 0 / (null)) or an ICE. Require a `_ =>` arm. This
+            // also fences three cases that mis-resolve their scalar type here: an
+            // int-literal match, a `none`-inferred Option (types as int → ICE on
+            // the string path), and an enum whose name collides with a builtin
+            // namespace (Color/Math/Time/File → not seen as TYPE_ENUM). In every
+            // one the fix a user wants is the same: cover the rest with `_ =>`.
+            // (Bool is exempt: `true`/`false` arms can be exhaustive.)
+            if ((match_value_type->kind == TYPE_INT || match_value_type->kind == TYPE_STRING) &&
+                !has_wildcard) {
+                // A plain (dataless) enum whose name collides with a builtin
+                // namespace mis-resolves to TYPE_INT right here. If the arms are
+                // enum-variant patterns (Color.Red) naming a real enum and they
+                // cover every variant, the match IS exhaustive - don't flag it.
+                // Genuine int/string literals, bare Some/None, and partially
+                // covered enums fall through and still require a `_ =>` arm.
+                EnumStmt* ed = NULL;
+                for (int ai = 0; ai < expr->match.arm_count && !ed; ai++) {
+                    Pattern* pat = expr->match.arms[ai].pattern;
+                    if (pat && pat->type == PATTERN_GUARD) pat = pat->guard.pattern;
+                    if (pat && pat->type == PATTERN_OPTION && pat->option.enum_name.length > 0)
+                        ed = find_enum_definition(pat->option.enum_name);
+                }
+                bool enum_exhaustive = false;
+                if (ed) {
+                    enum_exhaustive = true;
+                    for (int vi = 0; vi < ed->variant_count && enum_exhaustive; vi++) {
+                        Token ev = ed->variants[vi];
+                        bool covered = false;
+                        for (int ai = 0; ai < expr->match.arm_count && !covered; ai++) {
+                            Pattern* pat = expr->match.arms[ai].pattern;
+                            if (pat && pat->type == PATTERN_GUARD) continue; // guard may not cover
+                            Token vn = {0}; int have = 0;
+                            if (pat && pat->type == PATTERN_OPTION && pat->option.variant_name.length > 0) { vn = pat->option.variant_name; have = 1; }
+                            else if (pat && pat->type == PATTERN_IDENT) { vn = pat->ident.name; have = 1; }
+                            if (have && vn.length == ev.length && memcmp(vn.start, ev.start, ev.length) == 0)
+                                covered = true;
+                        }
+                        if (!covered) enum_exhaustive = false;
+                    }
+                }
+                if (!enum_exhaustive) {
+                    fprintf(stderr, "Error at line %d: non-exhaustive match - a match on %s must end with a wildcard '_ =>' arm\n",
+                            expr->match.value->token.line,
+                            match_value_type->kind == TYPE_STRING ? "a string" : "an int");
+                    had_error = true;
+                }
+            }
+
             // Exhaustiveness for match expressions checked in STMT_MATCH handler
             // Exhaustiveness: a match expression on an enum without a wildcard
             // must cover every variant. Otherwise codegen emits no default arm and
