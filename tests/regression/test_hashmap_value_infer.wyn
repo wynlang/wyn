@@ -1,0 +1,32 @@
+// Regression: HashMap::new() infers its value type from the first .set(), so
+// int/float/bool/string values round-trip correctly (previously an int map
+// silently decoded through hashmap_get_string and returned 0/blank). Each
+// HashMap::new() gets a FRESH value type - separate maps don't alias. Literal
+// maps must still work. (fix batch 2026-07)
+// EXPECT: 42
+// EXPECT: 52
+// EXPECT: 4.5
+// EXPECT: 1
+// EXPECT: wyn
+// EXPECT: 25
+fn main() {
+    m = HashMap::new()
+    m.set("a", 42)
+    println("${m.get("a")}")
+    println("${m.get("a") + 10}")
+
+    f = HashMap::new()
+    f.set("pi", 3.5)
+    println("${f.get("pi") + 1.0}")
+
+    b = HashMap::new()
+    b.set("ok", true)
+    println("${b.get("ok")}")
+
+    s = HashMap::new()
+    s.set("name", "wyn")
+    println("${s.get("name")}")
+
+    lit = {"age": 25}
+    println("${lit.get("age")}")
+}

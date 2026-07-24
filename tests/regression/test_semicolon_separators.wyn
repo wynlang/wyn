@@ -1,0 +1,13 @@
+// Regression: semicolons are optional statement separators (equivalent to a
+// newline). `var m = 1; println(...)` on one line, `;;` as an empty statement,
+// and a trailing `;` must all parse and not change behavior. (fix batch 2026-07)
+// EXPECT: 1
+// EXPECT: 2 3
+// EXPECT: 4
+fn main() {
+    var m = 1; println("${m}")
+    x = 2;; y = 3
+    println("${x} ${y}")
+    z = 4;
+    println("${z}")
+}

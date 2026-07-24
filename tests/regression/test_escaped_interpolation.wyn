@@ -1,0 +1,12 @@
+// Regression: a backslash-escaped `\${...}` is a LITERAL `${...}`, not an
+// interpolation - required by strings that show the interpolation syntax
+// verbatim (docs/HTML templates). Previously errored "Expected an expression".
+// A real `${x}` in the same string still interpolates. (fix batch 2026-07)
+// EXPECT: literal ${var} here
+// EXPECT: val 5 and ${literal}
+fn main() {
+    a = "literal \${var} here"
+    println("${a}")
+    x = 5
+    println("val ${x} and \${literal}")
+}

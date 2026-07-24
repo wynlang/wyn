@@ -389,6 +389,28 @@ Type* make_type(TypeKind kind) {
     return t;
 }
 
+// A container constructor (HashMap::new / HashSet::new) shares ONE builtin
+// return-type node across every call site. Its value/element type is inferred
+// later from the first `.set()`, so each call must yield a FRESH map/set node -
+// otherwise every map in a program aliases one value_type and only the first
+// inference wins (a float map read a bool map's values as 0.0). `call_expr`'s
+// per-node expr_type is reused across re-checks so an inferred value_type
+// survives a second walk. Non-container return types pass through unchanged.
+static Type* freshen_container_ret(Expr* call_expr, Type* ret) {
+    if (!ret || (ret->kind != TYPE_MAP && ret->kind != TYPE_SET)) return ret;
+    if (call_expr && call_expr->expr_type &&
+        call_expr->expr_type->kind == ret->kind && call_expr->expr_type != ret) {
+        return call_expr->expr_type;
+    }
+    Type* fresh = make_type(ret->kind);
+    if (ret->kind == TYPE_MAP) {
+        fresh->map_type.key_type = ret->map_type.key_type;
+        fresh->map_type.value_type = ret->map_type.value_type;
+    }
+    if (call_expr) call_expr->expr_type = fresh;
+    return fresh;
+}
+
 // T2.5.1: Optional Type Implementation - Helper functions
 static bool is_optional_type(Type* type) {
     return type && type->kind == TYPE_OPTIONAL;
@@ -671,11 +693,20 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     }
                 }
                 return array_type;
-            } else if (field_type_expr->type == EXPR_OPTIONAL_TYPE) {
-                // Optional field `f: T?` - resolve to the Option<T> family type so
-                // field access (`x.f`) and match on it lower correctly (was falling
-                // through to NULL → default int, breaking match on the field).
-                Expr* inner = field_type_expr->optional_type.inner_type;
+            } else if ((field_type_expr->type == EXPR_OPTIONAL_TYPE) ||
+                       (field_type_expr->type == EXPR_CALL &&
+                        field_type_expr->call.callee &&
+                        field_type_expr->call.callee->type == EXPR_IDENT &&
+                        field_type_expr->call.callee->token.length == 6 &&
+                        memcmp(field_type_expr->call.callee->token.start, "Option", 6) == 0 &&
+                        field_type_expr->call.arg_count == 1)) {
+                // Optional field `f: T?` (EXPR_OPTIONAL_TYPE) or the generic form
+                // `f: Option<T>` (EXPR_CALL) - resolve to the Option<T> family type
+                // so field access (`x.f`) and match on it lower correctly (was
+                // falling through to NULL → default int, breaking match on the field).
+                Expr* inner = (field_type_expr->type == EXPR_OPTIONAL_TYPE)
+                    ? field_type_expr->optional_type.inner_type
+                    : field_type_expr->call.args[0];
                 const char* fam = NULL;
                 if (inner && inner->type == EXPR_IDENT) {
                     Token t = inner->token;
@@ -3856,9 +3887,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         Symbol* _usym = find_symbol(scope, _utok);
                         if (_usym && _usym->type && _usym->type->kind == TYPE_FUNCTION &&
                             _usym->type->fn_type.return_type) {
-                            expr->expr_type = _usym->type->fn_type.return_type;
+                            Type* _r = freshen_container_ret(expr, _usym->type->fn_type.return_type);
+                            expr->expr_type = _r;
                             free(arg_types);
-                            return _usym->type->fn_type.return_type;
+                            return _r;
                         }
                     }
                     expr->expr_type = builtin_int;  // Default return type
@@ -3881,8 +3913,34 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     if (validation != VALIDATION_SUCCESS) {
                         char func_name[256];
                         token_to_cstr(func_name, sizeof(func_name), expr->call.callee->token);
-                        fprintf(stderr, "Error: Function call validation failed for '%s': %s\n",
-                                func_name, wyn_validation_error_message(validation));
+                        int _err_line = expr->call.callee->token.line;
+                        // Emit with the same source-location + caret path as every
+                        // other diagnostic (was a bare "validation failed" line with
+                        // no `--> file:line`, unlike the rest of the checker).
+                        if (validation == VALIDATION_PARAM_COUNT_MISMATCH) {
+                            int _expected = best_match->type->fn_type.param_count;
+                            type_error_wrong_arg_count(func_name, _expected,
+                                                       expr->call.arg_count, _err_line, 0);
+                        } else if (validation == VALIDATION_TYPE_MISMATCH) {
+                            // Find the first argument whose type doesn't match and
+                            // point the caret at its line.
+                            int _pc = best_match->type->fn_type.param_count;
+                            for (int _ai = 0; _ai < expr->call.arg_count && _ai < _pc; _ai++) {
+                                Type* _exp = best_match->type->fn_type.param_types[_ai];
+                                Type* _act = expr->call.args[_ai]->expr_type;
+                                if (!_act) _act = check_expr(expr->call.args[_ai], scope);
+                                if (!wyn_is_type_compatible(_exp, _act)) {
+                                    char _ctx[128];
+                                    snprintf(_ctx, sizeof(_ctx), "argument %d of '%s'", _ai + 1, func_name);
+                                    type_error_mismatch(type_to_string(_exp), type_to_string(_act),
+                                                        _ctx, expr->call.args[_ai]->token.line, 0);
+                                    break;
+                                }
+                            }
+                        } else {
+                            fprintf(stderr, "Error: Function call validation failed for '%s': %s\n",
+                                    func_name, wyn_validation_error_message(validation));
+                        }
                         had_error = true;
                     }
                     
@@ -3898,12 +3956,15 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             expr->call.selected_overload = (void*)best_match;
                         }
                     }
-                    expr->expr_type = best_match->type->fn_type.return_type;
-                    // S3: record the callee's own function type too - codegen
-                    // uses it to pick the closure-call ABI (float vs int).
-                    expr->call.callee->expr_type = best_match->type;
-                    free(arg_types);
-                    return best_match->type->fn_type.return_type;
+                    {
+                        Type* _r = freshen_container_ret(expr, best_match->type->fn_type.return_type);
+                        expr->expr_type = _r;
+                        // S3: record the callee's own function type too - codegen
+                        // uses it to pick the closure-call ABI (float vs int).
+                        expr->call.callee->expr_type = best_match->type;
+                        free(arg_types);
+                        return _r;
+                    }
                 } else if (find_local_noncallable(scope, expr->call.callee->token)) {
                     // K7: the callee is a LOCAL variable holding a non-function
                     // value (e.g. `var x = 5; x(3)`). Without this gate the call
@@ -4023,8 +4084,9 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             }
             
             if (callee_type && callee_type->kind == TYPE_FUNCTION) {
-                expr->expr_type = callee_type->fn_type.return_type;
-                return callee_type->fn_type.return_type;
+                Type* ret = freshen_container_ret(expr, callee_type->fn_type.return_type);
+                expr->expr_type = ret;
+                return ret;
             }
             expr->expr_type = builtin_int;
             return builtin_int;
@@ -4129,6 +4191,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
 
             Token method = expr->method_call.method;
             char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
+
+            // Infer an untyped map's value type from the first `.set(k, v)` /
+            // `.insert(k, v)`, mirroring the index-assign path (`m[k] = v`).
+            // Without this, a `HashMap::new()` map defaulted its value type to
+            // string, so `m.set("a", 42)` then `m.get("a")` decoded 42 through
+            // hashmap_get_string and returned garbage (FLOWY silent-wrong bug).
+            // A conflicting later store (int then string) is rejected below by
+            // the store-type check.
+            if (object_type && object_type->kind == TYPE_MAP &&
+                !object_type->map_type.value_type &&
+                expr->method_call.arg_count == 2 &&
+                ((strcmp(method_name, "set") == 0) || (strcmp(method_name, "insert") == 0))) {
+                Type* vt = expr->method_call.args[1]->expr_type;
+                if (!vt) vt = check_expr(expr->method_call.args[1], scope);
+                if (vt) object_type->map_type.value_type = vt;
+            }
 
             // S2 context-propagation: when .map()/.filter() is called on a
             // [string] or [float] array and the lambda arg has int-defaulted

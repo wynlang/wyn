@@ -75,6 +75,9 @@ jobs:
           cp VERSION dist/
           cp LICENSE dist/
           [ -d vendor/minicoro ] && cp -r vendor/minicoro dist/vendor/
+          # Bundle the TCC backend so the default (no-external-deps) compile
+          # path works on a fresh install - the site advertises "TCC bundled".
+          cp -r vendor/tcc dist/vendor/
           make runtime
           cp runtime/libwyn_rt.a dist/runtime/
           tar czf ${{ matrix.artifact }}.tar.gz -C dist .
@@ -88,6 +91,9 @@ jobs:
           test -f /tmp/verify/runtime/libwyn_rt.a
           test -f /tmp/verify/VERSION
           test -f /tmp/verify/LICENSE
+          # TCC must be bundled so "no external deps" is TRUE (site claim).
+          test -x /tmp/verify/vendor/tcc/bin/tcc
+          test -f /tmp/verify/vendor/tcc/lib/libwyn_rt_tcc.a
           # The INSTALLED binary must compile and run hello world from a
           # foreign cwd - this exact path was broken in every prior release.
           cd /tmp && echo 'fn main() { println("install-ok") }' > hello.wyn
@@ -95,16 +101,37 @@ jobs:
           /tmp/verify/bin/wyn version | grep -vq "1.10.0"
           echo "✅ artifact layout + installed-binary smoke verified"
 
+      # Windows must ship the SAME layout as Unix (install.ps1 depends on it):
+      #   bin\wyn.exe, src\, runtime\libwyn_rt.a, vendor\, VERSION, LICENSE.
+      # Build the runtime lib on Windows too (was missing - the installed
+      # binary had no precompiled runtime and vendor was absent).
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          mkdir dist\bin
-          copy wyn.exe dist\bin\
-          xcopy /E /I src dist\src
-          copy VERSION dist\
-          copy LICENSE dist\
-          Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip
-        shell: pwsh
+          mkdir -p dist/bin dist/runtime dist/vendor
+          cp wyn.exe dist/bin/
+          cp -r src dist/
+          cp VERSION dist/
+          cp LICENSE dist/
+          [ -d vendor/minicoro ] && cp -r vendor/minicoro dist/vendor/
+          [ -d vendor/tcc ] && cp -r vendor/tcc dist/vendor/
+          make runtime
+          cp runtime/libwyn_rt.a dist/runtime/
+          powershell -Command "Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip"
+        shell: bash
+
+      - name: Verify artifact layout (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p /tmp/verify
+          powershell -Command "Expand-Archive -Path ${{ matrix.artifact }}.zip -DestinationPath /tmp/verify -Force"
+          test -f /tmp/verify/bin/wyn.exe
+          test -f /tmp/verify/src/wyn_runtime.h
+          test -f /tmp/verify/runtime/libwyn_rt.a
+          test -f /tmp/verify/VERSION
+          test -f /tmp/verify/LICENSE
+          echo "artifact layout verified (Windows)"
+        shell: bash
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -132,13 +159,16 @@ jobs:
             artifact: wyn-macos-arm64
           - os: macos-15-intel
             artifact: wyn-macos-x64
+          - os: windows-latest
+            artifact: wyn-windows-x64
     steps:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.artifact }}
 
-      - name: Install exactly like install.sh does
+      - name: Install exactly like install.sh does (Unix)
+        if: runner.os != 'Windows'
         run: |
           # Mirror site/public/install.sh: extract into ~/.wyn, run bin/wyn.
           INSTALL_DIR="$HOME/.wyn"
@@ -155,6 +185,30 @@ jobs:
           wyn new demo --template cli
           cd demo && wyn test
           echo "✅ public install flow verified on ${{ matrix.artifact }}"
+
+      - name: Install exactly like install.ps1 does (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # Mirror site/public/install.ps1: expand the zip into %USERPROFILE%\.wyn,
+          # keep the bin\ subdir so wyn.exe finds ..\src and ..\runtime.
+          $installDir = "$env:USERPROFILE\.wyn"
+          if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
+          Expand-Archive -Path "${{ matrix.artifact }}.zip" -DestinationPath $installDir -Force
+          $env:PATH = "$installDir\bin;$env:PATH"
+          # First-five-minutes flow, from a foreign cwd, like a real user.
+          $work = Join-Path $env:TEMP ([System.Guid]::NewGuid().ToString())
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          Set-Location $work
+          wyn.exe version
+          if ((wyn.exe version) -match "1\.10\.0") { throw "stale version" }
+          'fn main() { println("hello from installed wyn") }' | Out-File -Encoding ascii hello.wyn
+          $out = wyn.exe run hello.wyn
+          if ($out -notmatch "hello from installed wyn") { throw "run failed: $out" }
+          wyn.exe new demo --template cli
+          Set-Location demo
+          wyn.exe test
+          Write-Host "public install flow verified on ${{ matrix.artifact }}"
+        shell: pwsh
 
   release:
     name: Create Release

@@ -589,7 +589,7 @@ int wyn_pkg_audit(int offline) {
 // Non-package repos in the org (tooling, docs, this compiler, editors, ...).
 static int search_is_infra_repo(const char* name) {
     static const char* infra[] = {
-        "wyn", "internal-docs", "site", "sample-apps", "awesome-wyn",
+        "wyn", "internal-docs", "site", "sample-apps",
         "nvim-wyn", "vscode-wyn", "play", "book", "wyn_old", "assets",
         ".github", NULL
     };

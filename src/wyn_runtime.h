@@ -718,9 +718,25 @@ static inline int wyn_lenient_mode(void) {
     if (cached < 0) cached = getenv("WYN_LENIENT") != NULL;
     return cached;
 }
+// A panic file is normally remapped to the user's `.wyn` source by the `#line`
+// directives codegen emits per statement. Hoisted code without a preceding
+// `#line` (e.g. lambda bodies) reports the raw generated `__FILE__`, which ends
+// in `.wyn.c` and leaks the compiler's generated-C seam. Trim a trailing
+// `.wyn.c` -> `.wyn` so a panic never points the user at a file they can't see.
+static inline const char* wyn_src_file(const char* file) {
+    if (!file) return file;
+    size_t n = strlen(file);
+    static char buf[1024];   // panic is terminal; a shared buffer is fine
+    if (n >= 6 && n < sizeof(buf) && strcmp(file + n - 6, ".wyn.c") == 0) {
+        memcpy(buf, file, n - 2);   // drop the trailing ".c"
+        buf[n - 2] = '\0';
+        return buf;
+    }
+    return file;
+}
 static inline void wyn_oob_panic(int index, int count, const char* file, int line) {
     if (file && line > 0)
-        fprintf(stderr, "panic at %s:%d: array index out of bounds: index %d, length %d\n", file, line, index, count);
+        fprintf(stderr, "panic at %s:%d: array index out of bounds: index %d, length %d\n", wyn_src_file(file), line, index, count);
     else
         fprintf(stderr, "panic: array index out of bounds: index %d, length %d\n", index, count);
     if (!wyn_lenient_mode()) exit(1);
@@ -2373,7 +2389,7 @@ bool bool_or(bool x, bool y) { return x || y; }
 bool bool_xor(bool x, bool y) { return x != y; }
 long long wyn_safe_div_impl(long long a, long long b, const char* file, int line) {
     if (b == 0) {
-        fprintf(stderr, "panic at %s:%d: division by zero\n", file, line);
+        fprintf(stderr, "panic at %s:%d: division by zero\n", wyn_src_file(file), line);
         exit(1);
     }
     return a / b;
@@ -2381,7 +2397,7 @@ long long wyn_safe_div_impl(long long a, long long b, const char* file, int line
 #define wyn_safe_div(a, b) wyn_safe_div_impl(a, b, __FILE__, __LINE__)
 long long wyn_safe_mod_impl(long long a, long long b, const char* file, int line) {
     if (b == 0) {
-        fprintf(stderr, "panic at %s:%d: modulo by zero\n", file, line);
+        fprintf(stderr, "panic at %s:%d: modulo by zero\n", wyn_src_file(file), line);
         exit(1);
     }
     return a % b;

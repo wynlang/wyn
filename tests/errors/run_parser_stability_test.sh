@@ -30,9 +30,13 @@ expect_clean_error "python lambda no longer hangs" "$TMP/b.wyn"
 printf 'fn main() {\n    ok = true\n    if !ok {\n        println(1)\n    }\n}\n' > "$TMP/c.wyn"
 expect_clean_error "bang-negation no longer hangs" "$TMP/c.wyn"
 
-# 4. Type-annotated declaration without var - used to hang.
+# 4. Type-annotated bare declaration `a: int = 5` - used to hang, then was a
+#    clean error; as of the 2026-07 DX batch it is VALID (parses identically to
+#    `var a: int = 5`). Assert it now checks + runs cleanly (rc 0, prints 5).
 printf 'fn main() {\n    a: int = 5\n    println(a)\n}\n' > "$TMP/d.wyn"
-expect_clean_error "bare annotated decl no longer hangs" "$TMP/d.wyn"
+rm -f "$TMP/d.wyn.out"
+out=$(perl -e 'alarm(15); exec @ARGV' -- "$WYN" run "$TMP/d.wyn" 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | grep -q '^5$'; then ok "bare annotated decl parses + runs"; else bad "bare annotated decl parses + runs (rc=$rc) [$(echo "$out" | tail -1)]"; fi
 
 # 5. Nested duplicated fn header - used to SEGFAULT the checker.
 printf 'fn f(p: int) -> int {\nfn f(p: int) -> int {\n    return 1\n}\nfn main() {\n    println(1)\n}\n' > "$TMP/e.wyn"

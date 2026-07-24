@@ -468,11 +468,13 @@ int main(int argc, char** argv) {
         const char* devnull = "> /dev/null 2>&1";
 #endif
         
-        // Determine wyn root
+        // Determine wyn root the SAME way run/build do (resolve_wyn_root):
+        // the OS executable path, not argv[0]'s dirname. A PATH-invoked
+        // `wyn doctor` (bare "wyn") used to set the root to "." and probe the
+        // user's CWD, so a healthy installed binary falsely reported issues and
+        // empty files in the cwd could fool the checks.
         char doc_root[512];
-        strncpy(doc_root, argv[0], sizeof(doc_root)-1);
-        char* last_slash = strrchr(doc_root, '/');
-        if (last_slash) *last_slash = 0; else strcpy(doc_root, ".");
+        resolve_wyn_root(argv[0], doc_root, sizeof(doc_root));
         
         // Check wyn binary
         printf("  \033[32m✓\033[0m Wyn compiler v%s\n", get_version());

@@ -119,8 +119,6 @@ var x: int? = Some(42)
 | GUI | Gui (30+, SDL2), Audio (5, SDL2_mixer) |
 | Testing | Test (12) |
 
-See [awesome-wyn](https://github.com/wynlang/awesome-wyn) for all official packages.
-
 ## CLI
 
 ```
@@ -216,7 +214,6 @@ wyn/
 ## Documentation
 
 - [wynlang.com](https://wynlang.com) - docs, playground, packages
-- [Official Packages](https://github.com/wynlang/awesome-wyn)
 
 ## License
 

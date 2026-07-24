@@ -4951,6 +4951,9 @@ void codegen_expr(Expr* expr) {
                             if (*part == '%') emit("%%%%");
                             else if (*part == '\n') emit("\\n");
                             else if (*part == '\\' && *(part+1) == '"') { emit("\\\""); part++; }
+                            // `\$` is an escaped dollar (from a literal `\${...}`);
+                            // emit a bare `$` (not a C escape sequence).
+                            else if (*part == '\\' && *(part+1) == '$') { emit("$"); part++; }
                             else if (*part == '"') emit("\\\"");
                             else emit("%c", *part);
                             part++;

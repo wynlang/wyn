@@ -1,0 +1,16 @@
+// Regression: type-annotated bare assignment `x: int = 5` (and empty
+// collections `xs: [int] = []`) must parse identically to `var x: int = 5`.
+// Previously errored "Expected an expression". (fix batch 2026-07)
+// EXPECT: 5
+// EXPECT: 3
+// EXPECT: hi
+fn main() {
+    x: int = 5
+    println("${x}")
+    xs: [int] = []
+    xs.push(3)
+    println("${xs[0]}")
+    m: [string] = []
+    m.push("hi")
+    println("${m[0]}")
+}
