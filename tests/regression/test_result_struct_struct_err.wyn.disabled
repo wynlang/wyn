@@ -1,0 +1,29 @@
+// DEFERRED / KNOWN-FAILING repro — NOT run by run_bdd.sh (the harness globs
+// *.wyn; the .disabled suffix keeps this out of the suite).
+//
+// Result<Struct, StructErr> — a Result whose ERROR type is itself a user struct.
+// The common case Result<Struct, string> now works (per-struct Result family,
+// see test_result_struct_return.wyn), but the monomorphic Result<Struct> family
+// hardcodes the error payload as `const char*` (string), matching the builtin
+// ResultInt/ResultString families. A struct error type would need either a
+// second type parameter threaded through the family name (ResultPoint_Fail) or a
+// generic tag+union lowering. That is a larger generics change; deferred.
+//
+// To reproduce: rename to .wyn and `wyn run` — expect an internal codegen error
+// (the struct Err payload is coerced to const char*).
+struct Point { x: int, y: int }
+struct Fail { code: int }
+
+fn find(ok: bool) -> Result<Point, Fail> {
+    if ok {
+        return Ok(Point{x: 1, y: 2})
+    }
+    return Err(Fail{code: 9})
+}
+
+fn main() {
+    match find(true) {
+        Ok(p) => println("x=" + int_to_string(p.x)),
+        Err(e) => println("err code=" + int_to_string(e.code))
+    }
+}
