@@ -42,20 +42,29 @@ run_test() {
     local bin="$sandbox/$(basename "${file%.wyn}")"
 
     # Step 1: build to a unique output path. Keep the source tree clean.
-    # A build that fails with NO diagnostic text is a transient toolchain flake
-    # (observed on the macos-15 runner: `wyn build` -> clang intermittently exits
-    # nonzero under parallel load with empty stderr and no binary). Retry those up
-    # to 3x. A build that fails WITH real error text is a genuine error and is
+    # A build that fails TRANSIENTLY is retried up to 5x with backoff. Transient =
+    # either (i) no diagnostic text at all, or (ii) a host resource-exhaustion
+    # error from the toolchain — on the macos-15 runner, launching the whole suite
+    # in parallel starves the process table and clang dies with
+    # "posix_spawn failed: Resource temporarily unavailable" / "unable to fork".
+    # A build that fails with a REAL compiler diagnostic is a genuine error and is
     # reported immediately — never retried away.
     local build_err build_rc build_diag
     local battempt=0
-    while [ "$battempt" -lt 3 ]; do
+    while [ "$battempt" -lt 5 ]; do
         build_err=$("$WYN" build "$file" -o "$bin" 2>&1 >/dev/null)
         build_rc=$?
         rm -f "${file%.wyn}" "${file}.c" 2>/dev/null
         # Present + executable => build succeeded, proceed.
         [ "$build_rc" -eq 0 ] && [ -x "$bin" ] && break
         build_diag="$(echo "$build_err" | grep -v '^Building\|^Built\|^Compiled in\|Warning:' | head -3 | tr '\n' ' ')"
+        # Host resource-exhaustion => transient, retry with backoff.
+        if echo "$build_diag" | grep -qiE 'Resource temporarily unavailable|posix_spawn|unable to fork|Cannot allocate memory|too many open files'; then
+            rm -f "$bin" 2>/dev/null
+            battempt=$((battempt + 1))
+            sleep "0.$((battempt * 3))"
+            continue
+        fi
         # Real diagnostic => genuine build error, stop and report.
         [ -n "$build_diag" ] && break
         # Empty diagnostic => transient flake, retry.
@@ -114,11 +123,26 @@ for f in tests/expect/*.wyn tests/regression/*.wyn; do
     [ -f "$f" ] && FILES+=("$f")
 done
 
-# Launch all tests in parallel
-# Guard empty-array expansion for bash 3.2 (macOS) under `set -u`.
+# Launch tests in parallel, but BOUND concurrency. Launching all ~180 at once
+# means ~180 concurrent `wyn build`->clang processes; on a constrained runner
+# (macos-15) that starves the process table and clang dies with
+# "posix_spawn failed: Resource temporarily unavailable". Cap at a multiple of
+# the CPU count so we still parallelize hard on big machines without fork-storming
+# small ones. Override with WYN_TEST_JOBS.
 if [ "${#FILES[@]}" -gt 0 ]; then
+    ncpu=$( (getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4) )
+    max_jobs="${WYN_TEST_JOBS:-$((ncpu * 2))}"
+    [ "$max_jobs" -lt 1 ] 2>/dev/null && max_jobs=4
+    running=0
     for f in "${FILES[@]}"; do
         run_test "$f" &
+        running=$((running + 1))
+        if [ "$running" -ge "$max_jobs" ]; then
+            # Bash 3.2 (macOS default) has no `wait -n`; drain the batch. Each
+            # test is short, so batch-draining keeps utilization high enough.
+            wait
+            running=0
+        fi
     done
     wait
 fi
