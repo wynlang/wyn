@@ -991,20 +991,54 @@ static Type* register_option_struct_family(Type* struct_type) {
     return opt_type;
 }
 
-// Lazily register a monomorphic Result<Struct, string> family for a user-struct
-// ok-payload (e.g. `Point` -> `ResultPoint`): the fake struct type symbol + the 7
-// member functions (_Ok/_Err/_is_ok/_is_err/_unwrap/_unwrap_err/_unwrap_or),
-// mirroring the builtin ResultInt/ResultString families and the Option<Struct>
-// analogue above. The error type is always `string` (const char*), matching the
-// builtin Result families. Idempotent. Also records the struct in codegen's
-// registry so the concrete C family is emitted after the struct typedef.
-// Returns the Result<Struct> Type (a TYPE_STRUCT named "Result<Struct>").
-static Type* register_result_struct_family(Type* struct_type) {
+// The Wyn type-name of an error payload, used for the family-name suffix. Returns
+// a static string: "string"/"int"/"float"/"bool" for scalars, the struct name for
+// a struct error. NULL if the type is unusable.
+static const char* result_err_type_name(Type* err_type) {
+    if (!err_type) return "string";
+    switch (err_type->kind) {
+        case TYPE_STRING: return "string";
+        case TYPE_INT:    return "int";
+        case TYPE_FLOAT:  return "float";
+        case TYPE_BOOL:   return "bool";
+        case TYPE_STRUCT: {
+            if (err_type->struct_type.name.length == 0) return NULL;
+            static char b[96]; token_to_cstr(b, sizeof(b), err_type->struct_type.name);
+            return b;
+        }
+        default: return NULL;
+    }
+}
+
+// Lazily register a monomorphic Result<Ok, Err> family for a user-struct ok-payload
+// (e.g. `Point`): the fake struct type symbol + the 7 member functions
+// (_Ok/_Err/_is_ok/_is_err/_unwrap/_unwrap_err/_unwrap_or), mirroring the builtin
+// ResultInt/ResultString families and the Option<Struct> analogue above.
+//
+// Generalized from #181 (which pinned the error to `string`): `err_type` may now be
+// a string (the common case, keeps the bare `Result<Ok>` family name for backward
+// compatibility), a scalar (int/float/bool), or another user struct. The family is
+// keyed by BOTH types — a non-string error appends `_<ErrTag>` to the name
+// (`ResultPoint_Fail`, `ResultPoint_int`) so `Result<Point,string>` and
+// `Result<Point,Fail>` are distinct and never collide. `err_type == NULL` means the
+// string default. Idempotent. Also records the family in codegen's registry so the
+// concrete C family is emitted after the struct typedefs.
+// Returns the Result Type (a TYPE_STRUCT named after the family).
+static Type* register_result_struct_family_e(Type* struct_type, Type* err_type) {
     if (!struct_type || struct_type->kind != TYPE_STRUCT || struct_type->struct_type.name.length == 0)
         return NULL;
     char sname[96]; token_to_cstr(sname, sizeof(sname), struct_type->struct_type.name);
-    char* fam = malloc(strlen(sname) + 7);
-    sprintf(fam, "Result%s", sname);
+    const char* ename = result_err_type_name(err_type);
+    if (!ename) ename = "string";              // unusable err falls back to string
+    Type* eff_err = err_type ? err_type : builtin_string;
+    if (eff_err == builtin_string || eff_err->kind == TYPE_STRING) ename = "string";
+
+    // Family name: bare "Result<Ok>" for a string error (backward compatible),
+    // "Result<Ok>_<ErrTag>" otherwise.
+    char fambuf[192];
+    if (strcmp(ename, "string") == 0) snprintf(fambuf, sizeof(fambuf), "Result%s", sname);
+    else                              snprintf(fambuf, sizeof(fambuf), "Result%s_%s", sname, ename);
+    char* fam = strdup(fambuf);
     Token fam_tok = {TOKEN_IDENT, fam, (int)strlen(fam), 0};
 
     Symbol* existing = find_symbol(global_scope, fam_tok);
@@ -1028,17 +1062,21 @@ static Type* register_result_struct_family(Type* struct_type) {
     } while (0)
 
     REG_RES_FN("_Ok", 1, struct_type, NULL, res_type);
-    REG_RES_FN("_Err", 1, builtin_string, NULL, res_type);
+    REG_RES_FN("_Err", 1, eff_err, NULL, res_type);
     REG_RES_FN("_is_ok", 1, res_type, NULL, builtin_bool);
     REG_RES_FN("_is_err", 1, res_type, NULL, builtin_bool);
     REG_RES_FN("_unwrap", 1, res_type, NULL, struct_type);
-    REG_RES_FN("_unwrap_err", 1, res_type, NULL, builtin_string);
+    REG_RES_FN("_unwrap_err", 1, res_type, NULL, eff_err);
     REG_RES_FN("_unwrap_or", 2, res_type, struct_type, struct_type);
     #undef REG_RES_FN
 
-    extern void register_result_struct(const char*);
-    register_result_struct(sname);
+    extern const char* register_result_family_for_types(const char*, const char*);
+    register_result_family_for_types(sname, ename);
     return res_type;
+}
+// Backward-compatible shim: string-error family.
+static Type* register_result_struct_family(Type* struct_type) {
+    return register_result_struct_family_e(struct_type, NULL);
 }
 
 void init_checker() {
@@ -5750,10 +5788,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 if (name.length == 10 && memcmp(name.start, "ResultBool", 10) == 0) {
                     expr->expr_type = builtin_bool;  return builtin_bool;
                 }
-                // Monomorphic Result<Struct> (e.g. ResultPoint): `?` unwraps to the
-                // underlying struct. The family name is "Result" + the struct name,
-                // so look up that struct symbol and yield its type.
+                // Monomorphic Result<Struct,E> (ResultPoint / ResultPoint_Fail): `?`
+                // unwraps to the underlying ok struct. The ok type is recovered from
+                // the family's registered `<fam>_unwrap` function (its return type is
+                // the ok struct) - robust to the "_<ErrTag>" suffix that a struct/
+                // scalar error appends to the family name.
                 if (name.length > 6 && memcmp(name.start, "Result", 6) == 0) {
+                    char unw[256]; int fl = name.length < 200 ? name.length : 200;
+                    memcpy(unw, name.start, fl); memcpy(unw + fl, "_unwrap", 7); unw[fl + 7] = '\0';
+                    Token utok = {TOKEN_IDENT, unw, fl + 7, name.line};
+                    Symbol* us = find_symbol(global_scope, utok);
+                    if (us && us->type && us->type->kind == TYPE_FUNCTION &&
+                        us->type->fn_type.return_type) {
+                        expr->expr_type = us->type->fn_type.return_type;
+                        return us->type->fn_type.return_type;
+                    }
+                    // Fallback: bare "Result<Struct>" (string err) -> strip prefix.
                     Token sname = {TOKEN_IDENT, name.start + 6, name.length - 6, name.line};
                     Symbol* st = find_symbol(global_scope, sname);
                     if (st && st->type && st->type->kind == TYPE_STRUCT) {
@@ -8025,11 +8075,27 @@ void check_program(Program* prog) {
                                     concrete = (Token){TOKEN_IDENT, "ResultBool", 10, 0};
                                 else if (inner.length != 3 || memcmp(inner.start, "int", 3) != 0) {
                                     // `Result<Struct, E>` - resolve the user struct and
-                                    // make its monomorphic Result<Struct> family the
-                                    // signature type (mirrors the `-> Struct?` path).
+                                    // make its monomorphic Result<Struct, E> family the
+                                    // signature type (mirrors the `-> Struct?` path). The
+                                    // error type E is resolved too (string/scalar/struct)
+                                    // so the family carries the real err C type.
                                     Symbol* st = find_symbol(global_scope, inner);
-                                    if (st && st->type && st->type->kind == TYPE_STRUCT)
-                                        struct_res = register_result_struct_family(st->type);
+                                    if (st && st->type && st->type->kind == TYPE_STRUCT) {
+                                        Type* err_t = NULL;
+                                        if (fn->return_type->call.arg_count > 1 &&
+                                            fn->return_type->call.args[1]->type == EXPR_IDENT) {
+                                            Token en = fn->return_type->call.args[1]->token;
+                                            if (en.length == 6 && memcmp(en.start, "string", 6) == 0) err_t = builtin_string;
+                                            else if (en.length == 3 && memcmp(en.start, "int", 3) == 0) err_t = builtin_int;
+                                            else if (en.length == 5 && memcmp(en.start, "float", 5) == 0) err_t = builtin_float;
+                                            else if (en.length == 4 && memcmp(en.start, "bool", 4) == 0) err_t = builtin_bool;
+                                            else {
+                                                Symbol* es = find_symbol(global_scope, en);
+                                                if (es && es->type) err_t = es->type;
+                                            }
+                                        }
+                                        struct_res = register_result_struct_family_e(st->type, err_t);
+                                    }
                                 }
                             }
                             if (struct_res) {

@@ -1589,29 +1589,121 @@ int is_registered_option_struct(const char* struct_name) {
     return 0;
 }
 
-// Parallel registry for Result<Struct, string> families (`ResultUser` for a
-// `Result<User, string>`). Mirrors the Option<Struct> registry above: populated
-// as struct-payload Results are seen (checker + codegen), the concrete C family
-// is emitted right after the user struct typedefs (it names a user struct, so it
-// cannot live in wyn_runtime.h). Error type is always `const char*` (string),
-// matching the builtin Result families.
-static char** needed_result_structs = NULL;
+// Registry for monomorphic Result<Ok, Err> families with a user-struct OK payload
+// (e.g. `ResultUser` for `Result<User, string>`, `ResultPoint_Fail` for
+// `Result<Point, Fail>`). Mirrors the Option<Struct> registry above: populated as
+// struct-payload Results are seen (checker + codegen), the concrete C family is
+// emitted right after the user struct typedefs (it names user structs, so it can't
+// live in wyn_runtime.h).
+//
+// Generalized from the #181 string-only form: each entry carries the family name
+// PLUS the concrete C types of the ok and err payloads, so the err type is no
+// longer hardcoded to `const char*`. The family name encodes BOTH types: a `string`
+// error keeps the #181 name `Result<Ok>` (backward compatible), any other error
+// type appends the err tag — `Result<Ok>_<ErrTag>` (e.g. `ResultPoint_Fail`,
+// `ResultPoint_int`) — so `Result<Point,string>` and `Result<Point,Fail>` are
+// distinct families that never collide.
+typedef struct {
+    char* family;      // e.g. "ResultPoint" / "ResultPoint_Fail"
+    char* ok_cty;      // C type of the ok payload (a struct name here)
+    char* err_cty;     // C type of the err payload ("const char*" | "long long" | struct)
+    int   err_is_str;  // 1 when err payload is a Wyn string (drives string-var binding)
+} ResultFamily;
+static ResultFamily* needed_result_structs = NULL;
 static int needed_result_struct_count = 0;
 static int needed_result_struct_cap = 0;
-void register_result_struct(const char* struct_name) {
+
+// Full registration: family name + concrete ok/err C types. Idempotent (keyed by
+// family name). This is the general entry point; register_result_struct is a
+// backward-compatible shim for the string-error case.
+void register_result_family(const char* family, const char* ok_cty,
+                            const char* err_cty, int err_is_str) {
     for (int i = 0; i < needed_result_struct_count; i++)
-        if (strcmp(needed_result_structs[i], struct_name) == 0) return;
+        if (strcmp(needed_result_structs[i].family, family) == 0) return;
     WYN_ENSURE_CAP(needed_result_structs, needed_result_struct_count, needed_result_struct_cap);
-    needed_result_structs[needed_result_struct_count++] = strdup(struct_name);
+    ResultFamily* e = &needed_result_structs[needed_result_struct_count++];
+    e->family = strdup(family);
+    e->ok_cty = strdup(ok_cty);
+    e->err_cty = strdup(err_cty);
+    e->err_is_str = err_is_str;
+}
+// Backward-compatible: `Result<Struct, string>` family named `Result<Struct>`.
+void register_result_struct(const char* struct_name) {
+    char fam[128]; snprintf(fam, sizeof(fam), "Result%s", struct_name);
+    register_result_family(fam, struct_name, "const char*", 1);
 }
 int result_struct_count(void) { return needed_result_struct_count; }
+// The family C name (e.g. "ResultPoint", "ResultPoint_Fail").
 const char* result_struct_name(int i) {
-    return (i >= 0 && i < needed_result_struct_count) ? needed_result_structs[i] : NULL;
+    return (i >= 0 && i < needed_result_struct_count) ? needed_result_structs[i].family : NULL;
 }
-int is_registered_result_struct(const char* struct_name) {
+int is_registered_result_struct(const char* family) {
     for (int i = 0; i < needed_result_struct_count; i++)
-        if (strcmp(needed_result_structs[i], struct_name) == 0) return 1;
+        if (strcmp(needed_result_structs[i].family, family) == 0) return 1;
     return 0;
+}
+// Look up a registered family by C name. Returns the ok/err C types via out params
+// (any may be NULL). Returns 1 if found, 0 otherwise.
+int result_family_lookup(const char* family, const char** ok_cty,
+                         const char** err_cty, int* err_is_str) {
+    for (int i = 0; i < needed_result_struct_count; i++) {
+        if (strcmp(needed_result_structs[i].family, family) == 0) {
+            if (ok_cty) *ok_cty = needed_result_structs[i].ok_cty;
+            if (err_cty) *err_cty = needed_result_structs[i].err_cty;
+            if (err_is_str) *err_is_str = needed_result_structs[i].err_is_str;
+            return 1;
+        }
+    }
+    return 0;
+}
+// Map an error type-name token (from a `Result<Ok, Err>` annotation) to its C type
+// + string-ness, and to the family-name suffix. `err_name` is the Wyn type name
+// ("string"/"int"/"float"/"bool"/<Struct>). Writes the C type into `cty_out` and,
+// when non-string, the "_<ErrTag>" suffix into `suffix_out` (empty for string).
+// Returns 1 if err payload is a Wyn string, else 0.
+int result_err_c_type(const char* err_name, char* cty_out, size_t cty_sz,
+                      char* suffix_out, size_t suffix_sz) {
+    if (suffix_out && suffix_sz) suffix_out[0] = '\0';
+    if (strcmp(err_name, "string") == 0) {
+        snprintf(cty_out, cty_sz, "const char*");
+        return 1;  // string err keeps the bare Result<Ok> name (no suffix)
+    }
+    if (strcmp(err_name, "int") == 0)        snprintf(cty_out, cty_sz, "long long");
+    else if (strcmp(err_name, "float") == 0) snprintf(cty_out, cty_sz, "double");
+    else if (strcmp(err_name, "bool") == 0)  snprintf(cty_out, cty_sz, "bool");
+    else                                     snprintf(cty_out, cty_sz, "%s", err_name);
+    if (suffix_out && suffix_sz) snprintf(suffix_out, suffix_sz, "_%s", err_name);
+    return 0;
+}
+// Family-name suffix for the error arg of a `Result<Ok, Err>` return-type node
+// (an EXPR_CALL for `Result<...>`). Returns "" for a string error (bare family
+// name) or a missing second arg, else "_<ErrTag>" (e.g. "_Fail", "_int"). Static
+// buffer. Keeps the codegen return-kind name in lockstep with the checker family.
+const char* result_family_err_suffix(Expr* return_type) {
+    static char buf[96]; buf[0] = '\0';
+    if (!return_type || return_type->type != EXPR_CALL) return buf;
+    if (return_type->call.arg_count < 2) return buf;   // 1-arg or missing err -> string default
+    Expr* e = return_type->call.args[1];
+    if (!e || e->type != EXPR_IDENT) return buf;
+    Token t = e->token;
+    if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return buf;  // string -> no suffix
+    char en[80]; token_to_cstr(en, sizeof(en), t);
+    char cty[96];
+    result_err_c_type(en, cty, sizeof(cty), buf, sizeof(buf));
+    return buf;
+}
+
+// Given ok (a known struct) + err Wyn type names from a `Result<Ok, Err>`
+// annotation, compute the monomorphic family name, register it (with concrete
+// ok/err C types), and return the family name in a static buffer. NULL only when
+// inputs are unusable.
+const char* register_result_family_for_types(const char* ok_name, const char* err_name) {
+    static char fam[192];
+    char err_cty[96]; char suffix[96];
+    int err_is_str = result_err_c_type(err_name, err_cty, sizeof(err_cty), suffix, sizeof(suffix));
+    snprintf(fam, sizeof(fam), "Result%s%s", ok_name, suffix);
+    register_result_family(fam, ok_name, err_cty, err_is_str);
+    return fam;
 }
 
 // Track variables that hold data-carrying enum types (growable)

@@ -4327,6 +4327,9 @@ void codegen_expr(Expr* expr) {
             // opt_val_is_str drives string-var registration; opt_val_cty is the C
             // type of the Some/Ok payload (long long | const char* | double | bool).
             int opt_kind = 0; int opt_val_is_str = 0; const char* opt_val_cty = "long long";
+            // For a struct-Result match: the Err payload's C type + string-ness
+            // (from the family registry). Defaults to the #181 string err.
+            const char* opt_res_err_cty = "const char*"; int opt_res_err_is_str = 1;
             if (match_type && match_type->kind == TYPE_STRUCT && match_type->struct_type.name.length > 0) {
                 char _mtn[64]; token_to_cstr(_mtn, sizeof(_mtn), match_type->struct_type.name);
                 if (strcmp(_mtn, "OptionInt") == 0) { opt_kind = 1; opt_val_cty = "long long"; }
@@ -4344,10 +4347,21 @@ void codegen_expr(Expr* expr) {
                 else if (strcmp(_mtn, "ResultFloat") == 0) { opt_kind = 2; opt_val_cty = "double"; }
                 else if (strcmp(_mtn, "ResultBool") == 0) { opt_kind = 2; opt_val_cty = "bool"; }
                 else if (strncmp(_mtn, "Result", 6) == 0) {
-                    // Monomorphic Result<Struct> (ResultPoint): Ok payload is the
-                    // struct value, bound by value (Err stays a string).
-                    static char _rsmcty[96]; snprintf(_rsmcty, sizeof(_rsmcty), "%s", _mtn + 6);
-                    opt_kind = 2; opt_val_cty = _rsmcty;
+                    // Monomorphic Result<Struct,E> (ResultPoint / ResultPoint_Fail):
+                    // Ok payload is the struct value, bound by value. The err payload
+                    // C type comes from the registry (no longer always a string), so
+                    // the Err arm binds `e` with the real err type.
+                    extern int result_family_lookup(const char*, const char**, const char**, int*);
+                    const char* _rok = NULL; const char* _rerr = NULL; int _reis = 1;
+                    if (result_family_lookup(_mtn, &_rok, &_rerr, &_reis) && _rok) {
+                        static char _rsmcty[96]; snprintf(_rsmcty, sizeof(_rsmcty), "%s", _rok);
+                        opt_kind = 2; opt_val_cty = _rsmcty;
+                        opt_res_err_cty = _rerr; opt_res_err_is_str = _reis;
+                    } else {
+                        // Fallback (unregistered): treat suffix-free name's tail as ok.
+                        static char _rsmcty[96]; snprintf(_rsmcty, sizeof(_rsmcty), "%s", _mtn + 6);
+                        opt_kind = 2; opt_val_cty = _rsmcty;
+                    }
                 }
             }
 
@@ -4445,13 +4459,14 @@ void codegen_expr(Expr* expr) {
                         } else {
                             // Result: ok arm uses ok_value, err arm uses err_value.
                             const char* field = is_some_arm ? "ok_value" : "err_value";
-                            // Err payload is always a string in the builtin Result.
-                            const char* bcty = is_some_arm ? opt_val_cty : "const char*";
+                            // Err payload C type comes from the family (string for the
+                            // builtin/#181 case, but may be a scalar or struct now).
+                            const char* bcty = is_some_arm ? opt_val_cty : opt_res_err_cty;
                             emit("%s %.*s = __match_val_%d.data.%s; ", bcty,
                                  binder->ident.name.length, binder->ident.name.start, match_id, field);
                         }
                         // Register a string binding so the arm body concats correctly.
-                        int binder_is_str = (opt_kind == 1) ? opt_val_is_str : (!is_some_arm ? 1 : opt_val_is_str);
+                        int binder_is_str = (opt_kind == 1) ? opt_val_is_str : (!is_some_arm ? opt_res_err_is_str : opt_val_is_str);
                         if (binder_is_str) {
                             char _bb[256]; token_to_cstr(_bb, sizeof(_bb), binder->ident.name);
                             extern void register_string_var(const char*);
@@ -4905,11 +4920,21 @@ void codegen_expr(Expr* expr) {
             // as a last-resort guard.
             static int _try_id = 0; _try_id++;
             const char* _try_fam = "ResultInt";
+            // Whether the Err payload is a string, so the non-Result-fn error-print
+            // path only uses `%s` for a real C string (a struct/scalar err has none).
+            int _try_err_is_str = 1;
             Type* _tvt = expr->try_expr.value ? expr->try_expr.value->expr_type : NULL;
             if (_tvt && _tvt->kind == TYPE_STRUCT && _tvt->struct_type.name.length > 0) {
-                static char _tfbuf[64];
+                static char _tfbuf[192];
                 token_to_cstr(_tfbuf, sizeof(_tfbuf), _tvt->struct_type.name);
-                if (strncmp(_tfbuf, "Result", 6) == 0) _try_fam = _tfbuf;
+                if (strncmp(_tfbuf, "Result", 6) == 0) {
+                    _try_fam = _tfbuf;
+                    // Struct-ok family: look up the real err string-ness.
+                    extern int result_family_lookup(const char*, const char**, const char**, int*);
+                    int _eis = 1;
+                    if (result_family_lookup(_tfbuf, NULL, NULL, &_eis)) _try_err_is_str = _eis;
+                    // The builtin families carry a string err (ResultInt Err = string).
+                }
             } else if (_tvt && _tvt->kind == TYPE_RESULT) {
                 Type* _ok = _tvt->result_type.ok_type;
                 if (_ok && _ok->kind == TYPE_STRING) _try_fam = "ResultString";
@@ -4921,8 +4946,11 @@ void codegen_expr(Expr* expr) {
             extern const char* current_fn_return_kind;
             if (current_fn_return_kind && strncmp(current_fn_return_kind, "Result", 6) == 0) {
                 emit("; if (__try_%d.tag == 1) return __try_%d; __try_%d.data.ok_value; })", _try_id, _try_id, _try_id);
-            } else {
+            } else if (_try_err_is_str) {
                 emit("; if (__try_%d.tag == 1) { fprintf(stderr, \"Error: %%s\\n\", __try_%d.data.err_value); exit(1); } __try_%d.data.ok_value; })", _try_id, _try_id, _try_id);
+            } else {
+                // Non-string Err payload (struct/scalar): no printable %s field.
+                emit("; if (__try_%d.tag == 1) { fprintf(stderr, \"Error: (unhandled Err)\\n\"); exit(1); } __try_%d.data.ok_value; })", _try_id, _try_id, _try_id);
             }
             break;
         }

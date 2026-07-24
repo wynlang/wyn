@@ -1,0 +1,40 @@
+// Regression: `Result<Struct, StructErr>` where the Err arm reads MULTIPLE fields
+// off the error struct (string + int), and the Ok arm reads the ok struct — proving
+// the Err binder `e` is the real error struct value (not a coerced string), and that
+// `Result<Ok, StructErr>` and `Result<Ok, string>` families coexist without collision.
+//
+// EXPECT: ok user=ada
+// EXPECT: fail: db down (code 500)
+// EXPECT: strerr: nope
+struct User { name: string, age: int }
+struct DbErr { message: string, code: int }
+
+fn load(ok: bool) -> Result<User, DbErr> {
+    if ok {
+        return Ok(User{name: "ada", age: 30})
+    }
+    return Err(DbErr{message: "db down", code: 500})
+}
+
+// A DIFFERENT error type for the same ok struct — must NOT collide with the family above.
+fn load_str(ok: bool) -> Result<User, string> {
+    if ok {
+        return Ok(User{name: "grace", age: 45})
+    }
+    return Err("nope")
+}
+
+fn main() {
+    match load(true) {
+        Ok(u) => println("ok user=" + u.name),
+        Err(e) => println("fail: " + e.message + " (code " + int_to_string(e.code) + ")")
+    }
+    match load(false) {
+        Ok(u) => println("ok user=" + u.name),
+        Err(e) => println("fail: " + e.message + " (code " + int_to_string(e.code) + ")")
+    }
+    match load_str(false) {
+        Ok(u) => println("ok user=" + u.name),
+        Err(e) => println("strerr: " + e)
+    }
+}
