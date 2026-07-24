@@ -76,4 +76,35 @@ printf 'fn main() {\n    var x = 5\n    if x > 3 {\n        return\n    }\n    p
 out=$(perl -e 'alarm(10); exec @ARGV' -- "$WYN" check "$TMP/n.wyn" 2>&1); rc=$?
 if [ $rc -eq 0 ]; then ok "bare return still accepted"; else bad "bare return rejected: rc=$rc [$out]"; fi
 
+# 12. Deeply nested `(` / `[` - used to overflow the C stack and SIGSEGV the
+#     compiler (exit 139). Now a clean "nesting too deep" error, not a signal.
+python3 -c "print('fn main() -> int {\n x = ' + '('*5000 + '1' + ')'*5000 + '\n return x\n}')" > "$TMP/deep_paren.wyn"
+out=$(perl -e 'alarm(12); exec @ARGV' -- "$WYN" check "$TMP/deep_paren.wyn" 2>&1); rc=$?
+if [ $rc -ge 1 ] && [ $rc -lt 128 ] && echo "$out" | grep -q "nesting too deep"; then ok "5000 nested parens: clean error, no segfault"
+else bad "deep parens (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+python3 -c "print('fn main() -> int {\n x = ' + '['*2000 + '1' + ']'*2000 + '\n return 0\n}')" > "$TMP/deep_arr.wyn"
+out=$(perl -e 'alarm(12); exec @ARGV' -- "$WYN" check "$TMP/deep_arr.wyn" 2>&1); rc=$?
+if [ $rc -ge 1 ] && [ $rc -lt 128 ] && echo "$out" | grep -q "nesting too deep"; then ok "2000 nested arrays: clean error, no segfault"
+else bad "deep arrays (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+# A modestly deep (100) nest must still parse - the guard must not reject real code.
+python3 -c "print('fn main() -> int {\n x = ' + '('*100 + '1' + ')'*100 + '\n return x\n}')" > "$TMP/ok_paren.wyn"
+out=$(perl -e 'alarm(10); exec @ARGV' -- "$WYN" check "$TMP/ok_paren.wyn" 2>&1); rc=$?
+if [ $rc -eq 0 ]; then ok "100 nested parens still parse (no over-reject)"; else bad "100-deep over-rejected (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
+# 13. An illegal character used to be lexed as premature EOF, making the parser
+#     blame the enclosing block ("Expected '}'") at the wrong line. Now the lexer
+#     reports the offending char/byte at its own column.
+for ch in '@' '`' '\'; do
+    printf 'fn main() -> int {\n    x = 5 %s 3\n    return x\n}\n' "$ch" > "$TMP/illegal.wyn"
+    out=$(perl -e 'alarm(10); exec @ARGV' -- "$WYN" check "$TMP/illegal.wyn" 2>&1); rc=$?
+    if [ $rc -ge 1 ] && [ $rc -lt 128 ] && echo "$out" | grep -q "unexpected character" && ! echo "$out" | grep -q "Expected '}'"; then
+        ok "illegal char '$ch' → unexpected-character (not Expected '}')"
+    else bad "illegal '$ch' (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+done
+# A non-ASCII byte is reported as a hex byte.
+printf 'fn main() -> int {\n    x = 5 \xC3 3\n    return x\n}\n' > "$TMP/illegal_byte.wyn"
+out=$(perl -e 'alarm(10); exec @ARGV' -- "$WYN" check "$TMP/illegal_byte.wyn" 2>&1); rc=$?
+if [ $rc -ge 1 ] && [ $rc -lt 128 ] && echo "$out" | grep -q "unexpected byte"; then ok "illegal non-ASCII byte → unexpected-byte"
+else bad "illegal byte (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
 echo ""; echo "parser-stability: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]

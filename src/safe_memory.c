@@ -1,4 +1,6 @@
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #define _DEFAULT_SOURCE
 #include "safe_memory.h"
 #include <stdio.h>
