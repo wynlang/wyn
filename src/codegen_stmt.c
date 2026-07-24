@@ -1359,6 +1359,18 @@ void codegen_stmt(Stmt* stmt) {
                             }
                         }
                     }
+                    // Same, but for the `::` constructor form: `StringBuilder::new()`
+                    // parses as a single EXPR_IDENT callee named "StringBuilder::new"
+                    // (not a field access), so it missed the SB-var registration
+                    // above and `.to_string()` fell back to the generic int
+                    // to_string -> "1". Register the var here too.
+                    if (!detected && stmt->var.init->call.callee->type == EXPR_IDENT) {
+                        Token c = stmt->var.init->call.callee->token;
+                        if (c.length == 18 && memcmp(c.start, "StringBuilder::new", 18) == 0) {
+                            c_type = "long long"; detected = true;
+                            { char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name); extern void register_sb_var(const char*); register_sb_var(_vn); }
+                        }
+                    }
                     if (!detected) {
                     // Function call - check expr_type first, then look up function return type
                     if (stmt->var.init->expr_type) {

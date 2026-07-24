@@ -236,6 +236,18 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_unterminated_string_test.sh
 	@echo "=== Running struct-eq negative test ==="
 	@WYN=./wyn bash tests/errors/run_struct_eq_test.sh
+	@echo "=== Running cross-type comparison soundness test ==="
+	@WYN=./wyn bash tests/errors/run_cross_type_cmp_test.sh
+	@echo "=== Running struct-field validation test ==="
+	@WYN=./wyn bash tests/errors/run_struct_field_test.sh
+	@echo "=== Running map missing-key panic test ==="
+	@WYN=./wyn bash tests/errors/run_map_missing_key_test.sh
+	@echo "=== Running nesting-depth guard test ==="
+	@WYN=./wyn bash tests/errors/run_nesting_depth_test.sh
+	@echo "=== Running empty-radix-literal test ==="
+	@WYN=./wyn bash tests/errors/run_empty_radix_literal_test.sh
+	@echo "=== Running doctor + version honesty test ==="
+	@WYN=./wyn bash tests/errors/run_doctor_version_test.sh
 	@echo "=== Running select-deadlock test ==="
 	@WYN=./wyn bash tests/errors/run_select_deadlock_test.sh
 	@echo "=== Running channel-deadlock test ==="

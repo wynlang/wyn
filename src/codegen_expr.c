@@ -2779,8 +2779,19 @@ void codegen_expr(Expr* expr) {
                     emit("} __gm; })");
                     break;
                 }
-                // arr.contains(val)
+                // arr.contains(val): string-element arrays must compare by value
+                // with strcmp (array_contains_str), not the int-based
+                // arr_contains - otherwise `["a"].contains("a")` was always 0.
                 if (method.length == 8 && memcmp(method.start, "contains", 8) == 0 && expr->method_call.arg_count == 1) {
+                    Type* _et = object_type->array_type.element_type;
+                    if (_et && _et->kind == TYPE_STRING) {
+                        emit("array_contains_str(");
+                        codegen_expr(expr->method_call.object);
+                        emit(", ");
+                        codegen_expr(expr->method_call.args[0]);
+                        emit(")");
+                        break;
+                    }
                     emit("arr_contains(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
@@ -2962,6 +2973,22 @@ void codegen_expr(Expr* expr) {
                         emit(")");
                         break;
                     }
+                }
+            }
+
+            // StringBuilder.to_string(): the receiver is an int HANDLE, so the
+            // generic _Generic to_string below would stringify the handle (-> "1").
+            // Route to the real runtime fn instead.
+            if (method.length == 9 && memcmp(method.start, "to_string", 9) == 0 &&
+                expr->method_call.arg_count == 0 &&
+                expr->method_call.object->type == EXPR_IDENT) {
+                char _vn[128]; token_to_cstr(_vn, sizeof(_vn), expr->method_call.object->token);
+                extern int is_known_sb_var(const char*);
+                if (is_known_sb_var(_vn)) {
+                    emit("StringBuilder_to_string(");
+                    codegen_expr(expr->method_call.object);
+                    emit(")");
+                    break;
                 }
             }
 
@@ -3738,13 +3765,17 @@ void codegen_expr(Expr* expr) {
                 // checker resolved for this index (from the map's value_type),
                 // so int/float/bool maps don't read through hashmap_get_string.
                 // Array values (group_by buckets) read via hashmap_get_array.
-                const char* _getter = "hashmap_get_string";
+                // Index-read `m[k]` panics on a missing key (see hashmap.c):
+                // the hashmap_index_* macros capture file/line. Array-valued
+                // maps (group_by buckets) keep hashmap_get_array, whose missing
+                // key is a legitimate empty bucket, not a lookup error.
+                const char* _getter = "hashmap_index_string";
                 if (expr->expr_type) {
                     switch (expr->expr_type->kind) {
-                        case TYPE_INT:   case TYPE_BOOL: _getter = (expr->expr_type->kind == TYPE_BOOL) ? "hashmap_get_bool" : "hashmap_get_int"; break;
-                        case TYPE_FLOAT: _getter = "hashmap_get_float"; break;
+                        case TYPE_INT:   case TYPE_BOOL: _getter = (expr->expr_type->kind == TYPE_BOOL) ? "hashmap_index_bool" : "hashmap_index_int"; break;
+                        case TYPE_FLOAT: _getter = "hashmap_index_float"; break;
                         case TYPE_ARRAY: _getter = "hashmap_get_array"; break;
-                        case TYPE_STRING: default: _getter = "hashmap_get_string"; break;
+                        case TYPE_STRING: default: _getter = "hashmap_index_string"; break;
                     }
                 }
                 emit("%s(", _getter);

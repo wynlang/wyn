@@ -1,0 +1,13 @@
+// Regression: valid hex/binary literals still lex, check, and run after the
+// empty-`0x`/`0b` rejection fix.
+// EXPECT: 255
+// EXPECT: 10
+// EXPECT: 16
+fn main() {
+    var a = 0xFF
+    var b = 0b1010
+    var c = 0x10
+    println("${a}")
+    println("${b}")
+    println("${c}")
+}

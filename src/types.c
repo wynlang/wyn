@@ -1052,7 +1052,7 @@ const char* lookup_module_fn_return_type(const char* fn_name) {
         {"Encoding_hex_encode", "string"}, {"Encoding_hex_decode", "string"},
         {"Base64_encode", "string"}, {"Base64_decode", "string"},
         {"Json_stringify", "string"}, {"Json_to_pretty_string", "string"},
-        {"Json_get", "string"}, {"Json_keys", "string"},
+        {"Json_get", "string"}, {"Json_keys", "array"},
         {"Os_platform", "string"}, {"Os_arch", "string"},
         {"Os_hostname", "string"}, {"Os_home_dir", "string"}, {"Os_temp_dir", "string"},
         {"Uuid_generate", "string"}, {"Uuid_v4", "string"}, {"Process_exec_capture", "string"},

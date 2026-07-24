@@ -214,16 +214,22 @@ static void resolve_wyn_root(const char* argv0, char* out, size_t out_sz) {
 static char* get_version() {
     static char version[64] = {0};
     if (version[0] == 0) {
-        // Prefer the repo VERSION file when running from a source checkout
-        // (keeps `./wyn version` current between rebuilds); otherwise use the
-        // compile-time constant.
-        FILE* f = fopen("VERSION", "r");
-        if (f) {
-            if (fgets(version, sizeof(version), f)) {
-                char* newline = strchr(version, '\n');
-                if (newline) *newline = 0;
+        // Prefer the repo VERSION file ONLY when the cwd is actually the Wyn
+        // source checkout (keeps `./wyn version` current between rebuilds).
+        // Gate on a sibling source marker (./src/wyn_runtime.h) so a stray
+        // `VERSION` file in some unrelated cwd can no longer hijack the reported
+        // version (`echo 9.9.9 > VERSION; wyn version` used to print v9.9.9).
+        FILE* marker = fopen("src/wyn_runtime.h", "r");
+        if (marker) {
+            fclose(marker);
+            FILE* f = fopen("VERSION", "r");
+            if (f) {
+                if (fgets(version, sizeof(version), f)) {
+                    char* newline = strchr(version, '\n');
+                    if (newline) *newline = 0;
+                }
+                fclose(f);
             }
-            fclose(f);
         }
         if (version[0] == 0) strncpy(version, WYN_VERSION, sizeof(version) - 1);
     }
@@ -530,9 +536,56 @@ int main(int argc, char** argv) {
         printf("  %s git (for `wyn add` dependencies)\n", has_git ? "\033[32m✓\033[0m" : "\033[33m○\033[0m");
         if (!has_git) printf("    Install git to fetch packages with 'wyn add <name|url>'\n");
 
+        // The decisive check: actually COMPILE AND RUN a trivial program with
+        // whatever backend is available. The individual probes above can all
+        // pass yet `wyn run` still fail (e.g. no system cc AND the TCC runtime
+        // can't link on this host) - doctor used to print "All good! Using TCC
+        // backend" and exit 0 in exactly that case. An end-to-end probe never
+        // lies: if this fails, the environment is NOT usable.
+        int compile_works = 0;
+        {
+            char self_exe[1024] = "";
+#ifdef __APPLE__
+            uint32_t _sz = sizeof(self_exe);
+            if (_NSGetExecutablePath(self_exe, &_sz) != 0) self_exe[0] = 0;
+#elif defined(_WIN32)
+            if (GetModuleFileNameA(NULL, self_exe, sizeof(self_exe)) == 0) self_exe[0] = 0;
+#else
+            ssize_t _rl = readlink("/proc/self/exe", self_exe, sizeof(self_exe) - 1);
+            if (_rl > 0) self_exe[_rl] = '\0'; else self_exe[0] = 0;
+#endif
+            if (!self_exe[0]) { strncpy(self_exe, argv[0], sizeof(self_exe) - 1); self_exe[sizeof(self_exe) - 1] = 0; }
+
+            const char* tmpdir = getenv("TMPDIR"); if (!tmpdir || !*tmpdir) tmpdir = "/tmp";
+            char probe_src[1100];
+            snprintf(probe_src, sizeof(probe_src), "%s/wyn_doctor_probe_%d.wyn", tmpdir, (int)getpid());
+            FILE* pf = fopen(probe_src, "w");
+            if (pf) {
+                fputs("fn main() { println(\"ok\") }\n", pf);
+                fclose(pf);
+                char probe_cmd[2400];
+                snprintf(probe_cmd, sizeof(probe_cmd),
+                         "\"%s\" run \"%s\" %s", self_exe, probe_src, devnull);
+                compile_works = (system(probe_cmd) == 0);
+                remove(probe_src);
+            }
+        }
+        printf("  %s Compile + run a trivial program\n", compile_works ? "\033[32m✓\033[0m" : "\033[31m✗\033[0m");
+        if (!compile_works) {
+            issues++;
+            printf("    `wyn run` failed on a trivial program. Install a C compiler:\n");
+#ifdef __APPLE__
+            printf("    xcode-select --install\n");
+#elif defined(__linux__)
+            printf("    sudo apt install build-essential\n");
+#else
+            printf("    install gcc or clang\n");
+#endif
+        }
+
         printf("\n");
         if (issues == 0 && has_cc && has_rt) printf("\033[32m✓ All good! Using fast compile path (system cc + precompiled runtime).\033[0m\n");
-        else if (issues == 0) printf("\033[32m✓ All good! Using TCC backend. Install a C compiler for 2.5x faster builds.\033[0m\n");
+        else if (issues == 0 && compile_works) printf("\033[32m✓ All good! Using TCC backend. Install a C compiler for 2.5x faster builds.\033[0m\n");
         else printf("\033[31m%d issue(s) found.\033[0m Fix them and run wyn doctor again.\n", issues);
         return issues > 0 ? 1 : 0;
     }

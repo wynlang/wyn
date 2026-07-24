@@ -1,0 +1,18 @@
+// Regression: StringBuilder.to_string() used to return "1" - the SB handle
+// (an int) was stringified via the generic to_string instead of calling the
+// real StringBuilder_to_string. Both the `::new()` and `.new()` constructor
+// forms must register the var so append+to_string produce the concatenation.
+// EXPECT: Hello World
+// EXPECT: abc
+fn main() {
+    var sb = StringBuilder::new()
+    sb.append("Hello ")
+    sb.append("World")
+    println(sb.to_string())
+
+    var sb2 = StringBuilder.new()
+    sb2.append("a")
+    sb2.append("b")
+    sb2.append("c")
+    println(sb2.to_string())
+}

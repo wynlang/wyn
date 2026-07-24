@@ -1,0 +1,23 @@
+// Regression: inline ${builtin_float_fn(...)} used to TRUNCATE to int
+// (`${Math.sqrt(2.0)}` printed "1"). The C float-returning builtins had no
+// `float:` case in to_string's _Generic, so they hit the int default. Now they
+// format as floats; int builtins and user int/float fns are unaffected.
+// EXPECT: 1.41421
+// EXPECT: 5
+// EXPECT: 42
+// EXPECT: 3.14
+// EXPECT: 5
+fn myint() -> int { return 42 }
+fn myfloat() -> float { return 3.14 }
+fn main() {
+    // Direct float builtin in interpolation - prints a real float, not "1".
+    var sq = "${Math.sqrt(2.0)}"
+    println(sq.slice(0, 7))
+    // Int builtin stays int.
+    println("${Math.abs(-5)}")
+    // User fns unchanged.
+    println("${myint()}")
+    println("${myfloat()}")
+    var s = "hello"
+    println("${s.len()}")
+}
