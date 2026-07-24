@@ -244,6 +244,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_collection_type_test.sh
 	@echo "=== Running silent-wrong-answer test ==="
 	@WYN=./wyn bash tests/errors/run_silent_wrong_test.sh
+	@echo "=== Running diagnostic-location + panic-path test ==="
+	@WYN=./wyn bash tests/errors/run_diagnostic_location_test.sh
 	@echo "=== Running checker-soundness gate (K5-K11) test ==="
 	@WYN=./wyn bash tests/errors/run_checker_soundness_test.sh
 	@echo "=== Running crucible-P0 (fatal-by-default) test ==="

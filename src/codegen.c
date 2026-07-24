@@ -965,8 +965,19 @@ int get_struct_field_option_family(const char* struct_name, const char* field_na
             if ((int)strlen(field_name) != s->struct_decl.fields[f].length ||
                 memcmp(field_name, s->struct_decl.fields[f].start, s->struct_decl.fields[f].length) != 0) continue;
             Expr* ft = s->struct_decl.field_types[f];
-            if (!ft || ft->type != EXPR_OPTIONAL_TYPE) return 0;
-            Expr* inner = ft->optional_type.inner_type;
+            Expr* inner = NULL;
+            if (ft && ft->type == EXPR_OPTIONAL_TYPE) {
+                inner = ft->optional_type.inner_type;
+            } else if (ft && ft->type == EXPR_CALL && ft->call.callee &&
+                       ft->call.callee->type == EXPR_IDENT &&
+                       ft->call.callee->token.length == 6 &&
+                       memcmp(ft->call.callee->token.start, "Option", 6) == 0 &&
+                       ft->call.arg_count == 1) {
+                // Generic form `f: Option<T>` (parsed as EXPR_CALL).
+                inner = ft->call.args[0];
+            } else {
+                return 0;
+            }
             if (!inner || inner->type != EXPR_IDENT) return 0;
             Token t = inner->token;
             if (t.length == 3 && memcmp(t.start, "int", 3) == 0) snprintf(out, outsz, "OptionInt");

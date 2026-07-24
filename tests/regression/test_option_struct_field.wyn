@@ -1,0 +1,37 @@
+// Regression: Option<T> as a struct field (generic form, parsed as EXPR_CALL)
+// must emit the correct Option family type - previously the field was emitted
+// `long long` but initialized with OptionInt_None(), an internal codegen error.
+// Covers Option<int> set to None and Some(x), and Option<string>. (fix batch 2026-07)
+// EXPECT: some 99
+// EXPECT: none
+// EXPECT: name wyn
+// EXPECT: no name
+struct Node {
+    val: int,
+    next: Option<int>
+}
+struct Rec {
+    name: Option<string>
+}
+fn main() {
+    a = Node { val: 1, next: Some(99) }
+    match a.next {
+        Some(x) => println("some ${x}")
+        None => println("none")
+    }
+    b = Node { val: 2, next: None }
+    match b.next {
+        Some(x) => println("some ${x}")
+        None => println("none")
+    }
+    r = Rec { name: Some("wyn") }
+    match r.name {
+        Some(s) => println("name ${s}")
+        None => println("no name")
+    }
+    r2 = Rec { name: None }
+    match r2.name {
+        Some(s) => println("name ${s}")
+        None => println("no name")
+    }
+}

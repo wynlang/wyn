@@ -349,10 +349,16 @@ static Expr* primary() {
         const char* str = str_token.start + quote_len;
         int len = str_token.length - quote_len * 2;
         
-        // Simple check for ${} pattern
+        // Simple check for ${} pattern. A `$` escaped with a backslash (odd
+        // number of preceding backslashes, e.g. `\${var}`) is a literal `${`,
+        // not an interpolation - required by strings that show the syntax
+        // verbatim (docs/templates).
         bool has_interp = false;
         for (int i = 0; i < len - 1; i++) {
             if (str[i] == '$' && str[i + 1] == '{') {
+                int bs = 0;
+                for (int k = i - 1; k >= 0 && str[k] == '\\'; k--) bs++;
+                if (bs % 2 == 1) continue;  // escaped -> literal
                 has_interp = true;
                 break;
             }
@@ -372,6 +378,11 @@ static Expr* primary() {
             int part_start = 0;
             for (int i = 0; i < len - 1; i++) {
                 if (str[i] == '$' && str[i + 1] == '{') {
+                    // A backslash-escaped `\${` is a literal `${`, not an
+                    // interpolation - leave it in the surrounding string part.
+                    int bs = 0;
+                    for (int k = i - 1; k >= 0 && str[k] == '\\'; k--) bs++;
+                    if (bs % 2 == 1) continue;
                     // Add string part before ${
                     if (i > part_start) {
                         int part_len = i - part_start;
@@ -2030,6 +2041,20 @@ Expr* expression() {
 Stmt* statement();
 
 Stmt* statement() {
+    // Semicolons are optional statement separators (equivalent to newlines).
+    // A `;` in statement position - whether a separator that was left in front
+    // of the next statement, a doubled/empty `;;`, or a trailing `;` - parses
+    // as a no-op empty statement (an empty block emits nothing). This lets
+    // `a = 1; b = 2`, `x = 1;; y = 2`, and trailing `x = 1;` all parse.
+    if (match(TOKEN_SEMI)) {
+        Stmt* empty = alloc_stmt();
+        empty->type = STMT_BLOCK;
+        empty->block.stmts = NULL;
+        empty->block.count = 0;
+        empty->block.timeout = NULL;
+        return empty;
+    }
+
     if (check(TOKEN_FN)) {
         fprintf(stderr, "Error at line %d: Nested functions are not supported. Functions can only be defined at the top level.\n", parser.current.line);
         parser.had_error = true;
@@ -3176,6 +3201,22 @@ Stmt* statement() {
                 blk->block.stmts[blk->block.count++] = es;
             }
             return blk;
+        }
+        // Annotated bare assignment: `x: int = 5`, `xs: [int] = []`. Parses
+        // identically to the `var`-prefixed form (`var x: int = 5`). We detect
+        // a bare identifier immediately followed by `:` at statement start.
+        if (first_target->type == EXPR_IDENT && check(TOKEN_COLON)) {
+            advance(); // consume ':'
+            Stmt* vstmt = alloc_stmt();
+            vstmt->type = STMT_VAR;
+            vstmt->var.is_const = false;
+            vstmt->var.is_mutable = true;
+            vstmt->var.name = first_target->token;
+            vstmt->var.type = parse_type();
+            expect(TOKEN_EQ, "Expected '=' after type annotation");
+            vstmt->var.init = expression();
+            match(TOKEN_SEMI);
+            return vstmt;
         }
         // Not a multi-assignment - fall through using the already-parsed expr.
         Stmt* stmt = alloc_stmt();
