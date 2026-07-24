@@ -8,6 +8,25 @@
 // (.set/.insert, map literal, m[k]=v) so they can't drift apart. Default int.
 // True if the program defines a user function with this token's name - the
 // str/int/float/sorted builtin call paths must yield to a user definition.
+// True if this bare identifier names a builtin runtime function (declared in
+// wyn_runtime.h), NOT a user/module function. Such calls must NEVER be given a
+// module prefix: `int_to_string(x)` invoked inside an imported module must emit
+// `int_to_string`, not `<mod>_int_to_string` (undeclared C fn -> codegen error).
+// Other string builtins (len/substring/concat) survive because they are method
+// calls; `str()` survives via a dedicated intercept. Only the free-function
+// *_to_string family reaches the generic prefix path, so guard it here.
+static bool is_builtin_runtime_fn(const char* name) {
+    static const char* builtins[] = {
+        "int_to_string", "float_to_string", "bool_to_string",
+        "char_to_string", "str_to_string", "array_to_string",
+        NULL
+    };
+    for (int i = 0; builtins[i] != NULL; i++) {
+        if (strcmp(name, builtins[i]) == 0) return true;
+    }
+    return false;
+}
+
 static bool user_fn_defined(Token name) {
     extern Program* current_program;
     if (!current_program) return false;
@@ -214,6 +233,13 @@ void codegen_expr(Expr* expr) {
             
             // If we're inside a module function, check if this identifier needs module prefix
             if (current_module_prefix && !strchr(temp_ident, ':') && !strchr(temp_ident, '.')) {
+                // Builtin runtime functions (int_to_string, ...) are never module
+                // members: emit the bare name so imported-module code links.
+                if (is_builtin_runtime_fn(temp_ident)) {
+                    emit("%s", temp_ident);
+                    free(ident);
+                    break;
+                }
                 // Check if this is a parameter - never prefix parameters
                 if (is_parameter(temp_ident)) {
                     // Dereference mut parameters
@@ -1662,7 +1688,7 @@ void codegen_expr(Expr* expr) {
                                 if (current_module_prefix && !is_module_qualified && expr->call.callee->type == EXPR_IDENT) {
                                     char func_name[256];
                                     token_to_cstr(func_name, sizeof(func_name), expr->call.callee->token);
-                                    is_internal_call = is_module_function(func_name);
+                                    is_internal_call = is_module_function(func_name) || is_builtin_runtime_fn(func_name);
                                 }
                                 
                                 // Only prefix if NOT an internal call
@@ -1694,7 +1720,7 @@ void codegen_expr(Expr* expr) {
                             if (current_module_prefix && !is_module_qualified && expr->call.callee->type == EXPR_IDENT) {
                                 char func_name[256];
                                 token_to_cstr(func_name, sizeof(func_name), expr->call.callee->token);
-                                is_internal_call = is_module_function(func_name);
+                                is_internal_call = is_module_function(func_name) || is_builtin_runtime_fn(func_name);
                             }
                             
                             // Only prefix if NOT an internal call

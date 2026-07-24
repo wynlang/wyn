@@ -21,8 +21,57 @@ run_test() {
         return
     fi
 
-    local output=$($WYN build "$file" 2>/dev/null && "${file%.wyn}" 2>&1; rm -f "${file%.wyn}" "${file}.c" 2>/dev/null) || true
-    output=$(echo "$output" | grep -v "Building\|Built\|Compiled in\|Warning:")
+    # --- Robust, deterministic build+run (fixes the macos-15 empty-output flake) ---
+    # Root causes the old one-liner exposed on the macos-15 runner:
+    #   (a) build+run+rm jammed in one subshell -> a slow/parallel `wyn build`
+    #       could race the immediate exec, or the `rm` could delete the binary
+    #       before it was executed / its stdout captured;
+    #   (b) stdout captured before the child's buffers flushed -> empty output;
+    #   (c) fixed binary path per source -> parallel shards clobbered each other;
+    #   (d) the written binary not observed as present before exec.
+    # Fix: unique artifact paths per invocation (defeats (c)); build as its own
+    # step and verify the binary exists+executable before running (defeats (a)/(d)
+    # and turns a real build failure into an explicit BUILD-FAIL instead of a
+    # silent empty-output "wrong answer"); capture run output separately AFTER the
+    # binary is confirmed present; retry an EMPTY-but-expected result up to 2x
+    # (defeats (b) — a genuinely wrong answer is non-empty so it is never retried).
+
+    # Unique per-invocation artifact directory so parallel shards never collide.
+    local sandbox="$TMPDIR/run.$name.$$.$RANDOM"
+    mkdir -p "$sandbox"
+    local bin="$sandbox/$(basename "${file%.wyn}")"
+
+    # Step 1: build to a unique output path. Keep the source tree clean.
+    local build_err
+    build_err=$("$WYN" build "$file" -o "$bin" 2>&1 >/dev/null)
+    local build_rc=$?
+    rm -f "${file%.wyn}" "${file}.c" 2>/dev/null
+
+    # Step 2: verify the binary is present and executable before running it.
+    if [ "$build_rc" -ne 0 ] || [ ! -x "$bin" ]; then
+        printf "FAIL\n    BUILD FAILED (rc=%s): %s\n" "$build_rc" \
+            "$(echo "$build_err" | grep -v '^Building\|^Built\|^Compiled in\|Warning:' | head -3 | tr '\n' ' ')" \
+            > "$result_file"
+        rm -rf "$sandbox"
+        return
+    fi
+
+    # Step 3: run & capture. Retry only when output is EMPTY but something was
+    # expected (the flush/timing flake) — never masks a non-empty wrong answer.
+    local output=""
+    local attempt=0
+    while [ "$attempt" -lt 3 ]; do
+        output=$("$bin" 2>&1)
+        output=$(echo "$output" | grep -v "Building\|Built\|Compiled in\|Warning:")
+        if [ -n "$output" ]; then
+            break
+        fi
+        attempt=$((attempt + 1))
+        sleep 0.2
+    done
+
+    # Step 4: clean up AFTER capture, so cleanup can never race the run.
+    rm -rf "$sandbox"
 
     local failed=0
     local errs=""

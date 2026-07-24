@@ -1,0 +1,23 @@
+// EXPECT: x=1
+// EXPECT: y=2
+// EXPECT: sum=30
+// Regression: a function may return a struct by value across a function
+// boundary, and the returned struct may itself be built from another
+// by-value struct return.
+struct Point { x: int, y: int }
+
+fn make() -> Point {
+    return Point{x: 1, y: 2}
+}
+
+fn scaled(n: int) -> Point {
+    return Point{x: n, y: n * 2}
+}
+
+fn main() {
+    p = make()
+    println("x=" + int_to_string(p.x))
+    println("y=" + int_to_string(p.y))
+    q = scaled(10)
+    println("sum=" + int_to_string(q.x + q.y))
+}
