@@ -1537,9 +1537,11 @@ static Expr* call() {
         } else if (check(TOKEN_QUESTION) && !check_next_is_value()) {
             // TASK-028: Handle ? operator for error propagation
             // Only consume ? when NOT followed by a value (to avoid ternary confusion)
+            Token q = parser.current; // the `?` token, for diagnostics
             advance(); // consume ?
             Expr* try_expr = alloc_expr();
             try_expr->type = EXPR_TRY;
+            try_expr->token = q;
             try_expr->try_expr.value = expr;
             expr = try_expr;
         } else {

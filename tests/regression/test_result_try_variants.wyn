@@ -1,0 +1,51 @@
+// The `?` try operator must work for EVERY Result family, not just ResultInt.
+// Codegen used to declare the unwrap temp as `ResultInt __try_N` unconditionally
+// (batch C / K6), so `?` on a ResultString/ResultFloat/ResultBool value produced
+// a C type mismatch ("initializing 'ResultInt' with an expression of incompatible
+// type 'ResultString'") - it only ever compiled for int. The checker now types
+// each `?` to its own ok-type and codegen emits the value's real family.
+// EXPECT: 84
+// EXPECT: hi there
+// EXPECT: 3.0
+// EXPECT: true
+
+fn parse_int(s: string) -> ResultInt {
+    if s == "42" { return ResultInt_Ok(42) }
+    return ResultInt_Err("bad int")
+}
+fn parse_str(s: string) -> ResultString {
+    if s == "ok" { return ResultString_Ok("hi there") }
+    return ResultString_Err("bad str")
+}
+fn parse_float(s: string) -> ResultFloat {
+    if s == "ok" { return ResultFloat_Ok(1.5) }
+    return ResultFloat_Err("bad float")
+}
+fn parse_bool(s: string) -> ResultBool {
+    if s == "ok" { return ResultBool_Ok(true) }
+    return ResultBool_Err("bad bool")
+}
+
+fn use_int(s: string) -> ResultInt {
+    n = parse_int(s)?
+    return ResultInt_Ok(n * 2)
+}
+fn use_str(s: string) -> ResultString {
+    v = parse_str(s)?
+    return ResultString_Ok(v)
+}
+fn use_float(s: string) -> ResultFloat {
+    v = parse_float(s)?
+    return ResultFloat_Ok(v * 2.0)
+}
+fn use_bool(s: string) -> ResultBool {
+    v = parse_bool(s)?
+    return ResultBool_Ok(v)
+}
+
+fn main() {
+    println(ResultInt_unwrap(use_int("42")))
+    println(ResultString_unwrap(use_str("ok")))
+    println(ResultFloat_unwrap(use_float("ok")))
+    println(ResultBool_unwrap(use_bool("ok")))
+}

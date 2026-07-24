@@ -4859,8 +4859,27 @@ void codegen_expr(Expr* expr) {
             // ? operator: unwrap Result or propagate error
             // In Result-returning function: return the error
             // In non-Result function: print error and exit
+            //
+            // The temp MUST be declared with the value's OWN Result family
+            // (ResultInt/ResultString/ResultFloat/ResultBool), not a hard-coded
+            // ResultInt - otherwise `?` on any non-int Result produced a C type
+            // mismatch (K6). The checker rejects `?` on non-Result values, so the
+            // value's expr_type is a Result struct here; default to ResultInt only
+            // as a last-resort guard.
             static int _try_id = 0; _try_id++;
-            emit("({ ResultInt __try_%d = ", _try_id);
+            const char* _try_fam = "ResultInt";
+            Type* _tvt = expr->try_expr.value ? expr->try_expr.value->expr_type : NULL;
+            if (_tvt && _tvt->kind == TYPE_STRUCT && _tvt->struct_type.name.length > 0) {
+                static char _tfbuf[64];
+                token_to_cstr(_tfbuf, sizeof(_tfbuf), _tvt->struct_type.name);
+                if (strncmp(_tfbuf, "Result", 6) == 0) _try_fam = _tfbuf;
+            } else if (_tvt && _tvt->kind == TYPE_RESULT) {
+                Type* _ok = _tvt->result_type.ok_type;
+                if (_ok && _ok->kind == TYPE_STRING) _try_fam = "ResultString";
+                else if (_ok && _ok->kind == TYPE_FLOAT) _try_fam = "ResultFloat";
+                else if (_ok && _ok->kind == TYPE_BOOL) _try_fam = "ResultBool";
+            }
+            emit("({ %s __try_%d = ", _try_fam, _try_id);
             codegen_expr(expr->try_expr.value);
             extern const char* current_fn_return_kind;
             if (current_fn_return_kind && strncmp(current_fn_return_kind, "Result", 6) == 0) {
