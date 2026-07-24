@@ -355,7 +355,20 @@ void codegen_expr(Expr* expr) {
                     free(ident);
                     break;
                 }
-                
+
+                // Special handling for StringBuilder:: constructor - map to
+                // StringBuilder_ prefix. Without this, the generic resolve/::->_
+                // path mangled "StringBuilder" away and emitted `_new()` (an
+                // implicit declaration - only a warning under clang, but a hard
+                // ERROR under glibc gcc, so it broke the Linux build).
+                if (strcmp(temp_ident, "StringBuilder") == 0) {
+                    snprintf(temp_ident, sizeof(temp_ident), "StringBuilder_%s", function_part);
+                    strcpy(ident + offset, temp_ident);
+                    emit("%s", ident);
+                    free(ident);
+                    break;
+                }
+
                 // Special handling for Color:: module - map to Color_ prefix.
                 // The runtime exposes Color_red/green/... (string-returning ANSI
                 // wrappers). Without this the generic ::->_ path mangled
