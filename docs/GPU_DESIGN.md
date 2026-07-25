@@ -1,11 +1,92 @@
 # Transparent GPU dispatch — design and honest limitations
 
-Status: **experimental, opt-in, macOS/Metal-only, not merged to main.**
-Branch: `feat/gpu-dispatch-m2`.
+Status: **experimental, opt-in, cross-platform by design.** Metal backend
+(macOS) verified; OpenCL backend (Linux/Windows) builds + falls back to CPU
+verified, GPU-on-hardware correctness pending GPU CI. Branch:
+`feat/gpu-crossplatform`.
 
 This document describes what the `[gpu]` feature *actually does today* — not what
 it could become. Anything aspirational is called out explicitly as "not
 implemented" or listed under [Known limitations](#known-limitations).
+
+## Cross-platform architecture
+
+GPU acceleration is gated by the **TARGET** platform, not the compiler host.
+Every backend implements one small C ABI (`src/gpu_backend.h`, six functions:
+`wyn_gpu_available` / `should_dispatch` / `map_f32_begin` / `map_f32_run` /
+`lock` / `unlock`). Codegen (`src/codegen_gpu.c`) is backend-neutral: at each
+eligible `[float].map` site it emits **both** an MSL kernel string (Metal) and
+an OpenCL-C kernel string, wrapped in `WYN_GPU_KERNEL(msl, ocl)` — a compile-time
+selector (`src/wyn_runtime.h`) that hands the linked backend its own shader
+language. The runtime shim `wyn_gpu_try_map_float` drives whichever backend is
+linked; if none is (or the backend finds no device at run time) the **CPU
+fallback always runs** — the invariant that makes results correct everywhere.
+
+| Target            | Backend                | Shader   | Link                               |
+|-------------------|------------------------|----------|------------------------------------|
+| macOS             | `src/gpu_metal.m`      | MSL      | `-framework Metal` (host-built .o) |
+| Linux / Windows   | `src/gpu_opencl.c`     | OpenCL-C | dlopen `libOpenCL` at run time     |
+| ios/android/wasm  | none (yet)             | —        | CPU-only                           |
+
+Backend selection lives in `wyn_gpu_link_flags_for(target, cc, …)` in
+`src/main.c`, keyed off the target OS. Both the native build/run path and the
+`wyn cross <target>` path call it, so **`wyn cross linux` from a Mac wires the
+OpenCL backend into the Linux binary** (this was the parity gap the old
+`#ifdef __APPLE__` host-gating left open).
+
+### Why OpenCL for the portable path
+
+OpenCL is a single C API present on most Linux GPU drivers (NVIDIA/AMD/Intel)
+and on Windows, and — critically — it is **dlopen-able at run time**. So a Wyn
+binary built with the OpenCL backend needs **no OpenCL SDK to link** (cross-
+compile friendly) and **still runs on a box with no GPU/driver**: `dlopen` finds
+no `libOpenCL` (or `clGetPlatformIDs` returns 0 devices) → `wyn_gpu_available()`
+returns 0 → the CPU fallback runs. CUDA is NVIDIA-only; Vulkan compute needs
+SPIR-V + far more code. OpenCL is the pragmatic first cross-platform backend.
+
+The OpenCL backend needs the OpenCL **headers** (`CL/cl.h`) at build time for
+types/enum values only — never the loader library. A minimal ABI-accurate
+subset is vendored at `vendor/opencl/CL/cl.h` so the backend compiles on hosts
+without the SDK (e.g. the macOS dev box when cross-building, or a bare Linux
+build). On a Linux box with `opencl-headers` installed, dropping
+`-Ivendor/opencl` uses the system header instead (the vendored subset is
+compatible — verified to compile against the real `CL/cl.h`).
+
+### Kill-switch
+
+`WYN_GPU=0` in the environment forces the CPU path for **any** backend at run
+time, no recompile — checked both in the runtime shim (short-circuits before any
+device work) and inside each backend. This is in addition to the compile-time
+`[gpu] enabled = false` opt-out.
+
+### Building & running on Linux (for the orchestrator / GPU CI)
+
+To exercise the OpenCL GPU path on real hardware (e.g. a Linux + NVIDIA T4 EC2
+box), rsync this worktree over and:
+
+```bash
+# build tooling + OpenCL headers/loader (loader only needed to actually run on GPU)
+sudo apt-get install -y build-essential opencl-headers ocl-icd-opencl-dev
+# plus the vendor ICD for the GPU, e.g. NVIDIA: nvidia-opencl-dev / the driver's ICD
+make                    # builds the wyn compiler natively (selects OpenCL backend for linux target)
+cat > /tmp/g/wyn.toml <<'EOF'
+[project]
+name="g"
+version="0.1.0"
+[gpu]
+enabled = true
+float32 = true
+EOF
+# a large [float].map so the cost model dispatches (N >= 300k cached / cumulative tiers)
+./wyn build /tmp/g/big.wyn
+WYN_GPU_DEBUG=1 ./big          # expect "[wyn-gpu] n=… -> GPU" lines and correct output
+clinfo                          # confirm a GPU device is visible to the ICD loader
+```
+
+`WYN_GPU_FORCE=1` bypasses the cost model to dispatch even small arrays (test
+knob). Verify the GPU result matches the CPU result within float32 tolerance
+(the suite's forced-dispatch check does this for the Metal path; the same check
+should be run on the OpenCL GPU box).
 
 ## What it does
 
@@ -150,8 +231,14 @@ A standalone CPU-vs-GPU microbenchmark lives at `benchmarks/gpu/bench_gpu_map.c`
 
 These are **out of scope** for this branch and must not be represented as working:
 
-- **macOS / Metal only.** No CUDA/ROCm/Vulkan/OpenCL backend. On every other
-  platform the runtime stub answers "no" and everything runs on CPU.
+- **OpenCL-on-GPU correctness/perf is NOT verified.** The macOS dev box has no
+  non-Apple GPU or OpenCL device, so the OpenCL backend has only been verified to
+  (a) compile (against both the vendored and the real system `CL/cl.h`) and
+  (b) fall back to CPU cleanly when no device is present. That it computes
+  *correctly and faster* on a real Linux/Windows GPU MUST be checked on GPU
+  hardware (a Linux + GPU box / GPU-enabled CI) before it can be claimed working.
+- **No CUDA/ROCm/Vulkan backend.** OpenCL is the only non-Metal backend.
+- **ios/android/wasm have no GPU backend** — CPU-only there.
 - **`[float].map` only.** No `filter`, `reduce`, `for` loops, or other methods.
 - **4 arithmetic ops only** (`+ - * /`, unary `-`). No `%`, comparisons,
   transcendental functions, or conditionals in eligible bodies.
@@ -161,20 +248,23 @@ These are **out of scope** for this branch and must not be represented as workin
   implemented*. There are no `wyn_gpu_map_i64_*` entry points.
 - **Runtime kernel compilation only.** No precompiled `.metallib`; the first use of
   each kernel pays the MSL compile cost.
-- **Single-threaded global state.** `src/gpu_metal.m` uses static device/queue/
-  buffer/pipeline caches and is **not thread-safe**. Concurrent GPU dispatch from
-  multiple threads (e.g. `parallel { }`) is unsafe. A per-thread or pooled job
-  context is future work.
+- **Serialized global state.** Each backend uses process-global device/queue/
+  buffer/kernel caches guarded by a pthread mutex the runtime shim holds across
+  the whole dispatch. Concurrent maps (e.g. `parallel { }`) serialize (correct,
+  not parallel). A per-job buffer pool for real GPU concurrency is future work.
 
 ## Files
 
 | File | Role |
 |------|------|
+| `src/gpu_backend.h` | the stable 6-function C ABI every backend implements |
 | `src/toml.h` / `src/toml.c` | `[gpu]` config (`enabled`, `float_enabled`) |
-| `src/main.c` (`wyn_gpu_flag_from_toml`, `wyn_gpu_link_flags`) | opt-in gate + lazy Metal link |
-| `src/codegen_gpu.c` | eligibility check + MSL kernel emission + dual-path codegen |
-| `src/wyn_runtime.h` (`wyn_gpu_try_map_float`) | runtime dispatch shim / CPU-only stub |
-| `src/gpu_metal.m` | Metal backend: device init, cost model, kernel cache, dispatch |
+| `src/main.c` (`wyn_gpu_flag_from_toml`, `wyn_gpu_backend_for_target`, `wyn_gpu_link_flags_for`) | opt-in gate + **target-based** backend selection + lazy backend build (native + cross) |
+| `src/codegen_gpu.c` | eligibility check + **dual** (MSL + OpenCL-C) kernel emission + dual-path codegen |
+| `src/wyn_runtime.h` (`wyn_gpu_try_map_float`, `WYN_GPU_KERNEL`) | runtime dispatch shim / kernel selector / CPU-only stub / `WYN_GPU=0` kill-switch |
+| `src/gpu_metal.m` | Metal backend (macOS): device init, cost model, kernel cache, dispatch |
+| `src/gpu_opencl.c` | OpenCL backend (linux/windows): dlopen loader, device probe, program build+cache, buffer pack/unpack, cost model |
+| `vendor/opencl/CL/cl.h` | minimal ABI-accurate OpenCL header subset (build without the SDK) |
 | `benchmarks/gpu/bench_gpu_map.c` | standalone CPU-vs-GPU microbenchmark |
 | `demos/gpu_map/` | runnable demo |
 | `tests/gpu/run_gpu_test.sh` | the test suite described above |

@@ -62,12 +62,14 @@ static bool gpu_lambda_eligible(Expr* lam) {
     return gpu_expr_eligible(lam->lambda.body, lam->lambda.params[0]);
 }
 
-// Append the lambda body as MSL (float32) into buf. The allowed node set
-// contains no quotes or backslashes, so the result is safe to splice into a
-// C string literal as-is. Int literals become float literals (MSL int*float
-// is legal but this keeps the whole kernel in one type). Float literals get
-// the f suffix so nothing promotes to (unsupported) double.
-static void gpu_msl_expr(Expr* e, char* buf, size_t bufsz) {
+// Append the lambda body as a float32 arithmetic expression into buf. The
+// allowed node set contains no quotes or backslashes, so the result is safe to
+// splice into a C string literal as-is. This body text is IDENTICAL in MSL and
+// OpenCL-C (both are C-like: `(x * 2.5f + 1.0f)`), so one emitter serves both
+// backends - only the kernel wrapper around it differs. Int literals become
+// float literals (keeps the whole kernel one type); float literals get the f
+// suffix so nothing promotes to (unsupported/optional) double.
+static void gpu_arith_expr(Expr* e, char* buf, size_t bufsz) {
     size_t len = strlen(buf);
     char* p = buf + len;
     size_t rem = bufsz - len;
@@ -87,17 +89,17 @@ static void gpu_msl_expr(Expr* e, char* buf, size_t bufsz) {
                            : e->binary.op.type == TOKEN_MINUS ? "-"
                            : e->binary.op.type == TOKEN_STAR  ? "*" : "/";
             snprintf(p, rem, "(");
-            gpu_msl_expr(e->binary.left, buf, bufsz);
+            gpu_arith_expr(e->binary.left, buf, bufsz);
             len = strlen(buf);
             snprintf(buf + len, bufsz - len, " %s ", op);
-            gpu_msl_expr(e->binary.right, buf, bufsz);
+            gpu_arith_expr(e->binary.right, buf, bufsz);
             len = strlen(buf);
             snprintf(buf + len, bufsz - len, ")");
             break;
         }
         case EXPR_UNARY:
             snprintf(p, rem, "(-");
-            gpu_msl_expr(e->unary.operand, buf, bufsz);
+            gpu_arith_expr(e->unary.operand, buf, bufsz);
             len = strlen(buf);
             snprintf(buf + len, bufsz - len, ")");
             break;
@@ -106,19 +108,26 @@ static void gpu_msl_expr(Expr* e, char* buf, size_t bufsz) {
     }
 }
 
-// Build the full MSL kernel source for an eligible lambda. Returns false if
-// the body would not fit. The kernel is a C string literal in the generated
-// C, so newlines are written as the two characters backslash-n.
-static bool gpu_msl_kernel(Expr* lam, char* out, size_t outsz) {
-    char body[2048]; body[0] = '\0';
-    gpu_msl_expr(lam->lambda.body, body, sizeof(body));
-    if (body[0] == '\0') return false;
-    Token param = lam->lambda.params[0];
+// Build the MSL (Metal Shading Language) kernel source for an eligible lambda.
+// Returns false if the body would not fit. The kernel is a C string literal in
+// the generated C, so newlines are written as the two characters backslash-n.
+static bool gpu_msl_kernel(const char* body, Token param, char* out, size_t outsz) {
     int n = snprintf(out, outsz,
         "#include <metal_stdlib>\\nusing namespace metal;\\n"
         "kernel void wyn_map_kernel(device const float* in [[buffer(0)]], "
         "device float* out [[buffer(1)]], uint i [[thread_position_in_grid]]) "
         "{ float %.*s = in[i]; out[i] = %s; }",
+        param.length, param.start, body);
+    return n > 0 && (size_t)n < outsz;
+}
+
+// Build the OpenCL-C kernel source for the SAME eligible lambda. The arithmetic
+// body text is identical to MSL; only the kernel signature differs (OpenCL uses
+// __kernel / __global and get_global_id instead of Metal attributes).
+static bool gpu_opencl_kernel(const char* body, Token param, char* out, size_t outsz) {
+    int n = snprintf(out, outsz,
+        "__kernel void wyn_map_kernel(__global const float* in, __global float* out) "
+        "{ int i = get_global_id(0); float %.*s = in[i]; out[i] = %s; }",
         param.length, param.start, body);
     return n > 0 && (size_t)n < outsz;
 }
@@ -135,12 +144,24 @@ static bool gpu_try_emit_map_dispatch(Expr* expr) {
     if (lam->expr_type && lam->expr_type->kind == TYPE_FUNCTION)
         lam_ret = lam->expr_type->fn_type.return_type;
     if (lam_ret && lam_ret->kind != TYPE_FLOAT) return false;
-    char kernel[4096];
-    if (!gpu_msl_kernel(lam, kernel, sizeof(kernel))) return false;
 
+    // Build the arithmetic body once, then wrap it for each backend language.
+    char body[2048]; body[0] = '\0';
+    gpu_arith_expr(lam->lambda.body, body, sizeof(body));
+    if (body[0] == '\0') return false;
+    Token param = lam->lambda.params[0];
+    char msl[4096], ocl[4096];
+    if (!gpu_msl_kernel(body, param, msl, sizeof(msl))) return false;
+    if (!gpu_opencl_kernel(body, param, ocl, sizeof(ocl))) return false;
+
+    // Emit BOTH kernel strings; WYN_GPU_KERNEL (defined in wyn_runtime.h per
+    // the linked backend) selects the right one at compile time - MSL for the
+    // Metal backend, OpenCL-C for the OpenCL backend. The CPU-only stub ignores
+    // both. This keeps codegen backend-neutral: whichever backend a given
+    // target links picks its own shader language.
     emit("({ WynArray __gpu_src = ");
     codegen_expr(expr->method_call.object);
-    emit("; WynArray __gpu_res; if (!wyn_gpu_try_map_float(__gpu_src, \"%s\", &__gpu_res)) __gpu_res = wyn_array_map_float(__gpu_src, ", kernel);
+    emit("; WynArray __gpu_res; if (!wyn_gpu_try_map_float(__gpu_src, WYN_GPU_KERNEL(\"%s\", \"%s\"), &__gpu_res)) __gpu_res = wyn_array_map_float(__gpu_src, ", msl, ocl);
     codegen_expr(lam);
     emit("); __gpu_res; })");
     gpu_dispatch_sites++;

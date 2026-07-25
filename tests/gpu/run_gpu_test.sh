@@ -100,6 +100,19 @@ sites=$(build_sites)
 [ "$sites" = "1" ] && ok "[gpu] enabled + float32 => GPU dispatch site emitted" \
     || bad "both flags: expected 1 site, got $sites"
 
+# --- 2b. cross-platform dual-kernel emission (platform-independent: inspects
+#         emitted C). Codegen emits BOTH an MSL kernel (Metal) and an OpenCL-C
+#         kernel (OpenCL) at every eligible site; the linked backend picks one
+#         via WYN_GPU_KERNEL. This is what makes the SAME .wyn accelerate on
+#         macOS/Metal and Linux/Windows/OpenCL.
+build_sites >/dev/null   # ensure p.wyn.c is fresh for the both-flags toml
+grep -q 'metal_stdlib' "$TMP/p.wyn.c" 2>/dev/null \
+    && ok "dual-kernel: MSL kernel emitted (Metal backend source)" \
+    || bad "dual-kernel: no MSL kernel in emitted C"
+grep -q '__kernel void wyn_map_kernel' "$TMP/p.wyn.c" 2>/dev/null \
+    && ok "dual-kernel: OpenCL-C kernel emitted (OpenCL backend source)" \
+    || bad "dual-kernel: no OpenCL-C kernel in emitted C"
+
 # --- 3. GPU correctness (float32 tolerance) - only where Metal runs ---
 if [ "$IS_MAC" = "1" ]; then
     # WYN_GPU_FORCE=1 makes the cost model dispatch even this tiny array.
@@ -110,6 +123,13 @@ if [ "$IS_MAC" = "1" ]; then
     else
         bad "WYN_GPU_FORCE did not dispatch to GPU (no Metal device?)"
     fi
+    # WYN_GPU=0 runtime kill-switch: even with FORCE, no dispatch happens, and
+    # the result is the (correct) CPU one. Proves the env kill-switch overrides.
+    killed=$( cd "$TMP" && WYN_GPU=0 WYN_GPU_FORCE=1 WYN_GPU_DEBUG=1 ./p 2>&1 >/dev/null | grep -c '\-> GPU' )
+    out_killed=$( cd "$TMP" && WYN_GPU=0 WYN_GPU_FORCE=1 ./p 2>/dev/null )
+    { [ "$killed" = "0" ] && [ "$out_killed" = "$EXPECTED_OUT" ]; } \
+        && ok "WYN_GPU=0 forces CPU even under FORCE (kill-switch, correct result)" \
+        || bad "WYN_GPU=0 kill-switch failed: dispatches=$killed out=[$out_killed]"
     # float32(2.5x+1) of small exact values is exact => identical string here,
     # which is the tightest possible tolerance check.
     [ "$out_gpu" = "$EXPECTED_OUT" ] && ok "GPU result matches CPU within f32 tolerance ($out_gpu)" \
