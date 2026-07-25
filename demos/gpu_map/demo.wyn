@@ -1,0 +1,28 @@
+// Transparent GPU dispatch demo (spike). Run from this directory:
+//   wyn run demo.wyn          (wyn.toml here has [gpu] enabled = true)
+// Set WYN_GPU_DEBUG=1 to watch the cost model choose per call.
+// The source is identical either way: no GPU API, no annotations.
+fn main() {
+    // Small array: the cost model always keeps this on the CPU.
+    var small = [1.0, 2.0, 3.0, 4.0]
+    var doubled = small.map((x) => x * 2.5 + 1.0)
+    println(doubled)
+
+    // Large array: worth the GPU once the kernel compile amortizes.
+    var big: [float] = []
+    var i = 0
+    while i < 20000000 {
+        big.push((i % 1000).to_float() * 0.001 + 0.5)
+        i = i + 1
+    }
+    // Round 1 stays on CPU (compile not yet amortized), round 2 compiles the
+    // kernel and dispatches, round 3 hits the cached pipeline.
+    var round = 1
+    while round <= 3 {
+        var t0 = Time.now_millis()
+        var mapped = big.map((x) => x * 2.5 + 1.0)
+        var t1 = Time.now_millis()
+        println("round ${round}: mapped ${mapped.len()} floats in ${t1 - t0} ms (first ${mapped[0]}, last ${mapped[999]})")
+        round = round + 1
+    }
+}

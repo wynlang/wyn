@@ -203,6 +203,51 @@ static void resolve_wyn_root(const char* argv0, char* out, size_t out_sz) {
     snprintf(out, out_sz, "%s", exe_dir);
 }
 
+// GPU dispatch: decide whether eligible [float].map sites emit the dual
+// CPU/GPU path, based on the project's wyn.toml [gpu] section. Called before
+// codegen.
+//
+// The only implemented GPU path is a float32 [float].map, which is LOSSY vs
+// Wyn's float64 CPU semantics (Metal has no double). So it stays off unless
+// the user EXPLICITLY asks for it: BOTH `enabled = true` (master switch) AND
+// `float32 = true` (accept-the-precision-loss opt-in) must be set. `enabled`
+// alone runs float maps on the CPU (exact doubles). Missing wyn.toml, missing
+// [gpu] section, or `enabled = false` all mean off - transparent by default.
+// See docs/GPU_DESIGN.md for the precision contract.
+static int wyn_gpu_flag_from_toml(void) {
+    WynConfig* cfg = wyn_config_parse("wyn.toml");
+    if (!cfg) return 0;
+    int on = cfg->gpu.enabled && cfg->gpu.float_enabled;
+    wyn_config_free(cfg);
+    return on;
+}
+
+// Compile src/gpu_metal.m to src/gpu_metal.o on first use (mirrors how
+// wyn_webview.o is consumed; the webview object is prebuilt out-of-band, but
+// for the spike we build the GPU object lazily so `make` needs no changes).
+// Fills `flags` with the extra compile/link flags for a GPU-dispatch build,
+// or leaves it empty (returning 0) if Metal support cannot be arranged.
+static int wyn_gpu_link_flags(const char* wyn_root, char* flags, size_t flags_sz) {
+    flags[0] = '\0';
+#ifdef __APPLE__
+    char obj[1200]; snprintf(obj, sizeof(obj), "%s/src/gpu_metal.o", wyn_root);
+    char msrc[1200]; snprintf(msrc, sizeof(msrc), "%s/src/gpu_metal.m", wyn_root);
+    struct stat os, ms;
+    if (stat(msrc, &ms) != 0) return 0;
+    if (stat(obj, &os) != 0 || os.st_mtime < ms.st_mtime) {
+        char cc_cmd[4096];
+        snprintf(cc_cmd, sizeof(cc_cmd),
+                 "clang -fobjc-arc -O2 -w -c \"%s\" -o \"%s\" 2>/dev/null", msrc, obj);
+        if (system(cc_cmd) != 0) return 0;
+    }
+    snprintf(flags, flags_sz, " -DWYN_GPU_METAL %s -framework Metal -framework Foundation", obj);
+    return 1;
+#else
+    (void)wyn_root; (void)flags_sz;
+    return 0;
+#endif
+}
+
 // The version is embedded at COMPILE TIME (-DWYN_VERSION, from the VERSION
 // file, wired in the Makefile). The old implementation read a VERSION file
 // relative to the CURRENT WORKING DIRECTORY with a hardcoded "1.10.0"
@@ -1155,12 +1200,14 @@ int main(int argc, char** argv) {
         init_codegen(out_f);
         { extern void codegen_set_slim_runtime(bool);
           extern void codegen_set_source_file(const char*);
+          extern void codegen_set_gpu_enabled(bool);
           codegen_set_slim_runtime(false);
-          codegen_set_source_file(entry); }
+          codegen_set_source_file(entry);
+          codegen_set_gpu_enabled(wyn_gpu_flag_from_toml() != 0); }
         codegen_c_header();
         codegen_program(prog);
         fclose(out_f);
-        
+
         // Determine output binary name
         char bin_path[512];
         if (output_name) {
@@ -1221,6 +1268,20 @@ int main(int argc, char** argv) {
         }
 #endif
 
+        // GPU dispatch spike: if codegen emitted any dual-path map sites,
+        // compile+link the Metal backend. If Metal flags cannot be arranged
+        // the -DWYN_GPU_METAL define stays absent and the runtime stub
+        // answers "no" - the program still builds and runs on CPU.
+        static char gpu_link[2048]; gpu_link[0] = '\0';
+        { extern int codegen_gpu_dispatch_count(void);
+          if (codegen_gpu_dispatch_count() > 0 &&
+              wyn_gpu_link_flags(wyn_root, gpu_link, sizeof(gpu_link))) {
+              // Ride the ffi_tail splice: appended at the end of the link
+              // line, before the stderr redirect.
+              size_t _fl = strlen(ffi_tail);
+              snprintf(ffi_tail + _fl, sizeof(ffi_tail) - _fl, "%s", gpu_link);
+          } }
+
         // Prefer precompiled runtime (fast) over TCC (recompiles all sources)
         if (build_flag[0] == 0 && !build_release && access(rt_lib, R_OK) == 0) {
             // Skip TCC - use system cc + precompiled runtime
@@ -1260,7 +1321,12 @@ int main(int argc, char** argv) {
                 static char _pch_flag[600]; _pch_flag[0] = '\0';
                 // sqlite_flags adds -D defines - a macro mismatch vs. the pch
                 // build is a hard clang error, so skip the pch in that case.
-                if (!build_release && sqlite_flags[0] == '\0') {
+                // Same for GPU dispatch: the pch was built without
+                // -DWYN_GPU_METAL, so using it would silently freeze the
+                // header's GPU shim to the CPU-only stub.
+                extern int codegen_gpu_dispatch_count(void);
+                if (!build_release && sqlite_flags[0] == '\0' &&
+                    codegen_gpu_dispatch_count() == 0) {
                     char _pch_path[512], _hdr_path[512];
                     snprintf(_pch_path, sizeof(_pch_path), "%s/runtime/wyn_runtime.pch", wyn_root);
                     snprintf(_hdr_path, sizeof(_hdr_path), "%s/src/wyn_runtime.h", wyn_root);
@@ -2455,10 +2521,14 @@ int main(int argc, char** argv) {
         init_codegen(out);
         { extern void codegen_set_slim_runtime(bool);
           extern void codegen_set_source_file(const char*);
+          extern void codegen_set_gpu_enabled(bool);
           bool _slim = false;
           for (int _i = 2; _i < argc; _i++) if (strcmp(argv[_i], "--release") == 0) _slim = true;
           codegen_set_slim_runtime(_slim);
-          codegen_set_source_file(file); }
+          codegen_set_source_file(file);
+          // GPU dispatch spike: only with the full runtime header - the slim
+          // (--release) header does not carry the wyn_gpu_try_map_float shim.
+          codegen_set_gpu_enabled(!_slim && wyn_gpu_flag_from_toml() != 0); }
         codegen_c_header();
         codegen_program(prog);
         fclose(out);
@@ -2529,6 +2599,18 @@ int main(int argc, char** argv) {
             // imported C-binding package (`wyn add <url>`) links its library.
             wyn_deps_ffi_flags(ffi_flags, sizeof(ffi_flags));
         }
+
+        // GPU dispatch spike: link the Metal backend when codegen emitted any
+        // dual-path map sites (rides the ffi_flags splice below). Failure to
+        // arrange Metal leaves -DWYN_GPU_METAL absent: CPU-only, still builds.
+        { extern int codegen_gpu_dispatch_count(void);
+          if (codegen_gpu_dispatch_count() > 0) {
+              char _gpu_link[2048];
+              if (wyn_gpu_link_flags(wyn_root, _gpu_link, sizeof(_gpu_link))) {
+                  size_t _fl = strlen(ffi_flags);
+                  snprintf(ffi_flags + _fl, sizeof(ffi_flags) - _fl, "%s", _gpu_link);
+              }
+          } }
 
         // Check for --fast flag (use -O0 for fastest compile)
         const char* opt_level = "-O0";  // Fast dev builds; --release uses -O3

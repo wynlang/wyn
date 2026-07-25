@@ -194,6 +194,8 @@ test: wyn
 	@WYN=./wyn bash tests/run_bdd.sh
 	@echo "=== Running golden-C snapshot tests ==="
 	@WYN=./wyn bash tests/golden/run_golden_tests.sh
+	@echo "=== Running GPU transparent-dispatch test ==="
+	@WYN=./wyn bash tests/gpu/run_gpu_test.sh
 	@echo "=== Running bindgen test ==="
 	@WYN=./wyn bash tests/bindgen/run_bindgen_test.sh
 	@echo "=== Running C-package (wyn add) test ==="

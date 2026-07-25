@@ -25,11 +25,27 @@ typedef struct {
     char* include_dirs;  // -I<dir> for each
 } WynFfi;
 
+// [gpu] section - transparent GPU dispatch for builtin array methods.
+// GPU dispatch is OFF by default: it turns on only when BOTH keys below are
+// present and true. Absent section / absent wyn.toml => off. `enabled = false`
+// is the kill-switch (turns everything off regardless of `float32`).
+//
+// The ONLY GPU path implemented today is a float32 `[float].map`, which is
+// LOSSY relative to Wyn's float64 CPU semantics (Metal has no double). Because
+// it changes results, it is not covered by `enabled` alone: it demands the
+// separate, explicit `float32 = true` opt-in. See main.c's
+// wyn_gpu_flag_from_toml and docs/GPU_DESIGN.md for the precision contract.
+typedef struct {
+    int enabled;         // [gpu] enabled = true - master switch (default off)
+    int float_enabled;   // [gpu] float32 = true - opt in to lossy f32 [float].map
+} WynGpu;
+
 typedef struct {
     WynProject project;
     WynDependency* dependencies;
     int dependency_count;
     WynFfi ffi;
+    WynGpu gpu;
 } WynConfig;
 
 // Parse wyn.toml file

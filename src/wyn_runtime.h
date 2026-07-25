@@ -4092,6 +4092,62 @@ WynArray wyn_array_map_float(WynArray arr, double (*fn)(double)) {
     }
     return result;
 }
+// GPU dispatch: try to run a [float].map on the GPU (Metal). Returns 1
+// and fills *out on success, 0 to tell the call site to run the normal CPU
+// map. Emitted by codegen ONLY when the project's wyn.toml explicitly opts in
+// with [gpu] enabled = true AND [gpu] float32 = true and the lambda is
+// compile-time GPU-eligible; the CPU fallback argument at the call site is the
+// exact same lambda, so behavior is identical modulo float32 rounding (a
+// deliberate, opted-into precision loss - see docs/GPU_DESIGN.md).
+// WYN_GPU_METAL is defined on the compile line (with gpu_metal.o linked)
+// only for such projects on macOS; everywhere else the stub says "no".
+#if defined(__APPLE__) && defined(WYN_GPU_METAL)
+extern int wyn_gpu_should_dispatch(int n, const char* kernel_src);
+extern int wyn_gpu_map_f32_begin(int n, float** in_ptr);
+extern int wyn_gpu_map_f32_run(int n, const char* kernel_src, float** out_ptr);
+extern void wyn_gpu_lock(void);
+extern void wyn_gpu_unlock(void);
+static inline int wyn_gpu_try_map_float(WynArray arr, const char* kernel_src, WynArray* out) {
+    if (arr.count <= 0 || !out) return 0;
+    // should_dispatch is a pure read of the cost model; the cheap early-out
+    // stays outside the lock so non-dispatching calls never contend.
+    if (!wyn_gpu_should_dispatch(arr.count, kernel_src)) return 0;
+    // The shared in/out buffers + pipeline cache are process-global, so the
+    // whole begin->pack->run->unpack sequence is one critical section: hold the
+    // GPU lock across it so concurrent maps (e.g. from parallel{}) serialize
+    // instead of racing the shared state. Every early return unlocks first.
+    wyn_gpu_lock();
+    float* gin = NULL; float* gout = NULL;
+    if (wyn_gpu_map_f32_begin(arr.count, &gin) != 0) { wyn_gpu_unlock(); return 0; }
+    // Direct cell access (not the bounds-checked array_get_float macro): i is
+    // already proven in range, and this pack loop is the dominant cost of the
+    // whole GPU path, especially in -O0 dev builds.
+    for (int i = 0; i < arr.count; i++) {
+        gin[i] = (float)(arr.data[i].type == WYN_TYPE_FLOAT
+                             ? arr.data[i].data.float_val
+                             : (double)arr.data[i].data.int_val);
+    }
+    if (wyn_gpu_map_f32_run(arr.count, kernel_src, &gout) != 0) { wyn_gpu_unlock(); return 0; }
+    WynArray r = {0};
+    r.data = wyn_array_realloc(NULL, 0, arr.count);
+    r.capacity = arr.count;
+    r.count = arr.count;
+    for (int i = 0; i < arr.count; i++) {
+        r.data[i].type = WYN_TYPE_FLOAT;
+        r.data[i].data.float_val = (double)gout[i];
+    }
+    // Unpack reads from the shared out buffer, so it must finish before another
+    // dispatch can reuse it - unlock only after the copy out is complete.
+    wyn_gpu_unlock();
+    *out = r;
+    return 1;
+}
+#else
+static inline int wyn_gpu_try_map_float(WynArray arr, const char* kernel_src, WynArray* out) {
+    (void)arr; (void)kernel_src; (void)out;
+    return 0;
+}
+#endif
 WynArray wyn_array_filter_float(WynArray arr, long long (*fn)(double)) {
     WynArray result = array_new();
     for (int i = 0; i < arr.count; i++) {
