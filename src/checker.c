@@ -4662,6 +4662,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // array.push(val) - update element type from pushed value
                 if (method.length == 4 && memcmp(method.start, "push", 4) == 0 && expr->method_call.arg_count >= 1) {
                     Type* val_type = check_expr(expr->method_call.args[0], scope);
+                    // Gate (not yet implemented): array of closures/functions.
+                    // A function-typed element is stored as `long long` and the
+                    // later `arr[i](x)` call leaks raw C. Reject cleanly until
+                    // arrays of closures are implemented.
+                    if ((val_type && val_type->kind == TYPE_FUNCTION) ||
+                        (expr->method_call.args[0] && expr->method_call.args[0]->type == EXPR_LAMBDA)) {
+                        fprintf(stderr, "Error at line %d: arrays of functions/closures are not yet supported\n",
+                                method.line);
+                        fprintf(stderr, "  \033[34mHelp:\033[0m call the closure directly, or dispatch via a match/enum instead\n");
+                        had_error = true;
+                        return NULL;
+                    }
                     if (val_type && !object_type->array_type.element_type) {
                         object_type->array_type.element_type = val_type;
                         // Also update the symbol's type
@@ -5053,14 +5065,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // every map value typed as int and non-int maps miscompiled.
             Type* map_type = make_type(TYPE_MAP);
             map_type->map_type.key_type = builtin_string;
-            map_type->map_type.value_type = builtin_int;
             // elements are [key0, value0, key1, value1, ...]
             if (expr->array.count >= 2) {
                 Type* vt = check_expr(expr->array.elements[1], scope);
-                if (vt) map_type->map_type.value_type = vt;
+                map_type->map_type.value_type = vt ? vt : builtin_int;
                 // still type-check the remaining entries
                 for (int _i = 0; _i < expr->array.count; _i++)
                     if (_i != 1) check_expr(expr->array.elements[_i], scope);
+            } else {
+                // Empty `{}`: leave the value type OPEN so the first `m[k] = v`
+                // store fixes it (see EXPR_INDEX_ASSIGN). Defaulting to int here
+                // rejected struct/array values a later store would supply.
+                map_type->map_type.value_type = NULL;
             }
             expr->expr_type = map_type;
             return map_type;
@@ -5402,12 +5418,21 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // Create a proper map type
             Type* map_type = make_type(TYPE_MAP);
             map_type->map_type.key_type = builtin_string;   // For now, assume string keys
-            map_type->map_type.value_type = builtin_int;    // For now, assume int values
-            
+
             // Check all keys and values
             for (int i = 0; i < expr->map.count; i++) {
                 check_expr(expr->map.keys[i], scope);
                 check_expr(expr->map.values[i], scope);
+            }
+            // Infer value type from the first literal value; leave it NULL for an
+            // empty `{}` so the first `m[k] = v` store fixes the value type (see
+            // EXPR_INDEX_ASSIGN). Defaulting empty maps to int rejected struct/
+            // array values that a later store would supply.
+            if (expr->map.count > 0) {
+                Type* vt = check_expr(expr->map.values[0], scope);
+                map_type->map_type.value_type = vt ? vt : builtin_int;
+            } else {
+                map_type->map_type.value_type = NULL;
             }
             return map_type;
         }
@@ -5503,7 +5528,25 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             if (object_type && object_type->kind == TYPE_STRUCT) {
                 Token struct_name = object_type->struct_type.name;
                 Token field_name = expr->field_access.field;
-                
+
+                // Monomorphic generic-struct instance (e.g. Box_string): its name
+                // is synthetic and not in the source, so find_struct_definition
+                // fails. The struct Type carries resolved field types - consult
+                // them directly so `b.val` gets the concrete field type.
+                if (object_type->struct_type.field_count > 0 &&
+                    object_type->struct_type.field_types &&
+                    object_type->struct_type.field_names &&
+                    !find_struct_definition(struct_name)) {
+                    for (int fi = 0; fi < object_type->struct_type.field_count; fi++) {
+                        Token fn = object_type->struct_type.field_names[fi];
+                        if (fn.length == field_name.length &&
+                            memcmp(fn.start, field_name.start, field_name.length) == 0) {
+                            expr->expr_type = object_type->struct_type.field_types[fi];
+                            return object_type->struct_type.field_types[fi];
+                        }
+                    }
+                }
+
                 // Find the struct definition
                 StructStmt* struct_def = find_struct_definition(struct_name);
                 if (struct_def) {
@@ -5612,16 +5655,61 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                 }
                 
-                // Generate monomorphic struct name
+                // Generate monomorphic struct name (e.g. Box_int, Box_string) and
+                // register the instantiation so codegen emits a distinct struct
+                // per concrete type. Without this, two instantiations (Box<int>
+                // and Box<string>) collapsed onto one heuristic C type and the
+                // second silently miscompiled (garbage pointer). Store the name on
+                // the init expr so struct_init / var-decl codegen use it.
                 char monomorphic_name[256];
-                wyn_generate_monomorphic_struct_name(struct_name, type_args, type_arg_count, 
+                wyn_generate_monomorphic_struct_name(struct_name, type_args, type_arg_count,
                                                      monomorphic_name, sizeof(monomorphic_name));
-                
-                // Create struct type
+                extern void wyn_register_generic_struct_instantiation(Token, Type**, int);
+                if (type_arg_count > 0) {
+                    wyn_register_generic_struct_instantiation(struct_name, type_args, type_arg_count);
+                    expr->struct_init.monomorphic_name = strdup(monomorphic_name);
+                }
+
+                // Create struct type. Name it with the MONOMORPHIC name so field
+                // access and var typing resolve against the concrete instance.
                 Type* struct_type = make_type(TYPE_STRUCT);
-                struct_type->struct_type.name = struct_name;  // Set name in struct_type union
+                if (type_arg_count > 0) {
+                    Token mono_tok = { TOKEN_IDENT, expr->struct_init.monomorphic_name,
+                                       (int)strlen(expr->struct_init.monomorphic_name), struct_name.line };
+                    struct_type->struct_type.name = mono_tok;
+                    // Resolve and cache each field's concrete Type on the struct
+                    // Type so EXPR_FIELD_ACCESS on this monomorphic instance sees
+                    // real field types (the monomorphic name isn't in the source,
+                    // so find_struct_definition can't). A field typed as the
+                    // generic param T takes the (single) inferred type arg;
+                    // concrete fields keep their declared type.
+                    StructStmt* gdef = find_struct_definition(struct_name);
+                    if (gdef && gdef->field_count > 0) {
+                        struct_type->struct_type.field_count = gdef->field_count;
+                        struct_type->struct_type.field_names = malloc(sizeof(Token) * gdef->field_count);
+                        struct_type->struct_type.field_types = malloc(sizeof(Type*) * gdef->field_count);
+                        for (int fi = 0; fi < gdef->field_count; fi++) {
+                            struct_type->struct_type.field_names[fi] = gdef->fields[fi];
+                            Expr* fte = gdef->field_types[fi];
+                            Type* resolved = NULL;
+                            if (fte && fte->type == EXPR_IDENT) {
+                                int is_tp = 0;
+                                for (int tp = 0; tp < gdef->type_param_count; tp++) {
+                                    if (gdef->type_params[tp].length == fte->token.length &&
+                                        memcmp(gdef->type_params[tp].start, fte->token.start, fte->token.length) == 0) {
+                                        is_tp = 1; break;
+                                    }
+                                }
+                                resolved = is_tp ? type_args[0] : extern_map_type(fte);
+                            }
+                            struct_type->struct_type.field_types[fi] = resolved ? resolved : builtin_int;
+                        }
+                    }
+                } else {
+                    struct_type->struct_type.name = struct_name;
+                }
                 expr->expr_type = struct_type;
-                
+
                 free(type_args);
                 return struct_type;
             } else {
@@ -6703,6 +6791,28 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                                 (int)stmt->struct_decl.name.length, stmt->struct_decl.name.start);
                         had_error = true;
                     }
+                }
+            }
+
+            // Gate (not yet implemented): a struct field whose declared type is a
+            // function type (`fn_ptr: fn(int) -> int`). Codegen currently types
+            // such a field as `long long` and lowers `h.fn_ptr(x)` as a method
+            // call (`Handler_fn_ptr(...)`), leaking a raw-C error. Reject at check
+            // with a clear message until closure/function-pointer fields are
+            // implemented, so nothing passes check then fails to build.
+            for (int i = 0; i < stmt->struct_decl.field_count; i++) {
+                Expr* ft = stmt->struct_decl.field_types[i];
+                if (ft && ft->type == EXPR_OPTIONAL_TYPE) ft = ft->optional_type.inner_type;
+                if (ft && ft->type == EXPR_FN_TYPE) {
+                    fprintf(stderr,
+                        "Error at line %d: struct '%.*s' field '%.*s' has a function type,"
+                        " which is not yet supported as a struct field.\n"
+                        "  Workaround: store the closure in a variable and call it directly,"
+                        " or pass it as a function argument.\n",
+                        stmt->struct_decl.name.line,
+                        (int)stmt->struct_decl.name.length, stmt->struct_decl.name.start,
+                        (int)stmt->struct_decl.fields[i].length, stmt->struct_decl.fields[i].start);
+                    had_error = true;
                 }
             }
 

@@ -1,0 +1,37 @@
+// Regression: recursive enums (the canonical ADT: expression trees, linked
+// lists, JSON values). Before nested-aggregate support, `enum Expr { Add(Expr,
+// Expr) }` passed `wyn check` but codegen emitted by-value recursive union
+// fields (`Expr f0;` = unknown type + infinite size) and match binders typed
+// `long long`. Now recursive payload fields are HEAP-BOXED: stored as a
+// pointer, allocated at construction, dereferenced at match binding.
+enum Expr { Num(int), Add(Expr, Expr), Mul(Expr, Expr) }
+
+fn eval(e: Expr) -> int {
+    match e {
+        Expr.Num(n) => { return n }
+        Expr.Add(a, b) => { return eval(a) + eval(b) }
+        Expr.Mul(a, b) => { return eval(a) * eval(b) }
+    }
+    return 0
+}
+
+// Recursive linked list via a single-field recursive variant.
+enum IList { Nil, Cons(int, IList) }
+fn ilen(l: IList) -> int {
+    match l {
+        IList.Nil => { return 0 }
+        IList.Cons(h, t) => { return 1 + ilen(t) }
+    }
+    return 0
+}
+
+// EXPECT: 20
+// EXPECT: 3
+fn main() -> int {
+    // Mul(Add(2,3), 4) = 20
+    e = Expr.Mul(Expr.Add(Expr.Num(2), Expr.Num(3)), Expr.Num(4))
+    println("${eval(e)}")
+    l = IList.Cons(1, IList.Cons(2, IList.Cons(3, IList.Nil)))
+    println("${ilen(l)}")
+    return 0
+}

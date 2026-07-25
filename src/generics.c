@@ -175,6 +175,19 @@ void wyn_register_generic_struct_instantiation(Token struct_name, Type** type_ar
     g_struct_instantiations = inst;
 }
 
+// True if at least one concrete instantiation of this generic struct was
+// registered. Codegen uses this to skip emitting the generic template (the
+// monomorphic instances cover every real use); a generic struct with no
+// instantiation still gets a placeholder so stray references compile.
+int wyn_generic_struct_has_instances(Token struct_name) {
+    for (GenericStructInstantiation* c = g_struct_instantiations; c; c = c->next) {
+        if (c->struct_name.length == struct_name.length &&
+            memcmp(c->struct_name.start, struct_name.start, struct_name.length) == 0)
+            return 1;
+    }
+    return 0;
+}
+
 // Check if two types are equal (simplified)
 bool wyn_types_equal(Type* a, Type* b) {
     if (!a || !b) return a == b;
@@ -737,18 +750,70 @@ void wyn_emit_monomorphic_function(GenericFunction* generic_fn, Type** type_args
 }
 
 // Resolve a type annotation to a C type string, substituting type parameters with concrete types
+// Map a concrete monomorphization type argument to its C type spelling.
+// Handles the non-scalar cases (array -> WynArray, map/set -> pointer,
+// struct/enum -> the type's own C name) so a generic instantiated over an
+// aggregate T doesn't fall back to `long long` and force-cast the aggregate.
+// Struct/enum names use a rotating static buffer (a single monomorphic
+// signature references at most a few of these at once).
+static const char* wyn_type_arg_to_c(Type* t) {
+    if (!t) return "long long";
+    switch (t->kind) {
+        case TYPE_STRING: return "const char*";
+        case TYPE_FLOAT:  return "double";
+        case TYPE_BOOL:   return "bool";
+        case TYPE_INT:    return "long long";
+        case TYPE_ARRAY:  return "WynArray";
+        case TYPE_MAP:    return "WynHashMap*";
+        case TYPE_SET:    return "WynHashSet*";
+        case TYPE_STRUCT: {
+            Token n = t->struct_type.name.start ? t->struct_type.name : t->name;
+            if (n.start && n.length > 0) {
+                static char bufs[4][128]; static int bi = 0;
+                char* b = bufs[bi++ & 3];
+                int len = n.length < 127 ? n.length : 127;
+                memcpy(b, n.start, len); b[len] = '\0';
+                return b;
+            }
+            return "long long";
+        }
+        case TYPE_ENUM: {
+            if (t->name.start && t->name.length > 0) {
+                static char ebufs[4][128]; static int ebi = 0;
+                char* b = ebufs[ebi++ & 3];
+                int len = t->name.length < 127 ? t->name.length : 127;
+                memcpy(b, t->name.start, len); b[len] = '\0';
+                return b;
+            }
+            return "long long";
+        }
+        default: return "long long";
+    }
+}
+
+// Resolve a full TYPE EXPRESSION (not just an identifier) to its C type for a
+// monomorphic signature. Handles `[T]`/`[int]` (EXPR_ARRAY -> WynArray) and
+// `fn(..)->..` (EXPR_FN_TYPE -> function pointers are represented as long long
+// handles here) in addition to the plain-identifier path. Returns NULL when the
+// expr is not a type-expr it recognizes so the caller keeps its default.
+static const char* wyn_resolve_type_to_c(Token type_name, FnStmt* fn, Type** type_args, int type_arg_count);
+static const char* wyn_resolve_type_expr_to_c(Expr* te, FnStmt* fn, Type** type_args, int type_arg_count) {
+    if (!te) return NULL;
+    if (te->type == EXPR_IDENT)
+        return wyn_resolve_type_to_c(te->token, fn, type_args, type_arg_count);
+    if (te->type == EXPR_ARRAY)   return "WynArray";     // [T], [[T]], [int], ...
+    if (te->type == EXPR_HASHMAP_LITERAL) return "WynHashMap*";
+    return NULL;
+}
+
 static const char* wyn_resolve_type_to_c(Token type_name, FnStmt* fn, Type** type_args, int type_arg_count) {
     // Check if this is a type parameter
     for (int i = 0; i < fn->type_param_count && i < type_arg_count; i++) {
         if (fn->type_params[i].length == type_name.length &&
             memcmp(fn->type_params[i].start, type_name.start, type_name.length) == 0) {
-            // Found matching type parameter - use concrete type
-            switch (type_args[i]->kind) {
-                case TYPE_STRING: return "const char*";
-                case TYPE_FLOAT:  return "double";
-                case TYPE_BOOL:   return "bool";
-                default:          return "long long";
-            }
+            // Found matching type parameter - use concrete type (scalar OR
+            // aggregate: array/map/set/struct/enum, not just long long).
+            return wyn_type_arg_to_c(type_args[i]);
         }
     }
     // Not a type parameter - resolve literally
@@ -766,10 +831,12 @@ void wyn_emit_monomorphic_function_declaration(void* original_fn_ptr, Type** typ
     
     if (!original_fn || !type_args || !monomorphic_name) return;
     
-    // Resolve return type (may be a type parameter like T)
+    // Resolve return type (may be a type parameter like T, or an aggregate
+    // type expression like [T]).
     const char* return_type = "long long";
-    if (original_fn->return_type && original_fn->return_type->type == EXPR_IDENT) {
-        return_type = wyn_resolve_type_to_c(original_fn->return_type->token, original_fn, type_args, type_arg_count);
+    if (original_fn->return_type) {
+        const char* rt = wyn_resolve_type_expr_to_c(original_fn->return_type, original_fn, type_args, type_arg_count);
+        if (rt) return_type = rt;
     }
     
     wyn_emit("%s %s(", return_type, monomorphic_name);
@@ -782,13 +849,8 @@ void wyn_emit_monomorphic_function_declaration(void* original_fn_ptr, Type** typ
             original_fn->param_types[i]->type == EXPR_IDENT) {
             param_type = wyn_resolve_type_to_c(original_fn->param_types[i]->token, original_fn, type_args, type_arg_count);
         } else if (i < type_arg_count && type_args[i]) {
-            // Fallback: use inferred type from call args
-            switch (type_args[i]->kind) {
-                case TYPE_STRING: param_type = "const char*"; break;
-                case TYPE_FLOAT:  param_type = "double"; break;
-                case TYPE_BOOL:   param_type = "bool"; break;
-                default:          param_type = "long long"; break;
-            }
+            // Fallback: use inferred type from call args (aggregate-aware).
+            param_type = wyn_type_arg_to_c(type_args[i]);
         }
         
         wyn_emit("%s %.*s", param_type, 
@@ -806,10 +868,12 @@ void wyn_emit_monomorphic_function_definition(void* original_fn_ptr, Type** type
     
     if (!original_fn || !type_args || !monomorphic_name) return;
     
-    // Resolve return type (may be a type parameter like T)
+    // Resolve return type (may be a type parameter like T, or an aggregate
+    // type expression like [T]).
     const char* return_type = "long long";
-    if (original_fn->return_type && original_fn->return_type->type == EXPR_IDENT) {
-        return_type = wyn_resolve_type_to_c(original_fn->return_type->token, original_fn, type_args, type_arg_count);
+    if (original_fn->return_type) {
+        const char* rt = wyn_resolve_type_expr_to_c(original_fn->return_type, original_fn, type_args, type_arg_count);
+        if (rt) return_type = rt;
     }
     
     wyn_emit("// Monomorphic instance of %.*s\n", 
@@ -824,12 +888,8 @@ void wyn_emit_monomorphic_function_definition(void* original_fn_ptr, Type** type
             original_fn->param_types[i]->type == EXPR_IDENT) {
             param_type = wyn_resolve_type_to_c(original_fn->param_types[i]->token, original_fn, type_args, type_arg_count);
         } else if (i < type_arg_count && type_args[i]) {
-            switch (type_args[i]->kind) {
-                case TYPE_STRING: param_type = "const char*"; break;
-                case TYPE_FLOAT:  param_type = "double"; break;
-                case TYPE_BOOL:   param_type = "bool"; break;
-                default:          param_type = "long long"; break;
-            }
+            // Fallback: use inferred type from call args (aggregate-aware).
+            param_type = wyn_type_arg_to_c(type_args[i]);
         }
         
         wyn_emit("%s %.*s", param_type, 

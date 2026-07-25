@@ -1,0 +1,31 @@
+// EXPECT: 1
+// EXPECT: 3
+// EXPECT: 7
+// EXPECT: 42
+// EXPECT: hi
+// Regression: generics over NON-scalar T. Before nested-aggregate support the
+// monomorphizer mapped every non-int/float/bool/string T to `long long`, so a
+// generic instantiated over an array/struct force-cast the aggregate, and a
+// second Box instantiation with a different concrete type silently miscompiled
+// (garbage pointer). Now type args map array->WynArray / struct->the struct's
+// own C type, return-type exprs like [T] resolve, and each generic-struct
+// instantiation emits a distinct monomorphic struct (Box_int vs Box_string).
+struct Point { x: int, y: int }
+struct Box<T> { val: T }
+
+fn id<T>(v: T) -> T { return v }
+fn pair<T>(x: T) -> [T] { return [x, x] }
+
+fn main() -> int {
+    arr = id([1, 2, 3])          // generic over array
+    println("${arr[0]}")          // 1
+    p = id(Point{ x: 3, y: 4 })  // generic over struct
+    println("${p.x}")             // 3
+    pr = pair(7)                  // generic returning [T]
+    println("${pr[1]}")           // 7
+    b1 = Box{ val: 42 }          // Box<int> (T inferred)
+    b2 = Box{ val: "hi" }        // Box<string> (distinct monomorphic type)
+    println("${b1.val}")          // 42
+    println("${b2.val}")          // hi
+    return 0
+}

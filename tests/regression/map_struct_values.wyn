@@ -1,0 +1,20 @@
+// EXPECT: alice 100
+// EXPECT: bob 250
+// Regression: a map with struct values. Before nested-aggregate support, `{}`
+// defaulted its value type to int, so `accts["a1"] = Account{...}` was rejected
+// ("Cannot store struct in map with values of int"). Now an empty `{}` leaves
+// its value type OPEN and the first store fixes it; struct values are
+// heap-boxed (hashmap_insert_struct) and read back via hashmap_index_struct so
+// `accts["a1"].balance` round-trips the whole struct.
+struct Account { balance: int, owner: string }
+
+fn main() -> int {
+    accts = {}
+    accts["a1"] = Account{ balance: 100, owner: "alice" }
+    accts["a2"] = Account{ balance: 250, owner: "bob" }
+    a = accts["a1"]
+    b = accts["a2"]
+    println("${a.owner} ${a.balance}")
+    println("${b.owner} ${b.balance}")
+    return 0
+}

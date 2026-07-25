@@ -2357,6 +2357,19 @@ void codegen_expr(Expr* expr) {
                         emit(")");
                         break;
                     }
+                    // Array-element push (array of arrays): the value is itself a
+                    // WynArray; casting it to (long long) is a C type error. Use
+                    // array_push_array, which heap-copies the nested array so it
+                    // outlives the caller's stack frame (matches the [[..]] literal
+                    // path that reads back via array_get_nested_*).
+                    if (elem_type && elem_type->kind == TYPE_ARRAY) {
+                        emit("({ WynArray __push_row = (");
+                        codegen_expr(expr->method_call.args[0]);
+                        emit("); array_push_array(&(");
+                        codegen_expr(expr->method_call.object);
+                        emit("), &__push_row); })");
+                        break;
+                    }
                     // Float-element push must store as a double. The default
                     // path below casts the value to (long long), so `.push(1.5)`
                     // on a [float] array silently truncated to 1.0 - a wrong
@@ -3782,6 +3795,20 @@ void codegen_expr(Expr* expr) {
                 // the hashmap_index_* macros capture file/line. Array-valued
                 // maps (group_by buckets) keep hashmap_get_array, whose missing
                 // key is a legitimate empty bucket, not a lookup error.
+                // Struct-valued map: read back the heap-boxed struct via the
+                // hashmap_index_struct macro (deref of hashmap_get_ptr).
+                if (expr->expr_type && expr->expr_type->kind == TYPE_STRUCT) {
+                    Token _stn = expr->expr_type->struct_type.name.start
+                        ? expr->expr_type->struct_type.name : expr->expr_type->name;
+                    if (_stn.start && _stn.length > 0) {
+                        emit("hashmap_index_struct(");
+                        codegen_expr(expr->index.array);
+                        emit(", ");
+                        codegen_expr(expr->index.index);
+                        emit(", %.*s)", _stn.length, _stn.start);
+                        break;
+                    }
+                }
                 const char* _getter = "hashmap_index_string";
                 if (expr->expr_type) {
                     switch (expr->expr_type->kind) {
@@ -4668,15 +4695,18 @@ void codegen_expr(Expr* expr) {
                         // Bind inner variables
                         if (pat->option.inner_count > 1) {
                             extern const char* get_enum_variant_field_type(const char*, const char*, int);
+                            extern int is_enum_field_boxed(const char*, const char*, int);
                             char _mfen[128], _mfvn[128];
                             token_to_cstr(_mfen, sizeof(_mfen), pat->option.enum_name);
                             token_to_cstr(_mfvn, sizeof(_mfvn), pat->option.variant_name);
                             for (int pi = 0; pi < pat->option.inner_count; pi++) {
                                 if (pat->option.inners[pi] && pat->option.inners[pi]->type == PATTERN_IDENT) {
                                     const char* _fty = get_enum_variant_field_type(_mfen, _mfvn, pi);
-                                    emit("%s %.*s = __match_val_%d.data.%.*s_value.f%d; ",
+                                    int _bx = is_enum_field_boxed(_mfen, _mfvn, pi);
+                                    emit("%s %.*s = %s__match_val_%d.data.%.*s_value.f%d; ",
                                          _fty,
                                          pat->option.inners[pi]->ident.name.length, pat->option.inners[pi]->ident.name.start,
+                                         _bx ? "*" : "",
                                          match_id,
                                          pat->option.variant_name.length, pat->option.variant_name.start, pi);
                                     // Register a string field binding so the arm body
@@ -4690,13 +4720,16 @@ void codegen_expr(Expr* expr) {
                             }
                         } else if (pat->option.inner && pat->option.inner->type == PATTERN_IDENT) {
                             extern const char* get_enum_variant_c_type(const char*, const char*);
+                            extern int is_enum_field_boxed(const char*, const char*, int);
                             char _en[128], _vn[128];
                             token_to_cstr(_en, sizeof(_en), pat->option.enum_name);
                             token_to_cstr(_vn, sizeof(_vn), pat->option.variant_name);
                             const char* vtype = get_enum_variant_c_type(_en, _vn);
-                            emit("%s %.*s = __match_val_%d.data.%.*s_value; ",
+                            int _bx = is_enum_field_boxed(_en, _vn, 0);
+                            emit("%s %.*s = %s__match_val_%d.data.%.*s_value; ",
                                  vtype,
                                  pat->option.inner->ident.name.length, pat->option.inner->ident.name.start,
+                                 _bx ? "*" : "",
                                  match_id,
                                  pat->option.variant_name.length, pat->option.variant_name.start);
                         }
@@ -4708,15 +4741,18 @@ void codegen_expr(Expr* expr) {
                              pat->option.variant_name.length, pat->option.variant_name.start);
                         if (pat->option.inner_count > 1) {
                             extern const char* get_enum_variant_field_type(const char*, const char*, int);
+                            extern int is_enum_field_boxed(const char*, const char*, int);
                             char _mfen[128], _mfvn[128];
                             snprintf(_mfen, sizeof(_mfen), "%.*s", type_name_len, type_name);
                             token_to_cstr(_mfvn, sizeof(_mfvn), pat->option.variant_name);
                             for (int pi = 0; pi < pat->option.inner_count; pi++) {
                                 if (pat->option.inners[pi] && pat->option.inners[pi]->type == PATTERN_IDENT) {
                                     const char* _fty = get_enum_variant_field_type(_mfen, _mfvn, pi);
-                                    emit("%s %.*s = __match_val_%d.data.%.*s_value.f%d; ",
+                                    int _bx = is_enum_field_boxed(_mfen, _mfvn, pi);
+                                    emit("%s %.*s = %s__match_val_%d.data.%.*s_value.f%d; ",
                                          _fty,
                                          pat->option.inners[pi]->ident.name.length, pat->option.inners[pi]->ident.name.start,
+                                         _bx ? "*" : "",
                                          match_id,
                                          pat->option.variant_name.length, pat->option.variant_name.start, pi);
                                     // Register a string field binding so the arm body
@@ -4730,14 +4766,17 @@ void codegen_expr(Expr* expr) {
                             }
                         } else if (pat->option.inner && pat->option.inner->type == PATTERN_IDENT) {
                             extern const char* get_enum_variant_c_type(const char*, const char*);
+                            extern int is_enum_field_boxed(const char*, const char*, int);
                             char _en[128], _vn[128];
                             snprintf(_en, 128, "%.*s", type_name_len, type_name);
                             token_to_cstr(_vn, sizeof(_vn), pat->option.variant_name);
                             const char* vtype = get_enum_variant_c_type(_en, _vn);
                             if (!vtype) vtype = "double";
-                            emit("%s %.*s = __match_val_%d.data.%.*s_value; ",
+                            int _bx = is_enum_field_boxed(_en, _vn, 0);
+                            emit("%s %.*s = %s__match_val_%d.data.%.*s_value; ",
                                  vtype,
                                  pat->option.inner->ident.name.length, pat->option.inner->ident.name.start,
+                                 _bx ? "*" : "",
                                  match_id,
                                  pat->option.variant_name.length, pat->option.variant_name.start);
                         }
@@ -5114,6 +5153,22 @@ void codegen_expr(Expr* expr) {
             // [expr for x in start..end] or [expr for x in array] or [expr for x in range if cond]
             static int lc_id = 0;
             int id = lc_id++;
+            // A nested comprehension `[[.. for j] for i]` produces a WynArray per
+            // element; casting it to (long long) is a C type error. Detect an
+            // aggregate body (its own list-comp or an array literal / array-typed
+            // value) and push it with array_push_array instead.
+            Expr* _lcbody = expr->list_comp.body;
+            int _body_is_arr = _lcbody && (_lcbody->type == EXPR_LIST_COMP ||
+                _lcbody->type == EXPR_ARRAY ||
+                (_lcbody->expr_type && _lcbody->expr_type->kind == TYPE_ARRAY));
+            int _body_is_float = _lcbody && _lcbody->expr_type && _lcbody->expr_type->kind == TYPE_FLOAT;
+            #define _LC_EMIT_PUSH() do { \
+                if (_body_is_arr) { emit("{ WynArray __lc_row_%d = (", id); codegen_expr(_lcbody); \
+                    emit("); array_push_array(&__lc_%d, &__lc_row_%d); }", id, id); } \
+                else if (_body_is_float) { emit("array_push_float(&__lc_%d, (double)(", id); \
+                    codegen_expr(_lcbody); emit("));"); } \
+                else { emit("array_push(&__lc_%d, (long long)(", id); codegen_expr(_lcbody); emit("));"); } \
+            } while(0)
             if (expr->list_comp.iter_end) {
                 // Range-based: [expr for x in start..end]
                 emit("({ WynArray __lc_%d = array_new(); ", id);
@@ -5127,9 +5182,8 @@ void codegen_expr(Expr* expr) {
                     codegen_expr(expr->list_comp.condition);
                     emit(") ");
                 }
-                emit("array_push(&__lc_%d, (long long)(", id);
-                codegen_expr(expr->list_comp.body);
-                emit(")); } __lc_%d; })", id);
+                _LC_EMIT_PUSH();
+                emit(" } __lc_%d; })", id);
             } else {
                 // Array-based: [expr for x in array]
                 emit("({ WynArray __lc_%d = array_new(); WynArray __lc_src_%d = ", id, id);
@@ -5142,10 +5196,10 @@ void codegen_expr(Expr* expr) {
                     codegen_expr(expr->list_comp.condition);
                     emit(") ");
                 }
-                emit("array_push(&__lc_%d, (long long)(", id);
-                codegen_expr(expr->list_comp.body);
-                emit(")); } __lc_%d; })", id);
+                _LC_EMIT_PUSH();
+                emit(" } __lc_%d; })", id);
             }
+            #undef _LC_EMIT_PUSH
             break;
         }
         case EXPR_CHANNEL: {
@@ -5384,6 +5438,30 @@ void codegen_expr(Expr* expr) {
             }
             
             if (is_map_assign) {
+                // Map-with-struct value: heap-box the struct via the
+                // hashmap_insert_struct macro (needs the struct's C type name).
+                {
+                    Expr* _mv = expr->index_assign.value;
+                    Token _stn = {0}; int _is_struct = 0;
+                    if (_mv->type == EXPR_STRUCT_INIT) { _stn = _mv->struct_init.type_name; _is_struct = 1; }
+                    else if (_mv->expr_type && _mv->expr_type->kind == TYPE_STRUCT) {
+                        _stn = _mv->expr_type->struct_type.name.start ? _mv->expr_type->struct_type.name : _mv->expr_type->name;
+                        _is_struct = (_stn.start && _stn.length > 0);
+                    }
+                    if (_is_struct && !expr->index_assign.is_compound) {
+                        emit("hashmap_insert_struct(");
+                        codegen_expr(expr->index_assign.object);
+                        emit(", ");
+                        codegen_expr(expr->index_assign.index);
+                        emit(", ");
+                        codegen_expr(_mv);
+                        if (current_module_prefix)
+                            emit(", %s_%.*s)", current_module_prefix, _stn.length, _stn.start);
+                        else
+                            emit(", %.*s)", _stn.length, _stn.start);
+                        break;
+                    }
+                }
                 // Map assignment: map["key"] = value -> hashmap_insert_*(map, "key", value)
                 // Determine insert function based on value type (shared helper).
                 const char* insert_func = hashmap_insert_fn_for(expr->index_assign.value);
