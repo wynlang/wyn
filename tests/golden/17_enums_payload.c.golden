@@ -3,13 +3,14 @@
 #define __auto_type long long
 #endif
 
-typedef struct {
+typedef struct Shape Shape;
+struct Shape {
     enum { Shape_Circle_TAG, Shape_Rect_TAG } tag;
     union {
         int Circle_value;
         struct { int f0; int f1; } Rect_value;
     } data;
-} Shape;
+};
 
 
 Shape Shape_Circle(int value) {

@@ -894,6 +894,19 @@ void array_push(WynArray* arr, long long value) {
     (arr)->count++; \
     WYN_ARR_WRITE_EXIT(arr); \
 } while(0)
+// Map-with-struct-values: heap-box the struct and store it as a ptr entry.
+// The reader casts the ptr back to the struct type and dereferences it.
+// Mirrors array_push_struct/array_get_struct for the HashMap value slot so
+// `m[k] = Account{...}` / `m[k].balance` round-trip a whole struct.
+extern void hashmap_insert_ptr(WynHashMap* map, const char* key, void* value);
+extern void* hashmap_get_ptr(WynHashMap* map, const char* key);
+#define hashmap_insert_struct(map, key, value, StructType) do { \
+    StructType __hm_tmp = (value); \
+    StructType* __hm_box = (StructType*)wyn_malloc(sizeof(StructType)); \
+    memcpy(__hm_box, &__hm_tmp, sizeof(StructType)); \
+    hashmap_insert_ptr((map), (key), __hm_box); \
+} while(0)
+#define hashmap_index_struct(map, key, StructType) (*(StructType*)hashmap_get_ptr((map), (key)))
 int array_pop(WynArray* arr) {
     if (arr->count == 0) return 0;
     arr->count--;

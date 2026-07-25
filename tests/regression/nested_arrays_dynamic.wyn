@@ -1,0 +1,32 @@
+// EXPECT: 2
+// EXPECT: 6
+// EXPECT: 4
+// EXPECT: 100
+// Regression: dynamic nested collections. Before nested-aggregate support,
+// every dynamic construction path cast the aggregate element to (long long):
+//   - grid.push(row)              (array of arrays)
+//   - [[.. for j] for i]          (nested comprehension)
+//   - accounts.push(Account{..})  (array of structs)
+// Only flat read-only literals [[1,2],[3,4]] worked. Now push of an array
+// dispatches to array_push_array and a comprehension whose body is itself an
+// aggregate pushes via array_push_array too.
+struct Account { balance: int, owner: string }
+
+fn main() -> int {
+    // array of arrays via push
+    grid = []
+    grid.push([1, 2, 3])
+    grid.push([4, 5, 6])
+    println("${grid[0][1]}")   // 2
+    println("${grid[1][2]}")   // 6
+
+    // nested comprehension
+    mult = [[i * j for j in 0..3] for i in 0..3]
+    println("${mult[2][2]}")   // 4
+
+    // array of structs via push
+    accounts = []
+    accounts.push(Account{ balance: 100, owner: "alice" })
+    println("${accounts[0].balance}")  // 100
+    return 0
+}

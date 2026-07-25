@@ -1807,6 +1807,34 @@ const char* get_enum_variant_field_type(const char* enum_name, const char* varia
     return "long long";
 }
 
+// Recursive-enum payload boxing. A variant field whose type is the enclosing
+// enum itself (e.g. `Add(Expr, Expr)`) would give the tagged-union struct
+// infinite size, so codegen stores such a field as a HEAP POINTER (`Expr* fN`),
+// allocated at construction and dereferenced at match-binding. This registry
+// records which (enum, variant, field-index) triples are boxed so every
+// resolution site emits the pointer/deref consistently. Keyed "enum.variant.fN".
+typedef struct { char key[160]; } EnumBoxedField;
+static EnumBoxedField* enum_boxed_fields = NULL;
+static int enum_boxed_field_count = 0;
+static int enum_boxed_field_cap = 0;
+void register_enum_field_boxed(const char* enum_name, const char* variant_name, int idx) {
+    char key[160];
+    snprintf(key, 160, "%s.%s.f%d", enum_name, variant_name, idx);
+    for (int i = 0; i < enum_boxed_field_count; i++)
+        if (strcmp(enum_boxed_fields[i].key, key) == 0) return;
+    WYN_ENSURE_CAP(enum_boxed_fields, enum_boxed_field_count, enum_boxed_field_cap);
+    strncpy(enum_boxed_fields[enum_boxed_field_count].key, key, 159);
+    enum_boxed_fields[enum_boxed_field_count].key[159] = '\0';
+    enum_boxed_field_count++;
+}
+int is_enum_field_boxed(const char* enum_name, const char* variant_name, int idx) {
+    char key[160];
+    snprintf(key, 160, "%s.%s.f%d", enum_name, variant_name, idx);
+    for (int i = 0; i < enum_boxed_field_count; i++)
+        if (strcmp(enum_boxed_fields[i].key, key) == 0) return 1;
+    return 0;
+}
+
 const char* find_enum_for_variant(const char* variant_name) {
     // Search "EnumName.VariantName" keys for matching variant
     

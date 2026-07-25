@@ -2075,13 +2075,15 @@ void codegen_match_statement(Stmt* stmt) {
                 else { snprintf(_en, sizeof(_en), "%.*s", match_enum_name_len, match_enum_name ? match_enum_name : ""); }
                 char _vn[128]; snprintf(_vn, sizeof(_vn), "%.*s", vn_len, vn);
                 extern const char* get_enum_variant_field_type(const char*, const char*, int);
+                extern int is_enum_field_boxed(const char*, const char*, int);
                 for (int pi = 0; pi < match_case->pattern->option.inner_count; pi++) {
                     Pattern* ip = match_case->pattern->option.inners[pi];
                     if (!ip || ip->type != PATTERN_IDENT) continue;
                     const char* fty = get_enum_variant_field_type(_en, _vn, pi);
                     if (!fty) fty = "long long";
-                    emit("        %s %.*s = __match_val.data.%s_value.f%d;\n",
-                         fty, ip->ident.name.length, ip->ident.name.start, _vn, pi);
+                    int _bx = is_enum_field_boxed(_en, _vn, pi);
+                    emit("        %s %.*s = %s__match_val.data.%s_value.f%d;\n",
+                         fty, ip->ident.name.length, ip->ident.name.start, _bx ? "*" : "", _vn, pi);
                     if (strcmp(fty, "const char*") == 0 || strcmp(fty, "char*") == 0) {
                         char _fb[128]; token_to_cstr(_fb, sizeof(_fb), ip->ident.name);
                         extern void register_string_var(const char*);
@@ -2098,8 +2100,15 @@ void codegen_match_statement(Stmt* stmt) {
                     const char* vn = match_case->pattern->option.variant_name.start;
                     int vn_len = match_case->pattern->option.variant_name.length;
                     if (vn_len == 0 && match_case->pattern->option.is_some) { vn = "Some"; vn_len = 4; }
-                    emit("        __auto_type %.*s = __match_val.data.%.*s_value;\n",
-                         var_name.length, var_name.start, vn_len, vn);
+                    extern int is_enum_field_boxed(const char*, const char*, int);
+                    char _sen[128], _svn[128];
+                    if (match_case->pattern->option.enum_name.length > 0)
+                        token_to_cstr(_sen, sizeof(_sen), match_case->pattern->option.enum_name);
+                    else snprintf(_sen, sizeof(_sen), "%.*s", match_enum_name_len, match_enum_name ? match_enum_name : "");
+                    snprintf(_svn, sizeof(_svn), "%.*s", vn_len, vn);
+                    int _bx = is_enum_field_boxed(_sen, _svn, 0);
+                    emit("        __auto_type %.*s = %s__match_val.data.%.*s_value;\n",
+                         var_name.length, var_name.start, _bx ? "*" : "", vn_len, vn);
                 } else {
                     // Simple enum - no data to extract
                     emit("        int %.*s = 0; (void)%.*s;\n",

@@ -3075,9 +3075,24 @@ void codegen_stmt(Stmt* stmt) {
             break;
         }
         case STMT_STRUCT:
+            // Generic struct declarations (with type params) are NOT emitted
+            // directly: a concrete monomorphic struct (Box_int, Box_string, ...)
+            // is emitted per instantiation via
+            // wyn_generate_monomorphic_instances_for_codegen. Emitting the
+            // generic template here produced a bogus single-type `Box` and the
+            // old field-type heuristic mis-typed the second instantiation (a
+            // garbage read). Skip it; the monomorphic pass covers every real use.
+            // (A monomorphic instance arrives here with type_param_count == 0.)
+            if (stmt->struct_decl.type_param_count > 0) {
+                extern int wyn_generic_struct_has_instances(Token);
+                if (wyn_generic_struct_has_instances(stmt->struct_decl.name)) break;
+                // No instantiation seen (dead generic) - fall through to emit a
+                // best-effort placeholder so any stray reference still compiles.
+            }
+
             // For generic structs, emit with type params resolved to default C types
             // Full monomorphization will generate specialized versions
-            
+
             // T2.5.3: Enhanced struct system with ARC integration
             emit("typedef struct {\n");
             for (int i = 0; i < stmt->struct_decl.field_count; i++) {
@@ -3358,14 +3373,27 @@ void codegen_stmt(Stmt* stmt) {
                     break;
                 }
             }
+            // A variant field whose type names the enclosing enum is recursive
+            // (e.g. Add(Expr, Expr)); it must be heap-boxed or the tagged union
+            // has infinite size. `_enum_field_is_self` tests a field type expr.
+            char _enum_self_name[128]; token_to_cstr(_enum_self_name, sizeof(_enum_self_name), stmt->enum_decl.name);
+            #define _enum_field_is_self(tx) ((tx) && (tx)->type == EXPR_IDENT && \
+                (int)strlen(_enum_self_name) == (tx)->token.length && \
+                memcmp(_enum_self_name, (tx)->token.start, (tx)->token.length) == 0)
             {
                 // Register all enum variants (simple and data)
                 extern void register_enum_variant_type(const char*, const char*, const char*);
+                extern void register_enum_field_boxed(const char*, const char*, int);
                 char _den[128]; token_to_cstr(_den, sizeof(_den), stmt->enum_decl.name);
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
                     char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->enum_decl.variants[i]);
                     if (stmt->enum_decl.variant_type_counts[i] == 1) {
-                        register_enum_variant_type(_den, _vn, c_type_from_expr(stmt->enum_decl.variant_types[i][0]));
+                        if (_enum_field_is_self(stmt->enum_decl.variant_types[i][0])) {
+                            register_enum_field_boxed(_den, _vn, 0);
+                            register_enum_variant_type(_den, _vn, _den);
+                        } else {
+                            register_enum_variant_type(_den, _vn, c_type_from_expr(stmt->enum_decl.variant_types[i][0]));
+                        }
                     } else {
                         register_enum_variant_type(_den, _vn, "void");
                     }
@@ -3378,8 +3406,14 @@ void codegen_stmt(Stmt* stmt) {
             }
             
             if (has_data) {
-                // Generate tagged union for enum with data
-                emit("typedef struct {\n");
+                // Generate tagged union for enum with data. Use a NAMED struct
+                // with a forward-declared typedef so recursive variant fields
+                // (heap-boxed `EnumName*`) can reference the type inside its own
+                // definition - an anonymous `typedef struct {...} E;` can't.
+                emit("typedef struct %.*s %.*s;\n",
+                     stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                     stmt->enum_decl.name.length, stmt->enum_decl.name.start);
+                emit("struct %.*s {\n", stmt->enum_decl.name.length, stmt->enum_decl.name.start);
                 emit("    enum { ");
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
                     emit("%.*s_%.*s_TAG",
@@ -3395,6 +3429,8 @@ void codegen_stmt(Stmt* stmt) {
                         if (stmt->enum_decl.variant_type_counts[i] == 1) {
                             Expr* type_expr = stmt->enum_decl.variant_types[i][0];
                             emit_type_from_expr(type_expr);
+                            // Recursive single field -> store a pointer (heap-boxed).
+                            if (_enum_field_is_self(type_expr)) emit("*");
                             emit(" %.*s_value;\n",
                                  stmt->enum_decl.variants[i].length,
                                  stmt->enum_decl.variants[i].start);
@@ -3402,15 +3438,25 @@ void codegen_stmt(Stmt* stmt) {
                             // Multi-field variant: struct { type0 f0; type1 f1; ... }
                             emit("struct { ");
                             for (int j = 0; j < stmt->enum_decl.variant_type_counts[i]; j++) {
-                                emit_type_from_expr(stmt->enum_decl.variant_types[i][j]);
+                                Expr* _jtx = stmt->enum_decl.variant_types[i][j];
+                                emit_type_from_expr(_jtx);
+                                int _jboxed = _enum_field_is_self(_jtx);
+                                if (_jboxed) emit("*");
                                 emit(" f%d; ", j);
                                 // Record each field's C type so match-arm extraction
                                 // can bind it with the right type (not a guess).
                                 { extern void register_enum_variant_field_type(const char*, const char*, int, const char*);
+                                  extern void register_enum_field_boxed(const char*, const char*, int);
                                   char _en[128], _vn[128];
                                   token_to_cstr(_en, sizeof(_en), stmt->enum_decl.name);
                                   token_to_cstr(_vn, sizeof(_vn), stmt->enum_decl.variants[i]);
-                                  register_enum_variant_field_type(_en, _vn, j, c_type_from_expr(stmt->enum_decl.variant_types[i][j])); }
+                                  if (_jboxed) {
+                                      register_enum_field_boxed(_en, _vn, j);
+                                      register_enum_variant_field_type(_en, _vn, j, _en);
+                                  } else {
+                                      register_enum_variant_field_type(_en, _vn, j, c_type_from_expr(_jtx));
+                                  }
+                                }
                             }
                             emit("} %.*s_value;\n",
                                  stmt->enum_decl.variants[i].length,
@@ -3419,9 +3465,7 @@ void codegen_stmt(Stmt* stmt) {
                     }
                 }
                 emit("    } data;\n");
-                emit("} %.*s;\n\n",
-                     stmt->enum_decl.name.length,
-                     stmt->enum_decl.name.start);
+                emit("};\n\n");
             } else {
                 // Simple enum without data
                 emit("typedef enum {\n");
@@ -3459,6 +3503,9 @@ void codegen_stmt(Stmt* stmt) {
                          stmt->enum_decl.name.length, stmt->enum_decl.name.start,
                          stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
                     
+                    // Recursive fields take the value BY VALUE as a parameter; the
+                    // constructor heap-boxes it (malloc + copy) before storing the
+                    // pointer, so callers keep passing plain values.
                     if (stmt->enum_decl.variant_type_counts[i] > 0) {
                         if (stmt->enum_decl.variant_type_counts[i] == 1) {
                             Expr* type_expr = stmt->enum_decl.variant_types[i][0];
@@ -3474,21 +3521,37 @@ void codegen_stmt(Stmt* stmt) {
                         }
                     }
                     // else: zero-argument constructor
-                    
+
                     emit(") {\n");
                     emit("    %.*s result;\n",
                          stmt->enum_decl.name.length, stmt->enum_decl.name.start);
                     emit("    result.tag = %.*s_%.*s_TAG;\n",
                          stmt->enum_decl.name.length, stmt->enum_decl.name.start,
                          stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
-                    
+
                     if (stmt->enum_decl.variant_type_counts[i] == 1) {
-                        emit("    result.data.%.*s_value = value;\n",
-                             stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
+                        if (_enum_field_is_self(stmt->enum_decl.variant_types[i][0])) {
+                            emit("    result.data.%.*s_value = (%s*)wyn_malloc(sizeof(%s));\n",
+                                 stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
+                                 _enum_self_name, _enum_self_name);
+                            emit("    *result.data.%.*s_value = value;\n",
+                                 stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
+                        } else {
+                            emit("    result.data.%.*s_value = value;\n",
+                                 stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
+                        }
                     } else if (stmt->enum_decl.variant_type_counts[i] > 1) {
                         for (int j = 0; j < stmt->enum_decl.variant_type_counts[i]; j++) {
-                            emit("    result.data.%.*s_value.f%d = f%d;\n",
-                                 stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start, j, j);
+                            if (_enum_field_is_self(stmt->enum_decl.variant_types[i][j])) {
+                                emit("    result.data.%.*s_value.f%d = (%s*)wyn_malloc(sizeof(%s));\n",
+                                     stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start, j,
+                                     _enum_self_name, _enum_self_name);
+                                emit("    *result.data.%.*s_value.f%d = f%d;\n",
+                                     stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start, j, j);
+                            } else {
+                                emit("    result.data.%.*s_value.f%d = f%d;\n",
+                                     stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start, j, j);
+                            }
                         }
                     }
                     
@@ -3621,7 +3684,7 @@ void codegen_stmt(Stmt* stmt) {
                     }
                 }
             }
-            
+            #undef _enum_field_is_self
             break;
         case STMT_TYPE_ALIAS: {
             const char* ct = "long long";

@@ -3,16 +3,16 @@
 #define __auto_type long long
 #endif
 
+
+// Lambda functions (defined before use)
 typedef struct {
     long long first;
     long long second;
-} Pair;
+} Pair_int;
 
-void Pair_cleanup(Pair* obj) {
+void Pair_int_cleanup(Pair_int* obj) {
 }
 
-
-// Lambda functions (defined before use)
 long long wyn_main();
 
 /* 25_generic_struct.wyn:7 */ 
@@ -20,7 +20,7 @@ long long wyn_main();
 long long wyn_main() {
     /* 25_generic_struct.wyn:8 */ 
 #line 8 "25_generic_struct.wyn"
-Pair p = ((Pair){.first = 10, .second = 20});
+Pair_int p = ((Pair_int){.first = 10, .second = 20});
     ({ const char* __ps = to_string(p.first); println(__ps); wyn_rc_release(__ps); });
     ({ const char* __ps = to_string(p.second); println(__ps); wyn_rc_release(__ps); });
     ({ const char* __ps = to_string((p.first + p.second)); println(__ps); wyn_rc_release(__ps); });
