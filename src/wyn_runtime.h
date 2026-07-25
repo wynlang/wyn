@@ -4105,11 +4105,20 @@ WynArray wyn_array_map_float(WynArray arr, double (*fn)(double)) {
 extern int wyn_gpu_should_dispatch(int n, const char* kernel_src);
 extern int wyn_gpu_map_f32_begin(int n, float** in_ptr);
 extern int wyn_gpu_map_f32_run(int n, const char* kernel_src, float** out_ptr);
+extern void wyn_gpu_lock(void);
+extern void wyn_gpu_unlock(void);
 static inline int wyn_gpu_try_map_float(WynArray arr, const char* kernel_src, WynArray* out) {
     if (arr.count <= 0 || !out) return 0;
+    // should_dispatch is a pure read of the cost model; the cheap early-out
+    // stays outside the lock so non-dispatching calls never contend.
     if (!wyn_gpu_should_dispatch(arr.count, kernel_src)) return 0;
+    // The shared in/out buffers + pipeline cache are process-global, so the
+    // whole begin->pack->run->unpack sequence is one critical section: hold the
+    // GPU lock across it so concurrent maps (e.g. from parallel{}) serialize
+    // instead of racing the shared state. Every early return unlocks first.
+    wyn_gpu_lock();
     float* gin = NULL; float* gout = NULL;
-    if (wyn_gpu_map_f32_begin(arr.count, &gin) != 0) return 0;
+    if (wyn_gpu_map_f32_begin(arr.count, &gin) != 0) { wyn_gpu_unlock(); return 0; }
     // Direct cell access (not the bounds-checked array_get_float macro): i is
     // already proven in range, and this pack loop is the dominant cost of the
     // whole GPU path, especially in -O0 dev builds.
@@ -4118,7 +4127,7 @@ static inline int wyn_gpu_try_map_float(WynArray arr, const char* kernel_src, Wy
                              ? arr.data[i].data.float_val
                              : (double)arr.data[i].data.int_val);
     }
-    if (wyn_gpu_map_f32_run(arr.count, kernel_src, &gout) != 0) return 0;
+    if (wyn_gpu_map_f32_run(arr.count, kernel_src, &gout) != 0) { wyn_gpu_unlock(); return 0; }
     WynArray r = {0};
     r.data = wyn_array_realloc(NULL, 0, arr.count);
     r.capacity = arr.count;
@@ -4127,6 +4136,9 @@ static inline int wyn_gpu_try_map_float(WynArray arr, const char* kernel_src, Wy
         r.data[i].type = WYN_TYPE_FLOAT;
         r.data[i].data.float_val = (double)gout[i];
     }
+    // Unpack reads from the shared out buffer, so it must finish before another
+    // dispatch can reuse it - unlock only after the copy out is complete.
+    wyn_gpu_unlock();
     *out = r;
     return 1;
 }

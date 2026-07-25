@@ -32,6 +32,20 @@
 #import <Metal/Metal.h>
 #import <Foundation/Foundation.h>
 #include <string.h>
+#include <pthread.h>
+
+// Thread-safety: all GPU state below (device/queue, the pipeline cache, and the
+// single pair of shared in/out MTLBuffers) is process-global and reused across
+// calls. A concurrent dispatch - e.g. two `parallel { }` workers each mapping a
+// [float] - would race the shared buffers and the cache and corrupt results.
+// The runtime's dispatch wrapper (wyn_runtime.h) holds this lock across the
+// whole begin->pack->run->unpack critical section, so at most one GPU map runs
+// at a time; overlapping callers serialize (still far faster than CPU for large
+// maps, and correct). A per-job buffer pool would allow real concurrency and is
+// noted as future work in docs/GPU_DESIGN.md.
+static pthread_mutex_t _gpu_lock = PTHREAD_MUTEX_INITIALIZER;
+void wyn_gpu_lock(void)   { pthread_mutex_lock(&_gpu_lock); }
+void wyn_gpu_unlock(void) { pthread_mutex_unlock(&_gpu_lock); }
 
 static id<MTLDevice> _gpu_dev = nil;
 static id<MTLCommandQueue> _gpu_queue = nil;
