@@ -184,13 +184,21 @@ int wyn_gpu_available(void) {
 }
 
 // --------------------------------------------------------------- cost model ---
-// Mirrors the Metal thresholds (see src/gpu_metal.m for the derivation). The
-// absolute crossover differs per GPU/driver, but the SHAPE is the same: a
-// cached-kernel minimum N, plus cumulative-N tiers that amortize the one-time
-// clBuildProgram compile before dispatching a not-yet-built kernel.
+// Tuned from measured Tesla T4 data (2026-07-25, see docs/GPU_DESIGN.md), NOT
+// copied from Metal. On the T4 a cached [float].map beats CPU ~3x from 300k up,
+// and the one-time clBuildProgram compile is only ~150-250ms - it amortizes in
+// 1-4 cached calls, so OpenCL should compile MUCH sooner than Metal did. (The
+// original Metal-inherited 40M-cumulative "first ever" threshold meant a normal
+// 3-round 2M map never dispatched at all.) Shape is the same as Metal - a
+// cached-kernel minimum N plus cumulative-N tiers that amortize the first
+// compile of a not-yet-built kernel - but the absolute values are OpenCL's.
+//   MIN_N_CACHED : below this, CPU wins even with a hot kernel (T4: 300k break-even).
+//   CUM_N_FIRST_EVER : cumulative eligible-N before the very first compile (pays
+//                      the ~150ms cold start once, then every later map is fast).
+//   CUM_N_KERNEL_COLD : cumulative-N to compile a NEW kernel once the ICD is warm.
 #define WYN_GPU_MIN_N_CACHED        300000
-#define WYN_GPU_CUM_N_KERNEL_COLD   8000000
-#define WYN_GPU_CUM_N_FIRST_EVER    40000000
+#define WYN_GPU_CUM_N_KERNEL_COLD    600000
+#define WYN_GPU_CUM_N_FIRST_EVER    1500000
 
 static int _gpu_compiled_any = 0;
 
