@@ -33,6 +33,7 @@
 #import <Foundation/Foundation.h>
 #include <string.h>
 #include <pthread.h>
+#include "gpu_backend.h"   // the 6-function C ABI this file implements
 
 // Thread-safety: all GPU state below (device/queue, the pipeline cache, and the
 // single pair of shared in/out MTLBuffers) is process-global and reused across

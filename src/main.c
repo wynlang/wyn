@@ -222,30 +222,94 @@ static int wyn_gpu_flag_from_toml(void) {
     return on;
 }
 
-// Compile src/gpu_metal.m to src/gpu_metal.o on first use (mirrors how
-// wyn_webview.o is consumed; the webview object is prebuilt out-of-band, but
-// for the spike we build the GPU object lazily so `make` needs no changes).
-// Fills `flags` with the extra compile/link flags for a GPU-dispatch build,
-// or leaves it empty (returning 0) if Metal support cannot be arranged.
-static int wyn_gpu_link_flags(const char* wyn_root, char* flags, size_t flags_sz) {
+// GPU backend selection is TARGET-based, not compiler-host-based: every Wyn
+// feature must work per the TARGET platform. macOS targets get the Metal
+// backend; linux/windows targets get the OpenCL backend (which dlopens
+// libOpenCL at run time, so a binary still runs on a box with no GPU/driver -
+// available() returns 0 -> CPU fallback). Other targets (ios/android/wasm) have
+// no GPU backend yet and run CPU-only. See src/gpu_backend.h + docs/GPU_DESIGN.md.
+typedef enum { WYN_GPU_BK_NONE, WYN_GPU_BK_METAL, WYN_GPU_BK_OPENCL } WynGpuBackend;
+
+static WynGpuBackend wyn_gpu_backend_for_target(const char* os) {
+    if (!os) return WYN_GPU_BK_NONE;
+    if (strncmp(os, "macos", 5) == 0) return WYN_GPU_BK_METAL;
+    if (strcmp(os, "linux") == 0 || strcmp(os, "windows") == 0) return WYN_GPU_BK_OPENCL;
+    return WYN_GPU_BK_NONE;   // ios / android / wasm: CPU-only for now
+}
+
+// The target this compiler is running ON (used for a NATIVE build/run, where
+// target == host). Cross-compilation passes an explicit target instead.
+static const char* wyn_gpu_host_os(void) {
+#if defined(__APPLE__)
+    return "macos";
+#elif defined(_WIN32)
+    return "windows";
+#elif defined(__linux__)
+    return "linux";
+#else
+    return "unknown";
+#endif
+}
+
+// Fill `flags` with the extra compile/link flags to wire the GPU backend for
+// `target_os`, using `cc` to lazily compile the backend object (Metal .m or
+// OpenCL .c) into src/. Returns 1 with flags filled, or 0 (flags empty) if a
+// backend can't be arranged for that target - then the program builds CPU-only.
+// The -DWYN_GPU_<BACKEND> define lands on the same command that compiles the
+// entry .c (which includes wyn_runtime.h), enabling the real dispatch path and
+// the WYN_GPU_KERNEL selector for that backend.
+static int wyn_gpu_link_flags_for(const char* wyn_root, const char* target_os,
+                                   const char* cc, char* flags, size_t flags_sz) {
     flags[0] = '\0';
+    WynGpuBackend bk = wyn_gpu_backend_for_target(target_os);
+    if (bk == WYN_GPU_BK_METAL) {
+        // Metal object is only buildable on a macOS build host (needs the
+        // Metal/Foundation frameworks + clang objc). Cross-building a macOS
+        // target from elsewhere can't produce it, so guard on the host.
 #ifdef __APPLE__
-    char obj[1200]; snprintf(obj, sizeof(obj), "%s/src/gpu_metal.o", wyn_root);
-    char msrc[1200]; snprintf(msrc, sizeof(msrc), "%s/src/gpu_metal.m", wyn_root);
-    struct stat os, ms;
-    if (stat(msrc, &ms) != 0) return 0;
-    if (stat(obj, &os) != 0 || os.st_mtime < ms.st_mtime) {
+        char obj[1200]; snprintf(obj, sizeof(obj), "%s/src/gpu_metal.o", wyn_root);
+        char msrc[1200]; snprintf(msrc, sizeof(msrc), "%s/src/gpu_metal.m", wyn_root);
+        struct stat os_st, ms;
+        if (stat(msrc, &ms) != 0) return 0;
+        if (stat(obj, &os_st) != 0 || os_st.st_mtime < ms.st_mtime) {
+            char cc_cmd[4096];
+            snprintf(cc_cmd, sizeof(cc_cmd),
+                     "clang -fobjc-arc -O2 -w -c \"%s\" -o \"%s\" 2>/dev/null", msrc, obj);
+            if (system(cc_cmd) != 0) return 0;
+        }
+        snprintf(flags, flags_sz, " -DWYN_GPU_METAL %s -framework Metal -framework Foundation", obj);
+        return 1;
+#else
+        (void)cc; return 0;
+#endif
+    }
+    if (bk == WYN_GPU_BK_OPENCL) {
+        // OpenCL backend: compile gpu_opencl.c to an object with -DWYN_GPU_OPENCL
+        // and the vendored CL headers, then link it. It dlopens libOpenCL at run
+        // time, so we add -ldl on POSIX (not on Windows). We compile the object
+        // with the SAME cc used for the program so it matches the target ABI.
+        char obj[1200]; snprintf(obj, sizeof(obj), "%s/src/gpu_opencl.o", wyn_root);
+        char csrc[1200]; snprintf(csrc, sizeof(csrc), "%s/src/gpu_opencl.c", wyn_root);
+        struct stat cs;
+        if (stat(csrc, &cs) != 0) return 0;
         char cc_cmd[4096];
         snprintf(cc_cmd, sizeof(cc_cmd),
-                 "clang -fobjc-arc -O2 -w -c \"%s\" -o \"%s\" 2>/dev/null", msrc, obj);
+                 "%s -std=c11 -O2 -w -DWYN_GPU_OPENCL -I \"%s/src\" -I \"%s/vendor/opencl\" "
+                 "-c \"%s\" -o \"%s\" 2>/dev/null",
+                 cc && cc[0] ? cc : "cc", wyn_root, wyn_root, csrc, obj);
         if (system(cc_cmd) != 0) return 0;
+        const char* dl = (strcmp(target_os, "windows") == 0) ? "" : " -ldl";
+        snprintf(flags, flags_sz,
+                 " -DWYN_GPU_OPENCL -I \"%s/vendor/opencl\" %s%s", wyn_root, obj, dl);
+        return 1;
     }
-    snprintf(flags, flags_sz, " -DWYN_GPU_METAL %s -framework Metal -framework Foundation", obj);
-    return 1;
-#else
-    (void)wyn_root; (void)flags_sz;
+    (void)cc;
     return 0;
-#endif
+}
+
+// Native build/run convenience wrapper: target == host, cc == host cc.
+static int wyn_gpu_link_flags(const char* wyn_root, char* flags, size_t flags_sz) {
+    return wyn_gpu_link_flags_for(wyn_root, wyn_gpu_host_os(), "cc", flags, flags_sz);
 }
 
 // The version is embedded at COMPILE TIME (-DWYN_VERSION, from the VERSION
@@ -1772,6 +1836,13 @@ int main(int argc, char** argv) {
             return 1;
         }
 
+        // Cross-compile parity: honor the [gpu] opt-in for the CROSS target too,
+        // so `wyn cross linux` on a [gpu]-opted project emits the dual-path map
+        // sites and wires the OpenCL backend below (was previously missing -> no
+        // GPU on any cross target, the parity gap this change fixes).
+        { extern void codegen_set_gpu_enabled(bool);
+          codegen_set_gpu_enabled(wyn_gpu_flag_from_toml() != 0); }
+
         char out_path[256];
         snprintf(out_path, 256, "%s.c", file);
         FILE* out = fopen(out_path, "w");
@@ -1780,7 +1851,42 @@ int main(int argc, char** argv) {
         codegen_program(prog);
         fclose(out);
         free(source);
-        
+
+        // GPU backend wiring for the cross target: if codegen emitted dispatch
+        // sites, build the per-target backend object and collect its extra
+        // compile/link flags to splice into the target link line below. Metal
+        // for macos targets; OpenCL (dlopen) for linux/windows. Empty -> CPU-only.
+        char gpu_xflags[2048]; gpu_xflags[0] = '\0';
+        { extern int codegen_gpu_dispatch_count(void);
+          if (codegen_gpu_dispatch_count() > 0) {
+              // The cross backend object must match the target ABI, so compile it
+              // with the SAME toolchain used for the program (zig cc for the
+              // portable path; a gcc cross-compiler if that's what's used).
+              const char* gpu_cc = NULL;
+              if (strcmp(target, "linux") == 0) {
+                  if (system("which zig >/dev/null 2>&1") == 0) {
+                      static char _zcc[256];
+                      snprintf(_zcc, sizeof(_zcc), "zig cc -target %s-linux-gnu", arch);
+                      gpu_cc = _zcc;
+                  } else if (strcmp(arch, "aarch64") == 0 &&
+                             system("which aarch64-linux-gnu-gcc >/dev/null 2>&1") == 0) {
+                      gpu_cc = "aarch64-linux-gnu-gcc";
+                  } else if (system("which x86_64-linux-gnu-gcc >/dev/null 2>&1") == 0) {
+                      gpu_cc = "x86_64-linux-gnu-gcc";
+                  }
+#ifdef __linux__
+                  if (!gpu_cc) gpu_cc = "cc";
+#endif
+              } else if (strcmp(target, "windows") == 0) {
+                  if (system("which zig >/dev/null 2>&1") == 0)
+                      gpu_cc = "zig cc -target x86_64-windows-gnu";
+              } else if (strcmp(target, "macos") == 0) {
+                  gpu_cc = "cc";   // handled by the Metal (host-only) branch
+              }
+              if (gpu_cc)
+                  wyn_gpu_link_flags_for(wyn_root, target, gpu_cc, gpu_xflags, sizeof(gpu_xflags));
+          } }
+
         // Cross-compile based on target
         char compile_cmd[4096];
         if (strcmp(target, "linux") == 0) {
@@ -2086,7 +2192,16 @@ int main(int argc, char** argv) {
             fprintf(stderr, "Available: linux, macos, windows, ios, android, wasm\n");
             return 1;
         }
-        
+
+        // Splice the GPU backend object + flags onto the END of the target link
+        // line (GNU ld resolves against preceding objects, and -ldl trails the
+        // object). Only the linux/windows link lines above are backend-eligible;
+        // gpu_xflags is empty for every other case, so this is a no-op there.
+        if (gpu_xflags[0]) {
+            size_t _n = strlen(compile_cmd);
+            snprintf(compile_cmd + _n, sizeof(compile_cmd) - _n, "%s", gpu_xflags);
+        }
+
         int result = system(compile_cmd);
         if (result == 0) {
             printf("✅ Cross-compilation successful\n");

@@ -4099,9 +4099,28 @@ WynArray wyn_array_map_float(WynArray arr, double (*fn)(double)) {
 // compile-time GPU-eligible; the CPU fallback argument at the call site is the
 // exact same lambda, so behavior is identical modulo float32 rounding (a
 // deliberate, opted-into precision loss - see docs/GPU_DESIGN.md).
-// WYN_GPU_METAL is defined on the compile line (with gpu_metal.o linked)
-// only for such projects on macOS; everywhere else the stub says "no".
-#if defined(__APPLE__) && defined(WYN_GPU_METAL)
+// The backend is chosen by the compile line per TARGET (not compiler host):
+//   -DWYN_GPU_METAL   links src/gpu_metal.o  (macOS targets)
+//   -DWYN_GPU_OPENCL  links src/gpu_opencl.o (linux/windows targets; dlopens
+//                     libOpenCL at run time - no GPU/driver -> available()==0
+//                     -> CPU fallback here)
+// Everywhere else (no backend linked) the stub below always says "no" and the
+// call site runs the CPU map. See src/gpu_backend.h for the shared ABI.
+//
+// WYN_GPU_KERNEL(msl, ocl) selects the kernel-source string for the linked
+// backend at compile time: codegen emits BOTH shader-language variants at every
+// dispatch site (MSL + OpenCL-C), and this macro hands the backend its own.
+// The CPU stub ignores kernel_src, but the arg must still be a valid string
+// expression, so the macro is defined in every configuration.
+#if defined(WYN_GPU_METAL)
+#  define WYN_GPU_KERNEL(msl, ocl) (msl)
+#elif defined(WYN_GPU_OPENCL)
+#  define WYN_GPU_KERNEL(msl, ocl) (ocl)
+#else
+#  define WYN_GPU_KERNEL(msl, ocl) (msl)
+#endif
+
+#if defined(WYN_GPU_METAL) || defined(WYN_GPU_OPENCL)
 extern int wyn_gpu_should_dispatch(int n, const char* kernel_src);
 extern int wyn_gpu_map_f32_begin(int n, float** in_ptr);
 extern int wyn_gpu_map_f32_run(int n, const char* kernel_src, float** out_ptr);
@@ -4109,6 +4128,10 @@ extern void wyn_gpu_lock(void);
 extern void wyn_gpu_unlock(void);
 static inline int wyn_gpu_try_map_float(WynArray arr, const char* kernel_src, WynArray* out) {
     if (arr.count <= 0 || !out) return 0;
+    // WYN_GPU=0 is a universal runtime kill-switch: force the CPU path for ANY
+    // backend, without recompiling. (Backends also honor it, but checking here
+    // covers every backend uniformly and short-circuits before any device work.)
+    { const char* _off = getenv("WYN_GPU"); if (_off && _off[0] == '0') return 0; }
     // should_dispatch is a pure read of the cost model; the cheap early-out
     // stays outside the lock so non-dispatching calls never contend.
     if (!wyn_gpu_should_dispatch(arr.count, kernel_src)) return 0;
