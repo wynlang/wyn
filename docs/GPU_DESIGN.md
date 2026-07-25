@@ -268,3 +268,26 @@ These are **out of scope** for this branch and must not be represented as workin
 | `benchmarks/gpu/bench_gpu_map.c` | standalone CPU-vs-GPU microbenchmark |
 | `demos/gpu_map/` | runnable demo |
 | `tests/gpu/run_gpu_test.sh` | the test suite described above |
+
+## Cross-platform verification — Tesla T4 (NVIDIA, OpenCL), 2026-07-25
+
+The OpenCL backend was verified on a real NVIDIA Tesla T4 (AWS g4dn.xlarge, Ubuntu 22.04 +
+NVIDIA driver 595 + CUDA/OpenCL). A Linux `wyn` built with the OpenCL backend:
+- runtime-detects the GPU via dlopen'd libOpenCL (no link-time SDK dependency);
+- AUTO-dispatches an eligible `[float].map` to the GPU when the cost model clears (no FORCE needed);
+- produces results matching the CPU path to float32 precision (~1e-7 relative — the documented lossy path);
+- falls back to CPU correctly when no GPU/driver is present (`wyn_gpu_available()==0`) and under `WYN_GPU=0`.
+
+Measured on the T4 (ms/round; CPU = WYN_GPU=0, GPU cached = warm kernel):
+| N    | CPU  | GPU cached | speedup |
+|------|------|-----------|---------|
+| 300K | 12   | 3-5       | ~3x     |
+| 1M   | 36   | 9-16      | ~3-4x   |
+| 2M   | 77   | 17-33     | ~2.3-4.5x |
+| 5M   | 230  | 82        | ~2.8x   |
+First-ever kernel compile is ~150-250ms (one-time), amortized in 1-4 cached calls.
+
+**Cost model was tuned from this T4 data** (not inherited from Metal): a Metal-derived 40M-cumulative
+"first compile" threshold meant `[float].map` never dispatched on OpenCL despite the device being
+detected — caught only by real-hardware verification. Lowered to FIRST_EVER=1.5M / KERNEL_COLD=600K
+(MIN_N_CACHED=300K = measured break-even).
