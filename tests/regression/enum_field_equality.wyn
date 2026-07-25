@@ -1,0 +1,49 @@
+// A payload-carrying enum is a tagged-union struct, so raw C `==` on it is a
+// type error. An enum value stored in a struct field with an auto-generated ==
+// emitted `__l.f != __r.f` -> C error "invalid operands ... (Shape and Shape)".
+// A standalone `enumA == enumB` (data enum) hit the same ICE. Fixed: codegen
+// emits __wyn_eq_enum_<E> (tag + payload compare, recursing into struct /
+// nested-enum / string payloads) and routes both struct-field and standalone
+// enum equality through it. Plain payload-less enums keep C `==`.
+// EXPECT: item equal
+// EXPECT: item diff
+// EXPECT: shape equal
+// EXPECT: tree ab equal
+// EXPECT: tree ac diff
+// EXPECT: tree ac neq
+// EXPECT: rec ab eq
+// EXPECT: rec ac neq
+
+enum Shape { Circle(int), Square(int), None }
+enum Tree { Leaf(int), Node(Tree, Tree), Empty }
+enum Rec { Pair(int, string), NoRec }
+struct Item { name: string, s: Shape }
+
+fn main() {
+    // Enum value in a struct field, auto ==
+    var a = Item{name: "x", s: Shape.Circle(5)}
+    var b = Item{name: "x", s: Shape.Circle(5)}
+    var c = Item{name: "x", s: Shape.Circle(9)}
+    if a == b { println("item equal") } else { println("item diff") }
+    if a == c { println("item equal") } else { println("item diff") }
+
+    // Standalone data-enum ==
+    var s1 = Shape.Circle(5)
+    var s2 = Shape.Circle(5)
+    if s1 == s2 { println("shape equal") } else { println("shape diff") }
+
+    // Recursive enum ==
+    var t1 = Tree.Node(Tree.Leaf(1), Tree.Leaf(2))
+    var t2 = Tree.Node(Tree.Leaf(1), Tree.Leaf(2))
+    var t3 = Tree.Node(Tree.Leaf(1), Tree.Leaf(9))
+    if t1 == t2 { println("tree ab equal") } else { println("tree ab diff") }
+    if t1 == t3 { println("tree ac equal") } else { println("tree ac diff") }
+    if t1 != t3 { println("tree ac neq") } else { println("tree ac eq") }
+
+    // Multi-field variant with a string payload
+    var r1 = Rec.Pair(1, "hi")
+    var r2 = Rec.Pair(1, "hi")
+    var r3 = Rec.Pair(1, "bye")
+    if r1 == r2 { println("rec ab eq") } else { println("rec ab neq") }
+    if r1 == r3 { println("rec ac eq") } else { println("rec ac neq") }
+}

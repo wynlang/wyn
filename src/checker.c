@@ -594,6 +594,35 @@ static EnumStmt* find_enum_definition(Token enum_name) {
     return NULL;
 }
 
+// Does enum `from` reach enum `target` through a chain of enum-typed variant
+// payloads? Used to detect a MUTUALLY-recursive enum cycle
+// (enum A{AtoB(B)} enum B{BtoA(A)}), which codegen cannot yet represent: the
+// tagged-union stores payloads by value, so a cycle is infinite-size, and the
+// constructors take payloads by value (an incomplete sibling type). Rejected at
+// check with a clear message instead of leaking a raw C error. `visited` guards
+// against infinite recursion in the walk itself.
+static bool enum_payload_reaches(Token from, Token target, Token* visited, int* nvisited) {
+    for (int i = 0; i < *nvisited; i++)
+        if (visited[i].length == from.length &&
+            memcmp(visited[i].start, from.start, from.length) == 0) return false;
+    if (*nvisited < 64) visited[(*nvisited)++] = from;
+    EnumStmt* e = find_enum_definition(from);
+    if (!e) return false;
+    for (int v = 0; v < e->variant_count; v++) {
+        for (int f = 0; f < e->variant_type_counts[v]; f++) {
+            Expr* ft = e->variant_types[v] ? e->variant_types[v][f] : NULL;
+            if (!ft || ft->type != EXPR_IDENT) continue;
+            // A payload that IS the target enum closes the cycle.
+            if (ft->token.length == target.length &&
+                memcmp(ft->token.start, target.start, target.length) == 0) return true;
+            // Otherwise, if it names another enum, recurse.
+            if (find_enum_definition(ft->token) &&
+                enum_payload_reaches(ft->token, target, visited, nvisited)) return true;
+        }
+    }
+    return false;
+}
+
 // Resolve an array-element type annotation Expr* to a Type*. Handles builtin
 // names, user struct/enum names, AND nested array annotations (`[[float]]`),
 // which the inline STMT_VAR resolver did not: it only looked at EXPR_IDENT, so
@@ -5642,16 +5671,50 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     check_expr(expr->struct_init.field_values[i], scope);
                 }
                 
-                // Infer type arguments from field values
-                Type** type_args = malloc(sizeof(Type*) * expr->struct_init.field_count);
+                // Infer one type argument PER type parameter (in declaration
+                // order), not just the first field. A multi-param struct
+                // `Pair<A,B> { first:A, second:B }` needs BOTH A and B
+                // substituted; the old "first field only" heuristic left B
+                // unsubstituted -> C error "unknown type name 'B'". For each
+                // type param, find the field whose DECLARED type is that param
+                // and take that field value's inferred type.
+                StructStmt* _gdef = find_struct_definition(struct_name);
+                int _nparams = _gdef ? _gdef->type_param_count : 1;
+                if (_nparams < 1) _nparams = 1;
+                Type** type_args = malloc(sizeof(Type*) * _nparams);
                 int type_arg_count = 0;
-                
-                // Infer types from field values
-                for (int i = 0; i < expr->struct_init.field_count; i++) {
-                    Type* field_type = check_expr(expr->struct_init.field_values[i], scope);
-                    if (field_type && type_arg_count == 0) {
-                        // Use first field type as type argument (simplified)
-                        type_args[type_arg_count++] = field_type;
+
+                if (_gdef && _gdef->type_param_count > 0) {
+                    for (int tp = 0; tp < _gdef->type_param_count; tp++) {
+                        Type* resolved = NULL;
+                        // Find a declared field whose type expr names this param.
+                        for (int fi = 0; fi < _gdef->field_count && !resolved; fi++) {
+                            Expr* fte = _gdef->field_types[fi];
+                            if (!fte || fte->type != EXPR_IDENT) continue;
+                            if (fte->token.length != _gdef->type_params[tp].length ||
+                                memcmp(fte->token.start, _gdef->type_params[tp].start,
+                                       fte->token.length) != 0) continue;
+                            // Match this declared field to the supplied init field
+                            // by name, then use that value's inferred type.
+                            Token dfn = _gdef->fields[fi];
+                            for (int ii = 0; ii < expr->struct_init.field_count; ii++) {
+                                Token ifn = expr->struct_init.field_names[ii];
+                                if (ifn.length == dfn.length &&
+                                    memcmp(ifn.start, dfn.start, dfn.length) == 0) {
+                                    resolved = check_expr(expr->struct_init.field_values[ii], scope);
+                                    break;
+                                }
+                            }
+                        }
+                        type_args[type_arg_count++] = resolved ? resolved : builtin_int;
+                    }
+                } else {
+                    // No decl available: fall back to the first field's type.
+                    for (int i = 0; i < expr->struct_init.field_count; i++) {
+                        Type* field_type = check_expr(expr->struct_init.field_values[i], scope);
+                        if (field_type && type_arg_count == 0) {
+                            type_args[type_arg_count++] = field_type;
+                        }
                     }
                 }
                 
@@ -5693,14 +5756,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             Expr* fte = gdef->field_types[fi];
                             Type* resolved = NULL;
                             if (fte && fte->type == EXPR_IDENT) {
-                                int is_tp = 0;
+                                int tp_idx = -1;
                                 for (int tp = 0; tp < gdef->type_param_count; tp++) {
                                     if (gdef->type_params[tp].length == fte->token.length &&
                                         memcmp(gdef->type_params[tp].start, fte->token.start, fte->token.length) == 0) {
-                                        is_tp = 1; break;
+                                        tp_idx = tp; break;
                                     }
                                 }
-                                resolved = is_tp ? type_args[0] : extern_map_type(fte);
+                                // Use the type arg for THIS param's index (not
+                                // always [0]) so multi-param structs resolve each
+                                // field to its own concrete type.
+                                resolved = (tp_idx >= 0 && tp_idx < type_arg_count)
+                                           ? type_args[tp_idx] : extern_map_type(fte);
                             }
                             struct_type->struct_type.field_types[fi] = resolved ? resolved : builtin_int;
                         }
@@ -6816,6 +6883,41 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 }
             }
 
+            // Gate (not yet implemented): a struct field whose declared type is a
+            // HashMap/HashSet (or bare map/set) container. Codegen silently types
+            // such a field as `long long` (not WynHashMap*/WynHashSet*), so the
+            // field is unusable - `s.m["k"]` / `s.m.add()` later report "struct
+            // has no field 'm'" and the program fails to build. A silently-
+            // mistyped field is worse than a clear error, so reject at check with
+            // a "not yet supported" message until container-valued fields land.
+            // Array-typed fields (`vals: [int]`) DO work and are NOT gated here.
+            for (int i = 0; i < stmt->struct_decl.field_count; i++) {
+                Expr* ft = stmt->struct_decl.field_types[i];
+                if (ft && ft->type == EXPR_OPTIONAL_TYPE) ft = ft->optional_type.inner_type;
+                int is_container = 0;
+                const char* cname = NULL;
+                if (ft && ft->type == EXPR_CALL && ft->call.callee &&
+                    ft->call.callee->type == EXPR_IDENT) {
+                    Token c = ft->call.callee->token;
+                    if ((c.length == 7 && memcmp(c.start, "HashMap", 7) == 0)) { is_container = 1; cname = "HashMap"; }
+                    else if ((c.length == 7 && memcmp(c.start, "HashSet", 7) == 0)) { is_container = 1; cname = "HashSet"; }
+                    else if ((c.length == 3 && memcmp(c.start, "Map", 3) == 0)) { is_container = 1; cname = "Map"; }
+                    else if ((c.length == 3 && memcmp(c.start, "Set", 3) == 0)) { is_container = 1; cname = "Set"; }
+                }
+                if (is_container) {
+                    fprintf(stderr,
+                        "Error at line %d: struct '%.*s' field '%.*s' has a %s type,"
+                        " which is not yet supported as a struct field.\n"
+                        "  Workaround: keep the %s in a separate variable, or store"
+                        " its entries in an array field.\n",
+                        stmt->struct_decl.name.line,
+                        (int)stmt->struct_decl.name.length, stmt->struct_decl.name.start,
+                        (int)stmt->struct_decl.fields[i].length, stmt->struct_decl.fields[i].start,
+                        cname, cname);
+                    had_error = true;
+                }
+            }
+
             // Type-check struct-body methods (`struct S { fn m(self, ...) {...} }`).
             // Without this, method bodies were never checked, so field accesses on
             // `self` and typed params never got an expr_type - and codegen then
@@ -7036,6 +7138,37 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
         case STMT_ENUM:
             // Create proper enum type
             {
+                // Reject a mutually-recursive enum cycle (enum A{AtoB(B)} enum
+                // B{BtoA(A)}). Codegen represents enum payloads by value and only
+                // heap-boxes DIRECT self-references, so a cross-enum cycle is an
+                // infinite-size / incomplete-type C error. Detect the cycle and
+                // report it clearly (a direct self-reference like Tree(Tree,Tree)
+                // IS supported via boxing, so only flag cycles through a SIBLING).
+                for (int vi = 0; vi < stmt->enum_decl.variant_count; vi++) {
+                    for (int fi = 0; fi < stmt->enum_decl.variant_type_counts[vi]; fi++) {
+                        Expr* ft = stmt->enum_decl.variant_types[vi] ? stmt->enum_decl.variant_types[vi][fi] : NULL;
+                        if (!ft || ft->type != EXPR_IDENT) continue;
+                        // Skip a direct self-reference (supported via boxing).
+                        if (ft->token.length == stmt->enum_decl.name.length &&
+                            memcmp(ft->token.start, stmt->enum_decl.name.start, ft->token.length) == 0) continue;
+                        if (find_enum_definition(ft->token)) {
+                            Token visited[64]; int nv = 0;
+                            if (enum_payload_reaches(ft->token, stmt->enum_decl.name, visited, &nv)) {
+                                fprintf(stderr,
+                                    "Error at line %d: enum '%.*s' variant '%.*s' forms a mutually-recursive"
+                                    " enum cycle through '%.*s', which is not yet supported"
+                                    " (enum payloads are stored by value, so a cross-enum cycle is infinite-size).\n"
+                                    "  Workaround: box one side by storing an index into an array of nodes,"
+                                    " or make the recursion direct (a variant of its OWN enum type is supported).\n",
+                                    stmt->enum_decl.name.line,
+                                    (int)stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                                    (int)stmt->enum_decl.variants[vi].length, stmt->enum_decl.variants[vi].start,
+                                    (int)ft->token.length, ft->token.start);
+                                had_error = true;
+                            }
+                        }
+                    }
+                }
                 Type* enum_type = make_type(TYPE_ENUM);
                 enum_type->name = stmt->enum_decl.name;
                 enum_type->enum_type.variants = stmt->enum_decl.variants;

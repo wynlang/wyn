@@ -699,6 +699,38 @@ void array_push_str(WynArray* restrict arr, const char* value) {
     arr->count++;
     WYN_ARR_WRITE_EXIT(arr);
 }
+// DEEP-copy a WynArray's backing store. The old array_push_array shallow-copied
+// the WynArray struct (`*copy = *nested`), so copy->data ALIASED the source's
+// backing buffer. When the source was a block-scoped local (e.g. `var row=[]` in
+// a while/if body), codegen emits `array_free(&row)` at scope end, freeing that
+// shared buffer and leaving the outer array's element dangling -> heap-use-
+// after-free / silent wrong answers (c[0][0] read freed memory -> 0). Owning a
+// private copy of the backing store (and recursively of nested arrays, plus an
+// RC retain on heap strings) makes the pushed element outlive the source frame.
+static WynArray wyn_array_deep_copy(const WynArray* src) {
+    WynArray out = {0};
+    if (!src || src->count <= 0) return out;
+    int cap = src->capacity > 0 ? src->capacity : src->count;
+    out.data = wyn_array_realloc(NULL, 0, cap);
+    out.capacity = cap;
+    out.count = src->count;
+    out.writing = 0;
+    extern int wyn_rc_is_heap(const void*);
+    for (int i = 0; i < src->count; i++) {
+        out.data[i] = src->data[i];
+        if (src->data[i].type == WYN_TYPE_STRING && src->data[i].data.string_val
+            && wyn_rc_is_heap(src->data[i].data.string_val)) {
+            wyn_rc_retain(src->data[i].data.string_val);
+        } else if (src->data[i].type == WYN_TYPE_ARRAY && src->data[i].data.array_val) {
+            WynArray* box = wyn_malloc(sizeof(WynArray));
+            *box = wyn_array_deep_copy(src->data[i].data.array_val);
+            out.data[i].data.array_val = box;
+        }
+        // STRUCT: struct_val boxes are not freed by array_free, so sharing the
+        // pointer cannot dangle; leave it as a shallow pointer copy.
+    }
+    return out;
+}
 void array_push_array(WynArray* restrict arr, WynArray* nested) {
     WYN_ARR_WRITE_ENTER(arr);
     if (arr->count >= arr->capacity) {
@@ -707,10 +739,10 @@ void array_push_array(WynArray* restrict arr, WynArray* nested) {
         arr->capacity = new_cap;
     }
     arr->data[arr->count].type = WYN_TYPE_ARRAY;
-    // Heap-allocate a copy so the nested array outlives the stack frame
+    // Heap-allocate a DEEP copy so the nested array (and its backing store)
+    // outlives the source stack frame even if the source is freed at scope end.
     WynArray* copy = wyn_malloc(sizeof(WynArray));
-    *copy = *nested;
-    copy->writing = 0;  // a copy is a fresh value; never inherit the mutation flag
+    *copy = wyn_array_deep_copy(nested);
     arr->data[arr->count].data.array_val = copy;
     arr->count++;
     WYN_ARR_WRITE_EXIT(arr);

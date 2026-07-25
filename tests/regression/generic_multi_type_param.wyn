@@ -1,0 +1,20 @@
+// A multi-type-param generic struct Pair<A,B> used to pass the checker but
+// emit C "unknown type name 'B'": the checker inferred only ONE type arg (the
+// first field) and applied it to every param, leaving B unsubstituted. Fixed:
+// the checker infers one type arg per type param, matching each declared
+// param-typed field to the supplied init field by name.
+// EXPECT: 5 hi
+// EXPECT: true 3.5
+// EXPECT: 1 x false
+
+struct Pair<A, B> { first: A, second: B }
+struct Triple<A, B, C> { a: A, b: B, c: C }
+
+fn main() {
+    var p = Pair{first: 5, second: "hi"}
+    println("${p.first} ${p.second}")
+    var q = Pair{first: true, second: 3.5}
+    println("${q.first} ${q.second}")
+    var t = Triple{a: 1, b: "x", c: false}
+    println("${t.a} ${t.b} ${t.c}")
+}

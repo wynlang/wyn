@@ -262,6 +262,82 @@ static bool codegen_skip_strdup = false;
 static bool codegen_emit_int_array = false;
 static bool codegen_fn_returns_array = false;
 
+// Monomorphization substitution context. While emitting a generic function's
+// body for one instantiation, this maps each type-parameter NAME (T, U, ...) to
+// the concrete Type it was instantiated with. Array-literal element pushes and
+// array-index getters consult it so a `[T]` built/indexed inside a generic body
+// picks the RIGHT element push/get (struct/string/float) instead of always
+// assuming int (a check-then-C-error before). NULL/0 outside a generic body.
+#define WYN_MONO_MAX_PARAMS 16
+// Type-parameter NAME (T, U) -> concrete Type for this instantiation.
+static struct { const char* name; int name_len; Type* type; } g_mono_params[WYN_MONO_MAX_PARAMS];
+static int g_mono_param_count = 0;
+// Value-parameter NAME (the fn param variable, e.g. `x`) -> concrete Type, for
+// params whose declared type is a type-param. Lets array-literal pushes /
+// index getters resolve `[x, x]` / `xs[0]` inside a monomorphic body.
+static struct { const char* name; int name_len; Type* type; } g_mono_vars[WYN_MONO_MAX_PARAMS];
+static int g_mono_var_count = 0;
+// Resolve a type-param NAME to its concrete instantiation Type, or NULL.
+static Type* wyn_mono_type_lookup(const char* name, int len) {
+    for (int i = 0; i < g_mono_param_count; i++)
+        if (g_mono_params[i].name_len == len &&
+            memcmp(g_mono_params[i].name, name, len) == 0)
+            return g_mono_params[i].type;
+    return NULL;
+}
+// Resolve a value-param variable NAME to its concrete element Type, or NULL.
+Type* wyn_mono_var_type(const char* name, int len) {
+    for (int i = 0; i < g_mono_var_count; i++)
+        if (g_mono_vars[i].name_len == len &&
+            memcmp(g_mono_vars[i].name, name, len) == 0)
+            return g_mono_vars[i].type;
+    return NULL;
+}
+void wyn_codegen_set_mono_context(Token* params, Type** args, int count) {
+    g_mono_param_count = 0;
+    if (!params || !args) return;
+    for (int i = 0; i < count && i < WYN_MONO_MAX_PARAMS; i++) {
+        g_mono_params[g_mono_param_count].name = params[i].start;
+        g_mono_params[g_mono_param_count].name_len = params[i].length;
+        g_mono_params[g_mono_param_count].type = args[i];
+        g_mono_param_count++;
+    }
+}
+// Register the fn's value params whose declared type names a type-param, so
+// their concrete Type is known while emitting the body.
+void wyn_codegen_set_mono_vars(Token* param_names, Expr** param_types, int param_count) {
+    g_mono_var_count = 0;
+    if (!param_names || !param_types) return;
+    for (int i = 0; i < param_count && g_mono_var_count < WYN_MONO_MAX_PARAMS; i++) {
+        Expr* pt = param_types[i];
+        if (!pt) continue;
+        // Direct `x: T`
+        if (pt->type == EXPR_IDENT) {
+            Type* ct = wyn_mono_type_lookup(pt->token.start, pt->token.length);
+            if (ct) {
+                g_mono_vars[g_mono_var_count].name = param_names[i].start;
+                g_mono_vars[g_mono_var_count].name_len = param_names[i].length;
+                g_mono_vars[g_mono_var_count].type = ct;
+                g_mono_var_count++;
+            }
+        }
+        // `xs: [T]` -> the param variable is an array whose element is T. Record
+        // the element Type so `xs[0]` inside the body picks the right getter.
+        else if (pt->type == EXPR_ARRAY && pt->array.count == 1 &&
+                 pt->array.elements[0] && pt->array.elements[0]->type == EXPR_IDENT) {
+            Type* ct = wyn_mono_type_lookup(pt->array.elements[0]->token.start,
+                                            pt->array.elements[0]->token.length);
+            if (ct) {
+                g_mono_vars[g_mono_var_count].name = param_names[i].start;
+                g_mono_vars[g_mono_var_count].name_len = param_names[i].length;
+                g_mono_vars[g_mono_var_count].type = ct;  // element type
+                g_mono_var_count++;
+            }
+        }
+    }
+}
+void wyn_codegen_clear_mono_context(void) { g_mono_param_count = 0; g_mono_var_count = 0; }
+
 // Module emission tracking (reset per compilation)
 static bool modules_emitted_this_compilation = false;
 
@@ -1556,6 +1632,8 @@ static char** data_enum_names = NULL;
 static int data_enum_count = 0;
 static int data_enum_cap = 0;
 void register_data_enum_type(const char* name) {
+    for (int i = 0; i < data_enum_count; i++)
+        if (strcmp(data_enum_names[i], name) == 0) return;  // dedup (pre-pass + body both register)
     WYN_ENSURE_CAP(data_enum_names, data_enum_count, data_enum_cap);
     data_enum_names[data_enum_count++] = strdup(name);
 }

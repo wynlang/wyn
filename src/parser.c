@@ -798,11 +798,31 @@ static Expr* primary() {
     }
     
     if (match(TOKEN_LBRACKET)) {
+        // Array literals recurse through the FULL precedence chain per nesting
+        // level (assignment->ternary->or->...->primary), so each `[` pushes far
+        // more C frames than a bare `(`. That let deeply nested `[[[...` overflow
+        // the native stack (SIGSEGV) at ~460 levels - BELOW the 500 expr_depth
+        // guard, which only counts one increment per expression(). Charge an
+        // extra depth unit here (and release it on every exit) so the aggregate
+        // path trips the guard cleanly at ~250 levels instead of crashing.
+        if (++expr_depth > WYN_MAX_EXPR_DEPTH) {
+            if (current_source_file)
+                show_error_context(current_source_file, parser.current.line, 1,
+                    "expression nesting too deep (limit 500) - simplify the expression", NULL);
+            parser.had_error = true;
+            expr_depth--;
+            Expr* e = alloc_expr();
+            e->type = EXPR_INT;
+            e->token.start = "0";
+            e->token.length = 1;
+            if (!check(TOKEN_EOF)) advance();
+            return e;
+        }
         Expr* expr = alloc_expr();
         expr->type = EXPR_ARRAY;
         expr->array.elements = NULL;
         expr->array.count = 0;
-        
+
         if (!check(TOKEN_RBRACKET)) {
             int capacity = 8;
             expr->array.elements = malloc(sizeof(Expr*) * capacity);
@@ -838,9 +858,10 @@ static Expr* primary() {
                     comp->list_comp.condition = NULL;
                 }
                 expect(TOKEN_RBRACKET, "Expected ']' after list comprehension");
+                expr_depth--;   // release the extra array-literal depth unit
                 return comp;
             }
-            
+
             while (match(TOKEN_COMMA) && !check(TOKEN_RBRACKET)) {
                 if (expr->array.count >= capacity) {
                     capacity *= 2;
@@ -849,8 +870,9 @@ static Expr* primary() {
                 expr->array.elements[expr->array.count++] = expression();
             }
         }
-        
+
         expect(TOKEN_RBRACKET, "Expected ']' after array elements");
+        expr_depth--;   // release the extra array-literal depth unit
         return expr;
     }
     
@@ -3983,6 +4005,20 @@ Stmt* enum_decl() {
                             type_expr->token = first;
                             types[type_count++] = type_expr;
                         }
+                    } else if (check(TOKEN_LBRACKET)) {
+                        // Array-typed enum payload (`Arr([Json])`) is not yet
+                        // supported - the codegen tagged-union path only handles
+                        // scalar/string/struct/self-enum fields. Give a clear
+                        // "not yet supported" message instead of the cryptic
+                        // "Expected type name in variant" that leaked before.
+                        if (current_source_file)
+                            show_error_context(current_source_file, parser.current.line, 1,
+                                "array-typed enum payloads are not yet supported - "
+                                "wrap the array in a struct field and store that in the variant", NULL);
+                        else
+                            fprintf(stderr, "Error: array-typed enum payloads are not yet supported\n");
+                        parser.had_error = true;
+                        break;
                     } else {
                         fprintf(stderr, "Error: Expected type name in variant\n");
                         break;
