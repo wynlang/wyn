@@ -3,6 +3,9 @@
 // EXPECT: 7
 // EXPECT: 42
 // EXPECT: hi
+// EXPECT: 10 20
+// EXPECT: 5
+// EXPECT: wyn
 // Regression: generics over NON-scalar T. Before nested-aggregate support the
 // monomorphizer mapped every non-int/float/bool/string T to `long long`, so a
 // generic instantiated over an array/struct force-cast the aggregate, and a
@@ -15,6 +18,13 @@ struct Box<T> { val: T }
 
 fn id<T>(v: T) -> T { return v }
 fn pair<T>(x: T) -> [T] { return [x, x] }
+// A generic fn that BUILDS `[T]` and one that INDEXES `[T]` used to assume
+// T=int: dup<Point> emitted array_push_int (C error), first<Point> emitted
+// array_get_int, and `first(dup(p))` monomorphized to first_int (wrong element
+// getter). Now the monomorphizer resolves T's real element push/get, and the
+// call-site keys the instantiation on the type-param value (first_Point).
+fn dup<T>(x: T) -> [T] { return [x, x] }
+fn first<T>(xs: [T]) -> T { return xs[0] }
 
 fn main() -> int {
     arr = id([1, 2, 3])          // generic over array
@@ -27,5 +37,15 @@ fn main() -> int {
     b2 = Box{ val: "hi" }        // Box<string> (distinct monomorphic type)
     println("${b1.val}")          // 42
     println("${b2.val}")          // hi
+
+    // dup<T> building [T] + first<T> indexing [T], over struct/int/string T.
+    q = Point{ x: 10, y: 20 }
+    dq = dup(q)                  // [Point] built via push-struct
+    fq = first(dq)               // first_Point, struct getter
+    println("${fq.x} ${fq.y}")    // 10 20
+    di = dup(5)
+    println("${first(di)}")       // 5
+    ds = dup("wyn")
+    println("${first(ds)}")       // wyn
     return 0
 }

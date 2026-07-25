@@ -70,6 +70,54 @@ static GenericInstantiation* g_instantiations = NULL;
 static GenericStructInstantiation* g_struct_instantiations = NULL;
 
 // Register a generic function instantiation
+// Infer the concrete type-PARAMETER values (T, U, ...) for a call, matching
+// each declared param type expr against the actual argument types. `x: T`
+// binds T to the arg's type; `xs: [T]` binds T to the arg array's element type.
+// Writes type_param_count entries into out_args and returns that count (0 if
+// the function isn't generic). Used so the monomorphic NAME and instantiation
+// key are keyed on the type-PARAM value, not the raw arg type - e.g. first(d)
+// with `xs:[T]` and d:[Point] keys on Point (first_Point), not array.
+int wyn_infer_type_args_for_call(Token func_name, Type** arg_types, int arg_count,
+                                 Type** out_args, int out_cap) {
+    GenericFunction* gf = wyn_find_generic_function(func_name);
+    if (!gf) return 0;
+    FnStmt* fn = gf->original_fn;
+    int n = gf->type_param_count;
+    if (n > out_cap) n = out_cap;
+    for (int p = 0; p < n; p++) out_args[p] = NULL;
+    if (fn) {
+        for (int a = 0; a < arg_count && a < fn->param_count; a++) {
+            Type* at = arg_types[a];
+            Expr* pt = fn->param_types ? fn->param_types[a] : NULL;
+            if (!pt) continue;
+            if (pt->type == EXPR_IDENT) {
+                for (int p = 0; p < n; p++) {
+                    if (gf->type_params[p].length == pt->token.length &&
+                        memcmp(gf->type_params[p].start, pt->token.start, pt->token.length) == 0 &&
+                        !out_args[p] && at)
+                        out_args[p] = at;
+                }
+            } else if (pt->type == EXPR_ARRAY && pt->array.count == 1 &&
+                       pt->array.elements[0] && pt->array.elements[0]->type == EXPR_IDENT) {
+                Token tpn = pt->array.elements[0]->token;
+                for (int p = 0; p < n; p++) {
+                    if (gf->type_params[p].length == tpn.length &&
+                        memcmp(gf->type_params[p].start, tpn.start, tpn.length) == 0 && !out_args[p]) {
+                        Type* elem = (at && at->kind == TYPE_ARRAY) ? at->array_type.element_type : NULL;
+                        if (elem) out_args[p] = elem;
+                    }
+                }
+            }
+        }
+    }
+    // Any param not bound (e.g. inferred from an untyped literal) defaults to
+    // the positional arg type, else int - preserves the legacy scalar behavior.
+    for (int p = 0; p < n; p++) {
+        if (!out_args[p]) out_args[p] = (p < arg_count && arg_types[p]) ? arg_types[p] : make_type(TYPE_INT);
+    }
+    return n;
+}
+
 void wyn_register_generic_instantiation(Token func_name, Type** type_args, int type_arg_count) {
     // Check if this instantiation already exists
     GenericInstantiation* current = g_instantiations;
@@ -638,45 +686,82 @@ Type* wyn_infer_generic_call_type(Token function_name, Expr** args, int arg_coun
     if (!generic_fn) {
         return NULL;
     }
-    
-    // Enhanced type inference from all arguments
-    Type** inferred_types = malloc(sizeof(Type*) * arg_count);
-    
-    for (int i = 0; i < arg_count; i++) {
-        Type* arg_type = NULL;
-        
-        if (args[i]) {
-            switch (args[i]->type) {
-                case EXPR_INT:
-                    arg_type = make_type(TYPE_INT);
-                    break;
-                case EXPR_FLOAT:
-                    arg_type = make_type(TYPE_FLOAT);
-                    break;
-                case EXPR_BOOL:
-                    arg_type = make_type(TYPE_BOOL);
-                    break;
-                case EXPR_STRING:
-                    arg_type = make_type(TYPE_STRING);
-                    break;
-                case EXPR_ARRAY:
-                    arg_type = make_type(TYPE_ARRAY);
-                    break;
-                default:
-                    arg_type = make_type(TYPE_INT); // Default
-                    break;
+    FnStmt* fn = generic_fn->original_fn;
+
+    // Map each type parameter -> the concrete Type inferred from the matching
+    // argument. Match by the declared param type expr: `x: T` binds T to arg's
+    // type; `xs: [T]` binds T to the arg array's element type. This lets the
+    // return type `[T]` / `T` resolve correctly so a var bound to the call gets
+    // the right Type (e.g. `d = dup(p)` typed `[Point]`, so `first(d)`
+    // monomorphizes to first_Point, not first_int).
+    Type** param_map = calloc(generic_fn->type_param_count, sizeof(Type*));
+    if (fn) {
+        for (int a = 0; a < arg_count && a < fn->param_count; a++) {
+            Type* at = args[a] ? args[a]->expr_type : NULL;
+            Expr* pt = fn->param_types ? fn->param_types[a] : NULL;
+            if (!pt) continue;
+            // `x: T`
+            if (pt->type == EXPR_IDENT) {
+                for (int p = 0; p < generic_fn->type_param_count; p++) {
+                    if (generic_fn->type_params[p].length == pt->token.length &&
+                        memcmp(generic_fn->type_params[p].start, pt->token.start, pt->token.length) == 0) {
+                        if (!param_map[p] && at) param_map[p] = at;
+                    }
+                }
             }
-        } else {
-            arg_type = make_type(TYPE_INT); // Default
+            // `xs: [T]` -> bind T to the arg array's element type.
+            else if (pt->type == EXPR_ARRAY && pt->array.count == 1 &&
+                     pt->array.elements[0] && pt->array.elements[0]->type == EXPR_IDENT) {
+                Token tpn = pt->array.elements[0]->token;
+                for (int p = 0; p < generic_fn->type_param_count; p++) {
+                    if (generic_fn->type_params[p].length == tpn.length &&
+                        memcmp(generic_fn->type_params[p].start, tpn.start, tpn.length) == 0) {
+                        Type* elem = (at && at->kind == TYPE_ARRAY) ? at->array_type.element_type : NULL;
+                        if (!param_map[p] && elem) param_map[p] = elem;
+                    }
+                }
+            }
         }
-        
-        inferred_types[i] = arg_type;
     }
-    
-    // For now, return the first argument's type as the function return type
-    Type* return_type = (arg_count > 0) ? inferred_types[0] : make_type(TYPE_INT);
-    
-    free(inferred_types);
+
+    // Resolve the return type expr against the param map.
+    Type* return_type = NULL;
+    if (fn && fn->return_type) {
+        Expr* rt = fn->return_type;
+        // `-> T`
+        if (rt->type == EXPR_IDENT) {
+            for (int p = 0; p < generic_fn->type_param_count; p++) {
+                if (generic_fn->type_params[p].length == rt->token.length &&
+                    memcmp(generic_fn->type_params[p].start, rt->token.start, rt->token.length) == 0) {
+                    return_type = param_map[p];
+                    break;
+                }
+            }
+        }
+        // `-> [T]` (or `[concrete]`) -> an array whose element is the resolved T.
+        else if (rt->type == EXPR_ARRAY && rt->array.count == 1 &&
+                 rt->array.elements[0] && rt->array.elements[0]->type == EXPR_IDENT) {
+            Type* arr = make_type(TYPE_ARRAY);
+            Token en = rt->array.elements[0]->token;
+            Type* elem = NULL;
+            for (int p = 0; p < generic_fn->type_param_count; p++) {
+                if (generic_fn->type_params[p].length == en.length &&
+                    memcmp(generic_fn->type_params[p].start, en.start, en.length) == 0) {
+                    elem = param_map[p]; break;
+                }
+            }
+            arr->array_type.element_type = elem ? elem : make_type(TYPE_INT);
+            return_type = arr;
+        }
+    }
+
+    // Fallback: first argument's inferred type (legacy behavior).
+    if (!return_type) {
+        return_type = (arg_count > 0 && args[0] && args[0]->expr_type)
+                      ? args[0]->expr_type : make_type(TYPE_INT);
+    }
+
+    free(param_map);
     return return_type;
 }
 
@@ -845,12 +930,14 @@ void wyn_emit_monomorphic_function_declaration(void* original_fn_ptr, Type** typ
         if (i > 0) wyn_emit(", ");
         
         const char* param_type = "long long";
-        if (original_fn->param_types && original_fn->param_types[i] && 
-            original_fn->param_types[i]->type == EXPR_IDENT) {
-            param_type = wyn_resolve_type_to_c(original_fn->param_types[i]->token, original_fn, type_args, type_arg_count);
-        } else if (i < type_arg_count && type_args[i]) {
-            // Fallback: use inferred type from call args (aggregate-aware).
-            param_type = wyn_type_arg_to_c(type_args[i]);
+        if (original_fn->param_types && original_fn->param_types[i]) {
+            // Resolve the whole param type EXPR: handles `x: T` (type param) and
+            // `xs: [T]` (EXPR_ARRAY -> WynArray). Without the array case a
+            // `[T]` param mis-resolved to long long and the C signature clashed
+            // with the WynArray the caller passed.
+            const char* rt = wyn_resolve_type_expr_to_c(original_fn->param_types[i], original_fn, type_args, type_arg_count);
+            if (rt) param_type = rt;
+            else if (i < type_arg_count && type_args[i]) param_type = wyn_type_arg_to_c(type_args[i]);
         }
         
         wyn_emit("%s %.*s", param_type, 
@@ -884,12 +971,14 @@ void wyn_emit_monomorphic_function_definition(void* original_fn_ptr, Type** type
         if (i > 0) wyn_emit(", ");
         
         const char* param_type = "long long";
-        if (original_fn->param_types && original_fn->param_types[i] && 
-            original_fn->param_types[i]->type == EXPR_IDENT) {
-            param_type = wyn_resolve_type_to_c(original_fn->param_types[i]->token, original_fn, type_args, type_arg_count);
-        } else if (i < type_arg_count && type_args[i]) {
-            // Fallback: use inferred type from call args (aggregate-aware).
-            param_type = wyn_type_arg_to_c(type_args[i]);
+        if (original_fn->param_types && original_fn->param_types[i]) {
+            // Resolve the whole param type EXPR: handles `x: T` (type param) and
+            // `xs: [T]` (EXPR_ARRAY -> WynArray). Without the array case a
+            // `[T]` param mis-resolved to long long and the C signature clashed
+            // with the WynArray the caller passed.
+            const char* rt = wyn_resolve_type_expr_to_c(original_fn->param_types[i], original_fn, type_args, type_arg_count);
+            if (rt) param_type = rt;
+            else if (i < type_arg_count && type_args[i]) param_type = wyn_type_arg_to_c(type_args[i]);
         }
         
         wyn_emit("%s %.*s", param_type, 
@@ -897,13 +986,23 @@ void wyn_emit_monomorphic_function_definition(void* original_fn_ptr, Type** type
     }
     
     wyn_emit(") {\n");
-    
+
     if (original_fn->body) {
+        // Give codegen the type-param -> concrete-Type map for THIS instance so
+        // aggregate builds/indexes in the body (`[T]`, `xs[0]`) pick the right
+        // element push/get instead of assuming int. Cleared after the body.
+        extern void wyn_codegen_set_mono_context(Token*, Type**, int);
+        extern void wyn_codegen_set_mono_vars(Token*, Expr**, int);
+        extern void wyn_codegen_clear_mono_context(void);
+        wyn_codegen_set_mono_context(original_fn->type_params, type_args,
+            type_arg_count < original_fn->type_param_count ? type_arg_count : original_fn->type_param_count);
+        wyn_codegen_set_mono_vars(original_fn->params, original_fn->param_types, original_fn->param_count);
         codegen_stmt(original_fn->body);
+        wyn_codegen_clear_mono_context();
     } else {
         wyn_emit("    return 0;\n");
     }
-    
+
     wyn_emit("}\n\n");
 }
 
@@ -1081,8 +1180,16 @@ void wyn_collect_generic_instantiations_from_expr(void* expr_ptr) {
                         }
                     }
                     
-                    // Register this instantiation
-                    wyn_register_generic_instantiation(func_name, arg_types, expr->call.arg_count);
+                    // Register keyed on the TYPE-PARAM values (mapped through the
+                    // declared param types) so the definition matches the call
+                    // site's monomorphic name (e.g. first_Point / first_int, not
+                    // first_array).
+                    Type* tparg[8];
+                    int tpn = wyn_infer_type_args_for_call(func_name, arg_types, expr->call.arg_count, tparg, 8);
+                    if (tpn > 0)
+                        wyn_register_generic_instantiation(func_name, tparg, tpn);
+                    else
+                        wyn_register_generic_instantiation(func_name, arg_types, expr->call.arg_count);
                     free(arg_types);
                 }
             }

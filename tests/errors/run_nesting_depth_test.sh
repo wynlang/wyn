@@ -29,9 +29,22 @@ expect_deep_error "1500 nested if -> clean error, not segfault" "$TMP/ifs.wyn"
 python3 -c "print('fn main(){ var x = ' + 'not '*600 + 'true }')" > "$TMP/nots.wyn"
 expect_deep_error "600 nested not -> clean error, not segfault" "$TMP/nots.wyn"
 
+# Nested ARRAY literals recurse through the whole precedence chain per level, so
+# each `[` pushes far more C frames than a bare `(`. Deeply nested `[[[...` used
+# to SIGSEGV at ~460 levels - BELOW the 500 expr_depth guard, which only counted
+# one increment per expression(). The array-literal branch now charges an extra
+# depth unit, so it trips the guard cleanly instead of crashing the native stack.
+python3 -c "print('fn main(){ var x = ' + '['*519 + '1' + ']'*519 + ' }')" > "$TMP/arrs.wyn"
+expect_deep_error "519 nested array literals -> clean error, not segfault" "$TMP/arrs.wyn"
+
 # A modest 100-deep block nest must still parse cleanly (no over-reject).
 python3 -c "print('fn main(){' + '{'*100 + 'println(\"ok\")' + '}'*100 + '}')" > "$TMP/ok100.wyn"
 out=$(perl -e 'alarm(15); exec @ARGV' -- "$WYN" check "$TMP/ok100.wyn" 2>&1); rc=$?
 if [ $rc -eq 0 ]; then ok "100 nested blocks still parse"; else bad "100-deep over-rejected (rc=$rc) [$out]"; fi
+
+# A modest 100-deep array-literal nest must still parse cleanly (no over-reject).
+python3 -c "print('fn main(){ var x = ' + '['*100 + '1' + ']'*100 + '; println(\"ok\") }')" > "$TMP/okarr100.wyn"
+out=$(perl -e 'alarm(15); exec @ARGV' -- "$WYN" check "$TMP/okarr100.wyn" 2>&1); rc=$?
+if [ $rc -eq 0 ]; then ok "100 nested array literals still parse"; else bad "100-deep array over-rejected (rc=$rc) [$out]"; fi
 
 echo ""; echo "nesting-depth: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]

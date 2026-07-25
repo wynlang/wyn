@@ -36,6 +36,22 @@ const char* Shape_toString(Shape val) {
     return "Unknown";
 }
 
+static int __wyn_eq_enum_Shape(Shape __l, Shape __r);
+static int __wyn_eq_enum_Shape(Shape __l, Shape __r) {
+    if (__l.tag != __r.tag) return 0;
+    switch (__l.tag) {
+      case Shape_Circle_TAG: {
+        if ((__l.data.Circle_value) != (__r.data.Circle_value)) return 0;
+        break;
+      }
+      case Shape_Rect_TAG: {
+        if ((__l.data.Rect_value.f0) != (__r.data.Rect_value.f0)) return 0;
+        if ((__l.data.Rect_value.f1) != (__r.data.Rect_value.f1)) return 0;
+        break;
+      }
+    }
+    return 1;
+}
 
 // Lambda functions (defined before use)
 __attribute__((hot)) static inline long long area(Shape s);

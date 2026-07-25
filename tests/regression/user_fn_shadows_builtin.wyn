@@ -1,0 +1,29 @@
+// A user-defined function named `len` used to be silently ignored: a bare
+// call `len(xs)` was lowered to the builtin `(xs).count`, so this printed 3
+// instead of 999 (silent miscompile). Fixed: codegen checks user_fn_defined
+// and takes the normal call path when the user defined the function.
+// sum/first/keys/sort/count are bare calls too and already resolved to the
+// user function - guard them here so a future len-style lowering can't regress.
+// EXPECT: 999
+// EXPECT: 111
+// EXPECT: 222
+// EXPECT: 333
+// EXPECT: 444
+// EXPECT: 555
+
+fn len(a: [int]) -> int { return 999 }
+fn sum(a: [int]) -> int { return 111 }
+fn first(a: [int]) -> int { return 222 }
+fn keys(a: [int]) -> int { return 333 }
+fn sort(a: [int]) -> int { return 444 }
+fn count(a: [int]) -> int { return 555 }
+
+fn main() {
+    var xs = [1, 2, 3]
+    println(len(xs))
+    println(sum(xs))
+    println(first(xs))
+    println(keys(xs))
+    println(sort(xs))
+    println(count(xs))
+}

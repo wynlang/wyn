@@ -834,6 +834,38 @@ void codegen_expr(Expr* expr) {
             // `==` on struct values doesn't compile (this was an ICE). Detect
             // via expr_type AND the struct-var registry - the checker often
             // doesn't propagate TYPE_STRUCT onto bare ident references.
+            // data-enum == data-enum: a tagged-union struct, so raw C `==` is a
+            // type error. Route to __wyn_eq_enum_<E> (tag + payload compare).
+            // Detect via expr_type TYPE_ENUM or the enum-var registry.
+            if (expr->binary.op.type == TOKEN_EQEQ || expr->binary.op.type == TOKEN_BANGEQ) {
+                const char* _een = NULL;
+                Expr* _esides[2] = { expr->binary.left, expr->binary.right };
+                extern int is_data_enum_type(const char*);
+                for (int _si = 0; _si < 2 && !_een; _si++) {
+                    Expr* _e = _esides[_si];
+                    if (_e->expr_type && _e->expr_type->kind == TYPE_ENUM && _e->expr_type->name.length > 0) {
+                        static char _eeb[64]; token_to_cstr(_eeb, sizeof(_eeb), _e->expr_type->name);
+                        if (is_data_enum_type(_eeb)) _een = _eeb;
+                    }
+                    if (!_een && _e->type == EXPR_IDENT) {
+                        char _vn[128]; token_to_cstr(_vn, sizeof(_vn), _e->token);
+                        extern const char* get_enum_var_type(const char*);
+                        const char* _evt = get_enum_var_type(_vn);
+                        if (_evt && is_data_enum_type(_evt)) _een = _evt;
+                    }
+                }
+                if (_een) {
+                    if (expr->binary.op.type == TOKEN_BANGEQ) emit("(!");
+                    emit("__wyn_eq_enum_%s(", _een);
+                    codegen_expr(expr->binary.left);
+                    emit(", ");
+                    codegen_expr(expr->binary.right);
+                    emit(")");
+                    if (expr->binary.op.type == TOKEN_BANGEQ) emit(")");
+                    break;
+                }
+            }
+
             if (expr->binary.op.type == TOKEN_EQEQ || expr->binary.op.type == TOKEN_BANGEQ) {
                 const char* _eqsn = NULL;
                 Expr* _sides[2] = { expr->binary.left, expr->binary.right };
@@ -1533,10 +1565,14 @@ void codegen_expr(Expr* expr) {
                 } else {
                     emit("false");
                 }
-            } else if (expr->call.callee->type == EXPR_IDENT && 
+            } else if (expr->call.callee->type == EXPR_IDENT &&
                        expr->call.callee->token.length == 3 &&
-                       memcmp(expr->call.callee->token.start, "len", 3) == 0) {
-                // Special handling for len() function
+                       memcmp(expr->call.callee->token.start, "len", 3) == 0 &&
+                       !user_fn_defined(expr->call.callee->token)) {
+                // Special handling for len() function. A user-defined `fn len`
+                // takes the normal call path instead (do NOT lower to .count) -
+                // otherwise `len(xs)` silently called the builtin and ignored
+                // the user function, a silent miscompile.
                 if (expr->call.arg_count == 1) {
                     Expr* arg = expr->call.args[0];
                     if (arg->type == EXPR_ARRAY) {
@@ -1657,15 +1693,26 @@ void codegen_expr(Expr* expr) {
                             }
                             arg_types[i] = expr->call.args[i]->expr_type;
                         }
-                        
+
+                        // Map ARG types -> TYPE-PARAM values through the declared
+                        // param types, so `first(d)` with `xs:[T]` and d:[Point]
+                        // keys on Point (first_Point) instead of the raw array
+                        // type (first_array). Falls back to raw arg types for a
+                        // non-generic or unbindable case.
+                        extern int wyn_infer_type_args_for_call(Token, Type**, int, Type**, int);
+                        Type* tparg[8];
+                        int tpn = wyn_infer_type_args_for_call(func_name, arg_types, expr->call.arg_count, tparg, 8);
+                        Type** key_args = tpn > 0 ? tparg : arg_types;
+                        int key_count = tpn > 0 ? tpn : expr->call.arg_count;
+
                         // Generate monomorphic function name
                         char monomorphic_name[256];
-                        wyn_generate_monomorphic_name(func_name, arg_types, expr->call.arg_count, 
+                        wyn_generate_monomorphic_name(func_name, key_args, key_count,
                                                       monomorphic_name, sizeof(monomorphic_name));
-                        
+
                         // Register this instantiation for later code generation
-                        wyn_register_generic_instantiation(func_name, arg_types, expr->call.arg_count);
-                        
+                        wyn_register_generic_instantiation(func_name, key_args, key_count);
+
                         // Emit call to monomorphic function
                         emit("%s", monomorphic_name);
                         free(arg_types);
@@ -3633,6 +3680,42 @@ void codegen_expr(Expr* expr) {
             emit("({ WynArray __arr_%d = array_new(); ", arr_id);
             for (int i = 0; i < expr->array.count; i++) {
                 Expr* elem = expr->array.elements[i];
+                // Monomorphization: an element that is a generic value-param
+                // (e.g. `x` in `[x, x]` inside `dup<T>(x:T)->[T]`) is typed T by
+                // the shared checker (= int), so the default dispatch below would
+                // wrongly emit array_push_int for a struct/string T. Resolve the
+                // param's concrete instantiation Type and push accordingly.
+                if (elem->type == EXPR_IDENT) {
+                    extern Type* wyn_mono_var_type(const char*, int);
+                    Type* mt = wyn_mono_var_type(elem->token.start, elem->token.length);
+                    if (mt) {
+                        if (mt->kind == TYPE_STRUCT) {
+                            Token tn = mt->struct_type.name.start ? mt->struct_type.name : mt->name;
+                            emit("array_push_struct(&__arr_%d, ", arr_id);
+                            codegen_expr(elem);
+                            emit(", %.*s); ", tn.length, tn.start);
+                            continue;
+                        } else if (mt->kind == TYPE_ENUM && mt->name.length > 0) {
+                            emit("array_push_struct(&__arr_%d, ", arr_id);
+                            codegen_expr(elem);
+                            emit(", %.*s); ", mt->name.length, mt->name.start);
+                            continue;
+                        } else if (mt->kind == TYPE_STRING) {
+                            emit("array_push_str(&__arr_%d, ", arr_id);
+                            codegen_expr(elem); emit("); ");
+                            continue;
+                        } else if (mt->kind == TYPE_FLOAT) {
+                            emit("array_push_float(&__arr_%d, ", arr_id);
+                            codegen_expr(elem); emit("); ");
+                            continue;
+                        } else if (mt->kind == TYPE_BOOL) {
+                            emit("array_push_bool(&__arr_%d, ", arr_id);
+                            codegen_expr(elem); emit("); ");
+                            continue;
+                        }
+                        // int/other: fall through to default int push below.
+                    }
+                }
                 if (elem->type == EXPR_STRING) {
                     emit("array_push_str(&__arr_%d, ", arr_id);
                     codegen_expr(elem);
@@ -3944,16 +4027,24 @@ void codegen_expr(Expr* expr) {
                     if (expr->index.array->expr_type &&
                         expr->index.array->expr_type->kind == TYPE_ARRAY) {
                         elem_type = expr->index.array->expr_type->array_type.element_type;
-                        if (elem_type) {
-                            if (elem_type->kind == TYPE_STRUCT) {
-                                is_struct_array = true;
-                            } else if (elem_type->kind == TYPE_STRING) {
-                                is_string_array = true;
-                            } else if (elem_type->kind == TYPE_FLOAT) {
-                                is_float_array = true;
-                            } else if (elem_type->kind == TYPE_BOOL) {
-                                is_bool_array = true;
-                            }
+                    }
+                    // Monomorphization: `xs[0]` where xs is a generic value-param
+                    // `xs: [T]` - the shared checker typed the element as int, so
+                    // resolve T's concrete instantiation Type for this instance.
+                    if (!elem_type && expr->index.array->type == EXPR_IDENT) {
+                        extern Type* wyn_mono_var_type(const char*, int);
+                        elem_type = wyn_mono_var_type(expr->index.array->token.start,
+                                                      expr->index.array->token.length);
+                    }
+                    if (elem_type) {
+                        if (elem_type->kind == TYPE_STRUCT) {
+                            is_struct_array = true;
+                        } else if (elem_type->kind == TYPE_STRING) {
+                            is_string_array = true;
+                        } else if (elem_type->kind == TYPE_FLOAT) {
+                            is_float_array = true;
+                        } else if (elem_type->kind == TYPE_BOOL) {
+                            is_bool_array = true;
                         }
                     }
                     // Array literal with a float first element -> float array.

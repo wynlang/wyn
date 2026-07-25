@@ -270,6 +270,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_ui_coverage_test.sh
 	@echo "=== Running install-layout canary ==="
 	@WYN=./wyn bash tests/errors/run_install_layout_test.sh
+	@echo "=== Running unsupported-field-type honesty gates ==="
+	@WYN=./wyn bash tests/errors/run_unsupported_field_type_test.sh
 	@echo "=== Running fuzz smoke (seed 1) ==="
 	@WYN=./wyn bash tests/fuzz/run_fuzz.sh 1 60
 

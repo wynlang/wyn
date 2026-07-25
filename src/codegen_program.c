@@ -107,6 +107,95 @@ static int cg_struct_comparable(Program* prog, StructStmt* sd, int depth) {
     }
     return 1;
 }
+// Data enums are tagged-union structs, so C `==` on them is a type error (this
+// was an ICE and, for struct fields typed as an enum, a hard C error
+// "__l.t != __r.t"). Emit a per-data-enum `__wyn_eq_enum_<Enum>` that compares
+// the tag and, for equal tags, the variant payload (scalars directly, strings
+// via strcmp, struct payloads via their own eq helper, nested/recursive enums
+// recursively). Simple (payload-less) enums stay plain C enums and keep `==`.
+// Emit the payload comparison for one enum field (accessed via `lhs`/`rhs`
+// expressions already spelled by the caller). `tx` is the field's declared
+// TYPE EXPR - the source truth for whether the payload is a data-enum / struct /
+// string / scalar (the c_type registry stores "long long" for user types, which
+// would wrongly pick raw `!=`). `boxed` = the field is heap-boxed (self-ref).
+static void emit_enum_field_cmp(Program* prog, Expr* tx, int boxed,
+                                const char* lhs, const char* rhs) {
+    extern int is_data_enum_type(const char*);
+    // Classify the field type from its type expr.
+    char tn[128] = {0};
+    int is_string = 0, is_data_enum = 0, is_struct = 0;
+    if (tx && tx->type == EXPR_IDENT) {
+        int l = tx->token.length < 127 ? tx->token.length : 127;
+        memcpy(tn, tx->token.start, l); tn[l] = '\0';
+        if (l == 6 && memcmp(tn, "string", 6) == 0) is_string = 1;
+        else if (is_data_enum_type(tn)) is_data_enum = 1;
+        else if (cg_find_struct(prog, tx->token)) is_struct = 1;
+    }
+    if (boxed) {
+        // Heap-boxed recursive self-reference: deref and recurse. Guard NULLs.
+        emit("        if ((%s) && (%s)) { if (!__wyn_eq_enum_%s(*(%s), *(%s))) return 0; } "
+             "else if ((%s) != (%s)) return 0;\n",
+             lhs, rhs, tn, lhs, rhs, lhs, rhs);
+        return;
+    }
+    if (is_string) {
+        emit("        if (strcmp((%s) ? (%s) : \"\", (%s) ? (%s) : \"\") != 0) return 0;\n",
+             lhs, lhs, rhs, rhs);
+    } else if (is_data_enum) {
+        emit("        if (!__wyn_eq_enum_%s(%s, %s)) return 0;\n", tn, lhs, rhs);
+    } else if (is_struct) {
+        emit("        if (!__wyn_eq_%s(%s, %s)) return 0;\n", tn, lhs, rhs);
+    } else {
+        emit("        if ((%s) != (%s)) return 0;\n", lhs, rhs);
+    }
+}
+static void emit_enum_eq_helpers(Program* prog) {
+    extern int is_enum_field_boxed(const char*, const char*, int);
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* s = prog->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            if (s->type != STMT_ENUM) continue;
+            if (s->enum_decl.type_param_count > 0) continue;  // generic enum: no monomorphic type
+            EnumStmt* ed = &s->enum_decl;
+            int has_data = 0;
+            for (int v = 0; v < ed->variant_count; v++)
+                if (ed->variant_type_counts[v] > 0) { has_data = 1; break; }
+            if (!has_data) continue;   // plain enum -> C `==` is fine
+            char en[128]; token_to_cstr(en, sizeof(en), ed->name);
+            if (pass == 0) {
+                emit("static int __wyn_eq_enum_%s(%s __l, %s __r);\n", en, en, en);
+                continue;
+            }
+            emit("static int __wyn_eq_enum_%s(%s __l, %s __r) {\n", en, en, en);
+            emit("    if (__l.tag != __r.tag) return 0;\n");
+            emit("    switch (__l.tag) {\n");
+            for (int v = 0; v < ed->variant_count; v++) {
+                char vn[128]; token_to_cstr(vn, sizeof(vn), ed->variants[v]);
+                emit("      case %s_%s_TAG: {\n", en, vn);
+                int nf = ed->variant_type_counts[v];
+                if (nf == 1) {
+                    int boxed = is_enum_field_boxed(en, vn, 0);
+                    char lhs[256], rhs[256];
+                    snprintf(lhs, sizeof(lhs), "__l.data.%s_value", vn);
+                    snprintf(rhs, sizeof(rhs), "__r.data.%s_value", vn);
+                    emit_enum_field_cmp(prog, ed->variant_types[v][0], boxed, lhs, rhs);
+                } else if (nf > 1) {
+                    for (int f = 0; f < nf; f++) {
+                        int boxed = is_enum_field_boxed(en, vn, f);
+                        char lhs[256], rhs[256];
+                        snprintf(lhs, sizeof(lhs), "__l.data.%s_value.f%d", vn, f);
+                        snprintf(rhs, sizeof(rhs), "__r.data.%s_value.f%d", vn, f);
+                        emit_enum_field_cmp(prog, ed->variant_types[v][f], boxed, lhs, rhs);
+                    }
+                }
+                emit("        break;\n      }\n");
+            }
+            emit("    }\n");
+            emit("    return 1;\n}\n");
+        }
+    }
+}
 // Emitted after ALL struct typedefs; prototypes first so helpers for structs
 // with struct-typed fields can call each other regardless of source order.
 static void emit_struct_eq_helpers(Program* prog) {
@@ -134,6 +223,12 @@ static void emit_struct_eq_helpers(Program* prog) {
                          fn.length, fn.start, fn.length, fn.start, fn.length, fn.start, fn.length, fn.start);
                 } else if (cg_find_struct(prog, t)) {
                     emit("    if (!__wyn_eq_%.*s(__l.%.*s, __r.%.*s)) return 0;\n",
+                         t.length, t.start, fn.length, fn.start, fn.length, fn.start);
+                } else if (({ char _ft[128]; token_to_cstr(_ft, sizeof(_ft), t);
+                             extern int is_data_enum_type(const char*); is_data_enum_type(_ft); })) {
+                    // Data-enum field is a tagged-union struct: `!=` is a C type
+                    // error. Compare via the enum eq helper (tag + payload).
+                    emit("    if (!__wyn_eq_enum_%.*s(__l.%.*s, __r.%.*s)) return 0;\n",
                          t.length, t.start, fn.length, fn.start, fn.length, fn.start);
                 } else {
                     emit("    if (__l.%.*s != __r.%.*s) return 0;\n",
@@ -367,7 +462,10 @@ void codegen_program(Program* prog) {
         }
     }
 
-    // Field-wise == helpers for user structs (after all typedefs exist).
+    // Tag+payload == helpers for data enums (before struct helpers so a struct
+    // with a data-enum field can call __wyn_eq_enum_<E>), then field-wise ==
+    // helpers for user structs (after all typedefs exist).
+    emit_enum_eq_helpers(prog);
     emit_struct_eq_helpers(prog);
 
     // Generate module-level constants (only if has main - script mode puts them in wyn_main)
