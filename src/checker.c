@@ -411,6 +411,40 @@ static Type* freshen_container_ret(Expr* call_expr, Type* ret) {
     return fresh;
 }
 
+// Open-map read-modify-write inference. An empty `{}` map leaves its value
+// type OPEN (NULL) so the first STORE fixes it - but `m[k] = m[k] + 1` reads
+// m[k] BEFORE the store, and the open-map read's historical string default
+// then fixed the map to string, rejecting the int store in the other branch
+// (the book's word-count pattern). In a read-modify-write the read and the
+// stored result share the map's ONE value type, so the read cannot decide it -
+// the OTHER operand of the arithmetic can. Walk the RHS: when one side of an
+// arithmetic binary op is an index-read of this same open map, the value type
+// is the other side's type. Returns NULL when the pattern doesn't apply
+// (then the normal first-store rule decides, unchanged).
+static bool expr_is_read_of_map(Expr* e, Type* map_t, SymbolTable* scope) {
+    return e && e->type == EXPR_INDEX &&
+           check_expr(e->index.array, scope) == map_t;
+}
+static Type* infer_open_map_rmw(Expr* v, Type* map_t, SymbolTable* scope) {
+    if (!v || v->type != EXPR_BINARY) return NULL;
+    WynTokenType op = v->binary.op.type;
+    if (op != TOKEN_PLUS && op != TOKEN_MINUS && op != TOKEN_STAR &&
+        op != TOKEN_SLASH && op != TOKEN_PERCENT) return NULL;
+    Expr* l = v->binary.left;
+    Expr* r = v->binary.right;
+    if (expr_is_read_of_map(l, map_t, scope)) {
+        Type* t = infer_open_map_rmw(r, map_t, scope);
+        return t ? t : check_expr(r, scope);
+    }
+    if (expr_is_read_of_map(r, map_t, scope)) {
+        Type* t = infer_open_map_rmw(l, map_t, scope);
+        return t ? t : check_expr(l, scope);
+    }
+    // The read may sit deeper: m[k] * 2 + 1.
+    Type* t = infer_open_map_rmw(l, map_t, scope);
+    return t ? t : infer_open_map_rmw(r, map_t, scope);
+}
+
 // T2.5.1: Optional Type Implementation - Helper functions
 static bool is_optional_type(Type* type) {
     return type && type->kind == TYPE_OPTIONAL;
@@ -5627,6 +5661,19 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // Check index assignment
             Type* obj_t = check_expr(expr->index_assign.object, scope);
             check_expr(expr->index_assign.index, scope);
+            // OPEN map (empty {} literal, value type not yet fixed) written with
+            // a read-modify-write of itself (m[k] = m[k] + 1): the read cannot
+            // decide the value type (its string default used to poison the map),
+            // so infer it from the arithmetic's OTHER operand BEFORE checking the
+            // RHS - then the inner m[k] reads type as the inferred type and the
+            // store below sees consistent types. See infer_open_map_rmw.
+            if (obj_t && obj_t->kind == TYPE_MAP && !obj_t->map_type.value_type) {
+                Type* rmw = infer_open_map_rmw(expr->index_assign.value, obj_t, scope);
+                if (rmw && (rmw->kind == TYPE_INT || rmw->kind == TYPE_FLOAT ||
+                            rmw->kind == TYPE_BOOL || rmw->kind == TYPE_STRING)) {
+                    obj_t->map_type.value_type = rmw;
+                }
+            }
             Type* val_t = check_expr(expr->index_assign.value, scope);
             // Enforce element/value type on stores. Codegen picks the insert
             // fn from the VALUE's type but reads decode with the CONTAINER's
@@ -6513,6 +6560,23 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
         case STMT_YIELD: if (stmt->yield_stmt.value) check_expr(stmt->yield_stmt.value, scope); break;
         case STMT_RETURN:
             if (stmt->ret.value) {
+                // `return m[k]` where m is an OPEN map (empty {} literal whose
+                // value type no store has fixed yet): the declared return type
+                // IS the expected value type, so let it fill the map instead of
+                // the open-read string default (which mis-reported "Return type
+                // mismatch. Expected int, got string" - the book's cache
+                // pattern). Scalars only; the first-store rule stays in charge
+                // of everything else.
+                if (current_function_return_type && stmt->ret.value->type == EXPR_INDEX &&
+                    (current_function_return_type->kind == TYPE_INT ||
+                     current_function_return_type->kind == TYPE_FLOAT ||
+                     current_function_return_type->kind == TYPE_BOOL ||
+                     current_function_return_type->kind == TYPE_STRING)) {
+                    Type* cont_t = check_expr(stmt->ret.value->index.array, scope);
+                    if (cont_t && cont_t->kind == TYPE_MAP && !cont_t->map_type.value_type) {
+                        cont_t->map_type.value_type = current_function_return_type;
+                    }
+                }
                 Type* return_expr_type = check_expr(stmt->ret.value, scope);
                 // Validate return type matches function return type
                 if (current_function_return_type && return_expr_type) {

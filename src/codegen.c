@@ -177,7 +177,7 @@ int is_c_name_collision(const char* name) {
         "sin_approx","cos_approx","pi_const","e_const",
         "int_abs","int_sign","int_clamp","int_min","int_max","int_pow",
         "int_is_even","int_is_odd","int_is_positive","int_is_negative","int_is_zero",
-        "int_times","int_to_float","int_array_len","int_array_push",
+        "int_times","int_to_float","int_to_int","int_array_len","int_array_push",
         "float_abs","float_sign","float_clamp","float_min","float_max","float_pow",
         "float_sqrt","float_floor","float_ceil","float_round","float_round_to",
         "float_sin","float_cos","float_tan","float_asin","float_acos","float_atan",

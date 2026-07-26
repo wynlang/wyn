@@ -1,0 +1,18 @@
+// Regression: a read from an OPEN map (empty {} literal, value type not yet
+// fixed) used to default the read to string, and a read-modify-write store
+// (m[k] = m[k] + 1) then FIXED the map's value type to string - so the other
+// branch's `m[k] = 1` was rejected ("Cannot store int in map with values of
+// string"). The book's word-count pattern. The RMW's non-map operand now
+// drives the inference: the map becomes an int map end-to-end.
+// EXPECT: 2
+fn main() {
+    counts = {}
+    word = "apple"
+    if (counts.has(word)) {
+        counts[word] = counts[word] + 1
+    } else {
+        counts[word] = 1
+    }
+    counts[word] = counts[word] + 1
+    print("${counts[word]}")
+}
