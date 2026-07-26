@@ -6,11 +6,19 @@ WYN="${WYN:-./wyn}"
 TMPDIR=$(mktemp -d)
 START=$(date +%s)
 
+# Per-test watchdog (stock macOS has no `timeout`): wall-clock alarm + CPU
+# rlimit so a looping/leaking test can't exhaust the host across N shards.
+WYN_TEST_TIMEOUT="${WYN_TEST_TIMEOUT:-60}"
+with_limits() {
+    ( ulimit -t $((WYN_TEST_TIMEOUT * 2)) 2>/dev/null
+      exec perl -e 'alarm shift; exec @ARGV or exit 127' "$WYN_TEST_TIMEOUT" "$@" )
+}
+
 run_test() {
     local file="$1"
     local name=$(basename "$file")
     local result_file="$TMPDIR/$name"
-    local output=$($WYN run "$file" 2>&1)
+    local output=$(with_limits $WYN run "$file" 2>&1)
     local exit_code=$?
     if [ $exit_code -eq 0 ] && ! echo "$output" | grep -q "Segmentation fault"; then
         echo "PASS" > "$result_file"
