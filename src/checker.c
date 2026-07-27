@@ -7313,6 +7313,26 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
         case STMT_ENUM:
             // Create proper enum type
             {
+                // Generic enums are NOT yet monomorphized (generic structs are).
+                // Emitting one would put the literal type parameter into the C
+                // (`T Some_value;`, `Opt_Some(T value)`) and fail to build, and a
+                // single C enum type cannot hold two different payload types for
+                // two instantiations. Reject cleanly at check time rather than
+                // leak a raw C error. (Generic STRUCTS are supported - use a
+                // struct wrapper, or a concrete enum, until generic-enum
+                // monomorphization lands.)
+                if (stmt->enum_decl.type_param_count > 0) {
+                    fprintf(stderr,
+                        "Error at line %d: generic enums are not yet supported "
+                        "(enum '%.*s' has type parameter%s).\n"
+                        "  Generic structs ARE supported; use a concrete enum "
+                        "or a generic struct wrapper for now.\n",
+                        stmt->enum_decl.name.line,
+                        (int)stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                        stmt->enum_decl.type_param_count > 1 ? "s" : "");
+                    had_error = true;
+                    break;
+                }
                 // Reject a mutually-recursive enum cycle (enum A{AtoB(B)} enum
                 // B{BtoA(A)}). Codegen represents enum payloads by value and only
                 // heap-boxes DIRECT self-references, so a cross-enum cycle is an
@@ -8826,6 +8846,14 @@ void check_program(Program* prog) {
                             }
                             Symbol* sym = find_symbol(global_scope, concrete);
                             current_function_return_type = sym ? sym->type : make_type(TYPE_RESULT);
+                        } else if (wyn_is_generic_struct(type_name)) {
+                            // A generic fn returning its OWN generic struct, e.g.
+                            // `fn wrap<T>(x: T) -> Box<T>`. The body returns a
+                            // monomorphic Box_int (TYPE_STRUCT), so make the declared
+                            // return a TYPE_STRUCT too - otherwise it defaulted to int
+                            // and the return-stmt check false-rejected with
+                            // "Return type mismatch. Expected int, got Box_int".
+                            current_function_return_type = make_type(TYPE_STRUCT);
                         }
                     }
                 } else if (fn->return_type->type == EXPR_ARRAY) {

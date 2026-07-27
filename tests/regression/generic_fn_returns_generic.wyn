@@ -1,0 +1,22 @@
+// A generic fn whose declared return type is its own generic struct
+// (fn wrap<T>(x: T) -> Box<T>) used to be false-rejected by the checker:
+// the declared return `Box<T>` (EXPR_CALL) wasn't recognized, so the return
+// type defaulted to int while the body returned a Box_int struct ->
+// "Return type mismatch. Expected int, got Box_int". Now the checker resolves
+// a generic-struct return type to that struct's Type so the return checks, and
+// codegen types the monomorphic instance / call result correctly.
+// EXPECT: 5
+// EXPECT: 1 hi
+
+struct Box<T> { val: T }
+fn wrap<T>(x: T) -> Box<T> { return Box { val: x } }
+
+struct Pair<A, B> { first: A, second: B }
+fn mk<A, B>(a: A, b: B) -> Pair<A, B> { return Pair { first: a, second: b } }
+
+fn main() {
+    var b = wrap(5)
+    println("${b.val}")
+    var p = mk(1, "hi")
+    println("${p.first} ${p.second}")
+}

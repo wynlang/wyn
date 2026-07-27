@@ -1,0 +1,14 @@
+// A nested generic-struct literal (Box { val: Box { val: 42 } }) used to
+// miscompile: the inner Box<int> wasn't recognized when inferring the outer
+// type arg, so the outer became Box<unknown> and its field was typed
+// `long long` -> C error "initializing 'long long' with Box_int". Now the
+// checker recurses into field-value types to instantiate inner generics first,
+// so the outer type arg is the inner monomorphic struct type.
+// EXPECT: 42
+
+struct Box<T> { val: T }
+
+fn main() {
+    var bb = Box { val: Box { val: 42 } }
+    println("${bb.val.val}")
+}

@@ -337,6 +337,8 @@ void wyn_codegen_set_mono_vars(Token* param_names, Expr** param_types, int param
     }
 }
 void wyn_codegen_clear_mono_context(void) { g_mono_param_count = 0; g_mono_var_count = 0; }
+// True while emitting a monomorphic generic-function body.
+int wyn_codegen_in_mono(void) { return g_mono_var_count > 0 || g_mono_param_count > 0; }
 
 // Module emission tracking (reset per compilation)
 static bool modules_emitted_this_compilation = false;

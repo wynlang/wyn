@@ -520,11 +520,11 @@ bool wyn_is_generic_struct(Token struct_name) {
 }
 
 // T3.1.2: Generate a monomorphic struct name
-void wyn_generate_monomorphic_struct_name(Token base_name, Type** type_args, int type_arg_count, 
+void wyn_generate_monomorphic_struct_name(Token base_name, Type** type_args, int type_arg_count,
                                           char* buffer, size_t buffer_size) {
     // Create a unique name for the monomorphic struct instance
     snprintf(buffer, buffer_size, "%.*s_", (int)base_name.length, base_name.start);
-    
+
     for (int i = 0; i < type_arg_count; i++) {
         if (type_args[i]) {
             switch (type_args[i]->kind) {
@@ -540,6 +540,35 @@ void wyn_generate_monomorphic_struct_name(Token base_name, Type** type_args, int
                 case TYPE_BOOL:
                     strncat(buffer, "bool", buffer_size - strlen(buffer) - 1);
                     break;
+                case TYPE_ARRAY:
+                    strncat(buffer, "array", buffer_size - strlen(buffer) - 1);
+                    break;
+                case TYPE_STRUCT: {
+                    // Nested generic (e.g. Box<Box<int>> -> Box_Box_int): use the
+                    // (possibly monomorphic) struct name so the outer instance name
+                    // is distinct and the field type resolves, instead of the old
+                    // "unknown" fallback that produced Box_unknown + a long long field.
+                    Token n = type_args[i]->struct_type.name.start ? type_args[i]->struct_type.name : type_args[i]->name;
+                    if (n.start && n.length > 0) {
+                        size_t remaining = buffer_size - strlen(buffer) - 1;
+                        size_t copy_len = (size_t)n.length < remaining ? (size_t)n.length : remaining;
+                        strncat(buffer, n.start, copy_len);
+                    } else {
+                        strncat(buffer, "struct", buffer_size - strlen(buffer) - 1);
+                    }
+                    break;
+                }
+                case TYPE_ENUM: {
+                    Token n = type_args[i]->name;
+                    if (n.start && n.length > 0) {
+                        size_t remaining = buffer_size - strlen(buffer) - 1;
+                        size_t copy_len = (size_t)n.length < remaining ? (size_t)n.length : remaining;
+                        strncat(buffer, n.start, copy_len);
+                    } else {
+                        strncat(buffer, "enum", buffer_size - strlen(buffer) - 1);
+                    }
+                    break;
+                }
                 default:
                     strncat(buffer, "unknown", buffer_size - strlen(buffer) - 1);
                     break;
@@ -629,11 +658,11 @@ void* wyn_monomorphize_struct(GenericStruct* generic_struct, Type** type_args, i
                 // Create a new expression with the concrete type
                 Expr* concrete_type = malloc(sizeof(Expr));
                 concrete_type->type = EXPR_IDENT;
-                
+
                 // Create a token for the concrete type name
                 Token concrete_token;
                 Type* concrete_type_obj = type_args[type_param_index];
-                
+
                 switch (concrete_type_obj->kind) {
                     case TYPE_INT:
                         concrete_token.start = "int";
@@ -651,6 +680,30 @@ void* wyn_monomorphize_struct(GenericStruct* generic_struct, Type** type_args, i
                         concrete_token.start = "bool";
                         concrete_token.length = 4;
                         break;
+                    case TYPE_STRUCT: {
+                        // Nested generic (Box<Box<int>>): the field's concrete type
+                        // is the inner (possibly monomorphic) struct's C name, so the
+                        // field emits `Box_int val;` instead of a long long.
+                        Token n = concrete_type_obj->struct_type.name.start
+                                  ? concrete_type_obj->struct_type.name : concrete_type_obj->name;
+                        if (n.start && n.length > 0) {
+                            concrete_token.start = n.start;
+                            concrete_token.length = n.length;
+                        } else {
+                            concrete_token.start = "int"; concrete_token.length = 3;
+                        }
+                        break;
+                    }
+                    case TYPE_ENUM: {
+                        Token n = concrete_type_obj->name;
+                        if (n.start && n.length > 0) {
+                            concrete_token.start = n.start;
+                            concrete_token.length = n.length;
+                        } else {
+                            concrete_token.start = "int"; concrete_token.length = 3;
+                        }
+                        break;
+                    }
                     default:
                         concrete_token.start = "int";  // fallback
                         concrete_token.length = 3;
@@ -658,7 +711,7 @@ void* wyn_monomorphize_struct(GenericStruct* generic_struct, Type** type_args, i
                 }
                 concrete_token.line = original_type->token.line;
                 concrete_type->token = concrete_token;
-                
+
                 monomorphic_struct->field_types[i] = concrete_type;
             } else {
                 // Not a type parameter, copy as-is
@@ -673,6 +726,50 @@ void* wyn_monomorphize_struct(GenericStruct* generic_struct, Type** type_args, i
     }
     
     return (void*)monomorphic_struct;
+}
+
+// Recompute a generic struct-init's monomorphic name from concrete field-value
+// types resolved at codegen time. The checker bakes the name when it first sees
+// the literal, but inside a generic FUNCTION body a type param (e.g. B in
+// `Pair<A,B>`) may have defaulted to int at check time, so the baked name
+// (Pair_int_int) disagrees with the real instantiation (Pair_int_string) once
+// the fn is monomorphized. Given each declared field's resolved value Type
+// (indexed to match the struct's declared field order), this maps type params
+// to their concrete args, generates the monomorphic name, registers the
+// instantiation, and writes the name into `out` (returns 1 on success).
+int wyn_mono_struct_init_name(Token struct_name, Token* init_field_names,
+                              Type** init_field_value_types, int init_field_count,
+                              char* out, size_t out_size) {
+    GenericStruct* gs = wyn_find_generic_struct(struct_name);
+    if (!gs || gs->type_param_count < 1) return 0;
+    StructStmt* def = gs->original_struct;
+    if (!def) return 0;
+
+    int nparams = gs->type_param_count;
+    Type** type_args = malloc(sizeof(Type*) * nparams);
+    for (int tp = 0; tp < nparams; tp++) {
+        Type* resolved = NULL;
+        for (int fi = 0; fi < def->field_count && !resolved; fi++) {
+            Expr* fte = def->field_types[fi];
+            if (!fte || fte->type != EXPR_IDENT) continue;
+            if (fte->token.length != gs->type_params[tp].length ||
+                memcmp(fte->token.start, gs->type_params[tp].start, fte->token.length) != 0) continue;
+            // Match this declared field to the supplied init field by name.
+            Token dfn = def->fields[fi];
+            for (int ii = 0; ii < init_field_count; ii++) {
+                if (init_field_names[ii].length == dfn.length &&
+                    memcmp(init_field_names[ii].start, dfn.start, dfn.length) == 0) {
+                    resolved = init_field_value_types[ii];
+                    break;
+                }
+            }
+        }
+        type_args[tp] = resolved ? resolved : make_type(TYPE_INT);
+    }
+    wyn_generate_monomorphic_struct_name(struct_name, type_args, nparams, out, out_size);
+    wyn_register_generic_struct_instantiation(struct_name, type_args, nparams);
+    free(type_args);
+    return 1;
 }
 
 // Check if a function call is calling a generic function
@@ -888,6 +985,50 @@ static const char* wyn_resolve_type_expr_to_c(Expr* te, FnStmt* fn, Type** type_
         return wyn_resolve_type_to_c(te->token, fn, type_args, type_arg_count);
     if (te->type == EXPR_ARRAY)   return "WynArray";     // [T], [[T]], [int], ...
     if (te->type == EXPR_HASHMAP_LITERAL) return "WynHashMap*";
+    // Generic struct instantiation used as a type, e.g. `-> Box<T>` (parsed as
+    // EXPR_CALL). Resolve each type-arg expr through the fn's type params to the
+    // concrete type args of THIS instantiation, then spell the monomorphic
+    // struct name (Box_int). Without this a generic fn returning its own generic
+    // struct emitted `long long` and the C return type clashed with the Box_int
+    // the body returns.
+    if (te->type == EXPR_CALL && te->call.callee && te->call.callee->type == EXPR_IDENT) {
+        Token sname = te->call.callee->token;
+        // Builtins Option/Result/HashMap are handled elsewhere; only remap user
+        // generic structs here.
+        if (wyn_is_generic_struct(sname)) {
+            int nargs = te->call.arg_count;
+            if (nargs > 8) nargs = 8;
+            Type* resolved[8];
+            for (int i = 0; i < nargs; i++) {
+                resolved[i] = NULL;
+                Expr* ae = te->call.args[i];
+                if (ae && ae->type == EXPR_IDENT) {
+                    // Map the type-arg name through the fn's type params.
+                    for (int p = 0; p < fn->type_param_count && p < type_arg_count; p++) {
+                        if (fn->type_params[p].length == ae->token.length &&
+                            memcmp(fn->type_params[p].start, ae->token.start, ae->token.length) == 0) {
+                            resolved[i] = type_args[p]; break;
+                        }
+                    }
+                    // A concrete-named arg (`Box<int>`): map the builtin name.
+                    if (!resolved[i]) {
+                        Token tn = ae->token;
+                        if (tn.length == 3 && memcmp(tn.start, "int", 3) == 0) resolved[i] = make_type(TYPE_INT);
+                        else if (tn.length == 6 && memcmp(tn.start, "string", 6) == 0) resolved[i] = make_type(TYPE_STRING);
+                        else if (tn.length == 5 && memcmp(tn.start, "float", 5) == 0) resolved[i] = make_type(TYPE_FLOAT);
+                        else if (tn.length == 4 && memcmp(tn.start, "bool", 4) == 0) resolved[i] = make_type(TYPE_BOOL);
+                    }
+                }
+                if (!resolved[i]) resolved[i] = make_type(TYPE_INT);
+            }
+            static char mbufs[4][128]; static int mbi = 0;
+            char* b = mbufs[mbi++ & 3];
+            wyn_generate_monomorphic_struct_name(sname, resolved, nargs, b, 128);
+            // Ensure the instantiation is registered so its struct def is emitted.
+            wyn_register_generic_struct_instantiation(sname, resolved, nargs);
+            return b;
+        }
+    }
     return NULL;
 }
 
@@ -1021,24 +1162,136 @@ void wyn_generate_monomorphic_instances(void) {
     }
 }
 
+// Prescan a monomorphic fn body for generic struct-init literals and register
+// the struct instantiations they need, using this instance's mono context to
+// resolve field-value types. Runs BEFORE struct defs are emitted so a generic
+// struct built inside a generic fn body (Pair_int_string inside mk<A,B>) has
+// its definition emitted. Mirrors the codegen-time recompute in EXPR_STRUCT_INIT.
+static void wyn_prescan_mono_expr(Expr* e) {
+    if (!e) return;
+    extern Type* wyn_mono_var_type(const char*, int);
+    switch (e->type) {
+        case EXPR_STRUCT_INIT: {
+            if (e->struct_init.field_count > 0 && wyn_find_generic_struct(e->struct_init.type_name)) {
+                Type** fvts = malloc(sizeof(Type*) * e->struct_init.field_count);
+                for (int i = 0; i < e->struct_init.field_count; i++) {
+                    Expr* fv = e->struct_init.field_values[i];
+                    Type* t = NULL;
+                    if (fv && fv->type == EXPR_IDENT)
+                        t = wyn_mono_var_type(fv->token.start, fv->token.length);
+                    if (!t && fv) t = fv->expr_type;
+                    fvts[i] = t;
+                    wyn_prescan_mono_expr(fv);
+                }
+                char nm[128];
+                wyn_mono_struct_init_name(e->struct_init.type_name, e->struct_init.field_names,
+                                          fvts, e->struct_init.field_count, nm, sizeof(nm));
+                free(fvts);
+            } else {
+                for (int i = 0; i < e->struct_init.field_count; i++)
+                    wyn_prescan_mono_expr(e->struct_init.field_values[i]);
+            }
+            break;
+        }
+        case EXPR_CALL:
+            wyn_prescan_mono_expr(e->call.callee);
+            for (int i = 0; i < e->call.arg_count; i++) wyn_prescan_mono_expr(e->call.args[i]);
+            break;
+        case EXPR_BINARY:
+            wyn_prescan_mono_expr(e->binary.left); wyn_prescan_mono_expr(e->binary.right);
+            break;
+        case EXPR_UNARY:
+            wyn_prescan_mono_expr(e->unary.operand);
+            break;
+        case EXPR_ASSIGN:
+            wyn_prescan_mono_expr(e->assign.value);
+            break;
+        case EXPR_STRING_INTERP:
+            for (int i = 0; i < e->string_interp.count; i++)
+                wyn_prescan_mono_expr(e->string_interp.expressions[i]);
+            break;
+        default: break;
+    }
+}
+static void wyn_prescan_mono_stmt(Stmt* s) {
+    if (!s) return;
+    switch (s->type) {
+        case STMT_EXPR: wyn_prescan_mono_expr(s->expr); break;
+        case STMT_VAR: if (s->var.init) wyn_prescan_mono_expr(s->var.init); break;
+        case STMT_RETURN: if (s->ret.value) wyn_prescan_mono_expr(s->ret.value); break;
+        case STMT_BLOCK:
+            for (int i = 0; i < s->block.count; i++) wyn_prescan_mono_stmt(s->block.stmts[i]);
+            break;
+        case STMT_IF:
+            if (s->if_stmt.condition) wyn_prescan_mono_expr(s->if_stmt.condition);
+            wyn_prescan_mono_stmt(s->if_stmt.then_branch);
+            wyn_prescan_mono_stmt(s->if_stmt.else_branch);
+            break;
+        case STMT_WHILE:
+            if (s->while_stmt.condition) wyn_prescan_mono_expr(s->while_stmt.condition);
+            wyn_prescan_mono_stmt(s->while_stmt.body);
+            break;
+        case STMT_FOR:
+            wyn_prescan_mono_stmt(s->for_stmt.body);
+            break;
+        default: break;
+    }
+}
+static void wyn_prescan_mono_instance(FnStmt* fn, Type** type_args, int type_arg_count) {
+    if (!fn) return;
+    extern void wyn_codegen_set_mono_context(Token*, Type**, int);
+    extern void wyn_codegen_set_mono_vars(Token*, Expr**, int);
+    extern void wyn_codegen_clear_mono_context(void);
+    wyn_codegen_set_mono_context(fn->type_params, type_args,
+        type_arg_count < fn->type_param_count ? type_arg_count : fn->type_param_count);
+    wyn_codegen_set_mono_vars(fn->params, fn->param_types, fn->param_count);
+    // Return type may itself be a generic struct (`-> Box<T>`); resolving it
+    // registers the instantiation as a side effect.
+    if (fn->return_type)
+        (void)wyn_resolve_type_expr_to_c(fn->return_type, fn, type_args, type_arg_count);
+    wyn_prescan_mono_stmt(fn->body);
+    wyn_codegen_clear_mono_context();
+}
+
 // Generate monomorphic instances for codegen integration
 void wyn_generate_monomorphic_instances_for_codegen(void* prog_ptr) {
     Program* prog = (Program*)prog_ptr;
     (void)prog;
     GenericInstantiation* current = g_instantiations;
-    
-    // First, generate monomorphized struct definitions
-    GenericStructInstantiation* struct_current = g_struct_instantiations;
-    while (struct_current) {
-        if (struct_current->monomorphic_struct) {
-            // Generate the struct definition using codegen_stmt
-            extern void codegen_stmt(Stmt* stmt);
-            Stmt wrapper_stmt;
-            wrapper_stmt.type = STMT_STRUCT;
-            wrapper_stmt.struct_decl = *struct_current->monomorphic_struct;
-            codegen_stmt(&wrapper_stmt);
+
+    // Pre-pass: register any generic struct instantiations that only appear
+    // inside monomorphic fn bodies / return types, so their struct definitions
+    // get emitted below. (E.g. Pair_int_string built inside mk<A,B>, whose B
+    // defaulted to int at check time.)
+    for (GenericInstantiation* c = g_instantiations; c; c = c->next) {
+        GenericFunction* gf = wyn_find_generic_function(c->function_name);
+        if (gf && gf->original_fn)
+            wyn_prescan_mono_instance(gf->original_fn, c->type_args, c->type_arg_count);
+    }
+
+    // First, generate monomorphized struct definitions. The instantiation list
+    // is prepend-ordered (newest first), but a nested generic (Box<Box<int>>)
+    // registers the INNER instance before the OUTER one, so the outer's field
+    // type (Box_int) must be defined first. Emit in reverse list order (oldest
+    // registered first) so an inner instance precedes any outer that embeds it.
+    int _struct_inst_count = 0;
+    for (GenericStructInstantiation* c = g_struct_instantiations; c; c = c->next) _struct_inst_count++;
+    if (_struct_inst_count > 0) {
+        GenericStructInstantiation** _order = malloc(sizeof(GenericStructInstantiation*) * _struct_inst_count);
+        int _oi = _struct_inst_count - 1;
+        for (GenericStructInstantiation* c = g_struct_instantiations; c; c = c->next) _order[_oi--] = c;
+        for (int _si = 0; _si < _struct_inst_count; _si++) {
+            GenericStructInstantiation* struct_current = _order[_si];
+            if (struct_current->monomorphic_struct) {
+                // Generate the struct definition using codegen_stmt
+                extern void codegen_stmt(Stmt* stmt);
+                Stmt wrapper_stmt;
+                wrapper_stmt.type = STMT_STRUCT;
+                wrapper_stmt.struct_decl = *struct_current->monomorphic_struct;
+                codegen_stmt(&wrapper_stmt);
+            }
         }
-        struct_current = struct_current->next;
+        free(_order);
     }
     
     // Then generate function declarations and definitions as before

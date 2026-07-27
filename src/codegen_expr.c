@@ -4340,12 +4340,41 @@ void codegen_expr(Expr* expr) {
         }
         case EXPR_STRUCT_INIT: {
             Token type_name = expr->struct_init.type_name;
-            
+
             // Use monomorphic name if available (for generic structs)
             const char* actual_type_name;
             int actual_type_name_len;
             static char prefixed_type_name[128];
-            
+
+            // Inside a monomorphic generic-fn body, a generic struct literal's
+            // baked name may be wrong: a type param that defaulted to int at
+            // check time (e.g. B in Pair<A,B>) is now concrete. Recompute the
+            // name from the fields' real value types resolved via the mono
+            // context, so `Pair{first:a, second:b}` in mk<A,B> emits
+            // Pair_int_string, not the frozen Pair_int_int.
+            static char _mono_struct_name[128];
+            extern int wyn_codegen_in_mono(void);
+            extern Type* wyn_mono_var_type(const char*, int);
+            extern int wyn_mono_struct_init_name(Token, Token*, Type**, int, char*, size_t);
+            if (wyn_codegen_in_mono() && expr->struct_init.monomorphic_name &&
+                expr->struct_init.field_count > 0) {
+                Type** _fvts = malloc(sizeof(Type*) * expr->struct_init.field_count);
+                for (int _fi = 0; _fi < expr->struct_init.field_count; _fi++) {
+                    Expr* _fv = expr->struct_init.field_values[_fi];
+                    Type* _t = NULL;
+                    if (_fv && _fv->type == EXPR_IDENT)
+                        _t = wyn_mono_var_type(_fv->token.start, _fv->token.length);
+                    if (!_t && _fv) _t = _fv->expr_type;
+                    _fvts[_fi] = _t;
+                }
+                if (wyn_mono_struct_init_name(type_name, expr->struct_init.field_names,
+                                              _fvts, expr->struct_init.field_count,
+                                              _mono_struct_name, sizeof(_mono_struct_name))) {
+                    expr->struct_init.monomorphic_name = strdup(_mono_struct_name);
+                }
+                free(_fvts);
+            }
+
             if (expr->struct_init.monomorphic_name) {
                 actual_type_name = expr->struct_init.monomorphic_name;
                 actual_type_name_len = strlen(actual_type_name);
