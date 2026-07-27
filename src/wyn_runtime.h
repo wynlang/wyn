@@ -4505,6 +4505,16 @@ long long Task_try_recv(long long handle, long long* out_value) {
     return 0;
 }
 
+// Wyn-facing non-blocking try_recv: returns an int-optional (OptionInt).
+// Some(value) when a value was ready, None when empty/closed. This is the shim
+// the codegen emits for `Task.try_recv(ch)` - it wraps the pointer out-param
+// Task_try_recv above so Wyn code doesn't have to express a `long long*`.
+OptionInt Task_try_recv_opt(long long handle) {
+    long long v = 0;
+    if (Task_try_recv(handle, &v)) return OptionInt_Some((int)v);
+    return OptionInt_None();
+}
+
 // Select: wait until one of the channels has data, return its index (0-based).
 // Returns -1 when every channel is closed (no arm runs).
 //

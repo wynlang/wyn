@@ -253,6 +253,33 @@ void wyn_yield() {
     sched_yield();
 }
 
+// Scheduler hooks used to park/wake blocked coroutine channel operations
+// instead of busy-spinning on wyn_coro_yield() (the spawn_10k livelock: excess
+// senders re-enqueued themselves every yield, pegging all workers ~forever).
+extern void* wyn_current_task(void);      // scheduler Task* for the running coro
+extern void  wyn_io_park(void);           // don't re-enqueue the running coro on yield
+extern void  wyn_sched_enqueue(void* t);  // re-enqueue a parked Task* to the scheduler
+
+// FIFO push/pop of a parked-coroutine waiter. Caller holds task->mutex.
+static void waiter_push(WynWaiter** head, WynWaiter** tail, void* sched_task) {
+    WynWaiter* w = malloc(sizeof(WynWaiter));
+    if (!w) return;  // OOM: fall back to spin (the coro will re-check on next yield)
+    w->task = sched_task;
+    w->next = NULL;
+    if (*tail) (*tail)->next = w; else *head = w;
+    *tail = w;
+}
+// Pop one waiter's Task* (or NULL). Caller holds task->mutex.
+static void* waiter_pop(WynWaiter** head, WynWaiter** tail) {
+    WynWaiter* w = *head;
+    if (!w) return NULL;
+    *head = w->next;
+    if (!*head) *tail = NULL;
+    void* t = w->task;
+    free(w);
+    return t;
+}
+
 // Task coordinator implementation
 WynTask* wyn_task_new(int capacity) {
     WynTask* task = malloc(sizeof(WynTask));
@@ -262,16 +289,23 @@ WynTask* wyn_task_new(int capacity) {
     task->write_pos = 0;
     task->closed = 0;
     task->buffer = malloc(capacity * sizeof(void*));
-    
+    task->send_head = task->send_tail = NULL;
+    task->recv_head = task->recv_tail = NULL;
+
     pthread_mutex_init(&task->mutex, NULL);
     pthread_cond_init(&task->not_empty, NULL);
     pthread_cond_init(&task->not_full, NULL);
-    
+
     return task;
 }
 
 void wyn_task_send(WynTask* task, void* value) {
-    // If inside a coroutine, use non-blocking try-send with yield
+    // Inside a coroutine: try-send, and if the channel is FULL, PARK on the
+    // send-waiter list (don't re-enqueue) until a receiver frees a slot. The
+    // old code yield()ed, which re-enqueued the coroutine immediately - with
+    // more senders than capacity every worker busy-spun on the full channel
+    // (~900% CPU, spawn_10k never finished). Parking makes a blocked sender
+    // consume zero CPU until woken by the exact receiver that made room.
     if (wyn_coro_current()) {
         for (;;) {
             pthread_mutex_lock(&task->mutex);
@@ -280,12 +314,26 @@ void wyn_task_send(WynTask* task, void* value) {
                 task->buffer[task->write_pos] = value;
                 task->write_pos = (task->write_pos + 1) % task->capacity;
                 task->size++;
+                // Wake one receiver parked on an empty channel (if any).
+                void* woken = waiter_pop(&task->recv_head, &task->recv_tail);
                 pthread_cond_signal(&task->not_empty);
                 pthread_mutex_unlock(&task->mutex);
+                if (woken) wyn_sched_enqueue(woken);
                 return;
             }
-            pthread_mutex_unlock(&task->mutex);
-            wyn_coro_yield();
+            // Full: park this coroutine on the send-waiter list, then yield.
+            void* self = wyn_current_task();
+            if (self) {
+                waiter_push(&task->send_head, &task->send_tail, self);
+                wyn_io_park();  // scheduler won't re-enqueue us on yield
+                pthread_mutex_unlock(&task->mutex);
+                wyn_coro_yield();  // suspend until a receiver wakes us
+            } else {
+                // No task identity (shouldn't happen in a coroutine): fall back
+                // to the old cooperative yield so we never hang here.
+                pthread_mutex_unlock(&task->mutex);
+                wyn_coro_yield();
+            }
         }
     }
     // Main thread / OS thread: poll + pump instead of blocking forever, so a
@@ -300,8 +348,10 @@ void wyn_task_send(WynTask* task, void* value) {
             task->buffer[task->write_pos] = value;
             task->write_pos = (task->write_pos + 1) % task->capacity;
             task->size++;
+            void* woken = waiter_pop(&task->recv_head, &task->recv_tail);
             pthread_cond_signal(&task->not_empty);
             pthread_mutex_unlock(&task->mutex);
+            if (woken) wyn_sched_enqueue(woken);
             return;
         }
         pthread_mutex_unlock(&task->mutex);
@@ -323,7 +373,9 @@ void wyn_task_send(WynTask* task, void* value) {
 }
 
 void* wyn_task_recv(WynTask* task) {
-    // If inside a coroutine, use non-blocking try-recv with yield
+    // Inside a coroutine: try-recv, and if EMPTY, PARK on the recv-waiter list
+    // (don't re-enqueue) until a sender delivers. Symmetric to wyn_task_send's
+    // parking - no busy-spin while blocked.
     if (wyn_coro_current()) {
         for (;;) {
             pthread_mutex_lock(&task->mutex);
@@ -331,13 +383,25 @@ void* wyn_task_recv(WynTask* task) {
                 void* value = task->buffer[task->read_pos];
                 task->read_pos = (task->read_pos + 1) % task->capacity;
                 task->size--;
+                // Wake one sender parked on a full channel (if any).
+                void* woken = waiter_pop(&task->send_head, &task->send_tail);
                 pthread_cond_signal(&task->not_full);
                 pthread_mutex_unlock(&task->mutex);
+                if (woken) wyn_sched_enqueue(woken);
                 return value;
             }
             if (task->closed) { pthread_mutex_unlock(&task->mutex); return NULL; }
-            pthread_mutex_unlock(&task->mutex);
-            wyn_coro_yield();
+            // Empty: park this coroutine on the recv-waiter list, then yield.
+            void* self = wyn_current_task();
+            if (self) {
+                waiter_push(&task->recv_head, &task->recv_tail, self);
+                wyn_io_park();
+                pthread_mutex_unlock(&task->mutex);
+                wyn_coro_yield();
+            } else {
+                pthread_mutex_unlock(&task->mutex);
+                wyn_coro_yield();
+            }
         }
     }
     // Main thread / OS thread: poll + pump instead of blocking forever, so a
@@ -351,8 +415,12 @@ void* wyn_task_recv(WynTask* task) {
             void* value = task->buffer[task->read_pos];
             task->read_pos = (task->read_pos + 1) % task->capacity;
             task->size--;
+            // A main-thread receive also frees a slot: wake a parked sender so
+            // it can make progress (this is the wake that drives spawn_10k).
+            void* woken = waiter_pop(&task->send_head, &task->send_tail);
             pthread_cond_signal(&task->not_full);
             pthread_mutex_unlock(&task->mutex);
+            if (woken) wyn_sched_enqueue(woken);
             return value;
         }
         if (task->closed) { pthread_mutex_unlock(&task->mutex); return NULL; }
@@ -377,12 +445,26 @@ void* wyn_task_recv(WynTask* task) {
 void wyn_task_close(WynTask* task) {
     pthread_mutex_lock(&task->mutex);
     task->closed = 1;
+    // Wake every parked sender/receiver so they observe `closed` and return
+    // (a blocked op on a now-closed channel must not stay parked forever).
+    void* woken;
+    // Collect under the lock, enqueue after unlocking.
+    WynWaiter* to_wake_head = NULL; WynWaiter* to_wake_tail = NULL;
+    while ((woken = waiter_pop(&task->send_head, &task->send_tail)))
+        waiter_push(&to_wake_head, &to_wake_tail, woken);
+    while ((woken = waiter_pop(&task->recv_head, &task->recv_tail)))
+        waiter_push(&to_wake_head, &to_wake_tail, woken);
     pthread_cond_broadcast(&task->not_empty);
     pthread_cond_broadcast(&task->not_full);
     pthread_mutex_unlock(&task->mutex);
+    while ((woken = waiter_pop(&to_wake_head, &to_wake_tail)))
+        wyn_sched_enqueue(woken);
 }
 
 void wyn_task_free(WynTask* task) {
+    // Drain any leftover waiter nodes (normally none by free time).
+    while (waiter_pop(&task->send_head, &task->send_tail)) {}
+    while (waiter_pop(&task->recv_head, &task->recv_tail)) {}
     pthread_mutex_destroy(&task->mutex);
     pthread_cond_destroy(&task->not_empty);
     pthread_cond_destroy(&task->not_full);

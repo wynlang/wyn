@@ -56,6 +56,7 @@ static Type* lambda_ctx_param_seed = NULL;
 static SymbolTable* global_scope = NULL;
 static Program* current_program = NULL;  // For looking up struct definitions
 static Type* builtin_int = NULL;
+static Type* builtin_int_opt = NULL;  // int? — used by Task.try_recv's return type
 
 // W9 namespaced imports: names brought in by a WHOLE-module `import m` (as
 // opposed to selective `import { foo } from m`). After a whole-module import,
@@ -1163,7 +1164,10 @@ void init_checker() {
     builtin_ptr = make_type(TYPE_STRUCT);
     { Token _pn = {TOKEN_IDENT, "void*", 5, 0}; builtin_ptr->struct_type.name = _pn; }
     builtin_array = make_type(TYPE_ARRAY);
-    
+    // int? — the return type of Task.try_recv (non-blocking receive → Option).
+    builtin_int_opt = make_type(TYPE_OPTIONAL);
+    builtin_int_opt->optional_type.inner_type = builtin_int;
+
     // Register collection types
     Type* builtin_map = make_type(TYPE_MAP);
     Token map_tok = {TOKEN_IDENT, "HashMap", 7, 0};
@@ -2517,7 +2521,8 @@ void init_checker() {
         {"Task_send", 9, builtin_void, 2, builtin_int},
         {"Task_recv", 9, builtin_int, 1, builtin_int},
         {"Task_close", 10, builtin_void, 1, builtin_int},
-        {"Task_try_recv", 13, builtin_int, 2, builtin_int},
+        // Task.try_recv(ch) — non-blocking receive returning int? (Some/none).
+        {"Task_try_recv", 13, builtin_int_opt, 1, builtin_int},
         {"Task_select_2", 13, builtin_int, 2, builtin_int},
         {"Task_select_3", 13, builtin_int, 3, builtin_int},
         // S4 cooperative cancellation: Task.cancel(handle) requests cancellation
@@ -2705,7 +2710,7 @@ void init_checker() {
         {"Task_value", 10, 1, builtin_int},
         {"Task_get", 8, 1, builtin_int},
         {"Task_recv", 9, 1, builtin_int},
-        {"Task_try_recv", 13, 1, builtin_int},
+        {"Task_try_recv", 13, 1, builtin_int_opt},
         {"Task_select_2", 13, 1, builtin_int},
         {"Task_select_3", 13, 1, builtin_int},
         {"Task_free_value", 15, 1, builtin_void},
