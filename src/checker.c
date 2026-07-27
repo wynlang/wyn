@@ -4625,6 +4625,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                 }
                 if (is_known_module) {
+                    // Task.select has no bare form - only the arity-suffixed
+                    // Task.select_2 / Task.select_3 exist (codegen lowers
+                    // Task.<m> to Task_<m>, so `Task.select` becomes a call to
+                    // the undeclared C fn Task_select and only died at C-compile
+                    // with a leaked `undeclared function 'Task_select'`). Reject
+                    // it here with a did-you-mean naming the real functions.
+                    // Narrow by design: only this known arity-suffixed family,
+                    // so no previously-valid namespace call is affected.
+                    if (strcmp(obj_name, "Task") == 0 && strcmp(method_name, "select") == 0) {
+                        fprintf(stderr, "Error at line %d: unknown function 'Task.select' - did you mean 'Task.select_2' or 'Task.select_3'?\n", method.line);
+                        show_source_line(method.line);
+                        fprintf(stderr, "  \033[34mHelp:\033[0m Task.select takes a fixed number of channels: use Task.select_2(a, b) for 2 or Task.select_3(a, b, c) for 3.\n");
+                        had_error = true;
+                        expr->expr_type = builtin_int;
+                        return builtin_int;
+                    }
                     // pub enforcement: a dot call into a user module (`m.f()`)
                     // must target a `pub fn` (or `export fn`). Builtin
                     // namespaces and C packages are not in the module registry
