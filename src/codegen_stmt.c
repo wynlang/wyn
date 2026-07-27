@@ -168,6 +168,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     clear_local_variables();
     { extern void reset_shadow_vars(void); reset_shadow_vars(); }
     { extern void reset_string_vars(void); reset_string_vars(); }
+    { extern void reset_borrowed_string_locals(void); reset_borrowed_string_locals(); }
     { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
         char param_name[256]; token_to_cstr(param_name, sizeof(param_name), fn_stmt->fn.params[i]);
@@ -250,11 +251,18 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     }
     
     emit("%s %s_%.*s(", return_type, c_prefix, fn_stmt->fn.name.length, fn_stmt->fn.name.start);
-    
+
+    // Track whether this module function returns a Wyn `string`, so STMT_RETURN
+    // can retain a borrowed return value (#32). Saved/restored around the body.
+    extern bool current_fn_returns_string;
+    bool _prev_fn_returns_string_mp = current_fn_returns_string;
+    current_fn_returns_string =
+        (strcmp(return_type, "const char*") == 0 || strcmp(return_type, "char*") == 0);
+
     // Parameters
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
         if (i > 0) emit(", ");
-        
+
         // Check if parameter has a type expression
         if (fn_stmt->fn.param_types && fn_stmt->fn.param_types[i]) {
             Expr* param_type = fn_stmt->fn.param_types[i];
@@ -321,9 +329,10 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
         }
     }
     emit("\n");
-    
+
     // Restore context
     current_module_prefix = saved_prefix;
+    current_fn_returns_string = _prev_fn_returns_string_mp;
 }
 
 static int stmt_line(Stmt* s) {
@@ -1764,6 +1773,16 @@ void codegen_stmt(Stmt* stmt) {
                 extern void register_releasable_string_var(const char*);
                 register_string_var(_svn);
                 register_releasable_string_var(_svn);
+                // Retain-on-return borrow tracking (#32): a string local bound
+                // directly from a parameter (or from another borrowed local) is
+                // an ALIAS of a value the callee does not own. Record it so a
+                // later `return <alias>` retains to hand out a +1. A local bound
+                // from a fresh producer (concat/interp/alloc) is NOT borrowed.
+                if (stmt->var.init && stmt->var.init->type == EXPR_IDENT) {
+                    char _isrc[256]; token_to_cstr(_isrc, sizeof(_isrc), stmt->var.init->token);
+                    if (is_parameter(_isrc) || is_borrowed_string_local(_isrc))
+                        register_borrowed_string_local(_svn);
+                }
             }
             // Detect await_all on string spawn arrays → register result as string array
             if (stmt->var.init && stmt->var.init->type == EXPR_CALL &&
@@ -2217,9 +2236,29 @@ void codegen_stmt(Stmt* stmt) {
                         emit(");\n");
                     }
                 } else {
-                    emit("return ");
-                    codegen_expr(stmt->ret.value);
-                    emit(";\n");
+                    // Retain-on-return (#32): a string-returning function returns
+                    // a +1 (owned) reference (ARC convention). When the returned
+                    // expression is a BORROW (a parameter, or a local aliasing
+                    // one, or an unknown ident shape), the callee does not own it,
+                    // so retain it to hand the caller a +1 that its release will
+                    // balance. Fresh producers (concat/interp/call/method/literal,
+                    // and fresh string locals moved out via R4's liveness skip)
+                    // are already +1 and are NOT retained (retaining would leak).
+                    // wyn_rc_retain is a safe no-op on literals/non-heap pointers.
+                    extern bool current_fn_returns_string;
+                    extern int return_value_is_borrowed(Expr*);
+                    if (current_fn_returns_string &&
+                        return_value_is_borrowed(stmt->ret.value)) {
+                        // Evaluate once into a temp (the return expr may have side
+                        // effects, e.g. an index), retain, then return it.
+                        emit("return ({ const char* __rret = ");
+                        codegen_expr(stmt->ret.value);
+                        emit("; wyn_rc_retain(__rret); __rret; });\n");
+                    } else {
+                        emit("return ");
+                        codegen_expr(stmt->ret.value);
+                        emit(";\n");
+                    }
                 }
             }
             break;
@@ -2847,6 +2886,7 @@ void codegen_stmt(Stmt* stmt) {
             clear_local_variables();
             { extern void reset_shadow_vars(void); reset_shadow_vars(); }
             { extern void reset_string_vars(void); reset_string_vars(); }
+            { extern void reset_borrowed_string_locals(void); reset_borrowed_string_locals(); }
             { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
             for (int i = 0; i < stmt->fn.param_count; i++) {
                 char pname[256]; token_to_cstr(pname, sizeof(pname), stmt->fn.params[i]);
@@ -2874,9 +2914,15 @@ void codegen_stmt(Stmt* stmt) {
             // bare `return;` in its body lowers to `return 0;` (see STMT_RETURN).
             extern bool current_fn_c_nonvoid;
             bool prev_fn_c_nonvoid = current_fn_c_nonvoid;
+            // Track whether this function returns a Wyn `string` (C `const char*`/
+            // `char*`), so STMT_RETURN can retain a borrowed return value (#32).
+            extern bool current_fn_returns_string;
+            bool prev_fn_returns_string = current_fn_returns_string;
             {
                 const char* _rt_eff = (return_type_buf[0] != '\0') ? return_type_buf : return_type;
                 current_fn_c_nonvoid = (strcmp(_rt_eff, "void") != 0);
+                current_fn_returns_string =
+                    (strcmp(_rt_eff, "const char*") == 0 || strcmp(_rt_eff, "char*") == 0);
             }
             if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_CALL &&
                 stmt->fn.return_type->call.callee->type == EXPR_IDENT) {
@@ -2998,6 +3044,7 @@ void codegen_stmt(Stmt* stmt) {
                 }
                 pop_scope(); current_fn_return_kind = prev_fn_return_kind;
                 current_fn_c_nonvoid = prev_fn_c_nonvoid;
+                current_fn_returns_string = prev_fn_returns_string;
                 emit("}\n\n"); break;
             }
             // TCO: detect tail-recursive calls and convert to goto loop
@@ -3092,6 +3139,7 @@ void codegen_stmt(Stmt* stmt) {
             pop_scope();   // Auto-cleanup before function end
             current_fn_return_kind = prev_fn_return_kind;
             current_fn_c_nonvoid = prev_fn_c_nonvoid;
+            current_fn_returns_string = prev_fn_returns_string;
             codegen_fn_returns_array = _prev_fn_returns_array;
             emit("}\n\n");
             break;

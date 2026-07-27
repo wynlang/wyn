@@ -889,6 +889,88 @@ void emit_string_releases_for_return(Expr* ret_value) {
 }
 int get_string_var_count(void) { return string_var_releasable_count; }
 
+// --- Retain-on-return borrow tracking (bug #32) -------------------------------
+// A string local bound directly from a parameter (or from another borrowed
+// local) is a BORROW: it aliases a pointer the callee does not own. Returning
+// such a value must hand the caller a +1 (owned) reference (see
+// docs/RC_OWNERSHIP_MODEL.md §5 Option A / §7 Stage 1), so the callee retains it
+// at the return. Fresh string locals (produced by concat/interp/alloc) are
+// already +1 and must NOT be retained. We track the borrowed set explicitly so
+// the return classifier can tell a borrow apart from a fresh owner.
+static char** borrowed_string_locals = NULL;
+static int borrowed_string_local_count = 0;
+static int borrowed_string_local_cap = 0;
+void register_borrowed_string_local(const char* name) {
+    for (int i = 0; i < borrowed_string_local_count; i++)
+        if (strcmp(borrowed_string_locals[i], name) == 0) return;
+    WYN_ENSURE_CAP(borrowed_string_locals, borrowed_string_local_count, borrowed_string_local_cap);
+    borrowed_string_locals[borrowed_string_local_count++] = strdup(name);
+}
+int is_borrowed_string_local(const char* name) {
+    for (int i = 0; i < borrowed_string_local_count; i++)
+        if (strcmp(borrowed_string_locals[i], name) == 0) return 1;
+    return 0;
+}
+void reset_borrowed_string_locals(void) {
+    for (int i = 0; i < borrowed_string_local_count; i++) free(borrowed_string_locals[i]);
+    borrowed_string_local_count = 0;
+}
+
+// True while emitting the body of a function whose Wyn return type is `string`
+// (C signature `const char*`/`char*`). Gates the retain-on-return emission.
+bool current_fn_returns_string = false;
+
+// Classifier: does the return expression of a string-returning function yield a
+// BORROWED (un-owned) reference that must be retained to become +1, or a FRESH
+// (+1) value that must not be? CONSERVATIVE / LEAK-LEANING: when unsure, treat
+// as borrow -> retain (an over-retain is a bounded leak; an under-retain is a
+// UAF). See docs/RC_OWNERSHIP_MODEL.md §5.
+//   BORROW (retain): return of a parameter, of a local aliased from a parameter,
+//     or any unknown identifier / index / field shape.
+//   FRESH (no retain): a freshly-allocated producer - string literal, `+`
+//     concat, string interpolation, a call/method call (which by this same
+//     invariant already returns +1), and a fresh string local (produced by an
+//     allocating initializer, already +1 and moved out to the caller).
+int return_value_is_borrowed(Expr* ret) {
+    if (!ret) return 0;
+    switch (ret->type) {
+        case EXPR_STRING:         // literal: immortal, retain is a no-op anyway
+        case EXPR_BINARY:         // `a + b` concat -> fresh alloc
+        case EXPR_STRING_INTERP:  // "${..}" -> fresh alloc
+        case EXPR_CALL:           // returns +1 by this same invariant
+        case EXPR_METHOD_CALL:    // builtin string methods return fresh allocs
+            return 0;
+        case EXPR_IDENT: {
+            char nm[256]; token_to_cstr(nm, sizeof(nm), ret->token);
+            if (is_parameter(nm)) return 1;                 // borrow of a param
+            if (is_borrowed_string_local(nm)) return 1;     // alias of a param
+            // A fresh string local (tracked, not borrowed): its +1 moves out to
+            // the caller (R4 liveness-skip keeps it alive) -> do NOT retain.
+            if (is_string_var(nm)) return 0;
+            return 1;                                       // unknown -> leak-lean
+        }
+        // Compound control-flow expressions: the result is whichever branch runs.
+        // Recurse - borrowed if ANY branch is borrowed. All-fresh branches (the
+        // common `return match { ... => a + b }`) then do NOT retain, so no leak;
+        // a mix retains (leak-lean: bounded leak on the fresh-arm executions, per
+        // docs/RC_OWNERSHIP_MODEL.md §5 - never a UAF).
+        case EXPR_TERNARY:
+            return return_value_is_borrowed(ret->ternary.then_expr) ||
+                   return_value_is_borrowed(ret->ternary.else_expr);
+        case EXPR_IF_EXPR:
+            return return_value_is_borrowed(ret->if_expr.then_expr) ||
+                   return_value_is_borrowed(ret->if_expr.else_expr);
+        case EXPR_MATCH:
+            for (int i = 0; i < ret->match.arm_count; i++)
+                if (return_value_is_borrowed(ret->match.arms[i].result)) return 1;
+            return 0;
+        case EXPR_BLOCK:
+            return return_value_is_borrowed(ret->block.result);
+        default:
+            return 1;  // index/field/other unknown shapes -> leak-lean borrow
+    }
+}
+
 // Liveness: check if a variable name appears in an expression
 static int expr_references_var(Expr* e, const char* name) {
     if (!e) return 0;

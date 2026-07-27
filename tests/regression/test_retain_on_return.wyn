@@ -1,0 +1,45 @@
+// Regression (#32): a string-returning function returns a +1 (owned) reference.
+// When the return expression is a BORROW - a parameter, or a local aliasing a
+// parameter, or one of several params chosen conditionally - the callee retains
+// it so the caller's release balances. Before the fix, `var b = f(a)` where f
+// returns its argument double-freed a (same rc pointer released twice) - a
+// use-after-free. Fresh producers (concat/interp) already own their +1 and must
+// NOT be retained (that would leak). This test drives all shapes in a loop so a
+// double-free would crash and a leak would show; correctness is the printed
+// output plus ASan cleanliness (this file is in the ASan suite).
+// EXPECT: hello
+// EXPECT: hello
+// EXPECT: world
+// EXPECT: ab
+// EXPECT: done
+
+fn passthru(s: string) -> string { return s }
+fn passchain(s: string) -> string {
+    var t = s
+    return t
+}
+fn pick(a: string, b: string, flag: int) -> string {
+    if flag > 0 { return a }
+    return b
+}
+fn cat(a: string, b: string) -> string { return a + b }
+
+fn main() {
+    // Loop the identity/alias/conditional paths so a double-free crashes.
+    var i = 0
+    var acc = 0
+    while i < 5000 {
+        var a = "payload string ${i} pad pad pad"
+        var b = passthru(a)
+        var c = passchain(a)
+        var d = pick(a, b, i)
+        acc = acc + b.len() + c.len() + d.len()
+        i = i + 1
+    }
+    // Correctness spot-checks of each shape.
+    println(passthru("hello"))
+    println(passchain("hello"))
+    println(pick("world", "nope", 1))
+    println(cat("a", "b"))
+    println("done")
+}
