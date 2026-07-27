@@ -1,0 +1,21 @@
+// Regression: string_repeat with non-positive/overflowing count must not
+// corrupt the heap (was: negative count -> int overflow -> wild OOB write).
+// EXPECT: neg=[] len=0
+// EXPECT: zero=[] len=0
+// EXPECT: norm=[ababab]
+// EXPECT: star=[zzzz]
+// EXPECT: count=20
+fn main() {
+    var neg = "ab".repeat(-1000)
+    print("neg=[${neg}] len=${neg.len()}")
+    var zero = "xy".repeat(0)
+    print("zero=[${zero}] len=${zero.len()}")
+    var norm = "ab".repeat(3)
+    print("norm=[${norm}]")
+    var star = "z" * 4
+    print("star=[${star}]")
+    // heap must be intact after the negative repeat
+    var parts: [string] = []
+    for i in 0..20 { parts.push("p" + int_to_str(i)) }
+    print("count=${parts.len()}")
+}

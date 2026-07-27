@@ -1549,6 +1549,21 @@ char* string_slice(const char* str, int start, int end) {
 }
 char* string_repeat(const char* str, int count) {
     int len = string_length(str);
+    // Guard non-positive counts (a negative count made `total` negative, so
+    // `wyn_str_alloc((size_t)total)` integer-overflowed to a tiny allocation
+    // and `result[total]` was a wild out-of-bounds write - heap corruption).
+    // Mirrors the guard in wyn_string_repeat (stdlib_string.c). Also reject an
+    // overflowing len*count product rather than allocating a wrapped size.
+    if (count <= 0 || len <= 0) {
+        char* empty = wyn_str_alloc(0);
+        empty[0] = '\0';
+        wyn_rc_set_length(empty, 0);
+        return empty;
+    }
+    if (count > (0x7fffffff - 1) / len) {
+        fprintf(stderr, "panic: string repeat result too large (%d * %d overflows)\n", len, count);
+        exit(1);
+    }
     int total = len * count;
     char* result = wyn_str_alloc(total);
     for (int i = 0; i < count; i++) memcpy(result + i * len, str, len);
