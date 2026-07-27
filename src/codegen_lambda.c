@@ -90,6 +90,15 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                     strcpy(spawn_wrappers[spawn_wrapper_count].func_name, func_name);
                     spawn_wrappers[spawn_wrapper_count].arg_count = arg_count;
                     spawn_wrappers[spawn_wrapper_count].returns_void = 1;
+                    // Single non-word arg (float/struct/array) needs the boxed
+                    // _1b wrapper - the word cast truncated floats and couldn't
+                    // carry structs at all (fire-and-forget was missing this).
+                    spawn_wrappers[spawn_wrapper_count].boxed_arg1 = 0;
+                    if (arg_count == 1) {
+                        int _w = 1;
+                        spawn_param_c_type(func_name, 0, &_w, NULL);
+                        if (!_w) spawn_wrappers[spawn_wrapper_count].boxed_arg1 = 1;
+                    }
                     spawn_wrapper_count++;
                 }
             }

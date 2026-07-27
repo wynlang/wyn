@@ -6558,6 +6558,15 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             break;
         }
         case STMT_YIELD: if (stmt->yield_stmt.value) check_expr(stmt->yield_stmt.value, scope); break;
+        case STMT_SPAWN:
+            // Fire-and-forget `spawn f(...)`: run normal expression checking on
+            // the call. Skipping it (the old default: break) left every argument
+            // expression UNTYPED - codegen then read array-element args through
+            // array_get_int regardless of element type (string elements arrived
+            // as NULL, float elements truncated) - and never marked the arg
+            // identifiers used, so the arrays were falsely warned "unused".
+            if (stmt->spawn.call) check_expr(stmt->spawn.call, scope);
+            break;
         case STMT_RETURN:
             if (stmt->ret.value) {
                 // `return m[k]` where m is an OPEN map (empty {} literal whose

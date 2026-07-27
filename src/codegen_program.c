@@ -1248,27 +1248,9 @@ void codegen_program(Program* prog) {
             } else if (ac == 1 && spawn_wrappers[i].boxed_arg1) {
                 // Boxed single arg (float/struct/array): the call site mallocs
                 // a one-field box; unpack with the REAL param type instead of
-                // the truncating (void*)(intptr_t) word cast.
-                const char* _bpt = "long long";
-                if (current_program) {
-                    for (int fi = 0; fi < current_program->count; fi++) {
-                        Stmt* fs = current_program->stmts[fi];
-                        if (fs->type == STMT_FN &&
-                            strlen(spawn_wrappers[i].func_name) == (size_t)fs->fn.name.length &&
-                            memcmp(spawn_wrappers[i].func_name, fs->fn.name.start, fs->fn.name.length) == 0) {
-                            if (fs->fn.param_count > 0 && fs->fn.param_types[0]) {
-                                Expr* pt0 = fs->fn.param_types[0];
-                                if (pt0->type == EXPR_ARRAY) _bpt = "WynArray";
-                                else if (pt0->type == EXPR_IDENT) {
-                                    Token ptk = pt0->token;
-                                    if (ptk.length == 5 && memcmp(ptk.start, "float", 5) == 0) _bpt = "double";
-                                    else { static char _bpb[96]; snprintf(_bpb, sizeof(_bpb), "%.*s", ptk.length, ptk.start); _bpt = _bpb; }
-                                }
-                            }
-                            break;
-                        }
-                    }
-                }
+                // the truncating (void*)(intptr_t) word cast. The type comes
+                // from spawn_param_c_type - the same helper the call sites use.
+                const char* _bpt = spawn_param_c_type(spawn_wrappers[i].func_name, 0, NULL, NULL);
                 emit("void* __spawn_wrapper_%s_1b(void* arg) {\n", spawn_wrappers[i].func_name);
                 emit("    struct { %s a0; } *args = arg;\n", _bpt);
                 if (spawn_wrappers[i].returns_void) {
@@ -1287,43 +1269,45 @@ void codegen_program(Program* prog) {
                 extern Expr* get_fn_default(const char*, int);
                 int total_params = get_fn_param_count(spawn_wrappers[i].func_name);
 
+                // Decode the word-sized arg with its REAL param type. A string
+                // arg is decoded as const char* and RC-released here (the call
+                // site retained it at spawn time so the spawning scope's own
+                // release can't free it before this task runs).
+                int _a1_str = 0;
+                spawn_param_c_type(spawn_wrappers[i].func_name, 0, NULL, &_a1_str);
+                const char* _a1_decode = _a1_str ? "__a0" : "(long long)(intptr_t)arg";
                 emit("void* __spawn_wrapper_%s_1(void* arg) {\n", spawn_wrappers[i].func_name);
-                if (total_params > 1) {
-                    // Function has more params - fill in defaults after the explicit arg
-                    if (spawn_wrappers[i].returns_void) {
-                        emit("    %s((long long)(intptr_t)arg", spawn_wrappers[i].func_name);
-                        for (int di = 1; di < total_params; di++) {
-                            emit(", ");
-                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
-                            if (def) { codegen_expr(def); } else { emit("0"); }
-                        }
-                        emit(");\n    return NULL;\n");
-                    } else if (spawn_wrappers[i].return_type[0]) {
-                        emit("    %s* __r = malloc(sizeof(%s)); *__r = %s((long long)(intptr_t)arg", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
-                        for (int di = 1; di < total_params; di++) {
-                            emit(", ");
-                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
-                            if (def) { codegen_expr(def); } else { emit("0"); }
-                        }
-                        emit(");\n    return __r;\n");
-                    } else {
-                        emit("    return (void*)(intptr_t)%s((long long)(intptr_t)arg", spawn_wrappers[i].func_name);
-                        for (int di = 1; di < total_params; di++) {
-                            emit(", ");
-                            Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
-                            if (def) { codegen_expr(def); } else { emit("0"); }
-                        }
-                        emit(");\n");
+                if (_a1_str) emit("    const char* __a0 = (const char*)arg;\n");
+                if (spawn_wrappers[i].returns_void) {
+                    emit("    %s(%s", spawn_wrappers[i].func_name, _a1_decode);
+                    for (int di = 1; di < total_params; di++) {
+                        emit(", ");
+                        Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                        if (def) { codegen_expr(def); } else { emit("0"); }
                     }
+                    emit(");\n");
+                    if (_a1_str) emit("    wyn_rc_release(__a0);\n");
+                    emit("    return NULL;\n");
+                } else if (spawn_wrappers[i].return_type[0]) {
+                    emit("    %s* __r = malloc(sizeof(%s)); *__r = %s(%s", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name, _a1_decode);
+                    for (int di = 1; di < total_params; di++) {
+                        emit(", ");
+                        Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                        if (def) { codegen_expr(def); } else { emit("0"); }
+                    }
+                    emit(");\n");
+                    if (_a1_str) emit("    wyn_rc_release(__a0);\n");
+                    emit("    return __r;\n");
                 } else {
-                    if (spawn_wrappers[i].returns_void) {
-                        emit("    %s((long long)(intptr_t)arg);\n    return NULL;\n", spawn_wrappers[i].func_name);
-                    } else if (spawn_wrappers[i].return_type[0]) {
-                        emit("    %s* __r = malloc(sizeof(%s)); *__r = %s((long long)(intptr_t)arg);\n    return __r;\n",
-                             spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
-                    } else {
-                        emit("    return (void*)(intptr_t)%s((long long)(intptr_t)arg);\n", spawn_wrappers[i].func_name);
+                    emit("    long long __r = (long long)%s(%s", spawn_wrappers[i].func_name, _a1_decode);
+                    for (int di = 1; di < total_params; di++) {
+                        emit(", ");
+                        Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
+                        if (def) { codegen_expr(def); } else { emit("0"); }
                     }
+                    emit(");\n");
+                    if (_a1_str) emit("    wyn_rc_release(__a0);\n");
+                    emit("    return (void*)(intptr_t)__r;\n");
                 }
                 emit("}\n\n");
             } else {
@@ -1334,29 +1318,15 @@ void codegen_program(Program* prog) {
                 
                 emit("void* __spawn_wrapper_%s_%d(void* arg) {\n", spawn_wrappers[i].func_name, ac);
                 emit("    struct { ");
-                // Use correct types for each parameter
+                // Field types come from spawn_param_c_type - the same helper
+                // the call sites' pack structs use, so they can never disagree.
+                // String fields were RC-retained at spawn time; track them so
+                // they are released after the call.
+                int _str_field[64] = {0};
                 for (int j = 0; j < ac; j++) {
-                    const char* ptype = "long long";
-                    // Look up actual parameter type from function declaration
-                    if (current_program) {
-                        for (int fi = 0; fi < current_program->count; fi++) {
-                            Stmt* fs = current_program->stmts[fi];
-                            if (fs->type == STMT_FN && 
-                                strlen(spawn_wrappers[i].func_name) == (size_t)fs->fn.name.length &&
-                                memcmp(spawn_wrappers[i].func_name, fs->fn.name.start, fs->fn.name.length) == 0) {
-                                if (j < fs->fn.param_count && fs->fn.param_types[j]) {
-                                    if (fs->fn.param_types[j]->type == EXPR_ARRAY) ptype = "WynArray";
-                                    else if (fs->fn.param_types[j]->type == EXPR_IDENT) {
-                                        Token pt = fs->fn.param_types[j]->token;
-                                        if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) ptype = "const char*";
-                                        else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) ptype = "double";
-                                        else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) ptype = "bool";
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
+                    int _isstr = 0;
+                    const char* ptype = spawn_param_c_type(spawn_wrappers[i].func_name, j, NULL, &_isstr);
+                    if (j < 64) _str_field[j] = _isstr;
                     emit("%s a%d; ", ptype, j);
                 }
                 emit("} *args = arg;\n");
@@ -1368,7 +1338,10 @@ void codegen_program(Program* prog) {
                         Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
                         if (def) { codegen_expr(def); } else { emit("0"); }
                     }
-                    emit(");\n    free(args);\n    return NULL;\n");
+                    emit(");\n");
+                    for (int j = 0; j < ac && j < 64; j++)
+                        if (_str_field[j]) emit("    wyn_rc_release(args->a%d);\n", j);
+                    emit("    free(args);\n    return NULL;\n");
                 } else {
                     if (spawn_wrappers[i].return_type[0]) {
                         // Struct return: heap-allocate and return pointer
@@ -1380,7 +1353,10 @@ void codegen_program(Program* prog) {
                             Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
                             if (def) { codegen_expr(def); } else { emit("0"); }
                         }
-                        emit(");\n    free(args);\n    return __r;\n");
+                        emit(");\n");
+                        for (int j = 0; j < ac && j < 64; j++)
+                            if (_str_field[j]) emit("    wyn_rc_release(args->a%d);\n", j);
+                        emit("    free(args);\n    return __r;\n");
                     } else {
                         emit("    long long __r = (long long)%s(", spawn_wrappers[i].func_name);
                         for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
@@ -1389,7 +1365,10 @@ void codegen_program(Program* prog) {
                             Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
                             if (def) { codegen_expr(def); } else { emit("0"); }
                         }
-                        emit(");\n    free(args);\n    return (void*)(intptr_t)__r;\n");
+                        emit(");\n");
+                        for (int j = 0; j < ac && j < 64; j++)
+                            if (_str_field[j]) emit("    wyn_rc_release(args->a%d);\n", j);
+                        emit("    free(args);\n    return (void*)(intptr_t)__r;\n");
                     }
                 }
                 emit("}\n\n");
