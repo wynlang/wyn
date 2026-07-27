@@ -1,9 +1,27 @@
 # Changelog
 
-## v1.20.0 (unreleased)
+## v1.20.0 (2026-07-28) - "The Concurrency & Correctness Release"
 
-Correctness release: compiler limits removed, lambdas fully typed, real
-crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C.
+The headline: **concurrency that's fast out of the box**. Fire-and-forget
+`spawn` got ~18x faster (1,000,000 tasks in ~0.66s, within striking distance
+of Go's goroutines), a channel-backpressure livelock that hung real programs
+is gone, and awaited `spawn`/`await_all`/`parallel { }` now run cooperatively
+on the coroutine scheduler by default (8 awaited 100ms sleeps overlap into
+~116ms, not ~800ms) - no thread-pool tuning, no async ceremony.
+
+Alongside that: **experimental GPU dispatch** for `[float].map` (Metal on
+macOS, OpenCL on Linux/Windows, opt-in), **nested & recursive data**
+(recursive enums, maps of structs, generics over non-scalar types), a broad
+memory-safety sweep (a string use-after-free, a `repeat` heap-corruption, a
+run-queue data race, `Shared`/channel guards - all found and fixed with
+ASan/TSan and locked behind regression tests, suite 210 -> 237), plus real
+crypto, AWS from pure Wyn, and removed compiler limits.
+
+Everything below is verified: 0-warning build on 4 platforms, full suite +
+golden-C snapshots green, and every fix carries a regression test.
+
+Correctness foundation (compiler limits removed, lambdas fully typed, real
+crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C):
 
 - **Out-of-bounds is fatal by default** (breaking): `a[10]` on a 3-element
   array (and `s[10]` on a 3-char string) now panics and exits 1 instead of
@@ -142,6 +160,187 @@ crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C.
   codegen changes.
 - **LICENSE shipped in release artifacts**: the MIT license file is now
   included in every platform tarball/zip.
+
+### Nested & aggregate values
+
+- **Recursive enums**: enum payloads may reference the enum itself
+  (`enum Expr { Num(int), Add(Expr, Expr) }`) - expression trees and linked
+  lists work; payloads are heap-boxed automatically. Mutually-recursive
+  enums are a clean check error (not yet supported), not leaked C.
+- **Maps with struct values, dynamic nested arrays**: `{string: Point}`,
+  `[[int]]`, array-of-struct, push/index/iterate all work.
+- **Generics over non-scalar T**: generic structs and functions instantiate
+  with array and struct type arguments (`Box<[int]>`, `Box<Point>`), including
+  multiple instantiations and multi-type-param generics.
+- **Enum equality**: `==`/`!=` on enum values, and enums as struct fields
+  (including in struct equality).
+- **`Result<Struct, E>` for any error type**: `Result<User, string>`,
+  `Result<User, ErrCode>`, struct errors, int errors - with `is_ok`,
+  `unwrap`, `unwrap_err`, and `?` propagation.
+- Unsupported nested cases (closure-typed struct fields, generic enums,
+  `Box<Box<T>>`) fail with clean "not yet supported" errors instead of
+  emitting broken C.
+
+### Experimental: GPU dispatch for [float].map (opt-in)
+
+- With `[gpu] enabled = true` + `float32 = true` in wyn.toml, large
+  `[float].map` calls auto-dispatch to the GPU: **Metal on macOS, OpenCL on
+  Linux/Windows** (loaded at run time - no SDK needed to build, binaries
+  still run on machines with no GPU via the always-correct CPU fallback).
+- Gated by build TARGET (cross-compiling from a Mac to Linux wires the
+  OpenCL backend in), thread-safe, `WYN_GPU=0` kill-switch.
+- Measured: ~2-5x on repeated 10M+-element maps on Apple M3 Pro, NVIDIA T4 and
+  A10G (first dispatch pays a one-time kernel-JIT; a runtime cost model
+  keeps small workloads on the CPU). float32 precision - that is why it is
+  opt-in and off by default.
+
+### Concurrency: much faster, and correct (2026-07-27 batch)
+
+- **Fire-and-forget `spawn` is ~18x faster**: 1,000,000 spawns dropped from
+  ~11.4s to ~0.66s (within ~2.3x of Go goroutines). The coroutine stack pool
+  was re-`mmap`-ing an 8MB region on every reuse (a syscall + ~2000 page faults
+  per spawn); it now reuses the pooled stack directly. Also added Go's `wakep`
+  rule (skip the wake syscall when a worker is already spinning) (#189).
+- **`Task.recv` collection no longer livelocks**: a program with more concurrent
+  senders than channel capacity (e.g. 10k senders on a 4k channel) span at 900%
+  CPU forever - blocked senders busy-yielded and were re-enqueued. Blocked
+  senders/receivers now park on a per-channel waiter list (zero CPU while
+  blocked); the 10k-task benchmark went from hanging to ~0.09s (#190).
+- **`Task.try_recv(ch)`** is now callable from Wyn and returns `int?`
+  (`Some(value)` / `none`) - a non-blocking receive that disambiguates a real
+  `0` from an empty channel (#190).
+- **`await_all` and `parallel { }` preserve the result type**: results were
+  hardcoded to `[int]`, so string/float/struct results miscompiled (and a
+  `parallel` float join printed garbage like `2.1e-314`). All element types now
+  flow through correctly (#191).
+- **Awaited concurrency is cooperative by default**: awaited `spawn`/`await_all`/
+  `parallel` run on the coroutine scheduler (not the thread pool), so cooperative
+  `Time::sleep` and I/O overlap - 8 awaited 100ms sleeps finish in ~116ms, not
+  ~800ms. (`WYN_ASYNC_POOL=1` selects the old blocking pool if needed.) (#196)
+- **`Shared.*` handles are bounds-checked**: `Shared.set(-1, x)` and slab
+  exhaustion were silent out-of-bounds reads/writes; now a clean panic, and the
+  pool is much larger (#193, ASan-verified).
+- **`Task.channel(0)` fails cleanly** instead of hanging forever (unbuffered
+  channels aren't supported yet - it now says so) (#193).
+- **Data race fixed** on the internal run-queue link field (`Task::next` is now
+  atomic) - TSan-clean on the channel wake path (#195).
+
+### Enums & generics
+
+- **Bare (unqualified) enum constructors work**: `Circle(5)` for
+  `enum Shape { Circle(int) }` (previously only `Shape.Circle(5)` compiled), and
+  a dataless variant of a data enum (`enum S { A(int), B }` → `var x = B`).
+  Rule: a real function of the same name wins; the qualified form is always
+  available to disambiguate (#192).
+- **Generics returning generics**: `fn wrap<T>(x: T) -> Box<T>`,
+  multi-parameter `fn mk<A, B>(...) -> Pair<A, B>`, and nested generic literals
+  (`Box { val: Box { val: 42 } }`) now compile (#194). Generic *enums*
+  (`enum Opt<T>`) give a clean "not yet supported" error instead of leaking C.
+
+### Soundness & memory safety
+
+- **Cross-type comparison segfault**: `int == "5"` type-checked and then
+  crashed at runtime - now a clean check error (#183).
+- **Use-after-free pushing a block-scoped array into an outer array**:
+  silent wrong answers from freed memory; pushes now deep-copy
+  (ASan-verified) (#185).
+- **Checker soundness gate K1-K11**: a batch of holes where the checker
+  accepted programs codegen couldn't compile (#177).
+- **User function named `len`** (or another builtin) no longer silently
+  shadowed by the builtin lowering - your function is called (#185).
+- **Generic `[T]` no longer assumes int elements** (#185).
+- **Deep nesting** (statements, array literals) and empty `0x`/`0b`
+  literals: clean errors instead of parser stack overflow / ICE (#179, #185).
+- **Missing HashMap key panics with the key name** instead of silently
+  returning 0 (#183). Struct field typos are check-time errors (#183).
+- **Channel-deadlock backstop**: recv on a channel every sender has
+  abandoned panics instead of hanging forever (#178).
+
+### Type inference & DX
+
+- **Word-count / cache patterns work**: reading from an empty `{}` map no
+  longer poisons its value type to string - `counts[w] = counts[w] + 1`
+  infers int, and `return cache[key]` in an int function types the map from
+  the return type (final-sweep fix).
+- **`m.contains(k).to_int()`** and other bool-int bridges compile (#final).
+- **Semicolons as statement separators**: `a = 1; b = 2` on one line (#179).
+- **`x: int = 5`** annotated bare assignment (#179).
+- **`HashMap::new()` then `m.set("a", 42)`** infers int values (was: string
+  default that decoded 42 as garbage) (#179).
+- **Option<T> struct fields** (was an ICE) (#179).
+- **`Json.get_string` links; `Json.keys` returns `[string]`** (#180, #183).
+- **`${Math.sqrt(2.0)}`** and other float builtins in interpolation no
+  longer truncate to int (#183).
+- **StringBuilder `to_string`** works in both `::new()` and `.new()` forms
+  (#183).
+- **`int_to_string` imported across modules** no longer mis-namespaced (#180).
+- **Argument-count errors carry file:line; panics no longer cite the
+  generated `.wyn.c`** - errors point at your code (#179).
+- **`return f(...)` where `f` returns void** compiles (the iOS-shim
+  pattern) (#167).
+
+### Tooling, CI, portability
+
+- **`wyn doctor`** no longer reports "All good" when it isn't; a stray
+  `./VERSION` file in your project no longer hijacks `wyn version` (#183).
+- **Test runners are storm-proof and watchdog-guarded**: bounded
+  parallelism (was: a fork-storm that starved CI runners), per-test
+  wall-clock timeout + CPU rlimit (a looping test can no longer exhaust the
+  host) (#180, final sweep).
+- **glibc/gcc + linux-arm64 portability**: builds clean under gcc/glibc;
+  runtime libs published for linux-arm64 (#178, #183).
+- **Release artifacts**: bundle vendor/tcc so `wyn run` works out of the
+  box; canonical Windows layout + install canary (#179).
+
+### Benchmarks (Apple M3 Pro, 15-run warm median; Go 1.26, Python 3.14)
+
+| Benchmark | Wyn 1.20 | Go | Python |
+|---|---|---|---|
+| fib(35) | 50 ms | 54 ms | 913 ms |
+| Strings 10K | 16 ms | 12 ms | - |
+| Startup | 8.4 ms | 8.8 ms | 39 ms |
+| Hello binary | 50 KB | 2,450 KB | - |
+| Edit-run loop (`wyn run`, TCC) | 27 ms | - | - |
+| GPU `[float].map` 10M (opt-in, cached) | 12-13 ms vs 27-38 ms CPU | - | - |
+
+Honest note: fire-and-forget task spawning remains far slower than
+goroutines at the 1M scale (~10s vs ~0.3s) - unchanged from 1.19, on the
+roadmap (coroutine-backed spawn).
+
+### Known limitations (documented, not hidden)
+
+- Recursive-enum payloads currently leak (freeing shared boxed subtrees
+  needs move/RC analysis - on the roadmap).
+- Deeper generics (generic fn returning generic, `Box<Box<T>>`, generic
+  enums) are clean check errors, not yet supported.
+- `Task.try_recv` has no working Wyn form yet.
+- GPU: float32 precision; verified on Apple Silicon + NVIDIA (T4, A10G);
+  AMD untested (driver provisioning, not Wyn); Windows GPU path untested
+  (CPU fallback verified via CI).
+
+### Memory safety & robustness (final hardening batch)
+
+- **String use-after-free on aliased returns fixed**: `var b = f(a)` where `f`
+  returns its argument (a borrow) double-released one buffer - now the callee
+  retains borrowed returns (ARC "+1 out"). ASan-clean, RSS-flat both directions.
+  Backed by a mapped RC ownership model (`docs/RC_OWNERSHIP_MODEL.md`).
+- **Heap corruption in `str.repeat(negative)` fixed**: `"x".repeat(-1)` / `s * -n`
+  integer-overflowed the allocation into a wild out-of-bounds write. Non-positive
+  counts now return `""`; an overflowing product panics cleanly.
+- **`Shared.*` handles bounds-checked** and **`Task.channel(0)` rejected** (was a
+  silent OOB and an infinite hang, respectively).
+- **Data race on the internal run-queue fixed** (`Task::next` is now atomic) -
+  TSan-clean on the channel wake path.
+
+### Enums & tooling (final batch)
+
+- **Bare enum constructors** (`Circle(5)`, not just `Shape.Circle(5)`) and the
+  `Enum::Variant(payload)` form both lower correctly (the `::` form dropped the
+  enum prefix under gcc - a real Linux-only miscompile, now fixed).
+- **`wyn run` recompiles** when the compiler binary is newer than the cached
+  build (no more running a stale binary after an upgrade).
+- **`Task.select`** gives a clean "did you mean `select_2`/`select_3`?" error
+  instead of a leaked C compiler error.
 
 ## v1.19.1 (2026-07-21)
 
