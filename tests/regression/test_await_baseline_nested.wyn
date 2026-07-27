@@ -1,0 +1,25 @@
+// EXPECT: nested-single: 37
+// EXPECT: nested-all: 34
+// S0 await-epic baseline: a spawned task itself spawns a child and awaits it.
+// parent(n) = leaf(n)+1 = n*n+1. Single: parent(6)=37. await_all over
+// parent(1..4) = 2+5+10+17 = 34. Exercises await-from-coroutine (the parent
+// task awaits its child while itself running on the scheduler). See
+// docs/CONCURRENCY_BASELINE.md.
+fn leaf(n: int) -> int { return n * n }
+fn parent(n: int) -> int {
+    var f = spawn leaf(n)
+    return (await f) + 1
+}
+
+fn main() -> int {
+    var f = spawn parent(6)
+    println("nested-single: " + (await f).to_string())
+
+    var futs = []
+    for i in 1..5 { futs.push(spawn parent(i)) }
+    var rs = await_all(futs)
+    var s = 0
+    for _, r in rs { s = s + r }
+    println("nested-all: " + s.to_string())
+    return 0
+}

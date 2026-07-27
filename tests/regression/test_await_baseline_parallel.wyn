@@ -1,0 +1,31 @@
+// EXPECT: 60
+// EXPECT: task-1 task-2
+// EXPECT: 29
+// S0 await-epic baseline: parallel { } joins all spawns at the closing brace;
+// spawn-bound vars hold the VALUE (not a Future) and are visible after the
+// block, for int and string returns. See docs/CONCURRENCY_BASELINE.md.
+fn compute(n: int) -> int => n * 2
+fn label(n: int) -> string => "task-" + n.to_string()
+fn sq(n: int) -> int => n * n
+
+fn main() -> int {
+    parallel {
+        a = spawn compute(10)
+        b = spawn compute(20)
+    }
+    println((a + b).to_string())            // 60
+
+    parallel {
+        x = spawn label(1)
+        y = spawn label(2)
+    }
+    println(x + " " + y)                     // task-1 task-2
+
+    parallel {
+        p = spawn sq(2)
+        q = spawn sq(3)
+        r = spawn sq(4)
+    }
+    println((p + q + r).to_string())         // 29
+    return 0
+}

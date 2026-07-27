@@ -1,0 +1,19 @@
+// EXPECT: awaited-sleep-sum: 800
+// S0 await-epic baseline (CORRECTNESS half of the cooperative-sleep probe): 8
+// awaited spawns that each Time::sleep(100) then return their argument. Asserts
+// the results are correct. The TIMING half - that these 8 (and N=64) sleeps
+// overlap cooperatively (wall ~= one sleep, not N*sleep) on the CURRENT
+// coroutine-scheduler executor - is measured by scripts/concurrency_timing_probe.sh
+// and recorded in docs/CONCURRENCY_BASELINE.md (timing is non-deterministic so it
+// is NOT asserted here).
+fn nap(ms: int) -> int { Time::sleep(ms); return ms }
+
+fn main() -> int {
+    var futs = []
+    for i in 0..8 { futs.push(spawn nap(100)) }
+    var rs = await_all(futs)
+    var sum = 0
+    for _, r in rs { sum = sum + r }
+    println("awaited-sleep-sum: " + sum.to_string())
+    return 0
+}
