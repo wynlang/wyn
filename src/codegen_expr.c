@@ -228,6 +228,31 @@ void codegen_expr(Expr* expr) {
             emit("'%.*s'", expr->token.length - 2, expr->token.start + 1);
             break;
         case EXPR_IDENT: {
+            // BARE (unqualified) no-payload variant of a DATA enum used as a value,
+            // e.g. `var s = Dot` for `enum Shape { Circle(int), Dot }`. A data
+            // enum's dataless variant is a zero-arg constructor FUNCTION in C
+            // (`Shape_Dot()`), not a bare constant, so emitting the raw name `Dot`
+            // is an undeclared identifier. Lower it to the constructor, mirroring
+            // the qualified `Shape.Dot` field-access path. Guarded so it never
+            // rewrites a variable/parameter that merely has an enum type: the name
+            // must NOT be a local/param and MUST be a known variant of a data enum.
+            // (A pure dataless enum like Color keeps emitting the bare constant,
+            // which the generated C defines directly.)
+            if (expr->expr_type && expr->expr_type->kind == TYPE_ENUM) {
+                char _iv[128]; token_to_cstr(_iv, sizeof(_iv), expr->token);
+                extern bool is_local_variable(const char*);
+                extern const char* find_enum_for_variant(const char*);
+                extern int is_data_enum_type(const char*);
+                extern const char* get_enum_variant_c_type(const char*, const char*);
+                if (!is_local_variable(_iv) && !is_parameter(_iv)) {
+                    const char* _ien = find_enum_for_variant(_iv);
+                    if (_ien && is_data_enum_type(_ien) &&
+                        strcmp(get_enum_variant_c_type(_ien, _iv), "void") == 0) {
+                        emit("%s_%s()", _ien, _iv);
+                        break;
+                    }
+                }
+            }
             // Convert :: to _ for C compatibility (e.g., Status::DONE -> Status_DONE)
             char* ident = malloc(expr->token.length + 256); // Extra space for alias resolution
             int offset = 0;
@@ -1002,6 +1027,29 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_CALL:
+            // BARE (unqualified) enum constructor: `Circle(5)` -> `Shape_Circle(5)`.
+            // The checker types this as the enum (see find_enum_for_bare_variant);
+            // here we lower the call to the enum's constructor symbol, mirroring the
+            // qualified `Shape.Circle(5)` (EXPR_METHOD_CALL) path. Resolution rule
+            // matches the checker: a real user FUNCTION of the same name wins, so we
+            // only reroute when no such function exists. The qualified form remains
+            // the disambiguator when two enums share a variant name.
+            if (expr->call.callee->type == EXPR_IDENT &&
+                expr->expr_type && expr->expr_type->kind == TYPE_ENUM &&
+                expr->expr_type->name.length > 0 &&
+                !user_fn_defined(expr->call.callee->token)) {
+                // Use the enum name the CHECKER resolved (expr_type->name) so the
+                // two stay in lockstep when a variant name is shared across enums.
+                char _bv[128]; token_to_cstr(_bv, sizeof(_bv), expr->call.callee->token);
+                char _ben[128]; token_to_cstr(_ben, sizeof(_ben), expr->expr_type->name);
+                emit("%s_%s(", _ben, _bv);
+                for (int i = 0; i < expr->call.arg_count; i++) {
+                    if (i > 0) emit(", ");
+                    codegen_expr(expr->call.args[i]);
+                }
+                emit(")");
+                break;
+            }
             // Handle assert() and assert_eq() for test blocks
             if (expr->call.callee->type == EXPR_IDENT) {
                 Token fn = expr->call.callee->token;

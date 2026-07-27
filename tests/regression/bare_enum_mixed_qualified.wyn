@@ -1,0 +1,30 @@
+// Regression: bare and qualified enum constructors / match arms mixed freely in
+// one program must all compile and produce identical values. Exercises bare
+// construct + qualified match, qualified construct + bare match, and a
+// multi-field variant built bare.
+
+enum Shape { Circle(int), Rect(int, int), Dot }
+
+fn area(s: Shape) -> int {
+    match s {
+        Circle(r) => { return 3 * r * r }
+        Rect(w, h) => { return w * h }
+        Dot => { return 0 }
+    }
+    return -1
+}
+
+// EXPECT: 12
+// EXPECT: 12
+// EXPECT: 20
+// EXPECT: 0
+fn main() {
+    // bare construct, function does bare match
+    println("${area(Circle(2))}")
+    // qualified construct, function does bare match
+    println("${area(Shape.Circle(2))}")
+    // bare multi-field construct
+    println("${area(Rect(4, 5))}")
+    // bare no-payload construct
+    println("${area(Dot)}")
+}
