@@ -23,6 +23,15 @@ struct WynSpawn {
     int worker_id;
 };
 
+// Intrusive FIFO node for a channel's parked-coroutine waiter lists. A blocked
+// sender/receiver coroutine registers its scheduler Task* here, parks (so the
+// scheduler won't re-enqueue it), and is woken by the counterpart operation
+// when a slot frees / data arrives - instead of busy-spinning via yield.
+typedef struct WynWaiter {
+    void* task;              // scheduler Task* (from wyn_current_task())
+    struct WynWaiter* next;
+} WynWaiter;
+
 struct WynTask {
     void** buffer;
     int capacity;
@@ -39,6 +48,9 @@ struct WynTask {
     pthread_cond_t not_full;
 #endif
     int closed;
+    // Parked-coroutine waiter FIFOs (protected by `mutex`).
+    WynWaiter* send_head; WynWaiter* send_tail;  // senders blocked on a full channel
+    WynWaiter* recv_head; WynWaiter* recv_tail;  // receivers blocked on an empty channel
 };
 
 struct WynScheduler {

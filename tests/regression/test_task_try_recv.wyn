@@ -1,0 +1,33 @@
+// Feature (BUG B): Task.try_recv(ch) is a non-blocking receive returning int?
+// - Some(value) when a value was ready, none when the channel is empty/closed.
+// Model: it flows through the checker as an int-optional and codegens to a new
+// Task_try_recv_opt(handle) shim built on the existing pointer out-param fn.
+// Here we push 3 values, then drain via a poll loop that stops on `none`.
+// EXPECT: got 10
+// EXPECT: got 20
+// EXPECT: got 30
+// EXPECT: drained after 3
+// EXPECT: PASS: try_recv
+
+fn main() -> int {
+    var ch = Task.channel(8)
+    Task.send(ch, 10)
+    Task.send(ch, 20)
+    Task.send(ch, 30)
+
+    var count = 0
+    var draining = true
+    while draining {
+        var v = Task.try_recv(ch)
+        if let Some(x) = v {
+            println("got ${x}")
+            count = count + 1
+        } else {
+            draining = false
+        }
+    }
+    println("drained after ${count}")
+    Task.close(ch)
+    println("PASS: try_recv")
+    return 0
+}

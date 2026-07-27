@@ -1,0 +1,33 @@
+// Regression (BUG A): fire-and-forget `spawn` senders that outnumber the
+// channel capacity must NOT busy-spin the scheduler forever. Each blocked
+// sender coroutine used to `wyn_coro_yield()` and get immediately re-enqueued,
+// so with N senders > capacity every worker (and main's recv pump) span at
+// ~900% CPU and the collection never finished (spawn_10k hung at 20s+).
+// The fix parks blocked sender/receiver coroutines on per-channel waiter lists
+// and wakes exactly one counterpart when a slot frees / data arrives.
+//
+// This uses capacity 4 with 100 senders so the blocking path is exercised on
+// every run (capacity >= N would never block and wouldn't guard the bug).
+// Sum of i*i for i in 0..100 == 328350. Must FINISH promptly.
+// EXPECT: sum=328350
+// EXPECT: PASS: channel backpressure
+
+fn work(ch: int, id: int) -> int {
+    Task.send(ch, id * id)
+    return 0
+}
+
+fn main() -> int {
+    var ch = Task.channel(4)
+    for i in 0..100 {
+        spawn work(ch, i)
+    }
+    var total = 0
+    for i in 0..100 {
+        total = total + Task.recv(ch)
+    }
+    Task.close(ch)
+    println("sum=${total}")
+    println("PASS: channel backpressure")
+    return 0
+}

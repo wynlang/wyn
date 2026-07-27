@@ -2262,8 +2262,15 @@ void codegen_expr(Expr* expr) {
                     } else if (strcmp(module_name, "HashSet") == 0) {
                         emit("hashset_%.*s(", method.length, method.start);
                     } else if (strcmp(module_name, "Task") == 0) {
-                        // Task API maps directly to Task_ prefix
-                        emit("Task_%.*s(", method.length, method.start);
+                        // Task API maps directly to Task_ prefix. try_recv is the
+                        // exception: the Wyn-facing form returns int? (OptionInt),
+                        // so it lowers to the Task_try_recv_opt shim (built on the
+                        // pointer out-param Task_try_recv that Wyn can't express).
+                        if (method.length == 8 && memcmp(method.start, "try_recv", 8) == 0) {
+                            emit("Task_try_recv_opt(");
+                        } else {
+                            emit("Task_%.*s(", method.length, method.start);
+                        }
                     } else if (strcmp(module_name, "File") == 0) {
                         // File maps to File_ prefix (wrappers in runtime)
                         emit("File_%.*s(", method.length, method.start);
