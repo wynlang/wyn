@@ -1,0 +1,34 @@
+// Regression: `::`-qualified enum constructors must lower to the enum-prefixed
+// C symbol (Shape::Circle(5) -> Shape_Circle(5)), NOT drop the enum name to
+// `_Circle(5)`. The bug was a snprintf with overlapping src/dst in the codegen
+// module-qualifier rewrite: `resolve_*` returned the same buffer it wrote into,
+// which is undefined behavior. clang happened to read the name first (masking
+// the bug); glibc gcc-13 read it as empty and emitted `_Circle(5)` -> "implicit
+// declaration of function '_Circle'" + "invalid initializer".
+//
+// MUST pass under gcc as well as clang (clang masks the original defect).
+// Covers: payload construct via ::, second payload variant via ::, dataless
+// variant via ::, and a `::`-qualified match arm printing the payload.
+
+enum Shape { Circle(int), Square(int), Dot }
+
+fn describe(s: Shape) -> int {
+    match s {
+        Shape::Circle(r) => { return r }
+        Shape::Square(w) => { return w * 10 }
+        Shape::Dot => { return -1 }
+    }
+    return 0
+}
+
+// EXPECT: 5
+// EXPECT: 90
+// EXPECT: -1
+fn main() {
+    var a = Shape::Circle(5)
+    var b = Shape::Square(9)
+    var c = Shape::Dot
+    println("${describe(a)}")
+    println("${describe(b)}")
+    println("${describe(c)}")
+}

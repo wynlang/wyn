@@ -244,6 +244,27 @@ void codegen_expr(Expr* expr) {
                 extern const char* find_enum_for_variant(const char*);
                 extern int is_data_enum_type(const char*);
                 extern const char* get_enum_variant_c_type(const char*, const char*);
+                // QUALIFIED dataless variant of a data enum, e.g. `Shape::Dot`
+                // for `enum Shape { Circle(int), Dot }`. The parser folds
+                // `Enum::Variant` into a single `Enum::Variant` ident token; a
+                // dataless variant is a zero-arg constructor FUNCTION in C
+                // (`Shape_Dot()`), so it must be lowered to a call, not left as
+                // a bare `Shape_Dot` (a function reference -> "incompatible
+                // type 'Shape ()'"). Mirrors the bare-variant path just below.
+                char* _cc = strstr(_iv, "::");
+                if (_cc) {
+                    char _qen[128], _qvar[128];
+                    int _enlen = (int)(_cc - _iv);
+                    if (_enlen > 0 && _enlen < (int)sizeof(_qen)) {
+                        memcpy(_qen, _iv, _enlen); _qen[_enlen] = '\0';
+                        snprintf(_qvar, sizeof(_qvar), "%s", _cc + 2);
+                        if (is_data_enum_type(_qen) &&
+                            strcmp(get_enum_variant_c_type(_qen, _qvar), "void") == 0) {
+                            emit("%s_%s()", _qen, _qvar);
+                            break;
+                        }
+                    }
+                }
                 if (!is_local_variable(_iv) && !is_parameter(_iv)) {
                     const char* _ien = find_enum_for_variant(_iv);
                     if (_ien && is_data_enum_type(_ien) &&
@@ -441,9 +462,19 @@ void codegen_expr(Expr* expr) {
                 // Resolve short name (http -> network/http)
                 const char* full_path = resolve_short_module_name(temp_ident);
                 const char* resolved = resolve_module_alias(full_path);
-                
-                // Rebuild identifier with resolved module name
-                snprintf(temp_ident, sizeof(temp_ident), "%s::%s", resolved, function_part);
+
+                // Rebuild identifier with resolved module name. `resolved` may
+                // alias temp_ident (the resolve_* helpers return their input
+                // pointer for an unregistered name, e.g. an enum name like
+                // `Shape`), so snprintf'ing back into temp_ident would be an
+                // overlapping src/dst copy -- undefined behavior. clang read the
+                // prefix first (accidentally correct); glibc gcc-13 read it as
+                // empty and dropped the enum name (`Shape::Circle` -> `::Circle`
+                // -> `_Circle`, an undeclared function). Build into a scratch
+                // buffer first, then copy back.
+                char qualbuf[512];
+                snprintf(qualbuf, sizeof(qualbuf), "%s::%s", resolved, function_part);
+                snprintf(temp_ident, sizeof(temp_ident), "%s", qualbuf);
             } else if (dot) {
                 // Handle module.function syntax
                 char function_part[256];
@@ -460,8 +491,14 @@ void codegen_expr(Expr* expr) {
                 }
                 
                 const char* resolved = resolve_module_alias(temp_ident);
-                // Rebuild identifier with resolved module name
-                snprintf(temp_ident, sizeof(temp_ident), "%s.%s", resolved, function_part);
+                // Rebuild identifier with resolved module name. `resolved` may
+                // alias temp_ident (resolve_module_alias returns its input for an
+                // unregistered name), so go through a scratch buffer to avoid an
+                // overlapping snprintf src/dst copy (undefined behavior; see the
+                // `::` branch above for the gcc-vs-clang divergence this caused).
+                char qualbuf[512];
+                snprintf(qualbuf, sizeof(qualbuf), "%s.%s", resolved, function_part);
+                snprintf(temp_ident, sizeof(temp_ident), "%s", qualbuf);
             }
             
             // Check if this is a user-defined name that collides with C/runtime
