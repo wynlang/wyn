@@ -1,0 +1,42 @@
+// EXPECT: 1
+// EXPECT: A
+// EXPECT: B
+// EXPECT: label_0
+// EXPECT: label_1
+// EXPECT: label_2
+// EXPECT: 7
+// Regression: await_all lost the element type - every result was typed int.
+// `results[0].len()` died with "Unknown method 'len' for type 'int'" (internal
+// codegen error) even though `wyn check` passed. The checker must type
+// await_all([f1,f2]) as [T] where T is the futures' common result type, and
+// codegen must decode each result as T (string retain semantics like single
+// await). Covers both future-array shapes: an array literal of spawn-bound
+// vars (WynArray) and a push-built spawn array (WynIntArray).
+fn shout(s: string) -> string {
+    return s.upper()
+}
+
+fn make_label(id: int) -> string {
+    return "label_" + id.to_string()
+}
+
+fn main() {
+    // Shape 1: array literal of futures
+    var f1 = spawn shout("a")
+    var f2 = spawn shout("b")
+    results = await_all([f1, f2])
+    print(results[0].len())
+    print(results[0])
+    print(results[1])
+
+    // Shape 2: push-built futures array
+    var futures = []
+    for i in 0..3 {
+        futures.push(spawn make_label(i))
+    }
+    var labels = await_all(futures)
+    print(labels[0])
+    print(labels[1])
+    print(labels[2])
+    print(labels[2].len())
+}

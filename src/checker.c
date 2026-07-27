@@ -3586,6 +3586,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     Type* arg_type = check_expr(expr->call.args[0], scope);
                     expr->expr_type = arg_type;  // Return type is pointer to Result
                     return arg_type;
+                } else if (strcmp(name_buf, "await_all") == 0) {
+                    // await_all(futures) : [T] where T is the futures' common
+                    // result type. EXPR_SPAWN types a future as its result T,
+                    // so the argument array's element type IS T. The blanket
+                    // global registration (return [int]) made every result int:
+                    // string results passed `wyn check` and then died at codegen
+                    // ("Unknown method 'len' for type 'int'"); float/struct
+                    // results miscompiled at the C level. Mixed-type future
+                    // arrays are already rejected by the array-literal
+                    // consistency check / the push type check on the argument.
+                    if (expr->call.arg_count != 1) {
+                        fprintf(stderr, "Error at line %d: 'await_all' expects 1 argument (an array of futures), got %d\n",
+                                func_name.line, expr->call.arg_count);
+                        had_error = true;
+                        return builtin_int;
+                    }
+                    Type* aa_arg = check_expr(expr->call.args[0], scope);
+                    Type* aa_elem = (aa_arg && aa_arg->kind == TYPE_ARRAY)
+                        ? aa_arg->array_type.element_type : NULL;
+                    Type* aa_ret = make_type(TYPE_ARRAY);
+                    aa_ret->array_type.element_type = aa_elem ? aa_elem : builtin_int;
+                    expr->expr_type = aa_ret;
+                    return aa_ret;
                 } else if (strcmp(name_buf, "file_write") == 0 || strcmp(name_buf, "file_append") == 0) {
                     // file_write(path, content) or file_append(path, content) - returns int
                     if (expr->call.arg_count != 2) {

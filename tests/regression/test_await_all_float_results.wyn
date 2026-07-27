@@ -1,0 +1,20 @@
+// EXPECT: 1.5
+// EXPECT: 2.5
+// EXPECT: 4.0
+// Regression: await_all on float-returning spawns decoded each result through
+// the int path - the boxed double was read as a word and truncated/garbled.
+// The checker must type the result as [float] and codegen must decode each
+// boxed double (mirroring single await's *(double*) deref).
+fn half(x: int) -> float {
+    return x.to_float() / 2.0
+}
+
+fn main() {
+    var f1 = spawn half(3)
+    var f2 = spawn half(5)
+    results = await_all([f1, f2])
+    print(results[0])
+    print(results[1])
+    sum = results[0] + results[1]
+    print(sum)
+}

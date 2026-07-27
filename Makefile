@@ -264,6 +264,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_diagnostic_location_test.sh
 	@echo "=== Running checker-soundness gate (K5-K11) test ==="
 	@WYN=./wyn bash tests/errors/run_checker_soundness_test.sh
+	@echo "=== Running await_all element-typing gate ==="
+	@WYN=./wyn bash tests/errors/run_await_all_type_test.sh
 	@echo "=== Running crucible-P0 (fatal-by-default) test ==="
 	@WYN=./wyn bash tests/errors/run_crucible_p0_test.sh
 	@echo "=== Running CLI DX test ==="
@@ -595,7 +597,10 @@ ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/regression/test_index_compound_assign.wyn \
              tests/regression/test_float_array_reductions.wyn \
              tests/regression/test_map_value_overwrite_read.wyn \
-             tests/regression/test_stringbuilder_many.wyn
+             tests/regression/test_stringbuilder_many.wyn \
+             tests/regression/test_await_all_string_results.wyn \
+             tests/regression/test_await_all_float_results.wyn \
+             tests/regression/test_await_all_struct_results.wyn
 
 asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a
 	@echo "=== ASan runtime test (representative set) ==="
