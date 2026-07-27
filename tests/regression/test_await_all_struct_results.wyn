@@ -1,0 +1,26 @@
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 10
+// EXPECT: 11
+// Regression: await_all on struct-returning spawns read the heap-boxed struct
+// pointer as an int result - field access on results[i] miscompiled. The
+// checker must type the result as [Struct]; codegen adopts each boxed result
+// as a struct array entry so results[i].field derefs the box in place.
+struct Point {
+    x: int,
+    y: int
+}
+
+fn make_point(a: int) -> Point {
+    return Point{ x: a, y: a + 1 }
+}
+
+fn main() {
+    var f1 = spawn make_point(1)
+    var f2 = spawn make_point(10)
+    results = await_all([f1, f2])
+    print(results[0].x)
+    print(results[0].y)
+    print(results[1].x)
+    print(results[1].y)
+}

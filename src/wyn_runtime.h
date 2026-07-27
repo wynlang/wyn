@@ -4624,6 +4624,60 @@ WynArray wyn_await_all_int_str(WynIntArray futures) {
     }
     return results;
 }
+// Float results travel as a heap-boxed double (the spawn wrapper mallocs it -
+// the word cast used to truncate 3.5 to 3). Unbox into a float entry and free
+// the box (single-await leaks it; here we own the only reference).
+WynArray wyn_await_all_float(WynArray futures) {
+    WynArray results = array_new();
+    for (int i = 0; i < futures.count; i++) {
+        long long fh = futures.data[i].data.int_val;
+        double* box = (double*)future_get_consume((Future*)(intptr_t)fh);
+        array_push_float(&results, box ? *box : 0.0);
+        free(box);
+    }
+    return results;
+}
+WynArray wyn_await_all_int_float(WynIntArray futures) {
+    WynArray results = array_new();
+    for (int i = 0; i < futures.count; i++) {
+        long long fh = futures.data[i];
+        double* box = (double*)future_get_consume((Future*)(intptr_t)fh);
+        array_push_float(&results, box ? *box : 0.0);
+        free(box);
+    }
+    return results;
+}
+// Struct results: the spawn wrapper heap-boxes the struct. Adopt the box as
+// the array entry (same representation array_push_struct creates), so
+// results[i].field derefs it in place via array_get_struct.
+static inline void wyn_array_adopt_struct_box(WynArray* arr, void* box) {
+    WYN_ARR_WRITE_ENTER(arr);
+    if (arr->count >= arr->capacity) {
+        int new_cap = arr->capacity == 0 ? 4 : arr->capacity * 2;
+        arr->data = wyn_array_realloc(arr->data, arr->capacity, new_cap);
+        arr->capacity = new_cap;
+    }
+    arr->data[arr->count].type = WYN_TYPE_STRUCT;
+    arr->data[arr->count].data.struct_val = box;
+    arr->count++;
+    WYN_ARR_WRITE_EXIT(arr);
+}
+WynArray wyn_await_all_struct(WynArray futures) {
+    WynArray results = array_new();
+    for (int i = 0; i < futures.count; i++) {
+        long long fh = futures.data[i].data.int_val;
+        wyn_array_adopt_struct_box(&results, future_get_consume((Future*)(intptr_t)fh));
+    }
+    return results;
+}
+WynArray wyn_await_all_int_struct(WynIntArray futures) {
+    WynArray results = array_new();
+    for (int i = 0; i < futures.count; i++) {
+        long long fh = futures.data[i];
+        wyn_array_adopt_struct_box(&results, future_get_consume((Future*)(intptr_t)fh));
+    }
+    return results;
+}
 
 // await_any: return the result of the first completed future
 long long wyn_await_any(WynArray futures) {

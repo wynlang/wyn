@@ -1029,23 +1029,51 @@ void codegen_expr(Expr* expr) {
                     emit(")");
                     break;
                 }
-                // await_all(futures_array) → collect all results into a WynArray
+                // await_all(futures_array) → collect all results into a WynArray.
+                // The checker types await_all([f1,f2]) as [T] (T = the futures'
+                // common result type); pick the decode variant from T so each
+                // result is read back as T: strings keep the RC-transfer
+                // semantics of the single-await path, floats/structs unbox the
+                // heap-boxed result the spawn wrapper malloc'd (the old blanket
+                // int decode truncated floats and made struct field access
+                // miscompile; string results died at codegen with "Unknown
+                // method ... for type 'int'").
                 if (fn.length == 9 && memcmp(fn.start, "await_all", 9) == 0 && expr->call.arg_count == 1) {
-                    // Check if the futures array holds string-returning spawns
-                    bool _is_str_arr = false;
-                    if (expr->call.args[0]->type == EXPR_IDENT) {
+                    const char* _aa_sfx = "";
+                    Type* _aa_ret = expr->expr_type;
+                    Type* _aa_elem = (_aa_ret && _aa_ret->kind == TYPE_ARRAY)
+                        ? _aa_ret->array_type.element_type : NULL;
+                    if (_aa_elem) {
+                        switch (_aa_elem->kind) {
+                            case TYPE_STRING: _aa_sfx = "_str"; break;
+                            case TYPE_FLOAT:  _aa_sfx = "_float"; break;
+                            case TYPE_STRUCT:
+                            case TYPE_ENUM:   _aa_sfx = "_struct"; break;
+                            default: break;
+                        }
+                    }
+                    // Fallback: the name-tracked string-spawn-array registry
+                    // (covers shapes where the checker element type is absent).
+                    if (!_aa_sfx[0] && expr->call.args[0]->type == EXPR_IDENT) {
                         char _aan[256]; token_to_cstr(_aan, sizeof(_aan), expr->call.args[0]->token);
                         extern int is_string_spawn_array(const char*);
-                        _is_str_arr = is_string_spawn_array(_aan);
+                        if (is_string_spawn_array(_aan)) _aa_sfx = "_str";
                     }
+                    // An inline array literal of futures must emit as a
+                    // WynIntArray of future handles. Without this the literal
+                    // dispatched pushes by the checker's element type T -
+                    // array_push_float(&arr, f1) on a Future* was a C type
+                    // error, and array_push_str stored a Future* in a slot
+                    // array_free would RC-release as a string.
+                    bool _aa_lit = (expr->call.args[0]->type == EXPR_ARRAY);
+                    bool _aa_was_int = codegen_emit_int_array;
+                    if (_aa_lit) codegen_emit_int_array = true;
                     emit("_Generic((");
                     codegen_expr(expr->call.args[0]);
-                    if (_is_str_arr)
-                        emit("), WynIntArray: wyn_await_all_int_str, WynArray: wyn_await_all_str)(");
-                    else
-                        emit("), WynIntArray: wyn_await_all_int, WynArray: wyn_await_all)(");
+                    emit("), WynIntArray: wyn_await_all_int%s, WynArray: wyn_await_all%s)(", _aa_sfx, _aa_sfx);
                     codegen_expr(expr->call.args[0]);
                     emit(")");
+                    if (_aa_lit) codegen_emit_int_array = _aa_was_int;
                     break;
                 }
                 // await_any(futures_array) → return first completed result
@@ -3685,9 +3713,12 @@ void codegen_expr(Expr* expr) {
             if (codegen_emit_int_array && expr->array.count > 0) {
                 emit("({ WynIntArray __arr_%d = int_array_new(); ", arr_id);
                 for (int i = 0; i < expr->array.count; i++) {
-                    emit("int_array_push(&__arr_%d, ", arr_id);
+                    // Elements may be Future* handles (await_all literals) -
+                    // cast through intptr_t so newer clang (which makes
+                    // pointer->int conversion a hard error) accepts them.
+                    emit("int_array_push(&__arr_%d, (long long)(intptr_t)(", arr_id);
                     codegen_expr(expr->array.elements[i]);
-                    emit("); ");
+                    emit(")); ");
                 }
                 emit("__arr_%d; })", arr_id);
                 break;

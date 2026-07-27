@@ -2427,6 +2427,16 @@ void codegen_stmt(Stmt* stmt) {
                             else if (strcmp(rt, "float") == 0) vctype = "double";
                             else if (strcmp(rt, "bool") == 0) vctype = "bool";
                             else if (strcmp(rt, "int") == 0) vctype = "long long";
+                            else {
+                                // Struct return: the wrapper heap-boxes the
+                                // result; declare the value var as the struct
+                                // type and deref the box at the join. (It used
+                                // to stay long long - the pointer leaked into
+                                // the value var as an int.)
+                                static char _par_st[64][64];
+                                snprintf(_par_st[joined_count], 64, "%s", rt);
+                                vctype = _par_st[joined_count];
+                            }
                         }
                     }
                     char vn[128]; token_to_cstr(vn, sizeof(vn), s->var.name);
@@ -2468,7 +2478,15 @@ void codegen_stmt(Stmt* stmt) {
                 else if (strcmp(joined_ctypes[j], "const char*") == 0)
                     emit("    %s = (const char*)(intptr_t)%s;\n", joined_names[j], getcall);
                 else if (strcmp(joined_ctypes[j], "double") == 0)
-                    emit("    { long long __r = (long long)(intptr_t)%s; %s = *(double*)&__r; }\n", getcall, joined_names[j]);
+                    // The wrapper heap-boxes a double result - deref the box and
+                    // free it. (The old bit-reinterpret of the POINTER value
+                    // produced 2.1e-314-style garbage instead of the float.)
+                    emit("    { double* __r = (double*)%s; %s = __r ? *__r : 0.0; free(__r); }\n", getcall, joined_names[j]);
+                else if (strcmp(joined_ctypes[j], "long long") != 0 &&
+                         strcmp(joined_ctypes[j], "bool") != 0)
+                    // Struct result: heap-boxed by the wrapper - deref + free.
+                    emit("    { %s* __r = (%s*)%s; if (__r) { %s = *__r; free(__r); } }\n",
+                         joined_ctypes[j], joined_ctypes[j], getcall, joined_names[j]);
                 else
                     emit("    %s = (%s)(intptr_t)%s;\n", joined_names[j], joined_ctypes[j], getcall);
             }
