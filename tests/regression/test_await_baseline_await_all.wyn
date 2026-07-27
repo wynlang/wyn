@@ -1,0 +1,24 @@
+// EXPECT: sum: 285
+// EXPECT: order: 1 4 9 16 25 36 49 64 81
+// S0 await-epic baseline: await_all over N=9 futures returns every result and
+// preserves index order (results[i] corresponds to futs[i], NOT completion
+// order). sum of squares 1^2..9^2 = 285. See docs/CONCURRENCY_BASELINE.md.
+fn work(n: int) -> int { return n * n }
+
+fn main() -> int {
+    var futs = []
+    for i in 1..10 { futs.push(spawn work(i)) }
+    var rs = await_all(futs)
+
+    var s = 0
+    for _, r in rs { s = s + r }
+    println("sum: " + s.to_string())
+
+    // Positional correspondence: rs[0]=work(1)=1, rs[1]=work(2)=4, ...
+    var line = ""
+    for idx, r in rs {
+        if idx == 0 { line = r.to_string() } else { line = line + " " + r.to_string() }
+    }
+    println("order: " + line)
+    return 0
+}

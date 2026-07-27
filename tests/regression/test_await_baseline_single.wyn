@@ -1,0 +1,28 @@
+// EXPECT: int: 4950
+// EXPECT: string: hi-5
+// EXPECT: struct: 10,11
+// S0 await-epic baseline: a single `spawn` + `await` returns the correct value
+// for int, string, and struct return types. Locks in the from-main single-await
+// path on the CURRENT (coroutine-scheduler) executor. See
+// docs/CONCURRENCY_BASELINE.md.
+struct Point { x: int, y: int }
+fn compute(n: int) -> int {
+    var sum = 0
+    for i in 0..n { sum = sum + i }
+    return sum
+}
+fn greet(n: int) -> string { return "hi-" + n.to_string() }
+fn mkpoint(a: int) -> Point { return Point{ x: a, y: a + 1 } }
+
+fn main() -> int {
+    var fi = spawn compute(100)
+    println("int: " + (await fi).to_string())
+
+    var fs = spawn greet(5)
+    println("string: " + await fs)
+
+    var fp = spawn mkpoint(10)
+    var p = await fp
+    println("struct: " + p.x.to_string() + "," + p.y.to_string())
+    return 0
+}
