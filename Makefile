@@ -602,7 +602,8 @@ ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/regression/test_stringbuilder_many.wyn \
              tests/regression/test_await_all_string_results.wyn \
              tests/regression/test_await_all_float_results.wyn \
-             tests/regression/test_await_all_struct_results.wyn
+             tests/regression/test_await_all_struct_results.wyn \
+             tests/regression/test_retain_on_return.wyn
 
 asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a
 	@echo "=== ASan runtime test (representative set) ==="
