@@ -1,0 +1,26 @@
+// Regression companion to bare_enum_constructor: a BARE no-payload variant
+// (`var c = Red` for `enum Color { Red, Green, Blue }`) must keep working as a
+// plain C enum constant, and a bare match on it must select the right arm. This
+// path was already correct; the test pins it so the payload-constructor fix does
+// not regress the dataless case.
+
+enum Color { Red, Green, Blue }
+
+fn name_of(c: Color) -> string {
+    match c {
+        Red => { return "red" }
+        Green => { return "green" }
+        Blue => { return "blue" }
+    }
+    return "?"
+}
+
+// EXPECT: red
+// EXPECT: green
+// EXPECT: blue
+fn main() {
+    var c = Red
+    println(name_of(c))
+    println(name_of(Green))
+    println(name_of(Blue))
+}

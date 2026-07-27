@@ -1,0 +1,24 @@
+// Regression: the ambiguity rule for a bare name that is BOTH an enum variant
+// and a real user function. Rule: a real user function WINS for a bare call —
+// `Foo(5)` calls `fn Foo`, not the enum constructor. The enum constructor is
+// still reachable via the qualified form `E.Foo(...)`. This keeps bare-call
+// resolution principled and predictable (real fn > enum variant), and matches
+// the codegen precedence (user_fn_defined checked before the enum-variant
+// fallback).
+
+enum E { Foo(int), Bar(int) }
+
+fn Foo(n: int) -> int { return n + 100 }
+
+// EXPECT: 105
+// EXPECT: 7
+fn main() {
+    // Bare Foo(5) resolves to the FUNCTION, not the enum constructor.
+    println("${Foo(5)}")
+    // The enum constructor is still reachable qualified.
+    var e = E.Foo(7)
+    match e {
+        Foo(x) => { println("${x}") }
+        Bar(y) => { println("${y}") }
+    }
+}

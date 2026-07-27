@@ -1,0 +1,35 @@
+// Regression: a BARE (unqualified) enum constructor with a payload — `Circle(5)`
+// instead of `Shape.Circle(5)` — passed `wyn check` but failed codegen. The
+// checker registered the bare variant name only as a VALUE symbol (TYPE_ENUM),
+// never as a constructor FUNCTION, so `Circle(5)` typed as int and codegen
+// emitted an undeclared `Circle(` call. The qualified form worked because it
+// registered `Shape_Circle` as a function and codegen lowered `Shape.Circle`.
+//
+// Fix: the checker now types a bare payload-constructor call whose name is a
+// known enum variant (and is NOT a real user function) as the enum, and codegen
+// lowers the bare `Variant(args)` call to the enum's `Enum_Variant(...)`
+// constructor. Bare match arms (`Circle(r) =>`) already resolved via
+// find_enum_for_variant; construction now mirrors that.
+//
+// Resolution rule (construction AND matching, kept consistent):
+//   1. A real user function of the same name WINS (see bare_enum_fn_collision).
+//   2. Otherwise a bare variant resolves to its enum's constructor.
+//   3. The qualified form `Enum.Variant(...)` is always available to
+//      disambiguate when two enums share a variant name.
+
+enum Shape { Circle(int), Square(int) }
+
+// EXPECT: circle 5
+// EXPECT: square 9
+fn main() {
+    var s = Circle(5)
+    match s {
+        Circle(r) => { println("circle ${r}") }
+        Square(x) => { println("square ${x}") }
+    }
+    var t = Square(9)
+    match t {
+        Circle(r) => { println("circle ${r}") }
+        Square(x) => { println("square ${x}") }
+    }
+}

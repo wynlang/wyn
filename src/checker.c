@@ -629,6 +629,46 @@ static EnumStmt* find_enum_definition(Token enum_name) {
     return NULL;
 }
 
+// Find the enum that declares a variant named `variant` (searching the current
+// program and loaded modules), returning its EnumStmt and, via *out_vi, the
+// variant index. Used to resolve a BARE (unqualified) enum constructor call
+// like `Circle(5)` -> the `Shape` enum's `Circle` variant, mirroring the
+// qualified `Shape.Circle(5)` path. Returns the FIRST match: when two enums
+// share a variant name the bare form is inherently ambiguous, so callers should
+// treat the qualified form as the disambiguator (documented in
+// tests/regression/bare_enum_constructor.wyn). Returns NULL if no enum has it.
+static EnumStmt* find_enum_for_bare_variant(Token variant, int* out_vi) {
+    if (!current_program) return NULL;
+    Program* progs[64]; int np = 0;
+    progs[np++] = current_program;
+    extern int get_module_count(void);
+    extern Program* get_module_at(int index);
+    int mc = get_module_count();
+    for (int m = 0; m < mc && np < 64; m++) {
+        Program* mod = get_module_at(m);
+        if (mod) progs[np++] = mod;
+    }
+    for (int p = 0; p < np; p++) {
+        Program* prog = progs[p];
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* stmt = prog->stmts[i];
+            if (stmt->type == STMT_EXPORT && stmt->export.stmt &&
+                stmt->export.stmt->type == STMT_ENUM)
+                stmt = stmt->export.stmt;
+            if (stmt->type != STMT_ENUM) continue;
+            for (int vi = 0; vi < stmt->enum_decl.variant_count; vi++) {
+                Token v = stmt->enum_decl.variants[vi];
+                if (v.length == variant.length &&
+                    memcmp(v.start, variant.start, v.length) == 0) {
+                    if (out_vi) *out_vi = vi;
+                    return &stmt->enum_decl;
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
 // Does enum `from` reach enum `target` through a chain of enum-typed variant
 // payloads? Used to detect a MUTUALLY-recursive enum cycle
 // (enum A{AtoB(B)} enum B{BtoA(A)}), which codegen cannot yet represent: the
@@ -3542,6 +3582,40 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                     expr->expr_type = ctor_sym->type->fn_type.return_type;
                     return ctor_sym->type->fn_type.return_type;
+                }
+            }
+            // BARE (unqualified) enum constructor call: `Circle(5)` where Circle
+            // is a variant of some enum. The variant name is registered as a
+            // value symbol (TYPE_ENUM) but not as a function, so without this it
+            // falls through to the int fallback and codegen emits an undeclared
+            // `Circle(` call. Type it as the enum, mirroring the qualified
+            // `Shape.Circle(5)` path above and the bare match-arm resolution.
+            // Rule: a real user FUNCTION of the same name wins (do not shadow
+            // it); the enum constructor stays reachable via the qualified form.
+            if (expr->call.callee->type == EXPR_IDENT) {
+                Token bare = expr->call.callee->token;
+                Symbol* fn_sym = find_symbol(scope, bare);
+                bool is_real_fn = false;
+                for (Symbol* s = fn_sym; s; s = s->next_overload) {
+                    if (s->type && s->type->kind == TYPE_FUNCTION) { is_real_fn = true; break; }
+                }
+                if (!is_real_fn) {
+                    int bvi = -1;
+                    EnumStmt* ed = find_enum_for_bare_variant(bare, &bvi);
+                    // Only intercept payload-carrying variants: a bare no-payload
+                    // variant is a value, not a call, and any `V()` on it is a
+                    // genuine error we leave to the normal path.
+                    if (ed && bvi >= 0 && ed->variant_type_counts &&
+                        ed->variant_type_counts[bvi] > 0) {
+                        for (int i = 0; i < expr->call.arg_count; i++)
+                            check_expr(expr->call.args[i], scope);
+                        Type* et = make_type(TYPE_ENUM);
+                        et->name = ed->name;
+                        et->enum_type.variants = ed->variants;
+                        et->enum_type.variant_count = ed->variant_count;
+                        expr->expr_type = et;
+                        return et;
+                    }
                 }
             }
             // T3.1.1: Enhanced generic function call handling
