@@ -16,6 +16,10 @@ void wyn_scheduler_enqueue(WynScheduler* s, WynSpawnFunc f, void* a) { (void)s; 
 void wyn_spawn(WynSpawnFunc f, void* a) { f(a); }
 void wyn_yield(void) {}
 WynTask* wyn_task_new(int cap) {
+    // Guard against a 0/negative capacity: calloc(0,..) is implementation-
+    // defined and a 0-capacity ring buffer can never deliver. Task.channel
+    // already rejects cap < 1; clamp here too so no path allocates a 0-slot ring.
+    if (cap < 1) cap = 1;
     WynTask* t = calloc(1, sizeof(WynTask));
     t->capacity = cap; t->buffer = calloc(cap, sizeof(void*));
     return t;
@@ -282,6 +286,11 @@ static void* waiter_pop(WynWaiter** head, WynWaiter** tail) {
 
 // Task coordinator implementation
 WynTask* wyn_task_new(int capacity) {
+    // Guard against a 0/negative capacity: malloc(0) is implementation-defined
+    // and a 0-capacity ring buffer can never deliver (size < capacity is never
+    // true → permanent send/recv hang). Task.channel already rejects cap < 1;
+    // clamp here too so no internal path can allocate a 0-slot ring.
+    if (capacity < 1) capacity = 1;
     WynTask* task = malloc(sizeof(WynTask));
     task->capacity = capacity;
     task->size = 0;

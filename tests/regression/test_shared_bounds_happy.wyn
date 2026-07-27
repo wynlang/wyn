@@ -1,0 +1,29 @@
+// Regression: Shared.* handle bounds-checking (was: no validation → OOB
+// read/write on wyn_shared_slab, ASan global-buffer-overflow). This test proves
+// the HAPPY PATH is untouched by the added guards: a valid handle still stores,
+// loads, adds and subs exactly, including 1000 sequential adds landing on the
+// exact total. (The OOB / out-of-range panic path is covered by the shell test
+// test_shared_channel_panics.sh, since // EXPECT can't assert a non-zero exit.)
+// EXPECT: PASS: shared bounds happy-path exact
+
+fn main() -> int {
+    var s = Shared.new(0)
+    if Shared.get(s) != 0 { println("FAIL: initial"); return 1 }
+
+    Shared.set(s, 42)
+    if Shared.get(s) != 42 { println("FAIL: set/get"); return 1 }
+
+    Shared.set(s, 0)
+    var i = 0
+    while i < 1000 {
+        Shared.add(s, 1)
+        i = i + 1
+    }
+    if Shared.get(s) != 1000 { println("FAIL: 1000 adds"); return 1 }
+
+    Shared.sub(s, 250)
+    if Shared.get(s) != 750 { println("FAIL: sub"); return 1 }
+
+    println("PASS: shared bounds happy-path exact")
+    return 0
+}
