@@ -63,7 +63,9 @@ typedef void* (*TaskFuncWithReturn)(void*);
 typedef struct Task {
     _Atomic(WynCoroutine*) coro;
     Future* future;          // NULL for fire-and-forget
-    struct Task* next;       // free list / global queue linkage
+    _Atomic(struct Task*) next;  // free list / global queue linkage (atomic:
+                                 // Treiber-stack link must be synchronized, not
+                                 // just global_q.top - see global_queue_push/pop)
     const char* spawn_file;  // Source file that created this spawn
     int spawn_line;          // Line number of the spawn call
     long spawn_id;           // Unique spawn ID for debugging
@@ -79,7 +81,8 @@ static _Atomic(Task*) task_free_list = NULL;
 static Task* alloc_task(void) {
     Task* t = atomic_load_explicit(&task_free_list, memory_order_acquire);
     while (t) {
-        if (atomic_compare_exchange_weak_explicit(&task_free_list, &t, t->next,
+        Task* next = atomic_load_explicit(&t->next, memory_order_acquire);
+        if (atomic_compare_exchange_weak_explicit(&task_free_list, &t, next,
                 memory_order_acq_rel, memory_order_acquire))
             return t;
     }
@@ -167,7 +170,9 @@ static void global_queue_push(Task* task) {
     Task* old_top;
     do {
         old_top = atomic_load_explicit(&global_q.top, memory_order_relaxed);
-        task->next = old_top;
+        // Release-store the link so a popper that acquire-loads it (below) sees
+        // the fully-written node; the CAS then publishes `task` as the new top.
+        atomic_store_explicit(&task->next, old_top, memory_order_release);
     } while (!atomic_compare_exchange_weak_explicit(&global_q.top, &old_top, task,
              memory_order_release, memory_order_relaxed));
     atomic_fetch_add_explicit(&global_q.count, 1, memory_order_relaxed);
@@ -179,7 +184,8 @@ static Task* global_queue_pop(void) {
     do {
         top = atomic_load_explicit(&global_q.top, memory_order_acquire);
         if (!top) return NULL;
-        next = top->next;
+        // Acquire-load the link to pair with the pusher's release-store of it.
+        next = atomic_load_explicit(&top->next, memory_order_acquire);
     } while (!atomic_compare_exchange_weak_explicit(&global_q.top, &top, next,
              memory_order_release, memory_order_relaxed));
     atomic_fetch_sub_explicit(&global_q.count, 1, memory_order_relaxed);

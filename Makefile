@@ -646,7 +646,8 @@ TSAN_TESTS = tests/expect/test_channels.wyn \
              tests/expect/test_spawn_typed_args.wyn \
              tests/expect/test_concurrent_strings.wyn \
              tests/expect/test_await_twice.wyn \
-             tests/expect/test_select_arms.wyn
+             tests/expect/test_select_arms.wyn \
+             tests/regression/test_channel_many_senders_race.wyn
 
 tsan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_tsan.a
 	@echo "=== TSan runtime test (both executor configs) ==="

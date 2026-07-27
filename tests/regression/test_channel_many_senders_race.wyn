@@ -1,0 +1,33 @@
+// EXPECT: 5000
+// Many coroutine senders + a main-thread receiver on one channel. Each send
+// that blocks/wakes drives wyn_task_recv -> wyn_sched_enqueue -> global_queue_push,
+// which races a worker's global_queue_pop over Task::next. Regression for the
+// TSan-confirmed Task::next data race (link field must be _Atomic).
+fn sender(ch: int, base: int, n: int) -> int {
+    i = 0
+    while i < n {
+        Task.send(ch, base + i)
+        i = i + 1
+    }
+    return 0
+}
+
+fn main() -> int {
+    ch = channel(8)
+    senders = 50
+    per = 100
+    s = 0
+    while s < senders {
+        spawn sender(ch, s * per, per)
+        s = s + 1
+    }
+    // Main-thread receiver: consume everything the senders push.
+    total = senders * per
+    got = 0
+    while got < total {
+        v = ch.recv()
+        got = got + 1
+    }
+    println(got.to_string())
+    return 0
+}
