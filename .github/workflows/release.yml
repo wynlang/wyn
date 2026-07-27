@@ -123,13 +123,18 @@ jobs:
       - name: Verify artifact layout (Windows)
         if: runner.os == 'Windows'
         run: |
-          mkdir -p /tmp/verify
-          powershell -Command "Expand-Archive -Path ${{ matrix.artifact }}.zip -DestinationPath /tmp/verify -Force"
-          test -f /tmp/verify/bin/wyn.exe
-          test -f /tmp/verify/src/wyn_runtime.h
-          test -f /tmp/verify/runtime/libwyn_rt.a
-          test -f /tmp/verify/VERSION
-          test -f /tmp/verify/LICENSE
+          # Unzip into a cwd-relative dir. PowerShell's `/tmp` and git-bash's
+          # `/tmp` map to DIFFERENT locations on the Windows runner, so a
+          # PowerShell Expand-Archive to /tmp followed by a bash `test -f /tmp/...`
+          # never sees the files (this failed the first release that ran it).
+          # A relative "verify_out" dir is resolved identically by both.
+          rm -rf verify_out
+          powershell -Command "Expand-Archive -Path ${{ matrix.artifact }}.zip -DestinationPath verify_out -Force"
+          test -f verify_out/bin/wyn.exe
+          test -f verify_out/src/wyn_runtime.h
+          test -f verify_out/runtime/libwyn_rt.a
+          test -f verify_out/VERSION
+          test -f verify_out/LICENSE
           echo "artifact layout verified (Windows)"
         shell: bash
 
