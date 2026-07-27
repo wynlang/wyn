@@ -203,6 +203,30 @@ static void resolve_wyn_root(const char* argv0, char* out, size_t out_sz) {
     snprintf(out, out_sz, "%s", exe_dir);
 }
 
+// Resolve the REAL path of the running `wyn` compiler binary. Same OS-level
+// lookup resolve_wyn_root() uses, but keeps the executable path itself (not
+// its root dir). Used by the `wyn run` incremental cache to detect a rebuilt
+// compiler. Returns 1 on success, 0 if the path can't be determined.
+static int resolve_wyn_exe(const char* argv0, char* out, size_t out_sz) {
+    char exe_path[1024] = "";
+#ifdef __APPLE__
+    uint32_t sz = sizeof(exe_path);
+    if (_NSGetExecutablePath(exe_path, &sz) != 0) exe_path[0] = 0;
+#elif defined(_WIN32)
+    if (GetModuleFileNameA(NULL, exe_path, sizeof(exe_path)) == 0) exe_path[0] = 0;
+#else
+    ssize_t rl = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (rl > 0) exe_path[rl] = '\0'; else exe_path[0] = 0;
+#endif
+    if (!exe_path[0]) {  // OS lookup failed - fall back to argv0
+        if (!argv0 || !*argv0) return 0;
+        strncpy(exe_path, argv0, sizeof(exe_path) - 1);
+        exe_path[sizeof(exe_path) - 1] = 0;
+    }
+    snprintf(out, out_sz, "%s", exe_path);
+    return 1;
+}
+
 // GPU dispatch: decide whether eligible [float].map sites emit the dual
 // CPU/GPU path, based on the project's wyn.toml [gpu] section. Called before
 // codegen.
@@ -2550,7 +2574,19 @@ int main(int argc, char** argv) {
             snprintf(out_path, sizeof(out_path), "%s.out", file);
             struct stat src_st, out_st;
             if (stat(file, &src_st) == 0 && stat(out_path, &out_st) == 0) {
-                if (out_st.st_mtime >= src_st.st_mtime) {
+                // Cache validity also depends on the COMPILER: a rebuilt `wyn`
+                // (bug fix, codegen change) must invalidate a binary produced
+                // by the old compiler, even if the source is untouched -
+                // otherwise `wyn run oldfile.wyn` silently runs the stale,
+                // pre-fix binary. Require the cached binary to be newer than
+                // the source AND newer than the wyn executable itself. If the
+                // compiler path can't be resolved, fall back to the source-only
+                // check (never break `run`).
+                char wyn_exe[1024]; struct stat wyn_st;
+                int compiler_ok = resolve_wyn_exe(argv[0], wyn_exe, sizeof(wyn_exe))
+                                  && stat(wyn_exe, &wyn_st) == 0;
+                if (out_st.st_mtime >= src_st.st_mtime &&
+                    (!compiler_ok || out_st.st_mtime >= wyn_st.st_mtime)) {
                     char run_cmd[2048];
                     if (out_path[0] == '/') {
                         snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
