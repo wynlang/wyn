@@ -1,0 +1,19 @@
+// Regression: Task.channel(0) used to hang forever (0 < 0 is never true, so a
+// capacity-0 channel can never deliver). It now panics cleanly at the
+// constructor (covered by the shell test). This test proves the VALID path is
+// untouched: a capacity-1 channel round-trips a value across a spawned producer.
+// EXPECT: PASS: channel cap-1 round-trip = 42
+
+fn produce(ch: int) -> int {
+    Task.send(ch, 42)
+    return 0
+}
+
+fn main() -> int {
+    var ch = Task.channel(1)
+    spawn produce(ch)
+    var v = Task.recv(ch)
+    if v != 42 { println("FAIL: got ${v}"); return 1 }
+    println("PASS: channel cap-1 round-trip = 42")
+    return 0
+}

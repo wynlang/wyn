@@ -4465,6 +4465,16 @@ static inline long long Task_is_cancelled(void) { return 0; }
 static WynTask* task_registry[MAX_TASKS] = {0};
 
 long long Task_channel(long long capacity) {
+    // Reject capacity < 1. A capacity-0 (unbuffered/rendezvous) channel can
+    // never satisfy `size < capacity`, so every send blocks forever and recv
+    // hangs — a silent deadlock (the deadlock backstop is defeated because the
+    // peer coroutine is itself "inflight"). Unbuffered rendezvous is a larger
+    // feature; until it exists, fail loudly and immediately instead of hanging.
+    if (capacity < 1) {
+        fprintf(stderr, "panic: Task.channel capacity must be >= 1 (unbuffered channels are not supported)\n");
+        if (!wyn_lenient_mode()) exit(1);
+        return 0;  // lenient: no channel allocated; handle 0 is the "invalid" sentinel
+    }
     WynTask* task = wyn_task_new((int)capacity);
     for (int i = 1; i < MAX_TASKS; i++) {
         if (!task_registry[i]) { task_registry[i] = task; return i; }
@@ -4704,27 +4714,58 @@ long long wyn_await_any_int(WynIntArray futures) {
 // === Shared Atomic Values ===
 // Lock-free shared integers for concurrent access.
 // Handle is an index into a global slab of atomics.
+//
+// The slab is a fixed-size global atomic array. Growing it concurrently would
+// be unsafe (readers of wyn_shared_slab[i] hold no lock — a realloc would
+// invalidate their pointer mid-access), so instead of a growable slab we
+// pre-size it large and treat true exhaustion as a clean fatal panic rather
+// than the old silent -1 (which then became an out-of-bounds slab access on the
+// next Shared.set/add). There is deliberately no Shared.free: handle reuse in a
+// lock-free design races (a stale handle could resurrect a freed slot), so
+// handles live for the process lifetime — 64K distinct live Shared values is
+// far beyond any realistic concurrent-counter workload.
 #include <stdatomic.h>
-#define WYN_SHARED_MAX 4096
+#define WYN_SHARED_MAX 65536
 static _Atomic long long wyn_shared_slab[WYN_SHARED_MAX];
 static _Atomic int wyn_shared_count = 0;
 
+// Out-of-range handle is a bug (bad/negative/stale handle). Match the array-OOB
+// house style: print a clear panic and exit unless lenient mode is on, in which
+// case callers return a safe default (0) and the store/sub is a no-op. Silently
+// returning 0 everywhere would hide the bug and, worse, the old code performed a
+// real OOB read/write on wyn_shared_slab[handle] (ASan: global-buffer-overflow).
+static inline void wyn_shared_oob_panic(long long handle) {
+    fprintf(stderr, "panic: Shared handle out of range: handle %lld (valid 0..%d)\n",
+            handle, WYN_SHARED_MAX - 1);
+    if (!wyn_lenient_mode()) exit(1);
+}
+
 long long Shared_new(long long initial) {
     int idx = atomic_fetch_add(&wyn_shared_count, 1);
-    if (idx >= WYN_SHARED_MAX) return -1;
+    if (idx >= WYN_SHARED_MAX) {
+        // True exhaustion: never hand back a sentinel that becomes an OOB later.
+        fprintf(stderr, "panic: Shared value pool exhausted (max %d live Shared values)\n",
+                WYN_SHARED_MAX);
+        if (!wyn_lenient_mode()) exit(1);
+        return -1;
+    }
     atomic_store(&wyn_shared_slab[idx], initial);
     return (long long)idx;
 }
 long long Shared_get(long long handle) {
+    if (handle < 0 || handle >= WYN_SHARED_MAX) { wyn_shared_oob_panic(handle); return 0; }
     return atomic_load(&wyn_shared_slab[(int)handle]);
 }
 void Shared_set(long long handle, long long value) {
+    if (handle < 0 || handle >= WYN_SHARED_MAX) { wyn_shared_oob_panic(handle); return; }
     atomic_store(&wyn_shared_slab[(int)handle], value);
 }
 long long Shared_add(long long handle, long long delta) {
+    if (handle < 0 || handle >= WYN_SHARED_MAX) { wyn_shared_oob_panic(handle); return 0; }
     return atomic_fetch_add(&wyn_shared_slab[(int)handle], delta);
 }
 long long Shared_sub(long long handle, long long delta) {
+    if (handle < 0 || handle >= WYN_SHARED_MAX) { wyn_shared_oob_panic(handle); return 0; }
     return atomic_fetch_sub(&wyn_shared_slab[(int)handle], delta);
 }
 
