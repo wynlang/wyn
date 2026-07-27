@@ -213,6 +213,23 @@ static _Atomic long total_completed = 0;
 
 static inline void wake_processor(void) {
     int n = atomic_load_explicit(&num_processors, memory_order_relaxed);
+    // Go's `wakep` rule: if a processor is already spinning it is actively
+    // draining the global queue / stealing, so it will pick up the task we just
+    // enqueued without an (expensive) pthread_cond_signal syscall. Callers ALWAYS
+    // enqueue (release-store into the global queue or a local deque) BEFORE
+    // calling wake_processor, so a processor we observe spinning here either (a)
+    // sees the task in its spin-loop poll, or (b) exhausts the spin, sets
+    // parked=1, and re-checks global_queue_pop() (processor_loop ~line 375) -
+    // finding the task pushed before this read. The park itself is a 100us
+    // pthread_cond_timedwait, so even a maximally-reordered miss self-heals on the
+    // next timeout tick: a task is delayed, never dropped, never a permanent hang.
+    // This only fires when SOME processor is spinning; when every worker is
+    // parked (nobody spinning) we fall through and signal one, so the last wake
+    // is never lost.
+    for (int i = 0; i < n; i++) {
+        if (atomic_load_explicit(&processors[i].spinning, memory_order_acquire))
+            return;  // a spinning worker will grab it - no signal needed
+    }
     for (int i = 0; i < n; i++) {
         if (atomic_load_explicit(&processors[i].parked, memory_order_acquire)) {
             pthread_mutex_lock(&processors[i].park_lock);
@@ -595,8 +612,7 @@ void wyn_spawn_fast_traced(TaskFunc func, void* arg, const char* file, int line)
     
     long spawned = atomic_fetch_add(&total_spawned, 1);
     t->spawn_id = spawned + 1;
-    enqueue_task(t);
-    wake_processor();  // Always wake - ensures tasks run in parallel
+    enqueue_task(t);  // enqueue_task already calls wake_processor()
 }
 
 Future* wyn_spawn_async(TaskFuncWithReturn func, void* arg) {

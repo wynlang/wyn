@@ -111,8 +111,15 @@ static void wc_dealloc(WynCoroutine* wc) {
 }
 
 // === Coroutine memory pool ===
-// Recycles mmap'd blocks via MAP_FIXED remap (fresh zeroed pages).
-// Avoids munmap+mmap round-trip while keeping virtual address reserved.
+// Recycles mmap'd 8MB stack blocks directly (no re-zeroing on reuse).
+// minicoro does NOT need a zeroed stack: mco_create memsets only the small
+// mco_coro header it carves from the block, and stack frames are written
+// before they're read - like Go, which reuses goroutine stacks without
+// scrubbing them. The old code re-mapped every recycled block with
+// mmap(MAP_FIXED) to hand back fresh zero pages; at 8MB/block that was a VM
+// remap syscall + ~2000 zero-fill page faults PER spawn (dominant cost in
+// spawn-heavy workloads: ~17s sys / 11s wall for benchmarks/spawn_1m).
+// Returning the pooled block as-is drops that entirely (~5x).
 #define CORO_POOL_MAX 4096
 static void* coro_pool_slots[CORO_POOL_MAX];
 static int coro_pool_count = 0;
@@ -135,10 +142,9 @@ static void* coro_pool_alloc(size_t size, void* ud) {
         if (coro_pool_count > 0) {
             void* ptr = coro_pool_slots[--coro_pool_count];
             coro_pool_unlock();
-            // Remap to get fresh zeroed pages at the same virtual address.
-            void* fresh = mmap(ptr, size, PROT_READ | PROT_WRITE,
-                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-            return (fresh != MAP_FAILED) ? fresh : NULL;
+            // Pool HIT: reuse the block as-is. minicoro re-inits the header it
+            // needs; a zeroed stack is not required (see note above). No remap.
+            return ptr;
         }
         coro_pool_unlock();
     }
