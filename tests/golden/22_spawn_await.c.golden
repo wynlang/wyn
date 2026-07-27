@@ -11,7 +11,8 @@ long long wyn_main();
 
 // Spawn wrapper functions
 void* __spawn_wrapper_compute_1(void* arg) {
-    return (void*)(intptr_t)compute((long long)(intptr_t)arg);
+    long long __r = (long long)compute((long long)(intptr_t)arg);
+    return (void*)(intptr_t)__r;
 }
 
 /* 22_spawn_await.wyn:2 */ 

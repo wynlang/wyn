@@ -1743,6 +1743,10 @@ bool set_is_disjoint(WynHashSet* set1, WynHashSet* set2) {
 }
 
 double int_to_float(int n) { return (double)n; }
+// Identity: .to_int() on an int is a no-op. Exists because bool-valued results
+// (map.contains, comparisons) are typed int, and the checker forgives .to_int()
+// on them - codegen must agree.
+static inline long long int_to_int(long long n) { return n; }
 int int_abs(int n) { return n < 0 ? -n : n; }
 int int_pow(int base, int exp) {
     int result = 1;

@@ -73,6 +73,7 @@ static const MethodSignature method_signatures[] = {
     
     // Int methods
     {"int", "to_string", "string", 0},
+    {"int", "to_int", "int", 0},    // identity - bool results are typed int (map.contains), keep .to_int() forgiving
     {"int", "to_float", "float", 0},
     {"int", "abs", "int", 0},
     {"int", "pow", "int", 1},
@@ -545,6 +546,14 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         // Integer methods
         if (strcmp(method_name, "to_string") == 0 && arg_count == 0) {
             out->c_function = "int_to_string"; return true;
+        }
+        // Identity, so bool-in-int-clothing results (map.contains() and other
+        // comparisons are typed int) accept .to_int() at build like the checker
+        // does at check. Before this, `map.contains(k).to_int()` passed `wyn
+        // check` and then died in codegen ("Unknown method 'to_int' for type
+        // 'int'").
+        if (strcmp(method_name, "to_int") == 0 && arg_count == 0) {
+            out->c_function = "int_to_int"; return true;
         }
         if (strcmp(method_name, "to_float") == 0 && arg_count == 0) {
             out->c_function = "int_to_float"; return true;

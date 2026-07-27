@@ -1,0 +1,21 @@
+// Regression: returning a read from an OPEN map (empty {} literal) out of a
+// function with a declared return type used to fail with "Return type
+// mismatch. Expected int, got string" - the open-map read defaulted to string
+// before any store could fix the value type. The book's cache pattern. The
+// declared return type now fills the open map's value type.
+// EXPECT: 25
+// EXPECT: 25
+cache = {}
+fn expensive_computation(n: int) -> int {
+    key = "${n}"
+    if (cache.has(key)) {
+        return cache[key]
+    }
+    result = n * n
+    cache[key] = result
+    return result
+}
+fn main() {
+    print("${expensive_computation(5)}")
+    print("${expensive_computation(5)}")
+}

@@ -177,7 +177,7 @@ int is_c_name_collision(const char* name) {
         "sin_approx","cos_approx","pi_const","e_const",
         "int_abs","int_sign","int_clamp","int_min","int_max","int_pow",
         "int_is_even","int_is_odd","int_is_positive","int_is_negative","int_is_zero",
-        "int_times","int_to_float","int_array_len","int_array_push",
+        "int_times","int_to_float","int_to_int","int_array_len","int_array_push",
         "float_abs","float_sign","float_clamp","float_min","float_max","float_pow",
         "float_sqrt","float_floor","float_ceil","float_round","float_round_to",
         "float_sin","float_cos","float_tan","float_asin","float_acos","float_atan",
@@ -1538,6 +1538,57 @@ static const char* c_type_from_expr(Expr* type_expr) {
         if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return "const char*";
         if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return "int";
         if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return "double";
+    }
+    return "long long";
+}
+
+// Resolve a function parameter's C type for spawn argument packing. Shared by
+// the fire-and-forget (STMT_SPAWN), awaited (EXPR_SPAWN) and wrapper-emission
+// paths so the call site's pack struct and the wrapper's unpack struct can
+// never disagree. Before this existed, each site kept its own PARTIAL copy of
+// the type map: struct/enum args didn't compile, and the awaited multi-arg
+// pack used `long long` for every field (double args arrived as garbage bits).
+// *out_word: value rides the single-arg (void*)(intptr_t) cast losslessly.
+// *out_str:  parameter is a string (RC-retained across the spawn: the spawning
+//            scope may release it before the task runs).
+// Returns a pointer that may be a static buffer - use before the next call.
+static const char* spawn_param_c_type(const char* func_name, int idx,
+                                      int* out_word, int* out_str) {
+    if (out_word) *out_word = 1;
+    if (out_str)  *out_str = 0;
+    if (!current_program) return "long long";
+    for (int fi = 0; fi < current_program->count; fi++) {
+        Stmt* fs = current_program->stmts[fi];
+        if (fs->type == STMT_EXPORT && fs->export.stmt) fs = fs->export.stmt;
+        if (fs->type != STMT_FN) continue;
+        if ((size_t)fs->fn.name.length != strlen(func_name) ||
+            memcmp(fs->fn.name.start, func_name, fs->fn.name.length) != 0) continue;
+        if (idx >= fs->fn.param_count || !fs->fn.param_types[idx]) return "long long";
+        Expr* pt = fs->fn.param_types[idx];
+        if (pt->type == EXPR_ARRAY) { if (out_word) *out_word = 0; return "WynArray"; }
+        if (pt->type != EXPR_IDENT) return "long long";  // fn/optional types: legacy word path
+        Token t = pt->token;
+        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return "long long";
+        if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return "bool";
+        if ((t.length == 6 && memcmp(t.start, "string", 6) == 0) ||
+            (t.length == 3 && memcmp(t.start, "str", 3) == 0)) {
+            if (out_str) *out_str = 1;
+            return "const char*";
+        }
+        if (t.length == 5 && memcmp(t.start, "float", 5) == 0) { if (out_word) *out_word = 0; return "double"; }
+        if (out_word) *out_word = 0;  // everything below rides the boxed path
+        if (t.length == 7 && memcmp(t.start, "HashMap", 7) == 0) return "WynHashMap*";
+        if (t.length == 7 && memcmp(t.start, "HashSet", 7) == 0) return "WynHashSet*";
+        if (t.length == 4 && memcmp(t.start, "cstr", 4) == 0) return "char*";
+        if (t.length == 3 && memcmp(t.start, "ptr", 3) == 0) return "void*";
+        // User-defined type (struct/enum): pack by value with its real C type.
+        // A struct can't ride the word cast, so route through the boxed path.
+        {
+            static char _spct_buf[96];
+            snprintf(_spct_buf, sizeof(_spct_buf), "%.*s", t.length, t.start);
+            if (out_word) *out_word = 0;
+            return _spct_buf;
+        }
     }
     return "long long";
 }

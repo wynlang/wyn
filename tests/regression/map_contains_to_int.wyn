@@ -1,0 +1,18 @@
+// Regression: map.contains() is typed int by the checker (bool/int are
+// conflated), but codegen had no .to_int() on an int receiver - `wyn check`
+// passed and `wyn build` died with "Unknown method 'to_int' for type 'int'".
+// .to_int() on an int is now a no-op identity, matching the forgiving checker.
+// (examples/v1_5_0_showcase.wyn line 90 hits the same path.)
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 0
+fn main() {
+    var map = {"key1": 1}
+    var has_key = map.contains("key1")
+    var as_int = has_key.to_int()
+    print("${as_int}")
+    var b = true
+    print("${b.to_int()}")
+    var n = 0
+    print("${n.to_int()}")
+}

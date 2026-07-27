@@ -5333,28 +5333,12 @@ void codegen_expr(Expr* expr) {
                 // array) cannot ride the (void*)(intptr_t) cast: floats were
                 // silently TRUNCATED (spawn half(7.0) -> 3), structs were a C
                 // type error. Route those through the args-struct path.
-                bool _arg1_needs_box = false;
-                if (arg_count == 1 && current_program) {
-                    for (int _fi = 0; _fi < current_program->count; _fi++) {
-                        Stmt* _fs = current_program->stmts[_fi];
-                        if (_fs->type == STMT_FN &&
-                            (size_t)_fs->fn.name.length == strlen(func_name) &&
-                            memcmp(_fs->fn.name.start, func_name, _fs->fn.name.length) == 0) {
-                            if (_fs->fn.param_count > 0 && _fs->fn.param_types[0]) {
-                                Expr* pt0 = _fs->fn.param_types[0];
-                                if (pt0->type == EXPR_ARRAY) _arg1_needs_box = true;
-                                else if (pt0->type == EXPR_IDENT) {
-                                    Token ptk = pt0->token;
-                                    bool is_word = (ptk.length == 3 && memcmp(ptk.start, "int", 3) == 0) ||
-                                                   (ptk.length == 4 && memcmp(ptk.start, "bool", 4) == 0) ||
-                                                   (ptk.length == 6 && memcmp(ptk.start, "string", 6) == 0);
-                                    if (!is_word) _arg1_needs_box = true;
-                                }
-                            }
-                            break;
-                        }
-                    }
-                }
+                // spawn_param_c_type is the same helper the wrapper emission
+                // uses, so pack and unpack can never disagree.
+                int _arg1_word = 1, _arg1_str = 0;
+                if (arg_count == 1)
+                    spawn_param_c_type(func_name, 0, &_arg1_word, &_arg1_str);
+                bool _arg1_needs_box = (arg_count == 1) && !_arg1_word;
 
                 if (arg_count == 0) {
                     if (_can_inline)
@@ -5362,39 +5346,35 @@ void codegen_expr(Expr* expr) {
                     else
                         emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s, NULL, __FILE__, __LINE__)", func_name);
                 } else if (arg_count == 1 && !_arg1_needs_box) {
-                    if (_can_inline) {
-                        emit("wyn_spawn_inline((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
+                    // A string arg is RC-retained for the task (the wrapper
+                    // releases it): the spawning scope's own release could
+                    // otherwise free it before the task runs.
+                    if (_arg1_str) {
+                        emit("({ const char* __sarg = (");
+                        codegen_expr(call->call.args[0]);
+                        emit("); wyn_rc_retain(__sarg); ");
+                        if (_can_inline)
+                            emit("wyn_spawn_inline((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)__sarg); })", func_name);
+                        else
+                            emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)__sarg, __FILE__, __LINE__); })", func_name);
                     } else {
-                        emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
+                        if (_can_inline) {
+                            emit("wyn_spawn_inline((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
+                        } else {
+                            emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
+                        }
+                        codegen_expr(call->call.args[0]);
+                        if (_can_inline)
+                            emit("))");
+                        else
+                            emit("), __FILE__, __LINE__)");
                     }
-                    codegen_expr(call->call.args[0]);
-                    if (_can_inline)
-                        emit("))");
-                    else
-                        emit("), __FILE__, __LINE__)");
                 } else if (arg_count == 1 && _arg1_needs_box) {
                     // Boxed single arg: same shape as the multi-arg path - the
                     // wrapper (which knows the real param type) unpacks it.
                     spawn_id_counter++;
                     int sid = spawn_id_counter;
-                    const char* _box_ct = "long long";
-                    {   // recover the param's C type for the box field
-                        for (int _fi = 0; _fi < current_program->count; _fi++) {
-                            Stmt* _fs = current_program->stmts[_fi];
-                            if (_fs->type == STMT_FN &&
-                                (size_t)_fs->fn.name.length == strlen(func_name) &&
-                                memcmp(_fs->fn.name.start, func_name, _fs->fn.name.length) == 0) {
-                                Expr* pt0 = _fs->fn.param_types[0];
-                                if (pt0->type == EXPR_ARRAY) _box_ct = "WynArray";
-                                else if (pt0->type == EXPR_IDENT) {
-                                    Token ptk = pt0->token;
-                                    if (ptk.length == 5 && memcmp(ptk.start, "float", 5) == 0) _box_ct = "double";
-                                    else { static char _bcb[96]; snprintf(_bcb, sizeof(_bcb), "%.*s", ptk.length, ptk.start); _box_ct = _bcb; }
-                                }
-                                break;
-                            }
-                        }
-                    }
+                    const char* _box_ct = spawn_param_c_type(func_name, 0, NULL, NULL);
                     emit("({ struct __spawn_args_%d { %s a0; } *__sa_%d = malloc(sizeof(struct __spawn_args_%d)); ",
                          sid, _box_ct, sid, sid);
                     emit("__sa_%d->a0 = ", sid);
@@ -5405,18 +5385,24 @@ void codegen_expr(Expr* expr) {
                     else
                         emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_1b, __sa_%d, __FILE__, __LINE__); })", func_name, sid);
                 } else {
-                    // Create args struct and pass to wrapper
+                    // Create args struct and pass to wrapper. Field types come
+                    // from spawn_param_c_type (shared with the wrapper), so a
+                    // double is stored AS a double - packing it into the old
+                    // blanket `long long` reinterpreted its bits as garbage.
                     spawn_id_counter++;
                     int sid = spawn_id_counter;
                     emit("({ struct __spawn_args_%d { ", sid);
                     for (int i = 0; i < arg_count; i++) {
-                        emit("long long a%d; ", i);
+                        emit("%s a%d; ", spawn_param_c_type(func_name, i, NULL, NULL), i);
                     }
                     emit("} *__sa_%d = malloc(sizeof(struct __spawn_args_%d)); ", sid, sid);
                     for (int i = 0; i < arg_count; i++) {
+                        int _fisstr = 0;
+                        spawn_param_c_type(func_name, i, NULL, &_fisstr);
                         emit("__sa_%d->a%d = ", sid, i);
                         codegen_expr(call->call.args[i]);
                         emit("; ");
+                        if (_fisstr) emit("wyn_rc_retain(__sa_%d->a%d); ", sid, i);
                     }
                     if (_can_inline)
                         emit("wyn_spawn_inline((TaskFuncWithReturn)__spawn_wrapper_%s_%d, __sa_%d); })", func_name, arg_count, sid);

@@ -1,0 +1,66 @@
+// Regression: fire-and-forget `spawn f(...)` must capture the VALUE of an
+// arbitrary argument expression at spawn time. Array-element args were read
+// through array_get_int regardless of element type (the checker never visited
+// STMT_SPAWN, so the args had no expr_type and codegen fell back to int):
+//   - string-array element  -> NULL delivered to the worker ("(null)")
+//   - float-array element   -> truncated to the integer part
+//   - struct-array element  -> C compile error
+// A single float literal arg was also truncated by the (void*)(intptr_t) word
+// cast, and an awaited spawn with MULTIPLE float args packed them into
+// `long long` fields the wrapper then reinterpreted as doubles (garbage bits).
+// The same missed checker visit falsely warned "unused variable" for the
+// indexed arrays. Ordering is made deterministic by sleeping after each spawn.
+// EXPECT: w0:direct
+// EXPECT: w1:literal
+// EXPECT: w2:from_array
+// EXPECT: w3:alpha
+// EXPECT: w3:beta
+// EXPECT: wint:7
+// EXPECT: wflt:2.5
+// EXPECT: wflt2:2.5
+// EXPECT: wp:7
+// EXPECT: addf:3.75
+// EXPECT: done
+
+struct P { x: int, y: int }
+
+fn wstr(cmd: string, i: int) { print("w${i}:${cmd}") }
+fn wint(n: int) { print("wint:${n}") }
+fn wflt(f: float) { print("wflt:${f}") }
+fn wflt2(f: float, i: int) { print("wflt2:${f}") }
+fn wp(p: P, i: int) { print("wp:${p.x}") }
+fn addf(a: float, b: float) -> float { return a + b }
+
+fn main() -> int {
+    cmds = ["from_array"]
+    labels = ["alpha", "beta"]
+    nums = [42, 7]
+    fs = [2.5]
+    ps = [P{x: 7, y: 8}]
+    s = "direct"
+
+    spawn wstr(s, 0)          // plain identifier (always worked)
+    Time::sleep(150)
+    spawn wstr("literal", 1)  // literal (always worked)
+    Time::sleep(150)
+    spawn wstr(cmds[0], 2)    // string-array element (was NULL)
+    Time::sleep(150)
+    for i in 0..2 {           // loop-index form (was all NULL)
+        spawn wstr(labels[i], 3)
+        Time::sleep(150)
+    }
+    spawn wint(nums[1])       // int-array element
+    Time::sleep(150)
+    spawn wflt(fs[0])         // float-array element (was truncated)
+    Time::sleep(150)
+    spawn wflt2(fs[0], 9)     // float-array element, multi-arg pack
+    Time::sleep(150)
+    spawn wp(ps[0], 4)        // struct-array element (was a C error)
+    Time::sleep(300)
+
+    // Awaited path: multi-float args were packed as long long (garbage).
+    var f = spawn addf(1.5, 2.25)
+    print("addf:${await f}")
+    print("done")
+    return 0
+}

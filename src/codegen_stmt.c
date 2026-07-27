@@ -2246,44 +2246,54 @@ void codegen_stmt(Stmt* stmt) {
                 
                 int arg_count = call->call.arg_count;
                 
+                // Argument VALUES are captured here, in the spawning scope, at
+                // spawn time (each arg expression is evaluated exactly once into
+                // the task's box/word). Types come from spawn_param_c_type - the
+                // same helper the wrapper emission uses - so pack and unpack can
+                // never disagree. String args are RC-retained for the task (the
+                // spawning scope may release them before the task runs); the
+                // wrapper releases them after the call.
                 if (arg_count == 0) {
                     emit("wyn_spawn_fast_traced((TaskFunc)__spawn_wrapper_%s, NULL, __FILE__, __LINE__);\n", func_name);
                 } else if (arg_count == 1) {
-                    // Single arg: pass directly, no malloc
-                    emit("wyn_spawn_fast_traced((TaskFunc)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
-                    codegen_expr(call->call.args[0]);
-                    emit("), __FILE__, __LINE__);\n");
+                    int _w = 1, _isstr = 0;
+                    const char* _ct = spawn_param_c_type(func_name, 0, &_w, &_isstr);
+                    if (_w && _isstr) {
+                        emit("{ const char* __sarg = (");
+                        codegen_expr(call->call.args[0]);
+                        emit("); wyn_rc_retain(__sarg); wyn_spawn_fast_traced((TaskFunc)__spawn_wrapper_%s_1, (void*)(intptr_t)__sarg, __FILE__, __LINE__); }\n", func_name);
+                    } else if (_w) {
+                        // Word-sized arg: rides the pointer cast, no malloc.
+                        emit("wyn_spawn_fast_traced((TaskFunc)__spawn_wrapper_%s_1, (void*)(intptr_t)(", func_name);
+                        codegen_expr(call->call.args[0]);
+                        emit("), __FILE__, __LINE__);\n");
+                    } else {
+                        // Non-word single arg (float/struct/array): boxed, the
+                        // _1b wrapper unpacks with the real param type.
+                        spawn_id_counter++;
+                        int sid = spawn_id_counter;
+                        emit("{ struct __spawn_args_%d { %s a0; } *__sa_%d = malloc(sizeof(struct __spawn_args_%d)); ",
+                             sid, _ct, sid, sid);
+                        emit("__sa_%d->a0 = ", sid);
+                        codegen_expr(call->call.args[0]);
+                        emit("; wyn_spawn_fast_traced((TaskFunc)__spawn_wrapper_%s_1b, __sa_%d, __FILE__, __LINE__); }\n",
+                             func_name, sid);
+                    }
                 } else {
                     spawn_id_counter++;
                     int sid = spawn_id_counter;
                     emit("{ struct __spawn_args_%d { ", sid);
                     for (int i = 0; i < arg_count; i++) {
-                        const char* ptype = "long long";
-                        if (current_program) {
-                            for (int fi = 0; fi < current_program->count; fi++) {
-                                Stmt* fs = current_program->stmts[fi];
-                                if (fs->type == STMT_FN && strlen(func_name) == (size_t)fs->fn.name.length &&
-                                    memcmp(func_name, fs->fn.name.start, fs->fn.name.length) == 0) {
-                                    if (i < fs->fn.param_count && fs->fn.param_types[i]) {
-                                        if (fs->fn.param_types[i]->type == EXPR_ARRAY) ptype = "WynArray";
-                                        else if (fs->fn.param_types[i]->type == EXPR_IDENT) {
-                                            Token pt = fs->fn.param_types[i]->token;
-                                            if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) ptype = "const char*";
-                                            else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) ptype = "double";
-                                            else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) ptype = "bool";
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                        emit("%s a%d; ", ptype, i);
+                        emit("%s a%d; ", spawn_param_c_type(func_name, i, NULL, NULL), i);
                     }
                     emit("} *__sa_%d = malloc(sizeof(struct __spawn_args_%d)); ", sid, sid);
                     for (int i = 0; i < arg_count; i++) {
+                        int _fisstr = 0;
+                        spawn_param_c_type(func_name, i, NULL, &_fisstr);
                         emit("__sa_%d->a%d = ", sid, i);
                         codegen_expr(call->call.args[i]);
                         emit("; ");
+                        if (_fisstr) emit("wyn_rc_retain(__sa_%d->a%d); ", sid, i);
                     }
                     emit("wyn_spawn_fast_traced((TaskFunc)__spawn_wrapper_%s_%d, __sa_%d, __FILE__, __LINE__); }\n",
                          func_name, arg_count, sid);

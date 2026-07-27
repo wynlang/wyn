@@ -10,6 +10,16 @@ FAIL=0
 TOTAL=0
 ERRORS=""
 
+# Per-command watchdog: wall-clock alarm + CPU rlimit. Stock macOS has no
+# `timeout` binary, so use perl's alarm. A single looping/leaking test binary,
+# multiplied across parallel shards, can exhaust host memory (this has
+# kernel-panicked a dev machine) — never run one unbounded.
+WYN_TEST_TIMEOUT="${WYN_TEST_TIMEOUT:-30}"
+with_limits() {
+    ( ulimit -t $((WYN_TEST_TIMEOUT * 2)) 2>/dev/null
+      exec perl -e 'alarm shift; exec @ARGV or exit 127' "$WYN_TEST_TIMEOUT" "$@" )
+}
+
 run_test() {
     local file="$1"
     local name=$(basename "$file")
@@ -52,7 +62,7 @@ run_test() {
     local build_err build_rc build_diag
     local battempt=0
     while [ "$battempt" -lt 5 ]; do
-        build_err=$("$WYN" build "$file" -o "$bin" 2>&1 >/dev/null)
+        build_err=$(with_limits "$WYN" build "$file" -o "$bin" 2>&1 >/dev/null)
         build_rc=$?
         rm -f "${file%.wyn}" "${file}.c" 2>/dev/null
         # Present + executable => build succeeded, proceed.
@@ -86,7 +96,7 @@ run_test() {
     local output=""
     local attempt=0
     while [ "$attempt" -lt 3 ]; do
-        output=$("$bin" 2>&1)
+        output=$(with_limits "$bin" 2>&1)
         output=$(echo "$output" | grep -v "Building\|Built\|Compiled in\|Warning:")
         if [ -n "$output" ]; then
             break
