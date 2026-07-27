@@ -11,7 +11,7 @@ on the coroutine scheduler by default (8 awaited 100ms sleeps overlap into
 
 Alongside that: **experimental GPU dispatch** for `[float].map` (Metal on
 macOS, OpenCL on Linux/Windows, opt-in), **nested & recursive data**
-(recursive enums, maps of structs, generics over non-scalar types), a broad
+(recursive enums, arrays of structs, generics over non-scalar types), a broad
 memory-safety sweep (a string use-after-free, a `repeat` heap-corruption, a
 run-queue data race, `Shared`/channel guards - all found and fixed with
 ASan/TSan and locked behind regression tests, suite 210 -> 237), plus real
@@ -167,8 +167,9 @@ crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C):
   (`enum Expr { Num(int), Add(Expr, Expr) }`) - expression trees and linked
   lists work; payloads are heap-boxed automatically. Mutually-recursive
   enums are a clean check error (not yet supported), not leaked C.
-- **Maps with struct values, dynamic nested arrays**: `{string: Point}`,
-  `[[int]]`, array-of-struct, push/index/iterate all work.
+- **Dynamic nested arrays**: `[[int]]`, arrays of structs (`[Point]`),
+  push/index/iterate all work. (Maps with struct *values* — `{string: Point}`
+  — type-check but do not yet codegen; see Known limitations.)
 - **Generics over non-scalar T**: generic structs and functions instantiate
   with array and struct type arguments (`Box<[int]>`, `Box<Point>`), including
   multiple instantiations and multi-type-param generics.
@@ -311,9 +312,14 @@ roadmap (coroutine-backed spawn).
 
 - Recursive-enum payloads currently leak (freeing shared boxed subtrees
   needs move/RC analysis - on the roadmap).
-- Deeper generics (generic fn returning generic, `Box<Box<T>>`, generic
-  enums) are clean check errors, not yet supported.
-- `Task.try_recv` has no working Wyn form yet.
+- User-declared generic enums (`enum Opt<T>`) are a clean check error, not
+  yet supported (generic structs work; a single C enum can't hold two payload
+  types across instantiations - needs monomorphization machinery).
+- A few constructs type-check but don't yet codegen (they fail at build with a
+  C-compiler error rather than running, so they never ship a broken binary):
+  maps with struct/array *values* (`{string: Point}`), `${struct}`/`${Option}`
+  string interpolation, `Result<Struct, CustomEnum>`, forward-referenced struct
+  field types, and escaping/nested closures. On the 1.21 fix list.
 - GPU: float32 precision; verified on Apple Silicon + NVIDIA (T4, A10G);
   AMD untested (driver provisioning, not Wyn); Windows GPU path untested
   (CPU fallback verified via CI).
