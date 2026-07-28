@@ -17,4 +17,10 @@ int cmd_watch(const char* file, int argc, char** argv);
 int cmd_version(int argc, char** argv);
 int cmd_help(const char* command, int argc, char** argv);
 
+// Portable recursive directory creation (a la `mkdir -p`). Accepts a
+// '/'-separated (or '\'-separated on Windows) path, creates every component,
+// tolerates already-existing directories. Returns 0 on success, -1 on failure.
+// Defined in main.c; safe to call from any command module.
+int wyn_mkdir_p(const char* path);
+
 #endif

@@ -4,10 +4,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <sys/stat.h>
 #ifndef _WIN32
 #include <unistd.h>
 #else
+#include <direct.h>   // For _mkdir
 // mingw under -std=c11 defines __STRICT_ANSI__, which hides the MS-specific
 // _isatty/_fileno declarations in <io.h>. Forward-declare them (same approach as
 // lsp.c) so the interactive `wyn add` TTY check compiles on Windows.
@@ -62,6 +64,48 @@ void build_source_list(char* buf, int bufsize, const char* prefix) {
             snprintf(buf + len, bufsize - len, "%s ", wyn_runtime_sources[i]);
         }
     }
+}
+
+// Portable recursive `mkdir -p`. Creates every component of `path`, tolerating
+// components that already exist. Works on Windows (via _mkdir, which itself
+// accepts forward slashes) and POSIX (mkdir(p, 0755)) without shelling out to
+// cmd.exe / /bin/sh — the old `system("mkdir -p ...")` failed on Windows
+// because cmd.exe has no `mkdir -p`. Returns 0 on success, -1 on failure.
+int wyn_mkdir_p(const char* path) {
+    if (!path || !*path) return -1;
+    char buf[1024];
+    size_t len = strlen(path);
+    if (len >= sizeof(buf)) return -1;
+    memcpy(buf, path, len + 1);
+    // Normalize separators to '/' so we can split uniformly; _mkdir on Windows
+    // accepts '/' just fine, and mkdir() on POSIX only ever sees '/'.
+    for (size_t i = 0; i < len; i++) {
+        if (buf[i] == '\\') buf[i] = '/';
+    }
+    // Walk each path component, creating it if missing.
+    for (char* p = buf + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            if (buf[0] != '\0') {
+#ifdef _WIN32
+                // Skip a bare drive spec like "C:".
+                if (!(strlen(buf) == 2 && buf[1] == ':')) {
+                    if (_mkdir(buf) != 0 && errno != EEXIST) return -1;
+                }
+#else
+                if (mkdir(buf, 0755) != 0 && errno != EEXIST) return -1;
+#endif
+            }
+            *p = '/';
+        }
+    }
+    // Create the final (leaf) component.
+#ifdef _WIN32
+    if (_mkdir(buf) != 0 && errno != EEXIST) return -1;
+#else
+    if (mkdir(buf, 0755) != 0 && errno != EEXIST) return -1;
+#endif
+    return 0;
 }
 
 void init_lexer(const char* source);
@@ -3239,9 +3283,14 @@ int create_new_project(const char* project_name) {
         return 1;
     }
     
-    // Create directories
-    snprintf(path, sizeof(path), "mkdir -p %s/src %s/tests", project_name, project_name);
-    if (system(path) != 0) {
+    // Create directories (portable; no cmd.exe/shell `mkdir -p`).
+    snprintf(path, sizeof(path), "%s/src", project_name);
+    if (wyn_mkdir_p(path) != 0) {
+        fprintf(stderr, "Error: Failed to create project directories\n");
+        return 1;
+    }
+    snprintf(path, sizeof(path), "%s/tests", project_name);
+    if (wyn_mkdir_p(path) != 0) {
         fprintf(stderr, "Error: Failed to create project directories\n");
         return 1;
     }
@@ -3321,8 +3370,16 @@ int create_new_project_with_template(const char* name, const char* template, con
     }
     
     char cmd[512]; FILE* f;
-    snprintf(cmd, sizeof(cmd), "mkdir -p %s/src %s/tests", name, name);
-    system(cmd);
+    snprintf(cmd, sizeof(cmd), "%s/src", name);
+    if (wyn_mkdir_p(cmd) != 0) {
+        fprintf(stderr, "Error: Failed to create project directories\n");
+        return 1;
+    }
+    snprintf(cmd, sizeof(cmd), "%s/tests", name);
+    if (wyn_mkdir_p(cmd) != 0) {
+        fprintf(stderr, "Error: Failed to create project directories\n");
+        return 1;
+    }
     
     // wyn.toml
     snprintf(cmd, sizeof(cmd), "%s/wyn.toml", name);
@@ -3344,8 +3401,8 @@ int create_new_project_with_template(const char* name, const char* template, con
     fclose(f);
     
     // .github/workflows/test.yml
-    snprintf(cmd, sizeof(cmd), "mkdir -p %s/.github/workflows", name);
-    system(cmd);
+    snprintf(cmd, sizeof(cmd), "%s/.github/workflows", name);
+    wyn_mkdir_p(cmd);
     snprintf(cmd, sizeof(cmd), "%s/.github/workflows/test.yml", name);
     f = fopen(cmd, "w");
     fprintf(f,
@@ -3756,15 +3813,29 @@ int create_new_project_with_template(const char* name, const char* template, con
     // Auto-install packages for templates that need them
     if (strcmp(template, "web") == 0 || strcmp(template, "api") == 0) {
         printf("Installing packages...\n");
-        char install_cmd[1024];
         // Copy sqlite from official-packages if available locally, otherwise note for user
         char local_sqlite[512];
         snprintf(local_sqlite, sizeof(local_sqlite), "%s/../official-packages/sqlite", name);
         struct stat _ls;
-        snprintf(install_cmd, sizeof(install_cmd), "mkdir -p %s/packages/sqlite/src && cp %s/src/sqlite3.c %s/src/sqlite3.h %s/src/sqlite.wyn %s/wyn.toml %s/packages/sqlite/ 2>/dev/null && cp %s/src/*.c %s/src/*.h %s/packages/sqlite/src/ 2>/dev/null",
-            name, local_sqlite, local_sqlite, local_sqlite, local_sqlite, name, local_sqlite, local_sqlite, name);
+        int copied = 0;
         if (stat(local_sqlite, &_ls) == 0) {
+            // Create the destination tree portably first.
+            char dest[600];
+            snprintf(dest, sizeof(dest), "%s/packages/sqlite/src", name);
+            wyn_mkdir_p(dest);
+#ifndef _WIN32
+            // The convenient shell copy (with a *.c/*.h glob) only runs in a
+            // POSIX dev checkout, where official-packages sits next to the new
+            // project. On Windows cmd.exe has no `cp`, so fall through to the
+            // pkg-install hint instead.
+            char install_cmd[1024];
+            snprintf(install_cmd, sizeof(install_cmd), "cp %s/src/sqlite3.c %s/src/sqlite3.h %s/src/sqlite.wyn %s/wyn.toml %s/packages/sqlite/ 2>/dev/null && cp %s/src/*.c %s/src/*.h %s/packages/sqlite/src/ 2>/dev/null",
+                local_sqlite, local_sqlite, local_sqlite, local_sqlite, name, local_sqlite, local_sqlite, name);
             system(install_cmd);
+            copied = 1;
+#endif
+        }
+        if (copied) {
             printf("  \033[32m✓\033[0m sqlite package installed\n\n");
         } else {
             printf("  \033[33m⚠\033[0m Run: cd %s && wyn pkg install github.com/wynlang/sqlite\n\n", name);
