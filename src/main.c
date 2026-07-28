@@ -263,6 +263,14 @@ static int wyn_run_program(const char* cmd) {
             signal(SIGTERM, SIG_DFL);
             signal(SIGHUP, SIG_DFL);
             signal(SIGCHLD, SIG_DFL);
+            /* Own process group, so the supervisor can kill the WHOLE tree.
+             * `sh -c "<one command>"` execs the command directly on macOS (so
+             * the program IS kid), but on Linux sh can leave the program as a
+             * GRANDCHILD - kill(kid) then hits only the sh and the real program
+             * survives. That was the actual "orphan on Linux" bug. With the
+             * program in its own group, killpg(kid) below reaps the whole tree
+             * regardless of how sh arranged it. */
+            setpgid(0, 0);
 #ifdef __linux__
             /* Belt-and-suspenders: if the supervisor itself dies, the kernel
              * SIGKILLs the program too. getppid()==1 closes the fork race. */
@@ -272,6 +280,9 @@ static int wyn_run_program(const char* cmd) {
             execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
             _exit(127);
         }
+        /* Parent side of the setpgid race: also set it here so the group exists
+         * no matter which of the two runs first. */
+        setpgid(kid, kid);
         for (;;) {
             int st = 0;
             pid_t r = waitpid(kid, &st, WNOHANG);
@@ -294,8 +305,11 @@ static int wyn_run_program(const char* cmd) {
              * returns immediately via EINTR. */
             int pr = poll(&p, 1, 100);
             if (pr > 0) {
-                /* Parent gone (EOF/HUP) -> take the program with us. */
-                kill(kid, SIGKILL);
+                /* Parent gone (EOF/HUP) -> take the whole program group with us.
+                 * killpg, not kill, so a program that sh left as a grandchild
+                 * (Linux) dies too - see the setpgid note above. Fall back to
+                 * kill(kid) if the group somehow was not established. */
+                if (killpg(kid, SIGKILL) != 0) kill(kid, SIGKILL);
                 int st2 = 0;
                 waitpid(kid, &st2, 0);
                 _exit(128 + SIGKILL);
