@@ -54,8 +54,14 @@ for wyn_src in "$DIR"/*.wyn; do
     # Build in a temp copy so we never litter tests/golden/ with artifacts.
     work="$TMP/$base.wyn"
     cp "$wyn_src" "$work"
-    if ! "$WYN" build "$work" --debug >/dev/null 2>&1 || [ ! -f "$work.c" ]; then
-        echo "  FAIL  $base - wyn build failed"
+    # Capture the build output instead of discarding it. This used to be
+    # >/dev/null 2>&1, so a genuine cross-platform build failure (22_spawn_await
+    # on windows-latest, the first time this suite was gated there) reported only
+    # "wyn build failed" with no cause - undiagnosable from a CI log, which is
+    # the one place you cannot attach a debugger.
+    if ! "$WYN" build "$work" --debug > "$TMP/$base.build.log" 2>&1 || [ ! -f "$work.c" ]; then
+        echo "  FAIL  $base - wyn build failed:"
+        sed 's/^/          /' "$TMP/$base.build.log" | head -25
         FAIL=$((FAIL + 1))
         continue
     fi

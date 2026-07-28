@@ -2844,8 +2844,17 @@ int main(int argc, char** argv) {
                 char wyn_exe[1024]; struct stat wyn_st;
                 int compiler_ok = resolve_wyn_exe(argv[0], wyn_exe, sizeof(wyn_exe))
                                   && stat(wyn_exe, &wyn_st) == 0;
-                if (out_st.st_mtime >= src_st.st_mtime &&
-                    (!compiler_ok || out_st.st_mtime >= wyn_st.st_mtime)) {
+                // STRICTLY newer, not >=. With >=, a source rewritten in the
+                // SAME second the cached binary was built still looks cached, so
+                // `run` executes the previous program. That is not theoretical:
+                // tests/pkg/run_pkg_test.sh writes src/main.wyn, runs it, then
+                // rewrites and re-runs it - on CI runners fast enough to do both
+                // inside one mtime tick, step 4 silently re-ran step 2's binary
+                // and the suite failed with the earlier program's output. st_mtime
+                // is whole-seconds, so equal timestamps must be treated as
+                // possibly-stale; recompiling is cheap, being wrong is not.
+                if (out_st.st_mtime > src_st.st_mtime &&
+                    (!compiler_ok || out_st.st_mtime > wyn_st.st_mtime)) {
                     char run_cmd[2048];
                     if (out_path[0] == '/') {
                         snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
