@@ -18,6 +18,8 @@
 #include <direct.h>    // For _mkdir
 #endif
 
+#include "commands.h"   // for wyn_mkdir_p and cmd_* declarations
+
 // Forward declarations
 extern void* parse_file(const char* filename);
 extern void format_program(void* program);
@@ -393,7 +395,7 @@ int cmd_doc_project(int argc, char** argv) {
     }
     
     // Generate HTML
-    system("mkdir -p docs");
+    wyn_mkdir_p("docs");
     FILE* out = fopen("docs/index.html", "w");
     if (!out) { fprintf(stderr, "Error: Cannot write docs/index.html\n"); free(entries); return 1; }
     
