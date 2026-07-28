@@ -43,7 +43,34 @@ for tpl in default cli api web; do
   # container, and "check or test failed" alone gave no way to tell WHICH of the
   # two commands failed, let alone why - the one place you cannot attach a
   # debugger is a CI log.
+  # The api/web templates depend on the sqlite package, which links the SYSTEM
+  # libsqlite3. A runner without the dev library fails at link time with
+  # "undefined reference to `sqlite3_exec'" - an environment gap, not a defect in
+  # the template or the compiler. Gate the scaffold+check part always, and only
+  # require `wyn test` (which builds and links) where sqlite3 is actually
+  # available. Skipping silently would be worse, so say so out loud.
+  _needs_sqlite=0
+  case "$tpl" in api|web) _needs_sqlite=1 ;; esac
+  _have_sqlite=1
+  if [ "$_needs_sqlite" = "1" ]; then
+    printf '#include <sqlite3.h>\nint main(void){return sqlite3_libversion_number()>0?0:1;}\n' > "$TMP/sqprobe.c"
+    ${CC:-cc} "$TMP/sqprobe.c" -lsqlite3 -o "$TMP/sqprobe" 2>/dev/null || _have_sqlite=0
+  fi
+
   _slog="$TMP/scaffold_$tpl.log"
+  if [ "$_needs_sqlite" = "1" ] && [ "$_have_sqlite" = "0" ]; then
+    # Still gate everything that does not need the library.
+    ( cd "$name" && perl -e 'alarm 30; exec @ARGV' "$WYN_ABS" check src/main.wyn 2>&1 ) > "$_slog" 2>&1
+    if [ $? -eq 0 ]; then
+      echo "  SKIP  $tpl: tree + check clean; 'wyn test' skipped (no system libsqlite3 to link)"
+      PASS=$((PASS+1))
+    else
+      bad "$tpl: check failed"
+      sed 's/^/          /' "$_slog" | tail -25
+    fi
+    continue
+  fi
+
   ( cd "$name" &&
     echo "== wyn check ==" &&
     perl -e 'alarm 30; exec @ARGV' "$WYN_ABS" check src/main.wyn 2>&1 &&
