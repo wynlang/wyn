@@ -590,6 +590,14 @@ runtime/libwyn_rt.a: $(RT_SRCS) $(wildcard src/*.h) | wyn$(EXE_EXT)
 		$(CC) -std=c11 -O2 -w -D_GNU_SOURCE -I src -I vendor/minicoro \
 		-c $$f -o runtime/obj/$$(basename $$f .c).o; \
 	done
+	@# `ar r` REPLACES members in an existing archive. If a stale runtime/obj/
+	@# holds an .o from a previous build that this loop did not just recompile
+	@# (or the archive holds a member whose source is gone), that stale code
+	@# silently survives into the lib and every compiled program links it.
+	@# This has already cost real debugging time: a runtime fix appeared to have
+	@# no effect, and a perf regression looked unreproducible, because the lib
+	@# still contained pre-fix objects. Build the archive from scratch instead.
+	@rm -f runtime/libwyn_rt.a
 	@ar rcs runtime/libwyn_rt.a runtime/obj/*.o
 	@echo "Built runtime/libwyn_rt.a ($$(du -h runtime/libwyn_rt.a | cut -f1))"
 

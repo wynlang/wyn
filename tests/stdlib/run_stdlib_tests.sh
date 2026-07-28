@@ -98,7 +98,15 @@ run_one() {
     build_out=$(with_limits "$BUILD_TIMEOUT" "$WYN" build "$file" -o "$bin" 2>&1 >/dev/null)
     build_rc=$?
     # `wyn build` can drop side artifacts next to the source; keep the tree clean.
-    rm -f "${file%.wyn}" "${file}.c" 2>/dev/null
+    # `.wyn.out` matters beyond tidiness: it is `wyn run`'s CACHE, and a stale one
+    # left by an earlier build silently RE-RUNS OLD CODE. That cost this release a
+    # long false-alarm hunt for a spawn-latency "regression" that did not exist -
+    # test_spawn_perf.wyn.out predated a runtime fix by hours, so every
+    # measurement of the supposedly-fixed build was actually running pre-fix code,
+    # reproducibly and deterministically, which reads exactly like a real bug.
+    # (`wyn run` now also keys the cache on the compiler's mtime, but delete it
+    # here too: defence in depth, and this runner is where fixes get verified.)
+    rm -f "${file%.wyn}" "${file}.c" "${file}.out" 2>/dev/null
 
     if is_timeout_rc "$build_rc"; then
         printf 'HANG\tbuild timed out after %ss (rc=%s)\n' "$BUILD_TIMEOUT" "$build_rc" > "$result_file"
