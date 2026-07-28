@@ -19,3 +19,21 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+-------------------------------------------------------------------------------
+
+Third-party licenses
+
+The MIT License above covers Wyn's own code. The distributed `wyn` binary is not
+MIT-only: it is MIT-licensed Wyn code statically linked with TinyCC (`libtcc`),
+which is licensed under the GNU Lesser General Public License, version 2.1
+(LGPL-2.1). A copy of the LGPL-2.1 text is distributed at `vendor/tcc/COPYING`.
+The release archives also redistribute the `tcc` driver, `libtcc1.a`, and TCC's
+bundled headers under `vendor/tcc/`.
+
+Wyn additionally uses minicoro (Public Domain / MIT-0, at your option); its
+license text is at `vendor/minicoro/LICENSE`.
+
+For the full list of third-party components, their versions, licenses, license
+text locations, and notes on the LGPL-2.1 section 6 relinking obligation, see
+`THIRD-PARTY-NOTICES.md`.

@@ -1,0 +1,54 @@
+// "fmt".format(args...) must actually substitute. It used to be a SILENT
+// NO-OP: codegen emitted string_format(fmt, to_string(a), ...) into a runtime
+// that only understood `{}` and copied any other format string straight
+// through, so `"Hello %s".format("World")` printed "Hello %s" at exit 0 with
+// the argument discarded. Semantics are brace-style `{}` (consistent with
+// Wyn's "${x}" interpolation); printf-style specs and placeholder/argument
+// count mismatches are now compile errors, covered in
+// tests/errors/run_silent_wrong_test.sh.
+// EXPECT: Hello World
+// EXPECT: 1 + 2 = 3
+// EXPECT: pi ~ 3.14159
+// EXPECT: 50% done
+// EXPECT: {literal}
+// EXPECT: flag true
+// EXPECT: abc has 3 chars
+// EXPECT: a 1 b x
+// EXPECT: no placeholders
+// EXPECT: ABC/abc
+// EXPECT: 9
+// EXPECT: 5000
+
+print("Hello {}".format("World"))
+print("{} + {} = {}".format(1, 2, 3))
+print("pi ~ {}".format(3.14159))
+
+// A bare percent sign is literal text, not a conversion spec
+print("{}% done".format(50))
+// Doubled braces escape to a single literal brace
+print("{{literal}}".format())
+
+print("flag {}".format(true))
+
+// String args pass through; int-returning method results stringify
+name = "abc"
+print("{} has {} chars".format(name, name.len()))
+
+// A computed (non-literal) format string still substitutes at runtime
+f = "a {} b {}"
+print(f.format(1, "x"))
+
+// No placeholders and no args is a plain copy
+print("no placeholders".format())
+
+// Fresh string temps as arguments (must not be double-released)
+print("{}/{}".format(name.upper(), name.lower()))
+
+// The result is a real string: length is measurable, not a pointer
+s = "{}{}".format("ab", "cd")
+t = "{}-{}".format(s, s)
+print(t.len())
+
+// Long output grows past the old fixed 4096-byte buffer instead of truncating
+big = "x".repeat(2500)
+print("{}{}".format(big, big).len())

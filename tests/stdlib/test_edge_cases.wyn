@@ -5,7 +5,18 @@ fn main() -> int {
     Test.assert_eq_int("".len(), 0, "empty len")
     Test.assert_eq_str("".upper(), "", "empty upper")
     Test.assert_eq_str("".trim(), "", "empty trim")
-    Test.assert_eq_int("".to_int(), 0, "empty to_int")
+    // v1.20.0 (breaking): `.to_int()` on an empty/garbage string PANICS instead
+    // of silently returning 0 - a silent 0 was indistinguishable from parsing
+    // "0". So the old `assert_eq_int("".to_int(), 0)` asserted a bug. The
+    // sanctioned safe path is to guard with .is_numeric() first; the panic
+    // itself is asserted out-of-process by tests/errors/run_crucible_p0_test.sh.
+    Test.assert(not "".is_numeric(), "empty is not numeric")
+    Test.assert(not "abc".is_numeric(), "garbage is not numeric")
+    Test.assert("0".is_numeric(), "\"0\" is numeric")
+    var safe_empty = 0
+    if "".is_numeric() { safe_empty = "".to_int() }
+    Test.assert_eq_int(safe_empty, 0, "guarded parse of empty defaults to 0")
+    Test.assert_eq_int("0".to_int(), 0, "\"0\" parses to 0")
     Test.assert_eq_int("".contains("x"), 0, "empty contains")
     Test.assert_eq_str("".replace("a", "b"), "", "empty replace")
     Test.assert_eq_str("".reverse(), "", "empty reverse")

@@ -165,10 +165,16 @@ fn main() -> int {
     Test.assert(Terminal.cols() > 0, "Terminal.cols")
     Test.assert(Terminal.rows() > 0, "Terminal.rows")
     
-    // Net (2 methods)
-    var sock = Net.connect("httpbin.org", 80)
+    // Net (2 methods). Connect to a listener WE own on 127.0.0.1, not to
+    // httpbin.org:80 - the remote connect made this whole 100+ assertion file
+    // hostage to a third-party host and was observed wedging for the full 75s
+    // watchdog while passing 3/3 standalone.
+    var nsrv = Net.listen(18791)
+    Test.assert(nsrv > 0, "Net.listen")
+    var sock = Net.connect("127.0.0.1", 18791)
     Test.assert(sock > 0, "Net.connect")
     Net.close(sock)
+    Net.close(nsrv)
     Test.assert(Net.resolve("localhost").len() > 0, "Net.resolve")
     
     // Url (2 methods)
@@ -235,11 +241,23 @@ fn main() -> int {
     Test.assert(Db.escape("it's").contains("''"), "Db.escape")
     Db.close(db)
     
-    // Http (5 client methods)
-    var body = Http.get("https://httpbin.org/get")
-    Test.assert(body.len() > 0, "Http.get HTTPS")
+    // Http (client + server), all on 127.0.0.1. Was Http.get to httpbin.org over
+    // HTTPS - same third-party dependency as the Net block above.
     var srv = Http.serve(19997)
     Test.assert(srv > 0, "Http.serve")
+    var hc = Net.connect("127.0.0.1", 19997)
+    Test.assert(hc > 0, "client connects to local server")
+    Net.send(hc, "GET /v HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+    var hreq = Http.accept(srv)
+    Test.assert_eq_str(Http.path(hreq), "/v", "Http.accept parses path")
+    var hfd = Http.fd(hreq)
+    Http.respond(hfd, 200, "text/plain", "body-ok")
+    // Http.respond leaves the fd open on purpose (handler loop owns it); no
+    // handler loop here, so close it or the recv below blocks forever.
+    Net.close(hfd)
+    var body = Net.recv(hc)
+    Test.assert(body.len() > 0, "client reads response body")
+    Net.close(hc)
     Http.close_server(srv)
     
     // Test module itself

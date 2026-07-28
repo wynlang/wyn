@@ -35,8 +35,18 @@ jobs:
         run: choco install make mingw -y
         shell: pwsh
 
-      - name: Build compiler
-        run: make clean && make
+      # Release binaries are built OPTIMIZED. The default `make` target uses
+      # CFLAGS (which carry -g and no -O2 - correct for the dev loop), so every
+      # release up to v1.20.0 shipped an unoptimized, unstripped compiler.
+      # Measured on macOS arm64: 1,349,552 B default -> 933,952 B with -O2 ->
+      # 871,592 B stripped, i.e. **35% smaller**. Warm compile time is
+      # unchanged (0.15-0.16s either way), so this is a download-size win, not
+      # a speed win - do not advertise it as the latter.
+      - name: Build compiler (optimized)
+        run: |
+          set -euo pipefail
+          make clean
+          make CFLAGS='-Wall -Wextra -std=c11 -D_GNU_SOURCE -O2 -DWYN_VERSION=\"'"$(cat VERSION)"'\"'
         shell: bash
 
       - name: Smoke test (Unix)
@@ -63,17 +73,31 @@ jobs:
       #   vendor/minicoro/
       #   VERSION
       #   LICENSE
+      #   THIRD-PARTY-NOTICES.md  + vendor/*/COPYING (LGPL-2.1 for bundled TCC)
       # The old packaging had wyn at the tarball ROOT (install.sh expected
       # bin/), nested sources at src/src/ (cp -r src dist/src copies INTO an
       # existing dir), and no VERSION - so no released binary ever worked.
+      #
+      # LICENSE COMPLIANCE: the binary statically links LGPL-2.1 libtcc, so the
+      # LGPL text and attribution MUST travel with every artifact. Shipping
+      # MIT-only LICENSE next to a statically-linked LGPL library is a
+      # distribution violation; the verify step below fails the release if the
+      # notices are missing rather than letting it ship silently.
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist/bin dist/runtime dist/vendor
           cp wyn dist/bin/
+          # Strip debug symbols from the shipped compiler (-O2 build above is
+          # 933,952 B; stripping takes it to 871,592 B on macOS arm64). Keep it
+          # non-fatal: a strip failure must not fail a release, and the binary
+          # is already correct without it.
+          strip dist/bin/wyn || echo "note: strip unavailable or failed; shipping unstripped"
+          ls -l dist/bin/wyn
           cp -r src dist/
           cp VERSION dist/
           cp LICENSE dist/
+          cp THIRD-PARTY-NOTICES.md dist/
           [ -d vendor/minicoro ] && cp -r vendor/minicoro dist/vendor/
           # Bundle the TCC backend so the default (no-external-deps) compile
           # path works on a fresh install - the site advertises "TCC bundled".
@@ -91,6 +115,11 @@ jobs:
           test -f /tmp/verify/runtime/libwyn_rt.a
           test -f /tmp/verify/VERSION
           test -f /tmp/verify/LICENSE
+          # LICENSE COMPLIANCE GATE: libtcc is statically linked and LGPL-2.1,
+          # so its license text and attribution must ship with the artifact.
+          # Fail the release rather than distribute without them.
+          test -f /tmp/verify/THIRD-PARTY-NOTICES.md
+          test -f /tmp/verify/vendor/tcc/COPYING
           # TCC must be bundled so "no external deps" is TRUE (site claim).
           test -x /tmp/verify/vendor/tcc/bin/tcc
           test -f /tmp/verify/vendor/tcc/lib/libwyn_rt_tcc.a
@@ -113,6 +142,7 @@ jobs:
           cp -r src dist/
           cp VERSION dist/
           cp LICENSE dist/
+          cp THIRD-PARTY-NOTICES.md dist/
           [ -d vendor/minicoro ] && cp -r vendor/minicoro dist/vendor/
           [ -d vendor/tcc ] && cp -r vendor/tcc dist/vendor/
           make runtime
@@ -135,7 +165,34 @@ jobs:
           test -f verify_out/runtime/libwyn_rt.a
           test -f verify_out/VERSION
           test -f verify_out/LICENSE
+          # License-compliance gate (see the Unix job for rationale).
+          test -f verify_out/THIRD-PARTY-NOTICES.md
+          test -f verify_out/vendor/tcc/COPYING
           echo "artifact layout verified (Windows)"
+        shell: bash
+
+      # Emit the digest in the SAME job that produced the bytes, so the
+      # install-canary below can verify exactly what a user would download.
+      # (Generating sums only in the final release job would leave install.sh's
+      # verification path completely unexercised by CI.)
+      - name: Checksum artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.sha256
+          else
+            shasum -a 256 ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.sha256
+          fi
+          cat ${{ matrix.artifact }}.sha256
+        shell: bash
+
+      - name: Checksum artifact (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          set -euo pipefail
+          sha256sum ${{ matrix.artifact }}.zip > ${{ matrix.artifact }}.sha256
+          cat ${{ matrix.artifact }}.sha256
         shell: bash
 
       - name: Upload artifact
@@ -171,6 +228,35 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.artifact }}
+
+      # Exercise the integrity check install.sh performs, against the real
+      # artifact, BEFORE trusting it - a verification path that CI never runs
+      # is a verification path that silently rots.
+      - name: Verify checksum like install.sh does (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          ASSET=${{ matrix.artifact }}.tar.gz
+          if command -v sha256sum >/dev/null 2>&1; then
+            ACTUAL=$(sha256sum "$ASSET" | cut -d' ' -f1)
+          else
+            ACTUAL=$(shasum -a 256 "$ASSET" | cut -d' ' -f1)
+          fi
+          EXPECTED=$(cut -d' ' -f1 < ${{ matrix.artifact }}.sha256)
+          echo "expected=$EXPECTED"
+          echo "actual=  $ACTUAL"
+          [ "$ACTUAL" = "$EXPECTED" ] || { echo "checksum mismatch"; exit 1; }
+          # Negative control: a tampered byte MUST be detected. If this ever
+          # stops failing, the check is vacuous.
+          cp "$ASSET" /tmp/tampered.tar.gz
+          printf 'x' >> /tmp/tampered.tar.gz
+          if command -v sha256sum >/dev/null 2>&1; then
+            BAD=$(sha256sum /tmp/tampered.tar.gz | cut -d' ' -f1)
+          else
+            BAD=$(shasum -a 256 /tmp/tampered.tar.gz | cut -d' ' -f1)
+          fi
+          [ "$BAD" != "$EXPECTED" ] || { echo "tamper NOT detected"; exit 1; }
+          echo "✅ checksum verified and tamper-detection proven"
 
       - name: Install exactly like install.sh does (Unix)
         if: runner.os != 'Windows'
@@ -225,6 +311,99 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
 
+      # SUPPLY-CHAIN INTEGRITY: the public install path is `curl … | sh`, and
+      # install.sh had no integrity check of any kind - it fetched from the
+      # mutable `releases/latest/download/` pointer and piped straight into
+      # tar. Publish SHA256SUMS alongside the artifacts so install.sh can
+      # verify what it downloaded (it fails closed if the digest mismatches).
+      - name: Generate SHA256SUMS
+        run: |
+          set -euo pipefail
+          # download-artifact@v4 without a name puts each artifact in its own
+          # directory; flatten them so the digest lines carry bare filenames
+          # (what install.sh greps for after downloading a single asset).
+          mkdir -p checksums
+          for f in wyn-linux-x64/wyn-linux-x64.tar.gz \
+                   wyn-linux-arm64/wyn-linux-arm64.tar.gz \
+                   wyn-macos-arm64/wyn-macos-arm64.tar.gz \
+                   wyn-macos-x64/wyn-macos-x64.tar.gz \
+                   wyn-windows-x64/wyn-windows-x64.zip; do
+            test -f "$f" || { echo "missing release asset: $f" >&2; exit 1; }
+            cp "$f" checksums/
+          done
+          cd checksums
+          sha256sum ./*.tar.gz ./*.zip | sed 's| \./| |' > ../SHA256SUMS
+          cd ..
+          echo "--- SHA256SUMS ---"
+          cat SHA256SUMS
+          # Self-check: the file must verify against the very artifacts we ship.
+          (cd checksums && sha256sum -c ../SHA256SUMS)
+
+      # RELEASE BODY = ONLY THIS VERSION'S SECTION.
+      # This used to be `body_path: CHANGELOG.md`, which republished the entire
+      # 1,000+ line file - all 24 historical releases - as the body of every
+      # single release, including claims that later releases corrected. Extract
+      # the one `## vX.Y.Z` section instead.
+      #
+      # SECURITY: github.ref_name is attacker-influencable in the general case
+      # (a tag name is arbitrary text), so it is passed through `env:` and only
+      # ever referenced as "$TAG" - never interpolated into the script body,
+      # which would be a shell-injection sink.
+      #
+      # FAILS LOUDLY: no matching section, an empty section, or a tag that
+      # disagrees with VERSION aborts the release. A silent fallback here would
+      # just recreate the original bug (empty or full-history body).
+      - name: Extract release notes for this tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          echo "tag=$TAG version=$VERSION"
+
+          # The tag must match the VERSION file - VERSION is the single source
+          # of the version string the binary reports, so a mismatch means the
+          # release would ship a binary that disagrees with its own tag.
+          FILE_VERSION="$(tr -d ' \t\r\n' < VERSION)"
+          if [ "$VERSION" != "$FILE_VERSION" ]; then
+            echo "ERROR: tag '$TAG' does not match VERSION file ('$FILE_VERSION')." >&2
+            echo "       Bump VERSION and re-tag; do not release a mismatched pair." >&2
+            exit 1
+          fi
+
+          # Print from the `## v<version>` heading up to (not including) the next
+          # `## ` heading. Headings in CHANGELOG.md come in two shapes -
+          #   "## v1.20.0 (2026-07-28) - \"Title\""
+          #   "## v1.18.0 - \"Title\" (2026-07-17)"
+          # - so match on the second whitespace-separated field being exactly
+          # "v<version>" rather than on the rest of the line.
+          awk -v ver="$VERSION" '
+            BEGIN { found = 0; printing = 0 }
+            /^## / {
+              if (printing) exit
+              if ($2 == "v" ver) { found = 1; printing = 1; print; next }
+              next
+            }
+            printing { print }
+            END { if (!found) exit 3 }
+          ' CHANGELOG.md > RELEASE_BODY.md || {
+            echo "ERROR: no '## v$VERSION' section in CHANGELOG.md." >&2
+            echo "       Add a section for this version before tagging." >&2
+            exit 1
+          }
+
+          # A heading with nothing under it is as useless as no heading at all.
+          if [ "$(grep -cve '^[[:space:]]*$' RELEASE_BODY.md)" -lt 2 ]; then
+            echo "ERROR: the '## v$VERSION' section is empty." >&2
+            exit 1
+          fi
+
+          printf '\n---\n\nFull changelog: https://github.com/%s/blob/%s/CHANGELOG.md\n' \
+            "$GITHUB_REPOSITORY" "$TAG" >> RELEASE_BODY.md
+
+          echo "--- release body ($(wc -l < RELEASE_BODY.md) lines) ---"
+          cat RELEASE_BODY.md
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -234,6 +413,7 @@ jobs:
             wyn-macos-arm64/wyn-macos-arm64.tar.gz
             wyn-macos-x64/wyn-macos-x64.tar.gz
             wyn-windows-x64/wyn-windows-x64.zip
-          body_path: CHANGELOG.md
+            SHA256SUMS
+          body_path: RELEASE_BODY.md
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}

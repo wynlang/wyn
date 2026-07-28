@@ -185,18 +185,20 @@ fn main() -> int {
     
     // ========== ALL MODULES ==========
     Test.init("All 18 Modules")
-    // File
-    File.write("/tmp/wyn_final.txt", "test\n")
-    Test.assert(File.exists("/tmp/wyn_final.txt"), "File.exists")
-    Test.assert(File.read("/tmp/wyn_final.txt").contains("test"), "File.read")
-    Test.assert(File.size("/tmp/wyn_final.txt") > 0, "File.size")
-    Test.assert(File.is_file("/tmp/wyn_final.txt"), "File.is_file")
+    // File. Per-process path: this was the fixed /tmp/wyn_final.txt, so two
+    // concurrent runs would delete each other's scratch file mid-assertion.
+    var tmpf = "/tmp/wyn_final_" + Os.pid().to_string() + ".txt"
+    File.write(tmpf, "test\n")
+    Test.assert(File.exists(tmpf), "File.exists")
+    Test.assert(File.read(tmpf).contains("test"), "File.read")
+    Test.assert(File.size(tmpf) > 0, "File.size")
+    Test.assert(File.is_file(tmpf), "File.is_file")
     Test.assert(File.is_dir("/tmp"), "File.is_dir")
-    File.append("/tmp/wyn_final.txt", "more\n")
-    var fh = File.open("/tmp/wyn_final.txt", "r")
+    File.append(tmpf, "more\n")
+    var fh = File.open(tmpf, "r")
     Test.assert_eq_str(File.read_line(fh).trim(), "test", "File.read_line")
     File.close(fh)
-    File.delete("/tmp/wyn_final.txt")
+    File.delete(tmpf)
     // System
     Test.assert_eq_str(System.exec("echo hi").trim(), "hi", "System.exec")
     Test.assert_eq_int(System.exec_code("true"), 0, "System.exec_code")
@@ -252,17 +254,33 @@ fn main() -> int {
     Db.exec(db, "INSERT INTO t VALUES('ok')")
     Test.assert_eq_str(Db.query_one(db, "SELECT v FROM t"), "ok", "Db.query_one")
     Db.close(db)
-    // Http client
-    var body = Http.get("https://httpbin.org/get")
-    Test.assert(body.len() > 0, "Http.get HTTPS")
-    // Http server
+    // Http client + server + Net, all against 127.0.0.1.
+    //
+    // This block used to do `Http.get("https://httpbin.org/get")` and
+    // `Net.connect("httpbin.org", 80)`. That made the whole 34-assertion suite
+    // hostage to a third-party host: it passed 3 of 4 probe runs and on the
+    // fourth never terminated (killed by the 60s watchdog) waiting on a remote
+    // TCP connect. Everything else in this file is offline and deterministic.
+    // Serving ourselves keeps the same client/server/socket coverage with no
+    // external dependency and no unbounded wait.
     var srv = Http.serve(19998)
     Test.assert(srv > 0, "Http.serve")
-    Http.close_server(srv)
-    // Net
-    var sock = Net.connect("httpbin.org", 80)
+    var sock = Net.connect("127.0.0.1", 19998)
     Test.assert(sock > 0, "Net.connect")
+    Net.send(sock, "GET /ping HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+    var req = Http.accept(srv)
+    Test.assert_eq_str(Http.method(req), "GET", "Http.accept parses method")
+    Test.assert_eq_str(Http.path(req), "/ping", "Http.accept parses path")
+    var cfd = Http.fd(req)
+    Http.respond(cfd, 200, "text/plain", "pong")
+    // Http.respond leaves the fd open on purpose (the handler loop owns it);
+    // with no handler loop we must close it or the read below never returns.
+    Net.close(cfd)
+    var reply = Net.recv(sock)
+    Test.assert(reply.len() > 0, "Http client reads a response")
+    Test.assert(reply.contains("200 OK"), "response status is 200")
     Net.close(sock)
+    Http.close_server(srv)
     Test.summary()
     
     return 0

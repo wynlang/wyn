@@ -1,0 +1,42 @@
+// Regression: a NAMESPACED BUILTIN call inside `parallel { }` emitted invalid C.
+//
+// This pins the guard on the implicit-spawn lowering added for bare calls in
+// `parallel { }` (see parallel_bare_call_overlaps.wyn). A namespaced builtin like
+// `Time::now_millis()` lexes as ONE identifier token whose text CONTAINS "::",
+// so treating it as an implicit spawn made codegen_lambda.c emit a wrapper named
+// after it verbatim:
+//
+//     void* __spawn_wrapper_Time::now_millis(void* arg)   <-- not valid C
+//
+// The fix is that BOTH sides of the lowering test the same predicate -
+// get_function_return_type(name) != NULL, i.e. "is this a known USER function" -
+// so builtins are left as ordinary inline calls. The two call sites are:
+//   * src/codegen_stmt.c   STMT_PARALLEL  (decides the lowering)
+//   * src/codegen_lambda.c STMT_PARALLEL  (collects the __spawn_wrapper_*)
+// If they ever drift apart, one side emits a wrapper the other doesn't declare
+// (or vice versa) and this test fails to compile.
+//
+// So: the value of this test is that it COMPILES AT ALL. The assertions below
+// just keep it honest about the mixed case still behaving.
+
+fn slow(ms: int) -> int {
+    Time::sleep(ms)
+    return ms
+}
+
+fn main() {
+    parallel {
+        // Namespaced builtin: must stay a plain inline call, no spawn wrapper.
+        t = Time::now_millis()
+        // Real user fn in the same block: must still be dispatched.
+        a = slow(50)
+    }
+
+    if t > 0 and a == 50 {
+        println("ok")
+    } else {
+        println("BAD")
+    }
+}
+
+// EXPECT: ok

@@ -168,11 +168,23 @@ Flags:
 
 ## Performance
 
-- Hello world binary: 33KB (release), runs in <1ms
-- Compilation: ~300ms with bundled TCC, ~220ms with system cc --release
-- Spawn: ~3μs per coroutine (pooled 16KB stacks, work-stealing scheduler, kqueue/epoll I/O)
-- Memory: 180 bytes/task
+Measured on an Apple M3 Pro, macOS 26, v1.20.0. Medians of warm runs; wall-clock
+figures include the ~7ms process-startup floor.
+
+- Hello world binary: 50KB release (51,400 bytes), 51KB dev (52,248 bytes)
+- Hello world runtime: ~7ms wall clock - the same as the equivalent C binary
+- Compilation: ~290ms dev, ~1.2s `--release` (hello world); `wyn check` ~10ms
+- Spawn: ~2μs per spawn+await (10K sequential in 32ms); 1M fire-and-forget in ~0.7s
+- Overlapping I/O: 8 awaited 100ms sleeps finish in ~112ms, not 800ms
+- Memory: ~172 bytes/task at 10K outstanding tasks; hello world peaks at 1.4MB RSS
+- Web: ~22,000 req/s with the `web` package (keep-alive, 200 concurrent, 0 failures)
 - 64-bit integers throughout
+
+Caveat worth stating: strings are immutable, so `s = s + "x"` in a loop is
+O(n²) - 1M iterations takes ~11.7s (slower than Python's ~10.2s on the same
+shape). Use `StringBuilder` (1M appends in ~14ms) or `.join()`.
+
+Full method and cross-language comparisons: https://wynlang.com/docs/guides/benchmarks
 
 ## Editor Support
 
@@ -217,7 +229,12 @@ wyn/
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+The shipped `wyn` binary statically links TinyCC (`libtcc`), which is LGPL-2.1, and
+bundles minicoro (Public Domain / MIT-0). License texts are distributed at
+`vendor/tcc/COPYING` and `vendor/minicoro/LICENSE`; the full list of third-party
+components is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ---
 

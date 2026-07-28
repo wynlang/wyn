@@ -2175,8 +2175,10 @@ char* http_put(const char* url, const char* data) {
             path, hostname, dlen, data?data:"", hostname);
         FILE* fp = popen(cmd, "r"); if (!fp) return "";
         char* resp = wyn_str_alloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
+        wyn_rc_set_length(resp, (unsigned int)len);
         char* body = strstr(resp, "\r\n\r\n");
-        if (body) { body+=4; char* r=wyn_strdup(body); free(resp); return r; }
+        // RC-offset pointer: release, never free() (same class as File_read_line).
+        if (body) { body+=4; char* r=wyn_strdup(body); wyn_rc_release(resp); return r; }
         return resp;
     }
     char* result = http_request("PUT", url, data);
@@ -2195,8 +2197,10 @@ char* http_delete(const char* url) {
             path, hostname, hostname);
         FILE* fp = popen(cmd, "r"); if (!fp) return "";
         char* resp = wyn_str_alloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
+        wyn_rc_set_length(resp, (unsigned int)len);
         char* body = strstr(resp, "\r\n\r\n");
-        if (body) { body+=4; char* r=wyn_strdup(body); free(resp); return r; }
+        // RC-offset pointer: release, never free() (same class as File_read_line).
+        if (body) { body+=4; char* r=wyn_strdup(body); wyn_rc_release(resp); return r; }
         return resp;
     }
     char* result = http_request("DELETE", url, NULL);
@@ -2310,15 +2314,58 @@ void print_args_impl(int count, ...) {
 }
 
 void print_int(int x) { printf("%d", x); }
-// Canonical float formatting: %g, but integral values keep a trailing ".0"
-// (print(1.0) -> "1.0", not "1") so float output is distinguishable from int
-// output (Python semantics). Skips values already carrying '.', an exponent,
-// or nan/inf. Shared by print/println/print_value/arrays/float_to_string.
+// Canonical float formatting: SHORTEST ROUND-TRIP text, with integral values
+// keeping a trailing ".0" (print(1.0) -> "1.0", not "1") so float output stays
+// distinguishable from int output (Python semantics).
+//
+// GUARANTEE: for every finite double d, strtod(wyn_format_float(d)) == d
+// exactly, using the FEWEST significant digits that achieve it.
+//
+// Why not a fixed precision: a fixed "%.15g" is LOSSY. 0.1+0.2 printed "0.3"
+// while 0.1+0.2 == 0.3 evaluated to false, and 1.0/3.0 printed
+// "0.333333333333333" (15 digits) which parses back to a DIFFERENT double.
+// That is a silent value substitution - the same class of defect the language
+// refuses to tolerate in memory - and it corrupts data anywhere floats are
+// stringified (JSON, CSV, logs, DB round-trips), not just at print().
+//
+// Algorithm: try 15, then 16, then 17 significant digits and take the first
+// whose strtod round-trips to the identical value. 17 always suffices for
+// IEEE-754 binary64, so the loop terminates with an exact answer. This costs at
+// most 3 snprintf+strtod pairs; a full Ryu/Grisu would be faster but needs
+// ~1500 lines of vendored code and float printing is not on a hot path.
+// Wyn's `float` IS a C double everywhere (codegen.c maps "float" -> "double";
+// there is no 32-bit float type in the language), so 17 digits is the right
+// bound - a real f32 would need 9.
+//
+// Special values, deliberately:
+//   inf / -inf / nan  -> "inf" / "-inf" / "nan" (whatever the C library's %g
+//                        emits; no ".0" is appended because of the n/i guard).
+//                        These do NOT round-trip through Wyn's to_float, which
+//                        rejects non-numeric text - that is intentional: they
+//                        are diagnostic output, not a data interchange format.
+//   -0.0              -> "-0.0" (sign preserved; %g emits "-0", the ".0" rule
+//                        makes it "-0.0"). strtod("-0.0") == -0.0 with the same
+//                        bit pattern, so the round-trip holds.
+//   0.0               -> "0.0"
+// Shared by print/println/print_value/arrays/float_to_string/interpolation.
+//
+// wyn_format_double_shortest is the same shortest-round-trip core WITHOUT the
+// ".0" suffix rule. JSON uses it: a JSON number 1 must stringify as "1", not
+// "1.0" (JSON has one numeric type and callers compare the text), while still
+// needing exact round-trip so re-serializing a parsed document is lossless.
+static inline int wyn_format_double_shortest(char* buf, size_t cap, double x) {
+    int n = 0;
+    for (int prec = 15; prec <= 17; prec++) {
+        n = snprintf(buf, cap, "%.*g", prec, x);
+        if (n <= 0 || (size_t)n >= cap) break;   // truncated: keep what we have
+        if (strtod(buf, NULL) == x) break;       // exact round-trip: done
+        // nan/inf never compare equal, and re-formatting cannot help; stop.
+        if (!(x == x) || x > 1.7976931348623157e308 || x < -1.7976931348623157e308) break;
+    }
+    return n;
+}
 static inline int wyn_format_float(char* buf, size_t cap, double x) {
-    // %.15g: 15 significant digits is the shortest representation that
-    // round-trips for >99.99% of doubles. The old %g (6 sig-digits) silently
-    // truncated: 3.141592653589793 → "3.14159" (G3, widest surface).
-    int n = snprintf(buf, cap, "%.15g", x);
+    int n = wyn_format_double_shortest(buf, cap, x);
     if (n > 0 && (size_t)n + 2 < cap
         && !strchr(buf, '.') && !strchr(buf, 'e') && !strchr(buf, 'E')
         && !strchr(buf, 'n') && !strchr(buf, 'i')) {
@@ -2406,21 +2453,94 @@ void print_debug(const char* label, int val) { printf("%s: %d\n", label, val); }
 
 int input() { int x = 0; if (scanf("%d", &x) != 1) { while(getchar() != '\n') { /* clear input buffer */ } return 0; } return x; }
 float input_float() { float x = 0.0f; if (scanf("%f", &x) != 1) { while(getchar() != '\n') { /* clear input buffer */ } return 0.0f; } return x; }
-char* input_line() { static char buffer[1024]; if (fgets(buffer, sizeof(buffer), stdin)) { size_t len = strlen(buffer); if (len > 0 && buffer[len-1] == '\n') buffer[len-1] = '\0'; return buffer; } return ""; }
+// Read one line from stdin as a real Wyn string.
+// Ownership: returns a FRESH +1 RC string (wyn_str_alloc), exactly like
+// file_read / int_to_string / wyn_strdup. Codegen's `is_fresh_string_temp`
+// treats a string-typed call as an owner and emits one wyn_rc_release, so a
+// borrowed pointer here would be an over-release. On EOF it returns the ""
+// literal, which wyn_rc_release safely ignores (not in the RC heap range).
+// The old version returned a `static char buffer[1024]`: two calls aliased the
+// same storage (`a = input_line(); b = input_line()` made a == b) and any line
+// over 1023 bytes was silently truncated. Now grows to fit the whole line.
+char* input_line() {
+    size_t cap = 256, len = 0;
+    char* buf = wyn_str_alloc(cap);
+    if (!buf) return "";
+    for (;;) {
+        if (!fgets(buf + len, (int)(cap - len), stdin)) break;
+        len += strlen(buf + len);
+        if (len > 0 && buf[len - 1] == '\n') { buf[--len] = '\0'; break; }
+        if (len + 1 < cap) break;          // short read: real EOF without newline
+        size_t ncap = cap * 2;             // buffer full mid-line: grow and continue
+        char* nb = wyn_str_alloc(ncap);
+        if (!nb) break;
+        memcpy(nb, buf, len + 1);
+        wyn_rc_release(buf);
+        buf = nb; cap = ncap;
+    }
+    if (len == 0) { buf[0] = '\0'; }
+    // Strip a trailing \r so CRLF input does not leak the carriage return into
+    // the string (Windows/CRLF files piped into a program on any platform).
+    if (len > 0 && buf[len - 1] == '\r') buf[--len] = '\0';
+    wyn_rc_set_length(buf, (unsigned int)len);
+    return buf;
+}
 void printf_wyn(const char* format, ...) { va_list args; va_start(args, format); vprintf(format, args); va_end(args); }
+// string_format / "...".format(a, b, ...) - the runtime substitution engine.
+//
+// SEMANTICS (see also the codegen note next to the `format` dispatch):
+//   Placeholders are BRACE-style `{}`, filled left to right from the arguments.
+//   Every argument arrives ALREADY STRINGIFIED by codegen (`to_string(arg)`), so
+//   this function only ever consumes `const char*` from the va_list - it cannot
+//   and must not try to interpret a printf conversion like %d against a value
+//   whose C type it does not know.
+//   printf-style specs (`%s`, `%d`, `%.2f`, ...) are therefore NOT accepted;
+//   the CHECKER rejects a format string containing them with a clear error
+//   pointing at `{}` (and at "${x}" interpolation) instead of substituting the
+//   wrong thing. `{{` / `}}` are literal `{` / `}`.
+//   A placeholder/argument count mismatch is also a compile error, so at this
+//   point counts are known to agree; a defensive "" is used if they somehow
+//   don't (never a wild va_arg read).
+//
+// Ownership: returns a FRESH +1 RC string (wyn_sb_finish -> wyn_str_alloc),
+// matching every other string-returning runtime function. Callers release once.
+//
+// The previous implementation also honored `{}` but was capped at a 4096-byte
+// stack buffer and truncated silently; it is now growable.
+static char* wyn_format_apply(const char* format, int argc, va_list args) {
+    if (!format) return wyn_strdup("");
+    WynStrBuf sb; wyn_sb_init(&sb);
+    int used = 0;
+    for (int i = 0; format[i]; i++) {
+        if (format[i] == '{' && format[i+1] == '{') { wyn_sb_append_n(&sb, "{", 1); i++; continue; }
+        if (format[i] == '}' && format[i+1] == '}') { wyn_sb_append_n(&sb, "}", 1); i++; continue; }
+        if (format[i] == '{' && format[i+1] == '}') {
+            const char* s = (argc < 0 || used < argc) ? va_arg(args, const char*) : "";
+            used++;
+            wyn_sb_append(&sb, s ? s : "");
+            i++;
+            continue;
+        }
+        wyn_sb_append_n(&sb, format + i, 1);
+    }
+    return wyn_sb_finish(&sb);
+}
+// Counted entry point used by `"...".format(a, b)`. argc lets the runtime stop
+// reading the va_list at the last real argument instead of walking off the end
+// if a future path ever passes fewer args than there are placeholders.
+char* wyn_str_format(const char* format, int argc, ...) {
+    va_list args; va_start(args, argc);
+    char* r = wyn_format_apply(format, argc, args);
+    va_end(args);
+    return r;
+}
+// Legacy bare builtin `string_format(fmt, ...)` - same `{}` substitution, kept
+// signature-compatible (uncounted) so existing direct calls keep working.
 char* string_format(const char* format, ...) {
     va_list args; va_start(args, format);
-    // First pass: calculate length
-    char temp[4096]; int pos = 0;
-    for (int i = 0; format[i] && pos < 4000; i++) {
-        if (format[i] == '{' && format[i+1] == '}') {
-            const char* s = va_arg(args, const char*);
-            pos += snprintf(temp + pos, 4000 - pos, "%s", s ? s : "(null)");
-            i++;
-        } else { temp[pos++] = format[i]; }
-    }
-    temp[pos] = '\0'; va_end(args);
-    return wyn_strdup(temp);
+    char* r = wyn_format_apply(format, -1, args);
+    va_end(args);
+    return r;
 }
 double sin_approx(double x) { return x - (x*x*x)/6 + (x*x*x*x*x)/120; }
 double cos_approx(double x) { return 1 - (x*x)/2 + (x*x*x*x)/24; }
@@ -2652,7 +2772,10 @@ int file_is_dir(const char* path) {
 }
 char* file_get_cwd() {
     char* buf = wyn_str_alloc(1024);
-    if (getcwd(buf, 1024) == NULL) { free(buf); return ""; }
+    // wyn_str_alloc returns an RC-offset pointer - free() on it corrupts the
+    // heap. Release through the RC owner (same class as File_read_line).
+    if (getcwd(buf, 1024) == NULL) { wyn_rc_release(buf); return ""; }
+    wyn_rc_set_length(buf, (unsigned int)strlen(buf));
     return buf;
 }
 int file_create_dir(const char* path) {
@@ -2868,8 +2991,20 @@ long long File_open(const char* path, const char* mode) {
 char* File_read_line(long long handle) {
     if (handle <= 0 || handle >= MAX_FILE_HANDLES || !file_handles[handle]) return "";
     char* buf = wyn_str_alloc(4096);
-    if (fgets(buf, 4096, file_handles[handle])) return buf;
-    free(buf);
+    if (fgets(buf, 4096, file_handles[handle])) {
+        // Cache the length like wyn_strdup does: string_length() prefers the
+        // RC header's cached length and only falls back to strlen() when it is
+        // 0, so leaving it unset made .len() re-scan (correct but O(n)) - and
+        // any future consumer that trusts the header outright would see 0.
+        wyn_rc_set_length(buf, (unsigned int)strlen(buf));
+        return buf;
+    }
+    // EOF/error path. `buf` came from wyn_str_alloc -> wyn_rc_alloc, i.e. a
+    // pointer OFFSET PAST the RC header. Handing that interior pointer to
+    // free() corrupts the heap and aborts - and because this is the EOF path,
+    // every `while File.eof(f) == 0 { File.read_line(f) }` loop hit it on the
+    // final iteration. Release through the RC owner instead.
+    wyn_rc_release(buf);
     return "";
 }
 int File_write_line(long long handle, const char* data) {
@@ -2971,16 +3106,40 @@ static void http_send_response(int client_fd, int status, const char* content_ty
 }
 
 void Http_respond(long long client_fd, long long status, const char* content_type, const char* body) {
-    http_send_response((int)client_fd, (int)status, content_type, body);
-    // The CLOSE happens in Http_read_request's next iteration, never here:
-    // if respond closed the fd while the handler coroutine was still going
-    // to loop, the kernel could recycle the fd number to a brand-new
-    // connection and the old handler would read - and close - the new
-    // client's traffic (connection-resets under ab -c 100, 2026-07-19).
-    // Single owner: the handler loop. Flag value 2 = "close pending".
-    if (!wyn_http_get_ka((int)client_fd)) {
-        if ((int)client_fd >= 0 && (int)client_fd < WYN_HTTP_KA_MAX)
-            atomic_store(&wyn_http_ka[(int)client_fd], 2);
+    int fd = (int)client_fd;
+    http_send_response(fd, (int)status, content_type, body);
+    // Close semantics (HTTP/1.0, or "Connection: close"): the response we just
+    // sent advertised `Connection: close`, so the CLIENT is waiting for EOF to
+    // know the response ended. We must half-close NOW.
+    //
+    // Why shutdown() and not close(): close() frees the fd NUMBER, and the
+    // kernel recycles it for the next accept(). A handler that loops would then
+    // read - and close - a brand new client's traffic (connection resets under
+    // `ab -c 100`, 2026-07-19). shutdown() sends the FIN without releasing the
+    // number, so it is safe with a single owner while still terminating the
+    // response for the client.
+    //
+    // Before this, the FIN was deferred to the handler's NEXT read_request
+    // call. A handler that answers one request and returns - the pattern in
+    // every doc example - never makes that call, so the client hung forever
+    // waiting for EOF and the fd leaked. That is what wedged `ab` even at
+    // concurrency 1 (2026-07-28).
+    //
+    // Flag value 2 = "FIN sent, fd still needs close()". A looping handler's
+    // next read_request sees it, closes, and ends the loop.
+    if (!wyn_http_get_ka(fd)) {
+        // SHUT_WR (not SHUT_RDWR): flush what we queued, then FIN. Shutting the
+        // READ side too would RST a client that pipelined another request and
+        // could discard our own unsent response.
+        if (fd >= 0) {
+#ifndef _WIN32
+            shutdown(fd, SHUT_WR);
+#else
+            shutdown(fd, SD_SEND);
+#endif
+        }
+        if (fd >= 0 && fd < WYN_HTTP_KA_MAX)
+            atomic_store(&wyn_http_ka[fd], 2);
     }
 }
 
@@ -3263,6 +3422,21 @@ char* Http_read_request(long long client_fd_ll) {
     char* result = wyn_str_alloc(16384);
     snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
     return result;
+}
+
+// Release a client connection. The checker has advertised Http.close_client
+// since forever but nothing ever defined it, so ANY program calling it failed
+// to compile ("call to undeclared function 'Http_close_client'", found
+// 2026-07-28). A one-shot handler - the shape of every documented example -
+// needs exactly this: respond, then hand the fd back, or the process leaks one
+// fd per request until it hits the per-process limit.
+//
+// Idempotent-ish and safe to call after respond(): clears the keep-alive slot
+// (so the recycled fd number starts clean) and closes.
+void Http_close_client(int fd) {
+    if (fd < 0) return;
+    wyn_http_set_ka(fd, 0);
+    close(fd);
 }
 
 void Http_close_server(int fd) { if (fd >= 0) close(fd); }
@@ -3984,10 +4158,12 @@ char* Net_recv(int sockfd) {
     char* buffer = wyn_str_alloc(4096);
     int received = recv(sockfd, buffer, 4095, 0);
     if (received < 0) {
-        free(buffer);
+        // RC-offset pointer: release, never free() (same class as File_read_line).
+        wyn_rc_release(buffer);
         return "";
     }
     buffer[received] = '\0';
+    wyn_rc_set_length(buffer, (unsigned int)received);
     return buffer;
 }
 
@@ -5126,7 +5302,10 @@ char* Json_get(long long root, const char* key) {
     int c = json_find_child((int)root, key);
     if (c < 0) return "";
     if (json_nodes[c].type == 's') return json_nodes[c].str_val ? json_nodes[c].str_val : "";
-    if (json_nodes[c].type == 'n') { char* buf = wyn_str_alloc(32); snprintf(buf, 32, "%.15g", json_nodes[c].num_val); return buf; }
+    // Shortest ROUND-TRIP text (not "%.15g", which silently altered the value:
+    // a JSON 0.30000000000000004 came back out as "0.3"). No ".0" suffix - a
+    // JSON number 1 must stringify as "1".
+    if (json_nodes[c].type == 'n') { char* buf = wyn_str_alloc(32); int bn = wyn_format_double_shortest(buf, 32, json_nodes[c].num_val); wyn_rc_set_length(buf, (unsigned int)(bn > 0 ? bn : 0)); return buf; }
     if (json_nodes[c].type == 'b') return json_nodes[c].num_val ? "true" : "false";
     return "";
 }
@@ -5168,7 +5347,8 @@ char* Json_node_str(long long node) {
     int n = (int)node;
     if (n < 0 || n >= json_node_count) return "";
     if (json_nodes[n].type == 's') return json_nodes[n].str_val ? json_nodes[n].str_val : "";
-    if (json_nodes[n].type == 'n') { char* buf = wyn_str_alloc(32); snprintf(buf, 32, "%.15g", json_nodes[n].num_val); return buf; }
+    // Shortest round-trip, no ".0" suffix - see Json_get.
+    if (json_nodes[n].type == 'n') { char* buf = wyn_str_alloc(32); int bn = wyn_format_double_shortest(buf, 32, json_nodes[n].num_val); wyn_rc_set_length(buf, (unsigned int)(bn > 0 ? bn : 0)); return buf; }
     return "";
 }
 

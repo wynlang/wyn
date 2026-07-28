@@ -1,30 +1,47 @@
-// Test string format method
+// Test string format method.
+// `.format()` substitutes brace-style `{}` placeholders, consistent with Wyn's
+// "${x}" interpolation. This test previously used printf-style specs (%s / %d),
+// which .format() never implemented - it silently returned the format string
+// unchanged and discarded the arguments. (This file would have caught that, but
+// it is not wired into any suite; the live coverage now lives in
+// tests/regression/test_string_format_method.wyn for the value path and
+// tests/errors/run_silent_wrong_test.sh for the error paths.)
 fn main() -> int {
-    // Test %s for strings
-    var s1 = "Hello %s".format("World")
-    if s1.contains("World") == 0 {
-        print("FAIL: %s format\n")
+    // Strings substitute
+    var s1 = "Hello {}".format("World")
+    if s1 != "Hello World" {
+        print("FAIL: string format\n")
         return 1
     }
-    
-    // Test %d for integers
-    var s2 = "Count: %d".format(42)
-    if s2.contains("42") == 0 {
-        print("FAIL: %d format\n")
+
+    // Integers are stringified
+    var s2 = "Count: {}".format(42)
+    if s2 != "Count: 42" {
+        print("FAIL: int format\n")
         return 2
     }
-    
-    // Test multiple args
-    var s3 = "%s has %d items".format("Alice", 5)
-    if s3.contains("Alice") == 0 {
+
+    // Multiple args fill left to right
+    var s3 = "{} has {} items".format("Alice", 5)
+    if s3 != "Alice has 5 items" {
         print("FAIL: multiple args\n")
         return 3
     }
-    if s3.contains("5") == 0 {
-        print("FAIL: multiple args int\n")
+
+    // Floats and bools too
+    var s4 = "{} / {}".format(2.5, true)
+    if s4 != "2.5 / true" {
+        print("FAIL: float/bool format\n")
         return 4
     }
-    
+
+    // Doubled braces are literal braces
+    var s5 = "{{x}} {}".format(1)
+    if s5 != "{x} 1" {
+        print("FAIL: escaped braces\n")
+        return 5
+    }
+
     print("String format tests PASS\n")
     return 0
 }

@@ -2,12 +2,22 @@
 
 ## v1.20.0 (2026-07-28) - "The Concurrency & Correctness Release"
 
+> **Re-released 2026-07-28.** The v1.20.0 artifacts were rebuilt and replaced in
+> place after an adversarial review of this release found defects serious enough
+> that shipping them was not defensible - including a license-compliance
+> violation in every binary, a scheduler bug that burned a full CPU core in
+> *every* concurrent program, and a silent data race that produced wrong answers
+> at exit 0. Nothing had been downloaded, so the artifacts were replaced rather
+> than superseded by a v1.20.1. The full list is in "Fixed in the re-release"
+> below. If you somehow obtained the original artifacts, replace them.
+
 The headline: **concurrency that's fast out of the box**. Fire-and-forget
-`spawn` got ~18x faster (1,000,000 tasks in ~0.66s, within striking distance
-of Go's goroutines), a channel-backpressure livelock that hung real programs
-is gone, and awaited `spawn`/`await_all`/`parallel { }` now run cooperatively
-on the coroutine scheduler by default (8 awaited 100ms sleeps overlap into
-~116ms, not ~800ms) - no thread-pool tuning, no async ceremony.
+`spawn` now dispatches 1,000,000 tasks in ~0.67s (Go goroutines: ~0.32s on the
+same machine), a channel-backpressure livelock that hung real programs is gone,
+and awaited `spawn`/`await_all`/`parallel { }` now run cooperatively on the
+coroutine scheduler by default (8 awaited 100ms sleeps overlap into ~112ms, not
+~800ms) - no thread-pool tuning, no async ceremony. Concurrent programs now also
+idle at **~0 CPU** rather than burning a core (see the re-release notes).
 
 Alongside that: **experimental GPU dispatch** for `[float].map` (Metal on
 macOS, OpenCL on Linux/Windows, opt-in), **nested & recursive data**
@@ -17,8 +27,153 @@ run-queue data race, `Shared`/channel guards - all found and fixed with
 ASan/TSan and locked behind regression tests, suite 210 -> 237), plus real
 crypto, AWS from pure Wyn, and removed compiler limits.
 
-Everything below is verified: 0-warning build on 4 platforms, full suite +
-golden-C snapshots green, and every fix carries a regression test.
+What CI actually gates, so you can judge the rest: every push and PR builds on
+Linux, macOS-arm64, macOS-x64 and Windows, and on the three Unix platforms runs
+`make test` - the 248-file expect/regression suite, the golden-C codegen
+snapshots, and 38 dedicated behavioral/negative sub-suites - plus the same suite
+re-run on the coroutine async substrate, plus ASan and TSan runtime jobs. Fixes
+listed below carry a regression test in that suite. Two honest caveats. First,
+the `tests/stdlib` suite (68 files) is gated through a known-failure allowlist
+(`tests/stdlib/known_failures.txt`): anything NOT listed there fails the build,
+but the listed entries are tolerated, so that suite is not 100% green - read the
+file for the current debt, which is only permitted to shrink. Second, Windows
+runs a declared portable subset rather than `make test`, because the
+exit-code- and signal-dependent suites are POSIX-only; the list of what is and
+is not covered there is in `.github/workflows/ci.yml`.
+
+The v1.20.0 tag originally shipped this paragraph as "Everything below is
+verified: 0-warning build on 4 platforms, full suite + golden-C snapshots
+green". That was false: CI ran only `run_bdd.sh` at the time, so `make test`
+was never gated, and `tests/errors/run_channel_deadlock_test.sh` was failing
+deterministically at the tag. `make test` is now a required check (see
+`.github/workflows/ci.yml`) precisely so that claim cannot be made again
+without being true.
+
+### Fixed in the re-release
+
+An adversarial review of v1.20.0 - deliberately reading it the way a hostile
+reader on a link-aggregator front page would - found the following. Every item
+was reproduced against a clean build of the original `v1.20.0` tag before being
+fixed, and re-verified after.
+
+**Legal**
+
+- The shipped binary statically links TinyCC (`libtcc`), which is **LGPL-2.1**,
+  while `LICENSE` was MIT-only and `vendor/` contained **no license text at
+  all**. That made every published artifact non-compliant. Added the full
+  LGPL-2.1 text (`vendor/tcc/COPYING`), minicoro's license (it was also
+  undocumented), a root `THIRD-PARTY-NOTICES.md` inventorying every vendored
+  component, and a third-party section in `LICENSE`. The release workflow now
+  **fails** if the notices are missing from an artifact, so this cannot silently
+  regress. Note LGPL-2.1 §6 also requires choosing dynamic linking or conveying
+  object code with relink terms; that decision is open and documented in
+  `THIRD-PARTY-NOTICES.md` rather than glossed over.
+
+**Correctness - wrong answers at exit code 0**
+
+- **Data race on shared mutable globals.** A global written from a `spawn`ed
+  function tore: 4 tasks x 2000 increments produced 7956 instead of 8000,
+  silently, exit 0. Now a **compile-time error** naming the global and the
+  function, pointing at `Shared`. (Found a real instance of this in our own
+  published REST-API blog post, where two concurrent requests could be assigned
+  the same ID.)
+- **`.format()` was a silent no-op** - `"Hello %s".format("World")` printed
+  `Hello %s`. Now implemented with `{}` placeholders; printf-style specs are a
+  hard compile error rather than silently ignored.
+- **`input_line()` returned a pointer as an integer** (e.g. `4339582744`). It was
+  registered in a blanket int-typed builtin loop. Also fixed: it returned a
+  `static` buffer, so two calls aliased, and lines over 1023 bytes were silently
+  truncated. `input_float()` had the same typing defect.
+- **Floats did not round-trip.** Printing at `%.15g` meant the printed text
+  parsed back to a *different* double: `0.1 + 0.2` printed `0.3` while
+  `0.1 + 0.2 == 0.3` was `false`, and `1e16 + 2.0` lost its low bits through any
+  string round-trip (JSON, CSV, logs). Now shortest-round-trip: the fewest digits
+  that parse back to the identical value. The `--release` slim runtime was worse
+  (6 digits) and is now identical.
+- **`array_push(arr, <fresh string>)` was a use-after-free** - the string was
+  released after being handed to the array, so elements read back empty.
+- **Annotated `[int]` arrays selected a different C representation than inferred
+  ones**, so `var a: [int]` then `a.sort()` failed codegen after `wyn check`
+  passed - and `a[0] = 9` *compiled* while writing a 16-byte value into an 8-byte
+  slot, printing `1` and corrupting memory.
+- **`HashMap<K,V>` annotations with a space** (`HashMap<string, int>`) failed to
+  parse with a misleading "unclosed block" error.
+- **`?` followed by `return` on one line** misparsed as a ternary.
+
+**Resource exhaustion**
+
+- **Every program that spawned a task burned ~1 CPU core forever**, including
+  while completely idle. Three separate busy-spin sites: idle workers polled on a
+  100us timeout instead of parking; the fire-and-forget drain loop spun with no
+  sleep at all (2.8 CPU-seconds per 2s wall, across multiple cores); and
+  `future_get` yielded in a tight loop. All three now measure **~0** idle CPU, with
+  the cooperative-await latency that this release is named for fully preserved
+  (verified: 8x100ms -> 115ms, 1M spawns 0.64-0.69s, TSan clean on both
+  executors). A CI gate now asserts idle CPU stays under 50ms.
+- **The HTTP server never closed connections.** `Http_respond` deferred the close
+  to the handler's *next* `read_request`, which never comes in the one-shot
+  handler shape every example used - so the response advertised
+  `Connection: close` and then never sent FIN, wedging any client that waits for
+  EOF (including `ab` at concurrency 1) and leaking an fd per request.
+  `Http_close_client` was advertised by the checker with **no implementation**.
+- **`wyn run` orphaned its child.** Killing `wyn` left the program running.
+  Signals are now forwarded, and the child dies with the parent even on
+  `SIGKILL` (`PR_SET_PDEATHSIG` on Linux, a pipe-EOF supervisor on macOS/BSD, a
+  job object on Windows).
+- **`stdout` was never flushed** when not a tty, so a server's startup line never
+  appeared in redirected output.
+
+**Supply chain**
+
+- **`wyn.lock` did not pin anything.** Install reconstructed the spec from
+  url+ref and **never compared the recorded commit sha**, so a moved branch or
+  retagged release silently yielded different code than the lockfile recorded.
+  Now enforced, preferring a checkout of the recorded commit, with a clear error
+  and legacy-lockfile handling.
+- **`install.sh` / `install.ps1` had no integrity checking of any kind** - they
+  fetched from the mutable `releases/latest` pointer and piped straight into
+  `tar`. Releases now publish `SHA256SUMS`; both installers verify and **fail
+  closed**. The release canary verifies the digest and proves tamper-detection by
+  corrupting a byte. (Signing the manifest is a separate, still-open step.)
+
+**Testing - the root cause behind most of the above**
+
+- **CI never ran `make test`.** It ran only `run_bdd.sh`, so ~80 test files were
+  ungated on every PR: all of `tests/errors/`, the golden-C snapshots, GPU,
+  bindgen, cpkg, sqlite - and `tests/stdlib` (68 files) was run by *nothing at
+  all*. `tests/errors/run_channel_deadlock_test.sh` was failing **deterministically
+  at the v1.20.0 tag** while the release notes claimed the full suite was green.
+  `make test` is now a required check on all three Unix platforms, and it drives
+  50 suites.
+- `tests/stdlib` went from **17 known failures to 0** and is now a hard gate. Two
+  of those were real compiler bugs (above); most of the rest were tests asserting
+  behavior this release deliberately changed, plus five that depended on a live
+  `httpbin.org` and are now hermetic.
+- `tests/run_tests_parallel.sh`, which CI *did* run, reads a `tests/test_list.txt`
+  that is not in the tree - it executed **zero tests** and reported success. Its
+  green tick was decoration.
+- `channel(0)` is now rejected at **check** time rather than panicking at runtime.
+
+**Honesty of published numbers**
+
+- Roughly 25 false or unsupportable performance claims were corrected across ~40
+  files. The pattern: nearly every *multiplier* was fabricated or traced to a
+  vanished baseline, while most *absolute* Wyn measurements were about right.
+  Worst offenders: "1M string appends in 6ms, 33x faster than Python" (actually
+  ~11.7s, and ~1.25x **slower** - naive concat is O(n^2) in both languages);
+  "Wyn compiles 7-15x faster than Rust" (cargo builds hello world in ~0.4s, so
+  the table was deleted); a GPU "~2-5x" speedup that **reverses** under
+  end-to-end measurement; ~10 files citing hardware the project has never run
+  on. The web throughput figure was real but measured against a *looping* handler
+  while the site published a *one-shot* snippet that cannot do keep-alive - the
+  snippet was fixed and the number re-derived with a committed harness
+  (`benchmarks/http_load.sh`).
+- Release artifacts are now built with `-O2` and stripped. Every prior release
+  shipped an unoptimized, unstripped compiler; the binary is **35% smaller**
+  (1,349,552 -> 871,584 bytes). Warm compile time is unchanged, so this is a
+  download-size win only.
+- The GitHub Release body is now scoped to the released version's section instead
+  of republishing all 1,082 lines of this file.
 
 Correctness foundation (compiler limits removed, lambdas fully typed, real
 crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C):
@@ -190,16 +345,19 @@ crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C):
   still run on machines with no GPU via the always-correct CPU fallback).
 - Gated by build TARGET (cross-compiling from a Mac to Linux wires the
   OpenCL backend in), thread-safe, `WYN_GPU=0` kill-switch.
-- Measured: ~2-5x on repeated 10M+-element maps on Apple M3 Pro, NVIDIA T4 and
-  A10G (first dispatch pays a one-time kernel-JIT; a runtime cost model
-  keeps small workloads on the CPU). float32 precision - that is why it is
-  opt-in and off by default.
+- Honest status: re-measured end-to-end on an Apple M3 Pro, the GPU path did
+  **not** beat the CPU path (10M-element `[float].map`: ~197ms with `[gpu]`
+  enabled vs ~134ms CPU-only; 50M: ~679ms vs ~584ms). First dispatch pays a
+  one-time kernel JIT and a runtime cost model keeps small workloads on the
+  CPU, but no reproducible speedup has been demonstrated on this hardware. This
+  is a spike, not a performance feature - which is why it is opt-in, off by
+  default, and float32-only.
 
 ### Concurrency: much faster, and correct (2026-07-27 batch)
 
-- **Fire-and-forget `spawn` is ~18x faster**: 1,000,000 spawns dropped from
-  ~11.4s to ~0.66s (within ~2.3x of Go goroutines). The coroutine stack pool
-  was re-`mmap`-ing an 8MB region on every reuse (a syscall + ~2000 page faults
+- **Fire-and-forget `spawn` is much faster**: 1,000,000 spawns now take ~0.67s
+  (Go goroutines: ~0.25s on the same machine). The coroutine stack pool was
+  re-`mmap`-ing an 8MB region on every reuse (a syscall + ~2000 page faults
   per spawn); it now reuses the pooled stack directly. Also added Go's `wakep`
   rule (skip the wake syscall when a worker is already spinning) (#189).
 - **`Task.recv` collection no longer livelocks**: a program with more concurrent
@@ -216,7 +374,7 @@ crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C):
   flow through correctly (#191).
 - **Awaited concurrency is cooperative by default**: awaited `spawn`/`await_all`/
   `parallel` run on the coroutine scheduler (not the thread pool), so cooperative
-  `Time::sleep` and I/O overlap - 8 awaited 100ms sleeps finish in ~116ms, not
+  `Time::sleep` and I/O overlap - 8 awaited 100ms sleeps finish in ~112ms, not
   ~800ms. (`WYN_ASYNC_POOL=1` selects the old blocking pool if needed.) (#196)
 - **`Shared.*` handles are bounds-checked**: `Shared.set(-1, x)` and slab
   exhaustion were silent out-of-bounds reads/writes; now a clean panic, and the
@@ -297,16 +455,32 @@ crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C):
 
 | Benchmark | Wyn 1.20 | Go | Python |
 |---|---|---|---|
-| fib(35) | 50 ms | 54 ms | 913 ms |
-| Strings 10K | 16 ms | 12 ms | - |
-| Startup | 8.4 ms | 8.8 ms | 39 ms |
-| Hello binary | 50 KB | 2,450 KB | - |
-| Edit-run loop (`wyn run`, TCC) | 27 ms | - | - |
-| GPU `[float].map` 10M (opt-in, cached) | 12-13 ms vs 27-38 ms CPU | - | - |
+| fib(35) | 41 ms | 48 ms | 958 ms |
+| 1M `StringBuilder` appends | 14 ms | - | 85 ms |
+| 100K `.upper().trim()` chains | 18 ms | - | 56 ms |
+| Sort 1M ints | 124 ms | 101 ms | 591 ms |
+| Startup (hello world) | 7.3 ms | 8.7 ms | 42 ms |
+| Hello binary | 50 KB (51,400 B) | 2,492 KB | - |
+| `wyn build` hello (dev) | 288 ms | 96 ms (`go build`) | - |
+| Edit-run loop (`wyn run`, already built) | 30 ms | - | - |
+| 1M fire-and-forget spawns | 0.67 s | 0.25 s | - |
+| 8 awaited 100 ms sleeps | 112 ms | - | - |
+| `web` pkg, keep-alive, c=200 | ~22,000 req/s | - | - |
 
-Honest note: fire-and-forget task spawning remains far slower than
-goroutines at the 1M scale (~10s vs ~0.3s) - unchanged from 1.19, on the
-roadmap (coroutine-backed spawn).
+Wall-clock medians of the whole process, so the ~7 ms startup floor is included
+in every Wyn row.
+
+Honest notes:
+- Naive string concatenation is the one place Wyn loses outright: `s = s + "x"`
+  1M times takes ~11.7 s versus Python's ~10.2 s (both are O(n²); Wyn's
+  per-copy constant is just worse). Use `StringBuilder` - 1M appends in 14 ms.
+- Fire-and-forget spawn at the 1M scale is now ~2.7x behind goroutines
+  (0.67 s vs 0.25 s) rather than ~35x, but Go is still far denser on memory
+  (~7 MB vs ~71 MB RSS for 1M outstanding tasks).
+- The GPU `[float].map` spike did **not** beat the CPU path end-to-end in
+  re-measurement on this machine (10M elements: ~197 ms GPU-enabled vs ~134 ms
+  CPU-only). Treat it as a spike, not a speedup. The runtime cost model keeps
+  small workloads on the CPU.
 
 ### Known limitations (documented, not hidden)
 
@@ -413,8 +587,10 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
   found is fixed: four parser infinite loops, a segfault on `===`, UTF-8 BOM
   silently emptying entire programs, `split("")`/`replace("")` hangs,
   `.chars()`/`.reverse()` corrupting multi-byte UTF-8, `.reduce(init, fn)`
-  segfaulting, and more. Invariant: **0 crashes, 0 hangs, 0 internal errors**
-  on malformed input.
+  segfaulting, and more. The gated invariant is **0 crashes, 0 hangs, 0 internal
+  errors** over the harness's generated corpus (`make test` runs seed 1 / 60
+  programs; larger runs are manual). That is a bound on what the fuzzer has
+  explored, not a proof over all inputs.
 
 **Error messages that tell the truth**
 - **Unterminated strings point at the opening quote** with "Unterminated
@@ -454,8 +630,9 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
 - **`wyn new <name> --template cli|api|web|lib`** scaffolds a runnable project
   (wyn.toml, src/, a passing test, README, CI workflow). The templates now
   actually compile - they had shipped with the removed `&&`/`||` syntax - and
-  every template is CI-verified to check clean and pass its own tests.
-  `http-service` is an alias for `api`.
+  the `default`, `cli`, `api` and `web` templates are CI-verified to scaffold a
+  full tree, check clean, and pass their own tests (`tests/errors/run_scaffold_test.sh`).
+  The `lib` template is not yet in that loop. `http-service` is an alias for `api`.
 - **`wyn pkg audit`** verifies your lockfile against reality: a **moved tag**
   (the classic retag/force-push supply-chain attack) is an error, branch pins
   warn with the exact command to pin today's SHA, local cache tampering is
@@ -477,8 +654,11 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
   static files, an HTML page builder, spawn-per-request concurrency.
 - **Curated C recipes: 12 → 31.** `wyn add png|jpeg|pcre2|yaml|ffi|uuid|ev|uv|
   sdl2|pthread|expat|bz2|iconv|gmp|onig|ssh2|git2|archive|magic` - each with
-  headers, pkg-config, and per-OS install hints. Every recipe is verified
-  end-to-end (add → bind → link → run).
+  headers, pkg-config, and per-OS install hints. Two recipes are gated
+  end-to-end in CI (add → bind → link → run): `m` and `sqlite3` (the latter
+  against a real library with opaque out-parameters). The other 29 were each
+  verified by hand at authoring time but are not in the automated suite, since
+  gating them would require 29 system libraries on every runner.
 - **`wyn bind` handles real-world headers.** Bindgen now resolves typedefs
   (`png_uint_32`, `uv_file`, opaque handle pointers - recorded from the whole
   preprocessed unit), scans prototypes behind macOS availability/`__asm`
@@ -545,7 +725,11 @@ under continuous fuzzing and sanitizer gates. No breaking changes.
 **Tests**: 146 expect/regression tests + 20 dedicated sub-suites (parser
 stability, struct equality, collection types, select deadlock, unterminated
 strings, scaffolding, test runner, pkg audit, module codegen, and more) + the
-fuzz invariants + ASan/TSan sanitizer sets, all green on all platforms.
+fuzz invariants + ASan/TSan sanitizer sets. (Correction, added later: at the
+1.19.0 tag CI ran only `run_bdd.sh`, so "all green on all platforms" - the
+original wording here - was an assertion about local runs, not something the
+automation enforced. Those sub-suites became a required check in 1.20.x; the
+sanitizer jobs are Linux-only.)
 
 ## v1.18.0 - "The Correctness Release" (2026-07-17)
 
@@ -965,8 +1149,8 @@ Make developers productive in their first hour. Every change improves error mess
 |--------|-------|-------|
 | Unit tests | 110 | 110 |
 | BDD tests | 32 | 36 |
-| Binary size | 49KB | 49KB |
-| fib(35) | 33ms | 34ms |
+| Binary size | 50KB | 50KB |
+| fib(35) | 41ms | 41ms |
 | Official packages | 31 | 36 |
 
 ## v1.10.0 - "The Quality Release" (2026-03-28)
@@ -975,19 +1159,33 @@ No new language features. Every change is about making the existing language fas
 
 ### Performance
 
-- **fib(35)**: 120ms → 33ms (3.6x faster via -O2 release builds)
-- **1M string append**: 12,143ms → 6ms (2,024x faster - RC header caches length + capacity)
-- **1M `.len()`**: ~100ms → 1ms (O(1) from RC length cache, was O(n) strlen)
-- **Array sort**: 189ms → 1ms for 10K ints (O(n²) bubble sort → O(n log n) inline introsort)
-- **`wyn build`**: ~4s → 411ms (precompiled `libwyn_rt.a` + system cc)
-- **Binary size**: 425KB → 49KB (dead code stripping)
-- **Spawn overhead**: ~20μs → 6μs per task
-- **4x parallel fib(35)**: perfect 4x scaling (33ms, same as sequential)
-- **HashMap**: 17x insert, 23x get (FNV-1a + 4096 buckets)
+- **fib(35)**: much faster via -O2 release builds (41ms as re-measured on v1.20)
+- **String length is O(1)**: the RC header now caches length and capacity, so
+  `.len()` no longer walks the string. 1M `.len()` calls measure 9ms on v1.20.
+  Note: this did *not* make naive concatenation cheap - `s = s + "x"` still
+  copies, so a 1M-iteration concat loop is O(n²) and takes ~11.7s. (An earlier
+  version of this entry claimed 1M string appends dropped to 6ms; that was
+  wrong by roughly three orders of magnitude. Use `StringBuilder` - 1M appends
+  in ~14ms.)
+- **Array sort**: O(n²) bubble sort replaced with O(n log n) introsort. On
+  v1.20, 10K ints measure 9ms and 1M ints 124ms (wall clock, including the
+  ~7ms startup floor).
+- **`wyn build`**: ~4s → sub-second (288ms dev / 1.17s `--release` on v1.20)
+- **Binary size**: dead-code stripping added; an unstripped dev build was
+  around 425KB, and `--release` is 50KB today
+- **Spawn overhead**: down from ~20μs to ~2μs per spawn+await (v1.20 measurement)
+- **4x parallel fib(35)**: real 4x scaling - four in `parallel { }` take the
+  same wall time as one (42ms on v1.20)
+- **HashMap**: much faster insert and get (FNV-1a + 4096 buckets)
 
-### Memory Safety - Zero Leaks
+### Memory Safety
 
-Every known memory leak pattern is fixed. Verified with AddressSanitizer + UndefinedBehaviorSanitizer.
+The leak patterns listed below are fixed, each verified under AddressSanitizer +
+UndefinedBehaviorSanitizer. (Correction, added later: this section was headed
+"Zero Leaks" and claimed "every known memory leak pattern is fixed". Releases
+1.12, 1.13, 1.19 and 1.20 each found and fixed more - a string use-after-free,
+a `repeat` heap corruption, RC container aliasing - so the only defensible claim
+is the specific one above.)
 
 - **50+ string functions**: raw `malloc` → RC-tracked `wyn_str_alloc`
 - **String concat temps**: left and right temporaries released after concat
@@ -1037,15 +1235,19 @@ All 64KB fixed buffers replaced with dynamic RC-tracked buffers:
 - **Source-line error messages**: errors point to the exact line in your `.wyn` file
 - **LSP struct field completions**: autocomplete for struct fields in editors
 - **`wyn doctor`**: shows active compile path and speed recommendations
-- **4-platform CI**: macOS, Linux, Windows (ARM + x64), all green
+- **4-platform CI**: macOS, Linux, Windows (ARM + x64) build and smoke-test
 - **Online playground**: deployed at play.wynlang.com
 
 ### Testing
 
 - 110 unit tests (was ~80)
 - 31 expect + regression tests (was 0)
-- ASan + UBSan clean across all patterns
+- ASan + UBSan clean on the patterns exercised by those tests
 - 30/30 concurrent stress runs correct
+
+(Correction, added later: "all green" and "clean across all patterns" as
+originally written here overstated a build-and-smoke-test CI plus 31 tests.
+Nothing beyond `run_bdd.sh` was gated by automation until 1.20.x.)
 
 ---
 

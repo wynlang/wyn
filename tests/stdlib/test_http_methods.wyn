@@ -1,18 +1,85 @@
-// Test HTTP methods on strings
+// HTTP client/server round-trip - HERMETIC.
+//
+// This test used to fetch http://httpbin.org/get through `url.http_get()` and
+// assert the body contained "httpbin". That made it fail 4-of-4 in the allowlist
+// derivation runs: it depends on a third-party host being up, reachable, and
+// returning a body of a particular shape, and it alternated rc=1/rc=2 depending
+// on which of those broke. It tested httpbin.org, not Wyn.
+//
+// It now serves the response itself on 127.0.0.1 and asserts against that, so it
+// is deterministic and works offline. Everything real is still exercised
+// end-to-end in-process: bind/listen (Http.serve), connect (Net.connect),
+// request parse (Http.accept + Http.method/path), response write (Http.respond),
+// and read-back (Net.recv). Single-threaded on purpose - the client writes
+// before the server accepts, so the request sits in the socket buffer and no
+// scheduler/spawn is involved.
 fn main() -> int {
-    var url = "http://httpbin.org/get"
-    var response = url.http_get()
-    
-    if response.len() == 0 {
-        print("FAIL: Response should have content\n")
+    // A high, fixed port. SO_REUSEADDR is set by Http_serve, and the suite runs
+    // one process per file, so contention here is not the flake it was for
+    // test_net_basic's 8080.
+    var port = 18744
+    var srv = Http.serve(port)
+    if srv <= 0 {
+        print("FAIL: could not bind local server\n")
         return 1
     }
-    
-    if response.contains("httpbin") == 0 {
-        print("FAIL: Response should contain 'httpbin'\n")
+
+    var client = Net.connect("127.0.0.1", port)
+    if client <= 0 {
+        print("FAIL: could not connect to local server\n")
         return 2
     }
-    
+
+    // Send a minimal HTTP/1.0 request; it buffers until the server accepts.
+    Net.send(client, "GET /probe HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+
+    var req = Http.accept(srv)
+    if Http.method(req) != "GET" {
+        print("FAIL: method should be GET\n")
+        return 3
+    }
+    if Http.path(req) != "/probe" {
+        print("FAIL: path should be /probe\n")
+        return 4
+    }
+
+    var server_side = Http.fd(req)
+    Http.respond(server_side, 200, "application/json", "{\"ok\":true,\"marker\":\"wyn-hermetic\"}")
+    // Http.respond intentionally leaves the fd open (the handler loop owns it -
+    // see Http_respond in src/wyn_runtime.h). No handler loop here, so close the
+    // server side, or the drain below blocks forever waiting for a hangup.
+    Net.close(server_side)
+
+    // Net.recv is ONE read(): Http.respond writes the head and the body as
+    // separate writes, so they may or may not coalesce into a single segment.
+    // Drain in a bounded loop instead of assuming either. (Assuming one recv is
+    // exactly the kind of timing dependence that made this test flaky before.)
+    var response = ""
+    var reads = 0
+    while reads < 8 {
+        var chunk = Net.recv(client)
+        if chunk.len() == 0 { break }
+        response = response + chunk
+        if response.contains("wyn-hermetic") { break }
+        reads += 1
+    }
+
+    if response.len() == 0 {
+        print("FAIL: Response should have content\n")
+        return 5
+    }
+    if not response.contains("200 OK") {
+        print("FAIL: Response should carry status 200\n")
+        return 6
+    }
+    if not response.contains("wyn-hermetic") {
+        print("FAIL: Response should contain the served body\n")
+        return 7
+    }
+
+    Net.close(client)
+    Http.close_server(srv)
+
     print("HTTP method test PASS\n")
     return 0
 }

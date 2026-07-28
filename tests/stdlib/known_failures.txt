@@ -1,0 +1,93 @@
+# tests/stdlib known-failure allowlist
+#
+# Every line here is an OPEN BUG (or an unhardened test) in the stdlib suite -
+# NOT a waiver. tests/stdlib/run_stdlib_tests.sh fails CI on any breakage that
+# is NOT listed here, so this file is the debt list: it must only ever shrink.
+# When you fix one, delete its line; the runner will tell you it now passes.
+#
+# Format: <filename> <fail|hang|flaky>   ('#' starts a comment)
+#   fail  = builds but exits nonzero (failed Test.assert_* / panic / crash)
+#   hang  = never terminates; killed by the runner watchdog
+#   flaky = outcome depends on the network or on host load, so it is neither
+#           reliably green nor reliably red
+# The status word is informational only - the runner matches by filename, so a
+# listed test is tolerated whether it fails, hangs, or (advisory) passes.
+#
+# Regenerate a single-run snapshot with:
+#   WYN=./wyn bash tests/stdlib/run_stdlib_tests.sh --update-allowlist
+# (a one-run snapshot cannot see intermittent failures, so re-check any `flaky`
+# entry by hand afterwards.)
+#
+# ---------------------------------------------------------------------------
+# 2026-07-28 debt paydown: 17 entries -> 1.
+#
+# The 12 deterministic failures were all resolved, and 4 of the 5 flaky
+# network tests were made hermetic. Every line removed below corresponds to a
+# test that was RUN and OBSERVED PASSING, not a speculative delete.
+#
+# TWO REAL COMPILER BUGS were found and fixed doing this; the rest were stale
+# tests asserting pre-v1.20 behavior:
+#
+#   1. src/parser.c check_next_is_value() - `foo()? return Ok(x)` on ONE line
+#      parsed the `?` as a ternary and demanded a `:`. Multi-line worked.
+#      (was: test_v16_final.wyn)
+#   2. src/codegen_stmt.c ownership transfer - `array_push(a, <fresh string>)`
+#      released the string it had just handed to the array, so every such
+#      element read back as "". `.push()` and the literal `array_push_str`
+#      spelling were already handled; the bare `array_push` spelling that
+#      codegen auto-rewrites to array_push_str was not.
+#      (was: test_epic31_self_hosted.wyn - 5 assertions)
+#
+# Stale tests updated to the current API / v1.20 contract:
+#   test_bug_hunt.wyn          .remove(i) -> .remove_at(i) (the tabled method;
+#                              `remove` is deliberately not blessed on arrays
+#                              because its meaning would differ by element type)
+#   test_string_methods.wyn    .to_upper/.to_lower -> .upper/.lower (to_upper has
+#                              never had codegen; tests/errors/run_unknown_method_
+#                              test.sh guards the check-time rejection)
+#   test_deferred_features.wyn `|>` (removed in v1.20) -> nested calls + locals
+#   test_v17_features.wyn      same
+#   test_edge_cases.wyn        `"".to_int() == 0` asserted the silent-0 bug that
+#   test_error_prop.wyn        v1.20 deliberately removed. Now guard with
+#   test_stress.wyn            .is_numeric() before parsing - the sanctioned safe
+#                              path (there is no Result-returning try_to_int).
+#                              The panic itself is asserted out-of-process by
+#                              tests/errors/run_crucible_p0_test.sh.
+#   test_string_format.wyn     already fixed by the .format() landing; allowlist
+#                              was stale.
+#   test_data_complete.wyn     fixed by the File.read_line free()-on-RC-memory
+#   test_streaming_io.wyn      fix (owned by another agent); both verified passing.
+#
+# Made hermetic instead of widening a timeout - these four now serve themselves
+# on 127.0.0.1 in-process, so they are deterministic and work offline. They also
+# got much faster (test_final_validation 1.10s -> 0.04s, test_http 1.69s ->
+# 0.003s) because they no longer wait on a third-party host:
+#   test_http.wyn, test_http_methods.wyn, test_final_validation.wyn,
+#   test_net_basic.wyn (also no longer binds the heavily-contended port 8080)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# The remaining debt: ONE entry.
+# ---------------------------------------------------------------------------
+# Still hangs. Re-probed standalone on 2026-07-28 after the paydown above:
+# rc=0, rc=0, rc=142 - roughly 1 in 3. Deliberately NOT converted to a local
+# server like its siblings: the hang is believed to be the scheduler bug that
+# hotfix H5 addresses (idle scheduler workers never park; a served request
+# leaves the pool spinning), and making this test hermetic would hide the
+# symptom rather than fix the cause. It is the web end-to-end test, so it is
+# the most valuable reproducer we have for that bug.
+#
+# Delete this line when H5 lands - and if it still hangs afterwards, that is an
+# independent bug needing its own investigation, not a permanent waiver.
+# EMPTY - the debt is fully paid down as of 2026-07-28.
+#
+# test_web_e2e.wyn was the last entry. It hung ~1/3 of runs, which the comment
+# attributed to the scheduler busy-spin (hotfix H5). H5 landed, and the test now
+# passes 6/6 standalone with a 45s watchdog, so the line was removed as that
+# comment instructed. The prediction held, which is a small piece of evidence
+# that H5 fixed a real cause rather than perturbing a symptom.
+#
+# Keep this file. The runner still reads it, and an empty allowlist means every
+# one of the 68 stdlib tests is now a hard gate: any regression fails the build.
+# If you must add a line, it is a debt you are taking on deliberately - say why
+# in a comment, and delete it when you pay it back.

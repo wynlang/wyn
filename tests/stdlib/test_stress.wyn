@@ -36,7 +36,12 @@ fn main() -> int {
     Test.assert_eq_str("".upper(), "", "empty upper")
     Test.assert_eq_str("".trim(), "", "empty trim")
     Test.assert_eq_int("".len(), 0, "empty len")
-    Test.assert_eq_int("".to_int(), 0, "empty to_int")
+    // v1.20.0 (breaking): `"".to_int()` PANICS rather than silently yielding 0.
+    // Guard with .is_numeric(); the panic is asserted in tests/errors/.
+    Test.assert(not "".is_numeric(), "empty is not numeric")
+    var empty_parsed = 0
+    if "".is_numeric() { empty_parsed = "".to_int() }
+    Test.assert_eq_int(empty_parsed, 0, "guarded empty to_int")
     Test.assert_eq_str("".reverse(), "", "empty reverse")
     Test.assert_eq_str("".replace("a","b"), "", "empty replace")
     Test.assert_eq_int("".index_of("x"), -1, "empty index_of")

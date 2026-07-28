@@ -1,0 +1,63 @@
+// Map/dict TYPE ANNOTATIONS must parse: `m: {string: int} = {"a": 1}`.
+//
+// The map LITERAL and inference always worked (`m = {"a": 1}`), but the
+// annotation form failed to parse at all - three cascading errors ("Expected
+// type name" / "Parse error" / "Expected '=' after type annotation"). A language
+// pitched as "feels like Python" could not annotate a dict.
+//
+// `{K: V}` is the idiomatic spelling; the parser desugars it to the pre-existing
+// `HashMap<K, V>` type, so the two are the same type and both are tested here.
+//
+// The annotation also has to carry the KEY/VALUE types through, not just parse:
+// before, `m: HashMap<string, int> = {"a": 1}` built the map with
+// hashmap_insert_int but read it back with hashmap_index_string, so m["a"]
+// printed "" instead of 1 - only the INFERRED form was correct.
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 3.5
+// EXPECT: v
+// EXPECT: param 1
+// EXPECT: return 9
+// EXPECT: optional 2
+
+fn count(m: {string: int}) -> int {
+    return m["a"]
+}
+
+// A map return type, in the brace spelling
+fn build() -> {string: int} {
+    return {"z": 9}
+}
+
+// The older generic spelling in a parameter position must keep working
+fn count_generic(m: HashMap<string, int>) -> int {
+    return m["a"]
+}
+
+fn main() {
+    // The headline case
+    m: {string: int} = {"a": 1}
+    print(m["a"])
+
+    // Same type, older spelling
+    g: HashMap<string, int> = {"a": 1}
+    print(g["a"])
+
+    // Non-int value types must select the right typed getter
+    fm: {string: float} = {"pi": 3.5}
+    print(fm["pi"])
+
+    sm: {string: string} = {"k": "v"}
+    print(sm["k"])
+
+    // Composes as a parameter and as a return type
+    print("param ${count(m)}")
+    b = build()
+    print("return ${b["z"]}")
+    if count_generic(g) != 1 { print("generic-param BROKEN") }
+
+    // `{K: V}?` composes with the optional suffix (parses; not dereferenced)
+    om: {string: int} = {"n": 2}
+    print("optional ${om["n"]}")
+}

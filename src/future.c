@@ -236,9 +236,21 @@ void* future_get(Future* f) {
         else if (coro && coro[0] == '0') async_coro = 0;
         else async_coro = 1;   // default: coroutine scheduler
     }
+    extern int wyn_io_poll_wait(int);
+    extern int wyn_io_has_reactor(void);
     while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY) {
         int did = async_coro ? wyn_sched_pump_one() : pool_try_run_one();
-        if (!did) sched_yield();
+        if (did) continue;
+        // Nothing runnable: the awaited task is I/O/timer-parked. Block in the
+        // reactor (bounded) instead of sched_yield-spinning a whole core. The
+        // state re-check closes the window where the future became ready between
+        // the empty pump and the block.
+        if (async_coro && wyn_io_has_reactor()) {
+            if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) break;
+            wyn_io_poll_wait(5);
+        } else {
+            sched_yield();
+        }
     }
     atomic_fetch_sub(&ws_blocked, 1);
     return f->result;

@@ -1,0 +1,55 @@
+// COUNTER-TEST for the scheduler idle-CPU fix. This test exists to fail if the
+// idle-CPU work is ever "fixed" the cheap way.
+//
+// The workers' idle park used to be a fixed 100us pthread_cond_timedwait, which
+// burned ~1 core in any concurrent program. The obvious one-line fix - just make
+// the park longer (100us -> 50ms) - DOES cut the idle CPU, but it also destroys
+// cooperative-sleep latency, because io_loop.c has no dedicated poller thread:
+// with every worker asleep, nothing advances the reactor, so each timer only
+// fires on the next park timeout. Measured on this chain: 225ms -> 1047ms.
+//
+// The real fix keeps latency AND removes the spin: one idle worker becomes the
+// DESIGNATED POLLER and blocks IN the reactor (kevent/epoll_wait), converting
+// timer/fd readiness into enqueued tasks immediately, while every other worker
+// parks. See src/spawn_fast.c (io_poller_owned) and wyn_io_poll_wait/wyn_io_wake.
+//
+// CRITICAL: the sleep chain MUST run inside a SPAWNED task. `Time::sleep` on the
+// main thread is a plain blocking sleep and never touches the worker park path,
+// so a main-thread version of this test passes even with the rejected fix and
+// measures nothing. Only a coroutine's cooperative sleep round-trips through
+// wyn_io_wait_timer -> reactor -> re-enqueue, which is what this pins.
+//
+// 20 sequential 10ms cooperative sleeps have an ideal cost of 200ms. Anything
+// near or past ~400ms means timers are being serviced by a park timeout instead
+// of by the reactor. The threshold is loose enough for a loaded CI box (baseline
+// here is ~225ms) but far below the ~1000ms the rejected long-park fix produced.
+
+fn chain(n: int) {
+    t0 = Time::now_millis()
+    i = 0
+    while i < 20 {
+        Time::sleep(10)
+        i = i + 1
+    }
+    elapsed = Time::now_millis() - t0
+    if elapsed < 400 {
+        println("ok")
+    } else {
+        println("SLOW")
+    }
+}
+
+fn main() {
+    // Fire-and-forget spawn => runs on the COROUTINE scheduler, so Time::sleep
+    // inside `chain` is cooperative (the property under test).
+    spawn chain(1)
+    // The outer blocking sleep is ALSO required. Without it, main falls into
+    // wyn_spawn_wait, which polls the reactor itself and would service the
+    // chain's timers even if the WORKER park path were broken - masking exactly
+    // the regression this test exists to catch (verified: without this line the
+    // rejected fixed-50ms-park build measures a passing ~225ms; with it, ~780ms).
+    // Keeping main parked in a plain sleep leaves the workers solely responsible.
+    Time::sleep(1500)
+}
+
+// EXPECT: ok

@@ -1,4 +1,7 @@
-// Language features: for-in iteration, pipe operator
+// Language features: for-in iteration, function composition.
+// The `|>` pipe operator was REMOVED in v1.20.0 - the composition cases below
+// are the sanctioned replacement (nested calls / intermediate variables) and
+// assert the same values the piped versions did.
 
 fn double_val(x: int) -> int { return x * 2 }
 fn add1(x: int) -> int { return x + 1 }
@@ -14,12 +17,20 @@ fn main() -> int {
     }
     Test.assert_eq_int(count, 3, "for-in count")
 
-    // Pipe with named functions
-    var r1 = 5 |> double_val |> add1
-    Test.assert_eq_int(r1, 11, "pipe chain")
+    // Composition with named functions (was `5 |> double_val |> add1`)
+    var r1 = add1(double_val(5))
+    Test.assert_eq_int(r1, 11, "compose chain")
 
-    var r2 = 3 |> add1 |> double_val |> add1
-    Test.assert_eq_int(r2, 9, "pipe 3-stage")
+    // 3-stage (was `3 |> add1 |> double_val |> add1`)
+    var r2 = add1(double_val(add1(3)))
+    Test.assert_eq_int(r2, 9, "compose 3-stage")
+
+    // Same composition spelled with intermediate variables - the other
+    // sanctioned replacement for a pipeline. Must agree with the nested form.
+    var step1 = add1(3)
+    var step2 = double_val(step1)
+    var step3 = add1(step2)
+    Test.assert_eq_int(step3, r2, "compose via locals matches nested")
 
     Test.summary()
     return 0

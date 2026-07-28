@@ -1,0 +1,82 @@
+// Floats must print their SHORTEST ROUND-TRIP text: the printed digits must
+// parse back to the identical double, using the fewest digits that achieve it.
+//
+// The old runtime printed at a fixed "%.15g", which SILENTLY SUBSTITUTED a
+// different value: print(0.1 + 0.2) said "0.3" while `0.1 + 0.2 == 0.3`
+// evaluated to false (a pedagogical trap), and 1.0/3.0 printed
+// "0.333333333333333" - 15 digits that parse back to a DIFFERENT double, so
+// every stringified float (JSON, CSV, logs, DB) lost data.
+//
+// Every expected value below matches Python's repr() exactly.
+// Note 0.1 + 0.2 == 0.3 is still false: that is IEEE-754, not a bug. The point
+// is that the PRINTED TEXT now shows why.
+//
+// EXPECT: 0.30000000000000004
+// EXPECT: 0.3333333333333333
+// EXPECT: 0.6666666666666666
+// EXPECT: 10000000000000002.0
+// EXPECT: false
+// EXPECT: 123456789.12345679
+// EXPECT: 1.0
+// EXPECT: 2.5
+// EXPECT: -3.0
+// EXPECT: -0.0
+// EXPECT: 0.0
+// EXPECT: 1e+300
+// EXPECT: 4.94065645841247e-324
+// EXPECT: 1.7976931348623157e+308
+// EXPECT: 3.141592653589793
+// EXPECT: inf
+// EXPECT: -inf
+// EXPECT: nan
+// EXPECT: roundtrip-print 0.30000000000000004
+// EXPECT: roundtrip-fmt 0.3333333333333333
+// EXPECT: all-roundtrip true
+
+fn main() {
+    // The headline cases
+    print(0.1 + 0.2)
+    print(1.0 / 3.0)
+    print(2.0 / 3.0)
+    print(1e16 + 2.0)
+    print(0.1 + 0.2 == 0.3)
+    print(123456789.123456789)
+
+    // Ordinary values keep their short shape (no 1.0000000000000000)
+    print(1.0)
+    print(2.5)
+    print(-3.0)
+
+    // Signed zero: the sign is preserved in the text, and -0.0 == 0.0 still
+    // holds (IEEE). nan/inf are diagnostic text, deliberately not parseable.
+    print(-0.0)
+    print(0.0)
+
+    // Extremes: huge, subnormal-minimum, largest finite
+    print(1.0e300)
+    print(5.0e-324)
+    print(1.7976931348623157e308)
+    print(3.141592653589793)
+
+    print(1.0 / 0.0)
+    print(0.0 - 1.0 / 0.0)
+    print(0.0 / 0.0)
+
+    // The data-integrity half: interpolation and .format() must use the same
+    // round-trip text as print, not a lossier path.
+    x = 0.1 + 0.2
+    print("roundtrip-print ${x}")
+    y = 1.0 / 3.0
+    print("roundtrip-fmt {}".format(y.to_string()))
+
+    // Property test: text -> value -> text must be a fixed point for every
+    // one of these, exercised through to_string()/to_float().
+    vals = [0.1 + 0.2, 1.0 / 3.0, 2.0 / 3.0, 1e16 + 2.0, 1.0e300, 5.0e-324,
+            3.141592653589793, 123456789.123456789, 1.0, 2.5, 0.0, -0.0,
+            1.7976931348623157e308]
+    ok = true
+    for v in vals {
+        if v.to_string().to_float() != v { ok = false }
+    }
+    print("all-roundtrip ${ok}")
+}

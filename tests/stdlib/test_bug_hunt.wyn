@@ -66,11 +66,16 @@ fn test_array_ops() {
     var total = nums.reduce(add, 0)
     Test.assert_eq_int(total, 55, "reduce sum")
     
-    // remove/insert
+    // remove_at/insert.
+    // The index-removal method on arrays is `remove_at(i)` (see the array method
+    // table in src/types.c). This test used to call `.remove(2)`, which the
+    // checker rejects: codegen carries an unreachable `remove` handler whose
+    // meaning would differ by element type (index for [int], VALUE for [string]),
+    // so `remove` is deliberately not a blessed array method - `remove_at` is.
     var list = [1, 2, 3, 4, 5]
-    list.remove(2)
-    Test.assert_eq_int(list.len(), 4, "remove len")
-    Test.assert_eq_int(list[2], 4, "remove shifted")
+    list.remove_at(2)
+    Test.assert_eq_int(list.len(), 4, "remove_at len")
+    Test.assert_eq_int(list[2], 4, "remove_at shifted")
     list.insert(0, 99)
     Test.assert_eq_int(list[0], 99, "insert at 0")
     Test.assert_eq_int(list.len(), 5, "insert len")

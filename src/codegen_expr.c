@@ -3569,6 +3569,69 @@ void codegen_expr(Expr* expr) {
                 // Resolve type parameters (T, K, V) to concrete types
                 if (receiver_type && strlen(receiver_type) == 1 && receiver_type[0] >= 'A' && receiver_type[0] <= 'Z')
                     receiver_type = "int";
+                // `"fmt".format(a, b, ...)` - brace-style substitution.
+                //
+                // The old code emitted `string_format(fmt, to_string(a), ...)`
+                // into a runtime that took NO argument count and (in the
+                // pre-existing `{}`-only loop) simply copied a `%s`/`%.2f`
+                // format string through unchanged, silently discarding every
+                // argument. `"Hello %s".format("World")` printed "Hello %s" at
+                // exit 0. printf-style specs are now a CHECKER error, and this
+                // path passes an explicit argc so the runtime never walks off
+                // the end of the va_list.
+                //
+                // Ownership (deliberately conservative - see
+                // docs/RC_OWNERSHIP_MODEL.md; over-release here would be a UAF,
+                // strictly worse than the bug being fixed):
+                //   - String-typed args pass through UNCHANGED and are never
+                //     released. `to_string` on a char* is the identity
+                //     (str_to_string), so releasing it would free a string the
+                //     CALLER still owns.
+                //   - Args whose static type is definitely int/float/bool/array
+                //     get `to_string(...)`, which allocates a fresh +1 RC
+                //     string, and that temp IS released after the call.
+                //   - Anything else (no resolved type) is wrapped in
+                //     `to_string(...)` for correct _Generic dispatch but NOT
+                //     released: if the value turns out to be a char* at the C
+                //     level the wrap is the identity, and a release would be an
+                //     over-release. Worst case is a small leak, matching what
+                //     the neighbouring string methods (e.g. `.upper()`) already
+                //     do in the same position.
+                if (strcmp(method_name, "format") == 0 &&
+                    receiver_type && strcmp(receiver_type, "string") == 0) {
+                    int n = expr->method_call.arg_count;
+                    // 0 = pass through as-is, 1 = to_string + release, 2 = to_string only.
+                    // Heap-allocated so an arbitrary argument count is handled -
+                    // a fixed cap would silently DROP arguments, which is the
+                    // very failure class this fix exists to remove.
+                    unsigned char* mode = n > 0 ? malloc((size_t)n) : NULL;
+                    for (int i = 0; i < n; i++) {
+                        Expr* a = expr->method_call.args[i];
+                        Type* at = a->expr_type;
+                        if (a->type == EXPR_STRING || a->type == EXPR_STRING_INTERP ||
+                            (at && at->kind == TYPE_STRING)) mode[i] = 0;
+                        else if (at && (at->kind == TYPE_INT || at->kind == TYPE_FLOAT ||
+                                        at->kind == TYPE_BOOL || at->kind == TYPE_ARRAY)) mode[i] = 1;
+                        else mode[i] = 2;
+                    }
+                    emit("({ ");
+                    for (int i = 0; i < n; i++) {
+                        emit("const char* __fa%d = ", i);
+                        if (mode[i] == 0) codegen_expr(expr->method_call.args[i]);
+                        else { emit("to_string("); codegen_expr(expr->method_call.args[i]); emit(")"); }
+                        emit("; ");
+                    }
+                    emit("char* __fr = wyn_str_format(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", %d", n);
+                    for (int i = 0; i < n; i++) emit(", __fa%d", i);
+                    emit("); ");
+                    for (int i = 0; i < n; i++)
+                        if (mode[i] == 1) emit("wyn_rc_release(__fa%d); ", i);
+                    emit("__fr; })");
+                    free(mode);
+                    goto method_done;
+                }
                 if (dispatch_method(receiver_type, method_name, expr->method_call.arg_count, &dispatch)) {
                     // When to_string is dispatched as int_to_string but the object is a method call,
                     // use _Generic to_string macro so the C compiler picks the right variant
@@ -3591,13 +3654,6 @@ void codegen_expr(Expr* expr) {
                         codegen_expr(expr->method_call.args[1]); // fn
                         emit(", ");
                         codegen_expr(expr->method_call.args[0]); // initial
-                    } else if (strcmp(method_name, "format") == 0) {
-                        // Convert all args to strings using to_string macro
-                        for (int i = 0; i < expr->method_call.arg_count; i++) {
-                            emit(", to_string(");
-                            codegen_expr(expr->method_call.args[i]);
-                            emit(")");
-                        }
                     } else {
                         for (int i = 0; i < expr->method_call.arg_count; i++) {
                             emit(", ");

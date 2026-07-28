@@ -1,0 +1,78 @@
+// Pins the SANCTIONED patterns for recursive data.
+//
+// A by-value recursive struct field is (correctly) rejected:
+//     struct Node { val: int, next: Node? }
+//   -> struct 'Node' cannot contain a field of its own type (structs are
+//      by-value, so a recursive field would be infinite-size).
+//      Workaround: store an index into an array of nodes instead of the node
+//      itself.
+// That rejection and its message are deliberate and must NOT change - see
+// tests/errors for the negative case. What this test pins is that the SUGGESTED
+// workaround actually works, so the error never sends a user down a dead end:
+//
+//   1. index-into-array arena  -> singly linked list traversal, and
+//                                 a binary tree with recursive in-order walk
+//   2. recursive ENUM          -> Cons/Nil list, including a recursive fold
+//
+// -1 is the null sentinel for an arena index.
+//
+// EXPECT: 10
+// EXPECT: 20
+// EXPECT: 30
+// EXPECT: tree 3 5 7 8
+// EXPECT: 1
+// EXPECT: 6
+
+struct Node { val: int, next: int }          // next = arena index, -1 = end
+struct TNode { val: int, left: int, right: int }
+
+enum List { Cons(int, List), Nil }           // recursive enum: boxed, so legal
+
+// In-order walk of the arena-backed tree; recurses on INDICES, not nodes.
+fn inorder(nodes: [TNode], i: int) -> string {
+    if i < 0 { return "" }
+    n = nodes[i]
+    return inorder(nodes, n.left) + " ${n.val}" + inorder(nodes, n.right)
+}
+
+// Recursive fold over a recursive enum.
+fn total(l: List) -> int {
+    match l {
+        List.Cons(v, rest) => return v + total(rest),
+        List.Nil => return 0
+    }
+    return 0
+}
+
+fn main() {
+    // 1a. Linked list as an arena of nodes joined by index
+    nodes = [Node{val: 10, next: 1}, Node{val: 20, next: 2}, Node{val: 30, next: -1}]
+    i = 0
+    while i >= 0 {
+        n = nodes[i]
+        print(n.val)
+        i = n.next
+    }
+
+    // 1b. Binary tree in the same arena style
+    //         5
+    //        / \
+    //       3   8
+    //          /
+    //         7
+    tree = [
+        TNode{val: 5, left: 1, right: 2},
+        TNode{val: 3, left: -1, right: -1},
+        TNode{val: 8, left: 3, right: -1},
+        TNode{val: 7, left: -1, right: -1}
+    ]
+    print("tree" + inorder(tree, 0))
+
+    // 2. Recursive enum: construction, nesting, match-destructuring, recursion
+    l = List.Cons(1, List.Cons(2, List.Cons(3, List.Nil)))
+    match l {
+        List.Cons(v, rest) => print(v),
+        List.Nil => print(0)
+    }
+    print(total(l))
+}

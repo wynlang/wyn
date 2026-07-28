@@ -41,9 +41,11 @@ fn main() -> int {
     n %= 5
     Test.assert_eq_int(n, 2, "%= operator")
     
-    // Pipe operator
-    var r = 5 |> dbl |> add1
-    Test.assert_eq_int(r, 11, "pipe operator")
+    // Function composition. `5 |> dbl |> add1` used to spell this; the `|>`
+    // pipe operator was REMOVED in v1.20.0, so the same chain is written as a
+    // nested call. Value asserted is unchanged.
+    var r = add1(dbl(5))
+    Test.assert_eq_int(r, 11, "compose dbl then add1")
     
     // Defer (LIFO order)
     test_defer_order()

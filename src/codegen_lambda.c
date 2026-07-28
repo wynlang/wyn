@@ -49,7 +49,31 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
             // inside (notably parallel's spawn-bound vars) get their wrappers
             // collected.
             for (int i = 0; i < stmt->block.count; i++) {
-                scan_stmt_for_lambdas(stmt->block.stmts[i]);
+                Stmt* _bs = stmt->block.stmts[i];
+                // A parallel-block `a = f()` is lowered as an IMPLICIT spawn
+                // (see codegen_stmt.c STMT_PARALLEL), so it needs the same
+                // __spawn_wrapper_f_N that an explicit `spawn f()` needs.
+                // Scan it AS a spawn expression to collect that wrapper.
+                if (stmt->type == STMT_PARALLEL && _bs && _bs->type == STMT_VAR &&
+                    _bs->var.init && _bs->var.init->type == EXPR_CALL &&
+                    _bs->var.init->call.callee->type == EXPR_IDENT) {
+                    // MUST use the SAME predicate as the codegen_stmt.c lowering:
+                    // get_function_return_type() != NULL, i.e. a known user fn.
+                    // Without it, `t = Time::now_millis()` (a builtin, lexed as
+                    // ONE EXPR_IDENT token containing "::") emitted
+                    // `void* __spawn_wrapper_Time::now_millis(...)` - invalid C.
+                    extern const char* get_function_return_type(const char*);
+                    char _pfn[256];
+                    token_to_cstr(_pfn, sizeof(_pfn), _bs->var.init->call.callee->token);
+                    if (get_function_return_type(_pfn)) {
+                        Expr _sp;
+                        _sp.type = EXPR_SPAWN;
+                        _sp.spawn.call = _bs->var.init;
+                        _sp._codegen_temp_id = -1;
+                        scan_expr_for_lambdas(&_sp);
+                    }
+                }
+                scan_stmt_for_lambdas(_bs);
             }
             break;
         case STMT_IF:
@@ -318,6 +342,391 @@ static void scan_expr_for_lambdas(Expr* expr) {
 
 static void scan_for_lambdas(Stmt* body) {
     scan_stmt_for_lambdas(body);
+}
+
+// --- WynIntArray veto pre-pass -------------------------------------------
+//
+// See the "int-array veto" block in codegen.c for the why. This pass walks the
+// whole program BEFORE any code is emitted and vetoes the packed WynIntArray
+// representation for every `[int]`-annotated variable whose uses that
+// representation cannot express. Vetoed variables fall back to the generic
+// WynArray, which is exactly what the inferred spelling (`xs = [1,2]`) already
+// emits - so both spellings agree by construction.
+//
+// The pass is deliberately CONSERVATIVE (whitelist, not blacklist): a bare
+// mention of the name in any position not explicitly known to be safe vetoes
+// it. A false veto only costs the packed-representation speedup; a missed veto
+// is a miscompile. New syntax therefore fails safe.
+
+// Ops with a real WynIntArray lowering. Keep in sync with the WynIntArray
+// dispatch in codegen_expr.c (~:2453) and the for-loop path in
+// codegen_stmt.c (~:4155).
+//
+// `sort` is deliberately NOT here: its packed lowering is the statement form
+// `int_array_sort(&xs)`, which yields the WynIntArray as its value. When that
+// value is CONSUMED (`var s = xs.sort()`) it flows into a var whose type the
+// STMT_VAR path independently decided is WynArray - the same store/load
+// disagreement in miniature. Statement-position `xs.sort()` discards the value
+// and is handled as a special case in veto_scan_stmt's STMT_EXPR arm.
+static int int_array_safe_method(Token m) {
+    if (m.length == 4 && memcmp(m.start, "push", 4) == 0) return 1;
+    if (m.length == 3 && memcmp(m.start, "len", 3) == 0) return 1;
+    return 0;
+}
+
+// True for `xs.sort()` where xs is a bare identifier - packed-safe ONLY when
+// the resulting value is discarded (statement position).
+static int is_bare_sort_call(Expr* e) {
+    return e && e->type == EXPR_METHOD_CALL &&
+           e->method_call.object->type == EXPR_IDENT &&
+           e->method_call.method.length == 4 &&
+           memcmp(e->method_call.method.start, "sort", 4) == 0;
+}
+
+static void veto_scan_expr(Expr* e);
+static void veto_scan_stmt(Stmt* s);
+static void veto_all_idents_in(Expr* e);
+
+// Veto the name if `e` is a bare identifier. Used for every position where a
+// whole array value would flow into generic-WynArray code.
+static void veto_if_ident(Expr* e) {
+    if (!e || e->type != EXPR_IDENT) return;
+    char n[256]; token_to_cstr(n, sizeof(n), e->token);
+    extern void veto_int_array_var(const char*);
+    veto_int_array_var(n);
+}
+
+static void veto_scan_expr(Expr* e) {
+    if (!e) return;
+    switch (e->type) {
+        case EXPR_METHOD_CALL: {
+            // `xs.push(v)` / `xs.sort()` / `xs.len()` on a bare identifier are
+            // the packed-safe forms: recurse into the ARGS but do not treat the
+            // receiver itself as a generic-array use. Everything else
+            // (.map/.filter/.slice/.join/.sum/.first/.contains/...) routes
+            // through a WynArray-taking helper, so it vetoes.
+            bool receiver_ok = (e->method_call.object->type == EXPR_IDENT &&
+                                int_array_safe_method(e->method_call.method));
+            if (!receiver_ok) {
+                veto_if_ident(e->method_call.object);
+                veto_scan_expr(e->method_call.object);
+            }
+            for (int i = 0; i < e->method_call.arg_count; i++)
+                veto_scan_expr(e->method_call.args[i]);
+            break;
+        }
+        case EXPR_INDEX:
+            // `xs[i]` has a packed lowering (int_array_get); the index does not
+            // carry the array, so only recurse into it. A non-ident base (e.g.
+            // `f()[i]`, `m[k][j]`) is scanned normally.
+            if (e->index.array->type != EXPR_IDENT) veto_scan_expr(e->index.array);
+            veto_scan_expr(e->index.index);
+            break;
+        case EXPR_INDEX_ASSIGN:
+            // `xs[i] = v` has NO packed lowering: the emitter casts &xs to
+            // WynArray* and writes a 16-byte WynValue into an 8-byte packed
+            // slot - a silent wrong answer plus an out-of-bounds write. This is
+            // the one shape that MUST veto (it used to compile "fine").
+            veto_if_ident(e->index_assign.object);
+            veto_scan_expr(e->index_assign.object);
+            veto_scan_expr(e->index_assign.index);
+            veto_scan_expr(e->index_assign.value);
+            break;
+        case EXPR_CALL:
+            // Passing the array to any function hands a WynIntArray to a
+            // WynArray parameter.
+            veto_scan_expr(e->call.callee);
+            for (int i = 0; i < e->call.arg_count; i++) {
+                veto_if_ident(e->call.args[i]);
+                veto_scan_expr(e->call.args[i]);
+            }
+            break;
+        case EXPR_BINARY:
+            veto_if_ident(e->binary.left); veto_if_ident(e->binary.right);
+            veto_scan_expr(e->binary.left); veto_scan_expr(e->binary.right);
+            break;
+        case EXPR_UNARY: veto_if_ident(e->unary.operand); veto_scan_expr(e->unary.operand); break;
+        case EXPR_ASSIGN:
+            // `ys = xs` (whole-array copy) and `xs = <other array>` both mix
+            // representations.
+            veto_if_ident(e->assign.value); veto_scan_expr(e->assign.value);
+            { char n[256]; token_to_cstr(n, sizeof(n), e->assign.name);
+              extern void veto_int_array_var(const char*); veto_int_array_var(n); }
+            break;
+        case EXPR_LAMBDA:
+            // Capture machinery declares every captured var as WynArray in the
+            // env struct, so ANY mention of the name inside a lambda body -
+            // even `xs.len()`, which is packed-safe outside a lambda - would
+            // assign a WynIntArray to a WynArray field. Veto every identifier
+            // the body mentions, not just the ones in unsafe positions.
+            veto_all_idents_in(e->lambda.body);
+            break;
+        case EXPR_ARRAY:
+            for (int i = 0; i < e->array.count; i++) {
+                veto_if_ident(e->array.elements[i]); veto_scan_expr(e->array.elements[i]);
+            }
+            break;
+        case EXPR_TUPLE:
+            for (int i = 0; i < e->tuple.count; i++) {
+                veto_if_ident(e->tuple.elements[i]); veto_scan_expr(e->tuple.elements[i]);
+            }
+            break;
+        case EXPR_MAP:
+            for (int i = 0; i < e->map.count; i++) {
+                veto_if_ident(e->map.keys[i]); veto_scan_expr(e->map.keys[i]);
+                veto_if_ident(e->map.values[i]); veto_scan_expr(e->map.values[i]);
+            }
+            break;
+        case EXPR_STRUCT_INIT:
+            for (int i = 0; i < e->struct_init.field_count; i++) {
+                veto_if_ident(e->struct_init.field_values[i]);
+                veto_scan_expr(e->struct_init.field_values[i]);
+            }
+            break;
+        case EXPR_STRING_INTERP:
+            for (int i = 0; i < e->string_interp.count; i++) {
+                veto_if_ident(e->string_interp.expressions[i]);
+                veto_scan_expr(e->string_interp.expressions[i]);
+            }
+            break;
+        case EXPR_TERNARY:
+            veto_scan_expr(e->ternary.condition);
+            veto_if_ident(e->ternary.then_expr); veto_scan_expr(e->ternary.then_expr);
+            veto_if_ident(e->ternary.else_expr); veto_scan_expr(e->ternary.else_expr);
+            break;
+        case EXPR_IF_EXPR:
+            veto_scan_expr(e->if_expr.condition);
+            veto_if_ident(e->if_expr.then_expr); veto_scan_expr(e->if_expr.then_expr);
+            veto_if_ident(e->if_expr.else_expr); veto_scan_expr(e->if_expr.else_expr);
+            break;
+        case EXPR_AWAIT: veto_if_ident(e->await.expr); veto_scan_expr(e->await.expr); break;
+        case EXPR_SPAWN: veto_scan_expr(e->spawn.call); break;
+        case EXPR_FIELD_ACCESS: veto_if_ident(e->field_access.object); veto_scan_expr(e->field_access.object); break;
+        case EXPR_FIELD_ASSIGN:
+            veto_if_ident(e->field_assign.object); veto_scan_expr(e->field_assign.object);
+            veto_if_ident(e->field_assign.value); veto_scan_expr(e->field_assign.value);
+            break;
+        case EXPR_RANGE: veto_scan_expr(e->range.start); veto_scan_expr(e->range.end); break;
+        case EXPR_SOME: case EXPR_OK: case EXPR_ERR:
+            veto_if_ident(e->option.value); veto_scan_expr(e->option.value); break;
+        case EXPR_TRY: veto_if_ident(e->try_expr.value); veto_scan_expr(e->try_expr.value); break;
+        case EXPR_MATCH:
+            veto_if_ident(e->match.value); veto_scan_expr(e->match.value);
+            for (int i = 0; i < e->match.arm_count; i++) veto_scan_expr(e->match.arms[i].result);
+            break;
+        case EXPR_BLOCK:
+            for (int i = 0; i < e->block.stmt_count; i++) veto_scan_stmt(e->block.stmts[i]);
+            veto_if_ident(e->block.result); veto_scan_expr(e->block.result);
+            break;
+        case EXPR_LIST_COMP:
+            // The generic list-comp lowering builds a WynArray.
+            veto_if_ident(e->list_comp.iter_start); veto_scan_expr(e->list_comp.iter_start);
+            veto_scan_expr(e->list_comp.iter_end);
+            veto_if_ident(e->list_comp.body); veto_scan_expr(e->list_comp.body);
+            veto_scan_expr(e->list_comp.condition);
+            break;
+        case EXPR_TUPLE_INDEX: veto_if_ident(e->tuple_index.tuple); veto_scan_expr(e->tuple_index.tuple); break;
+        case EXPR_OPT_CHAIN: veto_if_ident(e->opt_chain.object); veto_scan_expr(e->opt_chain.object); break;
+        default: break;
+    }
+}
+
+static void veto_scan_stmt(Stmt* s) {
+    if (!s) return;
+    switch (s->type) {
+        case STMT_VAR:
+            veto_if_ident(s->var.init); veto_scan_expr(s->var.init); break;
+        case STMT_CONST:
+            veto_if_ident(s->const_stmt.init); veto_scan_expr(s->const_stmt.init); break;
+        case STMT_EXPR:
+            // Statement-position `xs.sort()` discards the yielded value, so the
+            // packed in-place sort is safe. Only recurse into the args.
+            if (is_bare_sort_call(s->expr)) {
+                for (int i = 0; i < s->expr->method_call.arg_count; i++)
+                    veto_scan_expr(s->expr->method_call.args[i]);
+            } else {
+                veto_scan_expr(s->expr);
+            }
+            break;
+        case STMT_RETURN:
+            // Returning the array yields it as a WynArray to the caller.
+            veto_if_ident(s->ret.value); veto_scan_expr(s->ret.value); break;
+        case STMT_BLOCK: case STMT_UNSAFE: case STMT_PARALLEL:
+            for (int i = 0; i < s->block.count; i++) veto_scan_stmt(s->block.stmts[i]);
+            break;
+        case STMT_IF:
+            veto_scan_expr(s->if_stmt.condition);
+            veto_scan_stmt(s->if_stmt.then_branch); veto_scan_stmt(s->if_stmt.else_branch);
+            break;
+        case STMT_WHILE:
+            veto_scan_expr(s->while_stmt.condition); veto_scan_stmt(s->while_stmt.body); break;
+        case STMT_FOR:
+            // `for x in xs` HAS a packed lowering (codegen_stmt.c ~:4155), so a
+            // bare-ident iterable does not veto.
+            if (s->for_stmt.array_expr && s->for_stmt.array_expr->type != EXPR_IDENT)
+                veto_scan_expr(s->for_stmt.array_expr);
+            veto_scan_stmt(s->for_stmt.init);
+            veto_scan_expr(s->for_stmt.condition);
+            veto_scan_expr(s->for_stmt.increment);
+            veto_scan_stmt(s->for_stmt.body);
+            break;
+        case STMT_FN: case STMT_ASYNC_FN: veto_scan_stmt(s->fn.body); break;
+        case STMT_MATCH:
+            veto_if_ident(s->match_stmt.value); veto_scan_expr(s->match_stmt.value);
+            for (int i = 0; i < s->match_stmt.case_count; i++) {
+                veto_scan_expr(s->match_stmt.cases[i].guard);
+                veto_scan_stmt(s->match_stmt.cases[i].body);
+            }
+            break;
+        case STMT_SPAWN: veto_scan_expr(s->spawn.call); break;
+        case STMT_DEFER: veto_scan_expr(s->expr); break;
+        case STMT_TEST: veto_scan_stmt(s->test_stmt.body); break;
+        case STMT_IMPL:
+            for (int i = 0; i < s->impl.method_count; i++)
+                if (s->impl.methods[i]) veto_scan_stmt(s->impl.methods[i]->body);
+            break;
+        case STMT_THROW: veto_scan_expr(s->throw_stmt.value); break;
+        case STMT_TRY:
+            veto_scan_stmt(s->try_stmt.try_block);
+            for (int i = 0; i < s->try_stmt.catch_count; i++) veto_scan_stmt(s->try_stmt.catch_blocks[i]);
+            veto_scan_stmt(s->try_stmt.finally_block);
+            break;
+        default: break;
+    }
+}
+
+// Veto EVERY identifier mentioned anywhere in `e` (and any nested statements).
+// Used for lambda bodies, where the capture machinery types every captured
+// variable as WynArray regardless of how it is used.
+static void veto_all_idents_in_stmt(Stmt* s);
+static void veto_all_idents_in(Expr* e) {
+    if (!e) return;
+    if (e->type == EXPR_IDENT) { veto_if_ident(e); return; }
+    switch (e->type) {
+        case EXPR_BINARY: veto_all_idents_in(e->binary.left); veto_all_idents_in(e->binary.right); break;
+        case EXPR_UNARY: veto_all_idents_in(e->unary.operand); break;
+        case EXPR_TRY: veto_all_idents_in(e->try_expr.value); break;
+        case EXPR_AWAIT: veto_all_idents_in(e->await.expr); break;
+        case EXPR_SPAWN: veto_all_idents_in(e->spawn.call); break;
+        case EXPR_CALL:
+            veto_all_idents_in(e->call.callee);
+            for (int i = 0; i < e->call.arg_count; i++) veto_all_idents_in(e->call.args[i]);
+            break;
+        case EXPR_METHOD_CALL:
+            veto_all_idents_in(e->method_call.object);
+            for (int i = 0; i < e->method_call.arg_count; i++) veto_all_idents_in(e->method_call.args[i]);
+            break;
+        case EXPR_INDEX: veto_all_idents_in(e->index.array); veto_all_idents_in(e->index.index); break;
+        case EXPR_INDEX_ASSIGN:
+            veto_all_idents_in(e->index_assign.object);
+            veto_all_idents_in(e->index_assign.index);
+            veto_all_idents_in(e->index_assign.value);
+            break;
+        case EXPR_ASSIGN:
+            veto_all_idents_in(e->assign.value);
+            { char n[256]; token_to_cstr(n, sizeof(n), e->assign.name);
+              extern void veto_int_array_var(const char*); veto_int_array_var(n); }
+            break;
+        case EXPR_ARRAY:
+            for (int i = 0; i < e->array.count; i++) veto_all_idents_in(e->array.elements[i]);
+            break;
+        case EXPR_TUPLE:
+            for (int i = 0; i < e->tuple.count; i++) veto_all_idents_in(e->tuple.elements[i]);
+            break;
+        case EXPR_MAP:
+            for (int i = 0; i < e->map.count; i++) {
+                veto_all_idents_in(e->map.keys[i]); veto_all_idents_in(e->map.values[i]);
+            }
+            break;
+        case EXPR_STRUCT_INIT:
+            for (int i = 0; i < e->struct_init.field_count; i++)
+                veto_all_idents_in(e->struct_init.field_values[i]);
+            break;
+        case EXPR_STRING_INTERP:
+            for (int i = 0; i < e->string_interp.count; i++)
+                veto_all_idents_in(e->string_interp.expressions[i]);
+            break;
+        case EXPR_TERNARY:
+            veto_all_idents_in(e->ternary.condition);
+            veto_all_idents_in(e->ternary.then_expr); veto_all_idents_in(e->ternary.else_expr);
+            break;
+        case EXPR_IF_EXPR:
+            veto_all_idents_in(e->if_expr.condition);
+            veto_all_idents_in(e->if_expr.then_expr); veto_all_idents_in(e->if_expr.else_expr);
+            break;
+        case EXPR_FIELD_ACCESS: veto_all_idents_in(e->field_access.object); break;
+        case EXPR_OPT_CHAIN: veto_all_idents_in(e->opt_chain.object); break;
+        case EXPR_FIELD_ASSIGN:
+            veto_all_idents_in(e->field_assign.object); veto_all_idents_in(e->field_assign.value); break;
+        case EXPR_TUPLE_INDEX: veto_all_idents_in(e->tuple_index.tuple); break;
+        case EXPR_RANGE: veto_all_idents_in(e->range.start); veto_all_idents_in(e->range.end); break;
+        case EXPR_SOME: case EXPR_OK: case EXPR_ERR: veto_all_idents_in(e->option.value); break;
+        case EXPR_LAMBDA: veto_all_idents_in(e->lambda.body); break;
+        case EXPR_MATCH:
+            veto_all_idents_in(e->match.value);
+            for (int i = 0; i < e->match.arm_count; i++) veto_all_idents_in(e->match.arms[i].result);
+            break;
+        case EXPR_BLOCK:
+            for (int i = 0; i < e->block.stmt_count; i++) veto_all_idents_in_stmt(e->block.stmts[i]);
+            veto_all_idents_in(e->block.result);
+            break;
+        case EXPR_LIST_COMP:
+            veto_all_idents_in(e->list_comp.iter_start); veto_all_idents_in(e->list_comp.iter_end);
+            veto_all_idents_in(e->list_comp.body); veto_all_idents_in(e->list_comp.condition);
+            break;
+        default: break;
+    }
+}
+
+static void veto_all_idents_in_stmt(Stmt* s) {
+    if (!s) return;
+    switch (s->type) {
+        case STMT_VAR: veto_all_idents_in(s->var.init); break;
+        case STMT_CONST: veto_all_idents_in(s->const_stmt.init); break;
+        case STMT_EXPR: case STMT_DEFER: veto_all_idents_in(s->expr); break;
+        case STMT_RETURN: veto_all_idents_in(s->ret.value); break;
+        case STMT_BLOCK: case STMT_UNSAFE: case STMT_PARALLEL:
+            for (int i = 0; i < s->block.count; i++) veto_all_idents_in_stmt(s->block.stmts[i]);
+            break;
+        case STMT_IF:
+            veto_all_idents_in(s->if_stmt.condition);
+            veto_all_idents_in_stmt(s->if_stmt.then_branch);
+            veto_all_idents_in_stmt(s->if_stmt.else_branch);
+            break;
+        case STMT_WHILE:
+            veto_all_idents_in(s->while_stmt.condition); veto_all_idents_in_stmt(s->while_stmt.body); break;
+        case STMT_FOR:
+            veto_all_idents_in(s->for_stmt.array_expr);
+            veto_all_idents_in_stmt(s->for_stmt.init);
+            veto_all_idents_in(s->for_stmt.condition);
+            veto_all_idents_in(s->for_stmt.increment);
+            veto_all_idents_in_stmt(s->for_stmt.body);
+            break;
+        case STMT_MATCH:
+            veto_all_idents_in(s->match_stmt.value);
+            for (int i = 0; i < s->match_stmt.case_count; i++) {
+                veto_all_idents_in(s->match_stmt.cases[i].guard);
+                veto_all_idents_in_stmt(s->match_stmt.cases[i].body);
+            }
+            break;
+        case STMT_SPAWN: veto_all_idents_in(s->spawn.call); break;
+        case STMT_THROW: veto_all_idents_in(s->throw_stmt.value); break;
+        case STMT_FN: case STMT_ASYNC_FN: veto_all_idents_in_stmt(s->fn.body); break;
+        case STMT_TEST: veto_all_idents_in_stmt(s->test_stmt.body); break;
+        case STMT_TRY:
+            veto_all_idents_in_stmt(s->try_stmt.try_block);
+            for (int i = 0; i < s->try_stmt.catch_count; i++)
+                veto_all_idents_in_stmt(s->try_stmt.catch_blocks[i]);
+            veto_all_idents_in_stmt(s->try_stmt.finally_block);
+            break;
+        default: break;
+    }
+}
+
+// Entry point: run over the whole program before emission.
+void veto_scan_program(Program* prog) {
+    if (!prog) return;
+    for (int i = 0; i < prog->count; i++) veto_scan_stmt(prog->stmts[i]);
 }
 
 // S2: Emit a lambda function using the real codegen_expr pipeline instead of the

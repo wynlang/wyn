@@ -109,6 +109,44 @@ static int clone_into_cache(const PkgSpec* spec, char* dir_out, size_t dir_n,
     return 0;
 }
 
+// Is `s` a plausible git object id: hex only, 7..40 chars? Anything else must
+// never be spliced into a git revision or a shell command.
+static int is_hex_sha(const char* s) {
+    size_t len = s ? strlen(s) : 0;
+    if (len < 7 || len > 40) return 0;
+    for (size_t i = 0; i < len; i++)
+        if (!isxdigit((unsigned char)s[i])) return 0;
+    return 1;
+}
+
+// Does the resolved sha `got` satisfy the locked sha `want`? Prefix semantics
+// (same as `wyn pkg audit`) so an abbreviated sha in a hand-written lock still
+// verifies; `want` is already length-checked by is_hex_sha.
+static int sha_matches(const char* got, const char* want) {
+    if (!got || !got[0] || !want || !want[0]) return 0;
+    return strncmp(got, want, strlen(want)) == 0;
+}
+
+// Move the checkout in `dir` to exactly `sha` (detached). A plain checkout works
+// when the object is already present (full clone); a shallow clone only carries
+// the ref tip, so fall back to a targeted single-commit fetch. Returns 0 only if
+// HEAD really is `sha` afterwards - we re-read it rather than trust git's exit
+// code.
+static int checkout_sha(const char* dir, const char* sha) {
+    if (!shell_safe(dir) || !is_hex_sha(sha)) return 1;
+    char cmd[1800];
+    snprintf(cmd, sizeof(cmd),
+             "git -C '%s' checkout -q --detach '%s' 2>/dev/null "
+             "|| ( git -C '%s' fetch -q --depth 1 origin '%s' 2>/dev/null "
+             "&& git -C '%s' checkout -q --detach '%s' 2>/dev/null )",
+             dir, sha, dir, sha, dir, sha);
+    if (system(cmd) == -1) return 1;
+    // Re-read HEAD rather than trust git's exit status: the whole point here is
+    // that we don't take the checkout's word for what it contains.
+    char now[64]; get_head_sha(dir, now, sizeof(now));
+    return sha_matches(now, sha) ? 0 : 1;
+}
+
 // ---- wyn.lock (one format: `name url ref sha`, whitespace-separated) --------
 
 typedef struct { char name[128], url[512], ref[128], sha[64]; } LockEntry;
@@ -307,6 +345,32 @@ int wyn_pkg_add(const char* input, const char* override_name) {
     return 0;
 }
 
+// Print the "the lock does not match what we got" failure. Named the way a user
+// can act on: which package, what was promised, what arrived, and the exact
+// command that intentionally re-pins.
+static void report_sha_mismatch(const LockEntry* e, const char* got, const char* dir) {
+    const char* ref = (e->ref[0] && strcmp(e->ref, "-") != 0) ? e->ref : NULL;
+    fprintf(stderr, "  \033[31m✗\033[0m %s: \033[1mwyn.lock integrity check failed\033[0m\n", e->name);
+    fprintf(stderr, "      url      %s%s%s\n", e->url, ref ? "@" : "", ref ? ref : "");
+    fprintf(stderr, "      expected %s  (from wyn.lock)\n", e->sha);
+    fprintf(stderr, "      actual   %s  (what was cloned)\n", got[0] ? got : "(unknown)");
+    if (ref)
+        fprintf(stderr, "      the ref '%s' now points at different code than when it was locked "
+                        "(moved branch, retagged release, or force push).\n", ref);
+    else
+        fprintf(stderr, "      no ref is pinned, so the clone followed the default branch's HEAD, "
+                        "which has moved since it was locked.\n");
+    fprintf(stderr, "      Refusing to build against unverified code.\n");
+    fprintf(stderr, "      To inspect what changed:  \033[1mwyn pkg audit\033[0m\n");
+    fprintf(stderr, "                                git -C %s log --oneline -5\n", dir);
+    // `wyn pkg add` re-resolves and rewrites the lock - but clone_into_cache
+    // reuses an existing cache dir, so the stale checkout has to go first or the
+    // "update" would just re-pin the same wrong commit.
+    fprintf(stderr, "      To intentionally update:  rm -rf %s\n", dir);
+    fprintf(stderr, "                                \033[1mwyn pkg add %s%s%s\033[0m  (rewrites wyn.lock)\n",
+            e->url, ref ? "@" : "", ref ? ref : "");
+}
+
 int wyn_pkg_install(void) {
     // Prefer wyn.lock (pinned). Fall back to the manifest for a fresh checkout.
     LockEntry le[128]; int ln = lock_read(le, 128);
@@ -321,9 +385,55 @@ int wyn_pkg_install(void) {
             else snprintf(urlref, sizeof(urlref), "%s", le[i].url);
             if (pkgspec_parse(urlref, le[i].name, &spec) != 0) { fail++; continue; }
             char dir[600], sha[64];
-            if (clone_into_cache(&spec, dir, sizeof(dir), sha, sizeof(sha)) == 0) {
+            if (clone_into_cache(&spec, dir, sizeof(dir), sha, sizeof(sha)) != 0) { fail++; continue; }
+
+            // ---- lock ENFORCEMENT ------------------------------------------
+            // wyn.lock promises an exact commit. A ref (or no ref at all) is a
+            // moving target: the same `wyn restore` can hand you different code
+            // tomorrow. So after cloning, the resolved sha must equal the
+            // recorded one - and if it doesn't, we first try to *become* the
+            // recorded commit (that is the pin the user asked for) before
+            // giving up. The comparison runs either way: defense in depth for
+            // supply-chain code, since the checkout itself is what we distrust.
+            int have_lock_sha = is_hex_sha(le[i].sha);
+
+            if (!have_lock_sha) {
+                // Legacy 3-token lockfile (or a hand-mangled sha column): there
+                // is nothing to verify against. Do NOT hard-fail - that would
+                // break existing projects on upgrade. Record what we resolved
+                // so the NEXT install is verified.
+                if (le[i].sha[0])
+                    fprintf(stderr, "  \033[33m⚠\033[0m %s: wyn.lock sha '%s' is not a commit id "
+                                    "- recording %.12s instead (re-verify with `wyn pkg audit`)\n",
+                            le[i].name, le[i].sha, sha);
+                else
+                    fprintf(stderr, "  \033[33m⚠\033[0m %s: wyn.lock has no commit sha (legacy lockfile) "
+                                    "- pinning %.12s now; future installs are verified\n",
+                            le[i].name, sha);
+                if (sha[0]) lock_upsert(le[i].name, le[i].url, le[i].ref, sha);
                 printf("  \033[32m✓\033[0m %s\n", le[i].name); ok++;
-            } else fail++;
+                continue;
+            }
+
+            if (sha_matches(sha, le[i].sha)) {
+                printf("  \033[32m✓\033[0m %s  \033[2m%.12s verified\033[0m\n", le[i].name, sha);
+                ok++;
+                continue;
+            }
+
+            // Mismatch (or we could not read a sha at all): move the checkout to
+            // the recorded commit. This is the common, benign case - a shallow
+            // clone of a moved branch/tag, where the locked commit is still
+            // fetchable.
+            if (checkout_sha(dir, le[i].sha) == 0) {
+                printf("  \033[32m✓\033[0m %s  \033[2m%.12s (pinned from lock)\033[0m\n",
+                       le[i].name, le[i].sha);
+                ok++;
+                continue;
+            }
+
+            report_sha_mismatch(&le[i], sha, dir);
+            fail++;
         }
     } else {
         WynConfig* cfg = wyn_config_parse("wyn.toml");

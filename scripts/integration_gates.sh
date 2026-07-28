@@ -258,11 +258,141 @@ validate_day20_full_integration() {
     fi
 }
 
+# ============================================================================
+# Idle-CPU Gate: a WAITING concurrent program must not burn CPU
+# ============================================================================
+# Lives here rather than in tests/regression/ because it asserts a RESOURCE
+# property (CPU consumed while waiting), which the `// EXPECT:` runner cannot
+# express - those tests only compare stdout.
+#
+# History: the scheduler had three spin sites that each burned roughly a core in
+# any concurrent program. Measured cumulative CPU over 2s of wall time, before
+# the fix / after:
+#   (a) spawn + long sleep        - worker idle park (100us tick)   2.1s -> ~0ms
+#   (b) spawn then return         - wyn_spawn_wait poll+yield       2.8s -> ~12ms
+#                                   (357% CPU: it burned several cores)
+#   (c) spawn then await          - future_get sched_yield          0.95s -> ~10ms
+#
+# Case (b) is the biggest offender - do NOT drop it to save runtime.
+#
+# Measurement notes (both of these have caused wrong conclusions here before):
+#   * Use CUMULATIVE CPU time, never %CPU - %CPU is a decaying average.
+#   * `ps -o time=` has 1s granularity and non-portable formatting, and there is
+#     no `timeout` binary on macOS. Hence the small C probe, which uses
+#     getrusage(RUSAGE_CHILDREN) after waitpid (POSIX) / GetProcessTimes (Win).
+validate_idle_cpu() {
+    log_info "=== Idle-CPU Gate: waiting programs must not spin ==="
+
+    local errors=0
+    local budget_ms=50      # generous: the fixed scheduler measures ~0-15ms
+    local wall_ms=2000      # observation window
+    local work="${TMPDIR:-/tmp}/wyn_idle_cpu_gate.$$"
+
+    if [[ ! -x "./wyn" ]]; then
+        log_error "./wyn not built - run 'make' first"
+        return 1
+    fi
+
+    mkdir -p "$work"
+    # shellcheck disable=SC2064
+    trap "rm -rf '$work'" RETURN
+
+    # Build the CPU probe.
+    local probe="$work/cpu_probe"
+    if ! ${CC:-cc} -O2 -o "$probe" scripts/testing/cpu_probe.c 2>"$work/probe.err"; then
+        log_error "failed to build scripts/testing/cpu_probe.c"
+        cat "$work/probe.err"
+        return 1
+    fi
+
+    # (a) a spawned task plus a long sleep: nothing to run, everything parked.
+    cat > "$work/a.wyn" <<'WYN'
+fn work(x: int) -> int { return x + 1 }
+fn main() {
+    spawn work(1)
+    Time::sleep(6000)
+    println("done")
+}
+WYN
+    # (b) spawn a slow task and return immediately -> main drains in
+    #     wyn_spawn_wait. Historically the WORST site (357% CPU).
+    cat > "$work/b.wyn" <<'WYN'
+fn slow3(x: int) -> int { Time::sleep(3000); return x }
+fn main() {
+    spawn slow3(1)
+    println("returned")
+}
+WYN
+    # (c) await a slow task -> main blocks in future_get.
+    cat > "$work/c.wyn" <<'WYN'
+fn slow3(x: int) -> int { Time::sleep(3000); return x }
+fn main() {
+    f = spawn slow3(1)
+    a = await f
+    println(a)
+}
+WYN
+    # (d) a spawned fn with NO yield point. Regression guard: the reactor is
+    #     created lazily, so this program registers no fd/timer at all. When
+    #     wyn_io_poll_wait returned immediately in that state, the designated
+    #     poller re-claimed in a tight loop and burned ~200% CPU.
+    cat > "$work/d.wyn" <<'WYN'
+fn work(x: int) -> int { return x + 1 }
+fn main() {
+    spawn work(1)
+    Time::sleep(6000)
+    println("done")
+}
+WYN
+
+    local case_id
+    for case_id in a b c d; do
+        if ! ./wyn build "$work/$case_id.wyn" -o "$work/$case_id" >"$work/$case_id.build" 2>&1; then
+            log_error "idle-cpu case ($case_id): build failed"
+            tail -5 "$work/$case_id.build"
+            ((errors++))
+            continue
+        fi
+
+        # Median of 3: a single sample can catch an unrelated system hiccup.
+        local samples=() s
+        for s in 1 2 3; do
+            samples+=("$("$probe" "$wall_ms" "$work/$case_id" 2>/dev/null)")
+            # The probe kills the child, but be explicit: these programs spin by
+            # design when broken, and a leaked spinner corrupts later samples.
+            pkill -9 -f "$work/$case_id" 2>/dev/null || true
+        done
+        local cpu_ms
+        cpu_ms=$(printf '%s\n' "${samples[@]}" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}')
+
+        if [[ -z "$cpu_ms" ]]; then
+            log_error "idle-cpu case ($case_id): probe produced no measurement"
+            ((errors++))
+        elif (( cpu_ms > budget_ms )); then
+            log_error "idle-cpu case ($case_id): ${cpu_ms}ms CPU over ${wall_ms}ms wall (budget ${budget_ms}ms) [samples: ${samples[*]}]"
+            ((errors++))
+        else
+            log_success "idle-cpu case ($case_id): ${cpu_ms}ms CPU over ${wall_ms}ms wall (budget ${budget_ms}ms)"
+        fi
+    done
+
+    if [[ $errors -eq 0 ]]; then
+        log_success "✅ Idle-CPU Gate PASSED"
+        return 0
+    else
+        log_error "❌ Idle-CPU Gate FAILED - $errors case(s) over budget"
+        return 1
+    fi
+}
+
 # Run specific validation gate
 run_validation_gate() {
     local gate="$1"
-    
+
     case "$gate" in
+        "idle-cpu"|"cpu")
+            validate_idle_cpu
+            ;;
         "day5"|"5")
             validate_day5_llvm_infrastructure
             ;;
@@ -294,9 +424,10 @@ run_validation_gate() {
             fi
             ;;
         *)
-            echo "Usage: $0 [day5|day10|day15|day20|all]"
+            echo "Usage: $0 [idle-cpu|day5|day10|day15|day20|all]"
             echo ""
             echo "Integration Gates:"
+            echo "  idle-cpu - Waiting concurrent programs must not burn CPU"
             echo "  day5  - LLVM Infrastructure Complete"
             echo "  day10 - Basic Codegen + ARC Runtime Ready"
             echo "  day15 - Core Systems Complete"

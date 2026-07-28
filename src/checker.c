@@ -716,6 +716,21 @@ static Type* resolve_array_elem_annotation(Expr* elem_type_expr) {
         }
         return inner;
     }
+    // Nested map annotation: `{string: {string: int}}` / `HashMap<K, V>` in a
+    // value position. The parser desugars `{K: V}` to an EXPR_CALL with a
+    // HashMap callee, so both spellings land here and recurse for K and V.
+    if (elem_type_expr->type == EXPR_CALL &&
+        elem_type_expr->call.callee &&
+        elem_type_expr->call.callee->type == EXPR_IDENT &&
+        elem_type_expr->call.callee->token.length == 7 &&
+        memcmp(elem_type_expr->call.callee->token.start, "HashMap", 7) == 0) {
+        Type* inner = make_type(TYPE_MAP);
+        if (elem_type_expr->call.arg_count >= 1)
+            inner->map_type.key_type = resolve_array_elem_annotation(elem_type_expr->call.args[0]);
+        if (elem_type_expr->call.arg_count >= 2)
+            inner->map_type.value_type = resolve_array_elem_annotation(elem_type_expr->call.args[1]);
+        return inner;
+    }
     if (elem_type_expr->type != EXPR_IDENT) return NULL;
     Token n = elem_type_expr->token;
     StructStmt* struct_def = find_struct_definition(n);
@@ -1302,8 +1317,33 @@ void init_checker() {
         // string-typed entry is added in the JSON stdlib loop below - find_symbol
         // returns the FIRST match, so this one must not shadow it.
         if (strcmp(stdlib_funcs[i], "json_get_string") == 0) continue;
+        // input_line/input_float return char*/float from the runtime, not int.
+        // The blanket int entry made `s = input_line()` infer int, so codegen
+        // emitted int_to_string(s) on the returned char* and printed the line's
+        // ADDRESS as a decimal number (silent wrong output at exit 0). Real
+        // function types are registered just below; find_symbol returns the
+        // FIRST match, so these must not be added here.
+        if (strcmp(stdlib_funcs[i], "input_line") == 0) continue;
+        if (strcmp(stdlib_funcs[i], "input_float") == 0) continue;
         Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
         add_symbol(global_scope, tok, builtin_int, false);
+    }
+
+    // stdin builtins with their real return types (see the skips above).
+    // `input()` genuinely returns int, so it keeps the blanket entry.
+    {
+        struct { const char* name; Type* ret; } stdin_fns[] = {
+            {"input_float", builtin_float},
+            {"input_line", builtin_string},
+        };
+        for (int i = 0; i < (int)(sizeof(stdin_fns)/sizeof(stdin_fns[0])); i++) {
+            Type* ft = make_type(TYPE_FUNCTION);
+            ft->fn_type.param_count = 0;
+            ft->fn_type.param_types = NULL;
+            ft->fn_type.return_type = stdin_fns[i].ret;
+            Token tok = {TOKEN_IDENT, stdin_fns[i].name, (int)strlen(stdin_fns[i].name), 0};
+            add_symbol(global_scope, tok, ft, false);
+        }
     }
 
     // Bare http builtins with real types. The runtime returns char* from
@@ -3058,9 +3098,39 @@ static bool can_convert_type(Type* from, Type* to) {
     return false;
 }
 
+// A statically-known channel capacity, if the expression is a constant integer
+// literal (optionally negated). Returns 1 and writes *out on success, else 0.
+// Only literals are folded on purpose: anything computed is a runtime concern
+// and stays the runtime's job (Task_channel still rejects capacity < 1).
+static int channel_const_capacity(const Expr* cap, long long* out) {
+    if (!cap) return 0;
+    int negate = 0;
+    if (cap->type == EXPR_UNARY && cap->unary.op.type == TOKEN_MINUS && cap->unary.operand) {
+        negate = 1;
+        cap = cap->unary.operand;
+    }
+    if (cap->type != EXPR_INT) return 0;
+    char buf[80]; int bi = 0; int base = 10; int start = 0;
+    const char* p = cap->token.start;
+    int n = cap->token.length;
+    if (n >= 2 && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { base = 16; start = 2; }
+    else if (n >= 2 && p[0] == '0' && (p[1] == 'b' || p[1] == 'B')) { base = 2; start = 2; }
+    else if (n >= 2 && p[0] == '0' && (p[1] == 'o' || p[1] == 'O')) { base = 8; start = 2; }
+    for (int i = start; i < n && bi < (int)sizeof(buf) - 1; i++)
+        if (p[i] != '_') buf[bi++] = p[i];
+    buf[bi] = '\0';
+    if (bi == 0) return 0;
+    errno = 0;
+    char* endp = NULL;
+    unsigned long long v = strtoull(buf, &endp, base);
+    if (errno != 0 || (endp && *endp) || v > 9223372036854775807ULL) return 0;
+    *out = negate ? -(long long)v : (long long)v;
+    return 1;
+}
+
 Type* check_expr(Expr* expr, SymbolTable* scope) {
     if (!expr) return NULL;
-    
+
     // Handle generic type instantiation: HashMap<K,V>, Option<T>, etc.
     // Parser represents this as EXPR_CALL with type arguments
     if (expr->type == EXPR_CALL && expr->call.callee->type == EXPR_IDENT) {
@@ -4482,6 +4552,73 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Token method = expr->method_call.method;
             char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
 
+            // `"fmt".format(a, b, ...)` - validate the format string at CHECK
+            // time. `.format()` used to be a silent no-op: codegen called a
+            // runtime that only understood `{}` and copied everything else
+            // through, so `"Hello %s".format("World")` printed "Hello %s" at
+            // exit 0 with the argument discarded (the worst failure mode).
+            //
+            // CHOSEN SEMANTICS: brace-style `{}`, matching Wyn's own `"${x}"`
+            // interpolation (already brace-based) and the only form the runtime
+            // ever implemented. printf-style specs are rejected with a clear
+            // error rather than substituted, because codegen stringifies every
+            // argument before the call - the runtime cannot honor `%d`/`%.2f`
+            // against a value whose C type it no longer knows, and pretending
+            // to would reintroduce silent wrong output. `{{`/`}}` escape braces.
+            //
+            // Only checkable when the receiver is a literal string; a computed
+            // format string still runs, substituting `{}` left to right.
+            if (strcmp(method_name, "format") == 0 && object_type &&
+                object_type->kind == TYPE_STRING &&
+                expr->method_call.object->type == EXPR_STRING) {
+                Token ft = expr->method_call.object->token;
+                bool ml = (ft.length >= 6 && ft.start[0] == '"' &&
+                           ft.start[1] == '"' && ft.start[2] == '"');
+                int lo = ml ? 3 : 1, hi = ft.length - (ml ? 3 : 1);
+                int holes = 0; char bad_spec[8]; bad_spec[0] = 0;
+                for (int i = lo; i < hi; i++) {
+                    char c = ft.start[i];
+                    if (c == '\\' && i + 1 < hi) { i++; continue; }
+                    if (c == '{' && i + 1 < hi && ft.start[i+1] == '{') { i++; continue; }
+                    if (c == '}' && i + 1 < hi && ft.start[i+1] == '}') { i++; continue; }
+                    if (c == '{' && i + 1 < hi && ft.start[i+1] == '}') { holes++; i++; continue; }
+                    // A printf conversion: '%' followed by flags/width/precision
+                    // then a conversion letter. '%%' is a literal percent.
+                    // NOTE: the space flag is deliberately NOT recognized, so
+                    // prose like "{}% done" (a real percent sign followed by a
+                    // word) is not mistaken for "% d".
+                    if (c == '%' && i + 1 < hi) {
+                        if (ft.start[i+1] == '%') { i++; continue; }
+                        int j = i + 1, w = 0;
+                        while (j < hi && (strchr("-+#0123456789.", ft.start[j]) != NULL)) j++;
+                        if (j < hi && strchr("diouxXeEfgGcsp", ft.start[j]) != NULL) {
+                            for (int k = i; k <= j && w < (int)sizeof(bad_spec) - 1; k++)
+                                bad_spec[w++] = ft.start[k];
+                            bad_spec[w] = 0;
+                            break;
+                        }
+                    }
+                }
+                if (bad_spec[0]) {
+                    fprintf(stderr, "Error at line %d: .format() uses {} placeholders, not printf specs like '%s'\n",
+                            method.line, bad_spec);
+                    fprintf(stderr, "  \033[34mHelp:\033[0m Write \"...{}...\".format(x), or interpolate directly: \"...${x}...\"\n");
+                    had_error = true;
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                }
+                if (holes != expr->method_call.arg_count) {
+                    fprintf(stderr, "Error at line %d: .format() has %d {} placeholder%s but %d argument%s\n",
+                            method.line, holes, holes == 1 ? "" : "s",
+                            expr->method_call.arg_count,
+                            expr->method_call.arg_count == 1 ? "" : "s");
+                    fprintf(stderr, "  \033[34mHelp:\033[0m Every {} consumes one argument, left to right (use {{ for a literal brace)\n");
+                    had_error = true;
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                }
+            }
+
             // Infer an untyped map's value type from the first `.set(k, v)` /
             // `.insert(k, v)`, mirroring the index-assign path (`m[k] = v`).
             // Without this, a `HashMap::new()` map defaulted its value type to
@@ -5473,6 +5610,28 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int;
         case EXPR_CHANNEL: {
             if (expr->channel.capacity) check_expr(expr->channel.capacity, scope);
+            // A statically-known capacity < 1 can never work: the runtime
+            // rejects it (`size < capacity` is never true, so every send would
+            // block forever) and panics. A constant that is known-bad at
+            // compile time must not wait until runtime to say so - report it
+            // here, where the user still has the source in front of them.
+            // Bare `channel()` lowers to Task_channel(0), so it is the same bug
+            // with the capacity left implicit.
+            long long cap = 0;
+            int cap_known = expr->channel.capacity
+                                ? channel_const_capacity(expr->channel.capacity, &cap)
+                                : 1;  // no argument == capacity 0
+            if (cap_known && cap < 1) {
+                fprintf(stderr,
+                        "Error at line %d: channel capacity must be >= 1 (got %lld) - "
+                        "unbuffered channels are not currently supported\n",
+                        expr->token.line, cap);
+                show_source_line(expr->token.line);
+                fprintf(stderr, "  \033[34mHelp:\033[0m use \033[1mchannel(1)\033[0m for the "
+                                "smallest buffered channel. A capacity-0 (rendezvous) channel "
+                                "would block every send forever.\n");
+                had_error = true;
+            }
             Type* ch = make_type(TYPE_CHANNEL);
             expr->expr_type = ch;
             return ch;
@@ -6578,12 +6737,39 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         init_type = make_type(TYPE_ARRAY);
                     } else if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
                         init_type = make_type(TYPE_MAP);
+                        // Carry the ANNOTATED key/value types into the map type.
+                        // Without this the annotation erased them, so
+                        // `m: {string: int} = {"a": 1}` (and the older
+                        // `m: HashMap<string, int> = ...`) built the map with
+                        // hashmap_insert_int but READ it with
+                        // hashmap_index_string -> m["a"] printed "" instead of 1.
+                        // Only the inferred form `m = {"a": 1}` was correct.
+                        // resolve_array_elem_annotation resolves a leaf type
+                        // expression (int/string/float/bool/struct/enum/nested
+                        // [T]) - exactly what a type argument is here.
+                        if (stmt->var.type->call.arg_count >= 1)
+                            init_type->map_type.key_type =
+                                resolve_array_elem_annotation(stmt->var.type->call.args[0]);
+                        if (stmt->var.type->call.arg_count >= 2)
+                            init_type->map_type.value_type =
+                                resolve_array_elem_annotation(stmt->var.type->call.args[1]);
                     } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                         init_type = make_type(TYPE_SET);
                     } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
                         init_type = make_type(TYPE_OPTIONAL);
                     } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
                         init_type = make_type(TYPE_RESULT);
+                    } else if (find_struct_definition(type_name)) {
+                        // Generic STRUCT annotation: `b: Box<int> = Box{val: 7}`.
+                        // This fell through to check_expr, which read the
+                        // EXPR_CALL as a *call* to Box and typed the annotation
+                        // as the type argument (int) - so a correct program was
+                        // rejected with a spurious "Type mismatch / Expected:
+                        // int, Got: struct". Struct generics monomorphize from
+                        // the field values, so the annotation's type arguments
+                        // add no information: the annotated type IS the struct.
+                        init_type = make_type(TYPE_STRUCT);
+                        init_type->struct_type.name = type_name;
                     } else {
                         init_type = check_expr(stmt->var.type, scope);
                     }
@@ -6934,6 +7120,21 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         // `b: Struct?` / `b: int?` - resolve to the Option family.
                         Type* ot = check_expr(fn->param_types[j], &fn_scope);
                         if (ot) param_type = ot;
+                    } else if (fn->param_types[j]->type == EXPR_CALL &&
+                               fn->param_types[j]->call.callee &&
+                               fn->param_types[j]->call.callee->type == EXPR_IDENT &&
+                               fn->param_types[j]->call.callee->token.length == 7 &&
+                               memcmp(fn->param_types[j]->call.callee->token.start, "HashMap", 7) == 0) {
+                        // Map parameter `m: {string: int}` / `HashMap<K, V>` -
+                        // see the matching branch in the signature pass.
+                        Type* mt = make_type(TYPE_MAP);
+                        if (fn->param_types[j]->call.arg_count >= 1)
+                            mt->map_type.key_type =
+                                resolve_array_elem_annotation(fn->param_types[j]->call.args[0]);
+                        if (fn->param_types[j]->call.arg_count >= 2)
+                            mt->map_type.value_type =
+                                resolve_array_elem_annotation(fn->param_types[j]->call.args[1]);
+                        param_type = mt;
                     }
                 }
 
@@ -7726,6 +7927,446 @@ static Type* imported_fn_type(FnStmt* fn) {
     }
     fn_type->fn_type.return_type = imported_type_from_expr(fn->return_type);
     return fn_type;
+}
+
+// ===================================================================
+// Shared mutable global analysis (data-race soundness gate)
+// ===================================================================
+//
+// A mutable global (`var total = 0` at top level) lowers to a plain C global
+// (`long long total = 0;`) and a write lowers to a bare `total = (total + 1);`
+// with NO synchronization. When the writing function is reachable from a
+// `spawn` / `parallel { }` / `await_all` site, several OS threads (or
+// coroutines interleaved at a yield point) execute that unsynchronized
+// read-modify-write concurrently. The result is a torn count: the program
+// prints a WRONG NUMBER and exits 0.
+//
+// This is easy to miss because the narrow window usually closes: with no yield
+// point inside the loop, each task tends to run to completion and the answer
+// looks right on every run. Insert any yield (`Time::sleep(0)`, I/O) and it
+// collapses - measured 7947/7953/7957/7963 where 8000 was correct.
+//
+// POSTURE: reject at check time (an error, not a warning).
+//   - The language already HAS the correct tool for this exact job: `Shared`
+//     (`src/wyn_runtime.h`, lock-free atomics - Shared.new/get/set/add/sub) and
+//     channels. This diagnostic points at them.
+//   - It follows the precedent already set for the aggregate case: concurrent
+//     structural mutation of a plain array panics at RUNTIME with
+//     "use a channel or Shared to coordinate writers"
+//     (wyn_concurrent_mutation_panic, src/wyn_runtime.h:576). Scalars had no
+//     equivalent guard at all. A compile-time error is strictly better than a
+//     runtime panic where we can prove it statically, and this we can.
+//   - Rejected making it correct implicitly (atomics/lock on every qualifying
+//     global): it would silently tax ordinary single-threaded code, and a
+//     seq_cst RMW on a hot counter is a large regression on exactly the
+//     push/index loops the release's perf numbers were measured on. It also
+//     hides the design problem from the user instead of naming it.
+//   - An error, not a warning: a warning preserves the wrong-answer-at-exit-0
+//     failure mode, which is the whole defect.
+//
+// PRECISION (false positives are the main risk - a global written only from
+// main, or only before any spawn, must still compile):
+//   - Only MUTABLE globals count. `const` / immutable globals are never
+//     flagged (read-only sharing is safe).
+//   - Only writes from a function REACHABLE from a spawn site count. The
+//     reachability set is the transitive closure of the call graph starting at
+//     the functions named by `spawn f()` / `parallel { }` bodies / functions
+//     whose futures reach `await_all`.
+//   - `main` is deliberately NOT in the set (it is the single root thread), so
+//     a global initialized or mutated by main - the overwhelmingly common
+//     "configure once, then fan out" shape - still compiles.
+//   - Reads are never flagged; only writes race destructively here.
+
+#define WYN_MAXSMG 512
+
+typedef struct {
+    // Mutable global names (top-level `var`).
+    char names[WYN_MAXSMG][128];
+    int count;
+} SmgGlobals;
+
+typedef struct {
+    char names[WYN_MAXSMG][128];
+    int count;
+} SmgFnSet;
+
+static int smg_set_has(SmgFnSet* s, const char* n) {
+    for (int i = 0; i < s->count; i++) if (strcmp(s->names[i], n) == 0) return 1;
+    return 0;
+}
+static int smg_set_add(SmgFnSet* s, const char* n) {
+    if (smg_set_has(s, n)) return 0;
+    if (s->count >= WYN_MAXSMG) return 0;
+    snprintf(s->names[s->count++], 128, "%s", n);
+    return 1;  // newly added
+}
+
+// --- collect the direct callees / spawn targets of a function body ---------
+
+static void smg_collect_expr(Expr* e, SmgFnSet* calls, SmgFnSet* spawns);
+static void smg_collect_stmt(Stmt* s, SmgFnSet* calls, SmgFnSet* spawns);
+
+// Record the callee name of an EXPR_CALL into `set`.
+static void smg_record_callee(Expr* call, SmgFnSet* set) {
+    if (!call || call->type != EXPR_CALL) return;
+    if (call->call.callee->type != EXPR_IDENT) return;
+    char n[128]; token_to_cstr(n, sizeof(n), call->call.callee->token);
+    smg_set_add(set, n);
+}
+
+static void smg_collect_expr(Expr* e, SmgFnSet* calls, SmgFnSet* spawns) {
+    if (!e) return;
+    switch (e->type) {
+        case EXPR_SPAWN:
+            // `spawn f(...)` - f and everything it reaches runs concurrently.
+            smg_record_callee(e->spawn.call, spawns);
+            smg_collect_expr(e->spawn.call, calls, spawns);
+            break;
+        case EXPR_CALL:
+            smg_record_callee(e, calls);
+            // `await_all(futures)` / `Task.race(...)`: the futures were created
+            // by spawn sites already recorded, so nothing extra to do here.
+            smg_collect_expr(e->call.callee, calls, spawns);
+            for (int i = 0; i < e->call.arg_count; i++)
+                smg_collect_expr(e->call.args[i], calls, spawns);
+            break;
+        case EXPR_METHOD_CALL:
+            smg_collect_expr(e->method_call.object, calls, spawns);
+            for (int i = 0; i < e->method_call.arg_count; i++)
+                smg_collect_expr(e->method_call.args[i], calls, spawns);
+            break;
+        case EXPR_BINARY:
+            smg_collect_expr(e->binary.left, calls, spawns);
+            smg_collect_expr(e->binary.right, calls, spawns); break;
+        case EXPR_UNARY: smg_collect_expr(e->unary.operand, calls, spawns); break;
+        case EXPR_TRY: smg_collect_expr(e->try_expr.value, calls, spawns); break;
+        case EXPR_AWAIT: smg_collect_expr(e->await.expr, calls, spawns); break;
+        case EXPR_ASSIGN: smg_collect_expr(e->assign.value, calls, spawns); break;
+        case EXPR_INDEX:
+            smg_collect_expr(e->index.array, calls, spawns);
+            smg_collect_expr(e->index.index, calls, spawns); break;
+        case EXPR_INDEX_ASSIGN:
+            smg_collect_expr(e->index_assign.object, calls, spawns);
+            smg_collect_expr(e->index_assign.index, calls, spawns);
+            smg_collect_expr(e->index_assign.value, calls, spawns); break;
+        case EXPR_FIELD_ACCESS: smg_collect_expr(e->field_access.object, calls, spawns); break;
+        case EXPR_OPT_CHAIN: smg_collect_expr(e->opt_chain.object, calls, spawns); break;
+        case EXPR_FIELD_ASSIGN:
+            smg_collect_expr(e->field_assign.object, calls, spawns);
+            smg_collect_expr(e->field_assign.value, calls, spawns); break;
+        case EXPR_ARRAY:
+            for (int i = 0; i < e->array.count; i++) smg_collect_expr(e->array.elements[i], calls, spawns);
+            break;
+        case EXPR_TUPLE:
+            for (int i = 0; i < e->tuple.count; i++) smg_collect_expr(e->tuple.elements[i], calls, spawns);
+            break;
+        case EXPR_MAP:
+            for (int i = 0; i < e->map.count; i++) {
+                smg_collect_expr(e->map.keys[i], calls, spawns);
+                smg_collect_expr(e->map.values[i], calls, spawns);
+            }
+            break;
+        case EXPR_STRUCT_INIT:
+            for (int i = 0; i < e->struct_init.field_count; i++)
+                smg_collect_expr(e->struct_init.field_values[i], calls, spawns);
+            break;
+        case EXPR_STRING_INTERP:
+            for (int i = 0; i < e->string_interp.count; i++)
+                smg_collect_expr(e->string_interp.expressions[i], calls, spawns);
+            break;
+        case EXPR_TERNARY:
+            smg_collect_expr(e->ternary.condition, calls, spawns);
+            smg_collect_expr(e->ternary.then_expr, calls, spawns);
+            smg_collect_expr(e->ternary.else_expr, calls, spawns); break;
+        case EXPR_IF_EXPR:
+            smg_collect_expr(e->if_expr.condition, calls, spawns);
+            smg_collect_expr(e->if_expr.then_expr, calls, spawns);
+            smg_collect_expr(e->if_expr.else_expr, calls, spawns); break;
+        case EXPR_RANGE:
+            smg_collect_expr(e->range.start, calls, spawns);
+            smg_collect_expr(e->range.end, calls, spawns); break;
+        case EXPR_SOME: case EXPR_OK: case EXPR_ERR:
+            smg_collect_expr(e->option.value, calls, spawns); break;
+        case EXPR_LAMBDA: smg_collect_expr(e->lambda.body, calls, spawns); break;
+        case EXPR_TUPLE_INDEX: smg_collect_expr(e->tuple_index.tuple, calls, spawns); break;
+        case EXPR_MATCH:
+            smg_collect_expr(e->match.value, calls, spawns);
+            for (int i = 0; i < e->match.arm_count; i++)
+                smg_collect_expr(e->match.arms[i].result, calls, spawns);
+            break;
+        case EXPR_BLOCK:
+            for (int i = 0; i < e->block.stmt_count; i++) smg_collect_stmt(e->block.stmts[i], calls, spawns);
+            smg_collect_expr(e->block.result, calls, spawns); break;
+        case EXPR_LIST_COMP:
+            smg_collect_expr(e->list_comp.iter_start, calls, spawns);
+            smg_collect_expr(e->list_comp.iter_end, calls, spawns);
+            smg_collect_expr(e->list_comp.body, calls, spawns);
+            smg_collect_expr(e->list_comp.condition, calls, spawns); break;
+        default: break;
+    }
+}
+
+static void smg_collect_stmt(Stmt* s, SmgFnSet* calls, SmgFnSet* spawns) {
+    if (!s) return;
+    switch (s->type) {
+        case STMT_VAR: smg_collect_expr(s->var.init, calls, spawns); break;
+        case STMT_CONST: smg_collect_expr(s->const_stmt.init, calls, spawns); break;
+        case STMT_EXPR: case STMT_DEFER: smg_collect_expr(s->expr, calls, spawns); break;
+        case STMT_RETURN: smg_collect_expr(s->ret.value, calls, spawns); break;
+        case STMT_SPAWN:
+            // Bare `spawn f()` statement form.
+            smg_record_callee(s->spawn.call, spawns);
+            smg_collect_expr(s->spawn.call, calls, spawns);
+            break;
+        case STMT_PARALLEL:
+            // Every call bound inside `parallel { }` runs concurrently, whether
+            // or not it is spelled with `spawn` (codegen_stmt.c treats a direct
+            // call to a known user fn as an implicit spawn).
+            for (int i = 0; i < s->block.count; i++) {
+                Stmt* b = s->block.stmts[i];
+                if (b && b->type == STMT_VAR && b->var.init && b->var.init->type == EXPR_CALL)
+                    smg_record_callee(b->var.init, spawns);
+                if (b && b->type == STMT_EXPR && b->expr && b->expr->type == EXPR_CALL)
+                    smg_record_callee(b->expr, spawns);
+                smg_collect_stmt(b, calls, spawns);
+            }
+            break;
+        case STMT_BLOCK: case STMT_UNSAFE:
+            for (int i = 0; i < s->block.count; i++) smg_collect_stmt(s->block.stmts[i], calls, spawns);
+            break;
+        case STMT_IF:
+            smg_collect_expr(s->if_stmt.condition, calls, spawns);
+            smg_collect_stmt(s->if_stmt.then_branch, calls, spawns);
+            smg_collect_stmt(s->if_stmt.else_branch, calls, spawns); break;
+        case STMT_WHILE:
+            smg_collect_expr(s->while_stmt.condition, calls, spawns);
+            smg_collect_stmt(s->while_stmt.body, calls, spawns); break;
+        case STMT_FOR:
+            smg_collect_expr(s->for_stmt.array_expr, calls, spawns);
+            smg_collect_stmt(s->for_stmt.init, calls, spawns);
+            smg_collect_expr(s->for_stmt.condition, calls, spawns);
+            smg_collect_expr(s->for_stmt.increment, calls, spawns);
+            smg_collect_stmt(s->for_stmt.body, calls, spawns); break;
+        case STMT_MATCH:
+            smg_collect_expr(s->match_stmt.value, calls, spawns);
+            for (int i = 0; i < s->match_stmt.case_count; i++) {
+                smg_collect_expr(s->match_stmt.cases[i].guard, calls, spawns);
+                smg_collect_stmt(s->match_stmt.cases[i].body, calls, spawns);
+            }
+            break;
+        case STMT_THROW: smg_collect_expr(s->throw_stmt.value, calls, spawns); break;
+        case STMT_TRY:
+            smg_collect_stmt(s->try_stmt.try_block, calls, spawns);
+            for (int i = 0; i < s->try_stmt.catch_count; i++)
+                smg_collect_stmt(s->try_stmt.catch_blocks[i], calls, spawns);
+            smg_collect_stmt(s->try_stmt.finally_block, calls, spawns); break;
+        case STMT_FN: case STMT_ASYNC_FN: smg_collect_stmt(s->fn.body, calls, spawns); break;
+        case STMT_TEST: smg_collect_stmt(s->test_stmt.body, calls, spawns); break;
+        default: break;
+    }
+}
+
+// --- find writes to a global inside a function body -----------------------
+
+// Report a write at `line` to global `g`.
+static void smg_report(const char* g, int line, const char* fn_name) {
+    fprintf(stderr,
+        "\033[31m\033[1mError:\033[0m data race: shared mutable global '%s' is written from '%s', "
+        "which runs concurrently (line %d)\n", g, fn_name, line);
+    show_source_line(line);
+    fprintf(stderr,
+        "  \033[34mHelp:\033[0m A plain global is not synchronized, so concurrent writes lose\n"
+        "        updates and the program prints a wrong answer while exiting 0.\n"
+        "        Use an atomic Shared value:\n"
+        "          total = Shared.new(0)      // instead of: var total = 0\n"
+        "          Shared.add(total, 1)       // instead of: total = total + 1\n"
+        "          Shared.get(total)          // to read the final value\n"
+        "        Or send results over a channel, or return them from the task and\n"
+        "        combine the awaited values in the caller.\n");
+    had_error = true;
+}
+
+static void smg_check_expr_writes(Expr* e, SmgGlobals* globals, const char* fn_name, SmgFnSet* shadowed);
+static void smg_check_stmt_writes(Stmt* s, SmgGlobals* globals, const char* fn_name, SmgFnSet* shadowed);
+
+static int smg_is_flagged_global(SmgGlobals* g, SmgFnSet* shadowed, const char* n) {
+    if (smg_set_has(shadowed, n)) return 0;  // a local shadows the global here
+    for (int i = 0; i < g->count; i++) if (strcmp(g->names[i], n) == 0) return 1;
+    return 0;
+}
+
+static void smg_check_expr_writes(Expr* e, SmgGlobals* globals, const char* fn_name, SmgFnSet* shadowed) {
+    if (!e) return;
+    switch (e->type) {
+        case EXPR_ASSIGN: {
+            char n[128]; token_to_cstr(n, sizeof(n), e->assign.name);
+            if (smg_is_flagged_global(globals, shadowed, n))
+                smg_report(n, e->assign.name.line, fn_name);
+            smg_check_expr_writes(e->assign.value, globals, fn_name, shadowed);
+            break;
+        }
+        case EXPR_INDEX_ASSIGN:
+            smg_check_expr_writes(e->index_assign.object, globals, fn_name, shadowed);
+            smg_check_expr_writes(e->index_assign.index, globals, fn_name, shadowed);
+            smg_check_expr_writes(e->index_assign.value, globals, fn_name, shadowed);
+            break;
+        case EXPR_FIELD_ASSIGN:
+            smg_check_expr_writes(e->field_assign.object, globals, fn_name, shadowed);
+            smg_check_expr_writes(e->field_assign.value, globals, fn_name, shadowed);
+            break;
+        case EXPR_BINARY:
+            smg_check_expr_writes(e->binary.left, globals, fn_name, shadowed);
+            smg_check_expr_writes(e->binary.right, globals, fn_name, shadowed); break;
+        case EXPR_UNARY: smg_check_expr_writes(e->unary.operand, globals, fn_name, shadowed); break;
+        case EXPR_CALL:
+            for (int i = 0; i < e->call.arg_count; i++)
+                smg_check_expr_writes(e->call.args[i], globals, fn_name, shadowed);
+            break;
+        case EXPR_METHOD_CALL:
+            smg_check_expr_writes(e->method_call.object, globals, fn_name, shadowed);
+            for (int i = 0; i < e->method_call.arg_count; i++)
+                smg_check_expr_writes(e->method_call.args[i], globals, fn_name, shadowed);
+            break;
+        case EXPR_TERNARY:
+            smg_check_expr_writes(e->ternary.condition, globals, fn_name, shadowed);
+            smg_check_expr_writes(e->ternary.then_expr, globals, fn_name, shadowed);
+            smg_check_expr_writes(e->ternary.else_expr, globals, fn_name, shadowed); break;
+        case EXPR_IF_EXPR:
+            smg_check_expr_writes(e->if_expr.condition, globals, fn_name, shadowed);
+            smg_check_expr_writes(e->if_expr.then_expr, globals, fn_name, shadowed);
+            smg_check_expr_writes(e->if_expr.else_expr, globals, fn_name, shadowed); break;
+        case EXPR_LAMBDA: smg_check_expr_writes(e->lambda.body, globals, fn_name, shadowed); break;
+        case EXPR_BLOCK:
+            for (int i = 0; i < e->block.stmt_count; i++)
+                smg_check_stmt_writes(e->block.stmts[i], globals, fn_name, shadowed);
+            smg_check_expr_writes(e->block.result, globals, fn_name, shadowed); break;
+        case EXPR_MATCH:
+            smg_check_expr_writes(e->match.value, globals, fn_name, shadowed);
+            for (int i = 0; i < e->match.arm_count; i++)
+                smg_check_expr_writes(e->match.arms[i].result, globals, fn_name, shadowed);
+            break;
+        case EXPR_AWAIT: smg_check_expr_writes(e->await.expr, globals, fn_name, shadowed); break;
+        case EXPR_SPAWN: smg_check_expr_writes(e->spawn.call, globals, fn_name, shadowed); break;
+        default: break;
+    }
+}
+
+static void smg_check_stmt_writes(Stmt* s, SmgGlobals* globals, const char* fn_name, SmgFnSet* shadowed) {
+    if (!s) return;
+    switch (s->type) {
+        case STMT_VAR: {
+            // A local declaration shadows the global from here on: `var total = 0`
+            // inside the function is a different variable.
+            char n[128]; token_to_cstr(n, sizeof(n), s->var.name);
+            smg_set_add(shadowed, n);
+            smg_check_expr_writes(s->var.init, globals, fn_name, shadowed);
+            break;
+        }
+        case STMT_CONST: {
+            char n[128]; token_to_cstr(n, sizeof(n), s->const_stmt.name);
+            smg_set_add(shadowed, n);
+            smg_check_expr_writes(s->const_stmt.init, globals, fn_name, shadowed);
+            break;
+        }
+        case STMT_EXPR: case STMT_DEFER: smg_check_expr_writes(s->expr, globals, fn_name, shadowed); break;
+        case STMT_RETURN: smg_check_expr_writes(s->ret.value, globals, fn_name, shadowed); break;
+        case STMT_BLOCK: case STMT_UNSAFE: case STMT_PARALLEL:
+            for (int i = 0; i < s->block.count; i++)
+                smg_check_stmt_writes(s->block.stmts[i], globals, fn_name, shadowed);
+            break;
+        case STMT_IF:
+            smg_check_expr_writes(s->if_stmt.condition, globals, fn_name, shadowed);
+            smg_check_stmt_writes(s->if_stmt.then_branch, globals, fn_name, shadowed);
+            smg_check_stmt_writes(s->if_stmt.else_branch, globals, fn_name, shadowed); break;
+        case STMT_WHILE:
+            smg_check_expr_writes(s->while_stmt.condition, globals, fn_name, shadowed);
+            smg_check_stmt_writes(s->while_stmt.body, globals, fn_name, shadowed); break;
+        case STMT_FOR:
+            smg_check_expr_writes(s->for_stmt.array_expr, globals, fn_name, shadowed);
+            smg_check_stmt_writes(s->for_stmt.init, globals, fn_name, shadowed);
+            smg_check_expr_writes(s->for_stmt.condition, globals, fn_name, shadowed);
+            smg_check_expr_writes(s->for_stmt.increment, globals, fn_name, shadowed);
+            smg_check_stmt_writes(s->for_stmt.body, globals, fn_name, shadowed); break;
+        case STMT_MATCH:
+            smg_check_expr_writes(s->match_stmt.value, globals, fn_name, shadowed);
+            for (int i = 0; i < s->match_stmt.case_count; i++)
+                smg_check_stmt_writes(s->match_stmt.cases[i].body, globals, fn_name, shadowed);
+            break;
+        case STMT_SPAWN: smg_check_expr_writes(s->spawn.call, globals, fn_name, shadowed); break;
+        case STMT_THROW: smg_check_expr_writes(s->throw_stmt.value, globals, fn_name, shadowed); break;
+        case STMT_TRY:
+            smg_check_stmt_writes(s->try_stmt.try_block, globals, fn_name, shadowed);
+            for (int i = 0; i < s->try_stmt.catch_count; i++)
+                smg_check_stmt_writes(s->try_stmt.catch_blocks[i], globals, fn_name, shadowed);
+            smg_check_stmt_writes(s->try_stmt.finally_block, globals, fn_name, shadowed); break;
+        default: break;
+    }
+}
+
+// Entry point. Runs after the normal checking passes.
+static void check_shared_mutable_globals(Program* prog) {
+    static SmgGlobals globals;
+    globals.count = 0;
+
+    // 1. Collect MUTABLE top-level globals. `const` and immutable bindings are
+    //    safe to share, so they are never candidates.
+    for (int i = 0; i < prog->count; i++) {
+        Stmt* s = prog->stmts[i];
+        if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+        if (s->type != STMT_VAR) continue;
+        if (!s->var.is_mutable) continue;
+        if (globals.count >= WYN_MAXSMG) break;
+        token_to_cstr(globals.names[globals.count], 128, s->var.name);
+        globals.count++;
+    }
+    if (globals.count == 0) return;
+
+    // 2. Seed the concurrent set with every spawn / parallel target anywhere in
+    //    the program, then close it transitively over the call graph. `main` is
+    //    never seeded: it is the single root thread, so a global that main
+    //    mutates before fanning out is not racing with anything.
+    static SmgFnSet concurrent; concurrent.count = 0;
+    for (int i = 0; i < prog->count; i++) {
+        static SmgFnSet ignored_calls; ignored_calls.count = 0;
+        smg_collect_stmt(prog->stmts[i], &ignored_calls, &concurrent);
+    }
+    if (concurrent.count == 0) return;
+
+    // Transitive closure: anything a concurrent function calls is concurrent too.
+    int changed = 1;
+    while (changed) {
+        changed = 0;
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* s = prog->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            if (s->type != STMT_FN && s->type != STMT_ASYNC_FN) continue;
+            char fn[128]; token_to_cstr(fn, sizeof(fn), s->fn.name);
+            if (!smg_set_has(&concurrent, fn)) continue;
+            static SmgFnSet callees; callees.count = 0;
+            static SmgFnSet more_spawns; more_spawns.count = 0;
+            smg_collect_stmt(s->fn.body, &callees, &more_spawns);
+            for (int c = 0; c < callees.count; c++)
+                if (smg_set_add(&concurrent, callees.names[c])) changed = 1;
+            for (int c = 0; c < more_spawns.count; c++)
+                if (smg_set_add(&concurrent, more_spawns.names[c])) changed = 1;
+        }
+    }
+
+    // 3. Report writes to a candidate global from any concurrent function.
+    for (int i = 0; i < prog->count; i++) {
+        Stmt* s = prog->stmts[i];
+        if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+        if (s->type != STMT_FN && s->type != STMT_ASYNC_FN) continue;
+        char fn[128]; token_to_cstr(fn, sizeof(fn), s->fn.name);
+        if (!smg_set_has(&concurrent, fn)) continue;
+        // Parameters shadow globals of the same name.
+        static SmgFnSet shadowed; shadowed.count = 0;
+        for (int p = 0; p < s->fn.param_count; p++) {
+            char pn[128]; token_to_cstr(pn, sizeof(pn), s->fn.params[p]);
+            smg_set_add(&shadowed, pn);
+        }
+        smg_check_stmt_writes(s->fn.body, &globals, fn, &shadowed);
+    }
 }
 
 void check_program(Program* prog) {
@@ -8559,6 +9200,25 @@ void check_program(Program* prog) {
                         // validates Some/None arguments (not the bare int default).
                         Type* ot = check_expr(fn->param_types[j], global_scope);
                         if (ot) param_type = ot;
+                    } else if (fn->param_types[j]->type == EXPR_CALL &&
+                               fn->param_types[j]->call.callee &&
+                               fn->param_types[j]->call.callee->type == EXPR_IDENT &&
+                               fn->param_types[j]->call.callee->token.length == 7 &&
+                               memcmp(fn->param_types[j]->call.callee->token.start, "HashMap", 7) == 0) {
+                        // Map parameter: `m: {string: int}` (desugared to
+                        // HashMap<string, int>) or the explicit HashMap<K, V>.
+                        // Previously BOTH fell through to the `builtin_int`
+                        // default, so passing a map to the function reported
+                        // "Expected: int, Got: map" and `m[k]` inside the body
+                        // reported "Array index must be int".
+                        Type* mt = make_type(TYPE_MAP);
+                        if (fn->param_types[j]->call.arg_count >= 1)
+                            mt->map_type.key_type =
+                                resolve_array_elem_annotation(fn->param_types[j]->call.args[0]);
+                        if (fn->param_types[j]->call.arg_count >= 2)
+                            mt->map_type.value_type =
+                                resolve_array_elem_annotation(fn->param_types[j]->call.args[1]);
+                        param_type = mt;
                     }
                 }
                 fn_type->fn_type.param_types[j] = param_type;
@@ -8573,6 +9233,15 @@ void check_program(Program* prog) {
                         Token type_name = fn->return_type->call.callee->token;
                         if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
                             fn_type->fn_type.return_type = make_type(TYPE_MAP);
+                            // Carry the declared key/value types (`-> {string: int}`
+                            // desugars to HashMap<string, int>), else callers read
+                            // the returned map through the wrong typed getter.
+                            if (fn->return_type->call.arg_count >= 1)
+                                fn_type->fn_type.return_type->map_type.key_type =
+                                    resolve_array_elem_annotation(fn->return_type->call.args[0]);
+                            if (fn->return_type->call.arg_count >= 2)
+                                fn_type->fn_type.return_type->map_type.value_type =
+                                    resolve_array_elem_annotation(fn->return_type->call.args[1]);
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             fn_type->fn_type.return_type = make_type(TYPE_SET);
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
@@ -8832,6 +9501,12 @@ void check_program(Program* prog) {
                         Token type_name = fn->return_type->call.callee->token;
                         if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
                             current_function_return_type = make_type(TYPE_MAP);
+                            if (fn->return_type->call.arg_count >= 1)
+                                current_function_return_type->map_type.key_type =
+                                    resolve_array_elem_annotation(fn->return_type->call.args[0]);
+                            if (fn->return_type->call.arg_count >= 2)
+                                current_function_return_type->map_type.value_type =
+                                    resolve_array_elem_annotation(fn->return_type->call.args[1]);
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             current_function_return_type = make_type(TYPE_SET);
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
@@ -8982,6 +9657,22 @@ void check_program(Program* prog) {
                         // was rejected with "Return type mismatch ... got int".
                         Type* ft = check_expr(fn->param_types[j], &local_scope);
                         if (ft) param_type = ft;
+                    } else if (fn->param_types[j]->type == EXPR_CALL &&
+                               fn->param_types[j]->call.callee &&
+                               fn->param_types[j]->call.callee->type == EXPR_IDENT &&
+                               fn->param_types[j]->call.callee->token.length == 7 &&
+                               memcmp(fn->param_types[j]->call.callee->token.start, "HashMap", 7) == 0) {
+                        // Map parameter `m: {string: int}` / `HashMap<K, V>`: the
+                        // param defaulted to int inside the body, so `m[k]` was
+                        // rejected with "Array index must be int".
+                        Type* mt = make_type(TYPE_MAP);
+                        if (fn->param_types[j]->call.arg_count >= 1)
+                            mt->map_type.key_type =
+                                resolve_array_elem_annotation(fn->param_types[j]->call.args[0]);
+                        if (fn->param_types[j]->call.arg_count >= 2)
+                            mt->map_type.value_type =
+                                resolve_array_elem_annotation(fn->param_types[j]->call.args[1]);
+                        param_type = mt;
                     }
                 }
 
@@ -9114,6 +9805,11 @@ void check_program(Program* prog) {
             check_stmt(prog->stmts[i], global_scope);
         }
     }
+
+    // Data-race soundness gate: a mutable global written from a function that
+    // runs concurrently is an unsynchronized read-modify-write, i.e. a silent
+    // wrong answer at exit 0. Reject it and point at Shared/channels.
+    check_shared_mutable_globals(prog);
 }
 
 SymbolTable* get_global_scope() {

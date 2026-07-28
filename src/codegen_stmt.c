@@ -396,7 +396,12 @@ void codegen_stmt(Stmt* stmt) {
                 // Such an argument must NOT be released after the call, or the live
                 // array element is double-freed. Identify the transferring arg index
                 // (-1 = none): method `arr.push(x)` on a [string] → arg 0;
-                // free call `array_push_str(&arr, x)` → arg 1.
+                // free call `array_push_str(&arr, x)` → arg 1. The bare
+                // `array_push(arr, <string>)` spelling counts too: codegen_expr
+                // auto-rewrites it to array_push_str, so it transfers ownership
+                // exactly the same way. Matching only the 14-char spelling meant
+                // `array_push(nv, "" + tt[i])` released the string it had just
+                // handed to the array - every such element read back as "".
                 int _push_move_arg = -1;
                 if (_se->type == EXPR_METHOD_CALL &&
                     _se->method_call.method.length == 4 &&
@@ -410,6 +415,17 @@ void codegen_stmt(Stmt* stmt) {
                     _se->call.callee->token.length == 14 &&
                     memcmp(_se->call.callee->token.start, "array_push_str", 14) == 0) {
                     _push_move_arg = 1;
+                } else if (_se->type == EXPR_CALL && _se->call.callee->type == EXPR_IDENT &&
+                    _se->call.callee->token.length == 10 &&
+                    memcmp(_se->call.callee->token.start, "array_push", 10) == 0 &&
+                    _se->call.arg_count >= 2) {
+                    // Same string-argument test codegen_expr uses to pick
+                    // array_push_str over array_push.
+                    Expr* _pv = _se->call.args[1];
+                    if (_pv->type == EXPR_STRING || _pv->type == EXPR_STRING_INTERP ||
+                        (_pv->expr_type && _pv->expr_type->kind == TYPE_STRING)) {
+                        _push_move_arg = 1;
+                    }
                 }
                 if (_fc > 0 && !_is_str_call) {
                     emit("{ ");
@@ -501,6 +517,18 @@ void codegen_stmt(Stmt* stmt) {
                     if (!codegen_fn_returns_array && stmt->var.type->array.count > 0 && stmt->var.type->array.elements[0]->type == EXPR_IDENT) {
                         Token et = stmt->var.type->array.elements[0]->token;
                         if (et.length == 3 && memcmp(et.start, "int", 3) == 0) is_int_array = true;
+                    }
+                    // The packed WynIntArray only supports push/sort/len/index/
+                    // iterate. If the veto pre-pass saw any other use of this
+                    // name, fall back to WynArray - the same representation the
+                    // INFERRED spelling (`xs = [1,2]`) uses - so both spellings
+                    // agree by construction instead of emitting C that mixes the
+                    // two (check-passes-then-codegen-fails, or worse a silent
+                    // wrong answer for `xs[i] = v`). See codegen.c's veto block.
+                    if (is_int_array) {
+                        char _vvn[128]; token_to_cstr(_vvn, sizeof(_vvn), stmt->var.name);
+                        extern int is_int_array_vetoed(const char*);
+                        if (is_int_array_vetoed(_vvn)) is_int_array = false;
                     }
                     if (is_int_array) {
                         c_type = "WynIntArray";
@@ -2428,11 +2456,40 @@ void codegen_stmt(Stmt* stmt) {
             char joined_futs[64][160];
             const char* joined_ctypes[64];
             int joined_count = 0;
+            // Storage for synthesized implicit-spawn Exprs. These are written back
+            // into s->var.init, which the joining pass below re-reads, so they must
+            // outlive the loop iteration that creates them.
+            Expr implicit_spawns[64];
+            int implicit_spawn_count = 0;
 
             for (int i = 0; i < stmt->block.count; i++) {
                 Stmt* s = stmt->block.stmts[i];
                 bool is_spawn_var = (s->type == STMT_VAR && s->var.init &&
                                      s->var.init->type == EXPR_SPAWN);
+                // `a = f()` inside parallel{} (no `spawn` keyword) used to lower
+                // to a PLAIN SEQUENTIAL CALL - the block named after parallelism
+                // was the only construct that didn't overlap. Treat a direct call
+                // to a known user fn as an implicit spawn so it joins at `}` like
+                // the explicit form. The synthesized EXPR_SPAWN reuses the exact
+                // same lowering, so pack/unpack can't disagree.
+                // NOTE: the guard MUST stay get_function_return_type() != NULL and
+                // MUST match codegen_lambda.c's STMT_PARALLEL scan byte for byte -
+                // namespaced builtins (`Time::now_millis`) lex as ONE identifier and
+                // would emit `void* __spawn_wrapper_Time::now_millis(...)`.
+                if (!is_spawn_var && s->type == STMT_VAR && s->var.init &&
+                    s->var.init->type == EXPR_CALL &&
+                    s->var.init->call.callee->type == EXPR_IDENT &&
+                    implicit_spawn_count < 64) {
+                    char _fn[256]; token_to_cstr(_fn, sizeof(_fn), s->var.init->call.callee->token);
+                    if (get_function_return_type(_fn)) {
+                        Expr* isp = &implicit_spawns[implicit_spawn_count++];
+                        isp->type = EXPR_SPAWN;
+                        isp->spawn.call = s->var.init;
+                        isp->_codegen_temp_id = -1;
+                        s->var.init = isp;
+                        is_spawn_var = true;
+                    }
+                }
                 // An UNBOUND spawn - bare `spawn f()` inside the block (its own
                 // STMT_SPAWN) - must ALSO be joined at the closing brace, else it
                 // escapes the structured-concurrency barrier (it would lower to a
@@ -2839,6 +2896,21 @@ void codegen_stmt(Stmt* stmt) {
                     } else if (stmt->fn.param_types[i]->type == EXPR_ARRAY) {
                         // Handle array types [type] - pass as WynArray
                         param_type = "WynArray";
+                    } else if (stmt->fn.param_types[i]->type == EXPR_CALL &&
+                               stmt->fn.param_types[i]->call.callee &&
+                               stmt->fn.param_types[i]->call.callee->type == EXPR_IDENT &&
+                               stmt->fn.param_types[i]->call.callee->token.length == 7 &&
+                               memcmp(stmt->fn.param_types[i]->call.callee->token.start, "HashMap", 7) == 0) {
+                        // `m: {string: int}` (parser-desugared) / `HashMap<K, V>`.
+                        // Only the BARE `HashMap` ident was handled, so a
+                        // parameterized map param emitted `long long`.
+                        param_type = "WynHashMap*";
+                    } else if (stmt->fn.param_types[i]->type == EXPR_CALL &&
+                               stmt->fn.param_types[i]->call.callee &&
+                               stmt->fn.param_types[i]->call.callee->type == EXPR_IDENT &&
+                               stmt->fn.param_types[i]->call.callee->token.length == 7 &&
+                               memcmp(stmt->fn.param_types[i]->call.callee->token.start, "HashSet", 7) == 0) {
+                        param_type = "WynHashSet*";
                     } else if (stmt->fn.param_types[i]->type == EXPR_OPTIONAL_TYPE) {
                         // T2.5.1: Optional param. int?/string?/…/Struct? map to the
                         // concrete Option family; otherwise the generic WynOptional*.

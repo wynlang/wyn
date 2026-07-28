@@ -19,6 +19,10 @@ int _fileno(FILE* stream);
 #include <time.h>
 #ifndef _WIN32
 #include <sys/wait.h>
+#include <signal.h>
+#endif
+#ifdef __linux__
+#include <sys/prctl.h>
 #endif
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -107,6 +111,217 @@ int wyn_mkdir_p(const char* path) {
 #endif
     return 0;
 }
+
+/* ===========================================================================
+ * wyn_run_program - run a compiled program as a SUPERVISED child.
+ *
+ * `wyn run` used to launch the compiled binary with system(), which leaves the
+ * child completely unattached to its parent's fate:
+ *   - Ctrl-C / SIGTERM to `wyn run` killed only the compiler wrapper on the
+ *     `kill -TERM <wyn-pid>` path, and
+ *   - `kill -9` on `wyn run` left the compiled program running FOREVER.
+ * That orphan class has memory-exhaustion-panicked a dev machine during long
+ * sessions, so it is a real operational bug, not a tidiness matter.
+ *
+ * Guarantees, per platform. `wyn run` still forwards stdout/stderr, still
+ * passes stdin straight through (the child stays in our process group and,
+ * on a tty, in the foreground group - so interactive reads and terminal
+ * Ctrl-C both behave exactly as before), and still returns the child's exit
+ * code (128+N for a signal death).
+ *
+ *   POSIX, parent killable (SIGINT/SIGTERM/SIGHUP): a handler forwards the
+ *     signal to the child, then re-raises it with the default disposition so
+ *     `wyn`'s own status is a faithful 128+N.
+ *
+ *   Linux, parent SIGKILLed: the child sets PR_SET_PDEATHSIG(SIGKILL) before
+ *     exec, so the KERNEL kills it when we die - no cooperation needed.
+ *
+ *   macOS / other BSD, parent SIGKILLed: there is no PDEATHSIG. We interpose a
+ *     tiny supervisor process that holds the read end of a pipe whose write end
+ *     only we hold; when we die by ANY means the pipe reads EOF and the
+ *     supervisor SIGKILLs the program. Because the supervisor is the program's
+ *     real parent, no pid-recycling race is possible. (A kqueue EVFILT_PROC
+ *     watcher cannot live in the child itself - exec destroys it.)
+ *
+ *   Windows, parent TerminateProcess'd: the program is assigned to a job object
+ *     with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, so the kernel tears down the job
+ *     when our last handle to it goes away.
+ *
+ *   NOT COVERED, honestly: SIGSTOP'ing `wyn` leaves the child running (there is
+ *     no portable way to observe that, and it is recoverable by SIGCONT); and a
+ *     program that itself daemonizes (double-fork + setsid) escapes on macOS,
+ *     since we kill the program we started, not an arbitrary detached subtree.
+ *     On Linux/Windows the PDEATHSIG / job-object mechanisms are also per-
+ *     process and per-job respectively, so a deliberate breakaway still escapes.
+ *
+ * Returns the value `main` should return: the child's exit code, or 128+N if it
+ * died on signal N.
+ * =========================================================================== */
+#ifdef _WIN32
+static int wyn_run_program(const char* cmd) {
+    /* KILL_ON_JOB_CLOSE is the Windows equivalent of PDEATHSIG: our handle to
+     * the job is released when the process object is destroyed, however we die,
+     * and the kernel then kills every process in the job. */
+    HANDLE job = CreateJobObjectA(NULL, NULL);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli;
+        memset(&jeli, 0, sizeof(jeli));
+        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                     &jeli, sizeof(jeli))) {
+            CloseHandle(job);
+            job = NULL;   /* lost the guarantee; still run the program */
+        }
+    }
+    /* Preserve the old system() semantics exactly: run through the command
+     * processor, since run_cmd can contain shell syntax (the --mem-stats path). */
+    const char* shell = getenv("COMSPEC");
+    char cmdline[9216];
+    snprintf(cmdline, sizeof(cmdline), "%s /c %s",
+             (shell && *shell) ? shell : "cmd.exe", cmd);
+    STARTUPINFOA si; memset(&si, 0, sizeof(si)); si.cb = sizeof(si);
+    PROCESS_INFORMATION pi; memset(&pi, 0, sizeof(pi));
+    /* CREATE_SUSPENDED so the process cannot spawn anything before it is in the
+     * job; inherit handles so stdin/stdout/stderr pass straight through. */
+    if (!CreateProcessA(NULL, cmdline, NULL, NULL, TRUE, CREATE_SUSPENDED,
+                        NULL, NULL, &si, &pi)) {
+        if (job) CloseHandle(job);
+        return system(cmd);   /* fail open: behave exactly as before the fix */
+    }
+    if (job) AssignProcessToJobObject(job, pi.hProcess);
+    ResumeThread(pi.hThread);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    if (job) CloseHandle(job);
+    return (int)code;
+}
+#else  /* POSIX */
+#include <poll.h>
+
+/* Set by wyn_run_program for the duration of the run; read by the handler. */
+static volatile sig_atomic_t g_wyn_run_child = 0;
+
+static void wyn_run_signal_forward(int sig) {
+    pid_t p = (pid_t)g_wyn_run_child;
+    if (p > 0) kill(p, sig);
+    /* Die the same way we were asked to, so our own wait status is 128+N. */
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+#ifndef __linux__
+/* Supervisor-only: exists purely so SIGCHLD interrupts poll() promptly. */
+static void wyn_sup_sigchld(int sig) { (void)sig; }
+#endif
+
+static int wyn_run_program(const char* cmd) {
+    int pfd[2] = {-1, -1};
+#ifndef __linux__
+    /* Death-detector pipe: only WE hold the write end, so EOF on the read end
+     * means this process is gone - by SIGKILL, panic, or anything else. */
+    if (pipe(pfd) != 0) { pfd[0] = pfd[1] = -1; }
+#endif
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        if (pfd[0] >= 0) { close(pfd[0]); close(pfd[1]); }
+        return system(cmd) == 0 ? 0 : 1;   /* fail open */
+    }
+
+    if (pid == 0) {
+#ifdef __linux__
+        /* Kernel-enforced: when our parent dies, we get SIGKILL. */
+        prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
+        /* Close the fork/prctl race: if the parent died in between, PDEATHSIG
+         * was armed too late and would never fire, so bail out now. */
+        if (getppid() == 1) _exit(0);
+        execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
+        _exit(127);
+#else
+        /* --- supervisor --- */
+        if (pfd[1] >= 0) close(pfd[1]);
+        /* Survive the signals aimed at `wyn` so we live long enough to kill the
+         * program and report its status. */
+        signal(SIGINT, SIG_IGN);
+        signal(SIGTERM, SIG_IGN);
+        signal(SIGHUP, SIG_IGN);
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = wyn_sup_sigchld;
+        sa.sa_flags = 0;              /* no SA_RESTART: must interrupt poll() */
+        sigaction(SIGCHLD, &sa, NULL);
+
+        pid_t kid = fork();
+        if (kid < 0) _exit(127);
+        if (kid == 0) {
+            if (pfd[0] >= 0) close(pfd[0]);
+            signal(SIGINT, SIG_DFL);
+            signal(SIGTERM, SIG_DFL);
+            signal(SIGHUP, SIG_DFL);
+            signal(SIGCHLD, SIG_DFL);
+            execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
+            _exit(127);
+        }
+        for (;;) {
+            int st = 0;
+            pid_t r = waitpid(kid, &st, WNOHANG);
+            if (r == kid) {
+                /* Relay faithfully: re-raise the signal that killed the program
+                 * so `wyn`'s waitpid sees WIFSIGNALED with the same number. */
+                if (WIFSIGNALED(st)) {
+                    int s = WTERMSIG(st);
+                    signal(s, SIG_DFL);
+                    raise(s);
+                    _exit(128 + s);
+                }
+                _exit(WIFEXITED(st) ? WEXITSTATUS(st) : 1);
+            }
+            if (r < 0 && errno != EINTR) _exit(1);
+            if (pfd[0] < 0) { continue; }   /* no pipe: just wait */
+            struct pollfd p; p.fd = pfd[0]; p.events = POLLIN; p.revents = 0;
+            /* 100ms cap only covers the narrow lost-wakeup window where SIGCHLD
+             * lands between the waitpid above and poll() below; the normal case
+             * returns immediately via EINTR. */
+            int pr = poll(&p, 1, 100);
+            if (pr > 0) {
+                /* Parent gone (EOF/HUP) -> take the program with us. */
+                kill(kid, SIGKILL);
+                int st2 = 0;
+                waitpid(kid, &st2, 0);
+                _exit(128 + SIGKILL);
+            }
+        }
+#endif
+    }
+
+    /* --- parent (wyn) --- */
+    if (pfd[0] >= 0) close(pfd[0]);   /* only the supervisor reads */
+    g_wyn_run_child = (sig_atomic_t)pid;
+    void (*old_int)(int)  = signal(SIGINT,  wyn_run_signal_forward);
+    void (*old_term)(int) = signal(SIGTERM, wyn_run_signal_forward);
+    void (*old_hup)(int)  = signal(SIGHUP,  wyn_run_signal_forward);
+
+    int status = 0;
+    pid_t r;
+    do { r = waitpid(pid, &status, 0); } while (r < 0 && errno == EINTR);
+
+    signal(SIGINT,  old_int);
+    signal(SIGTERM, old_term);
+    signal(SIGHUP,  old_hup);
+    g_wyn_run_child = 0;
+    /* Closing last keeps the supervisor alive until the program is reaped, so a
+     * normal exit never trips the EOF kill path. */
+    if (pfd[1] >= 0) close(pfd[1]);
+
+    if (r < 0) return 1;
+    if (WIFEXITED(status))   return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return 1;
+}
+#endif  /* _WIN32 */
 
 void init_lexer(const char* source);
 void init_parser();
@@ -2642,19 +2857,14 @@ int main(int argc, char** argv) {
 #endif
                     }
                     for (int i = 3; i < argc; i++) { strcat(run_cmd, " "); strcat(run_cmd, argv[i]); }
-                    // system() returns the raw WAIT STATUS; returning it from
+                    // wyn_run_program supervises the child (signal forwarding,
+                    // reaping, no orphan on kill -9) and already returns the
+                    // decoded status - the exit code, or 128+N on a signal.
+                    // The old system() here returned the raw WAIT STATUS, which
                     // main truncates to its low byte, so exit(1) programs
                     // reported 0 on every cached (no-recompile) run - CI
                     // wrapping `wyn run` never saw the failure.
-                    { int _ws = system(run_cmd);
-#ifdef _WIN32
-                      return _ws;
-#else
-                      if (WIFEXITED(_ws)) return WEXITSTATUS(_ws);
-                      if (WIFSIGNALED(_ws)) return 128 + WTERMSIG(_ws);
-                      return _ws ? 1 : 0;
-#endif
-                    }
+                    return wyn_run_program(run_cmd);
                 }
             }
         }
@@ -2862,7 +3072,9 @@ int main(int argc, char** argv) {
                             rc += snprintf(run_cmd + rc, sizeof(run_cmd) - rc, " %s", argv[i]);
                         }
                     }
-                    int result = system(run_cmd);
+                    // Supervised: forwards signals, reaps, leaves no orphan.
+                    // Already returns the decoded status (exit code / 128+N).
+                    int result = wyn_run_program(run_cmd);
                     free(source);
                     if (!keep_artifacts) {
                         // Keep <file>.out: the incremental fast-path above reuses it
@@ -2874,7 +3086,6 @@ int main(int argc, char** argv) {
                         unlink(c_path);
                     }
                     unlink("wyn_cc_err.txt");
-                    if (WIFEXITED(result)) return WEXITSTATUS(result);
                     return result;
                 }
                 // TCC failed - fall through to system cc
@@ -3169,7 +3380,10 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        result = system(run_cmd);
+        // Supervised child: SIGINT/SIGTERM/SIGHUP are forwarded, the child is
+        // reaped (no zombie), and it does not survive us being killed. Returns
+        // the decoded status already - the exit code, or 128+N on a signal.
+        result = wyn_run_program(run_cmd);
         free(source);
         // Cleanup artifacts unless --debug. Keep <file>.out: the incremental
         // fast-path at the top of `run` reuses it when it's newer than the source,
@@ -3182,15 +3396,7 @@ int main(int argc, char** argv) {
             snprintf(c_path, 512, "%s.c", file);
             unlink(c_path);
         }
-        // Extract actual exit code from system() result
-#ifdef _WIN32
         return result;
-#else
-        if (WIFEXITED(result)) {
-            return WEXITSTATUS(result);
-        }
-        return result;
-#endif
     }
     
     // Parse optimization flags

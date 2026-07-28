@@ -397,6 +397,7 @@ float input_float();
 char* input_line();
 void printf_wyn(const char* format, ...);
 char* string_format(const char* format, ...);
+char* wyn_str_format(const char* format, int argc, ...);
 double sin_approx(double x);
 double cos_approx(double x);
 double pi_const();
@@ -796,11 +797,21 @@ void System_load_env(const char* path);
 
 // Inline codegen helpers
 static inline char* int_to_string(long long n) { static char __buf[32]; snprintf(__buf, sizeof(__buf), "%lld", n); return __buf; }
-// Canonical float text (matches wyn_format_float in the full runtime):
-// integral floats keep a trailing ".0" so they don't read as ints.
+// Canonical float text - MUST stay byte-identical to wyn_format_float in
+// wyn_runtime.h (slim and full builds have to print the same thing). Shortest
+// round-trip: try 15/16/17 significant digits, take the first that strtod's
+// back to the same double; integral floats keep a trailing ".0" so they don't
+// read as ints. The old "%g" here was 6 sig-digits - even lossier than the full
+// runtime's old "%.15g" (1.0/3.0 printed "0.333333").
 static inline char* float_to_string(double n) {
     static char __buf[64];
-    int __n = snprintf(__buf, sizeof(__buf), "%g", n);
+    int __n = 0;
+    for (int __p = 15; __p <= 17; __p++) {
+        __n = snprintf(__buf, sizeof(__buf), "%.*g", __p, n);
+        if (__n <= 0 || (size_t)__n >= sizeof(__buf)) break;
+        if (strtod(__buf, NULL) == n) break;
+        if (!(n == n) || n > 1.7976931348623157e308 || n < -1.7976931348623157e308) break;
+    }
     if (__n > 0 && (size_t)__n + 2 < sizeof(__buf)
         && !strchr(__buf, '.') && !strchr(__buf, 'e') && !strchr(__buf, 'E')
         && !strchr(__buf, 'n') && !strchr(__buf, 'i')) {

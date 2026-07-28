@@ -10,6 +10,10 @@ jobs:
   build-and-test:
     name: Build & Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Backstop only. Every individual test now has its own watchdog (perl alarm),
+    # so this should never trigger; if it does, something escaped the watchdogs.
+    # Without it a wedged suite burns the full 6h default.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -74,14 +78,37 @@ jobs:
           if exist smoke.exe ( .\smoke.exe ) else if exist smoke ( .\smoke ) else ( echo ERROR: binary not found && exit /b 1 )
         shell: cmd
 
-      - name: Run test suite (Unix)
+      # THE FULL SUITE. `make test` is the only thing that drives tests/errors/
+      # (40+ negative/behavioral gates), the golden-C snapshots, GPU, bindgen,
+      # cpkg, sqlite, pkg, LSP and the fuzz smoke. CI used to run only
+      # run_bdd.sh + run_tests_parallel.sh, so none of that was gated - which is
+      # how tests/errors/run_channel_deadlock_test.sh shipped failing
+      # deterministically at the v1.20.0 tag while the changelog claimed the
+      # "full suite" was green. Never narrow this back to run_bdd.sh alone.
+      #
+      # `make test` already runs run_bdd.sh AND (new) the allowlist-gated stdlib
+      # suite, so neither gets its own step here - that would just double-run
+      # them. The only things still needing separate steps are the
+      # coroutine-substrate rerun (same suite, different env) and the legacy
+      # parallel runner.
+      - name: Run full test suite - make test (Unix)
         if: runner.os != 'Windows'
-        run: bash tests/run_tests_parallel.sh
+        run: make test
         shell: bash
 
-      - name: Run expect + regression tests (Unix)
+      # RESOURCE gate, not a behavior gate: a concurrent program that is merely
+      # WAITING must not burn CPU. This cannot live in tests/regression/ because
+      # the `// EXPECT:` runner only compares stdout, and it is exactly the kind
+      # of regression that stays invisible in a functional suite - the scheduler
+      # shipped for months with three spin sites that each burned ~a core (up to
+      # 357% CPU on one) while every test passed.
+      #
+      # Measures cumulative child CPU via getrusage(RUSAGE_CHILDREN) /
+      # GetProcessTimes (scripts/testing/cpu_probe.c) - never %CPU, which is a
+      # decaying average and has produced wrong diagnoses on this codebase twice.
+      - name: Idle-CPU gate - waiting programs must not spin (Unix)
         if: runner.os != 'Windows'
-        run: bash tests/run_bdd.sh
+        run: bash scripts/integration_gates.sh idle-cpu
         shell: bash
 
       - name: Run suite on the coroutine async substrate (W8, Unix)
@@ -92,11 +119,82 @@ jobs:
         run: WYN_ASYNC_CORO=1 bash tests/run_bdd.sh
         shell: bash
 
+      # NOTE: this runner reads tests/test_list.txt, which is NOT checked in, so
+      # it currently reports "0 pass, 0 fail" and gates nothing. Kept because it
+      # is harmless and becomes useful the moment the list is regenerated; do not
+      # mistake its green tick for coverage. Real coverage is `make test` +
+      # the stdlib step above.
+      - name: Run legacy parallel runner (Unix, currently a no-op)
+        if: runner.os != 'Windows'
+        run: bash tests/run_tests_parallel.sh
+        shell: bash
+
       - name: Run test suite (Windows)
         if: runner.os == 'Windows'
         run: |
           ./wyn.exe build tests/smoke/wintest.wyn -o wintest
           ./wintest.exe
+        shell: bash
+
+      # ---------------------------------------------------------------------
+      # Windows: `make test` as a whole CANNOT run here, so gate the portable
+      # part of it explicitly instead of pretending the platform is covered.
+      #
+      # What is gated below (all host-independent):
+      #   * golden-C snapshots      - codegen emits no host-conditional C
+      #     (no _WIN32/__APPLE__ in src/codegen*.c or in any .c.golden), and the
+      #     runner already normalizes the embedded source path and strips CR.
+      #   * the check-only tests/errors/ suites - they only run `wyn check` and
+      #     assert on diagnostic text, so no exec/signal/fork behavior is involved.
+      #
+      # What is NOT gated on Windows, and why (deliberate, not an oversight):
+      #   * tests/errors/ suites that execute compiled binaries and assert on
+      #     exit codes/signals (run_channel_deadlock, run_select_deadlock,
+      #     run_map_missing_key, run_crucible_p0, ...). They depend on POSIX
+      #     signal-to-exit-code mapping (rc 128+N) and on the perl-alarm
+      #     watchdog killing a process group; both differ on Windows.
+      #   * tests/pkg/*        - needs `git` + file:// remotes and symlinks.
+      #   * tests/cpkg/*       - needs pkg-config / a Unix `cc -x c -` probe.
+      #   * tests/gpu/*        - Metal/host-GPU probing.
+      #   * tests/fuzz/*       - generator + POSIX watchdog.
+      #   * tests/stdlib/*     - same watchdog/exit-code dependency.
+      #   * run_bdd.sh         - same.
+      # Bindgen, the FFI pipeline and LSP already have dedicated Windows steps
+      # further down, which is why they are absent from this list.
+      - name: Portable subset of make test (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          set -uo pipefail
+          # Fail loudly if a prerequisite is missing rather than skipping quietly.
+          command -v perl >/dev/null 2>&1 || { echo "perl not on PATH - cannot run the portable suite subset"; exit 1; }
+
+          export WYN=./wyn.exe
+          rc=0
+          run_suite() {
+            echo "=== $1 ==="
+            # No pipe here: `bash "$1"` is the last command, so $? is its own
+            # exit status (a pipeline would report the tail's status instead).
+            if bash "$1"; then
+              echo "--- PASS $1"
+            else
+              echo "--- FAIL $1 (rc=$?)"
+              rc=1
+            fi
+          }
+
+          run_suite tests/golden/run_golden_tests.sh
+          run_suite tests/errors/run_removed_syntax_test.sh
+          run_suite tests/errors/run_checker_soundness_test.sh
+          run_suite tests/errors/run_cross_type_cmp_test.sh
+          run_suite tests/errors/run_struct_eq_test.sh
+          run_suite tests/errors/run_unterminated_string_test.sh
+          run_suite tests/errors/run_empty_radix_literal_test.sh
+
+          if [ "$rc" -ne 0 ]; then
+            echo "Windows portable subset: FAILURES above"
+            exit 1
+          fi
+          echo "Windows portable subset: all PASS"
         shell: bash
 
       # Bindgen shells out to `cc -E`; the Unix jobs cover it via `make test`, but

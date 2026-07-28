@@ -1,15 +1,36 @@
 fn main() -> int {
     // === NET ===
     Test.init("Net Module")
-    // Can't test full TCP without a server, but verify functions exist
-    var sock = Net.connect("httpbin.org", 80)
+    // The comment here used to read "can't test full TCP without a server", and
+    // the test connected to httpbin.org:80 to work around that. We CAN be the
+    // server: Http.serve gives a listening socket in-process, so the whole
+    // connect/send/recv/close path is exercised on 127.0.0.1 with no external
+    // dependency. That matters - this test was never allowlisted, it just got
+    // lucky in the runs the allowlist was derived from, and it was observed
+    // hanging for the full 60s watchdog waiting on the remote host.
+    var port = 18781
+    var srv = Http.serve(port)
+    Test.assert(srv > 0, "local server listens")
+
+    var sock = Net.connect("127.0.0.1", port)
     Test.assert(sock > 0, "Net.connect returns socket")
-    var sent = Net.send(sock, "GET / HTTP/1.0\r\nHost: httpbin.org\r\n\r\n")
+    var sent = Net.send(sock, "GET / HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
     Test.assert(sent > 0, "Net.send returns bytes")
+
+    // Accept and reply, then close the server side. Http.respond intentionally
+    // leaves the fd open (the handler loop owns it - see Http_respond in
+    // src/wyn_runtime.h); with no handler loop, closing here is what lets the
+    // client's recv return instead of blocking for a hangup that never comes.
+    var req = Http.accept(srv)
+    var cfd = Http.fd(req)
+    Http.respond(cfd, 200, "text/plain", "hello from wyn")
+    Net.close(cfd)
+
     var resp = Net.recv(sock)
     Test.assert(resp.len() > 0, "Net.recv returns data")
     Test.assert(resp.contains("HTTP"), "response contains HTTP")
     Net.close(sock)
+    Http.close_server(srv)
     Test.summary()
     
     // === JSON ===

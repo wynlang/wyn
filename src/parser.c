@@ -194,12 +194,38 @@ static bool stmt_made_no_progress(const char* before) {
     return true;
 }
 
+// Keywords that can only START A STATEMENT, never an expression. A `?` followed
+// by one of these is the error-propagation operator, not a ternary - even though
+// the keyword starts with a letter and so "looks like a value".
+// Deliberately excludes keywords that CAN open an expression (if/match/spawn/
+// not/true/false/None/Some/await/...) so `c ? if a {1} else {2} : 3` still parses.
+static bool word_is_stmt_only_keyword(const char* p) {
+    static const char* kw[] = {"return", "var", "let", "const", "while", "for",
+        "break", "continue", "fn", "struct", "enum", "impl", "trait", "import",
+        "use", "type", "else", "defer", "pub", "mod", "test", NULL};
+    for (int i = 0; kw[i]; i++) {
+        size_t n = strlen(kw[i]);
+        if (strncmp(p, kw[i], n) != 0) continue;
+        char after = p[n];
+        // Whole-word match only: `returned` is an identifier, `return` is not.
+        if ((after >= 'a' && after <= 'z') || (after >= 'A' && after <= 'Z') ||
+            (after >= '0' && after <= '9') || after == '_') continue;
+        return true;
+    }
+    return false;
+}
+
 // Check if the token after current looks like a value (for ternary ? disambiguation)
 static bool check_next_is_value(void) {
     if (!parser.current.start) return false;
     const char* p = parser.current.start + parser.current.length;
     while (*p && (*p == ' ' || *p == '\t')) p++;
     if (!*p) return false;
+    // `foo()? return Ok(x)` on ONE line: the `?` is try, not a ternary. Without
+    // this the parser demanded a `:` and reported "Expected an expression" at the
+    // start of the whole line (tests/stdlib/test_v16_final.wyn:15). Multi-line
+    // spellings already worked because the newline stopped the scan below.
+    if (word_is_stmt_only_keyword(p)) return false;
     return (*p >= '0' && *p <= '9') || *p == '"' || *p == '\'' || *p == '(' || *p == '-' ||
            (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_';
 }
@@ -313,6 +339,9 @@ static Expr* primary() {
     if (match(TOKEN_CHANNEL)) {
         Expr* expr = alloc_expr();
         expr->type = EXPR_CHANNEL;
+        // Keep the `channel` keyword token so the checker can point a
+        // capacity diagnostic at the right line.
+        expr->token = parser.previous;
         expr->channel.capacity = NULL;
         expect(TOKEN_LPAREN, "Expected '(' after 'channel'");
         if (!check(TOKEN_RPAREN)) {
@@ -537,11 +566,66 @@ static Expr* primary() {
         // bare identifier is legitimately followed by `=>`. Lambdas always
         // parenthesize their params: `(x) => expr`.
 
+        // GENERIC struct literal: `Box<int>{val: 7}`.
+        //
+        // Without this, `<` parsed as less-than and `{` as a hashmap literal,
+        // producing a three-error cascade in which TWO errors named constructs
+        // the user never wrote ("chained comparison is not supported",
+        // "HashMap keys must be strings", "Expected '}' after hashmap
+        // elements"). `Box{val: 7}` (inferred) always worked.
+        //
+        // Disambiguation is the standard bounded lookahead: speculatively scan a
+        // balanced `<...>` type-argument list and require the very next token to
+        // be `{`. A real comparison (`a < b`) cannot end that way, so `a < b`,
+        // `a<b, c>d`, and shifts are all untouched - on any mismatch the scan
+        // rewinds and the comparison path runs exactly as before.
+        //
+        // The type arguments are then DISCARDED: struct generics are already
+        // monomorphized from the field values (`Box{val: 7}` infers T=int), so
+        // `Box<int>{val: 7}` lowers to the same EXPR_STRUCT_INIT. The explicit
+        // arguments are accepted as documentation, not as a separate
+        // instantiation path - which keeps the change to the parser alone.
+        if (parser.allow_struct_init && check(TOKEN_LT) &&
+            name.start[0] >= 'A' && name.start[0] <= 'Z') {
+            extern void save_lexer_state(void);
+            extern void restore_lexer_state(void);
+            extern void discard_lexer_state(void);
+            save_lexer_state();
+            save_parser_state();
+
+            bool is_generic_struct_lit = false;
+            advance();                 // consume '<'
+            int depth = 1;             // nesting of < >
+            int guard = 0;             // bound the scan; a type-arg list is short
+            while (depth > 0 && guard++ < 64 && !check(TOKEN_EOF)) {
+                if (check(TOKEN_LT)) depth++;
+                else if (check(TOKEN_GT)) depth--;
+                // A statement/expression separator can never appear inside a
+                // type-argument list - bail out rather than scan past it.
+                else if (check(TOKEN_SEMI) || check(TOKEN_LBRACE) ||
+                         check(TOKEN_RBRACE) || check(TOKEN_RPAREN)) break;
+                advance();
+            }
+            // Balanced, and the token right after '>' is '{' on the same line.
+            if (depth == 0 && check(TOKEN_LBRACE) &&
+                parser.previous.line == parser.current.line) {
+                is_generic_struct_lit = true;
+            }
+
+            if (is_generic_struct_lit) {
+                discard_lexer_state();   // commit: we are positioned at '{'
+                discard_parser_state();
+            } else {
+                restore_parser_state();  // not a generic literal: rewind fully
+                restore_lexer_state();
+            }
+        }
+
         // Check for struct initialization: TypeName { field: value, ... }
         // Only parse as struct init if identifier starts with uppercase AND next is {
         if (is_struct_init_pattern() && name.start[0] >= 'A' && name.start[0] <= 'Z') {
             advance(); // consume '{'
-            
+
             Expr* expr = alloc_expr();
             expr->type = EXPR_STRUCT_INIT;
             expr->struct_init.type_name = name;
@@ -4747,7 +4831,44 @@ static Stmt* parse_match_statement() {
 // T2.5.2: Union Type Support - Type System Agent addition
 static Expr* parse_type() {
     Expr* base_type;
-    
+
+    // Handle map/dict types: {K: V}
+    //
+    // The map LITERAL is `{"a": 1}` and inference worked (`m = {"a": 1}`), but
+    // the ANNOTATION `m: {string: int} = {"a": 1}` did not parse at all - a
+    // language pitched as "feels like Python" could not annotate a dict. This
+    // is the brace analogue of the `[T]` array form handled just below.
+    //
+    // Desugars to the already-supported `HashMap<K, V>` shape (EXPR_CALL with a
+    // HashMap callee), so every downstream consumer - checker's TYPE_MAP
+    // mapping, codegen's WynHashMap* selection, struct fields, params, returns -
+    // works unchanged with zero new surface. `{K: V}` and `HashMap<K, V>` are
+    // therefore exactly the same type; `{K: V}` is the idiomatic spelling.
+    if (match(TOKEN_LBRACE)) {
+        Expr* key_type = parse_type();
+        expect(TOKEN_COLON, "Expected ':' between map key and value types (map types are written {K: V}, e.g. {string: int})");
+        Expr* value_type = parse_type();   // recursive: nests as {string: [int]}
+        expect(TOKEN_RBRACE, "Expected '}' after map value type");
+
+        base_type = alloc_expr();
+        base_type->type = EXPR_CALL;
+        Expr* map_name = alloc_expr();
+        map_name->type = EXPR_IDENT;
+        // Static storage: the token's `start` must outlive the parse (tokens
+        // normally point into the source buffer).
+        static const char kHashMapName[] = "HashMap";
+        Token map_tok = { TOKEN_IDENT, kHashMapName, 7, parser.previous.line };
+        map_name->token = map_tok;
+        base_type->call.callee = map_name;
+        base_type->call.args = malloc(sizeof(Expr*) * 2);
+        base_type->call.args[0] = key_type;
+        base_type->call.args[1] = value_type;
+        base_type->call.arg_count = 2;
+        // Fall through to the shared `|` union / `?` optional suffix handling
+        // below so `{string: int}?` and unions compose.
+        goto type_suffixes;
+    }
+
     // Handle tuple types: (T1, T2, ...)
     if (match(TOKEN_LPAREN)) {
         Expr* first = parse_type();
@@ -4864,7 +4985,8 @@ static Expr* parse_type() {
         fprintf(stderr, "Error at line %d: Expected type name\n", parser.current.line);
         return NULL;
     }
-    
+
+type_suffixes:
     // Check for union type with '|' syntax (T | U | V)
     if (match(TOKEN_PIPE)) {
         Expr* union_expr = alloc_expr();

@@ -182,13 +182,27 @@ debug-memory: CFLAGS += -DDEBUG_MEMORY -fsanitize=address -g
 debug-memory: wyn
 	@echo "Built with memory debugging enabled"
 
-# Run the test suite: the assertion-backed runner CI uses (run_bdd.sh),
-# covering tests/expect/ + tests/regression/ with `// EXPECT:` checks.
+# THE full test suite - and, as of 2026-07, what CI actually runs on every PR
+# (Linux + macOS-arm64 + macOS-x64). It drives, in order:
+#   * run_bdd.sh          - tests/expect/ + tests/regression/ `// EXPECT:` checks
+#   * golden-C snapshots, GPU, bindgen, cpkg, sqlite, pkg, pkg-audit, LSP
+#   * tests/errors/       - 40+ negative / behavioral / soundness gates
+#   * fuzz smoke
+#   * tests/stdlib/       - allowlist-gated (see the end of the recipe)
+#
+# Do NOT let CI drift back to running only run_bdd.sh. It did exactly that until
+# 2026-07, so everything in the list above except run_bdd.sh was ungated - which
+# is how tests/errors/run_channel_deadlock_test.sh shipped failing at the
+# v1.20.0 tag while the changelog claimed the "full suite" was green.
+#
+# Each line is a separate recipe command, so make stops at the FIRST failing
+# suite and exits nonzero. Consequence worth knowing: later suites are then not
+# run at all, so fix failures top-down.
+#
 # (The old test_unit/test_integration/test_stdlib/... targets referenced C unit
 # sources and shell scripts that no longer exist; they are gone. The separate
 # run_tests_parallel.sh needs a tests/test_list.txt that isn't in the tree, so
-# it's not wired into the default target - run it manually if you regenerate
-# the list.)
+# it's not wired into this target - run it manually if you regenerate the list.)
 test: wyn
 	@echo "=== Running assertion tests (run_bdd.sh) ==="
 	@WYN=./wyn bash tests/run_bdd.sh
@@ -244,6 +258,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_struct_eq_test.sh
 	@echo "=== Running cross-type comparison soundness test ==="
 	@WYN=./wyn bash tests/errors/run_cross_type_cmp_test.sh
+	@echo "=== Running data-race + file-IO soundness test ==="
+	@WYN=./wyn bash tests/errors/run_race_and_io_soundness_test.sh
 	@echo "=== Running struct-field validation test ==="
 	@WYN=./wyn bash tests/errors/run_struct_field_test.sh
 	@echo "=== Running map missing-key panic test ==="
@@ -272,6 +288,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_crucible_p0_test.sh
 	@echo "=== Running CLI DX test ==="
 	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
+	@echo "=== Running wyn-run orphan-child test ==="
+	@WYN=./wyn bash tests/errors/run_orphan_child_test.sh
 	@echo "=== Running wyn ui coverage test ==="
 	@WYN=./wyn bash tests/errors/run_ui_coverage_test.sh
 	@echo "=== Running install-layout canary ==="
@@ -280,8 +298,19 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_unsupported_field_type_test.sh
 	@echo "=== Running Task.select diagnostic gate ==="
 	@WYN=./wyn bash tests/errors/run_task_select_diagnostic_test.sh
+	@echo "=== Running HTTP server concurrent-load gate ==="
+	@WYN=./wyn bash tests/errors/run_http_server_load_test.sh
 	@echo "=== Running fuzz smoke (seed 1) ==="
 	@WYN=./wyn bash tests/fuzz/run_fuzz.sh 1 60
+	# tests/stdlib/ (68 files) used to be run by NOTHING - not run_bdd.sh (which
+	# only walks expect/ + regression/), not this target, and not
+	# run_tests_parallel.sh (its tests/test_list.txt isn't in the tree, so it
+	# executes zero tests). It is gated through a known-failure ALLOWLIST
+	# (tests/stdlib/known_failures.txt) because the suite is not clean yet: any
+	# NEW breakage fails, the listed entries are a visible, shrinking debt list.
+	# Runs LAST because it is the slowest and the only non-deterministic part.
+	@echo "=== Running stdlib suite (allowlist-gated) ==="
+	@WYN=./wyn bash tests/stdlib/run_stdlib_tests.sh
 
 # Alias kept for muscle memory.
 test_bdd: test
