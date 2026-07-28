@@ -1683,8 +1683,30 @@ int main(int argc, char** argv) {
         // failures were reported with a SIBLING's error text, naming a file the
         // user was not building. That is worse than no diagnostic, because it
         // sends you after the wrong source file.
-        char cc_err_path[256];
-        snprintf(cc_err_path, sizeof(cc_err_path), "/tmp/wyn_cc_err.%ld.txt", (long)getpid());
+        // The directory must be resolved per platform: Windows cmd.exe has no
+        // /tmp, and a `2>` to a non-existent path fails the whole command line
+        // with "The system cannot find the path specified." before the compiler
+        // ever runs - which is exactly how the first cut of this broke the
+        // Windows smoke test.
+        char cc_err_path[512];
+#ifdef _WIN32
+        const char* _tmpdir = getenv("TEMP");
+        if (!_tmpdir || !_tmpdir[0]) _tmpdir = getenv("TMP");
+        if (!_tmpdir || !_tmpdir[0]) _tmpdir = ".";
+#else
+        const char* _tmpdir = getenv("TMPDIR");
+        if (!_tmpdir || !_tmpdir[0]) _tmpdir = "/tmp";
+#endif
+        size_t _tdl = strlen(_tmpdir);
+        int _has_sep = _tdl > 0 && (_tmpdir[_tdl-1] == '/' || _tmpdir[_tdl-1] == '\\');
+        snprintf(cc_err_path, sizeof(cc_err_path), "%s%swyn_cc_err.%ld.txt",
+                 _tmpdir, _has_sep ? "" : "/", (long)getpid());
+        // Quoted for the shell, since %TEMP% is routinely
+        // C:\Users\<name>\AppData\Local\Temp - a path with spaces in it. Kept as
+        // one token so the FFI splice below, which looks for " 2>", still finds
+        // the redirect and inserts its -l flags before it.
+        char cc_err_redir[544];
+        snprintf(cc_err_redir, sizeof(cc_err_redir), "\"%s\"", cc_err_path);
         if (result != 0) {
 #ifdef __APPLE__
             const char* plibs = "-lpthread -lm";
@@ -1740,9 +1762,9 @@ int main(int argc, char** argv) {
                     "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>%s",
 #endif
 #ifdef __APPLE__
-                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, app_link, cc_err_path
+                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, app_link, cc_err_redir
 #else
-                    cc, _opt, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, cc_err_path
+                    cc, _opt, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, cc_err_redir
 #endif
                     );
                 // Splice FFI link flags in at the END of the link line (before any
