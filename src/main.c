@@ -1690,7 +1690,14 @@ int main(int argc, char** argv) {
 #elif defined(__APPLE__)
                     "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
 #else
-                    "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
+                    // Capture the C compiler's stderr, do NOT discard it. This
+                    // branch used to end in `2>/dev/null`, while the __APPLE__
+                    // branch above redirected to a file - so a build failure on
+                    // Linux printed "✗ Build failed" with NOTHING else, because
+                    // the "Compiler output:" reader below found no file. That is
+                    // exactly what a user (and a CI log) needs, and it was
+                    // silently unavailable on the platform most CI runs on.
+                    "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
 #endif
 #ifdef __APPLE__
                     cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, app_link
