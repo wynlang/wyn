@@ -54,8 +54,14 @@ for wyn_src in "$DIR"/*.wyn; do
     # Build in a temp copy so we never litter tests/golden/ with artifacts.
     work="$TMP/$base.wyn"
     cp "$wyn_src" "$work"
-    if ! "$WYN" build "$work" --debug >/dev/null 2>&1 || [ ! -f "$work.c" ]; then
-        echo "  FAIL  $base - wyn build failed"
+    # Capture the build output instead of discarding it. This used to be
+    # >/dev/null 2>&1, so a genuine cross-platform build failure (22_spawn_await
+    # on windows-latest, the first time this suite was gated there) reported only
+    # "wyn build failed" with no cause - undiagnosable from a CI log, which is
+    # the one place you cannot attach a debugger.
+    if ! "$WYN" build "$work" --debug > "$TMP/$base.build.log" 2>&1 || [ ! -f "$work.c" ]; then
+        echo "  FAIL  $base - wyn build failed:"
+        sed 's/^/          /' "$TMP/$base.build.log" | head -25
         FAIL=$((FAIL + 1))
         continue
     fi
@@ -80,12 +86,22 @@ for wyn_src in "$DIR"/*.wyn; do
         continue
     fi
 
-    if cmp -s "$TMP/$base.norm.c" "$golden"; then
+    # Strip CR from the SNAPSHOT side too, not just the generated side. On a
+    # Windows runner git checks the .golden files out with CRLF (there is no
+    # .gitattributes pinning them to LF), so comparing a CR-stripped generated
+    # file against a CRLF snapshot made all 30 snapshots "differ" on line
+    # endings alone - a whole-file diff with byte-identical content. That is what
+    # happened the first time this suite was gated on windows-latest. Normalizing
+    # both sides is the robust fix: it works regardless of the checkout's
+    # autocrlf setting, so nobody has to remember to configure git.
+    sed -e 's|\r$||' "$golden" > "$TMP/$base.golden.norm"
+
+    if cmp -s "$TMP/$base.norm.c" "$TMP/$base.golden.norm"; then
         echo "  ok    $base"
         PASS=$((PASS + 1))
     else
         echo "  FAIL  $base - generated C differs from snapshot:"
-        diff -u "$golden" "$TMP/$base.norm.c" | head -40 | sed 's/^/        /'
+        diff -u "$TMP/$base.golden.norm" "$TMP/$base.norm.c" | head -40 | sed 's/^/        /'
         FAIL=$((FAIL + 1))
     fi
 done

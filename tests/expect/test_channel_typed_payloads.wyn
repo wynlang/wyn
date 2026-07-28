@@ -1,7 +1,7 @@
 // EXPECT: 42
 // EXPECT: hello
 // EXPECT: 3.14
-// EXPECT: 4.64
+// EXPECT: 4.640000000000001
 // EXPECT: done
 // Channels used to be untyped int64 pipes: send("hello") came back as a
 // pointer number, send(3.14) truncated to 3. The checker now infers a

@@ -1,0 +1,72 @@
+// Generic struct literals: `Box<int>{val: 7}` must parse, and
+// `b: Box<int> = Box{val: 7}` must not be a spurious type mismatch.
+//
+// Before, `Box<int>{val: 7}` misparsed `<` as less-than and `{` as a hashmap
+// literal, emitting a three-error cascade in which TWO errors named constructs
+// the user never wrote:
+//     chained comparison is not supported - write it as two comparisons ...
+//     HashMap keys must be strings
+//     Expected '}' after hashmap elements
+// and `b: Box<int> = Box{val: 7}` (which parsed fine) was rejected with
+// "Type mismatch / Expected: int, Got: struct" - the annotation was typed as its
+// own type ARGUMENT. Only the fully-inferred `Box{val: 7}` worked.
+//
+// Struct generics monomorphize from the field values, so the explicit type
+// arguments are accepted and then discarded - `Box<int>{val: 7}` and
+// `Box{val: 7}` build the same value. The test pins all four spellings plus the
+// nested and multi-parameter cases.
+//
+// EXPECT: 7
+// EXPECT: hi
+// EXPECT: 42
+// EXPECT: 5
+// EXPECT: k
+// EXPECT: 9
+// EXPECT: 3
+// EXPECT: cmp true true true
+// EXPECT: guard-if ok
+// EXPECT: guard-while 5
+
+struct Box<T> { val: T }
+struct Pair<K, V> { key: K, val: V }
+
+fn main() {
+    // The headline case: explicit type argument on the literal
+    b = Box<int>{val: 7}
+    print(b.val)
+
+    s = Box<string>{val: "hi"}
+    print(s.val)
+
+    // Annotation + inferred literal (was the spurious mismatch)
+    a: Box<int> = Box{val: 42}
+    print(a.val)
+
+    // Annotation + explicit literal
+    c: Box<int> = Box<int>{val: 5}
+    print(c.val)
+
+    // Multiple type parameters
+    p = Pair<string, int>{key: "k", val: 9}
+    print(p.key)
+    print(p.val)
+
+    // Nested type argument: the lookahead must balance `<<` / `>>`
+    n = Box<Box<int>>{val: Box{val: 3}}
+    print(n.val.val)
+
+    // REGRESSION GUARD: the `<` lookahead must not swallow real comparisons.
+    // Uppercase names are exactly the case the generic-literal scan triggers on.
+    A = 1
+    B = 5
+    C = 3
+    print("cmp ${A < B} ${B > C} ${A < B and B > C}")
+
+    // The nastiest shape: uppercase ident, `<`, and a `{` on the SAME line -
+    // but the `{` opens a BLOCK, not a struct literal. The scan requires a
+    // balanced `>` immediately before the `{`, so this stays a comparison.
+    if A < B { print("guard-if ok") }
+    D = 1
+    while D < B { D = D + 1 }
+    print("guard-while ${D}")
+}

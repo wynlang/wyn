@@ -25,6 +25,21 @@ tests/test_codegen
 !tests/*.c
 !tests/*.h
 
+# Compiled test programs. `wyn build tests/regression/x.wyn` drops an
+# extensionless Mach-O/ELF binary next to the source, which the *.out / *.wyn.out
+# rules above do NOT match - a dozen of them showed up as untracked files while
+# staging v1.20.0. Ignore binaries in the test dirs while keeping the sources.
+tests/regression/*
+!tests/regression/*.wyn
+!tests/regression/*.sh
+tests/expect/*
+!tests/expect/*.wyn
+!tests/expect/*.sh
+tests/stdlib/*
+!tests/stdlib/*.wyn
+!tests/stdlib/*.sh
+!tests/stdlib/*.txt
+
 # IDE
 .vscode/
 .idea/

@@ -606,6 +606,52 @@ int is_int_array_var(const char* name) {
     }
     return 0;
 }
+
+// --- WynIntArray opt-in safety ("int-array veto") -------------------------
+//
+// `var xs: [int] = ...` opts the variable into the packed WynIntArray
+// representation (long long*), which is ~2x faster than the generic WynArray
+// (WynValue* of tagged unions) for push/index-heavy loops. But WynIntArray is
+// NOT a drop-in substitute for WynArray: only a handful of operations have a
+// packed lowering (push / sort / len / indexed get, plus `for x in xs`).
+//
+// Historically the opt-in was unconditional, so `var xs: [int] = ...` followed
+// by ANY other operation emitted code that mixed the two representations:
+//   - `xs.map/filter/slice/unique/reverse/join/sum/first/contains(..)`, passing
+//     `xs` to a fn taking [int], `var b = xs`, `print(xs)`, capturing `xs` in a
+//     lambda  -> generic WynArray helper gets a WynIntArray => C TYPE ERROR
+//     *after* `wyn check` said the program was fine (11 distinct shapes).
+//   - `xs[i] = v` -> the index-assign path casts &xs to WynArray* and writes a
+//     16-byte WynValue over a packed 8-byte slot => SILENT WRONG ANSWER +
+//     out-of-bounds write. Strictly worse than the compile error.
+// The inferred spelling `xs = [3,1,2]` was always fine because it stays
+// WynArray, so the two spellings disagreed - the "type-selection by heuristic"
+// family: the store path (declaration) and the load paths (uses) each picked a
+// C type independently and could disagree.
+//
+// Fix: make the two spellings agree BY CONSTRUCTION. A pre-pass walks the AST
+// and vetoes the packed representation for any variable that is used in a way
+// WynIntArray cannot express; a vetoed variable falls back to WynArray, i.e. to
+// exactly the code the inferred spelling already produced (proven-correct
+// path). Perf is preserved for the push/index/sort/len/iterate shapes the
+// optimization was built for, and every other shape becomes correct instead of
+// broken. The veto is keyed on the variable NAME because that is the key
+// is_int_array_var() dispatch already uses.
+static char** int_array_veto_names = NULL;
+static int int_array_veto_count = 0;
+static int int_array_veto_cap = 0;
+void veto_int_array_var(const char* name) {
+    for (int i = 0; i < int_array_veto_count; i++)
+        if (strcmp(int_array_veto_names[i], name) == 0) return;
+    WYN_ENSURE_CAP(int_array_veto_names, int_array_veto_count, int_array_veto_cap);
+    int_array_veto_names[int_array_veto_count++] = strdup(name);
+}
+int is_int_array_vetoed(const char* name) {
+    for (int i = 0; i < int_array_veto_count; i++) {
+        if (strcmp(int_array_veto_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
 void register_str_array_var(const char* name) {
     for (int i = 0; i < str_array_var_count; i++)
         if (strcmp(str_array_var_names[i], name) == 0) return;

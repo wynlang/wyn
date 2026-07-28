@@ -12,7 +12,23 @@ cd "$work"
 export WYN_ROOT="$ROOT"
 
 "$WYN_BIN" add m >/dev/null 2>&1 || { echo "cpkg: FAIL (wyn add m)"; exit 1; }
-grep -q 'extern fn sqrt' packages/m/m.wyn 2>/dev/null || { echo "cpkg: FAIL (no sqrt binding)"; exit 1; }
+if ! grep -q 'extern fn sqrt' packages/m/m.wyn 2>/dev/null; then
+    # Say WHAT bindgen produced, not just that sqrt is absent. This failed on
+    # ubuntu-latest while generating 160 bindings (sqrt included) on macOS, and
+    # "no sqrt binding" alone gave no way to tell whether the header was not
+    # found, parsed to nothing, or parsed to something unexpected - glibc's
+    # math.h differs substantially from the macOS SDK's. This suite had never
+    # been gated on Linux before, so nobody had seen it.
+    echo "cpkg: FAIL (no sqrt binding)"
+    if [ -f packages/m/m.wyn ]; then
+        echo "  m.wyn exists: $(wc -l < packages/m/m.wyn) lines, $(grep -c 'extern fn' packages/m/m.wyn) extern fns"
+        echo "  first 15 bindings:"; grep 'extern fn' packages/m/m.wyn | head -15 | sed 's/^/    /'
+    else
+        echo "  packages/m/m.wyn does NOT exist - bindgen produced no file at all"
+        ls -la packages/m/ 2>/dev/null | sed 's/^/    /' | head -8
+    fi
+    exit 1
+fi
 grep -q '\[ffi\]' wyn.toml 2>/dev/null || { echo "cpkg: FAIL (no [ffi] in wyn.toml)"; exit 1; }
 grep -q 'libs = "m"' wyn.toml 2>/dev/null || { echo "cpkg: FAIL (libm not linked)"; exit 1; }
 

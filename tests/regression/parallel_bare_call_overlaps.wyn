@@ -1,0 +1,48 @@
+// Regression: a BARE call inside `parallel { }` ran SEQUENTIALLY.
+//
+// `parallel { a = spawn slow(100); ... }` (explicit spawn) always overlapped, but
+// `parallel { a = slow(100); ... }` was never dispatched at all: the lowering in
+// codegen_stmt.c only treated `STMT_VAR` whose init was an `EXPR_SPAWN` as a
+// parallel arm, so a plain call fell through to the generic
+// `emit("    "); codegen_stmt(s);` path and executed inline. The block named
+// after parallelism was the only construct in the language that didn't overlap:
+// 4x100ms measured ~407ms instead of ~100ms.
+//
+// Fix: a `STMT_VAR` whose init is a direct `EXPR_CALL` on an `EXPR_IDENT` that
+// names a KNOWN USER FUNCTION (get_function_return_type() != NULL) is wrapped in
+// a synthesized `EXPR_SPAWN` and lowered exactly like the explicit form, so the
+// pack/unpack halves cannot disagree.
+//
+// This test asserts the OVERLAP, not just the result: four 100ms sleeps must
+// finish in well under the ~400ms they take sequentially. The 300ms threshold is
+// deliberately loose (>= 3x the ideal 100ms) so it can't flake on a loaded CI
+// box while still failing hard if the arms serialize again.
+
+fn slow(ms: int) -> int {
+    Time::sleep(ms)
+    return ms
+}
+
+fn main() {
+    t0 = Time::now_millis()
+    parallel {
+        a = slow(100)
+        b = slow(100)
+        c = slow(100)
+        d = slow(100)
+    }
+    elapsed = Time::now_millis() - t0
+
+    // Every arm must still produce its correct value.
+    if a + b + c + d != 400 {
+        println("BAD SUM")
+        return
+    }
+    if elapsed < 300 {
+        println("ok")
+    } else {
+        println("SEQUENTIAL")
+    }
+}
+
+// EXPECT: ok

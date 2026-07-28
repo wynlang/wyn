@@ -194,12 +194,22 @@ int cmd_test(const char* test_dir, int argc, char** argv) {
         if (compile_rc != 0) {
             r.failed++;
             printf("  \033[31m✗\033[0m %s (compile error)\n", files[i]);
-            // Re-run `wyn check` WITHOUT output suppression so the user sees
-            // the actual diagnostics - "(compile error)" alone was a dead end.
+            // Re-run so the user sees the actual diagnostics - "(compile error)"
+            // alone was a dead end.
+            //
+            // Re-run `build`, not `check`. When the two DISAGREE - check passes
+            // and build fails - re-running `check` prints "✓ no errors" and tells
+            // you nothing, which is exactly the dead end this was meant to avoid.
+            // That happened on the ubuntu CI runner with the api/web templates:
+            // `wyn check` was clean and the C compilation was what failed, so the
+            // log showed a green check next to a red test and no cause at all.
+            // `build` reproduces the real failure, including the C compiler's own
+            // errors, and it also covers the check-passes-then-codegen-fails class
+            // this release has been fixing.
 #ifndef _WIN32
             pid_t dp = fork();
             if (dp == 0) {
-                execl(wyn_exe, wyn_exe, "check", files[i], (char*)NULL);
+                execl(wyn_exe, wyn_exe, "build", files[i], (char*)NULL);
                 _exit(127);
             }
             if (dp > 0) { int ds; waitpid(dp, &ds, 0); }

@@ -332,6 +332,12 @@ void codegen_program(Program* prog) {
         }
     }
     
+    // PASS 0: Decide which `[int]`-annotated vars may use the packed
+    // WynIntArray representation. Must run before ANY emission, because the
+    // STMT_VAR type decision consults the result. See the "int-array veto"
+    // block in codegen.c.
+    veto_scan_program(prog);
+
     // PASS 1: Pre-scan to collect all lambdas
     // We need to emit lambda functions before they're used
     // So we do a quick scan to find and generate them first
@@ -1089,6 +1095,21 @@ void codegen_program(Program* prog) {
                     } else if (fn->param_types[j]->type == EXPR_ARRAY) {
                         // Handle array types [type] - pass as WynArray
                         param_type = "WynArray";
+                    } else if (fn->param_types[j]->type == EXPR_CALL &&
+                               fn->param_types[j]->call.callee &&
+                               fn->param_types[j]->call.callee->type == EXPR_IDENT &&
+                               fn->param_types[j]->call.callee->token.length == 7 &&
+                               memcmp(fn->param_types[j]->call.callee->token.start, "HashMap", 7) == 0) {
+                        // `m: {string: int}` (parser-desugared) / `HashMap<K, V>`:
+                        // the forward declaration must agree with the definition
+                        // (codegen_stmt.c), which now emits WynHashMap*.
+                        param_type = "WynHashMap*";
+                    } else if (fn->param_types[j]->type == EXPR_CALL &&
+                               fn->param_types[j]->call.callee &&
+                               fn->param_types[j]->call.callee->type == EXPR_IDENT &&
+                               fn->param_types[j]->call.callee->token.length == 7 &&
+                               memcmp(fn->param_types[j]->call.callee->token.start, "HashSet", 7) == 0) {
+                        param_type = "WynHashSet*";
                     } else if (fn->param_types[j]->type == EXPR_OPTIONAL_TYPE) {
                         // T2.5.1: Optional param. int?/string?/…/Struct? map to the
                         // concrete Option family; otherwise the generic WynOptional*.

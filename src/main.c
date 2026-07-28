@@ -19,6 +19,10 @@ int _fileno(FILE* stream);
 #include <time.h>
 #ifndef _WIN32
 #include <sys/wait.h>
+#include <signal.h>
+#endif
+#ifdef __linux__
+#include <sys/prctl.h>
 #endif
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -107,6 +111,237 @@ int wyn_mkdir_p(const char* path) {
 #endif
     return 0;
 }
+
+/* ===========================================================================
+ * wyn_run_program - run a compiled program as a SUPERVISED child.
+ *
+ * `wyn run` used to launch the compiled binary with system(), which leaves the
+ * child completely unattached to its parent's fate:
+ *   - Ctrl-C / SIGTERM to `wyn run` killed only the compiler wrapper on the
+ *     `kill -TERM <wyn-pid>` path, and
+ *   - `kill -9` on `wyn run` left the compiled program running FOREVER.
+ * That orphan class has memory-exhaustion-panicked a dev machine during long
+ * sessions, so it is a real operational bug, not a tidiness matter.
+ *
+ * Guarantees, per platform. `wyn run` still forwards stdout/stderr, still
+ * passes stdin straight through (the child stays in our process group and,
+ * on a tty, in the foreground group - so interactive reads and terminal
+ * Ctrl-C both behave exactly as before), and still returns the child's exit
+ * code (128+N for a signal death).
+ *
+ *   POSIX, parent killable (SIGINT/SIGTERM/SIGHUP): a handler forwards the
+ *     signal to the child, then re-raises it with the default disposition so
+ *     `wyn`'s own status is a faithful 128+N.
+ *
+ *   Linux, parent SIGKILLed: the child sets PR_SET_PDEATHSIG(SIGKILL) before
+ *     exec, so the KERNEL kills it when we die - no cooperation needed.
+ *
+ *   macOS / other BSD, parent SIGKILLed: there is no PDEATHSIG. We interpose a
+ *     tiny supervisor process that holds the read end of a pipe whose write end
+ *     only we hold; when we die by ANY means the pipe reads EOF and the
+ *     supervisor SIGKILLs the program. Because the supervisor is the program's
+ *     real parent, no pid-recycling race is possible. (A kqueue EVFILT_PROC
+ *     watcher cannot live in the child itself - exec destroys it.)
+ *
+ *   Windows, parent TerminateProcess'd: the program is assigned to a job object
+ *     with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, so the kernel tears down the job
+ *     when our last handle to it goes away.
+ *
+ *   NOT COVERED, honestly: SIGSTOP'ing `wyn` leaves the child running (there is
+ *     no portable way to observe that, and it is recoverable by SIGCONT); and a
+ *     program that itself daemonizes (double-fork + setsid) escapes on macOS,
+ *     since we kill the program we started, not an arbitrary detached subtree.
+ *     On Linux/Windows the PDEATHSIG / job-object mechanisms are also per-
+ *     process and per-job respectively, so a deliberate breakaway still escapes.
+ *
+ * Returns the value `main` should return: the child's exit code, or 128+N if it
+ * died on signal N.
+ * =========================================================================== */
+#ifdef _WIN32
+static int wyn_run_program(const char* cmd) {
+    /* KILL_ON_JOB_CLOSE is the Windows equivalent of PDEATHSIG: our handle to
+     * the job is released when the process object is destroyed, however we die,
+     * and the kernel then kills every process in the job. */
+    HANDLE job = CreateJobObjectA(NULL, NULL);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli;
+        memset(&jeli, 0, sizeof(jeli));
+        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                     &jeli, sizeof(jeli))) {
+            CloseHandle(job);
+            job = NULL;   /* lost the guarantee; still run the program */
+        }
+    }
+    /* Preserve the old system() semantics exactly: run through the command
+     * processor, since run_cmd can contain shell syntax (the --mem-stats path). */
+    const char* shell = getenv("COMSPEC");
+    char cmdline[9216];
+    snprintf(cmdline, sizeof(cmdline), "%s /c %s",
+             (shell && *shell) ? shell : "cmd.exe", cmd);
+    STARTUPINFOA si; memset(&si, 0, sizeof(si)); si.cb = sizeof(si);
+    PROCESS_INFORMATION pi; memset(&pi, 0, sizeof(pi));
+    /* CREATE_SUSPENDED so the process cannot spawn anything before it is in the
+     * job; inherit handles so stdin/stdout/stderr pass straight through. */
+    if (!CreateProcessA(NULL, cmdline, NULL, NULL, TRUE, CREATE_SUSPENDED,
+                        NULL, NULL, &si, &pi)) {
+        if (job) CloseHandle(job);
+        return system(cmd);   /* fail open: behave exactly as before the fix */
+    }
+    if (job) AssignProcessToJobObject(job, pi.hProcess);
+    ResumeThread(pi.hThread);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    if (job) CloseHandle(job);
+    return (int)code;
+}
+#else  /* POSIX */
+#include <poll.h>
+
+/* Set by wyn_run_program for the duration of the run; read by the handler. */
+static volatile sig_atomic_t g_wyn_run_child = 0;
+
+static void wyn_run_signal_forward(int sig) {
+    pid_t p = (pid_t)g_wyn_run_child;
+    if (p > 0) kill(p, sig);
+    /* Die the same way we were asked to, so our own wait status is 128+N. */
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+/* Supervisor helper: exists purely so SIGCHLD interrupts poll() promptly.
+ * All POSIX platforms now use the supervisor (was macOS-only), so this and the
+ * death-detector pipe below must NOT be Linux-excluded - that exclusion is what
+ * left Linux with the old bare-PDEATHSIG path and no kill-9 cleanup. */
+static void wyn_sup_sigchld(int sig) { (void)sig; }
+
+static int wyn_run_program(const char* cmd) {
+    int pfd[2] = {-1, -1};
+    /* Death-detector pipe: only WE hold the write end, so EOF on the read end
+     * means this process is gone - by SIGKILL, panic, or anything else. */
+    if (pipe(pfd) != 0) { pfd[0] = pfd[1] = -1; }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        if (pfd[0] >= 0) { close(pfd[0]); close(pfd[1]); }
+        return system(cmd) == 0 ? 0 : 1;   /* fail open */
+    }
+
+    if (pid == 0) {
+        /* --- supervisor (ALL POSIX platforms) --- */
+        /* This used to be Linux-vs-rest: Linux did a bare PR_SET_PDEATHSIG and
+         * exec'd the program directly, with NO signal forwarding and NO
+         * supervisor. That left SIGTERM/SIGINT propagation and orphan cleanup
+         * with no mechanism at all on Linux - all three failed on ubuntu the
+         * first time CI got far enough to run the test. The supervisor path
+         * (which passed 7/0 on macOS) is the portable design: it ignores the
+         * termination signals so it outlives `wyn`, and kills the program when
+         * the parent's end of the pipe closes - which happens on ANY death of
+         * `wyn`, including kill -9, where no handler can run. PDEATHSIG stays as
+         * a Linux-only belt-and-suspenders so the program dies even if the pipe
+         * mechanism is somehow defeated. */
+        if (pfd[1] >= 0) close(pfd[1]);
+        /* Survive the signals aimed at `wyn` so we live long enough to kill the
+         * program and report its status. */
+        signal(SIGINT, SIG_IGN);
+        signal(SIGTERM, SIG_IGN);
+        signal(SIGHUP, SIG_IGN);
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = wyn_sup_sigchld;
+        sa.sa_flags = 0;              /* no SA_RESTART: must interrupt poll() */
+        sigaction(SIGCHLD, &sa, NULL);
+
+        pid_t kid = fork();
+        if (kid < 0) _exit(127);
+        if (kid == 0) {
+            if (pfd[0] >= 0) close(pfd[0]);
+            signal(SIGINT, SIG_DFL);
+            signal(SIGTERM, SIG_DFL);
+            signal(SIGHUP, SIG_DFL);
+            signal(SIGCHLD, SIG_DFL);
+            /* Own process group, so the supervisor can kill the WHOLE tree.
+             * `sh -c "<one command>"` execs the command directly on macOS (so
+             * the program IS kid), but on Linux sh can leave the program as a
+             * GRANDCHILD - kill(kid) then hits only the sh and the real program
+             * survives. That was the actual "orphan on Linux" bug. With the
+             * program in its own group, killpg(kid) below reaps the whole tree
+             * regardless of how sh arranged it. */
+            setpgid(0, 0);
+#ifdef __linux__
+            /* Belt-and-suspenders: if the supervisor itself dies, the kernel
+             * SIGKILLs the program too. getppid()==1 closes the fork race. */
+            prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
+            if (getppid() == 1) _exit(0);
+#endif
+            execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
+            _exit(127);
+        }
+        /* Parent side of the setpgid race: also set it here so the group exists
+         * no matter which of the two runs first. */
+        setpgid(kid, kid);
+        for (;;) {
+            int st = 0;
+            pid_t r = waitpid(kid, &st, WNOHANG);
+            if (r == kid) {
+                /* Relay faithfully: re-raise the signal that killed the program
+                 * so `wyn`'s waitpid sees WIFSIGNALED with the same number. */
+                if (WIFSIGNALED(st)) {
+                    int s = WTERMSIG(st);
+                    signal(s, SIG_DFL);
+                    raise(s);
+                    _exit(128 + s);
+                }
+                _exit(WIFEXITED(st) ? WEXITSTATUS(st) : 1);
+            }
+            if (r < 0 && errno != EINTR) _exit(1);
+            if (pfd[0] < 0) { continue; }   /* no pipe: just wait */
+            struct pollfd p; p.fd = pfd[0]; p.events = POLLIN; p.revents = 0;
+            /* 100ms cap only covers the narrow lost-wakeup window where SIGCHLD
+             * lands between the waitpid above and poll() below; the normal case
+             * returns immediately via EINTR. */
+            int pr = poll(&p, 1, 100);
+            if (pr > 0) {
+                /* Parent gone (EOF/HUP) -> take the whole program group with us.
+                 * killpg, not kill, so a program that sh left as a grandchild
+                 * (Linux) dies too - see the setpgid note above. Fall back to
+                 * kill(kid) if the group somehow was not established. */
+                if (killpg(kid, SIGKILL) != 0) kill(kid, SIGKILL);
+                int st2 = 0;
+                waitpid(kid, &st2, 0);
+                _exit(128 + SIGKILL);
+            }
+        }
+    }
+
+    /* --- parent (wyn) --- */
+    if (pfd[0] >= 0) close(pfd[0]);   /* only the supervisor reads */
+    g_wyn_run_child = (sig_atomic_t)pid;
+    void (*old_int)(int)  = signal(SIGINT,  wyn_run_signal_forward);
+    void (*old_term)(int) = signal(SIGTERM, wyn_run_signal_forward);
+    void (*old_hup)(int)  = signal(SIGHUP,  wyn_run_signal_forward);
+
+    int status = 0;
+    pid_t r;
+    do { r = waitpid(pid, &status, 0); } while (r < 0 && errno == EINTR);
+
+    signal(SIGINT,  old_int);
+    signal(SIGTERM, old_term);
+    signal(SIGHUP,  old_hup);
+    g_wyn_run_child = 0;
+    /* Closing last keeps the supervisor alive until the program is reaped, so a
+     * normal exit never trips the EOF kill path. */
+    if (pfd[1] >= 0) close(pfd[1]);
+
+    if (r < 0) return 1;
+    if (WIFEXITED(status))   return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return 1;
+}
+#endif  /* _WIN32 */
 
 void init_lexer(const char* source);
 void init_parser();
@@ -1365,7 +1600,16 @@ int main(int argc, char** argv) {
                 sqlite_flags = "-DWYN_USE_SQLITE -I ./packages/sqlite/src";
                 sqlite_src = " ./packages/sqlite/src/sqlite3.c";
             } else {
-                sqlite_flags = "-DWYN_USE_SQLITE -lsqlite3";
+                // `-lsqlite3` is a LINK input, so it belongs in sqlite_src (spliced
+                // at the END of every link line), not in sqlite_flags (which is
+                // placed early, where only -D/-I belong). GNU ld resolves -l only
+                // against objects listed BEFORE it, so with -lsqlite3 up front every
+                // Db.* call came back as an undefined reference on Linux - 18 of them
+                // for tests/stdlib/test_sqlite.wyn. Apple's ld does not care about
+                // order, which is why this was invisible on macOS and only ever broke
+                // the ubuntu CI job. Same hazard, same fix as the FFI flags below.
+                sqlite_flags = "-DWYN_USE_SQLITE";
+                sqlite_src = " -lsqlite3";
             }
         }
 
@@ -1433,6 +1677,36 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        // The C compiler's stderr goes to a PER-PROCESS file. It used to be a
+        // fixed /tmp/wyn_cc_err.txt, which any parallel build (the stdlib runner
+        // uses 4+ jobs, and so does anyone running `make -j`) would overwrite:
+        // failures were reported with a SIBLING's error text, naming a file the
+        // user was not building. That is worse than no diagnostic, because it
+        // sends you after the wrong source file.
+        // The directory must be resolved per platform: Windows cmd.exe has no
+        // /tmp, and a `2>` to a non-existent path fails the whole command line
+        // with "The system cannot find the path specified." before the compiler
+        // ever runs - which is exactly how the first cut of this broke the
+        // Windows smoke test.
+        char cc_err_path[512];
+#ifdef _WIN32
+        const char* _tmpdir = getenv("TEMP");
+        if (!_tmpdir || !_tmpdir[0]) _tmpdir = getenv("TMP");
+        if (!_tmpdir || !_tmpdir[0]) _tmpdir = ".";
+#else
+        const char* _tmpdir = getenv("TMPDIR");
+        if (!_tmpdir || !_tmpdir[0]) _tmpdir = "/tmp";
+#endif
+        size_t _tdl = strlen(_tmpdir);
+        int _has_sep = _tdl > 0 && (_tmpdir[_tdl-1] == '/' || _tmpdir[_tdl-1] == '\\');
+        snprintf(cc_err_path, sizeof(cc_err_path), "%s%swyn_cc_err.%ld.txt",
+                 _tmpdir, _has_sep ? "" : "/", (long)getpid());
+        // Quoted for the shell, since %TEMP% is routinely
+        // C:\Users\<name>\AppData\Local\Temp - a path with spaces in it. Kept as
+        // one token so the FFI splice below, which looks for " 2>", still finds
+        // the redirect and inserts its -l flags before it.
+        char cc_err_redir[544];
+        snprintf(cc_err_redir, sizeof(cc_err_redir), "\"%s\"", cc_err_path);
         if (result != 0) {
 #ifdef __APPLE__
             const char* plibs = "-lpthread -lm";
@@ -1471,16 +1745,26 @@ int main(int argc, char** argv) {
 #endif
                 snprintf(cmd, sizeof(cmd),
 #ifdef _WIN32
-                    "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm",
+                    // Windows captures the compiler's stderr too - it was the last
+                    // branch still discarding it, so a failed build there printed
+                    // "✗ Build failed" and nothing else.
+                    "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm 2>%s",
 #elif defined(__APPLE__)
-                    "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
+                    "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>%s",
 #else
-                    "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/dev/null",
+                    // Capture the C compiler's stderr, do NOT discard it. This
+                    // branch used to end in `2>/dev/null`, while the __APPLE__
+                    // branch above redirected to a file - so a build failure on
+                    // Linux printed "✗ Build failed" with NOTHING else, because
+                    // the "Compiler output:" reader below found no file. That is
+                    // exactly what a user (and a CI log) needs, and it was
+                    // silently unavailable on the platform most CI runs on.
+                    "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>%s",
 #endif
 #ifdef __APPLE__
-                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, app_link
+                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, app_link, cc_err_redir
 #else
-                    cc, _opt, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
+                    cc, _opt, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, cc_err_redir
 #endif
                     );
                 // Splice FFI link flags in at the END of the link line (before any
@@ -1590,7 +1874,7 @@ int main(int argc, char** argv) {
         } else {
             fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
             // Show compiler errors if available
-            FILE* ef = fopen("/tmp/wyn_cc_err.txt", "r");
+            FILE* ef = fopen(cc_err_path, "r");
             if (!ef) ef = fopen("/tmp/wyn_tcc_err.txt", "r");
             if (ef) {
                 char ebuf[2048];
@@ -1600,6 +1884,7 @@ int main(int argc, char** argv) {
                 if (n > 0) fprintf(stderr, "  Compiler output:\n%s\n", ebuf);
             }
         }
+        unlink(cc_err_path);   // per-process file: don't litter /tmp
         return result == 0 ? 0 : 1;
     }
     
@@ -2629,8 +2914,17 @@ int main(int argc, char** argv) {
                 char wyn_exe[1024]; struct stat wyn_st;
                 int compiler_ok = resolve_wyn_exe(argv[0], wyn_exe, sizeof(wyn_exe))
                                   && stat(wyn_exe, &wyn_st) == 0;
-                if (out_st.st_mtime >= src_st.st_mtime &&
-                    (!compiler_ok || out_st.st_mtime >= wyn_st.st_mtime)) {
+                // STRICTLY newer, not >=. With >=, a source rewritten in the
+                // SAME second the cached binary was built still looks cached, so
+                // `run` executes the previous program. That is not theoretical:
+                // tests/pkg/run_pkg_test.sh writes src/main.wyn, runs it, then
+                // rewrites and re-runs it - on CI runners fast enough to do both
+                // inside one mtime tick, step 4 silently re-ran step 2's binary
+                // and the suite failed with the earlier program's output. st_mtime
+                // is whole-seconds, so equal timestamps must be treated as
+                // possibly-stale; recompiling is cheap, being wrong is not.
+                if (out_st.st_mtime > src_st.st_mtime &&
+                    (!compiler_ok || out_st.st_mtime > wyn_st.st_mtime)) {
                     char run_cmd[2048];
                     if (out_path[0] == '/') {
                         snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
@@ -2642,19 +2936,14 @@ int main(int argc, char** argv) {
 #endif
                     }
                     for (int i = 3; i < argc; i++) { strcat(run_cmd, " "); strcat(run_cmd, argv[i]); }
-                    // system() returns the raw WAIT STATUS; returning it from
+                    // wyn_run_program supervises the child (signal forwarding,
+                    // reaping, no orphan on kill -9) and already returns the
+                    // decoded status - the exit code, or 128+N on a signal.
+                    // The old system() here returned the raw WAIT STATUS, which
                     // main truncates to its low byte, so exit(1) programs
                     // reported 0 on every cached (no-recompile) run - CI
                     // wrapping `wyn run` never saw the failure.
-                    { int _ws = system(run_cmd);
-#ifdef _WIN32
-                      return _ws;
-#else
-                      if (WIFEXITED(_ws)) return WEXITSTATUS(_ws);
-                      if (WIFSIGNALED(_ws)) return 128 + WTERMSIG(_ws);
-                      return _ws ? 1 : 0;
-#endif
-                    }
+                    return wyn_run_program(run_cmd);
                 }
             }
         }
@@ -2862,7 +3151,9 @@ int main(int argc, char** argv) {
                             rc += snprintf(run_cmd + rc, sizeof(run_cmd) - rc, " %s", argv[i]);
                         }
                     }
-                    int result = system(run_cmd);
+                    // Supervised: forwards signals, reaps, leaves no orphan.
+                    // Already returns the decoded status (exit code / 128+N).
+                    int result = wyn_run_program(run_cmd);
                     free(source);
                     if (!keep_artifacts) {
                         // Keep <file>.out: the incremental fast-path above reuses it
@@ -2874,7 +3165,6 @@ int main(int argc, char** argv) {
                         unlink(c_path);
                     }
                     unlink("wyn_cc_err.txt");
-                    if (WIFEXITED(result)) return WEXITSTATUS(result);
                     return result;
                 }
                 // TCC failed - fall through to system cc
@@ -3169,7 +3459,10 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        result = system(run_cmd);
+        // Supervised child: SIGINT/SIGTERM/SIGHUP are forwarded, the child is
+        // reaped (no zombie), and it does not survive us being killed. Returns
+        // the decoded status already - the exit code, or 128+N on a signal.
+        result = wyn_run_program(run_cmd);
         free(source);
         // Cleanup artifacts unless --debug. Keep <file>.out: the incremental
         // fast-path at the top of `run` reuses it when it's newer than the source,
@@ -3182,15 +3475,7 @@ int main(int argc, char** argv) {
             snprintf(c_path, 512, "%s.c", file);
             unlink(c_path);
         }
-        // Extract actual exit code from system() result
-#ifdef _WIN32
         return result;
-#else
-        if (WIFEXITED(result)) {
-            return WEXITSTATUS(result);
-        }
-        return result;
-#endif
     }
     
     // Parse optimization flags

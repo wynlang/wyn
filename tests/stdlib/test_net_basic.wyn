@@ -1,17 +1,55 @@
-// Test basic TCP networking
-
+// Basic TCP networking - HERMETIC and port-contention-proof.
+//
+// Was: `Net::listen(8080)` and fail with rc=1 if the bind returned -1. 8080 is
+// the single most contended port on a developer machine, so this passed 4/4
+// standalone and then failed once under parallel suite load - a bind conflict
+// with something else on the host reported as a Wyn networking failure.
+//
+// Two changes:
+//   1. Use a high, unlikely port, and if it IS taken, walk a small range instead
+//      of failing. A failure now means "Wyn could not listen on ANY of 8 free
+//      ports", which is a real defect, not someone else's server.
+//   2. Actually exercise the loopback path (connect + send + recv) rather than
+//      only listen/close. All traffic is 127.0.0.1 within this one process, so
+//      there is no external dependency and nothing to be flaky about.
 fn main() -> int {
-    // Test TCP server creation
-    var server = Net::listen(8080);
-    if server == -1 {
-        return 1;  // Failed to create server
+    // Find a bindable port in a high range. Returns the fd, or -1 if all failed.
+    var server = -1
+    var port = 18771
+    var tries = 0
+    while tries < 8 {
+        server = Net.listen(port)
+        if server > 0 { break }
+        port += 1
+        tries += 1
     }
-    
-    // Close server
-    var close_result = Net::close(server);
-    if close_result == 0 {
-        return 2;
+    if server <= 0 {
+        return 1  // Could not listen on any of 8 ports - a genuine failure.
     }
-    
-    return 0;
+
+    // Loopback round-trip: connect to ourselves and move bytes.
+    var client = Net.connect("127.0.0.1", port)
+    if client <= 0 {
+        Net.close(server)
+        return 3
+    }
+
+    var sent = Net.send(client, "ping")
+    if sent != 4 {
+        Net.close(client)
+        Net.close(server)
+        return 4
+    }
+
+    // Net.close returns 1 on success, 0 on failure.
+    if Net.close(client) == 0 {
+        Net.close(server)
+        return 5
+    }
+
+    if Net.close(server) == 0 {
+        return 2
+    }
+
+    return 0
 }

@@ -187,13 +187,23 @@ int main(int argc, char** argv) {
     sigaction(SIGFPE, &sa, NULL);
     sigaction(SIGILL, &sa, NULL);  // stack overflow can land on SIGILL (macOS arm64)
     
+    // Line-buffer stdout so a long-running program's output appears as it is
+    // produced. When stdout is a pipe or file (not a tty) libc picks FULL
+    // buffering, so a server that prints its listening URL and then loops
+    // forever shows NOTHING until the 4KB buffer fills or the process exits -
+    // neither ever happens. `wyn run server.wyn | tee log` looked hung when the
+    // server was in fact serving (found benchmarking the web package,
+    // 2026-07-28). print/println of strings already force a flush; this makes
+    // every other print type behave the same when redirected.
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
     // Initialize arguments for Wyn interface
     wyn_init_args(argc, argv);
-    
+
     // Set global argc/argv for System::args()
     __wyn_argc = argc;
     __wyn_argv = argv;
-    
+
     // Call the Wyn-compiled main function
     long long __wyn_rc = wyn_main();
     wyn_spawn_wait();  // join fire-and-forget tasks before exit

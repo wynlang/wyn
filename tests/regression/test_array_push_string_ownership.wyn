@@ -1,0 +1,80 @@
+// Regression: `array_push(arr, <freshly-built string>)` released the string it
+// had just handed to the array, so the element read back as "".
+//
+// codegen_stmt.c evaluates fresh string arguments into an __sa temp and releases
+// each one after the call - correct, EXCEPT when the callee takes ownership.
+// array_push_str stores the pointer raw (array_free releases it later), so its
+// argument must not be released. That exemption keyed on the literal 14-char
+// spelling `array_push_str` and on the `.push()` method form, but NOT on the bare
+// `array_push(arr, s)` spelling - which codegen_expr AUTO-REWRITES to
+// array_push_str when the value is a string. So the bare spelling double-freed:
+// use-after-free, observed as every pushed element being the empty string.
+//
+// Discovered via tests/stdlib/test_epic31_self_hosted.wyn, whose hand-written
+// lexer/parser pushes `"" + tt[pos]` into node arrays - 5 assertions failed with
+// `expected: "hello", got: ""`. (2026-07)
+fn main() {
+    // The exact failing shape: bare array_push with a concat result.
+    var tt = []
+    array_push(tt, "a")
+    array_push(tt, "hello")
+
+    var nv = []
+    array_push(nv, "" + tt[1])
+    print(nv[0])
+
+    // Non-empty prefix concat, and a second element so we also prove the first
+    // element survives a subsequent push (realloc + release ordering).
+    array_push(nv, "pre" + tt[1])
+    array_push(nv, "plain")
+    print(nv[0])
+    print(nv[1])
+    print(nv[2])
+
+    // Interpolation is a fresh string too.
+    var who = "world"
+    var msgs = []
+    array_push(msgs, "hi ${who}")
+    array_push(msgs, "bye ${who}")
+    print(msgs[0])
+    print(msgs[1])
+
+    // A method-call result (also fresh) through the bare spelling.
+    var ups = []
+    array_push(ups, "abc".upper())
+    array_push(ups, "DEF".lower())
+    print(ups[0])
+    print(ups[1])
+
+    // The .push() method form and a pre-typed array were already correct;
+    // keep them covered so a future fix cannot regress them.
+    var typed = [""]
+    typed.push("x" + "y")
+    print(typed[1])
+
+    var m = []
+    m.push("m" + "n")
+    print(m[0])
+
+    // Many pushes in a loop - each element must be independently alive at the end.
+    var loops = []
+    for i in 0..4 {
+        array_push(loops, "item" + i.to_string())
+    }
+    print(loops[0])
+    print(loops[3])
+    print(loops.len())
+}
+// EXPECT: hello
+// EXPECT: hello
+// EXPECT: prehello
+// EXPECT: plain
+// EXPECT: hi world
+// EXPECT: bye world
+// EXPECT: ABC
+// EXPECT: def
+// EXPECT: xy
+// EXPECT: mn
+// EXPECT: item0
+// EXPECT: item3
+// EXPECT: 4

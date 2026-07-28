@@ -104,4 +104,94 @@ before="$(find "$WYN_PKG_CACHE" -maxdepth 6 -name '*@*' -type d | wc -l | tr -d 
 after="$(find "$WYN_PKG_CACHE" -maxdepth 6 -name '*@*' -type d | wc -l | tr -d ' ')"
 [ "$before" = "$after" ] || fail "cache not reused across projects ($before -> $after)"
 
+# --- 9. wyn.lock ENFORCEMENT -------------------------------------------------
+# wyn.lock claims to pin exact commits. It used to only be *read* for its url+ref
+# and the recorded sha was never compared against what got cloned, so a moved
+# branch/tag silently produced different code than the lockfile recorded. These
+# cases prove the sha now governs. All hermetic: file:// remotes, no network.
+
+# fixture: 'pinlib' with tag v1 at commit A, then retagged to commit B.
+mkdir -p "$work/pinlib"
+git_init "$work/pinlib"
+printf '[project]\nname = "pinlib"\n' > "$work/pinlib/wyn.toml"
+printf 'pub fn v() -> int { return 1 }\n' > "$work/pinlib/pinlib.wyn"
+git -C "$work/pinlib" add -A; git -C "$work/pinlib" commit -qm A; git -C "$work/pinlib" tag v1
+SHA_A="$(git -C "$work/pinlib" rev-parse HEAD)"
+printf 'pub fn v() -> int { return 2 }\n' > "$work/pinlib/pinlib.wyn"
+git -C "$work/pinlib" add -A; git -C "$work/pinlib" commit -qm B
+SHA_B="$(git -C "$work/pinlib" rev-parse HEAD)"
+
+proj3="$work/app3"; mkdir -p "$proj3/src"; cd "$proj3"
+printf '[project]\nname = "app3"\nversion = "0.1.0"\n' > wyn.toml
+"$WYN_BIN" add "file://$work/pinlib@v1" --as pinlib >/dev/null 2>&1 || fail "add pinlib"
+grep -q "^pinlib .* v1 $SHA_A\$" wyn.lock || fail "lock did not record commit A ($(cat wyn.lock | tail -1))"
+
+# 9a. A lock sha that does not exist anywhere must be REJECTED, not silently
+#     ignored. (Fabricated-but-well-formed sha == a tampered lockfile.)
+BOGUS="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+printf '%s file://%s v1 %s\n' pinlib "$work/pinlib" "$BOGUS" > wyn.lock
+out="$("$WYN_BIN" restore 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] || fail "restore accepted a lock sha that does not exist (rc=0)"
+echo "$out" | grep -q "integrity check failed" || fail "no integrity error for bogus sha [$out]"
+echo "$out" | grep -q "$BOGUS" || fail "integrity error omits the expected sha"
+echo "$out" | grep -q "wyn pkg add" || fail "integrity error does not say how to update"
+
+# 9b. ref written as '-' (meaningless, resolves to HEAD): the sha must still
+#     govern - that is exactly the case where the ref proves nothing.
+printf '%s file://%s - %s\n' pinlib "$work/pinlib" "$BOGUS" > wyn.lock
+out="$("$WYN_BIN" restore 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] || fail "restore accepted bogus sha with ref '-' (rc=0)"
+echo "$out" | grep -q "integrity check failed" || fail "ref '-' bypassed the sha check [$out]"
+
+# 9c. A MOVED tag whose locked commit is still fetchable must resolve to the
+#     LOCKED commit (that is what pinning means), not to the tag's new tip.
+git -C "$work/pinlib" tag -f v1 >/dev/null 2>&1   # v1: A -> B
+printf '%s file://%s v1 %s\n' pinlib "$work/pinlib" "$SHA_A" > wyn.lock
+rm -rf "$WYN_PKG_CACHE"
+out="$("$WYN_BIN" restore 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] || fail "restore of a moved tag with a fetchable locked commit failed [$out]"
+cdir="$(find "$WYN_PKG_CACHE" -type d -name 'pinlib@v1' | head -1)"
+[ -n "$cdir" ] || fail "moved-tag restore did not populate the cache"
+got="$(git -C "$cdir" rev-parse HEAD)"
+[ "$got" = "$SHA_A" ] || fail "moved tag: checkout is $got, lock pinned $SHA_A (pin not honored)"
+[ "$got" != "$SHA_B" ] || fail "moved tag: followed the retagged tip instead of the lock"
+
+# 9d. A matching sha still installs clean and says so.
+out="$("$WYN_BIN" restore 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] || fail "restore of an already-pinned dep failed [$out]"
+echo "$out" | grep -qE "verified|pinned from lock" || fail "restore does not report verification [$out]"
+
+# 9e. LEGACY 3-token lockfile (`name url sha`, no ref column): there is nothing
+#     to verify a ref against, but the sha still must not be dropped. Must WARN
+#     and keep working - never hard-fail an existing project - and must record a
+#     4-token entry so the NEXT install is verified.
+git -C "$work/pinlib" tag -f v1 "$SHA_A" >/dev/null 2>&1   # restore v1 -> A
+rm -rf "$WYN_PKG_CACHE"
+printf '%s file://%s\n' pinlib "$work/pinlib" > wyn.lock   # 2-token: no sha at all
+out="$("$WYN_BIN" restore 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] || fail "legacy lockfile (no sha) hard-failed - would break existing projects [$out]"
+echo "$out" | grep -q "legacy lockfile" || fail "legacy lockfile did not warn [$out]"
+grep -qE "^pinlib file://[^ ]+ [^ ]+ [0-9a-f]{40}\$" wyn.lock || fail "legacy lockfile was not upgraded to a pinned entry ($(tail -1 wyn.lock))"
+# and now that it is pinned, a tampered sha is caught
+sed -i.bak "s/[0-9a-f]\{40\}/$BOGUS/" wyn.lock && rm -f wyn.lock.bak
+out="$("$WYN_BIN" restore 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] || fail "upgraded legacy lock is still not enforced"
+
+# 9f. LEGACY 3-token lockfile (`name url sha` - a sha but NO ref column). This
+#     form DOES carry a commit, so it must be honored, not warned away: the
+#     clone follows the default branch (bucket @HEAD) and then gets pinned back
+#     to the recorded commit. SHA_A is one commit behind the branch tip.
+rm -rf "$WYN_PKG_CACHE"
+printf '%s file://%s %s\n' pinlib "$work/pinlib" "$SHA_A" > wyn.lock
+out="$("$WYN_BIN" restore 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] || fail "legacy 3-token lock with a real sha failed to install [$out]"
+cdir="$(find "$WYN_PKG_CACHE" -type d -name 'pinlib@HEAD' | head -1)"
+[ -n "$cdir" ] || fail "3-token legacy restore did not populate the cache"
+got="$(git -C "$cdir" rev-parse HEAD)"
+[ "$got" = "$SHA_A" ] || fail "3-token legacy lock: checkout is $got, lock pinned $SHA_A"
+# a tampered 3-token sha is still rejected
+printf '%s file://%s %s\n' pinlib "$work/pinlib" "$BOGUS" > wyn.lock
+out="$("$WYN_BIN" restore 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] || fail "3-token legacy lock sha is not enforced"
+
 echo "pkg: PASS"

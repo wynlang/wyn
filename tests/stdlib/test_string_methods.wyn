@@ -15,15 +15,21 @@ fn main() -> int {
     var replaced = s3.replace("world", "wyn")
     if replaced != "hello wyn" { return 3; }
     
-    // Test 4: to_upper
+    // Test 4: upper
+    // NOTE: the canonical names are `.upper()` / `.lower()`, NOT to_upper/to_lower.
+    // This test used to call `.to_upper()`, which no version of the compiler has
+    // ever generated code for; since v1.18.0 an unknown method on a string
+    // receiver is a check-time error (see tests/errors/run_unknown_method_test.sh)
+    // instead of a bare "Unknown method" C-compile failure, which is how the
+    // staleness surfaced.
     var s4 = "hello"
-    var upper = s4.to_upper()
+    var upper = s4.upper()
     if upper != "HELLO" { return 4; }
-    
-    // Test 5: to_lower
+
+    // Test 5: lower
     var s5 = "HELLO"
-    var lower = s5.to_lower()
+    var lower = s5.lower()
     if lower != "hello" { return 5; }
-    
+
     return 0
 }

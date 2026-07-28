@@ -1,0 +1,106 @@
+// Regression: `var xs: [int]` (annotated) must behave identically to the
+// inferred spelling `xs = [...]` for EVERY array operation.
+//
+// The annotation used to opt the variable unconditionally into the packed
+// WynIntArray representation, which only has a lowering for push/sort/len/
+// index/iterate. Any other operation emitted C that mixed WynIntArray with the
+// generic WynArray helpers, so `wyn check` said "no errors" and codegen then
+// failed - 11 distinct shapes. Worse, `xs[i] = v` DID compile and wrote a
+// 16-byte WynValue into an 8-byte packed slot: a silent wrong answer.
+//
+// A veto pre-pass (codegen_lambda.c) now falls back to WynArray whenever a
+// `[int]` var is used in a way the packed form cannot express, so the two
+// spellings agree by construction.
+
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 2
+// EXPECT: 3
+// EXPECT: 2
+// EXPECT: 3
+// EXPECT: 6
+// EXPECT: 3,1,2
+// EXPECT: 1
+// EXPECT: 3
+// EXPECT: 3
+// EXPECT: 3
+// EXPECT: [3, 1, 2]
+// EXPECT: 9
+// EXPECT: 1
+// EXPECT: 4
+// EXPECT: 1
+// EXPECT: 3
+
+fn take(a: [int]) -> int { return a.len() }
+
+fn main() -> int {
+    // Consuming the value of .sort() (the original reproducer)
+    var s0: [int] = [3, 1, 2]
+    var sorted = s0.sort()
+    println(sorted[0].to_string())
+
+    // reverse / filter / map / slice / unique
+    var s1: [int] = [3, 1, 2]
+    var rev = s1.reverse()
+    println(rev[0].to_string())
+
+    var s2: [int] = [3, 1, 2]
+    var filt = s2.filter((x) => x > 1)
+    println(filt.len().to_string())
+
+    var s3: [int] = [3, 1, 2]
+    var mapped = s3.map((x) => x * 2)
+    println(mapped.len().to_string())
+
+    var s4: [int] = [3, 1, 2]
+    var sliced = s4.slice(0, 2)
+    println(sliced.len().to_string())
+
+    var s5: [int] = [3, 1, 2]
+    var uniq = s5.unique()
+    println(uniq.len().to_string())
+
+    // reductions and joins
+    var s6: [int] = [3, 1, 2]
+    println(s6.sum().to_string())
+
+    var s7: [int] = [3, 1, 2]
+    println(s7.join(","))
+
+    var s8: [int] = [3, 1, 2]
+    println(s8.contains(2).to_string())
+
+    var s9: [int] = [3, 1, 2]
+    println(s9.first().to_string())
+
+    // whole-array flows: copy, pass to a function, print
+    var s10: [int] = [3, 1, 2]
+    var copied = s10
+    println(copied[0].to_string())
+
+    var s11: [int] = [3, 1, 2]
+    println(take(s11).to_string())
+
+    var s12: [int] = [3, 1, 2]
+    print(s12)
+
+    // Indexed assignment: used to silently write the WRONG slot.
+    var s13: [int] = [3, 1, 2]
+    s13[0] = 9
+    println(s13[0].to_string())
+    println(s13[1].to_string())
+
+    // Shapes that KEEP the fast packed representation must still be correct.
+    var fast: [int] = [3, 1, 2]
+    fast.push(9)
+    println(fast.len().to_string())
+    fast.sort()
+    println(fast[0].to_string())
+
+    // Captured in a lambda (env field is typed WynArray)
+    var cap: [int] = [3, 1, 2]
+    getlen = () => cap.len()
+    println(getlen().to_string())
+
+    return 0
+}

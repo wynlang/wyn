@@ -1,9 +1,16 @@
+// A checked string->int parse returning Result, i.e. exactly what user code
+// should write on top of the v1.20.0 contract.
+//
+// The old version of this helper called `s.to_int()` FIRST and inferred failure
+// from a returned 0. That only worked while `.to_int()` silently substituted 0
+// for garbage - which v1.20.0 deliberately removed (it made "abc" and "0"
+// indistinguishable). `.to_int()` now panics on garbage, so the validity check
+// has to happen BEFORE the parse: `.is_numeric()` is the sanctioned guard.
+// There is no Result-returning `try_to_int` in the language today; this function
+// is how you build one.
 fn parse_int(s: string) -> ResultInt {
-    var n = s.to_int()
-    if n == 0 {
-        if s != "0" { return Err("not a number") }
-    }
-    return Ok(n)
+    if not s.is_numeric() { return Err("not a number") }
+    return Ok(s.to_int())
 }
 
 fn add_parsed(a: string, b: string) -> ResultInt {
@@ -25,7 +32,17 @@ fn main() -> int {
     
     var r3 = add_parsed("abc", "20")
     Test.assert(r3.is_err(), "first arg error propagated")
-    
+
+    // "0" is a VALID parse, not a failure - the distinction the v1.20.0
+    // to_int change exists to preserve.
+    var r4 = add_parsed("0", "0")
+    Test.assert(r4.is_ok(), "\"0\" parses ok, is not treated as an error")
+    Test.assert_eq_int(r4.unwrap(), 0, "0+0=0")
+
+    // Empty string is garbage too, and must propagate as Err rather than panic.
+    var r5 = add_parsed("", "1")
+    Test.assert(r5.is_err(), "empty string propagates as Err")
+
     Test.summary()
     return 0
 }

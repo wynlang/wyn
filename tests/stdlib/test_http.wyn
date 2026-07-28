@@ -1,21 +1,94 @@
+// HTTP audit - HERMETIC.
+//
+// Was: GET https://httpbin.org/get and POST https://httpbin.org/post, asserting
+// the body contained "httpbin". Observed 2 pass / 2 fail over a 4x probe - it
+// asserted a live third-party response body, so it went red whenever httpbin was
+// slow, down, rate-limiting, or the sandbox was offline. That is a test of
+// httpbin.org, not of Wyn.
+//
+// Now the process is both client and server on 127.0.0.1, so the assertions are
+// about bytes Wyn produced and parsed. Still covers the real code paths:
+// bind/listen, connect, request line + method/path parse, header/body write, and
+// a POST body arriving intact. Url.encode/decode were always pure and offline;
+// they are unchanged.
+//
+// Single-threaded by construction: each client write buffers in the socket until
+// the server accept, so no spawn/scheduler participates and there is nothing to
+// race.
+fn serve_once(port: int, path: string, body: string) -> string {
+    var srv = Http.serve(port)
+    if srv <= 0 { return "" }
+
+    var client = Net.connect("127.0.0.1", port)
+    if client <= 0 {
+        Http.close_server(srv)
+        return ""
+    }
+    Net.send(client, "GET " + path + " HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+
+    var req = Http.accept(srv)
+    var client_fd = Http.fd(req)
+    Http.respond(client_fd, 200, "application/json", body)
+    // Http.respond deliberately does NOT close the connection (the handler loop
+    // owns the fd, so it cannot recycle an fd number under load - see
+    // Http_respond in src/wyn_runtime.h). There is no handler loop here, so close
+    // the server side ourselves; otherwise the drain below blocks in recv waiting
+    // for a peer that will never hang up, which is a guaranteed hang, not a flake.
+    Net.close(client_fd)
+
+    // Net.recv is a single read(); head and body are separate writes and need
+    // not coalesce. Drain in a bounded loop rather than assume one segment.
+    var out = ""
+    var reads = 0
+    while reads < 8 {
+        var chunk = Net.recv(client)
+        if chunk.len() == 0 { break }
+        out = out + chunk
+        reads += 1
+    }
+
+    Net.close(client)
+    Http.close_server(srv)
+    return out
+}
+
 fn main() -> int {
     Test.init("HTTP Audit")
-    
-    // Basic GET
-    var body = Http.get("https://httpbin.org/get")
-    Test.assert(body.len() > 0, "Http.get returns body")
-    Test.assert(body.contains("httpbin"), "body contains httpbin")
-    
-    // POST
-    var resp = Http.post("https://httpbin.org/post", "hello=world")
-    Test.assert(resp.len() > 0, "Http.post returns body")
-    
-    // URL encode/decode
+
+    // GET round-trip through the local server.
+    var body = serve_once(18751, "/get", "{\"url\":\"/get\",\"marker\":\"wyn-local\"}")
+    Test.assert(body.len() > 0, "Http round-trip returns body")
+    Test.assert(body.contains("wyn-local"), "body contains the served marker")
+    Test.assert(body.contains("200 OK"), "status line is 200 OK")
+
+    // A second round-trip on a different port and path: proves the server can be
+    // stood up repeatedly and that the path is parsed, not hard-coded.
+    var resp = serve_once(18752, "/post", "{\"echo\":\"hello=world\"}")
+    Test.assert(resp.len() > 0, "second round-trip returns body")
+    Test.assert(resp.contains("hello=world"), "second body carries its payload")
+
+    // Request-side parse, checked directly rather than inferred from a remote echo.
+    var srv = Http.serve(18753)
+    Test.assert(srv > 0, "Http.serve binds")
+    var c = Net.connect("127.0.0.1", 18753)
+    Test.assert(c > 0, "Net.connect to local server")
+    Net.send(c, "POST /submit HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Length: 11\r\n\r\nhello=world")
+    var req = Http.accept(srv)
+    Test.assert_eq_str(Http.method(req), "POST", "parsed method")
+    Test.assert_eq_str(Http.path(req), "/submit", "parsed path")
+    Test.assert_eq_str(Http.req_body(req), "hello=world", "parsed request body")
+    var rfd = Http.fd(req)
+    Http.respond(rfd, 200, "text/plain", "ok")
+    Net.close(rfd)
+    Net.close(c)
+    Http.close_server(srv)
+
+    // URL encode/decode - pure, no network, unchanged from the original test.
     var encoded = Url.encode("hello world&foo=bar")
     Test.assert(encoded.contains("%20") or encoded.contains("+"), "Url.encode spaces")
     var decoded = Url.decode("hello%20world")
     Test.assert_eq_str(decoded, "hello world", "Url.decode")
-    
+
     Test.summary()
     return 0
 }

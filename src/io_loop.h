@@ -20,6 +20,25 @@ int wyn_io_wait_timer(void* task_ptr, long long ms);
 // Poll for ready events and re-enqueue tasks. Non-blocking.
 int wyn_io_poll(void);
 
+// Blocking variant: wait up to timeout_ms (negative = indefinitely) for I/O or
+// timer readiness, re-enqueue the ready tasks, return the count.
+//
+// CONTRACT: on a reactor build (wyn_io_has_reactor() == 1) this ALWAYS waits -
+// it lazily creates the reactor if no fd/timer has been registered yet, and
+// falls back to a plain sleep if the reactor cannot be created at all. Callers
+// spin-loop on it, so a "return 0 immediately" path would reintroduce exactly
+// the busy-spin this exists to remove.
+//
+// On non-reactor builds (TCC / fallback stubs) it returns 0 without waiting;
+// callers MUST gate on wyn_io_has_reactor() and keep their old yield-spin.
+int wyn_io_poll_wait(int timeout_ms);
+
+// Interrupt a thread blocked in wyn_io_poll_wait. Idempotent, async-safe.
+void wyn_io_wake(void);
+
+// 1 if this build has a real reactor (kqueue/epoll) behind wyn_io_poll_wait.
+int wyn_io_has_reactor(void);
+
 // Shutdown the I/O loop.
 void wyn_io_shutdown(void);
 

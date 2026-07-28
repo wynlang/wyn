@@ -1,0 +1,65 @@
+// Regression: the `?` error-propagation operator followed by a STATEMENT KEYWORD
+// on the SAME LINE was misparsed as the start of a ternary.
+//
+// `fn f(x: int) -> ResultInt { var a = g(x)? return Ok(a) }` failed with
+//   Error: Expected an expression
+//   Error: Expected ':' in ternary expression
+// pointing at column 1 of the whole line, while the identical code split across
+// lines compiled fine. Cause: parser.c check_next_is_value() peeked at the raw
+// character after `?` and treated ANY letter as "a value follows", so the `r` of
+// `return` made it commit to a ternary and demand a `:`. It now excludes
+// keywords that can only begin a statement. (tests/stdlib/test_v16_final.wyn:15
+// was the discovery site; 2026-07)
+fn safe_div(a: int, b: int) -> ResultInt {
+    if b == 0 { return Err("zero") }
+    return Ok(a / b)
+}
+
+// The exact one-line shape that failed: `?` then `return` on the same line.
+fn chain_div(x: int) -> ResultInt { var a = safe_div(x, 2)? return Ok(a) }
+
+// `?` immediately followed by another statement-only keyword on one line.
+fn chain_var(x: int) -> ResultInt { var a = safe_div(x, 2)? var b = a + 1 return Ok(b) }
+// NOTE deliberately NOT covered: `... safe_div(x,2)? if cond { ... }` on one
+// line. `if` is a genuine expression opener in Wyn (`c ? if a {1} else {2} : 3`
+// is legal), so a bare `?` followed by `if` on the same line is ambiguous and
+// still parses as a ternary. Put the `if` on the next line, which works. The fix
+// above only excludes keywords that can NEVER open an expression.
+
+// Multi-line form - always worked, must keep working.
+fn chain_multiline(x: int) -> ResultInt {
+    var a = safe_div(x, 2)?
+    return Ok(a)
+}
+
+fn main() {
+    print(chain_div(100).unwrap())
+    print(chain_var(100).unwrap())
+    print(chain_multiline(100).unwrap())
+
+    // Err short-circuits through the one-line form (prints 1 = still Ok for a
+    // valid divisor; chain_div(0) would divide by zero at the FIRST call, so use
+    // a divisor that succeeds and assert the propagation path is intact).
+    print(chain_div(2).is_ok())
+
+    // Ternaries must still parse - including when a branch is an identifier that
+    // merely STARTS with a keyword (`returned`, `forever`), which a naive
+    // whole-line keyword check would have broken.
+    var n = 5
+    print(n > 3 ? 10 : 20)
+    var returned = 7
+    print(n > 3 ? returned : 0)
+    var forever = 42
+    print(n > 3 ? forever : 0)
+    print(n > 3 ? "yes" : "no")
+    print(n > 3 ? -1 : 1)
+}
+// EXPECT: 50
+// EXPECT: 51
+// EXPECT: 50
+// EXPECT: 1
+// EXPECT: 10
+// EXPECT: 7
+// EXPECT: 42
+// EXPECT: yes
+// EXPECT: -1

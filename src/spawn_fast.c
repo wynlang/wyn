@@ -15,6 +15,7 @@
 // Windows: stub implementation - spawn runs synchronously
 typedef void (*TaskFunc)(void*);
 void wyn_io_park(void) {}
+void wyn_io_wake(void) {}
 void* wyn_current_task(void) { return NULL; }
 void* wyn_current_task_future(void) { return NULL; }  // no coroutines on Windows
 int wyn_spawn_origin_line(void) { return 0; }
@@ -33,6 +34,16 @@ Future* wyn_spawn_async(void* (*func)(void*), void* arg) {
 Future* wyn_spawn_async_traced(void* (*func)(void*), void* arg, const char* f, int l) {
     (void)f; (void)l;
     return wyn_spawn_async(func, arg);
+}
+// codegen emits wyn_spawn_inline for an awaited `spawn f(...)` (see
+// codegen_expr.c ~5553-5616), but this Windows branch stubbed every OTHER spawn
+// entry point and missed this one, so any program using awaited spawn failed to
+// LINK on Windows: "undefined reference to `wyn_spawn_inline'". It went unnoticed
+// because the golden-C suite - whose 22_spawn_await case is the only one that
+// awaits a spawn - was never gated on windows-latest until now. Same synchronous
+// semantics as wyn_spawn_async above: run the task, hand back a settled future.
+Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg) {
+    return wyn_spawn_async((void* (*)(void*))func, arg);
 }
 _Atomic int ws_blocked = 0;
 int pool_try_run_one(void) { return 0; }
@@ -200,6 +211,7 @@ typedef struct {
     _Atomic int spinning;
     _Atomic int parked;
     int steal_hits;
+    int idle_rounds;   // consecutive empty park rounds -> park-duration backoff
     _Atomic(Task*) runnext;
     pthread_mutex_t park_lock;
     pthread_cond_t park_cond;
@@ -211,6 +223,14 @@ typedef struct {
 // All access paths loop to num_processors (0 before init), so a NULL
 // pointer is never dereferenced before init_scheduler allocates it.
 static Processor* processors = NULL;
+// Exactly one idle worker at a time becomes the DESIGNATED POLLER: it blocks in
+// wyn_io_poll_wait (kqueue/epoll) instead of pthread_cond_timedwait, so timer and
+// fd readiness still advance while every other worker parks (near-)indefinitely.
+// io_loop.c has no dedicated poller thread, so without this "one blocks in the
+// reactor, the rest park" rule an idle pool would stop advancing the reactor and
+// every cooperative Time::sleep / socket wait would stall until a timeout tick.
+// 0 = no poller, 1 = one worker owns the reactor.
+static _Atomic int io_poller_owned = 0;
 static _Atomic int num_processors = 0;
 static _Atomic int initialized = 0;
 static _Atomic int scheduler_shutdown = 0;
@@ -244,6 +264,11 @@ static inline void wake_processor(void) {
             return;  // Wake one - it will steal and wake others if needed
         }
     }
+    // Nobody spinning, nobody on a cond: the only remaining idle worker is the
+    // designated poller, blocked in the reactor where no pthread_cond_signal can
+    // reach it. Interrupt it so it re-scans the queues.
+    if (atomic_load_explicit(&io_poller_owned, memory_order_acquire))
+        wyn_io_wake();
 }
 
 // Wake all parked processors - used when multiple tasks are enqueued at once
@@ -256,6 +281,10 @@ static inline void wake_all_processors(void) {
             pthread_mutex_unlock(&processors[i].park_lock);
         }
     }
+    // Same reason as wake_processor: a worker blocked in the reactor is not on a
+    // cond and would otherwise only rejoin on the reactor timeout.
+    if (atomic_load_explicit(&io_poller_owned, memory_order_acquire))
+        wyn_io_wake();
 }
 
 // Forward declaration for re-enqueue
@@ -345,7 +374,12 @@ static Task* try_steal(int self_id) {
                     Task* extra = deque_steal(&processors[victim].deque);
                     if (!extra) break;
                     if (!deque_push(&processors[self_id].deque, extra)) {
+                        // Overflow into the global queue. This push had NO wake:
+                        // latent only because every park used to time out in
+                        // 100us. Now that parks can be long, the task must
+                        // actively wake a worker or it could sit until a timeout.
                         global_queue_push(extra);
+                        wake_processor();
                         break;
                     }
                 }
@@ -362,17 +396,17 @@ static void* processor_loop(void* arg) {
     
     while (!atomic_load(&scheduler_shutdown)) {
         Task* task = atomic_exchange_explicit(&p->runnext, NULL, memory_order_acquire);
-        if (task) { execute_task(task); continue; }
-        
+        if (task) { p->idle_rounds = 0; execute_task(task); continue; }
+
         task = deque_pop(&p->deque);
-        if (task) { execute_task(task); continue; }
-        
+        if (task) { p->idle_rounds = 0; execute_task(task); continue; }
+
         task = global_queue_pop();
-        if (task) { execute_task(task); continue; }
-        
+        if (task) { p->idle_rounds = 0; execute_task(task); continue; }
+
         task = try_steal(p->id);
-        if (task) { p->steal_hits = (p->steal_hits < 8) ? p->steal_hits + 1 : 8; execute_task(task); continue; }
-        
+        if (task) { p->idle_rounds = 0; p->steal_hits = (p->steal_hits < 8) ? p->steal_hits + 1 : 8; execute_task(task); continue; }
+
         // Poll I/O loop - re-enqueues tasks whose fds are ready
         wyn_io_poll();
         
@@ -380,9 +414,9 @@ static void* processor_loop(void* arg) {
         int spin_limit = 16 + p->steal_hits * 16;
         for (int spins = 0; spins < spin_limit; spins++) {
             task = global_queue_pop();
-            if (task) { atomic_store(&p->spinning, 0); execute_task(task); goto next; }
+            if (task) { p->idle_rounds = 0; atomic_store(&p->spinning, 0); execute_task(task); goto next; }
             task = try_steal(p->id);
-            if (task) { atomic_store(&p->spinning, 0); execute_task(task); goto next; }
+            if (task) { p->idle_rounds = 0; atomic_store(&p->spinning, 0); execute_task(task); goto next; }
             if ((spins & 15) == 0) wyn_io_poll();  // poll periodically during spin
             #ifdef __x86_64__
             __asm__ volatile("pause");
@@ -393,19 +427,82 @@ static void* processor_loop(void* arg) {
         atomic_store(&p->spinning, 0);
         
         p->steal_hits = p->steal_hits > 0 ? p->steal_hits - 1 : 0;
+
+        // Try to become the DESIGNATED POLLER. Exactly one idle worker blocks in
+        // the reactor (kqueue/epoll) with a bounded timeout; it converts timer and
+        // fd readiness into enqueued tasks plus a wake_processor() for the others.
+        // Everyone else parks on their cond. Without this, indefinite parking would
+        // mean nobody advances the reactor and every cooperative Time::sleep /
+        // socket wait would stall.
+        //
+        // The idle_rounds >= 4 gate is LOAD-BEARING: claiming the reactor mid-burst
+        // removes a worker from the pool for the length of the block (1M spawns
+        // measured 0.67s -> 0.80-1.00s without the gate). During a burst
+        // idle_rounds stays 0 because work keeps being found, so nobody claims and
+        // throughput is untouched; a genuinely idle program reaches the threshold
+        // in a few hundred microseconds.
+        int expected_owner = 0;
+        if (p->idle_rounds >= 4 && wyn_io_has_reactor() &&
+            atomic_compare_exchange_strong_explicit(&io_poller_owned, &expected_owner, 1,
+                memory_order_acq_rel, memory_order_relaxed)) {
+            // Re-check the queues AFTER claiming ownership: a task enqueued in the
+            // window between the spin ending and the claim (when spinning was
+            // still 1, so wake_processor early-returned without signalling) would
+            // otherwise sit idle until the reactor timeout.
+            task = global_queue_pop();
+            if (!task) task = try_steal(p->id);
+            if (task) {
+                atomic_store_explicit(&io_poller_owned, 0, memory_order_release);
+                p->idle_rounds = 0;
+                execute_task(task);
+                continue;
+            }
+            // WYN_POLL_MS bounds the block. It is a BACKSTOP only (missed-wakeup
+            // insurance), not the mechanism: real readiness interrupts this
+            // kevent/epoll_wait exactly on time, and wyn_io_wake() interrupts it
+            // for newly enqueued work. Idle cost: ~1 wakeup/sec for the pool.
+            static int poll_ms = -1;
+            if (poll_ms < 0) {
+                const char* e = getenv("WYN_POLL_MS");
+                poll_ms = (e && atoi(e) > 0) ? atoi(e) : 1000;
+            }
+            if (p->idle_rounds < 1000000) p->idle_rounds++;
+            wyn_io_poll_wait(poll_ms);
+            atomic_store_explicit(&io_poller_owned, 0, memory_order_release);
+            // Anything the reactor readied went to the global queue; another
+            // parked worker may need waking for it.
+            wake_processor();
+            goto next;
+        }
+
         pthread_mutex_lock(&p->park_lock);
         atomic_store(&p->parked, 1);
         task = global_queue_pop();
         if (task) {
             atomic_store(&p->parked, 0);
             pthread_mutex_unlock(&p->park_lock);
+            p->idle_rounds = 0;
             execute_task(task);
             continue;
         }
+        // ADAPTIVE park backstop. wake_processor() deliberately early-returns when
+        // any worker is spinning ("it'll grab it"), which is what makes 1M-spawn
+        // throughput fast (no signal syscall per spawn) - but it means a parked
+        // worker can be skipped. A SHORT first backstop preserves the old burst
+        // behavior byte-for-byte (a skipped worker rejoins in 100us); after a few
+        // consecutive empty rounds the program is genuinely idle, so ramp and stop
+        // burning a core.
+        //   rounds 0-3: 100us (identical to the old fixed tick)
+        //   then x8 per round, capped at 1s => idle cost ~1 wakeup/sec/worker.
+        long backstop_us = 100;
+        for (int r = 4; r < p->idle_rounds && backstop_us < 1000000; r++)
+            backstop_us *= 8;
+        if (backstop_us > 1000000) backstop_us = 1000000;
+        if (p->idle_rounds < 1000000) p->idle_rounds++;
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
-        ts.tv_nsec += 100000;
-        if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
+        ts.tv_nsec += backstop_us * 1000;
+        while (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
         pthread_cond_timedwait(&p->park_cond, &p->park_lock, &ts);
         atomic_store(&p->parked, 0);
         pthread_mutex_unlock(&p->park_lock);
@@ -438,6 +535,14 @@ static void init_scheduler(void) {
 
     atomic_store(&num_processors, cpus);
     global_queue_init();
+
+    // Create the reactor UP FRONT. It is otherwise created lazily by the first
+    // wyn_io_wait_* call, which leaves two holes: (1) the designated poller's
+    // wyn_io_poll_wait would have nothing to block on, and (2) a concurrent
+    // wake_processor() -> wyn_io_wake() would silently no-op against a -1 fd and
+    // lose the wakeup. Creating it here means the wake channel always exists
+    // before any worker can park.
+    wyn_io_init();
 
     processors[0].id = 0;
     deque_init(&processors[0].deque);
@@ -792,10 +897,61 @@ void wyn_spawn_wait(void) {
     // iteration: a task may be I/O-parked (e.g. cooperative Time::sleep / socket
     // wait), and if every worker processor is also parked, nothing else would
     // advance the reactor - the old pure sched_yield() spin could hang there.
+    // Adaptive: yield-spin briefly first (throughput workloads drain in
+    // microseconds, and blocking on iteration 1 regressed the 1M-spawn benchmark),
+    // then block in the reactor so a genuinely I/O/timer-parked tail costs no CPU
+    // instead of burning multiple cores in a pure sched_yield() spin.
+    // The spin phase is bounded by BOTH an iteration count and a wall-clock
+    // budget. An iteration count alone buys a wildly different amount of CPU per
+    // machine: 2048 rounds of wyn_io_poll() + sched_yield() measured 13ms on an
+    // M3 Pro but 91ms on the macos-15-intel CI runner, which blew the 50ms
+    // idle-CPU gate on that host only. The count still caps a fast machine (where
+    // it expires first and the 1M-spawn benchmark needs it); the deadline caps a
+    // slow one. Whichever hits first ends the spin, so the worst-case CPU burned
+    // before parking is bounded in TIME on every platform.
+    enum { WAIT_SPIN_ROUNDS = 2048, WAIT_SPIN_BUDGET_US = 20000 };
+    int spins = 0;
+    int _spin_budget_left = 1;   // sticky: once the deadline passes it stays expired
+    struct timespec _spin_t0;
+    clock_gettime(CLOCK_MONOTONIC, &_spin_t0);
     while (atomic_load(&total_completed) < atomic_load(&total_spawned)) {
-        wyn_io_poll();     // wake any tasks whose timers/fds are ready
-        wake_all_processors();
-        sched_yield();
+        if (_spin_budget_left && spins >= 64 && (spins & 63) == 0) {
+            // Check the clock only every 64th round: clock_gettime is a vDSO call,
+            // but this loop is hot enough on the 1M-spawn path that calling it
+            // every iteration is itself measurable.
+            struct timespec _now;
+            clock_gettime(CLOCK_MONOTONIC, &_now);
+            long _elapsed_us = (_now.tv_sec - _spin_t0.tv_sec) * 1000000L
+                             + (_now.tv_nsec - _spin_t0.tv_nsec) / 1000L;
+            if (_elapsed_us >= WAIT_SPIN_BUDGET_US) _spin_budget_left = 0;
+        }
+        if ((spins < WAIT_SPIN_ROUNDS && _spin_budget_left) || !wyn_io_has_reactor()) {
+            // SPIN PHASE. Blocking on iteration 1 regressed the 1M-spawn
+            // benchmark, hence spin-then-block rather than blocking immediately.
+            //
+            // wake_all_processors() is 2*N mutex ops and it wakes every worker to
+            // spin and re-park. With a real backlog that is exactly what we want
+            // (throttling it starved the workers: 1M spawns 744ms -> 1043ms), but
+            // when only a parked tail remains it is pure waste - it was measured
+            // burning up to ~600ms of CPU while waiting on ONE sleeping task.
+            // So: poke every round while a backlog is draining, else occasionally.
+            wyn_io_poll();          // wake any tasks whose timers/fds are ready
+            long backlog = atomic_load(&total_spawned) - atomic_load(&total_completed);
+            if (backlog > 8 || (spins & 255) == 0) wake_all_processors();
+            spins++;
+            sched_yield();
+            continue;
+        }
+        // BLOCKING PHASE: the tail is genuinely I/O/timer-parked. Block in the
+        // reactor so this costs no CPU. Do NOT wake_all_processors() per round
+        // here: at a 20ms tick that woke all N workers to spin and re-park for
+        // the whole wait (measured ~490ms of CPU over a 2s wait). Readiness comes
+        // from the reactor itself, which enqueues + wakes via wyn_sched_enqueue.
+        wyn_io_poll();
+        // Re-check before blocking: the counters may have reached parity during
+        // the poll above, and we must not sleep past our own completion.
+        if (atomic_load(&total_completed) >= atomic_load(&total_spawned)) break;
+        wyn_io_poll_wait(20);
     }
     // Belt-and-suspenders: flush stdout/stderr here, before main returns. Most
     // output already flushed (println_str self-flushes), but the numeric/bool/

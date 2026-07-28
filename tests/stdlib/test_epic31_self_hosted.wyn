@@ -161,10 +161,21 @@ fn main() -> int {
     Test.assert(out.contains("return 0"), "gen: return")
 
     // === 31.4: BOOTSTRAP ===
-    File.write("/tmp/wyn_sh_boot.c", out)
-    System_exec("gcc -o /tmp/wyn_sh_boot /tmp/wyn_sh_boot.c 2>&1")
-    var result = System_exec("/tmp/wyn_sh_boot")
+    // Per-process paths. These were the FIXED names /tmp/wyn_sh_boot{,.c}, so two
+    // concurrent runs of this test (two suite shards, or two agents on one host)
+    // raced: one process's `gcc -o` truncates the very binary the other is about
+    // to exec, and the exec then blocks/fails - observed as a 98s watchdog kill
+    // in the suite while the test passed 4/4 standalone AND 4/4 run concurrently
+    // with unique paths.
+    var tag = Os.pid().to_string()
+    var csrc = "/tmp/wyn_sh_boot_" + tag + ".c"
+    var cbin = "/tmp/wyn_sh_boot_" + tag
+    File.write(csrc, out)
+    System_exec("gcc -o " + cbin + " " + csrc + " 2>&1")
+    var result = System_exec(cbin)
     Test.assert_eq_str(result.trim(), "hello", "bootstrap: hello")
+    File.delete(csrc)
+    File.delete(cbin)
 
     Test.summary()
     return 0
