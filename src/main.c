@@ -1600,7 +1600,16 @@ int main(int argc, char** argv) {
                 sqlite_flags = "-DWYN_USE_SQLITE -I ./packages/sqlite/src";
                 sqlite_src = " ./packages/sqlite/src/sqlite3.c";
             } else {
-                sqlite_flags = "-DWYN_USE_SQLITE -lsqlite3";
+                // `-lsqlite3` is a LINK input, so it belongs in sqlite_src (spliced
+                // at the END of every link line), not in sqlite_flags (which is
+                // placed early, where only -D/-I belong). GNU ld resolves -l only
+                // against objects listed BEFORE it, so with -lsqlite3 up front every
+                // Db.* call came back as an undefined reference on Linux - 18 of them
+                // for tests/stdlib/test_sqlite.wyn. Apple's ld does not care about
+                // order, which is why this was invisible on macOS and only ever broke
+                // the ubuntu CI job. Same hazard, same fix as the FFI flags below.
+                sqlite_flags = "-DWYN_USE_SQLITE";
+                sqlite_src = " -lsqlite3";
             }
         }
 
@@ -1668,6 +1677,14 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        // The C compiler's stderr goes to a PER-PROCESS file. It used to be a
+        // fixed /tmp/wyn_cc_err.txt, which any parallel build (the stdlib runner
+        // uses 4+ jobs, and so does anyone running `make -j`) would overwrite:
+        // failures were reported with a SIBLING's error text, naming a file the
+        // user was not building. That is worse than no diagnostic, because it
+        // sends you after the wrong source file.
+        char cc_err_path[256];
+        snprintf(cc_err_path, sizeof(cc_err_path), "/tmp/wyn_cc_err.%ld.txt", (long)getpid());
         if (result != 0) {
 #ifdef __APPLE__
             const char* plibs = "-lpthread -lm";
@@ -1706,9 +1723,12 @@ int main(int argc, char** argv) {
 #endif
                 snprintf(cmd, sizeof(cmd),
 #ifdef _WIN32
-                    "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm",
+                    // Windows captures the compiler's stderr too - it was the last
+                    // branch still discarding it, so a failed build there printed
+                    // "✗ Build failed" and nothing else.
+                    "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm 2>%s",
 #elif defined(__APPLE__)
-                    "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
+                    "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>%s",
 #else
                     // Capture the C compiler's stderr, do NOT discard it. This
                     // branch used to end in `2>/dev/null`, while the __APPLE__
@@ -1717,12 +1737,12 @@ int main(int argc, char** argv) {
                     // the "Compiler output:" reader below found no file. That is
                     // exactly what a user (and a CI log) needs, and it was
                     // silently unavailable on the platform most CI runs on.
-                    "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>/tmp/wyn_cc_err.txt",
+                    "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>%s",
 #endif
 #ifdef __APPLE__
-                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, app_link
+                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, app_link, cc_err_path
 #else
-                    cc, _opt, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src
+                    cc, _opt, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, cc_err_path
 #endif
                     );
                 // Splice FFI link flags in at the END of the link line (before any
@@ -1832,7 +1852,7 @@ int main(int argc, char** argv) {
         } else {
             fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
             // Show compiler errors if available
-            FILE* ef = fopen("/tmp/wyn_cc_err.txt", "r");
+            FILE* ef = fopen(cc_err_path, "r");
             if (!ef) ef = fopen("/tmp/wyn_tcc_err.txt", "r");
             if (ef) {
                 char ebuf[2048];
@@ -1842,6 +1862,7 @@ int main(int argc, char** argv) {
                 if (n > 0) fprintf(stderr, "  Compiler output:\n%s\n", ebuf);
             }
         }
+        unlink(cc_err_path);   // per-process file: don't litter /tmp
         return result == 0 ? 0 : 1;
     }
     

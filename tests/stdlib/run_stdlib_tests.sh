@@ -113,8 +113,20 @@ run_one() {
         rm -rf "$sandbox"; return
     fi
     if [ "$build_rc" -ne 0 ] || [ ! -x "$bin" ]; then
+        # Report the REAL diagnostic, not the banner. This filter used to drop
+        # only "Building/Built/Compiled in" and then `head -2`, so the two lines
+        # it kept were "✗ Build failed" and "Compiler output:" - the heading of
+        # the error with the error itself cut off. Every one of the 12 Linux
+        # sqlite link failures in this cycle reported as an empty
+        # "Compiler output:" for that reason, which cost a full CI round-trip to
+        # diagnose. Drop the decoration and the "unused variable" warnings that
+        # otherwise crowd out the real cause, and keep more lines: a linker error
+        # names one undefined symbol per line.
         printf 'FAIL\tbuild failed (rc=%s): %s\n' "$build_rc" \
-            "$(echo "$build_out" | grep -v '^Building\|^Built\|^Compiled in' | head -2 | tr '\n' ' ')" \
+            "$(echo "$build_out" \
+                | sed 's/\x1b\[[0-9;]*m//g' \
+                | grep -vE '^Building|^Built|^Compiled in|^[[:space:]]*$|^✗ Build failed|^[[:space:]]*Compiler output:|^Warning: unused variable' \
+                | head -4 | tr '\n' ' ')" \
             > "$result_file"
         rm -rf "$sandbox"; return
     fi

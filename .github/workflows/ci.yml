@@ -24,7 +24,12 @@ jobs:
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y gcc make
+        # libsqlite3-dev: programs using `Db.` link against the system libsqlite3
+        # (see src/main.c - it falls back to -lsqlite3 when ./packages/sqlite is
+        # absent). macOS ships sqlite3.h in the SDK, so without this the 13
+        # tests/stdlib files that use Db. failed to build on Linux ONLY, which is
+        # exactly how it slipped through: the macOS jobs were green.
+        run: sudo apt-get update && sudo apt-get install -y gcc make libsqlite3-dev
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'

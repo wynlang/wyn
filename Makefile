@@ -290,6 +290,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
 	@echo "=== Running wyn-run orphan-child test ==="
 	@WYN=./wyn bash tests/errors/run_orphan_child_test.sh
+	@echo "=== Running sqlite link-order gate ==="
+	@WYN=./wyn bash tests/errors/run_sqlite_link_order_test.sh
 	@echo "=== Running wyn ui coverage test ==="
 	@WYN=./wyn bash tests/errors/run_ui_coverage_test.sh
 	@echo "=== Running install-layout canary ==="

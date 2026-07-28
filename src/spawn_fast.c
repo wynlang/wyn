@@ -901,9 +901,31 @@ void wyn_spawn_wait(void) {
     // microseconds, and blocking on iteration 1 regressed the 1M-spawn benchmark),
     // then block in the reactor so a genuinely I/O/timer-parked tail costs no CPU
     // instead of burning multiple cores in a pure sched_yield() spin.
+    // The spin phase is bounded by BOTH an iteration count and a wall-clock
+    // budget. An iteration count alone buys a wildly different amount of CPU per
+    // machine: 2048 rounds of wyn_io_poll() + sched_yield() measured 13ms on an
+    // M3 Pro but 91ms on the macos-15-intel CI runner, which blew the 50ms
+    // idle-CPU gate on that host only. The count still caps a fast machine (where
+    // it expires first and the 1M-spawn benchmark needs it); the deadline caps a
+    // slow one. Whichever hits first ends the spin, so the worst-case CPU burned
+    // before parking is bounded in TIME on every platform.
+    enum { WAIT_SPIN_ROUNDS = 2048, WAIT_SPIN_BUDGET_US = 20000 };
     int spins = 0;
+    int _spin_budget_left = 1;   // sticky: once the deadline passes it stays expired
+    struct timespec _spin_t0;
+    clock_gettime(CLOCK_MONOTONIC, &_spin_t0);
     while (atomic_load(&total_completed) < atomic_load(&total_spawned)) {
-        if (spins < 2048 || !wyn_io_has_reactor()) {
+        if (_spin_budget_left && spins >= 64 && (spins & 63) == 0) {
+            // Check the clock only every 64th round: clock_gettime is a vDSO call,
+            // but this loop is hot enough on the 1M-spawn path that calling it
+            // every iteration is itself measurable.
+            struct timespec _now;
+            clock_gettime(CLOCK_MONOTONIC, &_now);
+            long _elapsed_us = (_now.tv_sec - _spin_t0.tv_sec) * 1000000L
+                             + (_now.tv_nsec - _spin_t0.tv_nsec) / 1000L;
+            if (_elapsed_us >= WAIT_SPIN_BUDGET_US) _spin_budget_left = 0;
+        }
+        if ((spins < WAIT_SPIN_ROUNDS && _spin_budget_left) || !wyn_io_has_reactor()) {
             // SPIN PHASE. Blocking on iteration 1 regressed the 1M-spawn
             // benchmark, hence spin-then-block rather than blocking immediately.
             //
