@@ -212,18 +212,17 @@ static void wyn_run_signal_forward(int sig) {
     raise(sig);
 }
 
-#ifndef __linux__
-/* Supervisor-only: exists purely so SIGCHLD interrupts poll() promptly. */
+/* Supervisor helper: exists purely so SIGCHLD interrupts poll() promptly.
+ * All POSIX platforms now use the supervisor (was macOS-only), so this and the
+ * death-detector pipe below must NOT be Linux-excluded - that exclusion is what
+ * left Linux with the old bare-PDEATHSIG path and no kill-9 cleanup. */
 static void wyn_sup_sigchld(int sig) { (void)sig; }
-#endif
 
 static int wyn_run_program(const char* cmd) {
     int pfd[2] = {-1, -1};
-#ifndef __linux__
     /* Death-detector pipe: only WE hold the write end, so EOF on the read end
      * means this process is gone - by SIGKILL, panic, or anything else. */
     if (pipe(pfd) != 0) { pfd[0] = pfd[1] = -1; }
-#endif
 
     pid_t pid = fork();
     if (pid < 0) {
