@@ -2849,8 +2849,14 @@ int main(int argc, char** argv) {
                     // Run the compiled binary with user args
                     char run_cmd[4096];
                     int rc = 0;
+                    // A leading "./" is a Unix idiom; cmd.exe rejects it with
+                    // "'.' is not recognized". On Windows run the path as-is.
                     if (file[0] == '/') rc = snprintf(run_cmd, sizeof(run_cmd), "%s.out", file);
+#ifdef _WIN32
+                    else rc = snprintf(run_cmd, sizeof(run_cmd), "%s.out", file);
+#else
                     else rc = snprintf(run_cmd, sizeof(run_cmd), "./%s.out", file);
+#endif
                     if (user_args_start > 0) {
                         for (int i = user_args_start; i < argc && rc < (int)sizeof(run_cmd) - 2; i++) {
                             rc += snprintf(run_cmd + rc, sizeof(run_cmd) - rc, " %s", argv[i]);
@@ -3785,8 +3791,8 @@ int create_new_project_with_template(const char* name, const char* template, con
             "    assert_eq(\"a,b,c\".split(\",\").len(), 3)\n"
             "}\n\n"
             "test \"file roundtrip\" {\n"
-            "    File.write(\"/tmp/%s_test.txt\", \"hello\")\n"
-            "    var content = File.read(\"/tmp/%s_test.txt\")\n"
+            "    File.write(\"%s_test.txt\", \"hello\")\n"
+            "    var content = File.read(\"%s_test.txt\")\n"
             "    assert_eq(content, \"hello\")\n"
             "}\n", name, name);
     } else if (strcmp(template, "lib") == 0) {
