@@ -35,6 +35,16 @@ Future* wyn_spawn_async_traced(void* (*func)(void*), void* arg, const char* f, i
     (void)f; (void)l;
     return wyn_spawn_async(func, arg);
 }
+// codegen emits wyn_spawn_inline for an awaited `spawn f(...)` (see
+// codegen_expr.c ~5553-5616), but this Windows branch stubbed every OTHER spawn
+// entry point and missed this one, so any program using awaited spawn failed to
+// LINK on Windows: "undefined reference to `wyn_spawn_inline'". It went unnoticed
+// because the golden-C suite - whose 22_spawn_await case is the only one that
+// awaits a spawn - was never gated on windows-latest until now. Same synchronous
+// semantics as wyn_spawn_async above: run the task, hand back a settled future.
+Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg) {
+    return wyn_spawn_async((void* (*)(void*))func, arg);
+}
 _Atomic int ws_blocked = 0;
 int pool_try_run_one(void) { return 0; }
 int wyn_sched_pump_one(void) { return 0; }  // no scheduler on Windows (spawns run inline)
