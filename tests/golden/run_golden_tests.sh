@@ -80,12 +80,22 @@ for wyn_src in "$DIR"/*.wyn; do
         continue
     fi
 
-    if cmp -s "$TMP/$base.norm.c" "$golden"; then
+    # Strip CR from the SNAPSHOT side too, not just the generated side. On a
+    # Windows runner git checks the .golden files out with CRLF (there is no
+    # .gitattributes pinning them to LF), so comparing a CR-stripped generated
+    # file against a CRLF snapshot made all 30 snapshots "differ" on line
+    # endings alone - a whole-file diff with byte-identical content. That is what
+    # happened the first time this suite was gated on windows-latest. Normalizing
+    # both sides is the robust fix: it works regardless of the checkout's
+    # autocrlf setting, so nobody has to remember to configure git.
+    sed -e 's|\r$||' "$golden" > "$TMP/$base.golden.norm"
+
+    if cmp -s "$TMP/$base.norm.c" "$TMP/$base.golden.norm"; then
         echo "  ok    $base"
         PASS=$((PASS + 1))
     else
         echo "  FAIL  $base - generated C differs from snapshot:"
-        diff -u "$golden" "$TMP/$base.norm.c" | head -40 | sed 's/^/        /'
+        diff -u "$TMP/$base.golden.norm" "$TMP/$base.norm.c" | head -40 | sed 's/^/        /'
         FAIL=$((FAIL + 1))
     fi
 done

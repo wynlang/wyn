@@ -20,9 +20,20 @@
 // wyn_io_wait_timer -> reactor -> re-enqueue, which is what this pins.
 //
 // 20 sequential 10ms cooperative sleeps have an ideal cost of 200ms. Anything
-// near or past ~400ms means timers are being serviced by a park timeout instead
-// of by the reactor. The threshold is loose enough for a loaded CI box (baseline
-// here is ~225ms) but far below the ~1000ms the rejected long-park fix produced.
+// far past that means timers are being serviced by a park timeout instead of by
+// the reactor.
+//
+// THRESHOLD, and why it is 700ms rather than 400ms: the failure mode this pins
+// is a ~5x blowup (225ms -> ~1047ms measured), so the gate only has to separate
+// "roughly the ideal 200ms" from "~1000ms". A 400ms bound did that on a 12-core
+// dev box (measured 221-226ms, stable even under 6 competing busy-loops) but
+// FAILED on the 2-core macos-15 and macos-15-intel CI runners, where 20 timer
+// round-trips plus scheduler wakeups cost noticeably more wall clock. That was a
+// runner-capacity artifact, not a regression - the same commit passed ubuntu.
+// 700ms keeps a 1.5x margin below the ~1047ms broken case while giving slow
+// 2-core runners room, which is the right trade for a latency gate: a flaky red
+// teaches people to ignore it, and this test's whole value is being believed.
+// If you need to tighten this, measure on the slowest runner first.
 
 fn chain(n: int) {
     t0 = Time::now_millis()
@@ -32,10 +43,10 @@ fn chain(n: int) {
         i = i + 1
     }
     elapsed = Time::now_millis() - t0
-    if elapsed < 400 {
+    if elapsed < 700 {
         println("ok")
     } else {
-        println("SLOW")
+        println("SLOW elapsed=${elapsed}")
     }
 }
 

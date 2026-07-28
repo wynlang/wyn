@@ -1,0 +1,21 @@
+# Line-ending policy.
+#
+# The golden-C snapshots are byte-compared against compiler output by
+# tests/golden/run_golden_tests.sh. On a Windows checkout git would otherwise
+# convert them to CRLF, making all 30 snapshots "differ" from LF-normalized
+# generated C on line endings alone - byte-identical content, whole-file diff.
+# That failed the first CI run that gated this suite on windows-latest.
+#
+# The runner now strips CR from both sides regardless, so this file is
+# defence in depth: it keeps the working copy honest so a developer on Windows
+# sees the same bytes CI does.
+*.c.golden text eol=lf
+
+# Shell scripts must keep LF or they break when executed under a Unix shell
+# (git-bash on the Windows runner included: a CRLF shebang line yields
+# "bad interpreter: /bin/bash^M").
+*.sh text eol=lf
+
+# Wyn sources: keep LF so `// EXPECT:` comparisons and error-message snapshots
+# are stable across platforms.
+*.wyn text eol=lf

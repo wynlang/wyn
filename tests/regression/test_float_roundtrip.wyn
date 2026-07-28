@@ -28,7 +28,7 @@
 // EXPECT: 3.141592653589793
 // EXPECT: inf
 // EXPECT: -inf
-// EXPECT: nan
+// EXPECT: nan-not-equal-self
 // EXPECT: roundtrip-print 0.30000000000000004
 // EXPECT: roundtrip-fmt 0.3333333333333333
 // EXPECT: all-roundtrip true
@@ -60,7 +60,14 @@ fn main() {
 
     print(1.0 / 0.0)
     print(0.0 - 1.0 / 0.0)
-    print(0.0 / 0.0)
+    // NOT print(0.0 / 0.0): the SIGN of a NaN produced by 0.0/0.0 is not
+    // specified by IEEE-754, and it genuinely differs by platform - this
+    // printed "nan" on macOS-arm64 and "-nan" on Linux/x86 and macOS-intel,
+    // failing all three CI runners while passing locally. Assert the property
+    // that actually matters (NaN is not equal to itself) instead of libc's
+    // spelling of it.
+    nan_val = 0.0 / 0.0
+    if nan_val == nan_val { print("nan-is-reflexive-BUG") } else { print("nan-not-equal-self") }
 
     // The data-integrity half: interpolation and .format() must use the same
     // round-trip text as print, not a lossier path.
