@@ -96,6 +96,48 @@ static const char* map_c_type(const char* c, int is_return) {
         for (const char* p = s; *p && bi < 255; p++) if (*p != '*' && !isspace((unsigned char)*p)) base[bi++] = *p;
         base[bi] = '\0';
         if (strcmp(base, "char") == 0 && stars == 1) return "string";
+        // A pointer to a SIZED SCALAR (int*, double*, long*, ...) cannot be
+        // mapped to Wyn's opaque `ptr`, because `ptr` lowers to `void*` and the
+        // generated `extern` then CONFLICTS with the library's real prototype:
+        //   error: conflicting types for 'lgamma_r'; have 'double(double, void *)'
+        // The C compiler rejects a file the user did not write, which is a worse
+        // outcome than the function simply being unavailable. Skip it so it is
+        // reported as a `// TODO:` line instead.
+        //
+        // Opaque handles (struct pointers, void*, typedef'd handles) stay `ptr` -
+        // that is exactly what `ptr` is for, and their declarations agree because
+        // the real type is also a pointer-to-incomplete/void.
+        //
+        // Proper out-parameter support (int* as an inout binding) is real work on
+        // the FFI type model, tracked for a later release rather than bodged here.
+        {
+            const char* scalars[] = {"int","char","short","long","longlong","long long",
+                                     "float","double","longdouble","long double",
+                                     "unsigned","signed","size_t","ssize_t",
+                                     "int8_t","uint8_t","int16_t","uint16_t",
+                                     "int32_t","uint32_t","int64_t","uint64_t",
+                                     "bool","_Bool", NULL};
+            // Match on a PREFIX, not equality: a declared parameter may carry a
+            // name, and the star/space-stripping above folds it into the base
+            // spelling - glibc's `int *__signgamp` (lgamma_r) becomes
+            // "int__signgamp", which equality would miss, letting the conflicting
+            // void* declaration through. Require the next character to be a
+            // non-identifier or '_' so "int"/"int__signgamp" match while a
+            // genuinely different type like "intptr_t" (already handled as an
+            // opaque integer above) or a typedef such as "internal_state" does not.
+            for (int i = 0; scalars[i]; i++) {
+                size_t kl = strlen(scalars[i]);
+                if (strncmp(base, scalars[i], kl) != 0) continue;
+                char nxt = base[kl];
+                if (nxt == '\0' || nxt == '_') return NULL;
+            }
+            // Compound spellings survive the space-stripping above as e.g.
+            // "unsignedint" / "longlongint" - catch those too.
+            if (strncmp(base, "unsigned", 8) == 0 || strncmp(base, "signed", 6) == 0 ||
+                strncmp(base, "longlong", 8) == 0 || strncmp(base, "longdouble", 10) == 0 ||
+                strcmp(base, "longint") == 0 || strcmp(base, "shortint") == 0)
+                return NULL;
+        }
         // A typedef'd string pointer (png_const_charp = const char*) with one
         // extra star is still opaque; the plain typedef resolves below.
         return "ptr"; // any other single/multi pointer -> opaque
@@ -110,8 +152,16 @@ static const char* map_c_type(const char* c, int is_return) {
     // Bare scalar spellings.
     if (strcmp(s, "void") == 0) return is_return ? "void" : NULL;
     if (strcmp(s, "bool") == 0 || strcmp(s, "_Bool") == 0) return "bool";
-    if (strcmp(s, "float") == 0 || strcmp(s, "double") == 0 || strcmp(s, "long double") == 0)
-        return "float";
+    // Wyn `float` IS a C double (codegen.c maps it unconditionally), so a C
+    // `float`/`long double` in an FFI signature cannot be represented: emitting
+    // `float` for it declares the symbol as taking a double, and the C compiler
+    // then rejects the generated file with "conflicting types for 'j0f'" against
+    // the real prototype. Skip those instead of mis-declaring them - a missing
+    // binding is a TODO the user can see, a wrong one is a build failure in a
+    // file they did not write. (Surfaced by libm on glibc, which declares the
+    // full f/l variant family: j0f, y0f, sqrtf, lgammal, ...)
+    if (strcmp(s, "double") == 0) return "float";
+    if (strcmp(s, "float") == 0 || strcmp(s, "long double") == 0) return NULL;
     // Integer family (all widths/signedness collapse to Wyn int).
     if (strcmp(s, "int") == 0 || strcmp(s, "char") == 0 || strcmp(s, "short") == 0 ||
         strcmp(s, "long") == 0 || strcmp(s, "long long") == 0 ||
@@ -283,6 +333,79 @@ static char* bg_strip_attributes(char* s) {
     }
 }
 
+// Truncate a TRAILING GNU `__attribute__((...))` (and `__asm__(...)` rename),
+// which glibc puts AFTER the parameter list rather than before the return type:
+//
+//   extern double sqrt (double __x) __attribute__ ((__nothrow__ , __leaf__));
+//
+// bg_strip_attributes only handles the LEADING form, so on glibc every math.h
+// prototype kept a trailing `__attribute__ ((...))` fragment and the shape
+// filters rejected it - `wyn add m` generated a file with **0 extern fns** on
+// Linux while producing 160 (sqrt included) on the macOS SDK, whose headers use
+// the clean `extern double sqrt(double);` form. Nobody had seen it because the
+// cpkg suite was never gated on Linux until make test was wired into CI.
+//
+// Cutting at the attribute keyword is safe here: by this point the declaration
+// has already been split at its ';', so anything after the parameter list is
+// suffix noise with no FFI meaning. Also handles glibc's `__asm__ ("name")`
+// symbol-rename suffix (e.g. `__REDIRECT`-generated decls).
+static void bg_strip_trailing_attributes(char* s) {
+    const char* kw[] = {"__attribute__", "__asm__", "__asm", "__THROW", NULL};
+    for (int i = 0; kw[i]; i++) {
+        char* at = strstr(s, kw[i]);
+        // Only treat it as a suffix if a ')' precedes it - i.e. the parameter
+        // list is already closed. A leading attribute is bg_strip_attributes's
+        // job and must not be truncated here (that would delete the whole decl).
+        if (!at || at == s) continue;
+        int seen_close = 0;
+        for (char* q = s; q < at; q++) if (*q == ')') { seen_close = 1; break; }
+        if (seen_close) { *at = '\0'; }
+    }
+    // Re-trim: cutting the suffix can leave trailing whitespace.
+    size_t n = strlen(s);
+    while (n > 0 && (s[n-1] == ' ' || s[n-1] == '\t')) s[--n] = '\0';
+}
+
+// Does a `# <line> "file"` marker belong to the header we are binding?
+//
+// The naive test was `strstr(marker, base)`, i.e. "does the path contain
+// math.h". That works on the macOS SDK, which declares the API directly in
+// math.h - but glibc splits its declarations into bits/ sub-headers:
+//
+//   # 85 "/usr/include/aarch64-linux-gnu/bits/mathcalls.h"
+//   extern double sqrt (double __x) __attribute__ ((__nothrow__, __leaf__));
+//
+// and "math.h" is NOT a substring of "bits/mathcalls.h" (mathcalls != math.h).
+// So on Linux every real prototype was attributed to a non-target file and
+// skipped: `wyn add m` emitted a file with ZERO functions, while the same
+// command produced 160+ on macOS. The cpkg suite had never been gated on Linux,
+// so this went unseen.
+//
+// Accept a marker when the path's basename matches `base` exactly, OR when it
+// lives in a bits/ (or sys/) directory and shares the base's stem - which is
+// glibc's convention for the header's own private implementation pieces
+// (math.h -> bits/mathcalls.h, bits/math-finite.h; stdio.h -> bits/stdio.h).
+// Matching on the stem keeps unrelated headers pulled in transitively (stddef.h,
+// stdint.h) correctly excluded, which is the filter's whole purpose.
+static int bg_marker_is_target(const char* marker, const char* base) {
+    const char* mb = strrchr(marker, '/');
+    mb = mb ? mb + 1 : marker;
+    if (strcmp(mb, base) == 0) return 1;
+
+    // Stem of `base` (drop a trailing ".h").
+    char stem[256];
+    snprintf(stem, sizeof(stem), "%s", base);
+    size_t sl = strlen(stem);
+    if (sl > 2 && strcmp(stem + sl - 2, ".h") == 0) stem[sl - 2] = '\0';
+    if (stem[0] == '\0') return 0;
+
+    // Only trust the stem heuristic for the platform's private sub-header dirs,
+    // so a user header called "foo.h" can't be matched by an unrelated
+    // "foobar.h" elsewhere on the include path.
+    if (!strstr(marker, "/bits/") && !strstr(marker, "/sys/")) return 0;
+    return strncmp(mb, stem, strlen(stem)) == 0;
+}
+
 // Remove nullability/restrict annotations in place - macOS SDK headers wrap
 // nearly every pointer in `_Nullable`/`_Nonnull`/`_Null_unspecified`, and many
 // libraries use `restrict`/`__restrict`. They carry no FFI meaning; without
@@ -378,7 +501,27 @@ static int emit_prototype(char* decl, FILE* out) {
       } }
 
     const char* wyn_ret = map_c_type(rettype, 1);
-    if (!wyn_ret) { fprintf(out, "// TODO: %s - unsupported return type '%s'\n", name, bg_trim(rettype)); return 0; }
+    if (!wyn_ret) {
+        // Flatten the type text before putting it in a `//` comment. A C type can
+        // legitimately span lines after preprocessing - glibc's math.h yields
+        // `__extension__\nextern long long int` for llrint/llround - and an
+        // embedded newline SPLITS the comment, so the tail is parsed as code:
+        //     // TODO: llrint - unsupported return type '__extension__
+        //     extern long long int'
+        //         ^ "Expected 'fn' after 'extern'", then a cascade.
+        // That made every generated libm binding on Linux unusable even once the
+        // prototypes were being found. Collapse whitespace runs to single spaces.
+        char flat[512]; size_t fi = 0; int ws = 0;
+        for (const char* p = bg_trim(rettype); *p && fi + 1 < sizeof(flat); p++) {
+            if (*p == '\n' || *p == '\r' || *p == '\t' || *p == ' ') {
+                if (!ws && fi) { flat[fi++] = ' '; ws = 1; }
+            } else { flat[fi++] = *p; ws = 0; }
+        }
+        while (fi > 0 && flat[fi-1] == ' ') fi--;
+        flat[fi] = '\0';
+        fprintf(out, "// TODO: %s - unsupported return type '%s'\n", name, flat);
+        return 0;
+    }
 
     // Parse params: comma-split at top level (params here have no nested parens
     // in the representable subset; a '(' means a function-pointer param -> skip).
@@ -465,7 +608,7 @@ int wyn_bindgen(const char* header_path, const char* cc, const char* extra_iflag
                 char* q2 = strchr(q + 1, '"');
                 if (q2) {
                     *q2 = '\0';
-                    in_target = (strstr(q + 1, base) != NULL);
+                    in_target = bg_marker_is_target(q + 1, base);
                 }
             }
             decl[0] = '\0';
@@ -492,6 +635,8 @@ int wyn_bindgen(const char* header_path, const char* cc, const char* extra_iflag
             // reject - silently skipping every attributed prototype in SDK
             // headers (all of pthread.h, most of libgit2).
             d = bg_strip_attributes(d);
+            // ...and the trailing form glibc uses (see bg_strip_trailing_attributes).
+            bg_strip_trailing_attributes(d);
 
             if (strncmp(d, "typedef", 7) == 0 && !has_char(d, '{')) {
                 td_record(d);
