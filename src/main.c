@@ -232,16 +232,18 @@ static int wyn_run_program(const char* cmd) {
     }
 
     if (pid == 0) {
-#ifdef __linux__
-        /* Kernel-enforced: when our parent dies, we get SIGKILL. */
-        prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
-        /* Close the fork/prctl race: if the parent died in between, PDEATHSIG
-         * was armed too late and would never fire, so bail out now. */
-        if (getppid() == 1) _exit(0);
-        execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
-        _exit(127);
-#else
-        /* --- supervisor --- */
+        /* --- supervisor (ALL POSIX platforms) --- */
+        /* This used to be Linux-vs-rest: Linux did a bare PR_SET_PDEATHSIG and
+         * exec'd the program directly, with NO signal forwarding and NO
+         * supervisor. That left SIGTERM/SIGINT propagation and orphan cleanup
+         * with no mechanism at all on Linux - all three failed on ubuntu the
+         * first time CI got far enough to run the test. The supervisor path
+         * (which passed 7/0 on macOS) is the portable design: it ignores the
+         * termination signals so it outlives `wyn`, and kills the program when
+         * the parent's end of the pipe closes - which happens on ANY death of
+         * `wyn`, including kill -9, where no handler can run. PDEATHSIG stays as
+         * a Linux-only belt-and-suspenders so the program dies even if the pipe
+         * mechanism is somehow defeated. */
         if (pfd[1] >= 0) close(pfd[1]);
         /* Survive the signals aimed at `wyn` so we live long enough to kill the
          * program and report its status. */
@@ -262,6 +264,12 @@ static int wyn_run_program(const char* cmd) {
             signal(SIGTERM, SIG_DFL);
             signal(SIGHUP, SIG_DFL);
             signal(SIGCHLD, SIG_DFL);
+#ifdef __linux__
+            /* Belt-and-suspenders: if the supervisor itself dies, the kernel
+             * SIGKILLs the program too. getppid()==1 closes the fork race. */
+            prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
+            if (getppid() == 1) _exit(0);
+#endif
             execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
             _exit(127);
         }
@@ -294,7 +302,6 @@ static int wyn_run_program(const char* cmd) {
                 _exit(128 + SIGKILL);
             }
         }
-#endif
     }
 
     /* --- parent (wyn) --- */
