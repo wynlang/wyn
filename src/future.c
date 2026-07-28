@@ -17,6 +17,42 @@ typedef enum { FUTURE_FREE = -1, FUTURE_PENDING = 0, FUTURE_READY = 1 } FutureSt
 // Forward declaration
 extern void wyn_sched_enqueue(void* task_ptr);
 
+// === Blocked-getter wakeup channel ===
+// A non-coroutine getter (typically main in `a = await f`) cannot park on the
+// coroutine scheduler, so it waits here. It used to sched_yield-spin a whole
+// core; blocking in the reactor instead fixed the CPU burn but added a LATENCY
+// TAIL, because nothing woke it - readiness was only noticed on the next poll
+// timeout. With a 5ms poll that showed up as 100 sequential awaited spawns
+// costing 58/112/223us each instead of 1-2us (the stalls were exact multiples of
+// the poll timeout, which is how it was identified).
+//
+// So the wait is now SIGNALLED by future_set: normal completion wakes the getter
+// immediately (restoring 1-2us) and the timeout is only a backstop.
+#ifndef _WIN32
+#include <pthread.h>
+static pthread_mutex_t fut_wait_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  fut_wait_cond = PTHREAD_COND_INITIALIZER;
+// Number of getters currently in (or about to enter) the timed wait. Lets
+// future_set skip the mutex entirely in the overwhelmingly common case where
+// nobody is blocked - important because future_set runs on every completion.
+static _Atomic int fut_waiters = 0;
+
+// Wake every blocked getter. Called from future_set after READY is published.
+static inline void fut_wake_getters(void) {
+    // Dekker-style handshake with fut_wait_begin below: the READY store must be
+    // ordered before this load, or a getter that just published itself could be
+    // missed AND fail to observe READY - a lost wakeup, i.e. exactly the stall
+    // this replaces. The waiter's fetch_add is seq_cst, this fence is its pair.
+    atomic_thread_fence(memory_order_seq_cst);
+    if (atomic_load_explicit(&fut_waiters, memory_order_relaxed) == 0) return;
+    pthread_mutex_lock(&fut_wait_lock);
+    pthread_cond_broadcast(&fut_wait_cond);
+    pthread_mutex_unlock(&fut_wait_lock);
+}
+#else
+static inline void fut_wake_getters(void) {}
+#endif
+
 typedef struct Future {
     _Atomic int state;
     void* result;
@@ -143,6 +179,11 @@ void future_set(Future* f, void* result) {
     if (waiter) {
         wyn_sched_enqueue(waiter);
     }
+    // And wake any NON-coroutine getter blocked in future_get's timed wait
+    // (typically main in `a = await f`). Without this the getter only noticed
+    // readiness on its next timeout tick, which is what produced the 30-85x
+    // latency tail on sequential awaited spawns.
+    fut_wake_getters();
 }
 
 // future_get MEMOIZES: the result stays readable, so `await f` twice returns
@@ -236,21 +277,48 @@ void* future_get(Future* f) {
         else if (coro && coro[0] == '0') async_coro = 0;
         else async_coro = 1;   // default: coroutine scheduler
     }
-    extern int wyn_io_poll_wait(int);
-    extern int wyn_io_has_reactor(void);
     while (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY) {
         int did = async_coro ? wyn_sched_pump_one() : pool_try_run_one();
         if (did) continue;
-        // Nothing runnable: the awaited task is I/O/timer-parked. Block in the
-        // reactor (bounded) instead of sched_yield-spinning a whole core. The
-        // state re-check closes the window where the future became ready between
-        // the empty pump and the block.
-        if (async_coro && wyn_io_has_reactor()) {
-            if (atomic_load_explicit(&f->state, memory_order_acquire) == FUTURE_READY) break;
-            wyn_io_poll_wait(5);
-        } else {
-            sched_yield();
+
+        // Nothing runnable: the awaitee is executing on a worker (or parked), so
+        // there is nothing useful for this thread to do. Sleep until woken.
+        //
+        // Deliberately NO yield-spin before the wait. Measured on 100 sequential
+        // awaited spawns, waiting immediately is not just as good but BETTER:
+        //   spin rounds:      0      64     512      4096
+        //   max us idle:      2       3       2         3
+        //   max us w/ 6 busy: 4       7      67        53
+        // A spin here competes with the very worker that has to finish the task
+        // it is waiting for, so on a contended machine it ADDS latency. The
+        // signalled wakeup below is fast enough (~1-2us) to not need a spin.
+#ifndef _WIN32
+        // The awaitee is parked, not running. Sleep until future_set signals us
+        // (fut_wake_getters) rather than spinning a core or polling blindly.
+        //
+        // The timeout is a BACKSTOP ONLY. Correctness of the wakeup comes from the
+        // handshake: we publish ourselves in fut_waiters (seq_cst) and then RECHECK
+        // the state under the mutex before waiting, so a future_set that lands in
+        // the window either sees our count and broadcasts, or completed before our
+        // recheck and we never wait. It must stay short anyway, because a getter
+        // can also be unblocked by things that do NOT call future_set - notably a
+        // cooperative timer firing into wyn_sched_pump_one, which is why we must
+        // return to the pump loop periodically.
+        atomic_fetch_add(&fut_waiters, 1);   // seq_cst: pairs with the fence in
+                                             // fut_wake_getters
+        pthread_mutex_lock(&fut_wait_lock);
+        if (atomic_load_explicit(&f->state, memory_order_acquire) != FUTURE_READY) {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_nsec += 2 * 1000 * 1000;   // 2ms backstop
+            while (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
+            pthread_cond_timedwait(&fut_wait_cond, &fut_wait_lock, &ts);
         }
+        pthread_mutex_unlock(&fut_wait_lock);
+        atomic_fetch_sub(&fut_waiters, 1);
+#else
+        sched_yield();
+#endif
     }
     atomic_fetch_sub(&ws_blocked, 1);
     return f->result;

@@ -23,17 +23,27 @@
 // far past that means timers are being serviced by a park timeout instead of by
 // the reactor.
 //
-// THRESHOLD, and why it is 700ms rather than 400ms: the failure mode this pins
-// is a ~5x blowup (225ms -> ~1047ms measured), so the gate only has to separate
-// "roughly the ideal 200ms" from "~1000ms". A 400ms bound did that on a 12-core
-// dev box (measured 221-226ms, stable even under 6 competing busy-loops) but
-// FAILED on the 2-core macos-15 and macos-15-intel CI runners, where 20 timer
-// round-trips plus scheduler wakeups cost noticeably more wall clock. That was a
-// runner-capacity artifact, not a regression - the same commit passed ubuntu.
-// 700ms keeps a 1.5x margin below the ~1047ms broken case while giving slow
-// 2-core runners room, which is the right trade for a latency gate: a flaky red
-// teaches people to ignore it, and this test's whole value is being believed.
-// If you need to tighten this, measure on the slowest runner first.
+// THRESHOLD - measured, twice, rather than guessed:
+//   dev box (12-core, idle):                  221-226ms, stable
+//   dev box under 6 competing busy-loops:     223-225ms, still stable
+//   macos-15 / macos-15-intel CI (2-core):    750ms
+//   the REJECTED fixed-50ms-park runtime:     ~1047ms
+//
+// A 400ms bound passed locally and failed both macOS runners; 700ms still failed
+// them at 750ms. The 2-core runners simply need more wall clock for 20 timer
+// round-trips plus the scheduler wakeups between them. Set to 900ms, which is
+// the largest value that still separates a healthy run from the ~1047ms broken
+// case - and note the broken figure was itself measured on the fast dev box, so
+// the real margin on a slow runner is wider than 900 vs 1047 suggests.
+//
+// This is deliberately a LOOSE gate. It exists to catch a ~5x regression, not to
+// track latency: a bound tight enough to flake on the slowest runner teaches
+// people to ignore the red, and this test's entire value is being believed. If
+// you tighten it, measure on the SLOWEST platform first, not locally.
+//
+// The failure message prints the elapsed value precisely so the next person does
+// not have to write a probe to find out how far off it was - which is how the
+// 750ms figure above was obtained.
 
 fn chain(n: int) {
     t0 = Time::now_millis()
@@ -43,7 +53,7 @@ fn chain(n: int) {
         i = i + 1
     }
     elapsed = Time::now_millis() - t0
-    if elapsed < 700 {
+    if elapsed < 900 {
         println("ok")
     } else {
         println("SLOW elapsed=${elapsed}")

@@ -38,10 +38,22 @@ for tpl in default cli api web; do
     [ -f "$name/.github/workflows/test.yml" ] || miss="$miss .github/workflows/test.yml"
   fi
   if [ -n "$miss" ]; then bad "$tpl: scaffold missing:$miss"; continue; fi
+  # Capture check/test output rather than discarding it. `api` and `web` failed
+  # on ubuntu-latest while passing on macOS and in a local gcc:13-bookworm
+  # container, and "check or test failed" alone gave no way to tell WHICH of the
+  # two commands failed, let alone why - the one place you cannot attach a
+  # debugger is a CI log.
+  _slog="$TMP/scaffold_$tpl.log"
   ( cd "$name" &&
-    perl -e 'alarm 30; exec @ARGV' "$WYN_ABS" check src/main.wyn >/dev/null 2>&1 &&
-    perl -e 'alarm 90; exec @ARGV' "$WYN_ABS" test >/dev/null 2>&1 )
-  if [ $? -eq 0 ]; then ok "$tpl: tree + checks clean + tests pass"; else bad "$tpl: check or test failed"; fi
+    echo "== wyn check ==" &&
+    perl -e 'alarm 30; exec @ARGV' "$WYN_ABS" check src/main.wyn 2>&1 &&
+    echo "== wyn test ==" &&
+    perl -e 'alarm 90; exec @ARGV' "$WYN_ABS" test 2>&1 ) > "$_slog" 2>&1
+  if [ $? -eq 0 ]; then ok "$tpl: tree + checks clean + tests pass"
+  else
+    bad "$tpl: check or test failed"
+    sed 's/^/          /' "$_slog" | tail -25
+  fi
 done
 
 # `wyn init` alias must also build the full tree (same scaffolding path).
