@@ -7677,9 +7677,27 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             register_import(stmt->import.module.start, stmt->import.module.line);
             break;
         case STMT_TEST:
-            // Check test block body
+            // Check the test body in its OWN child scope, exactly as STMT_FN
+            // does for a function body.
+            //
+            // Each `test` block is lowered to a separate function, so its
+            // locals are genuinely independent at runtime. Checking the body
+            // in the enclosing scope instead let a `var` declared in one test
+            // leak its inferred type into every later test reusing the name:
+            //     test "a" { var b = returns_float() ... }
+            //     test "b" { var b = returns_int()   ... }
+            // the second block resolved `b` to the first block's float symbol
+            // and rejected valid code with "Type mismatch ... Expected: int,
+            // Got: float". The two names occupy disjoint runtime scopes, so
+            // this was a checker-only false positive.
             if (stmt->test_stmt.body) {
-                check_stmt(stmt->test_stmt.body, scope);
+                SymbolTable test_scope = {0};
+                test_scope.parent = scope;
+                test_scope.capacity = 32;
+                test_scope.symbols = calloc(32, sizeof(Symbol));
+                test_scope.count = 0;
+                check_stmt(stmt->test_stmt.body, &test_scope);
+                free(test_scope.symbols);
             }
             break;
         case STMT_MATCH: {
