@@ -313,3 +313,47 @@ headers = "magic.h"
 system.brew = "libmagic"
 system.apt = "libmagic-dev"
 system.pacman = "file"
+
+[tiff]
+description = "libtiff - TIFF image reading and writing"
+version = "system"
+libs = "tiff"
+# No pkg-config metadata ships with Homebrew's libtiff, so the header path is
+# given explicitly rather than via `pkgconfig`.
+include_dirs = "/opt/homebrew/include, /usr/local/include"
+lib_dirs = "/opt/homebrew/lib, /usr/local/lib"
+headers = "tiffio.h"
+system.brew = "libtiff"
+system.apt = "libtiff-dev"
+system.pacman = "libtiff"
+
+[webp]
+description = "libwebp - WebP image encoding and decoding"
+version = "system"
+libs = "webp"
+pkgconfig = "libwebp"
+headers = "webp/decode.h, webp/encode.h"
+system.brew = "webp"
+system.apt = "libwebp-dev"
+system.pacman = "libwebp"
+
+[freetype]
+description = "FreeType - font rasterization and glyph metrics"
+version = "system"
+libs = "freetype"
+# The pkg-config module is named freetype2, not freetype.
+pkgconfig = "freetype2"
+headers = "freetype/freetype.h"
+system.brew = "freetype"
+system.apt = "libfreetype6-dev"
+system.pacman = "freetype2"
+
+[lcms2]
+description = "Little CMS 2 - ICC colour management and profile transforms"
+version = "system"
+libs = "lcms2"
+pkgconfig = "lcms2"
+headers = "lcms2.h"
+system.brew = "little-cms2"
+system.apt = "liblcms2-dev"
+system.pacman = "lcms2"
