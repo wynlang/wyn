@@ -42,11 +42,30 @@ jobs:
       # 871,592 B stripped, i.e. **35% smaller**. Warm compile time is
       # unchanged (0.15-0.16s either way), so this is a download-size win, not
       # a speed win - do not advertise it as the latter.
+      # Override ONLY the optimization level, via OPT - do NOT pass CFLAGS= on the
+      # command line. A command-line CFLAGS beats the Makefile's assignment
+      # wholesale, so it silently dropped $(PLATFORM_CFLAGS), i.e.
+      # -DWYN_PLATFORM_WINDOWS. Diffing the two Windows build lines from the v1.20.0
+      # attempt, that plus -g -> -O2 were the ONLY differences:
+      #   ci.yml   (works): -D_GNU_SOURCE -g   -DWYN_PLATFORM_WINDOWS -DWYN_VERSION=...
+      #   release  (fails): -D_GNU_SOURCE -O2                         -DWYN_VERSION=...
+      # and the failure was in mingw's own unistd.h, from the __CRT_INLINE body of
+      # ftruncate calling _chsize:
+      #   error: implicit declaration of function '_chsize' [-Wimplicit-function-declaration]
+      # reported against src/package.c, src/lsp.c and src/bindgen.c. -O2 is what
+      # makes those __CRT_INLINE bodies get emitted at all, which is why only the
+      # optimized build tripped it, and gcc 14+ (the runner has mingw 16.1.0) makes
+      # an implicit declaration a hard error rather than a warning.
+      #
+      # Both jobs use the SAME mingw 16.1.0, so the toolchain is not the variable -
+      # the flags are. ci.yml runs a plain `make` and gets the auto-detected platform
+      # flags; the release build was the only one replacing CFLAGS, so it was the
+      # only one missing them.
       - name: Build compiler (optimized)
         run: |
           set -euo pipefail
           make clean
-          make CFLAGS='-Wall -Wextra -std=c11 -D_GNU_SOURCE -O2 -DWYN_VERSION=\"'"$(cat VERSION)"'\"'
+          make OPT=-O2
         shell: bash
 
       - name: Smoke test (Unix)
