@@ -8,7 +8,16 @@ ifeq ($(OS),Windows_NT)
     CC := gcc
     EXE_EXT := .exe
     PLATFORM_LIBS := -lws2_32 -lpthread -lm
-    PLATFORM_CFLAGS := -DWYN_PLATFORM_WINDOWS
+    # -include forces src/mingw_unistd_fix.h to the top of EVERY translation unit,
+    # before any #include can pull in <unistd.h>. 21 of our .c files include
+    # <unistd.h>, and mingw defines ftruncate there as a __CRT_INLINE body calling
+    # _chsize - an underscore-prefixed CRT extension that -std=c11 (strict ANSI)
+    # hides, so gcc 14+ hard-errors on the implicit declaration. Patching each file
+    # by hand is whack-a-mole: the failing release log only named the first three
+    # (make stops early), and a 4th (src/cpkg.c) was found only by enumerating
+    # CORE_SRCS. Forcing the include once cannot be got wrong by include ORDER and
+    # cannot be missed by a new file.
+    PLATFORM_CFLAGS := -DWYN_PLATFORM_WINDOWS -include src/mingw_unistd_fix.h
 else ifeq ($(UNAME_S),Darwin)
     PLATFORM := macos
     CC := clang
