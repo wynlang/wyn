@@ -284,7 +284,32 @@ validate_idle_cpu() {
     log_info "=== Idle-CPU Gate: waiting programs must not spin ==="
 
     local errors=0
-    local budget_ms=50      # generous: the fixed scheduler measures ~0-15ms
+    # KNOWN TIGHTNESS ON SHARED CI RUNNERS - revisit after v1.20.0 ships.
+    #
+    # This budget is generous against the FIXED scheduler on a quiet machine
+    # (~0-20ms on an M3 Pro). It is NOT generous on a contended shared runner,
+    # where getrusage-style CPU accounting also absorbs runqueue competition from
+    # co-tenants. Observed on macos-15-intel across three runs of code that
+    # differed only in a shell script:
+    #   case (b): 91ms (real bug, fixed: wyn_spawn_wait now has a wall-clock
+    #             spin budget) -> 25ms -> 27ms -> 37ms
+    #   case (c): 25ms -> 26ms -> 96ms (FLAKE - no relevant code change; a
+    #             no-change job re-run went green)
+    # Case (c) measures 13-20ms locally and 31-43ms even throttled to 0.5 CPU,
+    # i.e. under budget on genuinely slow hardware, so the 96ms was contention.
+    #
+    # If case (c) starts failing PERSISTENTLY rather than at the margin, the two
+    # options, cheapest first:
+    #   1. Raise budget_ms to ~80. Cheap and safe. The gate exists to catch a
+    #      core-burning spin (the original bug was ~1 core, i.e. ~2000ms/2000ms,
+    #      and 357% CPU at its worst) - a 30ms shift does not weaken that signal.
+    #      Prefer overriding via WYN_IDLE_CPU_BUDGET_MS in CI over editing this.
+    #   2. Give future_get (src/future.c, the awaited path with the 2ms backstop
+    #      poll) the same time-bounded treatment wyn_spawn_wait got. HIGHER RISK:
+    #      that poll is why the verified "8 awaited 100ms sleeps -> ~112ms"
+    #      cooperative-await number is good, so re-measure it as a gate before
+    #      and after. Do not do this under release pressure.
+    local budget_ms="${WYN_IDLE_CPU_BUDGET_MS:-50}"
     local wall_ms=2000      # observation window
     local work="${TMPDIR:-/tmp}/wyn_idle_cpu_gate.$$"
 

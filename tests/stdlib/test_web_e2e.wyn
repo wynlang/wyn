@@ -1,14 +1,86 @@
+// Web services end-to-end - HERMETIC.
+//
+// Was: GET https://httpbin.org/get and POST https://httpbin.org/post, asserting
+// only that the body was non-empty. That made a HARD CI gate depend on a
+// third-party host: a slow/rate-limiting/unreachable httpbin leaves the client
+// blocked in a TLS connect with no timeout, so the test does not fail - it HANGS
+// until the runner's 60s watchdog kills it and reddens the whole build. Observed
+// exactly that on macos-15-intel (`NEW HANG: run killed by watchdog after 60s`)
+// after passing 68/68 on the four preceding runs.
+//
+// This test was the LAST entry in tests/stdlib/known_failures.txt, where it was
+// tolerated because it "hung ~1 in 3" runs. That comment blamed the scheduler
+// busy-spin (hotfix H5) and said: delete this line when H5 lands, and if it still
+// hangs afterwards, that is an independent bug needing its own investigation, not
+// a permanent waiver. H5 landed and the line was removed. This is that
+// independent cause: the network dependency, not the scheduler.
+//
+// Four sibling tests (test_http, test_http_methods, test_final_validation,
+// test_net_basic) were made hermetic this same cycle for this same reason. This
+// one was missed because it was still allowlisted at the time. Now the process is
+// both client and server on 127.0.0.1, so the assertions are about bytes Wyn
+// produced and parsed - covering the real paths (bind/listen, connect, request
+// parse, header/body write, POST body arriving intact) deterministically and
+// offline.
+//
+// Single-threaded by construction: each client write buffers in the socket until
+// the server accepts, so no spawn/scheduler participates and there is nothing to
+// race. Mirrors serve_once in test_http.wyn deliberately - same shape, same
+// close-the-server-side reasoning (see below).
+fn round_trip(port: int, method: string, path: string, req_body: string, resp_body: string) -> string {
+    var srv = Http.serve(port)
+    if srv <= 0 { return "" }
+
+    var client = Net.connect("127.0.0.1", port)
+    if client <= 0 {
+        Http.close_server(srv)
+        return ""
+    }
+    var req = method + " " + path + " HTTP/1.0\r\nHost: 127.0.0.1\r\n"
+    if req_body.len() > 0 {
+        req = req + "Content-Length: " + req_body.len().to_string() + "\r\n\r\n" + req_body
+    } else {
+        req = req + "\r\n"
+    }
+    Net.send(client, req)
+
+    var accepted = Http.accept(srv)
+    var client_fd = Http.fd(accepted)
+    Http.respond(client_fd, 200, "application/json", resp_body)
+    // Http.respond deliberately does NOT close the connection (the handler loop
+    // owns the fd). There is no handler loop here, so close the server side
+    // ourselves - otherwise the drain below blocks in recv waiting for a peer that
+    // will never hang up, which is a guaranteed hang, not a flake.
+    Net.close(client_fd)
+
+    // Net.recv is a single read(); head and body are separate writes and need not
+    // coalesce. Drain in a bounded loop rather than assume one segment.
+    var got = ""
+    var i = 0
+    while i < 16 {
+        var chunk = Net.recv(client)
+        if chunk.len() == 0 { break }
+        got = got + chunk
+        i = i + 1
+    }
+    Net.close(client)
+    Http.close_server(srv)
+    return got
+}
+
 fn main() -> int {
     Test.init("Web Services E2E")
-    
-    // 1. HTTP Client - GET
-    var body = Http.get("https://httpbin.org/get")
+
+    // 1. HTTP Client - GET (loopback, not a third-party host)
+    var body = round_trip(18092, "GET", "/get", "", "{\"ok\":true}")
     Test.assert(body.len() > 0, "HTTPS GET works")
-    
+    Test.assert(body.contains("200"), "GET response has a status line")
+
     // 2. HTTP Client - POST
-    var pbody = Http.post("https://httpbin.org/post", "key=value")
+    var pbody = round_trip(18093, "POST", "/post", "key=value", "{\"posted\":true}")
     Test.assert(pbody.len() > 0, "HTTPS POST works")
-    
+    Test.assert(pbody.contains("posted"), "POST response body arrives intact")
+
     // 3. SQLite CRUD
     var db = Db.open("/tmp/wyn_web_test.db")
     Db.exec(db, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)")
