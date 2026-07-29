@@ -13,12 +13,27 @@
 //     __CRT_INLINE int ftruncate(int __fd, off32_t __length)
 //     { return _chsize (__fd, __length); }
 //
-// _chsize is an underscore-prefixed CRT extension declared in <io.h>. Under
-// -std=c11 (strict ANSI) mingw hides those extensions, exactly as this codebase
-// already documents for _setmode/_fileno in src/lsp.c - so at the point that
-// inline body is compiled, _chsize has no declaration in scope. gcc 14+ treats an
-// implicit declaration as a hard error rather than a warning, and the runner ships
-// mingw 16.1.0:
+// _chsize is declared in mingw's <io.h>, which mingw's own unistd.h includes at its
+// line 10. THE REAL CAUSE IS INCLUDE-PATH SHADOWING, not -std=c11: we compile with
+// `-I src` and we ship our own `src/io.h`. gcc searches -I directories before system
+// directories even for angle-bracket includes, so mingw's `#include <io.h>` resolves
+// to OUR src/io.h (guard WYN_IO_H), mingw's real io.h is never read, and _chsize is
+// never declared. Verified with mingw gcc 14:
+//
+//     -std=c11  -O2  (no -I src)  -> 0 errors   <- so c11 is NOT the trigger
+//     -std=gnu11 -O2 -I src       -> 2 errors   <- so gnu11 does not save you
+//     gcc -H shows: .. src/io.h                 <- our header wins
+//
+// (An earlier version of this comment blamed -std=c11 hiding underscore CRT
+// extensions, citing the _setmode/_fileno precedent in src/lsp.c. That was wrong -
+// mingw's io.h declares _chsize under `#ifndef _IO_H_` and nothing else - and the
+// lsp.c precedent is very likely the same misdiagnosis. Kept here because the wrong
+// story predicts the wrong fix: it makes per-file include ORDER look like the
+// problem, when in fact mingw's <io.h> is unreachable from anywhere while -I src
+// shadows it.)
+//
+// gcc 14+ treats the resulting implicit declaration as a hard error rather than a
+// warning, and the runner ships mingw 16.1.0:
 //
 //     unistd.h:67:10: error: implicit declaration of function '_chsize';
 //                     did you mean '_msize'? [-Wimplicit-function-declaration]
@@ -46,6 +61,14 @@
 // first failures - a fourth (src/cpkg.c) was found only by enumerating CORE_SRCS
 // against the Makefile. Patching them one at a time is whack-a-mole with a
 // ~9-minute CI round-trip per miss.
+//
+// THE DURABLE FIX WE HAVE NOT DONE: rename src/io.h to src/wyn_io.h. That unshadows
+// mingw's real <io.h> for every translation unit at once and stops the next file
+// that includes <unistd.h> from re-breaking the Windows release build. This -include
+// shim only patches the one symbol we tripped over; the shadowing is still there and
+// can bite again with a different symbol (_setmode, _fileno, _mkdir, ...). Tracked in
+// internal-docs/PLAN_v1.21.md §8. Only 4 files include our "io.h", so the rename is
+// small - it was deliberately not done during the release to keep the diff minimal.
 //
 // Harmless everywhere else: the whole thing is behind _WIN32, and the declaration
 // matches the CRT's real signature, so it either agrees with <io.h> or supplies
