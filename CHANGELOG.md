@@ -2,7 +2,7 @@
 
 ## v1.20.0 (2026-07-28) - "The Concurrency & Correctness Release"
 
-> **Re-released 2026-07-28.** The v1.20.0 artifacts were rebuilt and replaced in
+> **Re-released 2026-07-29.** The v1.20.0 artifacts were rebuilt and replaced in
 > place after an adversarial review of this release found defects serious enough
 > that shipping them was not defensible - including a license-compliance
 > violation in every binary, a scheduler bug that burned a full CPU core in
@@ -32,12 +32,11 @@ Linux, macOS-arm64, macOS-x64 and Windows, and on the three Unix platforms runs
 `make test` - the 248-file expect/regression suite, the golden-C codegen
 snapshots, and 38 dedicated behavioral/negative sub-suites - plus the same suite
 re-run on the coroutine async substrate, plus ASan and TSan runtime jobs. Fixes
-listed below carry a regression test in that suite. Two honest caveats. First,
-the `tests/stdlib` suite (68 files) is gated through a known-failure allowlist
-(`tests/stdlib/known_failures.txt`): anything NOT listed there fails the build,
-but the listed entries are tolerated, so that suite is not 100% green - read the
-file for the current debt, which is only permitted to shrink. Second, Windows
-runs a declared portable subset rather than `make test`, because the
+listed below carry a regression test in that suite. The `tests/stdlib` suite (68
+files) is gated through an allowlist (`tests/stdlib/known_failures.txt`) that is
+now **empty**: the debt was paid down to zero during this cycle, so all 68 files
+are hard gates and any regression fails the build. One honest caveat remains:
+Windows runs a declared portable subset rather than `make test`, because the
 exit-code- and signal-dependent suites are POSIX-only; the list of what is and
 is not covered there is in `.github/workflows/ci.yml`.
 
@@ -174,6 +173,36 @@ fixed, and re-verified after.
   download-size win only.
 - The GitHub Release body is now scoped to the released version's section instead
   of republishing all 1,082 lines of this file.
+
+**Found by the newly-gated `make test`, on platforms the dev box is not**
+
+Wiring `make test` into CI immediately paid for itself: these were caught before
+the re-release shipped, and none of them reproduce on macOS-arm64.
+
+- **`Db.` programs failed to link on Linux.** `-lsqlite3` was placed *before* the
+  objects on the link line, and GNU ld only resolves a `-l` against objects
+  listed earlier - so every `Db.*` call became an undefined reference (18 of them
+  in one test). Apple's linker ignores `-l` order, which is why this was
+  invisible on macOS while breaking every Linux user compiling against a system
+  libsqlite3. Moved to the end of the link line, where the FFI flags beside it
+  already were, and covered by a new gate
+  (`tests/errors/run_sqlite_link_order_test.sh`) that exercises the builtin `Db.`
+  path - the existing sqlite test covers `import sqlite3` (FFI) and passed
+  throughout.
+- **Awaited-drain spin was bounded by iterations, not time.** `wyn_spawn_wait`
+  spun a fixed 2048 rounds before parking, which costs whatever the host makes it
+  cost: ~13ms on an M3 Pro but ~91ms on a slower x86 runner, over the 50ms
+  idle-CPU budget. It now also carries a 20ms wall-clock budget, so the CPU burned
+  before parking is bounded in *time* on every platform. Measured on a throttled
+  0.5-CPU container, same program: 117ms -> 10ms, with no change to the 1M-spawn,
+  awaited-sleep, or timer-chain benchmarks.
+- **Build failures were reported without the error.** Two separate defects: the
+  stdlib runner truncated output such that only "Build failed" and the "Compiler
+  output:" *heading* survived, and `wyn build` wrote the C compiler's stderr to a
+  fixed `/tmp` path, so parallel builds overwrote each other and a failure could
+  be reported with a *sibling's* error text - naming a file you were not
+  building. The error file is now per-process, and Windows captures compiler
+  stderr too (it was the last platform still discarding it).
 
 Correctness foundation (compiler limits removed, lambdas fully typed, real
 crypto, AWS from pure Wyn, and a snapshot suite guarding the generated C):
