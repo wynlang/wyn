@@ -196,6 +196,16 @@ the re-release shipped, and none of them reproduce on macOS-arm64.
   before parking is bounded in *time* on every platform. Measured on a throttled
   0.5-CPU container, same program: 117ms -> 10ms, with no change to the 1M-spawn,
   awaited-sleep, or timer-chain benchmarks.
+- **A hard CI gate depended on `httpbin.org`.** `tests/stdlib/test_web_e2e.wyn`
+  made live HTTPS calls to a third-party host, and the failure mode was the bad
+  one: a slow or rate-limiting remote leaves the client blocked in a TLS connect
+  with no timeout, so the test does not fail - it *hangs* until the 60s watchdog
+  reddens the whole build. It is now hermetic (serves itself on 127.0.0.1), which
+  makes it deterministic, offline-capable and ~1.3s instead of a 60s hang. Four
+  sibling tests got this treatment earlier in the cycle; this one was missed
+  because it was still allowlisted at the time. Coverage went up rather than down
+  (it now asserts the status line and the POST body, which a non-empty-body check
+  could not).
 - **Build failures were reported without the error.** Two separate defects: the
   stdlib runner truncated output such that only "Build failed" and the "Compiler
   output:" *heading* survived, and `wyn build` wrote the C compiler's stderr to a
