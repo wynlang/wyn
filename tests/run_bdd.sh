@@ -143,16 +143,24 @@ if [ "${#FILES[@]}" -gt 0 ]; then
     ncpu=$( (getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4) )
     max_jobs="${WYN_TEST_JOBS:-$((ncpu * 2))}"
     [ "$max_jobs" -lt 1 ] 2>/dev/null && max_jobs=4
-    running=0
+    # SLIDING WINDOW, not batch-drain. The previous version launched max_jobs tests
+    # and then `wait`ed for ALL of them before launching any more, because bash 3.2
+    # (still the macOS default) has no `wait -n`. The comment claimed "each test is
+    # short, so batch-draining keeps utilization high enough" - measured, it does
+    # not: per-test wall time ranges 0.5-4.4s, so every batch runs at the speed of
+    # its slowest member while the other slots sit idle. Total %CPU across the whole
+    # box mid-run was 439% of a possible 1200% on this 12-core machine, i.e. ~8
+    # cores idle for most of a 234-second suite.
+    #
+    # `jobs -pr` (running jobs only) works on bash 3.2, so poll it and launch a
+    # replacement as soon as any slot frees. Same max_jobs cap, same fork-storm
+    # protection - just no barrier. The 0.05s poll is far below the 0.5s floor of
+    # the fastest test, so polling overhead is noise.
     for f in "${FILES[@]}"; do
+        while [ "$(jobs -pr | wc -l | tr -d ' ')" -ge "$max_jobs" ]; do
+            sleep 0.05
+        done
         run_test "$f" &
-        running=$((running + 1))
-        if [ "$running" -ge "$max_jobs" ]; then
-            # Bash 3.2 (macOS default) has no `wait -n`; drain the batch. Each
-            # test is short, so batch-draining keeps utilization high enough.
-            wait
-            running=0
-        fi
     done
     wait
 fi
