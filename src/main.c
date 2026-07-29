@@ -371,6 +371,58 @@ static void wynter_encourage(void) {
             wynter_compile_tips[wynter_compile_tip_idx++ % 5]);
 }
 
+// A misspelled stdlib namespace method (`Time.now_ms()`) survives the checker on
+// purpose: namespace methods are permissive there because an allowlist would
+// reject the ~100 runtime functions the checker has no table entry for. It then
+// lowers to a plain C call and dies at C-compile with
+//   error: call to undeclared function 'Time_now_ms'
+// which names a symbol that appears nowhere in the user's source. This scans the
+// C compiler's stderr for that shape and reprints it in Wyn spelling. Diagnostic
+// only - it never changes which programs compile, and it stays silent unless the
+// leaked symbol really looks like `Namespace_method` (capitalised first segment),
+// so an ordinary missing FFI function is reported the old way.
+static int wyn_report_undeclared_namespace_call(const char* cc_err_path) {
+    FILE* f = fopen(cc_err_path, "r");
+    if (!f) return 0;
+    char line[2048];
+    int reported = 0;
+    while (fgets(line, sizeof(line), f)) {
+        const char* m = strstr(line, "call to undeclared function '");
+        if (!m) m = strstr(line, "implicit declaration of function '");
+        if (!m) continue;
+        const char* q = strchr(m, '\'');
+        if (!q) continue;
+        q++;
+        const char* end = strchr(q, '\'');
+        if (!end || end - q >= 200) continue;
+        char sym[200];
+        size_t n = (size_t)(end - q);
+        memcpy(sym, q, n);
+        sym[n] = '\0';
+        // Require Namespace_method: an uppercase first letter and an underscore
+        // with a non-empty method after it.
+        if (!(sym[0] >= 'A' && sym[0] <= 'Z')) continue;
+        char* us = strchr(sym, '_');
+        if (!us || us == sym || us[1] == '\0') continue;
+        *us = '\0';
+        const char* ns = sym;
+        const char* method = us + 1;
+        if (!reported) {
+            fprintf(stderr,
+                "Error: unknown method '%s.%s' on namespace '%s'\n",
+                ns, method, ns);
+            fprintf(stderr,
+                "  \033[34mHelp:\033[0m '%s' is not a function Wyn knows about. Check the spelling"
+                " against the '%s' stdlib docs - namespace methods are not"
+                " verified until the generated C is compiled, so a typo surfaces"
+                " here rather than at the call site.\n", method, ns);
+            reported = 1;
+        }
+    }
+    fclose(f);
+    return reported;
+}
+
 // Detect available C backend: WYN_CC env > cc > gcc > clang
 static const char* detect_cc(void) {
     static char cc_path[256] = "";
@@ -3412,8 +3464,18 @@ int main(int argc, char** argv) {
             fprintf(stderr, "\033[2mCompiled in %.0fms\033[0m\n", _ms);
         }
         if (result != 0) {
-            fprintf(stderr, "Error: compilation failed (internal codegen error)\n");
-            fprintf(stderr, "Run with WYN_DEBUG=1 for details\n");
+            // A misspelled namespace method (`Time.now_ms()`) is lowered to a
+            // bare C call (`Time_now_ms`) because the checker deliberately stays
+            // permissive about namespace methods - an allowlist there would
+            // reject ~100 real runtime functions it does not know about. So the
+            // failure only shows up here, as a C "undeclared function" that the
+            // user has no way to connect back to their source. Translate the
+            // Ns_method shape back into Wyn spelling before giving up; purely a
+            // diagnostic, it cannot change what compiles.
+            if (!wyn_report_undeclared_namespace_call("wyn_cc_err.txt")) {
+                fprintf(stderr, "Error: compilation failed (internal codegen error)\n");
+                fprintf(stderr, "Run with WYN_DEBUG=1 for details\n");
+            }
             wynter_encourage();
             if (getenv("WYN_DEBUG")) {
                 FILE* err_file = fopen("wyn_cc_err.txt", "r");
