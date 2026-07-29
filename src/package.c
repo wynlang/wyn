@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include "mingw_unistd_fix.h"   // must precede <unistd.h>; see header
 #include <unistd.h>
 #include <ctype.h>
 
