@@ -111,10 +111,28 @@ jobs:
       # Measures cumulative child CPU via getrusage(RUSAGE_CHILDREN) /
       # GetProcessTimes (scripts/testing/cpu_probe.c) - never %CPU, which is a
       # decaying average and has produced wrong diagnoses on this codebase twice.
+      # Budget raised 50 -> 80ms FOR CI ONLY (the local default stays 50ms, which
+      # is what a dev machine should hold itself to). Rationale and the readings
+      # are at the budget itself in scripts/integration_gates.sh, and the item is
+      # tracked in internal-docs/ROADMAP.md under Tooling / DX.
+      #
+      # Short version: on the shared macos-15-intel runner, CPU-time accounting
+      # also absorbs runqueue competition from co-tenants, so case (c) - the
+      # awaited future_get path - read 25, 26, 96, then 79ms across runs whose code
+      # differed only in docs and a shell script. It measures 12-20ms locally and
+      # 31-43ms even throttled to 0.5 CPU, i.e. comfortably under budget on
+      # genuinely slow hardware, so those spikes are contention and not cost.
+      #
+      # This does NOT weaken the gate's purpose. It exists to catch a spin that
+      # burns a CORE: the bugs it was built for measured ~2000ms/2000ms and 357%
+      # CPU. An 80ms ceiling still fails anything in that class by a factor of ~25,
+      # while no longer failing the build on a noisy neighbour.
       - name: Idle-CPU gate - waiting programs must not spin (Unix)
         if: runner.os != 'Windows'
         run: bash scripts/integration_gates.sh idle-cpu
         shell: bash
+        env:
+          WYN_IDLE_CPU_BUDGET_MS: 80
 
       - name: Run suite on the coroutine async substrate (W8, Unix)
         # WYN_ASYNC_CORO=1 runs awaited spawn/await_all/parallel as coroutines on
