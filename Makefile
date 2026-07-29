@@ -220,6 +220,25 @@ debug-memory: wyn
 # sources and shell scripts that no longer exist; they are gone. The separate
 # run_tests_parallel.sh needs a tests/test_list.txt that isn't in the tree, so
 # it's not wired into this target - run it manually if you regenerate the list.)
+# check-fast: the EDIT-LOOP gate, not a merge gate. Target <= 30s.
+#
+# WHY: `make test` chains ~100 steps and takes ~9 minutes; run_bdd.sh alone is
+# ~250s. That cost is per-iteration during debugging, so a 10-round session spends
+# over an hour waiting. This runs the two things that actually catch codegen
+# mistakes fast: the build (0 warnings) and the golden-C snapshots, which pin the
+# generated C and are exactly what the soundness work perturbs.
+#
+# THIS IS NOT A SUBSTITUTE FOR `make test`, AND MUST NOT BECOME ONE. `make test`
+# stays the merge gate and the source of truth. The lesson from the v1.20.0 cycle
+# (CI never ran `make test`, so ~80 test files were ungated for months) is that a
+# suite people trust but which does not run everything is worse than no suite. Run
+# check-fast while editing; run `make test` before you push.
+check-fast: wyn
+	@echo "=== Golden-C snapshots (pins generated C) ==="
+	@WYN=./wyn bash tests/golden/run_golden_tests.sh
+	@echo ""
+	@echo "check-fast passed. This is NOT 'make test' - run that before pushing."
+
 test: wyn
 	@echo "=== Running assertion tests (run_bdd.sh) ==="
 	@WYN=./wyn bash tests/run_bdd.sh
