@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.20.0 (2026-07-28) - "The Concurrency & Correctness Release"
+## v1.20.0 (2026-07-29) - "The Concurrency & Correctness Release"
 
 > **Re-released 2026-07-29.** The v1.20.0 artifacts were rebuilt and replaced in
 > place after an adversarial review of this release found defects serious enough
