@@ -23,13 +23,23 @@
 //     unistd.h:67:10: error: implicit declaration of function '_chsize';
 //                     did you mean '_msize'? [-Wimplicit-function-declaration]
 //
-// WHY ONLY THE RELEASE BUILD SAW IT: -O2 is what causes __CRT_INLINE bodies to be
-// emitted at all. The CI build uses -g, never emits ftruncate's body, and so never
-// references _chsize - which is why four platforms plus every CI run were green
-// while the optimized Windows build failed on src/package.c, src/lsp.c and
-// src/bindgen.c. Including <io.h> first is not a reliable fix on its own: these
-// files pull <unistd.h> in ahead of <io.h> through their own headers, and reordering
-// across headers is fragile. Declaring the symbol is order-independent.
+// WHY ONLY THE RELEASE BUILD SAW IT - it is PREPROCESSOR exclusion, not codegen:
+//   1. gcc defines __NO_INLINE__ at -O0/-g but NOT at -O1/-O2/-Og.
+//   2. _mingw.h: `#ifdef __NO_INLINE__` -> `#define __CRT__NO_INLINE 1`.
+//   3. unistd.h: `#ifndef __CRT__NO_INLINE` wraps the ftruncate body.
+// So at -g the body is #ifdef'd OUT of the translation unit entirely and _chsize is
+// never referenced; at -O2 it is present. Measured on the preprocessed output:
+// `-g` yields 2 _chsize hits (both declarations from io.h), `-O2` yields 3, the
+// extra being `return _chsize (__fd, __length);`.
+//
+// Note the corollary: when the body IS present gcc diagnoses the implicit _chsize at
+// EVERY optimization level. Optimization level is irrelevant to diagnosing the body -
+// the only thing protecting the -g CI build is __NO_INLINE__. That is why four
+// platforms and every CI run were green while the optimized Windows build failed.
+//
+// Including <io.h> first is not a reliable fix on its own: these files pull
+// <unistd.h> in ahead of <io.h> through their own headers, and reordering across
+// headers is fragile. Declaring the symbol is order-independent.
 //
 // WHY -include RATHER THAN PER-FILE: 21 of the .c files in CORE_SRCS include
 // <unistd.h>. The failing release log named only three, because make stops at the
