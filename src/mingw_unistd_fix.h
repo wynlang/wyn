@@ -1,7 +1,11 @@
 #ifndef WYN_MINGW_UNISTD_FIX_H
 #define WYN_MINGW_UNISTD_FIX_H
 
-// Include this BEFORE <unistd.h> in any translation unit that includes it.
+// Force-included into EVERY translation unit on Windows via
+// `PLATFORM_CFLAGS := ... -include src/mingw_unistd_fix.h` in the Makefile. Do not
+// #include it by hand - the point of -include is that it lands before any header
+// can pull in <unistd.h>, so no per-file include ORDER can get it wrong and a newly
+// added .c file cannot miss it.
 //
 // THE BUG: mingw's <unistd.h> defines ftruncate as a __CRT_INLINE body that calls
 // _chsize:
@@ -26,6 +30,12 @@
 // src/bindgen.c. Including <io.h> first is not a reliable fix on its own: these
 // files pull <unistd.h> in ahead of <io.h> through their own headers, and reordering
 // across headers is fragile. Declaring the symbol is order-independent.
+//
+// WHY -include RATHER THAN PER-FILE: 21 of the .c files in CORE_SRCS include
+// <unistd.h>. The failing release log named only three, because make stops at the
+// first failures - a fourth (src/cpkg.c) was found only by enumerating CORE_SRCS
+// against the Makefile. Patching them one at a time is whack-a-mole with a
+// ~9-minute CI round-trip per miss.
 //
 // Harmless everywhere else: the whole thing is behind _WIN32, and the declaration
 // matches the CRT's real signature, so it either agrees with <io.h> or supplies
