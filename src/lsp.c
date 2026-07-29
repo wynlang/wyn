@@ -5,6 +5,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdbool.h>
+#include "mingw_unistd_fix.h"   // must precede <unistd.h>; see header
 #include <unistd.h>
 #ifdef _WIN32
 #include <io.h>
