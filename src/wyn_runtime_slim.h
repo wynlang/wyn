@@ -13,6 +13,24 @@
 #define __auto_type long long
 #endif
 
+// Reference counting (wyn_rc.c) - copied verbatim from wyn_runtime.h:6-12.
+// codegen emits wyn_rc_release() around every temporary string (see the
+// string-concat and println lowering), so the slim header needs it too or any
+// program that builds a string fails to compile under --release.
+void* wyn_rc_alloc(size_t size);
+void wyn_rc_retain(const void* ptr);
+void wyn_rc_release(const void* ptr);
+void wyn_rc_set_length(const void* ptr, unsigned int len);
+unsigned int wyn_rc_get_length(const void* ptr);
+
+// Value type tags (WYN_TYPE_FLOAT, WYN_TYPE_STRING, ...). Included rather than
+// copied: these tags are a WIRE FORMAT between codegen and the runtime, since
+// codegen writes WYN_TYPE_FLOAT into WynValue.type and the runtime reads it
+// back. A copied enum that drifted by one would silently mis-read every float
+// instead of failing loudly, so both headers take the values from the single
+// canonical definition here. wyn_runtime.h:170 includes this same file.
+#include "arc_runtime.h"
+
 // Forward declarations for opaque types
 typedef struct WynHashMap WynHashMap;
 typedef struct WynHashSet WynHashSet;
@@ -179,6 +197,76 @@ char* regex_find_all(const char* str, const char* pattern);
 char* regex_split(const char* str, const char* pattern);
 WynArray array_new();
 void array_push_int(WynArray* arr, long long value);
+// Float/bool element push. Mirrors array_push_int; definitions live in
+// wyn_runtime.h:647 / :659. Those are non-inline, so they only reach the linker
+// through a TU that includes wyn_runtime.h - src/runtime_exports.c exists for
+// exactly that. NOTE: runtime_exports.c is in Makefile's TCC_RT_SRCS but NOT in
+// RT_SRCS / main.c's wyn_runtime_sources[], so runtime/libwyn_rt.a (what
+// --release links) currently omits it and these resolve at compile time but
+// fail at link time. Tracked separately; declaring them here is still correct.
+void array_push_float(WynArray* arr, double value);
+void array_push_bool(WynArray* arr, int value);
+// Out-of-bounds panic used by the bounds-checked getters below. Copied verbatim
+// from wyn_runtime.h:755-782 (wyn_lenient_mode / wyn_src_file / wyn_oob_panic)
+// so the two headers report identical diagnostics.
+//
+// Lenient-mode gate: panics that guard silent wrong answers (OOB index,
+// bad numeric parses, checked-arithmetic overflow) are FATAL by default.
+// WYN_LENIENT=1 restores the old print-and-continue-with-0 behavior for
+// programs that depended on it. WYN_STRICT is accepted as a no-op alias of
+// the default so existing "strict" invocations keep working.
+static inline int wyn_lenient_mode(void) {
+    static int cached = -1;
+    if (cached < 0) cached = getenv("WYN_LENIENT") != NULL;
+    return cached;
+}
+// A panic file is normally remapped to the user's `.wyn` source by the `#line`
+// directives codegen emits per statement. Hoisted code without a preceding
+// `#line` (e.g. lambda bodies) reports the raw generated `__FILE__`, which ends
+// in `.wyn.c` and leaks the compiler's generated-C seam. Trim a trailing
+// `.wyn.c` -> `.wyn` so a panic never points the user at a file they can't see.
+static inline const char* wyn_src_file(const char* file) {
+    if (!file) return file;
+    size_t n = strlen(file);
+    static char buf[1024];   // panic is terminal; a shared buffer is fine
+    if (n >= 6 && n < sizeof(buf) && strcmp(file + n - 6, ".wyn.c") == 0) {
+        memcpy(buf, file, n - 2);   // drop the trailing ".c"
+        buf[n - 2] = '\0';
+        return buf;
+    }
+    return file;
+}
+static inline void wyn_oob_panic(int index, int count, const char* file, int line) {
+    if (file && line > 0)
+        fprintf(stderr, "panic at %s:%d: array index out of bounds: index %d, length %d\n", wyn_src_file(file), line, index, count);
+    else
+        fprintf(stderr, "panic: array index out of bounds: index %d, length %d\n", index, count);
+    if (!wyn_lenient_mode()) exit(1);
+}
+// Float/bool element getters. The full header (wyn_runtime.h:671-687) defines
+// these as `static inline` *_impl functions behind a __FILE__/__LINE__ macro so
+// an out-of-bounds panic can name the call site. Reproduced here verbatim
+// rather than declared as plain functions, because codegen emits the MACRO
+// spelling `array_get_float(arr, idx)` with two arguments - a two-parameter
+// prototype would compile but lose the source location, and the *_impl symbols
+// are static-inline in the full header so they are not in the archive to link
+// against. Keep byte-identical to wyn_runtime.h.
+#define array_get_float(arr, idx) array_get_float_impl(arr, idx, __FILE__, __LINE__)
+static inline double array_get_float_impl(WynArray arr, int index, const char* file, int line) {
+    if (index < 0) index += arr.count;
+    if (index < 0 || index >= arr.count) { wyn_oob_panic(index, arr.count, file, line); return 0.0; }
+    if (arr.data[index].type == WYN_TYPE_FLOAT) return arr.data[index].data.float_val;
+    if (arr.data[index].type == WYN_TYPE_INT) return (double)arr.data[index].data.int_val;
+    return 0.0;
+}
+// Bool element getter. Returns `bool` so to_string()'s _Generic dispatch picks
+// bool_to_string -> "true"/"false" rather than int_to_string -> "1"/"0" (G5).
+#define array_get_bool(arr, idx) array_get_bool_impl(arr, idx, __FILE__, __LINE__)
+static inline bool array_get_bool_impl(WynArray arr, int index, const char* file, int line) {
+    if (index < 0) index += arr.count;
+    if (index < 0 || index >= arr.count) { wyn_oob_panic(index, arr.count, file, line); return false; }
+    return arr.data[index].data.int_val ? true : false;
+}
 void array_push_str(WynArray* arr, const char* value);
 void array_push_array(WynArray* arr, WynArray* nested);
 long long array_get_int(WynArray arr, int index);
