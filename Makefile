@@ -29,7 +29,15 @@ else
     PLATFORM_CFLAGS := -DWYN_PLATFORM_UNKNOWN
 endif
 
-CFLAGS=-Wall -Wextra -std=c11 -D_GNU_SOURCE -g $(PLATFORM_CFLAGS) -DWYN_VERSION=\"$(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)\"
+# OPT is the debug/optimization level, split out so a release build can override
+# JUST this (`make OPT=-O2`) instead of replacing CFLAGS wholesale. A command-line
+# CFLAGS= beats this assignment entirely and silently drops $(PLATFORM_CFLAGS).
+# That is exactly how the v1.20.0 release build lost -DWYN_PLATFORM_WINDOWS and
+# failed on Windows alone, inside mingw's own unistd.h (the __CRT_INLINE ftruncate
+# body calls _chsize, which -O2 causes to be emitted and gcc 14+ treats as a hard
+# error when implicitly declared). Override OPT, never CFLAGS.
+OPT?=-g
+CFLAGS=-Wall -Wextra -std=c11 -D_GNU_SOURCE $(OPT) $(PLATFORM_CFLAGS) -DWYN_VERSION=\"$(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)\"
 OPTFLAGS=-O2
 
 all: wyn$(EXE_EXT) runtime
