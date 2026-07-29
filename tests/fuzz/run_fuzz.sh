@@ -11,7 +11,15 @@ WYN="${WYN:-./wyn}"
 case "$WYN" in /*) ;; *) WYN="$(pwd)/$WYN" ;; esac
 SEED="${1:-1}"
 COUNT="${2:-120}"
-TIMEOUT=12
+# Per-input wall-clock budget for `wyn check`/`wyn build`. This exists to catch a
+# genuine INFINITE loop (parser/checker non-termination), where the gap between
+# "hung forever" and "finished" is enormous - not to police a few hundred ms. A
+# real repro here checks/builds in well under a second; anything near the budget
+# is the shared CI runner being contended, not the compiler looping. It was 12s,
+# which flaked one input to a false HANG on a busy macos-15-intel runner (the
+# input parse-errors in 0.7s locally). 30s keeps the infinite-loop signal while
+# giving the slowest borrowed core plenty of head-room. Override with FUZZ_TIMEOUT.
+TIMEOUT="${FUZZ_TIMEOUT:-30}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
