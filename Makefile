@@ -46,7 +46,31 @@ endif
 # body calls _chsize, which -O2 causes to be emitted and gcc 14+ treats as a hard
 # error when implicitly declared). Override OPT, never CFLAGS.
 OPT?=-g
-CFLAGS=-Wall -Wextra -std=c11 -D_GNU_SOURCE $(OPT) $(PLATFORM_CFLAGS) -DWYN_VERSION=\"$(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)\"
+
+# RELEASE_BUILD marks a binary as an official release. It DEFAULTS TO OFF, so every
+# ordinary `make` produces a binary that reports e.g. "v1.20.0-dev". Only the release
+# workflow passes RELEASE_BUILD=1, which drops the suffix.
+#
+# The default is off ON PURPOSE. A dev build and a released build previously reported
+# the identical string, so there was no way to tell whether the compiler you were
+# running contained a fix — the Wynshop dogfood session hit exactly this: its suite
+# was green against the INSTALLED v1.20.0 binary, which did not contain the fixes
+# under test, and only a byte-size comparison revealed it.
+#
+# Deliberately NOT `git describe --exact-match`: release.yml checks out with
+# actions/checkout@v4 at fetch-depth 1 and does not fetch tags, so describe would
+# fail there and label genuine releases as "-dev". An explicit opt-in flag cannot
+# fail that way, and if it is ever forgotten the error is in the honest direction:
+# a real release mislabelled as dev, never a dev build passing itself off as
+# official.
+RELEASE_BUILD?=0
+ifeq ($(RELEASE_BUILD),1)
+    VERSION_SUFFIX=
+else
+    VERSION_SUFFIX=-dev
+endif
+
+CFLAGS=-Wall -Wextra -std=c11 -D_GNU_SOURCE $(OPT) $(PLATFORM_CFLAGS) -DWYN_VERSION=\"$(shell cat VERSION 2>/dev/null || echo 0.0.0)$(VERSION_SUFFIX)\"
 OPTFLAGS=-O2
 
 all: wyn$(EXE_EXT) runtime
