@@ -6981,6 +6981,15 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     }
                     // Allow int/bool interchangeability (comparisons return int but work as bool)
                     bool types_match = (current_function_return_type->kind == return_expr_type->kind) ||
+                        // FFI `ptr` (TYPE_STRUCT "void*") and a machine word are
+                        // interchangeable here for the same reason
+                        // wyn_is_type_compatible allows it at a call boundary: `0` is
+                        // the null idiom, and an unresolved `-> ptr` annotation still
+                        // defaults to int. Without this, `pub fn f() -> ptr { return
+                        // extern_returning_ptr() }` was rejected with
+                        // "Expected int, got void*" on correct code.
+                        (is_ptr_type(current_function_return_type) && return_expr_type->kind == TYPE_INT) ||
+                        (is_ptr_type(return_expr_type) && current_function_return_type->kind == TYPE_INT) ||
                         (current_function_return_type->kind == TYPE_BOOL && return_expr_type->kind == TYPE_INT) ||
                         (current_function_return_type->kind == TYPE_INT && return_expr_type->kind == TYPE_BOOL) ||
                         (current_function_return_type->kind == TYPE_ENUM && return_expr_type->kind == TYPE_ENUM) ||
@@ -7952,6 +7961,12 @@ static Type* imported_type_from_expr(Expr* type_expr) {
     if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return builtin_int;
     if (t.length == 5 && memcmp(t.start, "array", 5) == 0) return builtin_array;
     if (t.length == 4 && memcmp(t.start, "void", 4) == 0) return builtin_void;
+    // The FFI pointer family, mapped exactly as extern_map_type does it. Missing
+    // here, `pub fn cstr_through(s: cstr) -> cstr` registered as returning int, so
+    // handing its result to an `extern fn atoi(s: cstr)` was rejected with
+    // "Expected string, got int" - the annotation was right and the call was right.
+    if (t.length == 3 && memcmp(t.start, "ptr", 3) == 0) return builtin_ptr;
+    if (t.length == 4 && memcmp(t.start, "cstr", 4) == 0) return builtin_string;
     // A STRUCT or ENUM the module returns. The name is resolvable by now: pass -1
     // (check_program) merges module exports and pass 0 registers their types
     // BEFORE the import-registration loop reaches here, so the symbol exists.

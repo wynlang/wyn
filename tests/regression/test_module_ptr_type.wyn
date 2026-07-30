@@ -1,0 +1,61 @@
+// `ptr` / `cstr` in a module `pub fn` signature.
+//
+// Four near-identical Wyn->C type ladders decide a module function's C type
+// (return + param, each for the definition and the imported-module prototype).
+// Only ONE of the four knew `ptr`, so `pub fn take(p: ptr)` emitted a correct
+// definition and a prototype naming the undefined type `<module>_ptr`:
+//
+//     tests/regression/test_module_ptr_type.wyn.c:8:21:
+//       error: unknown type name 'ptr_types_mod_ptr'
+//
+// The checker had the matching gap: `ptr` is TYPE_STRUCT named "void*" and the
+// return-statement check listed only INT/BOOL/ENUM interchanges, so
+// `pub fn fill(...) -> ptr { return memset(...) }` was rejected outright.
+import ptr_types_mod
+
+extern fn malloc(n: int) -> ptr;
+extern fn free(p: ptr);
+extern fn memcmp(a: ptr, b: ptr, n: int) -> int;
+extern fn atoi(s: cstr) -> int;
+extern fn strcpy(dst: ptr, src: cstr) -> ptr;
+
+fn main() -> int {
+    var p = malloc(64)
+
+    // `ptr` as a parameter of a module pub fn.
+    println("${ptr_types_mod.take(p)}")
+
+    // `-> ptr`: the returned handle must be the SAME pointer, not a truncated or
+    // re-boxed copy. memcmp over 8 bytes both handles wrote is the check that a
+    // 32-bit truncation would fail.
+    var q = ptr_types_mod.pass_through(p)
+    ptr_types_mod.fill(q, 8)
+    var same: int = memcmp(p, q, 8)
+    println("${same}")
+
+    // `ptr` sitting between other types in one signature.
+    println("${ptr_types_mod.mixed("n", q, 7, 1.5)}")
+
+    // `cstr` in and out, read back through C so a wrong C type would show.
+    var s = ptr_types_mod.cstr_through("777")
+    var n: int = atoi(s)
+    println("${n}")
+
+    // A ptr from a module pub fn passed STRAIGHT to an extern fn.
+    strcpy(q, "4242")
+    var m: int = atoi(q)
+    println("${m}")
+
+    // CONTROL: a user-defined type still gets the module prefix.
+    var h = ptr_types_mod.wrap(31)
+    println("${ptr_types_mod.unwrap(h)}")
+
+    free(p)
+    return 0
+}
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 7
+// EXPECT: 777
+// EXPECT: 4242
+// EXPECT: 31
