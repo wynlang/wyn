@@ -7897,7 +7897,22 @@ static Type* imported_type_from_expr(Expr* type_expr) {
     if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return builtin_int;
     if (t.length == 5 && memcmp(t.start, "array", 5) == 0) return builtin_array;
     if (t.length == 4 && memcmp(t.start, "void", 4) == 0) return builtin_void;
-    return builtin_int;  // structs/enums default to int-sized handle here
+    // A STRUCT or ENUM the module returns. The name is resolvable by now: pass -1
+    // (check_program) merges module exports and pass 0 registers their types
+    // BEFORE the import-registration loop reaches here, so the symbol exists.
+    //
+    // Defaulting these to builtin_int made `var b = lib.make()` type `b` as int,
+    // and every field access on it then degraded to int as well - so
+    // `b.items[0]` reported "member reference base type 'long long' is not a
+    // structure". Codegen was taught to emit the right C type for the RETURN
+    // (get_module_fn_struct_return, #229) but the checker's type stayed wrong,
+    // which is why the C declaration looked correct while uses of it did not.
+    {
+        Symbol* s = find_symbol(global_scope, t);
+        if (s && s->type && (s->type->kind == TYPE_STRUCT || s->type->kind == TYPE_ENUM))
+            return s->type;
+    }
+    return builtin_int;  // unresolvable name: int-sized handle, as before
 }
 
 // W9: is `name` legitimately flat-callable in `prog` - i.e. defined as a

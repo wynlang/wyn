@@ -278,6 +278,8 @@ test: wyn
 	@WYN=./wyn bash tests/module_tests/run_extern_prefix_test.sh
 	@echo "=== Running cross-module struct/enum type test ==="
 	@WYN=./wyn bash tests/module_tests/run_cross_module_type_test.sh
+	@echo "=== Running imported-type checker test ==="
+	@WYN=./wyn bash tests/module_tests/run_imported_type_test.sh
 	@echo "=== Running C-package (wyn add) test ==="
 	@WYN=./wyn bash tests/cpkg/run_cpkg_test.sh
 	@echo "=== Running SQLite dogfood (wyn add sqlite3) test ==="
