@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>   // isalpha, for accepting a keyword as a module name
 #include "common.h"
 #include "ast.h"
 #include "types.h"
@@ -230,6 +231,19 @@ static bool check_next_is_value(void) {
            (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_';
 }
 
+// Is the next non-blank source character a '{'?
+//
+// Used to make `select` contextual. There is no token-level lookahead in this
+// parser (only `current` and `previous`), so this scans the raw source after the
+// current token exactly as check_next_is_value above does. Newlines are skipped
+// too: `select\n{` is the same statement as `select {`.
+static bool next_char_is_lbrace(void) {
+    if (!parser.current.start) return false;
+    const char* p = parser.current.start + parser.current.length;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    return *p == '{';
+}
+
 static bool match(WynTokenType type) {
     if (!check(type)) return false;
     advance();
@@ -261,6 +275,34 @@ static void expect(WynTokenType type, const char* message) {
         advance();
     }
     if (check(TOKEN_SEMI)) advance();
+}
+
+// A MODULE NAME may be spelled with a keyword.
+//
+// A module name is a FILENAME, and which filenames a user may pick is not the
+// compiler's business. `import select` failed with "Expected module name"
+// pointing at the import line, never mentioning that `select` is a keyword
+// (channel multiplexing), and then cascaded into a parse error for every later
+// statement. The path form was no escape either - the resolver keys off the
+// import NAME, not a path. WynCanvas hit this with src/select.wyn (a selection
+// engine is an obvious thing to call `select`) and had to ship a `selection.wyn`
+// symlink to work around it.
+//
+// This position is unambiguous: after `import`, or after `from`, a keyword can
+// only be a name, because no statement may begin there. So accept any token whose
+// text is identifier-shaped, whatever the lexer classified it as. `select`,
+// `channel`, `parallel`, `table` and the rest all become reachable as module
+// names; a genuinely wrong token - a literal, an operator - still produces the
+// same message as before.
+static void expect_module_name(const char* message) {
+    if (parser.current.type != TOKEN_IDENT &&
+        parser.current.length > 0 &&
+        (isalpha((unsigned char)parser.current.start[0]) ||
+         parser.current.start[0] == '_')) {
+        advance();
+        return;
+    }
+    expect(TOKEN_IDENT, message);
 }
 
 static Expr* alloc_expr() {
@@ -550,6 +592,20 @@ static Expr* primary() {
         return expr;
     }
     
+    // Treat 'select' as an identifier in expression context.
+    //
+    // `select` is only a STATEMENT when a `{` follows it (see the contextual check
+    // in parse_statement). In an expression it can only be a name, so a module,
+    // variable or field may be called `select` - which is what a selection engine
+    // wants to be called. `select.clip(cov)` previously reported "Expected an
+    // expression" at the START of the line, naming neither the word nor the reason.
+    if (match(TOKEN_SELECT)) {
+        Expr* expr = alloc_expr();
+        expr->type = EXPR_IDENT;
+        expr->token = parser.previous;
+        return expr;
+    }
+
     // Treat 'self' as an identifier in expression context
     if (match(TOKEN_SELF)) {
         Expr* expr = alloc_expr();
@@ -2617,7 +2673,20 @@ static Stmt* statement_impl() {
     
     // Channel multiplexing: select { v = ch.recv() => body  ... }
     // Waits until one channel has data, receives from it, binds v, runs body.
-    if (match(TOKEN_SELECT)) {
+    //
+    // `select` is CONTEXTUAL: only a statement when a `{` follows. Anywhere else
+    // the word is an ordinary identifier, so a module, variable or field may be
+    // called `select` - which a selection engine obviously wants to be. Without
+    // the lookahead, `select.clip(c)` parsed as this statement and failed with
+    // "Expected '{' after 'select'"; and because the recovery then skipped to the
+    // next `;` or `}`, one such line poisoned the rest of the function.
+    //
+    // The lookahead is unambiguous in both directions: a select STATEMENT always
+    // has its brace immediately (the arms live inside it), and no expression
+    // beginning with an identifier can have `{` next - a struct literal is
+    // `Name { ... }` with a TYPE name, and this arm is only reached in statement
+    // position where a bare `ident {` is not otherwise legal.
+    if (check(TOKEN_SELECT) && next_char_is_lbrace() && match(TOKEN_SELECT)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_SELECT;
         stmt->select_stmt.arm_count = 0;
@@ -2808,7 +2877,7 @@ static Stmt* statement_impl() {
             
             expect(TOKEN_RBRACE, "Expected '}' after import list");
             expect(TOKEN_FROM, "Expected 'from' after import list");
-            expect(TOKEN_IDENT, "Expected module name after 'from'");
+            expect_module_name("Expected module name after 'from'");
             
             // Build module path
             char* module_path = malloc(256);
@@ -2851,7 +2920,7 @@ static Stmt* statement_impl() {
         }
         
         // Parse: import name [.name]* [as alias]
-        expect(TOKEN_IDENT, "Expected module name after 'import'");
+        expect_module_name("Expected module name after 'import'");
         
         // Build module path with . support (like Java)
         char* module_path = malloc(256);
@@ -4199,7 +4268,7 @@ Program* parse_program() {
                 
                 expect(TOKEN_RBRACE, "Expected '}' after import list");
                 expect(TOKEN_FROM, "Expected 'from' after import list");
-                expect(TOKEN_IDENT, "Expected module name after 'from'");
+                expect_module_name("Expected module name after 'from'");
                 
                 // Build module path
                 char* module_path = malloc(256);
@@ -4242,7 +4311,7 @@ Program* parse_program() {
                 expect(TOKEN_COLONCOLON, "Expected '::' after 'self'");
             }
             
-            expect(TOKEN_IDENT, "Expected module name");
+            expect_module_name("Expected module name");
             
             // Build module path with . support (like Java)
             char* module_path = malloc(256);

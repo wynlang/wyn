@@ -1,0 +1,5 @@
+// Support module for select_is_contextual.wyn - exists to be `import select`ed.
+// Its NAME is the whole point: `select` is a keyword, and a module may still be
+// called that. See the long note in select_is_contextual.wyn.
+pub fn seven() -> int { return 7 }
+pub fn twice(n: int) -> int { return n * 2 }
