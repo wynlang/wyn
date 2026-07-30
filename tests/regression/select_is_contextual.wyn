@@ -1,0 +1,40 @@
+// Regression: `select` is a CONTEXTUAL keyword - a statement only when `{` follows.
+//
+// `select` is channel multiplexing (`select { v = ch.recv() => ... }`), but it is
+// also an obvious name for a MODULE: a selection engine, a query builder. The word
+// used to be reserved unconditionally, so:
+//
+//   * `import select` failed with "Expected module name" pointing at the import
+//     line, never mentioning that the word was a keyword, and then cascaded into
+//     a parse error for every later statement.
+//   * `select.clip(c)` failed with "Expected an expression" at the START of the
+//     line, and recovery skipped to the next `;` or `}` - so one such line
+//     poisoned the rest of the function.
+//
+// WynCanvas hit both with src/select.wyn and had to ship a `selection.wyn` symlink.
+//
+// This file keeps BOTH readings working. The `select { }` half is the CONTROL: a
+// fix that made the name work by weakening the statement would pass a name-only
+// test, and channel multiplexing would break silently.
+//
+// STILL RESERVED, deliberately: `var select`, a struct FIELD and a function
+// PARAMETER named `select`. Those positions expect a type or a binding after the
+// name and are a separate, larger change. A module name and a qualified call were
+// what blocked real code, and are what this covers.
+// EXPECT: 7
+// EXPECT: 14
+// EXPECT: done
+import select
+
+fn main() {
+    // A module named `select`, and a qualified call on it. This is the shape
+    // WynCanvas needed and could not spell.
+    println(select.seven())
+    println(select.twice(7))
+
+    // The `select { }` STATEMENT control lives in select_stmt_still_parses.wyn:
+    // `Channel` is not resolvable in a file that imports a module, which is a
+    // separate defect, so the two halves cannot share one file.
+
+    println("done")
+}

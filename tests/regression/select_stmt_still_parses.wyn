@@ -1,0 +1,17 @@
+// Regression CONTROL for select_is_contextual.wyn: making `select` usable as a
+// module name must NOT weaken the `select { }` statement. A fix that simply
+// un-reserved the word would pass a name-only test while silently breaking
+// channel multiplexing, so this half is as load-bearing as the other.
+//
+// Separate file because `select_is_contextual.wyn` carries an `import`, and this
+// needs none - keeping the control free of the feature it is controlling for.
+// EXPECT: chan 99
+// EXPECT: done
+fn main() {
+    a = channel(2)
+    Task.send(a, 99)
+    select {
+        v = a.recv() => println("chan " + v.to_string())
+    }
+    println("done")
+}
