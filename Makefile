@@ -274,6 +274,8 @@ test: wyn
 	@WYN=./wyn bash tests/bindgen/run_bindgen_test.sh
 	@echo "=== Running src/ module-layout resolution test ==="
 	@WYN=./wyn bash tests/module_tests/run_src_layout_test.sh
+	@echo "=== Running module extern-fn naming test ==="
+	@WYN=./wyn bash tests/module_tests/run_extern_prefix_test.sh
 	@echo "=== Running C-package (wyn add) test ==="
 	@WYN=./wyn bash tests/cpkg/run_cpkg_test.sh
 	@echo "=== Running SQLite dogfood (wyn add sqlite3) test ==="

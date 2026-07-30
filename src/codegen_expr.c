@@ -24,6 +24,21 @@ static bool is_builtin_runtime_fn(const char* name) {
     for (int i = 0; builtins[i] != NULL; i++) {
         if (strcmp(name, builtins[i]) == 0) return true;
     }
+    // An `extern fn` declared by a module is likewise never a module member: it
+    // names a symbol that already exists in a C library, so there is no
+    // `mathlib_sqrt` in libm, only `sqrt`.
+    //
+    // This predicate is the right seam because it is the ONE thing every bare-
+    // identifier prefix site consults - the two `is_module_function(f) ||
+    // is_builtin_runtime_fn(f)` guards, and the EXPR_IDENT early-out. Those
+    // sites emit the prefix and the name SEPARATELY (the caller writes
+    // "mathlib_", then recurses to write "sqrt"), so a check placed in the
+    // recursion cannot suppress a prefix that has already been written. It has
+    // to be decided before the prefix is emitted, which is here.
+    {
+        extern bool is_module_extern_fn(const char*, const char*);
+        if (is_module_extern_fn(NULL, name)) return true;
+    }
     return false;
 }
 
@@ -2551,8 +2566,26 @@ void codegen_expr(Expr* expr) {
                     } else if (strcmp(module_name, "Shared") == 0) {
                         emit("Shared_%.*s(", method.length, method.start);
                     } else {
-                        // Use resolved module name if available (e.g., "lib/utils" -> "lib_utils")
-                        if (resolved_mod_name[0]) {
+                        // An `extern fn` declared by the module names a symbol
+                        // that already exists in a C library, so it must be
+                        // called UNPREFIXED - there is no `mymod_Thing_do` in
+                        // libthing, only `Thing_do`. The declaration was already
+                        // being emitted unprefixed (correctly); only the call
+                        // site prefixed, so the two disagreed and the program
+                        // failed to link. That made it impossible to put an FFI
+                        // binding behind a Wyn module.
+                        char _mfn[256]; token_to_cstr(_mfn, sizeof(_mfn), method);
+                        extern bool is_module_extern_fn(const char*, const char*);
+                        const char* _mn = resolved_mod_name[0] ? resolved_mod_name : NULL;
+                        char _obuf[128];
+                        if (!_mn) {
+                            token_to_cstr(_obuf, sizeof(_obuf), obj_name);
+                            _mn = _obuf;
+                        }
+                        if (is_module_extern_fn(_mn, _mfn)) {
+                            emit("%.*s(", method.length, method.start);
+                        } else if (resolved_mod_name[0]) {
+                            // Use resolved module name if available (e.g., "lib/utils" -> "lib_utils")
                             const char* c_mod = module_to_c_ident(resolved_mod_name);
                             emit("%s_%.*s(", c_mod, method.length, method.start);
                         } else {
