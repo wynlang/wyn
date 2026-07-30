@@ -1,0 +1,30 @@
+// Fixture for test_module_ptr_type.wyn. `ptr` and `cstr` are BUILTINS, but the
+// module type mappers treated any unrecognised annotation as a user struct
+// needing the module prefix, so these signatures emitted the undefined C type
+// `ptr_types_mod_ptr`. Only the module-fn PARAMETER site of the definition
+// emitter knew better, which is why the definition compiled and its prototype
+// did not.
+extern fn memset(p: ptr, c: int, n: int) -> ptr;
+
+pub struct Handle { id: int }
+
+// `ptr` as a parameter, and as a return.
+pub fn take(p: ptr) -> int { return 1 }
+pub fn pass_through(p: ptr) -> ptr { return p }
+
+// `ptr` alongside other types, so a positional off-by-one in the ladder shows up.
+pub fn mixed(name: string, p: ptr, n: int, f: float) -> int { return n }
+
+// `cstr` in both positions.
+pub fn cstr_through(s: cstr) -> cstr { return s }
+
+// A module pub fn returning the `ptr` an `extern fn` handed it. This is the
+// CHECKER half: `ptr` is TYPE_STRUCT named "void*", and the return-statement
+// check enumerated only INT/BOOL/ENUM interchanges, so it rejected correct code
+// with "Return type mismatch. Expected int, got void*".
+pub fn fill(p: ptr, n: int) -> ptr { return memset(p, 66, n) }
+
+// CONTROL: a USER-DEFINED type must still get the module prefix. If the fix had
+// been "never prefix an unrecognised name", this stops compiling.
+pub fn wrap(id: int) -> Handle { return Handle { id: id } }
+pub fn unwrap(h: Handle) -> int { return h.id }
