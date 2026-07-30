@@ -1655,6 +1655,16 @@ int main(int argc, char** argv) {
         { extern void codegen_set_slim_runtime(bool);
           extern void codegen_set_source_file(const char*);
           extern void codegen_set_gpu_enabled(bool);
+          // ALWAYS false here, even for `wyn build --release`, which is NOT the
+          // same as `wyn run --release` (that path passes the flag through at
+          // :3124). So `--release` means "-O3 + strip" to `build` but "-O3 +
+          // slim runtime header" to `run`, and only `run` exercises the slim
+          // header at all. Worth knowing when testing a slim-runtime change: a
+          // green `wyn build --release` proves nothing about it. Verified that
+          // flipping this to build_release now works end to end - left alone
+          // because unifying the two modes changes what `build --release`
+          // emits, which is its own change with its own risk (the GPU shim is
+          // full-header-only and would have to be gated the same way).
           codegen_set_slim_runtime(false);
           codegen_set_source_file(entry);
           codegen_set_gpu_enabled(wyn_gpu_flag_from_toml() != 0); }

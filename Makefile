@@ -284,6 +284,8 @@ test: wyn
 	@WYN=./wyn bash tests/module_tests/run_pkg_multimodule_test.sh
 	@echo "=== Running argv-forwarding test ==="
 	@WYN=./wyn bash tests/errors/run_argv_forward_test.sh
+	@echo "=== Running --release link/parity test ==="
+	@WYN=./wyn bash tests/errors/run_release_link_test.sh
 	@echo "=== Running C-package (wyn add) test ==="
 	@WYN=./wyn bash tests/cpkg/run_cpkg_test.sh
 	@echo "=== Running SQLite dogfood (wyn add sqlite3) test ==="
@@ -644,9 +646,18 @@ tools/formatter.wyn.out: tools/formatter.wyn wyn
 
 
 # Precompile runtime library for fast compilation
-# runtime_exports.c compiles all inline functions from wyn_runtime.h
+# runtime_exports.c is the ONLY translation unit that includes wyn_runtime.h, so
+# it is where every runtime function defined *in that header* becomes a linkable
+# symbol. The default path does not need it (the generated program .c includes
+# wyn_runtime.h itself and so defines them all locally), but `--release` emits
+# `#include "wyn_runtime_slim.h"` - declarations only - and then has nothing to
+# link against. Omitting it here made EVERY --release build fail at link
+# (Math_pow, System_args, __wyn_argc, print_float_no_nl, array_push_float, ...).
+# It is safe on the default path because the linker only pulls an archive member
+# in to resolve an undefined symbol, and the program's own object already defines
+# all of them; see tests/regression/test_release_link.sh, which guards both paths.
 # Additional .c files provide functions NOT in the header
-RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/wyn_wrapper.c \
+RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/runtime_exports.c src/wyn_wrapper.c \
           src/wyn_interface.c src/coroutine.c src/spawn_fast.c src/spawn.c src/future.c \
           src/io.c src/io_loop.c src/optional.c src/result.c \
           src/arc_runtime.c src/concurrency.c src/async_runtime.c \
