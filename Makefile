@@ -282,6 +282,8 @@ test: wyn
 	@WYN=./wyn bash tests/module_tests/run_imported_type_test.sh
 	@echo "=== Running multi-module package test ==="
 	@WYN=./wyn bash tests/module_tests/run_pkg_multimodule_test.sh
+	@echo "=== Running argv-forwarding test ==="
+	@WYN=./wyn bash tests/errors/run_argv_forward_test.sh
 	@echo "=== Running C-package (wyn add) test ==="
 	@WYN=./wyn bash tests/cpkg/run_cpkg_test.sh
 	@echo "=== Running SQLite dogfood (wyn add sqlite3) test ==="
