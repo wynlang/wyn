@@ -4181,6 +4181,11 @@ void codegen_expr(Expr* expr) {
                             _nest2 = "array_get_nested_bool";
                             // no triple-bool getter yet; _int is a safe fallback
                             // (bool is stored in int_val) - only formatting differs.
+                        } else if (expr->expr_type->kind == TYPE_STRING) {
+                            // Without this a [[string]] read went through
+                            // _nested_int and returned the char* as an int.
+                            _nest2 = "array_get_nested_str";
+                            _nest3 = "array_get_nested3_str";
                         }
                     }
                     if (expr->index.array->index.array->type == EXPR_INDEX) {
@@ -5790,7 +5795,45 @@ void codegen_expr(Expr* expr) {
                 emit("].data.array_val; int __idx = ");
                 codegen_expr(expr->index_assign.index);
                 emit("; if (__arr_ptr && __idx >= 0 && __idx < __arr_ptr->count) { ");
-                emit("__arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = ");
+                // The stored WynValue tag must match the element type. Hardcoding
+                // WYN_TYPE_INT here silently truncated `m[0][1] = 9.75` to 9 (the
+                // double was converted to the int_val member) and stored a string
+                // pointer in int_val for `[[string]]`, so the later read through
+                // array_get_nested_* reinterpreted it and printed garbage.
+                // Prefer the assigned value's checked type; fall back to the
+                // element type of the inner array (`m[0]`'s type).
+                // Only string and float need to differ from the historical int
+                // path: bool already round-trips because array_push_bool stores
+                // into int_val too, and structs in a nested array were never
+                // supported by this branch at all.
+                {
+                    int nested_is_string = 0, nested_is_float = 0;
+                    if (expr->index_assign.value->type == EXPR_STRING) {
+                        nested_is_string = 1;
+                    } else if (expr->index_assign.value->expr_type) {
+                        TypeKind vk = expr->index_assign.value->expr_type->kind;
+                        if (vk == TYPE_STRING) nested_is_string = 1;
+                        else if (vk == TYPE_FLOAT) nested_is_float = 1;
+                    }
+                    if (!nested_is_string && !nested_is_float) {
+                        // `m[0]` is the object; its checked type is the inner
+                        // array, so its element_type is what one slot holds.
+                        Type* inner = expr->index_assign.object->expr_type;
+                        if (inner && inner->kind == TYPE_ARRAY &&
+                            inner->array_type.element_type) {
+                            TypeKind ek = inner->array_type.element_type->kind;
+                            if (ek == TYPE_STRING) nested_is_string = 1;
+                            else if (ek == TYPE_FLOAT) nested_is_float = 1;
+                        }
+                    }
+                    if (nested_is_string) {
+                        emit("__arr_ptr->data[__idx].type = WYN_TYPE_STRING; __arr_ptr->data[__idx].data.string_val = (char*)");
+                    } else if (nested_is_float) {
+                        emit("__arr_ptr->data[__idx].type = WYN_TYPE_FLOAT; __arr_ptr->data[__idx].data.float_val = ");
+                    } else {
+                        emit("__arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = ");
+                    }
+                }
                 codegen_expr(expr->index_assign.value);
                 emit("; } }");
                 break;

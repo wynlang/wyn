@@ -1,0 +1,71 @@
+// Nested array element access must respect the ELEMENT TYPE, both reading and
+// writing. Two independent defects lived here, and both were silent - exit 0
+// with a wrong value, which is the worst failure mode:
+//
+//   1. WRITE (codegen_expr.c, the EXPR_INDEX index_assign branch) hardcoded
+//      `WYN_TYPE_INT` / `.data.int_val` for every nested store. So
+//      `m[0][1] = 9.75` on a [[float]] converted the double into the int
+//      member and read back 9.0, and a [[string]] store put the char* into
+//      int_val, so the later read reinterpreted it and printed a number.
+//
+//   2. READ (codegen_expr.c nested-getter dispatch) had no [[string]] case, so
+//      `s[0][1]` lowered to array_get_nested_int and returned the char* as an
+//      int - `println(s[0][1])` printed a pointer-derived number rather than
+//      the text. This was wrong even with NO write involved.
+//
+// Both are exercised below at double and triple nesting depth.
+//
+// EXPECT: f-read 2.5
+// EXPECT: f-write 9.75
+// EXPECT: f-flat 9.75
+// EXPECT: s-read b
+// EXPECT: s-write zz
+// EXPECT: i-write 7
+// EXPECT: b-write true
+// EXPECT: f-triple 2.5
+// EXPECT: s-triple y
+// EXPECT: f-preserved 0.125
+
+fn main() {
+    // --- float, double nesting: the headline truncation ---
+    frow = [1.5, 2.5, 3.5]
+    fm = [frow]
+    print("f-read ${fm[0][1]}")
+    fm[0][1] = 9.75
+    print("f-write ${fm[0][1]}")
+
+    // The FLAT path was always correct; assert it so a future change to the
+    // nested branch cannot "fix" nested by breaking flat.
+    fflat = [1.5, 2.5]
+    fflat[1] = 9.75
+    print("f-flat ${fflat[1]}")
+
+    // --- string, double nesting: read is broken independently of write ---
+    srow = ["a", "b"]
+    sm = [srow]
+    print("s-read ${sm[0][1]}")
+    sm[0][1] = "zz"
+    print("s-write ${sm[0][1]}")
+
+    // --- int and bool must keep working (both live in int_val) ---
+    irow = [1, 2]
+    im = [irow]
+    im[0][1] = 7
+    print("i-write ${im[0][1]}")
+
+    brow = [true, false]
+    bm = [brow]
+    bm[0][1] = true
+    print("b-write ${bm[0][1]}")
+
+    // --- triple nesting uses the separate *_nested3_* getters ---
+    ft = [[[1.25, 2.5]]]
+    print("f-triple ${ft[0][0][1]}")
+    st = [[["x", "y"]]]
+    print("s-triple ${st[0][0][1]}")
+
+    // A fractional value that is NOT representable as an int at all: if the
+    // int path ever comes back this reads 0.0, not 0.125.
+    pm = [[0.5, 0.125]]
+    print("f-preserved ${pm[0][1]}")
+}

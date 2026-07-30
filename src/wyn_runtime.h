@@ -848,6 +848,21 @@ bool array_get_nested_bool(WynArray arr, int index1, int index2) {
     if (nested == NULL) return false;
     return array_get_bool(*nested, index2);
 }
+// String nested getters: without these, s[0][1] on a [[string]] read the inner
+// element through array_get_nested_int, which returned the char* reinterpreted
+// as an int - so `println(s[0][1])` printed a number, not the text.
+const char* array_get_nested_str(WynArray arr, int index1, int index2) {
+    WynArray* nested = array_get_array(arr, index1);
+    if (nested == NULL) return "";
+    return array_get_str(*nested, index2);
+}
+const char* array_get_nested3_str(WynArray arr, int index1, int index2, int index3) {
+    WynArray* nested1 = array_get_array(arr, index1);
+    if (nested1 == NULL) return "";
+    WynArray* nested2 = array_get_array(*nested1, index2);
+    if (nested2 == NULL) return "";
+    return array_get_str(*nested2, index3);
+}
 
 int array_len(WynArray arr) { return arr.count; }
 bool array_is_empty(WynArray arr) { return arr.count == 0; }
