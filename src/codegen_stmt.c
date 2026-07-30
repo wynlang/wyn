@@ -897,6 +897,26 @@ void codegen_stmt(Stmt* stmt) {
                                 if (strcmp(_rt, "bool") == 0) { c_type = "bool"; goto var_type_done; }
                                 if (strcmp(_rt, "float") == 0) { c_type = "double"; goto var_type_done; }
                             }
+                            // Same lookup, but from the module's OWN declarations -
+                            // its `extern fn`s and `pub fn`s, which the stdlib table
+                            // above knows nothing about. Without this, binding a
+                            // string-returning package function to a variable stored
+                            // a `const char*` in a `long long` and printed the
+                            // pointer as a decimal integer, at exit 0.
+                            {
+                                extern const char* get_module_fn_builtin_return(const char*, const char*);
+                                char _bfn[128];
+                                snprintf(_bfn, sizeof(_bfn), "%.*s",
+                                         stmt->var.init->method_call.method.length,
+                                         stmt->var.init->method_call.method.start);
+                                const char* _br = get_module_fn_builtin_return(_on, _bfn);
+                                if (_br) {
+                                    if (strcmp(_br, "string") == 0) { c_type = "const char*"; is_already_const = true; goto var_type_done; }
+                                    if (strcmp(_br, "float") == 0)  { c_type = "double"; goto var_type_done; }
+                                    if (strcmp(_br, "bool") == 0)   { c_type = "bool"; goto var_type_done; }
+                                    if (strcmp(_br, "int") == 0)    { c_type = "long long"; goto var_type_done; }
+                                }
+                            }
                             // A module pub fn returning a STRUCT. `_rt` is NULL here for
                             // any USER module: lookup_module_fn_return_type is a
                             // hardcoded table of stdlib builtins (types.c ~:1054), so it

@@ -550,6 +550,56 @@ static void clear_module_functions() {
 // fell through every branch to the `long long` default while the function
 // correctly returned `shapes_Point`, and the C compiler reported "initializing
 // 'long long' with an expression of incompatible type".
+// The declared return type NAME of a module's `extern fn` or `pub fn`, as written
+// in the source ("string", "float", "int", ...), or NULL if not found.
+//
+// lookup_module_fn_return_type() cannot answer this either: it is a hardcoded
+// table of stdlib builtins in types.c, so a package's own functions are absent.
+// The consequence was a silent wrong answer, which is the worst failure class:
+//
+//     println(gui.Win_backend_name())   // "sdl3"       - direct call, fine
+//     var s = gui.Win_backend_name()
+//     println(s)                        // 4370151551   - the POINTER, as decimal
+//
+// The direct call worked because the call site emits the C function's own return
+// type; only the VARIABLE fell back to `long long`, so a `const char*` was stored
+// in an integer and printed as one. Nothing failed and the exit code was 0.
+const char* get_module_fn_builtin_return(const char* mod_name, const char* fn_name) {
+    if (!fn_name) return NULL;
+    extern int get_module_count(void);
+    extern void* get_module_entry_at(int);
+    typedef struct { char* name; Program* ast; } ModuleEntry;
+    int n = get_module_count();
+    for (int m = 0; m < n; m++) {
+        ModuleEntry* mod = (ModuleEntry*)get_module_entry_at(m);
+        if (!mod || !mod->ast) continue;
+        if (mod_name) {
+            const char* a = module_to_c_ident(mod->name);
+            const char* b = module_to_c_ident(mod_name);
+            if (!a || !b || strcmp(a, b) != 0) continue;
+        }
+        for (int i = 0; i < mod->ast->count; i++) {
+            Stmt* s = mod->ast->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            Expr* rt = NULL;
+            char nm[256];
+            if (s->type == STMT_EXTERN) {
+                token_to_cstr(nm, sizeof(nm), s->extern_fn.name);
+                rt = s->extern_fn.return_type;
+            } else if (s->type == STMT_FN) {
+                token_to_cstr(nm, sizeof(nm), s->fn.name);
+                rt = s->fn.return_type;
+            } else continue;
+            if (strcmp(nm, fn_name) != 0) continue;
+            if (!rt || rt->type != EXPR_IDENT) return NULL;
+            static char rbuf[64];
+            token_to_cstr(rbuf, sizeof(rbuf), rt->token);
+            return rbuf;
+        }
+    }
+    return NULL;
+}
+
 const char* get_module_fn_struct_return(const char* mod_name, const char* fn_name) {
     if (!fn_name) return NULL;
     extern int get_module_count(void);
