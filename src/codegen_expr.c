@@ -2036,6 +2036,125 @@ void codegen_expr(Expr* expr) {
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
 
+            // Calling a function-typed STRUCT FIELD: `b.on_click()` - the VB-style
+            // event-handler shape. `obj.name(...)` parses as a METHOD call, so this
+            // must be checked BEFORE method dispatch: otherwise the field name is
+            // treated as a method and we emit `Button_on_click(b)`, a symbol that
+            // does not exist. That leaked raw-C error is exactly why fn-typed struct
+            // fields used to be rejected at check time.
+            //
+            // The field holds a WynClosure {fn, env} (see the EXPR_FN_TYPE branch in
+            // codegen_stmt.c), so call through it the same way the closure-VARIABLE
+            // path does. Cast from the checker-resolved type rather than assuming
+            // the int ABI - assuming it is the bug that made `fn(float) -> float`
+            // return garbage bits on the variable path.
+            // Resolve the struct NAME two ways, because the checker's
+            // struct_type.field_count is 0 on a method-call object (field arrays are
+            // not populated there), so the AST declaration is the reliable source.
+            if (expr->method_call.object) {
+                const char* _sname = NULL;
+                char _snbuf[96];
+                if (expr->method_call.object->expr_type &&
+                    expr->method_call.object->expr_type->kind == TYPE_STRUCT) {
+                    token_to_cstr(_snbuf, sizeof(_snbuf),
+                                  expr->method_call.object->expr_type->struct_type.name);
+                    _sname = _snbuf;
+                } else if (expr->method_call.object->type == EXPR_IDENT) {
+                    char _vn[96]; token_to_cstr(_vn, sizeof(_vn), expr->method_call.object->token);
+                    extern const char* get_struct_var_type(const char*);
+                    _sname = get_struct_var_type(_vn);
+                }
+                extern Program* current_program;
+                if (_sname && current_program) {
+                    Expr* _fty = NULL;
+                    for (int _si = 0; _si < current_program->count && !_fty; _si++) {
+                        Stmt* _s = current_program->stmts[_si];
+                        if (_s->type == STMT_EXPORT && _s->export.stmt) _s = _s->export.stmt;
+                        if (_s->type != STMT_STRUCT) continue;
+                        char _dn[96]; token_to_cstr(_dn, sizeof(_dn), _s->struct_decl.name);
+                        if (strcmp(_dn, _sname) != 0) continue;
+                        for (int _fi = 0; _fi < _s->struct_decl.field_count; _fi++) {
+                            Token _f = _s->struct_decl.fields[_fi];
+                            if (_f.length == method.length &&
+                                memcmp(_f.start, method.start, method.length) == 0) {
+                                _fty = _s->struct_decl.field_types[_fi];
+                                break;
+                            }
+                        }
+                    }
+                    if (_fty && _fty->type == EXPR_FN_TYPE) {
+                        // Emit the C return type straight from the annotation.
+                        const char* _rc = "void";
+                        Expr* _rt = _fty->fn_type.return_type;
+                        if (_rt && _rt->type == EXPR_IDENT) {
+                            Token t = _rt->token;
+                            if (t.length == 3 && memcmp(t.start, "int", 3) == 0) _rc = "long long";
+                            else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) _rc = "const char*";
+                            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) _rc = "double";
+                            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) _rc = "bool";
+                        }
+                        // Per-argument C types, from the annotation. Resolve once:
+                        // both call forms below must agree on them, and a
+                        // hand-copied second list is a silent-miscompile waiting to
+                        // happen (the variable path's forced int ABI is exactly that
+                        // bug - it made `fn(float) -> float` return garbage bits).
+                        const char* _pcs[16];
+                        int _na = expr->method_call.arg_count;
+                        if (_na > 16) _na = 16;
+                        for (int _ai = 0; _ai < _na; _ai++) {
+                            _pcs[_ai] = "long long";
+                            if (_ai < _fty->fn_type.param_count &&
+                                _fty->fn_type.param_types[_ai] &&
+                                _fty->fn_type.param_types[_ai]->type == EXPR_IDENT) {
+                                Token t = _fty->fn_type.param_types[_ai]->token;
+                                if (t.length == 6 && memcmp(t.start, "string", 6) == 0) _pcs[_ai] = "const char*";
+                                else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) _pcs[_ai] = "double";
+                                else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) _pcs[_ai] = "bool";
+                            }
+                        }
+                        // TWO calling conventions have to work through this ONE
+                        // field, because only a lambda that was `return`ed gets an
+                        // env parameter (codegen_lambda.c:212 sets is_closure, :794
+                        // vs :807 emit the two signatures):
+                        //
+                        //   env != NULL  ->  fn(void* env, args...)   capturing closure
+                        //   env == NULL  ->  fn(args...)              plain fn / non-capturing
+                        //
+                        // Passing env unconditionally shifted every argument by one
+                        // slot, so `h.f(21)` printed 0 rather than 42. Calling
+                        // through the wrong prototype is undefined behaviour, not
+                        // merely a wrong value, so branch at runtime on the tag the
+                        // struct-init path sets (see EXPR_STRUCT_INIT, ~:4605).
+                        emit("({ WynClosure __c = ");
+                        codegen_expr(expr->method_call.object);
+                        emit(".%.*s; __c.env ? ", method.length, method.start);
+                        // --- with env ---
+                        emit("((%s(*)(void*", _rc);
+                        for (int _ai = 0; _ai < _na; _ai++) emit(",%s", _pcs[_ai]);
+                        emit("))__c.fn)(__c.env");
+                        for (int _ai = 0; _ai < _na; _ai++) {
+                            emit(", ");
+                            codegen_expr(expr->method_call.args[_ai]);
+                        }
+                        emit(") : ");
+                        // --- without env ---
+                        emit("((%s(*)(", _rc);
+                        if (_na == 0) emit("void");
+                        for (int _ai = 0; _ai < _na; _ai++) {
+                            if (_ai > 0) emit(",");
+                            emit("%s", _pcs[_ai]);
+                        }
+                        emit("))__c.fn)(");
+                        for (int _ai = 0; _ai < _na; _ai++) {
+                            if (_ai > 0) emit(", ");
+                            codegen_expr(expr->method_call.args[_ai]);
+                        }
+                        emit("); })");
+                        break;
+                    }
+                }
+            }
+
             // Channel methods: ch.send(v) / ch.recv() / ch.close() lower to the
             // Task_* runtime. The channel value is a long long handle and the
             // payload moves through one word: ints/bools ride it directly,
@@ -4519,7 +4638,36 @@ void codegen_expr(Expr* expr) {
                     const char* _prev_kind = current_assign_target_kind;
                     if (get_struct_field_option_family(_sn, _fn, _fam, sizeof(_fam)))
                         current_assign_target_kind = _fam;
-                    codegen_expr(expr->struct_init.field_values[i]);
+                    // A function-typed field holds a WynClosure {fn, env}, but the
+                    // VALUES that can land in one have three different C shapes:
+                    //
+                    //   named fn `dbl`          -> long long dbl(long long)
+                    //   non-capturing lambda    -> long long __lambda_1(long long)
+                    //   returned capturing one  -> long long __lambda_1(void*, long long)
+                    //
+                    // Only the third takes an env parameter (codegen_lambda.c:794
+                    // vs :807, gated on is_closure, which is set only for a lambda
+                    // in a `return` - codegen_lambda.c:212).
+                    //
+                    // Assigning any of them bare left .env uninitialised, and the
+                    // call site passed it as argument 0 regardless, shifting every
+                    // real argument by one slot: `h.f(21)` printed 0 instead of 42,
+                    // and a captured `n=5` printed 5 because it read 0+5. A silent
+                    // wrong answer at exit 0 - the worst failure class.
+                    //
+                    // So normalise here: wrap into a real WynClosure and let
+                    // env == NULL mean "plain function, do not pass env". The call
+                    // site (EXPR_METHOD_CALL, ~:2039) branches on that, so both
+                    // shapes stay callable through one field.
+                    extern Expr* get_struct_field_fn_type(const char*, const char*);
+                    Expr* _ffty = get_struct_field_fn_type(_sn, _fn);
+                    if (_ffty) {
+                        emit("wyn_closure_new((void*)");
+                        codegen_expr(expr->struct_init.field_values[i]);
+                        emit(", NULL)");
+                    } else {
+                        codegen_expr(expr->struct_init.field_values[i]);
+                    }
                     current_assign_target_kind = _prev_kind;
                 }
                 emit("})");

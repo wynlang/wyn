@@ -3345,6 +3345,14 @@ void codegen_stmt(Stmt* stmt) {
                     } else if (stmt->struct_decl.field_types[i]->type == EXPR_ARRAY) {
                         // Array field type
                         c_type = "WynArray";
+                    } else if (stmt->struct_decl.field_types[i]->type == EXPR_FN_TYPE) {
+                        // Function-typed field: `struct Button { on_click: fn() -> void }`.
+                        // WynClosure is the SAME representation already used for a
+                        // fn-typed return value (see codegen_program.c), so a plain
+                        // function and a capturing closure are both storable in one
+                        // field: {void* fn; void* env;}. Was defaulting to
+                        // `long long`, which is what made this a check-time error.
+                        c_type = "WynClosure";
                     } else if (stmt->struct_decl.field_types[i]->type == EXPR_CALL &&
                                stmt->struct_decl.field_types[i]->call.callee &&
                                stmt->struct_decl.field_types[i]->call.callee->type == EXPR_IDENT &&

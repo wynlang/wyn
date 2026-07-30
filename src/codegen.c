@@ -1199,6 +1199,33 @@ int get_struct_field_option_family(const char* struct_name, const char* field_na
     return 0;
 }
 
+// Does struct `struct_name` declare field `field_name` with a FUNCTION type
+// (`on_click: fn() -> void`)? Returns the field's type expression so the caller
+// can read the parameter/return types, or NULL.
+//
+// Same shape as get_struct_field_option_family above, and for the same reason:
+// the checker's struct_type.field_count is 0 for the objects reaching these code
+// paths, so the AST declaration in current_program is the only reliable source.
+Expr* get_struct_field_fn_type(const char* struct_name, const char* field_name) {
+    extern Program* current_program;
+    if (!current_program || !struct_name || !field_name) return NULL;
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* s = current_program->stmts[i];
+        if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+        if (s->type != STMT_STRUCT) continue;
+        if ((int)strlen(struct_name) != s->struct_decl.name.length ||
+            memcmp(struct_name, s->struct_decl.name.start, s->struct_decl.name.length) != 0) continue;
+        for (int f = 0; f < s->struct_decl.field_count; f++) {
+            if ((int)strlen(field_name) != s->struct_decl.fields[f].length ||
+                memcmp(field_name, s->struct_decl.fields[f].start, s->struct_decl.fields[f].length) != 0) continue;
+            Expr* ft = s->struct_decl.field_types[f];
+            return (ft && ft->type == EXPR_FN_TYPE) ? ft : NULL;
+        }
+        return NULL;
+    }
+    return NULL;
+}
+
 static char** sb_var_names = NULL;
 static int sb_var_count = 0;
 static int sb_var_cap = 0;
