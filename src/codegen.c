@@ -527,6 +527,47 @@ static void clear_module_functions() {
     module_function_count = 0;
 }
 
+// Is `fn_name` declared `extern fn` by module `mod_name` (or, when mod_name is
+// NULL, by ANY loaded module)?
+//
+// A module's own functions are emitted with a module prefix so two modules can
+// each define `parse`. An `extern fn` is the opposite case: it names a symbol
+// that already exists in a C library, so the prefix must NOT be applied - there
+// is no `lowlib_Thing_do` in libthing, only `Thing_do`.
+//
+// Getting this wrong produced a declaration and a call that disagreed:
+//     extern void Thing_do(long long, long long, long long);   // right
+//     lowlib_Thing_do(1, 2, 3);                                // wrong
+// which failed to link, or reported "conflicting types" when some other symbol
+// happened to match. Either way a Wyn module could not wrap a C function, which
+// is precisely what an FFI package is for.
+bool is_module_extern_fn(const char* mod_name, const char* fn_name) {
+    if (!fn_name) return false;
+    extern int get_module_count(void);
+    extern void* get_module_entry_at(int);
+    typedef struct { char* name; Program* ast; } ModuleEntry;
+    int n = get_module_count();
+    for (int m = 0; m < n; m++) {
+        ModuleEntry* mod = (ModuleEntry*)get_module_entry_at(m);
+        if (!mod || !mod->ast) continue;
+        // Compare on the C identifier form, so "lib/utils" matches "lib_utils"
+        // however the caller spelled it.
+        if (mod_name) {
+            const char* a = module_to_c_ident(mod->name);
+            const char* b = module_to_c_ident(mod_name);
+            if (!a || !b || strcmp(a, b) != 0) continue;
+        }
+        for (int i = 0; i < mod->ast->count; i++) {
+            Stmt* s = mod->ast->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            if (s->type != STMT_EXTERN) continue;
+            char nm[256]; token_to_cstr(nm, sizeof(nm), s->extern_fn.name);
+            if (strcmp(nm, fn_name) == 0) return true;
+        }
+    }
+    return false;
+}
+
 static void register_parameter_mut(const char* name, bool is_mut) {
     ensure_param_cap();
     current_param_mut[current_param_count] = is_mut;
