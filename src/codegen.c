@@ -541,6 +541,46 @@ static void clear_module_functions() {
 // which failed to link, or reported "conflicting types" when some other symbol
 // happened to match. Either way a Wyn module could not wrap a C function, which
 // is precisely what an FFI package is for.
+// If module `mod_name` declares `pub fn fn_name` returning a STRUCT, give back the
+// struct's type name; otherwise NULL.
+//
+// lookup_module_fn_return_type() cannot answer this: it is a hardcoded table of
+// stdlib builtins (Crypto_sha256 -> string, ...) in types.c, so a user module's
+// functions are simply absent from it. Without this, `var p = shapes.make(3, 4)`
+// fell through every branch to the `long long` default while the function
+// correctly returned `shapes_Point`, and the C compiler reported "initializing
+// 'long long' with an expression of incompatible type".
+const char* get_module_fn_struct_return(const char* mod_name, const char* fn_name) {
+    if (!fn_name) return NULL;
+    extern int get_module_count(void);
+    extern void* get_module_entry_at(int);
+    extern int is_known_struct(const char*);
+    typedef struct { char* name; Program* ast; } ModuleEntry;
+    int n = get_module_count();
+    for (int m = 0; m < n; m++) {
+        ModuleEntry* mod = (ModuleEntry*)get_module_entry_at(m);
+        if (!mod || !mod->ast) continue;
+        if (mod_name) {
+            const char* a = module_to_c_ident(mod->name);
+            const char* b = module_to_c_ident(mod_name);
+            if (!a || !b || strcmp(a, b) != 0) continue;
+        }
+        for (int i = 0; i < mod->ast->count; i++) {
+            Stmt* s = mod->ast->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            if (s->type != STMT_FN) continue;
+            char nm[256]; token_to_cstr(nm, sizeof(nm), s->fn.name);
+            if (strcmp(nm, fn_name) != 0) continue;
+            Expr* rt = s->fn.return_type;
+            if (!rt || rt->type != EXPR_IDENT) return NULL;
+            static char sbuf[128];
+            token_to_cstr(sbuf, sizeof(sbuf), rt->token);
+            return is_known_struct(sbuf) ? sbuf : NULL;
+        }
+    }
+    return NULL;
+}
+
 bool is_module_extern_fn(const char* mod_name, const char* fn_name) {
     if (!fn_name) return false;
     extern int get_module_count(void);
