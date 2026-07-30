@@ -897,6 +897,34 @@ void codegen_stmt(Stmt* stmt) {
                                 if (strcmp(_rt, "bool") == 0) { c_type = "bool"; goto var_type_done; }
                                 if (strcmp(_rt, "float") == 0) { c_type = "double"; goto var_type_done; }
                             }
+                            // A module pub fn returning a STRUCT. `_rt` is NULL here for
+                            // any USER module: lookup_module_fn_return_type is a
+                            // hardcoded table of stdlib builtins (types.c ~:1054), so it
+                            // never knows about `shapes.make`. Ask the module AST.
+                            //
+                            // Without this the declaration fell through to the
+                            // `long long` default while the function correctly returned
+                            // `shapes_Point`: "initializing 'long long' with an
+                            // expression of incompatible type", then "member reference
+                            // base type 'long long' is not a structure" on `p.x`.
+                            {
+                                extern const char* get_module_fn_struct_return(const char*, const char*);
+                                char _mfn[128];
+                                snprintf(_mfn, sizeof(_mfn), "%.*s",
+                                         stmt->var.init->method_call.method.length,
+                                         stmt->var.init->method_call.method.start);
+                                const char* _sr = get_module_fn_struct_return(_on, _mfn);
+                                if (_sr) {
+                                    // Use the module-qualified spelling, which is what
+                                    // the function's own signature uses.
+                                    const char* _q = resolve_module_alias(_sr);
+                                    c_type = (_q && strcmp(_q, _sr) != 0) ? _q : _sr;
+                                    { char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                                      extern void register_struct_var(const char*, const char*);
+                                      register_struct_var(_vn, _sr); }
+                                    goto var_type_done;
+                                }
+                            }
                         }
                     }
                     // Check if object is a trait - look up method return type from trait decl
@@ -4461,7 +4489,27 @@ void codegen_stmt(Stmt* stmt) {
                             Stmt* s = mod->ast->stmts[i];
                             if ((s->type == STMT_STRUCT && s->struct_decl.is_public) ||
                                 (s->type == STMT_ENUM && s->enum_decl.is_public)) {
-                                codegen_stmt(s);
+                                // Deliberately NOT re-emitting the type here. An
+                                // imported module's public types are spliced into the
+                                // main program as STMT_EXPORT and already emitted,
+                                // unprefixed, by the struct/enum pass in
+                                // codegen_program.c (~:400). This pass runs with
+                                // current_module_prefix set, so calling codegen_stmt
+                                // again produced a SECOND copy - and the two failure
+                                // modes differed only because structs honour the prefix
+                                // and enums do not:
+                                //
+                                //   enum:   both copies named `Color`, so C rejected it
+                                //           outright - "redefinition of enumerator
+                                //           'Red'". Its toString was emitted twice too.
+                                //   struct: the copies were `Point` and `shapes_Point`,
+                                //           so it compiled far enough to fail later, at
+                                //           the typedef alias below.
+                                //
+                                // The ALIAS is all this pass needs to add: pass 1
+                                // emitted `Point`, callers refer to `shapes_Point`, so
+                                // `typedef Point shapes_Point;` is the missing link.
+                                //
                                 // Emit typedef alias: OrigName -> module_OrigName
                                 if (s->type == STMT_ENUM) {
                                     emit("typedef %.*s %s_%.*s;\n",
