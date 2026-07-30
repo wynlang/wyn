@@ -36,6 +36,22 @@ FILE* codegen_get_output(void) { return out; }
 #define WYN_UFN_PFX "wynfn_"
 #define WYN_UFN_PFX_LEN 6
 
+// The C type for one of Wyn's FFI pointer-family type NAMES (`ptr`, `cstr`), or
+// NULL when the token is not one of them.
+//
+// Every emitter that turns a type annotation into a C type must consult this
+// BEFORE its "unrecognised name means user struct" fallback. `ptr` and `cstr`
+// are builtins, so that fallback produced an UNDEFINED C TYPE NAME rather than a
+// wrong value: `<module>_ptr` inside a module, a bare `ptr` at top level. One
+// authority because four near-identical if/else ladders had already drifted -
+// only the module-fn PARAMETER site knew about `ptr`, so `pub fn f(p: ptr)`
+// emitted a correct definition and a broken prototype.
+const char* wyn_ffi_ptr_c_type(Token t) {
+    if (t.length == 3 && memcmp(t.start, "ptr", 3) == 0) return "void*";
+    if (t.length == 4 && memcmp(t.start, "cstr", 4) == 0) return "char*";
+    return NULL;
+}
+
 // Map an `extern fn` C type expression to the C type emitted in the prototype.
 // `is_return` distinguishes a string return (`char*`, caller may own) from a
 // string param (`const char*`). NULL type = void (no `-> T`). A pointer type
@@ -1377,6 +1393,18 @@ int is_known_float_var(const char* name) {
         if (strcmp(float_var_names[i], name) == 0) return 1;
     }
     return 0;
+}
+// Float tracking is keyed on the NAME only, so it must not outlive the function
+// that registered it. Without this reset the table accumulated every float local
+// in the program, and any LATER local sharing that name was dispatched as a
+// float wherever it was used - a `var t = some_string` in one function failed
+// with "Unknown method 'len' for type 'float'" because an unrelated function
+// earlier in the file had a `var t = some_float`. Both functions were correct;
+// only their variable names collided. Reset alongside the string/array/hashmap
+// scopes, which are per-function for exactly this reason.
+void reset_float_vars(void) {
+    for (int i = 0; i < float_var_count; i++) free(float_var_names[i]);
+    float_var_count = 0;
 }
 int is_known_sb_var(const char* name) {
     for (int i = 0; i < sb_var_count; i++) {
