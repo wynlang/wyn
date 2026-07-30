@@ -1112,14 +1112,36 @@ void codegen_expr(Expr* expr) {
                     break;
                 }
                 if (fn.length == 9 && memcmp(fn.start, "assert_eq", 9) == 0 && expr->call.arg_count == 2) {
-                    // Type dispatch: string vs int
+                    // Type dispatch: string vs FLOAT vs int.
+                    //
+                    // The float arm is not a nicety. Without it a float comparison
+                    // went to wyn_assert_eq_int and both sides were TRUNCATED, so
+                    // assert_eq(0.0, -0.1875) PASSED - any two values inside one
+                    // unit interval truncate alike, and the assertion was vacuous.
+                    // Whole suites of opacity/coverage assertions were green while
+                    // the values were wrong.
+                    //
+                    // EITHER side decides it, checked both by static type and by
+                    // literal form: a mismatch like assert_eq(x_float, 1) must not
+                    // silently pick the int arm and truncate x, and the type is
+                    // often unknown for one side (a module fn's return) while the
+                    // other is a plain 1.0 literal.
                     Type* arg_type = expr->call.args[0]->expr_type;
-                    bool is_str = (arg_type && arg_type->kind == TYPE_STRING);
+                    Type* arg_type1 = expr->call.args[1]->expr_type;
+                    bool is_str = (arg_type && arg_type->kind == TYPE_STRING) ||
+                                  (arg_type1 && arg_type1->kind == TYPE_STRING);
                     // Also check if first arg is a string literal or method returning string
                     if (!is_str && expr->call.args[0]->type == EXPR_STRING) is_str = true;
                     if (!is_str && expr->call.args[1]->type == EXPR_STRING) is_str = true;
+                    bool is_flt = !is_str &&
+                        ((arg_type && arg_type->kind == TYPE_FLOAT) ||
+                         (arg_type1 && arg_type1->kind == TYPE_FLOAT) ||
+                         expr->call.args[0]->type == EXPR_FLOAT ||
+                         expr->call.args[1]->type == EXPR_FLOAT);
                     if (is_str) {
                         emit("wyn_assert_eq_str(");
+                    } else if (is_flt) {
+                        emit("wyn_assert_eq_float(");
                     } else {
                         emit("wyn_assert_eq_int(");
                     }

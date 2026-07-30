@@ -38,6 +38,33 @@ void wyn_assert_eq_int(long long actual, long long expected) {
     }
 }
 
+// assert_eq on FLOATS.
+//
+// Without this, `assert_eq` had only an int arm and a string arm, so every float
+// comparison was emitted as wyn_assert_eq_int(1.0, 2.0) - both sides TRUNCATED to
+// a long long. Two consequences, and the second is the dangerous one:
+//
+//   * assert_eq(1.0, 2.0) failed, but reported "expected: 2, got: 1" - the
+//     truncated values, so a 1.5-vs-1.9 style mismatch was misreported.
+//   * assert_eq(0.0, -0.1875) PASSED. Any two values inside the same unit
+//     interval truncate to the same integer, so the assertion was VACUOUS. A
+//     whole suite of opacity and coverage assertions can be green while the
+//     values are wrong.
+//
+// Comparison is EXACT (==), not epsilon-based, and that is deliberate: an
+// assert_eq that silently tolerated drift would be a different kind of lie, and
+// callers who want a tolerance already have one (WynCanvas uses pixel.approx).
+// The printed value carries enough digits to show a near-miss rather than
+// rounding it away into a puzzling "expected 0.1, got 0.1".
+void wyn_assert_eq_float(double actual, double expected) {
+    if (!(actual == expected)) {   // NaN != NaN, so a NaN on either side fails
+        wyn_test_fail_count++;
+        fprintf(stderr, "    \033[31massert_eq failed\033[0m\n");
+        fprintf(stderr, "      expected: %.17g\n", expected);
+        fprintf(stderr, "      got:      %.17g\n", actual);
+    }
+}
+
 void wyn_assert_eq_str(const char* actual, const char* expected) {
     if (!actual || !expected || strcmp(actual, expected) != 0) {
         wyn_test_fail_count++;
