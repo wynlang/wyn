@@ -263,7 +263,20 @@ char* resolve_module_path(const char* module_name) {
     
     // 4. Current directory
     TRY_RESOLVE("%s", module_name);
-    
+
+    // 4b. ./src/ - the layout `wyn init --template lib` scaffolds.
+    //
+    // `wyn test` compiles each test file on its own (cmd_test.c shells out to
+    // `wyn build <file>`), so source_directory is always tests/ and candidates
+    // 1-3 cannot see a sibling src/. Without this the one layout the tooling
+    // itself creates is unimportable from a test, and projects resort to
+    // committing ./<name>.wyn -> src/<name>.wyn symlinks to satisfy candidate 4.
+    //
+    // Consistent with the git-dep branch below, which already tries
+    // `<cache>/src/<name>.wyn`: a fetched dependency's src/ was searched while
+    // the local project's was not.
+    TRY_RESOLVE("./src/%s", module_name);
+
     // 5. ./modules/ directory
     TRY_RESOLVE("./modules/%s", module_name);
     
