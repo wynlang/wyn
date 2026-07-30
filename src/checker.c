@@ -1021,6 +1021,40 @@ void add_symbol(SymbolTable* scope, Token name, Type* type, bool is_mutable) {
 static void mark_used(SymbolTable* scope, Token name) {
     Symbol* sym = find_symbol(scope, name);
     if (sym) sym->is_used = true;
+    // A re-declared name occupies a SECOND slot (add_symbol always appends;
+    // nothing dedupes), but find_symbol returns just one of them - so marking
+    // only that one left the other permanently unused and produced a false
+    // "unused variable" warning for a variable that is plainly read on the very
+    // next line:
+    //
+    //     var line_start = 0            // outer
+    //     while ... {
+    //         var line_start = i + 1    // inner, shadows
+    //         print("${line_start}")    // READS it - yet it was reported unused
+    //     }
+    //
+    // Since these warnings are per-function and this is a diagnostic rather than
+    // a semantic decision, mark EVERY same-named slot. The failure direction
+    // matters: a missed warning costs nothing, while a false one on correct code
+    // trains people to ignore all warnings. Measured across sample-apps: 5 such
+    // warnings on committed, working code (netstat-lite x3, dockermon, and this
+    // shape), of which 4 were false.
+    // Walk the whole enclosing chain, not just this scope: the READ usually
+    // happens in a child scope (inside a for/if body) while the declarations sit
+    // in the function scope, so marking only the innermost table left every
+    // outer duplicate false. Measured on sysadmin/netstat-lite, which declares
+    // `line_start` four times in one function and reads all four: slot 3 was
+    // marked used, slots 6/11/14 were not, giving three false warnings.
+    if (!name.start || name.length <= 0) return;
+    for (SymbolTable* t = scope; t; t = t->parent) {
+        for (int i = 0; i < t->count; i++) {
+            Symbol* s = &t->symbols[i];
+            if (s->name.length == name.length && s->name.start &&
+                memcmp(s->name.start, name.start, name.length) == 0) {
+                s->is_used = true;
+            }
+        }
+    }
 }
 
 // K7: does this call target a genuinely non-callable value - i.e. a LOCAL

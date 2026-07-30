@@ -5194,7 +5194,28 @@ void StringBuilder_append(long long handle, const char* s) {
 
 char* StringBuilder_to_string(long long handle) {
     if (!sb_handle_ok(handle)) return "";
-    return sb_pool[handle].data;
+    // Return an OWNED COPY, not the live buffer.
+    //
+    // Handing back sb_pool[handle].data made every earlier snapshot alias the
+    // builder, so appending mutated strings the caller already held:
+    //
+    //     sb.append("a");  s1 = sb.to_string();   // "a"
+    //     sb.append("b");  s2 = sb.to_string();   // "ab"
+    //     // ... and s1 is NOW "ab" as well
+    //
+    // Measured: s1=ab s2=ab where s1=a was correct. A silent wrong answer at
+    // exit 0. Worse, the pointer dangles the moment append() has to realloc, so
+    // the value could also change to garbage rather than merely to the newer
+    // text.
+    //
+    // Allocated with wyn_str_alloc, the same way string_concat and every other
+    // string-returning runtime function does it, so it participates in the normal
+    // retain/release rather than leaking a copy per call.
+    const char* src = sb_pool[handle].data ? sb_pool[handle].data : "";
+    size_t n = strlen(src);
+    char* out = wyn_str_alloc(n + 1);
+    memcpy(out, src, n + 1);
+    return out;
 }
 
 long long StringBuilder_len(long long handle) {
