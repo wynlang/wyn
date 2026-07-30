@@ -239,6 +239,10 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                 return_type = "WynHashMap*";
             } else if (rt.length == 7 && memcmp(rt.start, "HashSet", 7) == 0) {
                 return_type = "WynHashSet*";
+            } else if (wyn_ffi_ptr_c_type(rt)) {
+                // `-> ptr` / `-> cstr`: a builtin, NOT a user struct, so it must
+                // never take the module prefix (that emitted `<module>_ptr`).
+                return_type = wyn_ffi_ptr_c_type(rt);
             } else {
                 // Custom struct type - add module prefix if in module context
                 if (current_module_prefix) {
@@ -286,10 +290,11 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                     c_type = "WynHashMap*";
                 } else if (type_token.length == 7 && memcmp(type_token.start, "HashSet", 7) == 0) {
                     c_type = "WynHashSet*";
-                } else if (type_token.length == 3 && memcmp(type_token.start, "ptr", 3) == 0) {
-                    c_type = "void*";   // FFI opaque pointer passed through a user fn
-                } else if (type_token.length == 4 && memcmp(type_token.start, "cstr", 4) == 0) {
-                    c_type = "char*";   // raw C string
+                } else if (wyn_ffi_ptr_c_type(type_token)) {
+                    // FFI opaque pointer / raw C string passed through a user fn.
+                    // This was the ONE site that got `ptr` right; the other three
+                    // now share the same authority instead of re-deriving it.
+                    c_type = wyn_ffi_ptr_c_type(type_token);
                 } else {
                     // Custom struct type - add module prefix if in module context
                     if (current_module_prefix) {
@@ -4603,6 +4608,9 @@ void codegen_stmt(Stmt* stmt) {
                                             return_type = "WynHashMap*";
                                         } else if (rt.length == 7 && memcmp(rt.start, "HashSet", 7) == 0) {
                                             return_type = "WynHashSet*";
+                                        } else if (wyn_ffi_ptr_c_type(rt)) {
+                                            // Builtin, not a user struct: no prefix.
+                                            return_type = wyn_ffi_ptr_c_type(rt);
                                         } else {
                                             // Custom struct type - add module prefix
                                             snprintf(custom_ret_type, 128, "%s_%.*s", c_mod_name, rt.length, rt.start);
@@ -4633,6 +4641,12 @@ void codegen_stmt(Stmt* stmt) {
                                                 param_type = "long long";
                                             } else if (pt.length == 5 && memcmp(pt.start, "array", 5) == 0) {
                                                 param_type = "WynArray";
+                                            } else if (wyn_ffi_ptr_c_type(pt)) {
+                                                // Builtin, not a user struct: no prefix.
+                                                // This prototype and the definition
+                                                // emitter above disagreed, which is why
+                                                // `pub fn f(p: ptr)` failed only here.
+                                                param_type = wyn_ffi_ptr_c_type(pt);
                                             } else {
                                                 // Custom struct type - add module prefix
                                                 snprintf(custom_param_type, 128, "%s_%.*s", c_mod_name, pt.length, pt.start);
