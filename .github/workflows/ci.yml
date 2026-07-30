@@ -3,8 +3,14 @@ name: CI
 on:
   push:
     branches: [main, dev]
+  # Gate PRs into BOTH branches. `dev` is the integration branch that ordinary
+  # fix/feature PRs target; `main` represents the last release and only moves via
+  # a dev -> main PR at release time. Without `dev` here, every integration PR
+  # would land ungated and `main` would inherit whatever accumulated - which is
+  # the same "a check that cannot fail reads as coverage" failure that let ~80
+  # test files go ungated before v1.20.0.
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 jobs:
   build-and-test:
