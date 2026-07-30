@@ -286,6 +286,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_argv_forward_test.sh
 	@echo "=== Running --release link/parity test ==="
 	@WYN=./wyn bash tests/errors/run_release_link_test.sh
+	@echo "=== Running assert_eq float-comparison test ==="
+	@WYN=./wyn bash tests/errors/run_assert_eq_float_test.sh
 	@echo "=== Running C-package (wyn add) test ==="
 	@WYN=./wyn bash tests/cpkg/run_cpkg_test.sh
 	@echo "=== Running SQLite dogfood (wyn add sqlite3) test ==="
