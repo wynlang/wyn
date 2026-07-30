@@ -65,7 +65,13 @@ jobs:
         run: |
           set -euo pipefail
           make clean
-          make OPT=-O2
+          # RELEASE_BUILD=1 drops the "-dev" suffix from `wyn version`. This is the
+          # ONLY place it is set: every other build (local, CI, a user's `make`)
+          # reports e.g. "v1.20.0-dev" so nobody mistakes a working tree for the
+          # shipped compiler. If this flag is ever dropped the failure is a real
+          # release labelled "-dev" - annoying but honest - rather than a dev build
+          # masquerading as official.
+          make RELEASE_BUILD=1 OPT=-O2
         shell: bash
 
       - name: Smoke test (Unix)

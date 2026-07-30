@@ -694,6 +694,17 @@ static char* get_version() {
                 }
                 fclose(f);
             }
+            // The VERSION file holds only the number ("1.20.0"), so reading it
+            // would DROP the -dev suffix that WYN_VERSION carries for a
+            // non-release build - i.e. the one case where it matters most, since
+            // reading VERSION only happens inside a source checkout. Re-apply it.
+            // Compare against the compiled-in string rather than hardcoding, so
+            // this stays correct if the suffix ever changes.
+            if (version[0] != 0 && strstr(WYN_VERSION, "-dev") != NULL
+                && strstr(version, "-dev") == NULL) {
+                size_t n = strlen(version);
+                if (n + 4 < sizeof(version)) memcpy(version + n, "-dev", 5);
+            }
         }
         if (version[0] == 0) strncpy(version, WYN_VERSION, sizeof(version) - 1);
     }
