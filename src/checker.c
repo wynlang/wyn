@@ -4820,6 +4820,27 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         if (strcmp(rt, "array") == 0) { expr->expr_type = builtin_array; return builtin_array; }
                         expr->expr_type = builtin_int; return builtin_int;
                     }
+                    // Still nothing: ask the module's OWN AST. Neither of the two
+                    // lookups above can answer for a module loaded from the package
+                    // cache - the symbol may not be registered under either spelling,
+                    // and lookup_module_fn_return_type is a hardcoded table of stdlib
+                    // builtins (types.c), so a package's functions are absent from it.
+                    //
+                    // Falling through here defaulted to int, so a `pub fn ... -> string`
+                    // in a git-fetched package produced
+                    // "Cannot compare int with string" on a perfectly correct
+                    // comparison - which is how this was found: WynCanvas importing
+                    // the `gui` package as a real dependency rather than a symlink.
+                    {
+                        extern const char* get_module_fn_builtin_return(const char*, const char*);
+                        const char* mr = get_module_fn_builtin_return(obj_name, method_name);
+                        if (mr) {
+                            if (strcmp(mr, "string") == 0) { expr->expr_type = builtin_string; return builtin_string; }
+                            if (strcmp(mr, "bool") == 0)   { expr->expr_type = builtin_bool;   return builtin_bool; }
+                            if (strcmp(mr, "float") == 0)  { expr->expr_type = builtin_float;  return builtin_float; }
+                            if (strcmp(mr, "int") == 0)    { expr->expr_type = builtin_int;    return builtin_int; }
+                        }
+                    }
                 }
             }
             

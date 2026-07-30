@@ -30,6 +30,15 @@ static void ensure_dir(const char* path) {
     system(cmd);
 }
 
+// A plain file test. wyn_runtime.h's file_exists is not linked into the compiler
+// (it is for compiled PROGRAMS), so keep a local one next to dir_exists.
+static int pkg_file_exists(const char* path) {
+    FILE* f = fopen(path, "r");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
 static int dir_exists(const char* path) {
     struct stat st;
     return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
@@ -484,6 +493,8 @@ int wyn_dep_resolve(const char* import_name, char* dir_out, size_t n) {
     WynConfig* cfg = wyn_config_parse("wyn.toml");
     if (!cfg) return 0;
     int hit = 0;
+
+    // 1. The import name IS a dependency name (`import gui` -> the gui package).
     for (int i = 0; i < cfg->dependency_count; i++) {
         if (strcmp(cfg->dependencies[i].name, import_name) != 0) continue;
         PkgSpec spec;
@@ -493,6 +504,39 @@ int wyn_dep_resolve(const char* import_name, char* dir_out, size_t n) {
         }
         break;
     }
+    if (hit) { wyn_config_free(cfg); return 1; }
+
+    // 2. The import names a module INSIDE some dependency
+    //    (`import widgets` -> gui's src/widgets.wyn).
+    //
+    // Without this a package could export only ONE module, the one named after
+    // itself. The `gui` package ships both `gui` (the bindings) and `widgets`
+    // (the toolkit built on them), and `import widgets` simply failed to resolve
+    // - load_module returned NULL, so the checker never registered any of its
+    // functions and every call to one defaulted to int. The visible symptom was
+    // far from the cause: "Cannot compare int with string" on a correct
+    // comparison, and a generated `long long s = ;` with the initialiser missing
+    // entirely.
+    //
+    // Splitting one library per repo would be the alternative, and it is worse:
+    // widgets is useless without gui, they version together, and it would make
+    // every multi-module package a multi-repo package.
+    for (int i = 0; i < cfg->dependency_count && !hit; i++) {
+        PkgSpec spec;
+        if (spec_from_dep_value(cfg->dependencies[i].name, cfg->dependencies[i].version, &spec) != 0) continue;
+        char dir[600];
+        pkgspec_cache_dir(&spec, dir, sizeof(dir));
+        if (!dir_exists(dir)) continue;
+        // Only claim the dependency if the module file is actually there, so a
+        // genuinely missing module still reports "not found" against the right
+        // name rather than being silently attributed to some package.
+        char probe[800];
+        snprintf(probe, sizeof(probe), "%s/src/%s.wyn", dir, import_name);
+        if (pkg_file_exists(probe)) { snprintf(dir_out, n, "%s", dir); hit = 1; break; }
+        snprintf(probe, sizeof(probe), "%s/%s.wyn", dir, import_name);
+        if (pkg_file_exists(probe)) { snprintf(dir_out, n, "%s", dir); hit = 1; break; }
+    }
+
     wyn_config_free(cfg);
     return hit;
 }
