@@ -360,6 +360,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_install_layout_test.sh
 	@echo "=== Running unsupported-field-type honesty gates ==="
 	@WYN=./wyn bash tests/errors/run_unsupported_field_type_test.sh
+	@echo "=== Running function-typed struct field test ==="
+	@WYN=./wyn bash tests/errors/run_fn_field_test.sh
 	@echo "=== Running Task.select diagnostic gate ==="
 	@WYN=./wyn bash tests/errors/run_task_select_diagnostic_test.sh
 	@echo "=== Running HTTP server concurrent-load gate ==="

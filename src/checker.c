@@ -7253,27 +7253,17 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 }
             }
 
-            // Gate (not yet implemented): a struct field whose declared type is a
-            // function type (`fn_ptr: fn(int) -> int`). Codegen currently types
-            // such a field as `long long` and lowers `h.fn_ptr(x)` as a method
-            // call (`Handler_fn_ptr(...)`), leaking a raw-C error. Reject at check
-            // with a clear message until closure/function-pointer fields are
-            // implemented, so nothing passes check then fails to build.
-            for (int i = 0; i < stmt->struct_decl.field_count; i++) {
-                Expr* ft = stmt->struct_decl.field_types[i];
-                if (ft && ft->type == EXPR_OPTIONAL_TYPE) ft = ft->optional_type.inner_type;
-                if (ft && ft->type == EXPR_FN_TYPE) {
-                    fprintf(stderr,
-                        "Error at line %d: struct '%.*s' field '%.*s' has a function type,"
-                        " which is not yet supported as a struct field.\n"
-                        "  Workaround: store the closure in a variable and call it directly,"
-                        " or pass it as a function argument.\n",
-                        stmt->struct_decl.name.line,
-                        (int)stmt->struct_decl.name.length, stmt->struct_decl.name.start,
-                        (int)stmt->struct_decl.fields[i].length, stmt->struct_decl.fields[i].start);
-                    had_error = true;
-                }
-            }
+            // Function-typed struct fields (`on_click: fn() -> void`) ARE supported:
+            // the field is emitted as WynClosure and `b.on_click()` is lowered
+            // through {fn, env} (see the EXPR_FN_TYPE branch in codegen_stmt.c and
+            // the EXPR_FIELD_ACCESS callee branch in codegen_expr.c). This used to
+            // be a hard check-time error because codegen typed the field
+            // `long long` and lowered the call as a method call
+            // (`Button_on_click(...)`, a symbol that does not exist).
+            //
+            // Kept as a comment rather than deleted because the OPTIONAL form
+            // (`on_click: fn() -> void ?`) is still NOT wired up - Option<closure>
+            // has no family type - and this is where a future gate for it belongs.
 
             // Gate (not yet implemented): a struct field whose declared type is a
             // HashMap/HashSet (or bare map/set) container. Codegen silently types

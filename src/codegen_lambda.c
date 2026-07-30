@@ -335,6 +335,19 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 scan_expr_for_lambdas(expr->array.elements[i]);
             }
             break;
+        case EXPR_STRUCT_INIT:
+            // A lambda in a struct initializer - `Button { on_click: () => ... }`,
+            // the event-handler shape. Without this arm the lambda is never
+            // visited here, so it gets no id and no top-level function is emitted,
+            // while the initializer still emits a reference to it: the generated C
+            // failed with `use of undeclared identifier '__lambda_1'`.
+            //
+            // Field VALUES only. Field types are type expressions, not values, so
+            // they can hold no lambda.
+            for (int i = 0; i < expr->struct_init.field_count; i++) {
+                scan_expr_for_lambdas(expr->struct_init.field_values[i]);
+            }
+            break;
         default:
             break;
     }
