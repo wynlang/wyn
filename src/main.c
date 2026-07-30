@@ -713,6 +713,30 @@ static char* get_version() {
 
 #include "wyn_interface.h"
 
+
+// Append one program argument to a shell command string, single-quoted so the
+// shell cannot split or interpret it.
+//
+// The arguments were appended as a bare " %s", which meant (a) an argument
+// containing a space became TWO arguments - `wyn run app.wyn "two words"` arrived
+// as `two` and `words` - and (b) anything shell-special was EXECUTED. An argument
+// of `; rm -rf x` would have run. Both paths (cached binary and fresh build)
+// build such a string, so both must use this.
+//
+// POSIX single-quote rule: everything is literal inside '...', and an embedded
+// single quote is written by closing, escaping, and reopening: '\''
+static int append_shell_arg(char* buf, size_t cap, int at, const char* arg) {
+    if (at < 0 || (size_t)at + 4 >= cap) return at;
+    int n = at;
+    n += snprintf(buf + n, cap - n, " '");
+    for (const char* c = arg; *c && (size_t)n + 5 < cap; c++) {
+        if (*c == '\'') n += snprintf(buf + n, cap - n, "'\\''");
+        else            n += snprintf(buf + n, cap - n, "%c", *c);
+    }
+    n += snprintf(buf + n, cap - n, "'");
+    return n;
+}
+
 int main(int argc, char** argv) {
     // Initialize platform-specific functionality
     if (wyn_platform_init() != 0) {
@@ -2914,13 +2938,35 @@ int main(int argc, char** argv) {
         int keep_artifacts = 0;
         int mem_stats = 0;
         int user_args_start = -1;  // index in argv where user args begin (after --)
+        // ARGUMENT SPLIT: wyn's own flags come BEFORE the file; everything after the
+        // file belongs to the program.
+        //
+        // `wyn run app.wyn alpha beta` used to drop both arguments silently - the
+        // loop consumed them as candidate file names and nothing forwarded them, so
+        // System.args() had length 1. That made `wyn run` unusable for the one thing
+        // a CLI tool does, which is why so many sample CLIs hardcode their inputs
+        // (logwatch cannot open a log file; portscanner has 11 fixed ports).
+        //
+        // The rule has to be positional rather than "is it flag-shaped", because a
+        // program's own `--verbose` is indistinguishable from one of ours. Once the
+        // file is seen, we stop interpreting anything.
         for (int i = 2; i < argc; i++) {
-            if (strcmp(argv[i], "--") == 0) { user_args_start = i + 1; break; }
+            if (file) {
+                // Everything from here on is the program's, including flag-shaped
+                // arguments. An explicit `--` right here is OUR separator and is
+                // consumed; a `--` later is the program's and is forwarded.
+                user_args_start = (strcmp(argv[i], "--") == 0) ? i + 1 : i;
+                break;
+            }
+            if (strcmp(argv[i], "--") == 0) {
+                // `--` before any file: the next token is the file.
+                continue;
+            }
             if (strcmp(argv[i], "--debug") == 0) keep_artifacts = 1;
             else if (strcmp(argv[i], "--mem-stats") == 0) mem_stats = 1;
             else if (strcmp(argv[i], "--fast") == 0 || strcmp(argv[i], "--release") == 0 || strcmp(argv[i], "--shared") == 0 || strcmp(argv[i], "--python") == 0) {}
             else if (strcmp(argv[i], "-e") == 0 && i + 1 < argc) { eval_code = argv[++i]; }
-            else if (!file) file = argv[i];
+            else file = argv[i];
         }
         // Handle -e: write to temp file
         if (eval_code) {
@@ -3070,7 +3116,11 @@ int main(int argc, char** argv) {
           extern void codegen_set_source_file(const char*);
           extern void codegen_set_gpu_enabled(bool);
           bool _slim = false;
-          for (int _i = 2; _i < argc; _i++) if (strcmp(argv[_i], "--release") == 0) _slim = true;
+          // Bounded by user_args_start: past that point the flags are the
+          // PROGRAM's, and `wyn run app.wyn -- --release` must not put the
+          // compiler into release mode (nor swallow the argument).
+          { int _lim = (user_args_start > 0) ? user_args_start : argc;
+            for (int _i = 2; _i < _lim; _i++) if (strcmp(argv[_i], "--release") == 0) _slim = true; }
           codegen_set_slim_runtime(_slim);
           codegen_set_source_file(file);
           // GPU dispatch spike: only with the full runtime header - the slim
@@ -3162,7 +3212,11 @@ int main(int argc, char** argv) {
         // Check for --fast flag (use -O0 for fastest compile)
         const char* opt_level = "-O0";  // Fast dev builds; --release uses -O3
         int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python, 4=--node
-        for (int i = 3; i < argc; i++) {
+        // Bounded by user_args_start for the same reason as above: everything past
+        // it is the PROGRAM's argv, so a program flag named --release/--fast must
+        // not reconfigure our compile (and must still reach the program).
+        int _flag_lim = (user_args_start > 0) ? user_args_start : argc;
+        for (int i = 3; i < _flag_lim; i++) {
             if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; }
             if (strcmp(argv[i], "--release") == 0) { opt_level = "-O3"; }
             if (strcmp(argv[i], "--shared") == 0) { shared_mode = 1; }
@@ -3175,7 +3229,7 @@ int main(int argc, char** argv) {
         if (shared_mode == 4) { shared_mode = 1; }
         int generate_node = 0;
         int use_release = 0;
-        for (int i = 3; i < argc; i++) {
+        for (int i = 3; i < _flag_lim; i++) {
             if (strcmp(argv[i], "--node") == 0) { generate_node = 1; }
             if (strcmp(argv[i], "--release") == 0) { use_release = 1; }
         }
@@ -3210,8 +3264,8 @@ int main(int argc, char** argv) {
                     else rc = snprintf(run_cmd, sizeof(run_cmd), "./%s.out", file);
 #endif
                     if (user_args_start > 0) {
-                        for (int i = user_args_start; i < argc && rc < (int)sizeof(run_cmd) - 2; i++) {
-                            rc += snprintf(run_cmd + rc, sizeof(run_cmd) - rc, " %s", argv[i]);
+                        for (int i = user_args_start; i < argc && rc < (int)sizeof(run_cmd) - 8; i++) {
+                            rc = append_shell_arg(run_cmd, sizeof(run_cmd), rc, argv[i]);
                         }
                     }
                     // Supervised: forwards signals, reaps, leaves no orphan.
@@ -3527,8 +3581,8 @@ int main(int argc, char** argv) {
             else
                 _rc = snprintf(run_cmd, sizeof(run_cmd), "./%s.out", file);
             if (user_args_start > 0) {
-                for (int i = user_args_start; i < argc && _rc < (int)sizeof(run_cmd) - 2; i++) {
-                    _rc += snprintf(run_cmd + _rc, sizeof(run_cmd) - _rc, " %s", argv[i]);
+                for (int i = user_args_start; i < argc && _rc < (int)sizeof(run_cmd) - 8; i++) {
+                    _rc = append_shell_arg(run_cmd, sizeof(run_cmd), _rc, argv[i]);
                 }
             }
         }
