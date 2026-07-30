@@ -23,6 +23,13 @@ void wyn_rc_release(const void* ptr);
 void wyn_rc_set_length(const void* ptr, unsigned int len);
 unsigned int wyn_rc_get_length(const void* ptr);
 
+// Abort-on-OOM allocators, verbatim from wyn_runtime.h:42-44. `static inline` in
+// both headers, so there is nothing in the archive to link - they must be
+// duplicated, not declared. Needed by the array_push_struct macro below.
+static inline void* wyn_malloc(size_t n) { void* p = malloc(n); if (!p && n) { fprintf(stderr, "wyn: out of memory (%zu bytes)\n", n); abort(); } return p; }
+static inline void* wyn_calloc(size_t c, size_t n) { void* p = calloc(c, n); if (!p && c && n) { fprintf(stderr, "wyn: out of memory\n"); abort(); } return p; }
+static inline void* wyn_realloc(void* p, size_t n) { void* q = realloc(p, n); if (!q && n) { fprintf(stderr, "wyn: out of memory\n"); abort(); } return q; }
+
 // Value type tags (WYN_TYPE_FLOAT, WYN_TYPE_STRING, ...). Included rather than
 // copied: these tags are a WIRE FORMAT between codegen and the runtime, since
 // codegen writes WYN_TYPE_FLOAT into WynValue.type and the runtime reads it
@@ -30,6 +37,16 @@ unsigned int wyn_rc_get_length(const void* ptr);
 // instead of failing loudly, so both headers take the values from the single
 // canonical definition here. wyn_runtime.h:170 includes this same file.
 #include "arc_runtime.h"
+// The HashMap / HashSet / Json entry points are plain functions living in
+// hashmap.c / hashset.c / json.c, i.e. real symbols in libwyn_rt.a. Include
+// their canonical headers rather than restating the prototypes, for the same
+// drift reason as arc_runtime.h above: a hand-copied signature that disagreed
+// (int vs long long, missing const) would compile and then corrupt arguments.
+// Without these, --release rejected every program that touched a HashMap,
+// HashSet or Json with `call to undeclared function 'hashmap_new'`.
+#include "hashmap.h"
+#include "hashset.h"
+#include "json.h"
 
 // Forward declarations for opaque types
 typedef struct WynHashMap WynHashMap;
@@ -102,6 +119,14 @@ void future_set(Future* f, void* result);
 void* future_get(Future* f);
 void future_free(Future* f);
 int future_is_ready(Future* f);
+// `spawn f()` on a non-yielding fn lowers to wyn_spawn_inline; awaiting a set of
+// futures lowers to wyn_await_all_int / wyn_await_any_int, which consume each
+// future via future_get_consume. All four are real symbols (spawn_fast.c,
+// future.c, runtime_exports.c) but were undeclared here, so every --release
+// build of a spawn/await program failed. Signatures mirror wyn_runtime.h:17,
+// :4825, :4909 and future.h.
+struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
+void* future_get_consume(Future* f);
 
 // WebSocket module
 int Ws_connect(const char* url);
@@ -141,6 +166,9 @@ long long Json_new(void);
 void Json_set(long long j, const char* key, const char* val);
 void Json_set_string(long long j, const char* key, const char* val);
 void Json_set_int(long long j, const char* key, long long val);
+// `int v`, matching wyn_runtime.h:3555 - the handle keeps this file's long long
+// spelling (a WynJson* is pointer-sized) but the value width must not drift.
+void Json_set_bool(long long j, const char* key, int val);
 char* Json_get_string(long long j, const char* key);
 long long Json_get_int(long long j, const char* key);
 char* Json_stringify(long long j);
@@ -200,12 +228,27 @@ void array_push_int(WynArray* arr, long long value);
 // Float/bool element push. Mirrors array_push_int; definitions live in
 // wyn_runtime.h:647 / :659. Those are non-inline, so they only reach the linker
 // through a TU that includes wyn_runtime.h - src/runtime_exports.c exists for
-// exactly that. NOTE: runtime_exports.c is in Makefile's TCC_RT_SRCS but NOT in
-// RT_SRCS / main.c's wyn_runtime_sources[], so runtime/libwyn_rt.a (what
-// --release links) currently omits it and these resolve at compile time but
-// fail at link time. Tracked separately; declaring them here is still correct.
+// exactly that, and IS now in Makefile's RT_SRCS (it was previously only in
+// TCC_RT_SRCS, which is why every --release build used to fail at link).
 void array_push_float(WynArray* arr, double value);
 void array_push_bool(WynArray* arr, int value);
+void array_each(WynArray arr, long long (*fn)(long long));
+void array_free(WynArray* arr);
+// Pushing a struct is a MACRO, not a function: it needs the static struct type
+// to size the heap box. Kept byte-identical to wyn_runtime.h:931-943 - a
+// divergent copy would lay out the boxed struct differently from the reader
+// (array_get_struct), which is a silent memory bug rather than a link error.
+#define array_push_struct(arr, value, StructType) do { \
+    StructType __temp_val = (value); \
+    if ((arr)->count >= (arr)->capacity) { \
+        (arr)->capacity = (arr)->capacity == 0 ? 4 : (arr)->capacity * 2; \
+        (arr)->data = wyn_realloc((arr)->data, sizeof(WynValue) * (arr)->capacity); \
+    } \
+    (arr)->data[(arr)->count].type = WYN_TYPE_STRUCT; \
+    (arr)->data[(arr)->count].data.struct_val = wyn_malloc(sizeof(StructType)); \
+    memcpy((arr)->data[(arr)->count].data.struct_val, &__temp_val, sizeof(StructType)); \
+    (arr)->count++; \
+} while(0)
 // Out-of-bounds panic used by the bounds-checked getters below. Copied verbatim
 // from wyn_runtime.h:755-782 (wyn_lenient_mode / wyn_src_file / wyn_oob_panic)
 // so the two headers report identical diagnostics.
@@ -269,12 +312,50 @@ static inline bool array_get_bool_impl(WynArray arr, int index, const char* file
 }
 void array_push_str(WynArray* arr, const char* value);
 void array_push_array(WynArray* arr, WynArray* nested);
-long long array_get_int(WynArray arr, int index);
-const char* array_get_str(WynArray arr, int index);
+// int/str element getters, same reasoning (and the same verbatim-copy rule) as
+// the float/bool pair above: wyn_runtime.h:783-804 defines them as `static
+// inline *_impl` behind a __FILE__/__LINE__ macro, so they are NOT symbols in
+// libwyn_rt.a. Declaring them as plain prototypes here - which is what this
+// header did - compiled fine and then failed at link with "Undefined symbols:
+// _array_get_str" for any --release program that read a [string] element.
+#define array_get_int(arr, idx) array_get_int_impl(arr, idx, __FILE__, __LINE__)
+static inline long long array_get_int_impl(WynArray arr, int index, const char* file, int line) {
+    if (index < 0) index += arr.count;   // Python-style negative index: a[-1] == last
+    if (index < 0 || index >= arr.count) {
+        wyn_oob_panic(index, arr.count, file, line);
+        return 0;
+    }
+    if (arr.data[index].type == WYN_TYPE_INT || arr.data[index].type == WYN_TYPE_BOOL)
+        return arr.data[index].data.int_val;   // bool is stored in int_val
+    if (arr.data[index].type == WYN_TYPE_FLOAT) return (long long)arr.data[index].data.float_val;
+    return 0;
+}
+#define array_get_str(arr, idx) array_get_str_impl(arr, idx, __FILE__, __LINE__)
+static inline const char* array_get_str_impl(WynArray arr, int index, const char* file, int line) {
+    if (index < 0) index += arr.count;   // Python-style negative index
+    if (index < 0 || index >= arr.count) {
+        wyn_oob_panic(index, arr.count, file, line);
+        return "";
+    }
+    if (arr.data[index].type == WYN_TYPE_STRING) return arr.data[index].data.string_val;
+    return "";
+}
+#define array_get_struct(arr, idx, T) (*(T*)arr.data[idx].data.struct_val)
 WynValue array_get(WynArray arr, int index);
 WynArray* array_get_array(WynArray arr, int index);
 int array_get_nested_int(WynArray arr, int index1, int index2);
 int array_get_nested3_int(WynArray arr, int index1, int index2, int index3);
+// The non-int nested getters must be declared here too, and with EXACTLY the
+// return types wyn_runtime.h defines: codegen_expr.c picks one of these by the
+// inner element's type, so a missing declaration is not merely a warning - the
+// implicit int return truncates a float and reinterprets a char* as a number,
+// which is how `m[0][1]` on a [[string]] printed an address. Signatures mirror
+// wyn_runtime.h:820-863; keep them in sync.
+double array_get_nested_float(WynArray arr, int index1, int index2);
+double array_get_nested3_float(WynArray arr, int index1, int index2, int index3);
+bool array_get_nested_bool(WynArray arr, int index1, int index2);
+const char* array_get_nested_str(WynArray arr, int index1, int index2);
+const char* array_get_nested3_str(WynArray arr, int index1, int index2, int index3);
 int array_len(WynArray arr);
 bool array_is_empty(WynArray arr);
 bool array_contains(WynArray arr, int value);
@@ -289,6 +370,24 @@ WynIntArray int_array_new();
 void int_array_push(WynIntArray* a, long long v);
 long long int_array_get(WynIntArray a, int i);
 int int_array_len(WynIntArray a);
+// await_all / await_any over a set of futures. Declared after WynIntArray
+// because they take one by value. wyn_runtime.h:4807-4917.
+//
+// ALL EIGHT await_all variants are needed, not just the ones a given program
+// calls: codegen_expr.c:1173 emits a `_Generic((futs), WynIntArray:
+// wyn_await_all_int<sfx>, WynArray: wyn_await_all<sfx>)` selection, and C
+// requires every association in a _Generic to name a declared function even
+// though only one is chosen. Declaring just the chosen arm still failed.
+WynArray wyn_await_all(WynArray futures);
+WynArray wyn_await_all_str(WynArray futures);
+WynArray wyn_await_all_float(WynArray futures);
+WynArray wyn_await_all_struct(WynArray futures);
+WynArray wyn_await_all_int(WynIntArray futures);
+WynArray wyn_await_all_int_str(WynIntArray futures);
+WynArray wyn_await_all_int_float(WynIntArray futures);
+WynArray wyn_await_all_int_struct(WynIntArray futures);
+long long wyn_await_any(WynArray futures);
+long long wyn_await_any_int(WynIntArray futures);
 int array_pop(WynArray* arr);
 int array_index_of(WynArray arr, int value);
 void array_reverse(WynArray* arr);
@@ -327,22 +426,15 @@ bool range_has_next(WynRange* r);
 int range_next(WynRange* r);
 int string_length(const char* str);
 char* string_substring(const char* str, int start, int end);
-static inline bool string_contains(const char* str, const char* substr) { return strstr(str, substr) != NULL; }
+// Declarations, not copies - see the to_string note near the bottom of this
+// file. The hand-written `static inline` versions these replace all omitted the
+// wyn_rc_set_length() the real ones do (wyn_runtime.h:1383-1401), so a
+// --release string carried a bogus RC length and the release() codegen emits
+// after it corrupted the heap.
+bool string_contains(const char* str, const char* substr);
 char* string_concat(const char* a, const char* b);
-static inline char* string_upper(const char* str) {
-    size_t len = strlen(str);
-    char* r = wyn_str_alloc(len);
-    for (size_t i = 0; i < len; i++) r[i] = (str[i] >= 'a' && str[i] <= 'z') ? str[i] - 32 : str[i];
-    r[len] = '\0';
-    return r;
-}
-static inline char* string_lower(const char* str) {
-    size_t len = strlen(str);
-    char* r = wyn_str_alloc(len);
-    for (size_t i = 0; i < len; i++) r[i] = (str[i] >= 'A' && str[i] <= 'Z') ? str[i] + 32 : str[i];
-    r[len] = '\0';
-    return r;
-}
+char* string_upper(const char* str);
+char* string_lower(const char* str);
 int string_is_alpha(const char* str);
 int string_is_digit(const char* str);
 int string_is_alnum(const char* str);
@@ -358,25 +450,13 @@ int string_is_empty(const char* str);
 int string_starts_with(const char* str, const char* prefix);
 int string_ends_with(const char* str, const char* suffix);
 int string_index_of(const char* str, const char* substr);
-static inline char* string_replace(const char* str, const char* old, const char* new_str) {
-    size_t ol = strlen(old), nl = strlen(new_str), sl = strlen(str);
-    if (!ol) return wyn_strdup(str);
-    // Count occurrences
-    int cnt = 0; const char* p = str;
-    while ((p = strstr(p, old))) { cnt++; p += ol; }
-    if (!cnt) return wyn_strdup(str);
-    char* r = wyn_str_alloc(sl + cnt * (nl - ol));
-    char* d = r; p = str;
-    while (*p) {
-        const char* m = strstr(p, old);
-        if (m == p) { memcpy(d, new_str, nl); d += nl; p += ol; }
-        else if (m) { size_t n = m - p; memcpy(d, p, n); d += n; }
-        else { strcpy(d, p); d += strlen(p); break; }
-    }
-    *d = '\0';
-    return r;
-}
-static inline char* string_replace_all(const char* str, const char* old, const char* new_str) { return string_replace(str, old, new_str); }
+// Ditto: the local copy this replaces had a real bug the archive version does
+// not - when a match was found mid-string it copied the prefix but never the
+// replacement, and never advanced past the needle, so `"Hello World".replace(
+// "World", "Wyn")` overran its buffer and segfaulted under --release while
+// working on the default path. wyn_runtime.h:1516.
+char* string_replace(const char* str, const char* old, const char* new_str);
+char* string_replace_all(const char* str, const char* old, const char* new_str);
 int string_last_index_of(const char* str, const char* substr);
 char* string_slice(const char* str, int start, int end);
 char* string_repeat(const char* str, int count);
@@ -507,8 +587,15 @@ bool bool_not(bool x);
 bool bool_and(bool x, bool y);
 bool bool_or(bool x, bool y);
 bool bool_xor(bool x, bool y);
-long long wyn_safe_div(long long a, long long b);
-long long wyn_safe_mod(long long a, long long b);
+// `a / b` and `a % b` lower to the MACRO form, which threads __FILE__/__LINE__
+// through so a divide-by-zero panic names the user's line. The two-argument
+// prototypes that used to be here compiled and then failed at link with
+// "Undefined symbols: _wyn_safe_div" - only the *_impl symbols exist
+// (wyn_runtime.h:2597-2612). Same trap as array_get_float/_str above.
+long long wyn_safe_div_impl(long long a, long long b, const char* file, int line);
+long long wyn_safe_mod_impl(long long a, long long b, const char* file, int line);
+#define wyn_safe_div(a, b) wyn_safe_div_impl(a, b, __FILE__, __LINE__)
+#define wyn_safe_mod(a, b) wyn_safe_mod_impl(a, b, __FILE__, __LINE__)
 int char_to_int(char x);
 char char_from_int(int x);
 bool char_is_alpha(char x);
@@ -677,6 +764,19 @@ int Net_send(int sockfd, const char* data);
 char* Net_recv(int sockfd);
 int Net_close(int sockfd);
 char* Time_format(int timestamp);
+// Time.now()/Time.sleep(), Shared.* and the array HOFs. Every one is a symbol in
+// libwyn_rt.a and every one was missing here, so --release rejected the programs
+// that use them. `long` (not long long) for Time_now is deliberate - it matches
+// wyn_runtime.h:450 exactly; disagreeing would be a silent ABI mismatch.
+long Time_now();
+void Time_sleep(long long ms);
+long long Shared_new(long long initial);
+long long Shared_get(long long handle);
+long long Shared_add(long long handle, long long delta);
+WynArray wyn_array_map(WynArray arr, long long (*fn)(long long));
+WynArray wyn_array_filter(WynArray arr, long long (*fn)(long long));
+long long wyn_array_reduce(WynArray arr, long long (*fn)(long long, long long), long long initial);
+long file_modified_time(const char* path);
 int arr_sum(WynArray arr, int len);
 int arr_max(WynArray arr, int len);
 int arr_min(WynArray arr, int len);
@@ -787,6 +887,7 @@ void StringBuilder_append(long long handle, const char* s);
 long long StringBuilder_len(long long handle);
 void StringBuilder_clear(long long handle);
 void StringBuilder_free(long long handle);
+char* StringBuilder_to_string(long long handle);   // wyn_runtime.h:5195
 // Json_parse declared in module declarations block above
 char* Json_get(long long root, const char* key);
 long long Json_get_int(long long root, const char* key);
@@ -824,6 +925,23 @@ char* DateTime_to_iso(long long timestamp);
 long long regex_find(const char* str, const char* pattern);
 int File_rename(const char* old_path, const char* new_path);
 void Test_assert_eq_float(double actual, double expected, double epsilon, const char* msg);
+// The rest of the Test module (test_runtime.c, declared at wyn_runtime.h:250-262).
+// `assert`/`assert_eq` in a Wyn test block lower to these, so without them no
+// test file could be built with --release.
+void Test_init(const char* suite_name);
+void Test_assert(int condition, const char* message);
+void Test_assert_eq_int(int actual, int expected, const char* message);
+void Test_assert_eq_str(const char* actual, const char* expected, const char* message);
+void Test_assert_ne_int(int actual, int expected, const char* message);
+void Test_assert_gt(int actual, int threshold, const char* message);
+void Test_assert_lt(int actual, int threshold, const char* message);
+void Test_assert_gte(int actual, int threshold, const char* message);
+void Test_assert_lte(int actual, int threshold, const char* message);
+void Test_assert_contains(const char* haystack, const char* needle, const char* message);
+void Test_assert_null(void* ptr, const char* message);
+void Test_assert_not_null(void* ptr, const char* message);
+void Test_describe(const char* description);
+void Test_skip(const char* reason);
 char* Net_resolve(const char* hostname);
 char* Db_escape(const char* str);
 void Log_set_level(long long level);
@@ -883,33 +1001,25 @@ char* Template_render_string(const char* tmpl, WynHashMap* ctx);
 char* Template_render(const char* path, WynHashMap* ctx);
 void System_load_env(const char* path);
 
-// Inline codegen helpers
-static inline char* int_to_string(long long n) { static char __buf[32]; snprintf(__buf, sizeof(__buf), "%lld", n); return __buf; }
-// Canonical float text - MUST stay byte-identical to wyn_format_float in
-// wyn_runtime.h (slim and full builds have to print the same thing). Shortest
-// round-trip: try 15/16/17 significant digits, take the first that strtod's
-// back to the same double; integral floats keep a trailing ".0" so they don't
-// read as ints. The old "%g" here was 6 sig-digits - even lossier than the full
-// runtime's old "%.15g" (1.0/3.0 printed "0.333333").
-static inline char* float_to_string(double n) {
-    static char __buf[64];
-    int __n = 0;
-    for (int __p = 15; __p <= 17; __p++) {
-        __n = snprintf(__buf, sizeof(__buf), "%.*g", __p, n);
-        if (__n <= 0 || (size_t)__n >= sizeof(__buf)) break;
-        if (strtod(__buf, NULL) == n) break;
-        if (!(n == n) || n > 1.7976931348623157e308 || n < -1.7976931348623157e308) break;
-    }
-    if (__n > 0 && (size_t)__n + 2 < sizeof(__buf)
-        && !strchr(__buf, '.') && !strchr(__buf, 'e') && !strchr(__buf, 'E')
-        && !strchr(__buf, 'n') && !strchr(__buf, 'i')) {
-        __buf[__n] = '.'; __buf[__n + 1] = '0'; __buf[__n + 2] = 0;
-    }
-    return __buf;
-}
-static inline char* str_to_string(const char* s) { return (char*)s; }
-static inline char* bool_to_string(bool b) { return b ? "true" : "false"; }
-char* array_to_string(WynArray arr);  // defined in the runtime lib (wyn_runtime.h)
+// to_string helpers. These are DECLARATIONS of the real runtime functions
+// (wyn_runtime.h:2589-2633, in the archive via runtime_exports.c), NOT local
+// copies - and that distinction is the whole point.
+//
+// This header used to define int_to_string / float_to_string as `static inline`
+// returning a `static char __buf[]`. A single shared buffer per function means
+// every to_string in one expression returns the SAME pointer, so string
+// interpolation with two or more of them printed the last value in every slot:
+// `print("${a} + ${b} = ${a+b}")` with a=10 b=20 gave "30 + 30 = 30" under
+// --release and "10 + 20 = 30" on the default path. It also broke the RC
+// contract codegen relies on - it emits wyn_rc_release() on the result of
+// int_to_string/float_to_string, which is only valid for a wyn_rc_alloc'd
+// buffer. Linking the real, per-call-allocating definitions fixes both and
+// makes the two build modes agree by construction rather than by copy.
+char* int_to_string(long long x);
+char* float_to_string(double x);
+char* str_to_string(const char* x);
+char* bool_to_string(bool x);
+char* array_to_string(WynArray arr);
 
 // _Generic macros for type-dispatched print/println/to_string
 #define print_no_nl(x) _Generic((x), \
