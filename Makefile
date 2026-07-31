@@ -328,6 +328,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_pub_visibility_test.sh
 	@echo "=== Running module-call arity test ==="
 	@WYN=./wyn bash tests/errors/run_module_arity_test.sh
+	@echo "=== Running bool/int argument test ==="
+	@WYN=./wyn bash tests/errors/run_bool_int_arg_test.sh
 	@echo "=== Running pkg search test ==="
 	@WYN=./wyn bash tests/errors/run_search_test.sh
 	@echo "=== Running scaffold (wyn new) test ==="

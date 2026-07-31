@@ -876,6 +876,35 @@ static bool wyn_is_type_compatible(Type* expected, Type* actual) {
         return true;
     }
 
+    // Allow bool <-> int, because THIS COMPILER MAKES THEM THE SAME THING.
+    //
+    // A comparison is typed int, not bool - see the `expr_type = builtin_int`
+    // at the end of the comparison branch in EXPR_BINARY, and the note on the
+    // and/or branch above it: the lambda and predicate runtime ABI
+    // (long long (*fn)(...)) depends on that choice. The consequence was that
+    // passing a comparison straight to a `bool` parameter was REJECTED -
+    //
+    //     fn wrap(ok: bool) -> bool { return ok }
+    //     wrap(f(x) == 1)          // "Expected: bool  Got: int"
+    //
+    // - while the identical value hoisted into a local first was accepted,
+    // because a `var` declaration special-cases the op to declare bool. So the
+    // same expression was legal or illegal depending on whether it passed
+    // through a variable, which is not a rule anyone can learn. Found writing
+    // ordinary Wyn: a one-line `return changed(sel_all(s) == 1)` wrapper in
+    // WynCanvas's selection module.
+    //
+    // Fixing it here rather than by retyping comparisons keeps the ABI note
+    // above true and cannot change any generated code: this function only
+    // decides whether a call is ACCEPTED. The reverse direction (an int-typed
+    // argument to a bool parameter and vice versa) is admitted for the same
+    // reason the enum and channel rules above are - they are one representation
+    // with two spellings, and `if 1 { }` has always been legal.
+    if ((expected->kind == TYPE_BOOL && actual->kind == TYPE_INT) ||
+        (expected->kind == TYPE_INT && actual->kind == TYPE_BOOL)) {
+        return true;
+    }
+
     // FFI `ptr` interop: an opaque C pointer (`void*`) is freely convertible at
     // the C boundary with a Wyn `string` (both are char* - passing a string to a
     // `const char*` param), with the null idiom `0` (int), and with a raw machine
