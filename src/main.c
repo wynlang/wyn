@@ -1534,7 +1534,14 @@ int main(int argc, char** argv) {
             }
             if (argc < 3 && stat("src/main.wyn", &_bs) == 0) { argc = 3; argv[2] = "src/main.wyn"; }
             if (argc < 3) {
-                fprintf(stderr, "Usage: wyn build <file|dir> [--shared|--python]\n");
+                fprintf(stderr, "Usage: wyn build <file|dir> [--release] [--app] [--shared|--python]\n");
+                fprintf(stderr, "  --app         package a native, double-clickable GUI app instead of a\n");
+                fprintf(stderr, "                console binary: a .app bundle on macOS, a GUI-subsystem\n");
+                fprintf(stderr, "                .exe on Windows, a binary + .desktop entry on Linux.\n");
+                fprintf(stderr, "                Metadata (name, identifier, version, icon, category)\n");
+                fprintf(stderr, "                comes from the [app] section of wyn.toml.\n");
+                fprintf(stderr, "  --app-plan    show the packaging decision without compiling\n");
+                fprintf(stderr, "  --app-target  macos | windows | linux (metadata for another platform)\n");
                 return 1;
             }
         }
@@ -1545,17 +1552,27 @@ int main(int argc, char** argv) {
         int build_pgo = 0;
         const char* output_name = NULL;
         const char* build_target = NULL;
+        // --app: package a NATIVE, double-clickable GUI application instead of a
+        // console binary (macOS .app bundle / Windows GUI-subsystem .exe / Linux
+        // binary + .desktop). See the header comment in src/cmd_compile.c.
+        // --app-target picks the packaging for another platform's metadata, and
+        // --app-plan prints the decision without compiling.
+        int app_flag = 0, app_plan_only = 0;
+        const char* app_target = NULL;
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--shared") == 0) build_flag = " --shared";
             else if (strcmp(argv[i], "--python") == 0) build_flag = " --python";
             else if (strcmp(argv[i], "--release") == 0) build_release = 1;
             else if (strcmp(argv[i], "--fast") == 0) { /* skip optimizations - default behavior */ }
             else if (strcmp(argv[i], "--pgo") == 0) build_pgo = 1;
+            else if (strcmp(argv[i], "--app") == 0) app_flag = 1;
+            else if (strcmp(argv[i], "--app-plan") == 0) { app_flag = 1; app_plan_only = 1; }
+            else if (strcmp(argv[i], "--app-target") == 0 && i + 1 < argc) { app_flag = 1; app_target = argv[++i]; }
             else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) { output_name = argv[++i]; }
             else if (strcmp(argv[i], "--target") == 0 && i + 1 < argc) { build_target = argv[++i]; }
             else if (!dir) dir = argv[i];
         }
-        
+
         // If --target is specified, delegate to cross-compile
         if (build_target) {
             // Rewrite as: wyn cross <target> <file> [flags]
@@ -1637,6 +1654,27 @@ int main(int argc, char** argv) {
             }
         }
         
+        // Resolve the native-app packaging plan BEFORE compiling: it decides the
+        // path the C compiler must link to (a macOS bundle is built around a
+        // space-free staging path, since the link line goes through system()).
+        extern int wyn_app_begin(int, const char*, const char*, const char*, char*, size_t, int);
+        extern const char* wyn_app_link_flags(void);
+        extern const char* wyn_app_artifact(void);
+        extern int wyn_app_emit_metadata(void);
+        extern int wyn_app_finalize(void);
+        extern void wyn_app_describe(void);
+        char app_link_path[512] = "";
+        int app_on = wyn_app_begin(app_flag, app_target, entry, output_name,
+                                   app_link_path, sizeof(app_link_path), app_plan_only);
+        if (app_on < 0) return 1;
+        if (app_plan_only) {
+            // Emit the metadata (Info.plist / .desktop) and describe the plan
+            // without invoking the C compiler. This is how the Windows and Linux
+            // packaging paths are asserted on from a macOS box.
+            wyn_app_describe();
+            return wyn_app_emit_metadata() == 0 ? 0 : 1;
+        }
+
         printf("\033[1mBuilding\033[0m %s%s...\n", entry, build_flag);
         struct timespec _build_t0;
         clock_gettime(CLOCK_MONOTONIC, &_build_t0);
@@ -1698,7 +1736,12 @@ int main(int argc, char** argv) {
 
         // Determine output binary name
         char bin_path[512];
-        if (output_name) {
+        if (app_on) {
+            // --app owns the link destination: for a macOS bundle that is a
+            // space-free staging path (moved into Contents/MacOS afterwards),
+            // for Windows/Linux the final artifact itself.
+            snprintf(bin_path, sizeof(bin_path), "%s", app_link_path);
+        } else if (output_name) {
             snprintf(bin_path, sizeof(bin_path), "%s", output_name);
         } else {
             snprintf(bin_path, sizeof(bin_path), "%s", entry);
@@ -1779,10 +1822,23 @@ int main(int argc, char** argv) {
               snprintf(ffi_tail + _fl, sizeof(ffi_tail) - _fl, "%s", gpu_link);
           } }
 
+        // --app link flags ride the same ffi_tail splice (end of the link line).
+        // Today that is only Windows' -mwindows, which selects PE subsystem
+        // WINDOWS: the difference between a console flashing up behind the
+        // window and not. It is a LINK flag, so end-of-line is where it belongs.
+        if (app_on && wyn_app_link_flags()[0]) {
+            size_t _al = strlen(ffi_tail);
+            snprintf(ffi_tail + _al, sizeof(ffi_tail) - _al, "%s", wyn_app_link_flags());
+        }
+
         // Prefer precompiled runtime (fast) over TCC (recompiles all sources)
         if (build_flag[0] == 0 && !build_release && access(rt_lib, R_OK) == 0) {
             // Skip TCC - use system cc + precompiled runtime
-        } else if (build_flag[0] == 0 && !build_release && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
+        } else if (build_flag[0] == 0 && !build_release && !app_on && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
+            // --app is excluded from the TCC path on purpose: TCC does not take
+            // -mwindows, and this branch does not splice ffi_tail at all, so a
+            // GUI app built through it would silently link as a console program
+            // with none of its [ffi] libraries.
             int _p = 0;
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s ", tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, wyn_root, sqlite_flags);
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s.c ", entry);
@@ -1905,12 +1961,17 @@ int main(int argc, char** argv) {
                 _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -ffunction-sections -fdata-sections -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, entry);
                 char _src_list[4096]; build_source_list(_src_list, sizeof(_src_list), wyn_root);
                 _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s", _src_list);
+                // `app_tail` = the --app link flags (Windows' -mwindows). This
+                // no-precompiled-runtime branch does not splice ffi_tail, so the
+                // flag has to be threaded in explicitly or a GUI app built here
+                // would come out as a console program.
+                const char* app_tail = app_on ? wyn_app_link_flags() : "";
 #ifdef __APPLE__
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,-dead_strip -lpthread -lm 2>&1", sqlite_src);
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s%s -Wl,-dead_strip -lpthread -lm 2>&1", sqlite_src, app_tail);
 #elif defined(_WIN32)
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,--allow-multiple-definition -lws2_32 -lpthread -lm 2>&1", sqlite_src);
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s%s -Wl,--allow-multiple-definition -lws2_32 -lpthread -lm 2>&1", sqlite_src, app_tail);
 #else
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,--allow-multiple-definition,--gc-sections -lpthread -lm 2>&1", sqlite_src);
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s%s -Wl,--allow-multiple-definition,--gc-sections -lpthread -lm 2>&1", sqlite_src, app_tail);
 #endif
             }
             result = system(cmd);
@@ -1975,23 +2036,26 @@ int main(int argc, char** argv) {
             unlink(out_c);
             pgo_done:
             if (result == 0) {
-                printf("\033[32m✓\033[0m Built with PGO: %s\n", bin_path);
+                // Package AFTER PGO: phase 3 relinks to bin_path, which for a
+                // macOS bundle is the staging path finalize consumes.
+                if (app_on && wyn_app_finalize() != 0) { unlink(cc_err_path); return 1; }
+                printf("\033[32m✓\033[0m Built with PGO: %s\n", app_on ? wyn_app_artifact() : bin_path);
             }
         } else if (result == 0) {
             struct timespec _build_t1;
             clock_gettime(CLOCK_MONOTONIC, &_build_t1);
             long _build_ms = (_build_t1.tv_sec - _build_t0.tv_sec) * 1000 + (_build_t1.tv_nsec - _build_t0.tv_nsec) / 1000000;
-            // Show binary size
+            // Show binary size. Measured BEFORE packaging: finalize moves the
+            // staged binary into the bundle, after which bin_path is gone.
             struct stat _bs;
-            if (stat(bin_path, &_bs) == 0) {
-                long kb = _bs.st_size / 1024;
-                if (kb > 0)
-                    printf("\033[32m✓\033[0m Built: %s (%ldKB, %ldms)\n", bin_path, kb, _build_ms);
-                else
-                    printf("\033[32m✓\033[0m Built: %s (%ldms)\n", bin_path, _build_ms);
-            } else {
-                printf("\033[32m✓\033[0m Built: %s (%ldms)\n", bin_path, _build_ms);
-            }
+            long kb = (stat(bin_path, &_bs) == 0) ? _bs.st_size / 1024 : 0;
+            if (app_on && wyn_app_finalize() != 0) { unlink(cc_err_path); return 1; }
+            const char* shown = app_on ? wyn_app_artifact() : bin_path;
+            if (kb > 0)
+                printf("\033[32m✓\033[0m Built: %s (%ldKB, %ldms)\n", shown, kb, _build_ms);
+            else
+                printf("\033[32m✓\033[0m Built: %s (%ldms)\n", shown, _build_ms);
+            if (app_on) printf("  double-clickable native app - no terminal window\n");
         } else {
             fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
             // Show compiler errors if available

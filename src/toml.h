@@ -40,12 +40,36 @@ typedef struct {
     int float_enabled;   // [gpu] float32 = true - opt in to lossy f32 [float].map
 } WynGpu;
 
+// [app] section - metadata for a NATIVE, double-clickable application
+// (`wyn build --app`): a macOS .app bundle, a Windows GUI-subsystem .exe, or a
+// Linux binary + .desktop entry.
+//
+// This section only ever supplies METADATA; it does not by itself change what
+// `wyn build` produces. The one exception is `bundle = true`, which is an
+// explicit in-manifest opt-in equivalent to passing --app - see cmd_compile.c's
+// wyn_app_begin for why the trigger is opt-in and never inferred.
+//
+// An identifier and an icon have nowhere sensible to live on a command line,
+// which is the whole reason this section exists alongside the flag.
+typedef struct {
+    char* name;        // user-visible name ("My Great App"); may contain spaces
+    char* identifier;  // CFBundleIdentifier, e.g. com.example.myapp
+    char* version;     // CFBundleShortVersionString; falls back to [project] version
+    char* icon;        // path to .icns (macOS) / .png (Linux), relative to cwd
+    char* category;    // LSApplicationCategoryType / .desktop Categories
+    char* min_system;  // LSMinimumSystemVersion (macOS only)
+    char* resources;   // directory copied into Contents/Resources (macOS)
+    char* cwd;         // "resources"|"bundle": chdir launcher for a .app (macOS)
+    int bundle;        // `bundle = true` => `wyn build` packages without --app
+} WynApp;
+
 typedef struct {
     WynProject project;
     WynDependency* dependencies;
     int dependency_count;
     WynFfi ffi;
     WynGpu gpu;
+    WynApp app;
 } WynConfig;
 
 // Parse wyn.toml file
