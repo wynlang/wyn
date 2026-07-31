@@ -774,6 +774,7 @@ int main(int argc, char** argv) {
         
         fprintf(stderr, "\n\033[1mTools:\033[0m\n");
         fprintf(stderr, "  \033[32mui\033[0m                      Interactive command browser\n");
+        fprintf(stderr, "  \033[32mdesign\033[0m [file.json]      Visual form designer (needs the gui package)\n");
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
         fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
         fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
@@ -1342,6 +1343,7 @@ int main(int argc, char** argv) {
         
         fprintf(stderr, "\n\033[1mTools:\033[0m\n");
         fprintf(stderr, "  \033[32mui\033[0m                      Interactive command browser\n");
+        fprintf(stderr, "  \033[32mdesign\033[0m [file.json]      Visual form designer (needs the gui package)\n");
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
         fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
         fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
@@ -1435,6 +1437,28 @@ int main(int argc, char** argv) {
         return cmd_ui(argc, argv, get_version());
     }
     
+    if (strcmp(command, "design") == 0) {
+        // wyn design [Form1.json] - launcher for the Visual Wyn form designer
+        // (src/cmd_other.c). The designer itself is a Wyn program in the `gui`
+        // package, deliberately NOT compiled in: it needs SDL3.
+        extern int cmd_design(const char* form_file, const char* wyn_root, const char* wyn_exe);
+        extern int cmd_design_help(void);
+        const char* form = NULL;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) return cmd_design_help();
+            if (argv[i][0] != '-' && !form) form = argv[i];
+        }
+        char design_root[1024];
+        resolve_wyn_root(argv[0], design_root, sizeof(design_root));
+        // The designer runs via `wyn run`, so it must be THIS wyn - not whatever
+        // an older install left on PATH, which would compile it with a different
+        // compiler than the one the user invoked.
+        char design_exe[1024];
+        if (!resolve_wyn_exe(argv[0], design_exe, sizeof(design_exe)))
+            snprintf(design_exe, sizeof(design_exe), "%s", argv[0]);
+        return cmd_design(form, design_root, design_exe);
+    }
+
     // ── Dependency commands (git-URL model; no central registry) ──
     // A dependency is a git repo. `wyn remove` drops it from the manifest+lock;
     // `wyn list` prints the declared deps; `wyn restore` reinstalls from the lock.
@@ -2915,14 +2939,37 @@ int main(int argc, char** argv) {
         if (!ext || strcmp(ext, ".wyn") != 0) {
             fprintf(stderr, "\033[31mError:\033[0m Unknown command '%s'\n", command);
             fprintf(stderr, "  Run \033[1mwyn help\033[0m for available commands.\n");
-            // Suggest closest match
-            const char* cmds[] = {"run","build","test","fmt","fix","init","new","check","clean","repl","doc","bench","watch","deploy","version","help",NULL};
-            for (int i = 0; cmds[i]; i++) {
-                if (cmds[i][0] == command[0] || (strlen(command) > 2 && strstr(cmds[i], command))) {
-                    fprintf(stderr, "  Did you mean \033[1mwyn %s\033[0m?\n", cmds[i]);
-                    break;
+            // Suggest the closest match by EDIT DISTANCE first, and only then fall
+            // back to the old first-letter/substring rule.
+            //
+            // The old rule alone was first-letter-wins in list order, which gets
+            // the wrong answer as soon as two commands share an initial: `wyn
+            // desgin` hit "doc" (the first 'd' in the list) rather than "design",
+            // and any future d-command would too. Distance is what the checker
+            // already uses for identifier typos (levenshtein_distance in error.c),
+            // so this is the same suggestion quality the type errors give.
+            const char* cmds[] = {"run","build","test","fmt","fix","init","new","check","clean","repl","doc","bench","watch","design","deploy","version","help",NULL};
+            extern int levenshtein_distance(const char*, const char*);
+            const char* best = NULL; int best_d = 0;
+            size_t clen = strlen(command);
+            // levenshtein_distance builds a (len1+1)x(len2+1) VLA on the stack, so
+            // it must not be handed an unbounded argv - a megabyte-long "command"
+            // would ask for a megabyte-wide matrix. Nothing that long is a typo for
+            // a 7-letter verb anyway, so skip straight to the fallback rule.
+            if (clen <= 64) for (int i = 0; cmds[i]; i++) {
+                int d = levenshtein_distance(command, cmds[i]);
+                if (!best || d < best_d) { best = cmds[i]; best_d = d; }
+            }
+            // A typo is a near miss, not any word at all: cap at a third of the
+            // length (min 2) so an unrelated command still gets no suggestion.
+            int limit = (int)(clen / 3); if (limit < 2) limit = 2;
+            if (!(best && best_d <= limit)) {
+                best = NULL;
+                for (int i = 0; cmds[i]; i++) {
+                    if (cmds[i][0] == command[0] || (clen > 2 && strstr(cmds[i], command))) { best = cmds[i]; break; }
                 }
             }
+            if (best) fprintf(stderr, "  Did you mean \033[1mwyn %s\033[0m?\n", best);
             return 1;
         }
     }

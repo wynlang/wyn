@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <errno.h>   // strerror, for the `wyn design` launch diagnostics
 #ifndef _WIN32
 #include <sys/wait.h>  // For WEXITSTATUS
 #include <unistd.h>    // For sleep, readlink
@@ -15,7 +16,11 @@
 #else
 #define WEXITSTATUS(x) (x)
 #include <windows.h>   // For Sleep, GetModuleFileNameA
-#include <direct.h>    // For _mkdir
+#include <direct.h>    // For _mkdir, _getcwd, _chdir
+// mingw under -std=c11 (__STRICT_ANSI__) hides the unprefixed POSIX spellings,
+// and <unistd.h> is not included on this branch at all. Same shim src/io.c uses.
+#define getcwd _getcwd
+#define chdir  _chdir
 #endif
 
 #include "commands.h"   // for wyn_mkdir_p and cmd_* declarations
@@ -1121,4 +1126,173 @@ int cmd_fix_file(const char* file, int check_only, int* out_pipe_warns) {
     }
     free(src); free(out);
     return changed ? total_subs : 0;
+}
+
+// ---------------------------------------------------------------------------
+// `wyn design [file]` - launcher for the Visual Wyn form designer.
+//
+// The designer is NOT part of the compiler and must not become part of it: it is
+// a Wyn program (examples/designer.wyn in the `gui` package) built on the
+// retained widget toolkit, and it needs SDL3. Vendoring it here would put an
+// SDL3 dependency on `wyn` itself, which every user pays for and almost none
+// want. So this subcommand has exactly three jobs: find that program, run it on
+// a form model, and - the common case, since nobody has the package installed
+// until they ask for it - say how to get it instead of failing obscurely.
+//
+// Spelling and semantics are owner decisions recorded in
+// internal-docs/VISUAL_WYN_DESIGN.md: `wyn ui` was already taken (the
+// interactive command browser), `design` fits the all-verb style, and the form
+// is a JSON document rather than code so that both the designer and an AI
+// assistant edit the same model.
+
+static int design_is_file(const char* p) {
+    struct stat st;
+    return stat(p, &st) == 0 && !S_ISDIR(st.st_mode);
+}
+
+// Fill `cands` with every place the designer could live, in priority order, and
+// return how many. An installed package beats a development checkout, so a
+// checkout cannot shadow what the user actually installed.
+//
+// WYN_GUI_ROOT is EXCLUSIVE rather than merely first: if you point at a
+// checkout and that checkout has no designer, resolving quietly to some other
+// copy is the wrong answer twice over - you get a designer you did not ask for,
+// and the reason your checkout was rejected never appears. Exclusive also means
+// the failure is reproducible, which is what makes it testable.
+//
+// Kept as a list rather than a chain of ifs so the "not found" message can print
+// exactly what was probed; "looked in these paths" is the difference between a
+// user fixing it in ten seconds and filing a bug.
+#define DESIGN_MAX_CANDS 8
+static int design_candidates(const char* wyn_root, char cands[DESIGN_MAX_CANDS][1200]) {
+    int n = 0;
+    const char* env = getenv("WYN_GUI_ROOT");
+    if (env && *env) {
+        snprintf(cands[n++], 1200, "%s/examples/designer.wyn", env);
+        snprintf(cands[n++], 1200, "%s/designer.wyn", env);
+        return n;
+    }
+    // Installed as a git dependency. The cache root honors WYN_PKG_CACHE the
+    // same way pkgspec_cache_root() does; the @ref suffix is part of the cache
+    // layout, so both the default HEAD and a main-pinned checkout are probed.
+    char cache[600];
+    const char* pc = getenv("WYN_PKG_CACHE");
+    if (pc && *pc) snprintf(cache, sizeof(cache), "%s", pc);
+    else { const char* home = getenv("HOME"); snprintf(cache, sizeof(cache), "%s/.wyn/pkg", home && *home ? home : "."); }
+    snprintf(cands[n++], 1200, "%s/github.com/wynlang/gui@HEAD/examples/designer.wyn", cache);
+    snprintf(cands[n++], 1200, "%s/github.com/wynlang/gui@main/examples/designer.wyn", cache);
+    { const char* home = getenv("HOME");
+      if (home && *home) snprintf(cands[n++], 1200, "%s/.wyn/packages/gui/examples/designer.wyn", home); }
+    snprintf(cands[n++], 1200, "./packages/gui/examples/designer.wyn");
+    // Development layout: repos/wyn beside repos/gui.
+    snprintf(cands[n++], 1200, "%s/../gui/examples/designer.wyn", wyn_root && *wyn_root ? wyn_root : ".");
+    return n;
+}
+
+int cmd_design(const char* form_file, const char* wyn_root, const char* wyn_exe) {
+    if (!form_file || !*form_file) form_file = "Form1.json";
+
+    // A directory argument must be refused loudly. `wyn check <dir>` used to
+    // "read" a directory as empty source and print a green tick; the same shape
+    // of mistake here would launch the designer on something it cannot save.
+    { struct stat st;
+      if (stat(form_file, &st) == 0 && S_ISDIR(st.st_mode)) {
+          fprintf(stderr, "Error: '%s' is a directory - pass a form file (e.g. wyn design Form1.json)\n", form_file);
+          return 1;
+      } }
+
+    char cands[DESIGN_MAX_CANDS][1200];
+    int ncands = design_candidates(wyn_root, cands);
+    const char* designer = NULL;
+    for (int i = 0; i < ncands && !designer; i++) if (design_is_file(cands[i])) designer = cands[i];
+
+    if (!designer) {
+        const char* env = getenv("WYN_GUI_ROOT");
+        fprintf(stderr, "\033[31mError:\033[0m the Visual Wyn designer is not installed.\n\n");
+        fprintf(stderr, "  `wyn design` launches examples/designer.wyn from the \033[1mgui\033[0m package.\n");
+        fprintf(stderr, "  It is not built into the compiler, because it needs SDL3.\n\n");
+        if (env && *env)
+            fprintf(stderr, "  \033[33mWYN_GUI_ROOT=%s\033[0m is set but has no examples/designer.wyn.\n\n", env);
+        fprintf(stderr, "  Install it:\n    \033[1mwyn add gui\033[0m\n");
+        fprintf(stderr, "  Or point at a checkout:\n    \033[1mWYN_GUI_ROOT=/path/to/gui wyn design %s\033[0m\n\n", form_file);
+        fprintf(stderr, "  Looked in:\n");
+        for (int i = 0; i < ncands; i++) fprintf(stderr, "    %s\n", cands[i]);
+        return 1;
+    }
+
+    // The form path has to be made absolute BEFORE we move, because we run the
+    // designer from the package root (the directory holding wyn.toml) rather
+    // than from the user's cwd: the designer links SDL3 through that manifest's
+    // [ffi] section, so started anywhere else it does not link at all. The form
+    // belongs to the user's cwd, the manifest to the package's - the two cannot
+    // be the same directory, so one of the paths must be absolute.
+    char form_abs[1200];
+    int rooted = (form_file[0] == '/');
+#ifdef _WIN32
+    if (form_file[0] == '\\' || (form_file[1] == ':' )) rooted = 1;
+#endif
+    if (rooted) snprintf(form_abs, sizeof(form_abs), "%s", form_file);
+    else {
+        char cwd[900];
+        if (!getcwd(cwd, sizeof(cwd))) snprintf(cwd, sizeof(cwd), ".");
+        snprintf(form_abs, sizeof(form_abs), "%s/%s", cwd, form_file);
+    }
+
+    char pkg_root[1200];
+    snprintf(pkg_root, sizeof(pkg_root), "%s", designer);
+    { char* slash = strrchr(pkg_root, '/');
+      if (slash) *slash = 0;
+      // .../examples/designer.wyn -> the package root is one level up again.
+      slash = strrchr(pkg_root, '/');
+      if (slash && strcmp(slash + 1, "examples") == 0) *slash = 0; }
+
+    printf("Opening \033[1m%s\033[0m in the Visual Wyn designer\n", form_file);
+    printf("\033[2m  designer: %s\033[0m\n", designer);
+    fflush(stdout);
+
+    char designer_abs[1200];
+    if (designer[0] == '/') snprintf(designer_abs, sizeof(designer_abs), "%s", designer);
+    else {
+        char cwd[900];
+        if (!getcwd(cwd, sizeof(cwd))) snprintf(cwd, sizeof(cwd), ".");
+        snprintf(designer_abs, sizeof(designer_abs), "%s/%s", cwd, designer);
+    }
+    if (chdir(pkg_root) != 0) {
+        fprintf(stderr, "Error: cannot enter the gui package at %s (%s)\n", pkg_root, strerror(errno));
+        return 1;
+    }
+#ifndef _WIN32
+    // execv, not system(): the arguments are user-supplied paths, and replacing
+    // this process means no quoting rules to get wrong and the designer's own
+    // exit status is what the shell sees.
+    char* args[5];
+    args[0] = (char*)wyn_exe; args[1] = (char*)"run";
+    args[2] = designer_abs;   args[3] = form_abs; args[4] = NULL;
+    execv(wyn_exe, args);
+    fprintf(stderr, "Error: cannot run %s (%s)\n", wyn_exe, strerror(errno));
+    return 1;
+#else
+    char cmd[3000];
+    snprintf(cmd, sizeof(cmd), "\"%s\" run \"%s\" \"%s\"", wyn_exe, designer_abs, form_abs);
+    return system(cmd) == 0 ? 0 : 1;
+#endif
+}
+
+// The subcommand's own `--help`. Separate from the one-line entry in `wyn help`
+// because the two-file split is the thing a first-time user has to understand,
+// and it does not fit on one line.
+int cmd_design_help(void) {
+    printf("\033[1mUsage:\033[0m wyn design [file.json]\n\n");
+    printf("Open the Visual Wyn form designer on a form model.\n");
+    printf("With no argument, uses \033[1mForm1.json\033[0m in the current directory.\n\n");
+    printf("\033[1mThe form is data.\033[0m The designer reads and writes the JSON model, and\n");
+    printf("generates two files beside it:\n");
+    printf("  Form1.designer.wyn   layout - REGENERATED, never hand-edit\n");
+    printf("  Form1.wyn            your handler bodies - never rewritten\n\n");
+    printf("Because the model is a plain file, an AI assistant edits the same\n");
+    printf("document you do; neither side clobbers the other.\n\n");
+    printf("\033[1mThe designer ships in the gui package, not in the compiler:\033[0m\n");
+    printf("  wyn add gui                       install it\n");
+    printf("  WYN_GUI_ROOT=/path/to/gui         use a checkout instead\n");
+    return 0;
 }
