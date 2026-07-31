@@ -7,6 +7,20 @@
 #ifndef _WIN32
 #include <dirent.h>
 #include <unistd.h>
+#else
+// mingw has no <unistd.h> worth including here, so mkdir/getcwd/getpid are all
+// undeclared on Windows and gcc 14+ makes an implicit declaration a hard ERROR
+// (measured: this file built clean on macOS/Linux and broke only the Windows
+// leg of CI). Same spelling as src/cmd_other.c and src/io.c: the CRT's
+// underscore names via <direct.h>, mapped back to the POSIX names so the code
+// below stays platform-neutral. _mkdir takes no mode argument - that one is
+// handled at the call site in app_mkdir, since a #define cannot drop a
+// parameter. (src/windows_compat.h has a getpid() shim, but nothing this file
+// includes pulls it in, so the mapping is declared here.)
+#include <direct.h>    // _mkdir, _getcwd
+#include <process.h>   // _getpid
+#define getcwd _getcwd
+#define getpid _getpid
 #endif
 #include "common.h"
 #include "ast.h"
@@ -104,7 +118,9 @@ static void app_default_identifier(char* out, size_t n, const char* name) {
 
 static int app_mkdir(const char* path) {
 #ifdef _WIN32
-    if (mkdir(path) == 0) return 0;
+    // _mkdir, not mkdir: mingw's mkdir is the one-argument CRT spelling and is
+    // only declared in <direct.h>, which is included above for exactly this.
+    if (_mkdir(path) == 0) return 0;
 #else
     if (mkdir(path, 0755) == 0) return 0;
 #endif
