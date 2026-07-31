@@ -290,6 +290,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_assert_eq_float_test.sh
 	@echo "=== Running wyn design subcommand test ==="
 	@WYN=./wyn bash tests/errors/run_design_cmd_test.sh
+	@echo "=== Running test-name percent-escaping test ==="
+	@WYN=./wyn bash tests/errors/run_test_name_percent_test.sh
 	@echo "=== Running C-package (wyn add) test ==="
 	@WYN=./wyn bash tests/cpkg/run_cpkg_test.sh
 	@echo "=== Running SQLite dogfood (wyn add sqlite3) test ==="
