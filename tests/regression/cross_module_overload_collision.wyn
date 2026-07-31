@@ -1,0 +1,24 @@
+// Regression: two imported modules exporting a same-named `pub fn` of DIFFERENT
+// arity must not corrupt one module's own unqualified internal call.
+//
+// a.handle(string) and b.handle() share the name; module a calls its own handle
+// unqualified. Before the fix, codegen emitted `handle_string(s)` inside a's
+// use_it - an overload-mangled callee that nothing defines, since a module pub fn
+// is emitted as `<mod>_handle`. The build died with "call to undeclared function
+// 'handle_string'" pointing at a line the programmer never wrote, and swapping the
+// import order changed whether it compiled. See OPEN-12 in the dogfood findings.
+//
+// The fix: an unqualified call resolving to a function of the CURRENT module is
+// emitted by that module's own C name, never the overload-mangled one, even when
+// another imported module has a same-named namesake. Genuine SAME-module
+// overloading is unaffected (it resolves within one module and keeps its mangled
+// names).
+// EXPECT: 5
+// EXPECT: 42
+import overload_collision_mod
+import overload_collision_mod2
+
+fn main() {
+    println(overload_collision_mod.use_it("hello"))
+    println(overload_collision_mod2.handle())
+}

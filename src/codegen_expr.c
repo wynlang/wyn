@@ -1878,11 +1878,31 @@ void codegen_expr(Expr* expr) {
                             extern int find_lambda_var(const char*);
                             _callee_is_lambda_var = (find_lambda_var(_lvn) >= 0);
                         }
+                        // Is this an unqualified call to a function of the CURRENT
+                        // module? If so it must be emitted by that module's own C
+                        // name, never an overload-mangled one - even when some
+                        // OTHER imported module exports a same-named function of a
+                        // different arity. All module `pub fn`s share global_scope,
+                        // so add_function_overload chains those cross-module
+                        // namesakes into one overload list; without this guard the
+                        // mangled branch below emits e.g. `handle_string` into a
+                        // module whose `handle` is defined as `<mod>_handle`, a
+                        // callee nothing defines. (OPEN-12.)
+                        bool _resolves_to_internal_module_fn = false;
+                        if (current_module_prefix && expr->call.callee->type == EXPR_IDENT) {
+                            char _imn[256]; token_to_cstr(_imn, sizeof(_imn), expr->call.callee->token);
+                            bool _qual = false;
+                            for (int _qi = 0; _qi < expr->call.callee->token.length - 1; _qi++)
+                                if (_imn[_qi] == ':' && _imn[_qi+1] == ':') { _qual = true; break; }
+                            if (!_qual) _resolves_to_internal_module_fn = is_module_function(_imn);
+                        }
                         // T1.5.3: Use mangled name only for actually overloaded functions
                         if (expr->call.selected_overload && !_callee_is_lambda_var) {
                             Symbol* overload = (Symbol*)expr->call.selected_overload;
                             // Only use mangled name if there are multiple overloads
-                            if (overload->mangled_name && overload->next_overload) {
+                            // AND this is not an internal module call (see above).
+                            if (overload->mangled_name && overload->next_overload
+                                && !_resolves_to_internal_module_fn) {
                                 emit("%s", overload->mangled_name);
                             } else {
                                 // Check if we're in a module and need to prefix

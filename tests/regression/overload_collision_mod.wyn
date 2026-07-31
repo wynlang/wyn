@@ -1,0 +1,9 @@
+// Support module for cross_module_overload_collision.wyn.
+//
+// This module exports `handle` (arity 1) and calls it UNQUALIFIED from its own
+// `use_it`. The importer also imports another module whose `handle` has arity 0.
+// Both module `pub fn`s land in one global scope, so the checker used to chain
+// them into a single overload list and codegen emitted `handle_string` here - a
+// mangled name nothing defines - for this module's own internal call. (OPEN-12.)
+pub fn handle(s: string) -> int { return s.len() }
+pub fn use_it(s: string) -> int { return handle(s) }
