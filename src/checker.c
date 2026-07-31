@@ -4838,6 +4838,47 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         ns_sym = find_symbol(global_scope, ns_tok2);
                     }
                     if (ns_sym && ns_sym->type && ns_sym->type->kind == TYPE_FUNCTION) {
+                        // ARITY, before the return type is adopted.
+                        //
+                        // This is the only place a dotted module call - `m.foo(...)`,
+                        // which the parser gives us as a METHOD_CALL - meets its real
+                        // signature. Without a check here the call was never
+                        // validated at all: `m.needs_arg()` with the argument missing
+                        // passed `wyn check` clean and then failed as a raw C compiler
+                        // error ("too few arguments to function call") pointing at
+                        // generated code the programmer never wrote. The `::` spelling
+                        // of the identical call WAS checked (it resolves as an
+                        // EXPR_CALL and reaches the T1.5.4 validation), so the two
+                        // syntaxes disagreed - and the dot form is the one every
+                        // program and every doc uses.
+                        //
+                        // Deliberately narrow, because this path also carries builtin
+                        // namespaces (Time.now_millis, System.args) whose registered
+                        // types are not all faithful:
+                        //   - variadic and overloaded callees are skipped entirely;
+                        //     an overload set resolves by argument type, so "no
+                        //     overload takes this many" is a different diagnostic and
+                        //     reporting the first overload's arity would mislead.
+                        //   - min_param_count carries defaulted parameters, so a call
+                        //     that omits an argument WITH a default stays legal.
+                        // A call that is fine today therefore stays fine; only a call
+                        // that could not have compiled is now reported here instead of
+                        // by the C compiler.
+                        if (!ns_sym->type->fn_type.is_variadic &&
+                            ns_sym->next_overload == NULL) {
+                            int _pc = ns_sym->type->fn_type.param_count;
+                            int _min = ns_sym->type->fn_type.min_param_count;
+                            if (_min < 0) _min = _pc;
+                            if (expr->method_call.arg_count < _min ||
+                                expr->method_call.arg_count > _pc) {
+                                char _fq[256];
+                                snprintf(_fq, sizeof(_fq), "%s.%s", obj_name, method_name);
+                                type_error_wrong_arg_count(_fq, _pc,
+                                                           expr->method_call.arg_count,
+                                                           method.line, 0);
+                                had_error = true;
+                            }
+                        }
                         Type* ret = ns_sym->type->fn_type.return_type;
                         if (ret) {
                             expr->expr_type = ret;
@@ -8012,6 +8053,25 @@ static bool flat_callable_in_program(Program* prog, const char* name, int name_l
 static Type* imported_fn_type(FnStmt* fn) {
     Type* fn_type = make_type(TYPE_FUNCTION);
     fn_type->fn_type.param_count = fn->param_count;
+    // Required-parameter count, counted the same way the local-function path
+    // counts it: walk back from the end while the parameter has a default.
+    //
+    // Without this the field kept make_type's -1 sentinel, so an imported
+    // function's DEFAULTED parameters were invisible to any caller-side arity
+    // check - `pub fn f(a: int, b: int = 5)` looked like it required both. That
+    // was harmless while nothing checked arity on the dotted path; it stops being
+    // harmless the moment something does, which is why it is fixed here rather
+    // than worked around at the call site.
+    {
+        int min_params = fn->param_count;
+        if (fn->param_defaults) {
+            for (int j = fn->param_count - 1; j >= 0; j--) {
+                if (fn->param_defaults[j]) min_params = j;
+                else break;
+            }
+        }
+        fn_type->fn_type.min_param_count = min_params;
+    }
     fn_type->fn_type.param_types = fn->param_count
         ? malloc(sizeof(Type*) * fn->param_count) : NULL;
     for (int k = 0; k < fn->param_count; k++) {
