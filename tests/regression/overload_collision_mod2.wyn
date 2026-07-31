@@ -1,0 +1,2 @@
+// The colliding namesake: same name `handle`, DIFFERENT arity (0 vs 1).
+pub fn handle() -> int { return 42 }
