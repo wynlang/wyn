@@ -76,6 +76,8 @@ static const UiCmd CMDS[] = {
      NULL, NULL, 0, 0, NOFLAGS},
     {"watch", NULL, "Develop", "Watch and auto-rebuild", ARG_FILE, "file.wyn", ".wyn", 1,
      NULL, NULL, 1, 0, NOFLAGS},
+    {"design", NULL, "Develop", "Open the Visual Wyn form designer", ARG_FILE, "Form1.json (optional)", ".json", 0,
+     NULL, NULL, 1, 0, NOFLAGS},
     {"repl", NULL, "Develop", "Interactive REPL", ARG_NONE, NULL, NULL, 0,
      NULL, NULL, 1, 0, NOFLAGS},
     {"bench", NULL, "Develop", "Benchmark with timing", ARG_FILE, "file.wyn", ".wyn", 1,
