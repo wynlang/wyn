@@ -111,6 +111,25 @@ WynConfig* wyn_config_parse(const char* filename) {
                     *slot = value;
                 }
             } else free(value);
+        } else if (strcmp(current_section, "app") == 0) {
+            // Last-one-wins, unlike [ffi] above: an app has exactly one name and
+            // one identifier, so accumulating repeated keys would produce
+            // nonsense like a CFBundleIdentifier of "com.a.x, com.b.y".
+            char** slot = NULL;
+            if      (strcmp(key, "name") == 0)        slot = &config->app.name;
+            else if (strcmp(key, "identifier") == 0 ||
+                     strcmp(key, "bundle_id") == 0)   slot = &config->app.identifier;
+            else if (strcmp(key, "version") == 0)     slot = &config->app.version;
+            else if (strcmp(key, "icon") == 0)        slot = &config->app.icon;
+            else if (strcmp(key, "category") == 0)    slot = &config->app.category;
+            else if (strcmp(key, "min_system") == 0)  slot = &config->app.min_system;
+            else if (strcmp(key, "resources") == 0)   slot = &config->app.resources;
+            else if (strcmp(key, "cwd") == 0)         slot = &config->app.cwd;
+            if (slot) { free(*slot); *slot = value; }
+            else if (strcmp(key, "bundle") == 0) {
+                config->app.bundle = (strcmp(value, "true") == 0);
+                free(value);
+            } else free(value);
         } else if (strcmp(current_section, "gpu") == 0) {
             if (strcmp(key, "enabled") == 0) {
                 config->gpu.enabled = (strcmp(value, "true") == 0);
@@ -174,6 +193,14 @@ void wyn_config_free(WynConfig* config) {
     free(config->ffi.libs);
     free(config->ffi.lib_dirs);
     free(config->ffi.include_dirs);
+    free(config->app.name);
+    free(config->app.identifier);
+    free(config->app.version);
+    free(config->app.icon);
+    free(config->app.category);
+    free(config->app.min_system);
+    free(config->app.resources);
+    free(config->app.cwd);
     free(config);
 }
 

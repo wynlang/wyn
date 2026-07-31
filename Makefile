@@ -286,6 +286,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_argv_forward_test.sh
 	@echo "=== Running --release link/parity test ==="
 	@WYN=./wyn bash tests/errors/run_release_link_test.sh
+	@echo "=== Running native app-bundle (wyn build --app) test ==="
+	@WYN=./wyn bash tests/errors/run_app_bundle_test.sh
 	@echo "=== Running assert_eq float-comparison test ==="
 	@WYN=./wyn bash tests/errors/run_assert_eq_float_test.sh
 	@echo "=== Running wyn design subcommand test ==="
