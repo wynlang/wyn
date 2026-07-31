@@ -1,6 +1,20 @@
 // codegen_program.c - Program-level code generation
 // Included from codegen.c - shares all statics
 
+// Emit `len` bytes of `s` into a C string literal that will be used as a printf
+// FORMAT string, doubling every `%` so it survives as a literal percent.
+//
+// Needed because a `test "..."` name is spliced straight into the emitted
+// printf's format. A name like "a 30%-alpha stroke" made `%-a` a real conversion
+// that consumed an argument nobody passed - undefined behaviour, and visibly
+// wrong output ("a 300x1.08p-1044lpha stroke").
+static void emit_percent_doubled(const char* s, int len) {
+    for (int i = 0; i < len; i++) {
+        if (s[i] == '%') emit("%%%%");   // one literal %% in the generated C
+        else emit("%c", s[i]);
+    }
+}
+
 // Track which Option<Struct> family typedefs have already been emitted this
 // compilation, so the per-struct emission (below) and the standalone catch-all
 // block don't emit the same family twice. Reset at the top of codegen_program.
@@ -1530,11 +1544,24 @@ void codegen_program(Program* prog) {
                 codegen_stmt(after_each_body);
             }
             
+            // The test NAME lands inside the emitted printf's FORMAT string, so a
+            // `%` in it becomes a live format specifier reading a nonexistent
+            // argument: `test "a 30%-alpha stroke"` printed
+            // "a 300x1.08p-1044lpha stroke", because `%-a` consumed a double that
+            // was never passed. That is undefined behaviour rather than a cosmetic
+            // mangling - a name containing `%s` or `%n` would read or write through
+            // a wild pointer - so every `%` is doubled here. The other C-string
+            // hazards in a name (a quote, a backslash) are handled where the name
+            // is echoed elsewhere; this is the one site that treats it as a format.
             emit("        if (wyn_test_fail_count == __prev_fail) {\n");
-            emit("            printf(\"  \\033[32m✓\\033[0m %.*s\\n\");\n", tname_len, tname);
+            emit("            printf(\"  \\033[32m✓\\033[0m ");
+            emit_percent_doubled(tname, tname_len);
+            emit("\\n\");\n");
             emit("            __test_pass++;\n");
             emit("        } else {\n");
-            emit("            printf(\"  \\033[31m✗\\033[0m %.*s\\n\");\n", tname_len, tname);
+            emit("            printf(\"  \\033[31m✗\\033[0m ");
+            emit_percent_doubled(tname, tname_len);
+            emit("\\n\");\n");
             emit("            __test_fail++;\n");
             emit("        }\n");
             emit("    }\n");
