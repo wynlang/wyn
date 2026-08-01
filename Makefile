@@ -346,6 +346,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_enum_variant_name_test.sh
 	@echo "=== Running lambda-in-interpolation test ==="
 	@WYN=./wyn bash tests/errors/run_lambda_interp_test.sh
+	@echo "=== Running bool-method formatting test ==="
+	@WYN=./wyn bash tests/errors/run_bool_method_format_test.sh
 	@echo "=== Running pkg search test ==="
 	@WYN=./wyn bash tests/errors/run_search_test.sh
 	@echo "=== Running scaffold (wyn new) test ==="
