@@ -3757,12 +3757,21 @@ void codegen_stmt(Stmt* stmt) {
                 emit("    } data;\n");
                 emit("};\n\n");
             } else {
-                // Simple enum without data
+                // Simple enum without data.
+                //
+                // Members are emitted PREFIXED as `EnumName_Variant`, not bare. A bare
+                // variant named `Error` (or any C type/keyword) redefined a runtime
+                // symbol - `WynError` - and the C compiler rejected the whole program
+                // with "redefinition of 'Error'", while `wyn check` passed. Prefixing
+                // makes the member identical to the `EnumName_Variant` constant that
+                // `match` and `EnumName.Variant` already use, so the separate #define
+                // block below is no longer needed.
                 emit("typedef enum {\n");
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
-                    emit("    %.*s", 
-                         stmt->enum_decl.variants[i].length,
-                         stmt->enum_decl.variants[i].start);
+                    emit("    %.*s_%.*s = %d",
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
+                         i);
                     if (i < stmt->enum_decl.variant_count - 1) {
                         emit(",");
                     }
@@ -3773,15 +3782,9 @@ void codegen_stmt(Stmt* stmt) {
                      stmt->enum_decl.name.start);
             }
             
-            // Generate qualified constants for EnumName.MEMBER access (only for simple enums)
-            if (!has_data) {
-                for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
-                    emit("#define %.*s_%.*s %d\n",
-                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
-                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
-                         i);
-                }
-            }
+            // No #define block: for a simple enum the C enum members emitted above
+            // ARE the `EnumName_Variant` constants that match and EnumName.Variant use,
+            // so defining them again would be a redefinition.
             emit("\n");
             
             // Generate constructor functions for enums with data
@@ -3868,7 +3871,8 @@ void codegen_stmt(Stmt* stmt) {
             } else {
                 emit("    switch(val) {\n");
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
-                    emit("        case %.*s: return \"%.*s\";\n",
+                    emit("        case %.*s_%.*s: return \"%.*s\";\n",
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
                          stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
                          stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
                 }
