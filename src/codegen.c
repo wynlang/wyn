@@ -1760,9 +1760,18 @@ static void pop_scope() {
 }
 
 static void track_var_with_type(const char* name, int len, const char* type) {
-    // Safety check: ensure scope_depth is valid
+    // A var tracked at file scope (scope_depth 0) is a no-op: module-level vars are
+    // not scope-tracked for cleanup, so there is nothing to record and nothing wrong.
+    // This is reached on ordinary programs - five times building WynCanvas's ui.wyn -
+    // so the diagnostic must NOT print on a clean build. It is a codegen-internal
+    // note, gated behind WYN_DEBUG like the other ones, not a warning a user can act
+    // on. (Was printed unconditionally to stderr, which put "WARNING: ..." lines in
+    // the output of a successful compile.)
     if (scope_depth == 0) {
-        fprintf(stderr, "WARNING: track_var_with_type called with scope_depth=0\n");
+        if (getenv("WYN_DEBUG")) {
+            fprintf(stderr, "WYN_DEBUG: track_var_with_type at file scope (no-op): %.*s\n",
+                    len, name);
+        }
         return;
     }
 
