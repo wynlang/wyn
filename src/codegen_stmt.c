@@ -244,11 +244,28 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                 // never take the module prefix (that emitted `<module>_ptr`).
                 return_type = wyn_ffi_ptr_c_type(rt);
             } else {
-                // Custom struct type - add module prefix if in module context
-                if (current_module_prefix) {
-                    snprintf(custom_return_type, 128, "%s_%.*s", current_module_prefix, rt.length, rt.start);
+                // Custom struct type - add the module prefix ONLY when the struct
+                // is not already declared in the program being emitted.
+                //
+                // A struct DECLARED IN A MODULE is merged into the target program
+                // (merge_module_exports) and its typedef is emitted UNPREFIXED, as
+                // `Box`. Prefixing the prototype's spelling anyway produced
+                // `m_Box`, a type nothing declares - so a module whose `pub fn`
+                // returned its own struct failed to compile with
+                // "unknown type name 'm_Box'", while the identical code in a
+                // single file was fine.
+                //
+                // is_known_struct answers exactly the right question: it looks in
+                // the merged program, which is where the typedef will come from. A
+                // name it does not know keeps the prefix, which is what the
+                // generic/inner-type paths rely on.
+                extern int is_known_struct(const char* name);
+                char _rt_name[128];
+                token_to_cstr(_rt_name, sizeof(_rt_name), rt);
+                if (current_module_prefix && !is_known_struct(_rt_name)) {
+                    snprintf(custom_return_type, 128, "%s_%s", current_module_prefix, _rt_name);
                 } else {
-                    token_to_cstr(custom_return_type, sizeof(custom_return_type), rt);
+                    snprintf(custom_return_type, 128, "%s", _rt_name);
                 }
                 return_type = custom_return_type;
             }
@@ -296,11 +313,17 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                     // now share the same authority instead of re-deriving it.
                     c_type = wyn_ffi_ptr_c_type(type_token);
                 } else {
-                    // Custom struct type - add module prefix if in module context
-                    if (current_module_prefix) {
-                        emit("%s_%.*s ", current_module_prefix, type_token.length, type_token.start);
+                    // Custom struct type - prefix ONLY when the struct is not
+                    // declared in the program being emitted. Same rule as the
+                    // prototype emitter; without it the DEFINITION said `m_Point`
+                    // while its own prototype said `Point`.
+                    extern int is_known_struct(const char* nm);
+                    char _tn[128];
+                    token_to_cstr(_tn, sizeof(_tn), type_token);
+                    if (current_module_prefix && !is_known_struct(_tn)) {
+                        emit("%s_%s ", current_module_prefix, _tn);
                     } else {
-                        emit("%.*s ", type_token.length, type_token.start);
+                        emit("%s ", _tn);
                     }
                     goto emit_param_name;
                 }
@@ -1241,11 +1264,21 @@ void codegen_stmt(Stmt* stmt) {
                             // Replace dot with underscore: point.Point → point_Point
                             *dot = '_';
                             snprintf(struct_type, 128, "%s", temp_name);
-                        } else if (current_module_prefix) {
-                            // Add module prefix if in module context
-                            snprintf(struct_type, 128, "%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                         } else {
-                            token_to_cstr(struct_type, sizeof(struct_type), type_name);
+                            // Prefix ONLY when the struct is not declared in the
+                            // program being emitted - the same rule the prototype,
+                            // definition and literal sites now share. Without it a
+                            // local declared as `var r = Row { ... }` inside a
+                            // module emitted `m_Row r = ((Row){...})`: the
+                            // declaration and its own initialiser disagreed.
+                            extern int is_known_struct(const char* nm);
+                            char _sn[128];
+                            token_to_cstr(_sn, sizeof(_sn), type_name);
+                            if (current_module_prefix && !is_known_struct(_sn)) {
+                                snprintf(struct_type, 128, "%s_%s", current_module_prefix, _sn);
+                            } else {
+                                snprintf(struct_type, 128, "%s", _sn);
+                            }
                         }
                     }
                     c_type = struct_type;
@@ -4612,8 +4645,22 @@ void codegen_stmt(Stmt* stmt) {
                                             // Builtin, not a user struct: no prefix.
                                             return_type = wyn_ffi_ptr_c_type(rt);
                                         } else {
-                                            // Custom struct type - add module prefix
-                                            snprintf(custom_ret_type, 128, "%s_%.*s", c_mod_name, rt.length, rt.start);
+                                            // Custom struct type - prefix ONLY if the
+                                            // struct is not declared in the program
+                                            // being emitted. A module's own struct is
+                                            // merged in and its typedef emitted
+                                            // UNPREFIXED, so prefixing here named a
+                                            // type nothing declares ("unknown type
+                                            // name 'm_Box'") for any module whose
+                                            // pub fn returned its own struct.
+                                            extern int is_known_struct(const char* name);
+                                            char _rn[128];
+                                            token_to_cstr(_rn, sizeof(_rn), rt);
+                                            if (is_known_struct(_rn)) {
+                                                snprintf(custom_ret_type, 128, "%s", _rn);
+                                            } else {
+                                                snprintf(custom_ret_type, 128, "%s_%s", c_mod_name, _rn);
+                                            }
                                             return_type = custom_ret_type;
                                         }
                                     }
@@ -4649,7 +4696,17 @@ void codegen_stmt(Stmt* stmt) {
                                                 param_type = wyn_ffi_ptr_c_type(pt);
                                             } else {
                                                 // Custom struct type - add module prefix
-                                                snprintf(custom_param_type, 128, "%s_%.*s", c_mod_name, pt.length, pt.start);
+                                                // Same rule as the return type above:
+                                                // a struct declared in the merged
+                                                // program has an UNPREFIXED typedef.
+                                                extern int is_known_struct(const char* name);
+                                                char _pn[128];
+                                                token_to_cstr(_pn, sizeof(_pn), pt);
+                                                if (is_known_struct(_pn)) {
+                                                    snprintf(custom_param_type, 128, "%s", _pn);
+                                                } else {
+                                                    snprintf(custom_param_type, 128, "%s_%s", c_mod_name, _pn);
+                                                }
                                                 param_type = custom_param_type;
                                             }
                                         }

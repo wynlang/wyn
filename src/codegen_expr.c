@@ -15,6 +15,24 @@
 // Other string builtins (len/substring/concat) survive because they are method
 // calls; `str()` survives via a dedicated intercept. Only the free-function
 // *_to_string family reaches the generic prefix path, so guard it here.
+// Should a user struct name take the module prefix when emitted?
+//
+// NO if the struct is declared in the program being emitted. A struct declared in
+// a module is merged into the target (merge_module_exports) and its typedef comes
+// out UNPREFIXED, so prefixing a use of it names a type nothing declares - which
+// is what made any module returning or taking its own struct fail to compile with
+// "unknown type name '<module>_<Struct>'". One predicate, used by every site that
+// spells a struct type, so the prototype and the body cannot disagree.
+static int wyn_struct_needs_prefix(Token name) {
+    extern int is_known_struct(const char* nm);
+    if (!current_module_prefix) return 0;
+    char buf[128];
+    int n = name.length < 127 ? name.length : 127;
+    memcpy(buf, name.start, (size_t)n);
+    buf[n] = 0;
+    return is_known_struct(buf) ? 0 : 1;
+}
+
 static bool is_builtin_runtime_fn(const char* name) {
     static const char* builtins[] = {
         "int_to_string", "float_to_string", "bool_to_string",
@@ -2459,6 +2477,8 @@ void codegen_expr(Expr* expr) {
                         // We stored param types during STMT_FN processing
                         // (current_param_types is the growable array defined in codegen.c;
                         // this file is #included into codegen.c so it is in scope)
+
+
                         if (current_param_types[pi][0] && is_trait_type(current_param_types[pi], strlen(current_param_types[pi]))) {
                             emit("(");
                             codegen_expr(expr->method_call.object);
@@ -2701,7 +2721,7 @@ void codegen_expr(Expr* expr) {
                             
                             // The struct initializer codegen adds current_module_prefix
                             // We need to do the same here to match
-                            if (current_module_prefix) {
+                            if (wyn_struct_needs_prefix(type_name)) {
                                 emit("%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                             } else {
                                 emit("%.*s", type_name.length, type_name.start);
@@ -2709,7 +2729,7 @@ void codegen_expr(Expr* expr) {
                         } else {
                             // Fallback
                             Token type_name = elem_type->struct_type.name;
-                            if (current_module_prefix) {
+                            if (wyn_struct_needs_prefix(type_name)) {
                                 emit("%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                             } else {
                                 emit("%.*s", type_name.length, type_name.start);
@@ -4115,7 +4135,7 @@ void codegen_expr(Expr* expr) {
                     emit("array_push_struct(&__arr_%d, ", arr_id);
                     codegen_expr(elem);
                     emit(", ");
-                    if (current_module_prefix) {
+                    if (wyn_struct_needs_prefix(type_name)) {
                         emit("%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                     } else {
                         emit("%.*s", type_name.length, type_name.start);
@@ -4127,7 +4147,7 @@ void codegen_expr(Expr* expr) {
                     emit("array_push_struct(&__arr_%d, ", arr_id);
                     codegen_expr(elem);
                     emit(", ");
-                    if (current_module_prefix) {
+                    if (wyn_struct_needs_prefix(type_name)) {
                         emit("%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                     } else {
                         emit("%.*s", type_name.length, type_name.start);
@@ -4684,7 +4704,7 @@ void codegen_expr(Expr* expr) {
                     snprintf(prefixed_type_name, 128, "%s", temp_name);
                     actual_type_name = prefixed_type_name;
                     actual_type_name_len = strlen(prefixed_type_name);
-                } else if (current_module_prefix) {
+                } else if (wyn_struct_needs_prefix(type_name)) {
                     // Add module prefix if in module context
                     snprintf(prefixed_type_name, 128, "%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                     actual_type_name = prefixed_type_name;
