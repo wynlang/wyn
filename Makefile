@@ -332,6 +332,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_bool_int_arg_test.sh
 	@echo "=== Running module struct type test ==="
 	@WYN=./wyn bash tests/errors/run_module_struct_test.sh
+	@echo "=== Running clean-output test ==="
+	@WYN=./wyn bash tests/errors/run_clean_output_test.sh
 	@echo "=== Running pkg search test ==="
 	@WYN=./wyn bash tests/errors/run_search_test.sh
 	@echo "=== Running scaffold (wyn new) test ==="
