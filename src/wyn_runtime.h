@@ -1706,24 +1706,47 @@ WynArray string_to_bytes(const char* str) {
     }
     return arr;
 }
+// How many UTF-8 CHARACTERS are in `str`, not how many bytes.
+//
+// The pad functions align text into columns, and a column is counted in characters.
+// Measuring in bytes makes every non-ASCII string look longer than it is: a
+// box-drawing rule "────" is 4 characters and 12 bytes, so pad_right(9) treated it as
+// already over-width and padded nothing - which silently broke the alignment of every
+// table in the sample apps that drew one, and would break any column containing an
+// accent or an emoji.
+//
+// A continuation byte is 0b10xxxxxx; every other byte starts a character. That is the
+// whole rule.
+static int wyn_utf8_chars_rt(const char* s) {
+    int n = 0;
+    for (const unsigned char* p = (const unsigned char*)s; *p; p++) {
+        if ((*p & 0xC0) != 0x80) n++;
+    }
+    return n;
+}
 char* string_pad_left(const char* str, int width, const char* pad) {
-    int len = string_length(str);
-    if (len >= width) return wyn_strdup(str);
-    int pad_len = width - len;
-    char* result = wyn_str_alloc(width);
+    int bytes = (int)strlen(str);
+    int chars = wyn_utf8_chars_rt(str);
+    if (chars >= width) return wyn_strdup(str);
+    int pad_len = width - chars;
+    // Allocated in BYTES: one byte per pad character plus the string's own bytes, which
+    // may outnumber its characters. Sizing by `width` truncated multi-byte content.
+    char* result = wyn_str_alloc(pad_len + bytes);
     for (int i = 0; i < pad_len; i++) result[i] = pad[0];
-    memcpy(result + pad_len, str, len + 1);
-    wyn_rc_set_length(result, width);
+    memcpy(result + pad_len, str, bytes + 1);
+    wyn_rc_set_length(result, pad_len + bytes);
     return result;
 }
 char* string_pad_right(const char* str, int width, const char* pad) {
-    int len = string_length(str);
-    if (len >= width) return wyn_strdup(str);
-    char* result = wyn_str_alloc(width);
-    memcpy(result, str, len);
-    for (int i = len; i < width; i++) result[i] = pad[0];
-    result[width] = '\0';
-    wyn_rc_set_length(result, width);
+    int bytes = (int)strlen(str);
+    int chars = wyn_utf8_chars_rt(str);
+    if (chars >= width) return wyn_strdup(str);
+    int pad_len = width - chars;
+    char* result = wyn_str_alloc(bytes + pad_len);
+    memcpy(result, str, bytes);
+    for (int i = 0; i < pad_len; i++) result[bytes + i] = pad[0];
+    result[bytes + pad_len] = '\0';
+    wyn_rc_set_length(result, bytes + pad_len);
     return result;
 }
 

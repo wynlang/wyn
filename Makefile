@@ -334,6 +334,12 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_module_struct_test.sh
 	@echo "=== Running clean-output test ==="
 	@WYN=./wyn bash tests/errors/run_clean_output_test.sh
+	@echo "=== Running interpolated-receiver method test ==="
+	@WYN=./wyn bash tests/errors/run_interp_method_test.sh
+	@echo "=== Running UTF-8 padding test ==="
+	@WYN=./wyn bash tests/errors/run_pad_utf8_test.sh
+	@echo "=== Running struct string-field ownership test ==="
+	@WYN=./wyn bash tests/errors/run_struct_string_field_test.sh
 	@echo "=== Running pkg search test ==="
 	@WYN=./wyn bash tests/errors/run_search_test.sh
 	@echo "=== Running scaffold (wyn new) test ==="

@@ -1304,6 +1304,36 @@ int function_can_inline(const char* name) {
 // (`f: T?`), return the concrete C Option family name (e.g. "OptionInt",
 // "OptionAddr") in `out`; return 1 on match, 0 otherwise. Used to coerce a bare
 // Some(..)/None field initializer to the exact family the field's type names.
+// Is `field_name` of `struct_name` declared as a `string`?
+//
+// Needed by the struct-init emitter: a string field initialised from a BORROWED
+// pointer - an array element, which array_get_str returns without copying - dangles
+// as soon as that array is released. In a loop that reassigns the array each
+// iteration, every struct built earlier ends up with an empty field, silently and at
+// exit 0. So the emitter copies such a value, and this answers "is this field a
+// string" so it only copies where it matters.
+int wyn_struct_field_is_string(const char* struct_name, const char* field_name) {
+    extern Program* current_program;
+    if (!current_program || !struct_name || !field_name) return 0;
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* s = current_program->stmts[i];
+        if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+        if (s->type != STMT_STRUCT) continue;
+        if ((int)strlen(struct_name) != s->struct_decl.name.length ||
+            memcmp(struct_name, s->struct_decl.name.start, s->struct_decl.name.length) != 0) continue;
+        for (int f = 0; f < s->struct_decl.field_count; f++) {
+            if ((int)strlen(field_name) != s->struct_decl.fields[f].length ||
+                memcmp(field_name, s->struct_decl.fields[f].start, s->struct_decl.fields[f].length) != 0) continue;
+            Expr* ft = s->struct_decl.field_types[f];
+            if (ft && ft->type == EXPR_IDENT && ft->token.length == 6 &&
+                memcmp(ft->token.start, "string", 6) == 0) return 1;
+            return 0;
+        }
+        return 0;
+    }
+    return 0;
+}
+
 int get_struct_field_option_family(const char* struct_name, const char* field_name,
                                    char* out, size_t outsz) {
     extern Program* current_program;
