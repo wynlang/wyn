@@ -340,6 +340,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_pad_utf8_test.sh
 	@echo "=== Running struct string-field ownership test ==="
 	@WYN=./wyn bash tests/errors/run_struct_string_field_test.sh
+	@echo "=== Running parenthesized-condition test ==="
+	@WYN=./wyn bash tests/errors/run_paren_condition_test.sh
 	@echo "=== Running pkg search test ==="
 	@WYN=./wyn bash tests/errors/run_search_test.sh
 	@echo "=== Running scaffold (wyn new) test ==="
