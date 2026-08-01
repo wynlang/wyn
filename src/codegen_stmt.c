@@ -3757,12 +3757,21 @@ void codegen_stmt(Stmt* stmt) {
                 emit("    } data;\n");
                 emit("};\n\n");
             } else {
-                // Simple enum without data
+                // Simple enum without data.
+                //
+                // Members are emitted PREFIXED as `EnumName_Variant`, not bare. A bare
+                // variant named `Error` (or any C type/keyword) redefined a runtime
+                // symbol - `WynError` - and the C compiler rejected the whole program
+                // with "redefinition of 'Error'", while `wyn check` passed. Prefixing
+                // makes the member identical to the `EnumName_Variant` constant that
+                // `match` and `EnumName.Variant` already use, so the separate #define
+                // block below is no longer needed.
                 emit("typedef enum {\n");
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
-                    emit("    %.*s", 
-                         stmt->enum_decl.variants[i].length,
-                         stmt->enum_decl.variants[i].start);
+                    emit("    %.*s_%.*s = %d",
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
+                         i);
                     if (i < stmt->enum_decl.variant_count - 1) {
                         emit(",");
                     }
@@ -3773,13 +3782,25 @@ void codegen_stmt(Stmt* stmt) {
                      stmt->enum_decl.name.start);
             }
             
-            // Generate qualified constants for EnumName.MEMBER access (only for simple enums)
+            // BARE-name aliases. The prefixed members above are what qualified use
+            // (Level.Error, match on Level) resolves to and are collision-proof. But a
+            // BARE reference - `var c = Red`, or `match c { Red => ... }` without the
+            // enum qualifier - still emits the bare name, so it needs a constant of that
+            // name. These #defines provide it.
+            //
+            // #define, not an enum member, precisely so a bare name that WOULD collide
+            // with a C type (Error -> WynError) does not force a redefinition: a
+            // #define of a colliding name is still a hazard for BARE use of that
+            // variant, but the qualified form Level.Error is now always safe, which is
+            // the form that matters. A macro also cannot redefine a typedef the way a
+            // second enum member would.
             if (!has_data) {
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
-                    emit("#define %.*s_%.*s %d\n",
-                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                    emit("#ifndef %.*s\n#define %.*s %.*s_%.*s\n#endif\n",
                          stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
-                         i);
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
                 }
             }
             emit("\n");
@@ -3868,7 +3889,8 @@ void codegen_stmt(Stmt* stmt) {
             } else {
                 emit("    switch(val) {\n");
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
-                    emit("        case %.*s: return \"%.*s\";\n",
+                    emit("        case %.*s_%.*s: return \"%.*s\";\n",
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
                          stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
                          stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
                 }
