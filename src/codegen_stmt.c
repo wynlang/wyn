@@ -4362,8 +4362,20 @@ void codegen_stmt(Stmt* stmt) {
                     } else if (elem_type->kind == TYPE_ARRAY) {
                         is_array_array = true;
                     } else if (elem_type->kind == TYPE_ENUM && elem_type->name.length > 0) {
-                        is_enum_array = true;
-                        token_to_cstr(enum_arr_type, sizeof(enum_arr_type), elem_type->name);
+                        // ONLY a data-carrying enum is stored by value as a struct.
+                        // A plain `enum Level { Info, Warn }` is a C enum constant, i.e.
+                        // an int, so binding it via `*(Level*)__elem.data.struct_val`
+                        // dereferences a value that was never a pointer - a segfault at
+                        // the first iteration. Payload-free enums must fall through to
+                        // the int path below, which is what they did before the element
+                        // type of a `-> [Level]` return was resolved at all.
+                        char _en[128];
+                        token_to_cstr(_en, sizeof(_en), elem_type->name);
+                        extern int is_data_enum_type(const char*);
+                        if (is_data_enum_type(_en)) {
+                            is_enum_array = true;
+                            snprintf(enum_arr_type, sizeof(enum_arr_type), "%s", _en);
+                        }
                     }
                 }
                 // Array LITERAL whose first element is itself an array literal

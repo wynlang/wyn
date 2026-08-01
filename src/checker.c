@@ -9516,22 +9516,30 @@ void check_program(Program* prog) {
                         fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
                     }
                 } else if (fn->return_type->type == EXPR_ARRAY) {
-                    // Array type like [int] or [string]
+                    // Array type like [int], [string] or [S].
+                    //
+                    // This used to inline a four-way int/string/float/bool chain, so a
+                    // STRUCT or ENUM element fell through and left element_type NULL:
+                    //
+                    //     fn make() -> [S] { ... }
+                    //     for s in make() { print(s.name) }    // s was `long long`
+                    //
+                    // `wyn check` passed and the C compiler then rejected the program
+                    // with "member reference base type 'long long' is not a structure
+                    // or union" - so returning an array of structs, the natural way to
+                    // structure any program with records in it, was unusable. Adding an
+                    // explicit `var xs: [S] = make()` worked, because the ANNOTATION
+                    // path already used the resolver below; that asymmetry is what made
+                    // this read as a rule about annotations rather than a gap here.
+                    //
+                    // resolve_array_elem_annotation() is the same resolver the
+                    // annotated-variable and parameter paths use, and it also handles
+                    // nested arrays ([[float]]) and map elements, so those come along
+                    // rather than needing their own arms later.
                     Type* array_type = make_type(TYPE_ARRAY);
                     if (fn->return_type->array.count > 0 && fn->return_type->array.elements[0]) {
-                        Expr* elem_type_expr = fn->return_type->array.elements[0];
-                        if (elem_type_expr->type == EXPR_IDENT) {
-                            Token elem_type_name = elem_type_expr->token;
-                            if (elem_type_name.length == 3 && memcmp(elem_type_name.start, "int", 3) == 0) {
-                                array_type->array_type.element_type = builtin_int;
-                            } else if (elem_type_name.length == 6 && memcmp(elem_type_name.start, "string", 6) == 0) {
-                                array_type->array_type.element_type = builtin_string;
-                            } else if (elem_type_name.length == 5 && memcmp(elem_type_name.start, "float", 5) == 0) {
-                                array_type->array_type.element_type = builtin_float;
-                            } else if (elem_type_name.length == 4 && memcmp(elem_type_name.start, "bool", 4) == 0) {
-                                array_type->array_type.element_type = builtin_bool;
-                            }
-                        }
+                        array_type->array_type.element_type =
+                            resolve_array_elem_annotation(fn->return_type->array.elements[0]);
                     }
                     fn_type->fn_type.return_type = array_type;
                 } else if (fn->return_type->type == EXPR_FN_TYPE) {
