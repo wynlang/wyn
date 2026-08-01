@@ -103,6 +103,37 @@ else
   bad "capturing case failed"; printf '%s\n' "$out" | head -3 | sed 's/^/        /'
 fi
 
+# ---- a lambda under a unary `not` -----------------------------------------
+# The same missing-arm family: EXPR_BINARY was traversed, EXPR_UNARY was not, so the
+# lambda under a `not` got no function. This one MISREPORTS ITS OWN LOCATION - the id
+# counter still advanced, so a LATER lambda referenced `__lambda_2` when only
+# `__lambda_1` existed, and the C error pointed at the innocent later line.
+cat > "$TMP/e.wyn" <<'EOF'
+fn main() {
+    var ns = [5, 3, 9]
+    // negated predicate: the ordinary way to say "some element fails"
+    if not ns.all((n) => n > 100) { print("not-all ok") }
+    if not ns.any((n) => n > 100) { print("not-any ok") }
+    // a later lambda in the SAME function - this is the line that used to fail
+    // (compared against a variable, so this case turns only on the traversal, not on
+    // how a bool-returning method formats - that is a separate defect and PR)
+    var later = ns.all((n) => n > 100)
+    print("later ${later}")
+    var neg = not ns.all((n) => n > 1)
+    print("neg ${neg}")
+}
+EOF
+out=$(cd "$TMP" && "$WYN_ABS" run e.wyn 2>&1); code=$?
+if [ $code -eq 0 ] &&
+   printf '%s' "$out" | grep -q '^not-all ok$' &&
+   printf '%s' "$out" | grep -q '^not-any ok$' &&
+   printf '%s' "$out" | grep -q '^later false$' &&
+   printf '%s' "$out" | grep -q '^neg false$'; then
+  ok "a lambda under a unary 'not' gets its function, and does not shift later ids"
+else
+  bad "negated-lambda case failed"; printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+fi
+
 # ---- and the spellings that already worked are unchanged -------------------
 # The fix only ADDS a traversal arm. A lambda assigned to a variable, passed to a
 # function, or held in a struct field must behave exactly as before.

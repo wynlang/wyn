@@ -369,6 +369,20 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 scan_expr_for_lambdas(expr->string_interp.expressions[i]);
             }
             break;
+        case EXPR_UNARY:
+            // The THIRD instance of the same omission, and the one that proves it is a
+            // family rather than three accidents:
+            //
+            //     if not xs.all((n) => n > 100) { ... }
+            //
+            // A negated predicate is the ordinary way to write "some element fails".
+            // EXPR_BINARY was handled, EXPR_UNARY was not, so the lambda under the
+            // `not` was never visited. Worse than a plain miscompile: the id counter
+            // still advanced elsewhere, so a LATER lambda in the same function emitted
+            // a reference to `__lambda_2` while only `__lambda_1` existed - the failure
+            // surfaced on a different line than the code that caused it.
+            scan_expr_for_lambdas(expr->unary.operand);
+            break;
         default:
             break;
     }
