@@ -330,6 +330,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_module_arity_test.sh
 	@echo "=== Running bool/int argument test ==="
 	@WYN=./wyn bash tests/errors/run_bool_int_arg_test.sh
+	@echo "=== Running module struct type test ==="
+	@WYN=./wyn bash tests/errors/run_module_struct_test.sh
 	@echo "=== Running pkg search test ==="
 	@WYN=./wyn bash tests/errors/run_search_test.sh
 	@echo "=== Running scaffold (wyn new) test ==="
