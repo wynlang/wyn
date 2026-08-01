@@ -3782,9 +3782,27 @@ void codegen_stmt(Stmt* stmt) {
                      stmt->enum_decl.name.start);
             }
             
-            // No #define block: for a simple enum the C enum members emitted above
-            // ARE the `EnumName_Variant` constants that match and EnumName.Variant use,
-            // so defining them again would be a redefinition.
+            // BARE-name aliases. The prefixed members above are what qualified use
+            // (Level.Error, match on Level) resolves to and are collision-proof. But a
+            // BARE reference - `var c = Red`, or `match c { Red => ... }` without the
+            // enum qualifier - still emits the bare name, so it needs a constant of that
+            // name. These #defines provide it.
+            //
+            // #define, not an enum member, precisely so a bare name that WOULD collide
+            // with a C type (Error -> WynError) does not force a redefinition: a
+            // #define of a colliding name is still a hazard for BARE use of that
+            // variant, but the qualified form Level.Error is now always safe, which is
+            // the form that matters. A macro also cannot redefine a typedef the way a
+            // second enum member would.
+            if (!has_data) {
+                for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
+                    emit("#ifndef %.*s\n#define %.*s %.*s_%.*s\n#endif\n",
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
+                }
+            }
             emit("\n");
             
             // Generate constructor functions for enums with data
