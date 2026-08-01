@@ -348,6 +348,27 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 scan_expr_for_lambdas(expr->struct_init.field_values[i]);
             }
             break;
+        case EXPR_STRING_INTERP:
+            // The SAME omission as EXPR_STRUCT_INIT above, in the one place a
+            // reader is most likely to write a pipeline:
+            //
+            //     print("top: ${xs.filter((n) => n > 2)}")
+            //
+            // An interpolated expression is a value like any other, but this
+            // scanner never descended into the parts, so the lambda got no id
+            // and no top-level function - while the interpolation still emitted
+            // a call referencing it. The generated C failed with `use of
+            // undeclared identifier '__lambda_1'`, surfaced to the user only as
+            // "compilation failed (internal codegen error)".
+            //
+            // Assigning the pipeline to a variable first worked, which is why
+            // this survived: it reads as a rule about interpolation rather than
+            // a missing traversal. Every other walker in this file (collect_idents,
+            // veto_scan_expr, veto_all_idents_in) already handles this node.
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                scan_expr_for_lambdas(expr->string_interp.expressions[i]);
+            }
+            break;
         default:
             break;
     }
