@@ -3472,6 +3472,21 @@ void codegen_expr(Expr* expr) {
                     (inner.length == 9 && memcmp(inner.start, "to_string", 9) == 0))
                     receiver_type = "string";
             }
+            // AN INTERPOLATED STRING LITERAL IS A STRING, by construction.
+            //
+            // `"a${x}b".pad_right(20, " ")` type-checked fine and then died in codegen
+            // with "Unknown method 'pad_right' (no type info)": every other receiver
+            // shape above is special-cased here, and this one was not, so the receiver
+            // type stayed NULL and the dispatch fell through to the error. The same
+            // call on a plain literal, or on a variable holding the interpolation,
+            // worked - so the rule was "you may not call a method on an interpolated
+            // literal", which is not a rule anyone can learn.
+            //
+            // No inference needed: EXPR_STRING_INTERP produces a string whatever its
+            // pieces are.
+            if (!receiver_type && expr->method_call.object->type == EXPR_STRING_INTERP)
+                receiver_type = "string";
+
             // Method chaining: function calls that return arrays
             if (!receiver_type && expr->method_call.object->type == EXPR_CALL) {
                 // await_all returns array
@@ -4761,7 +4776,45 @@ void codegen_expr(Expr* expr) {
                         codegen_expr(expr->struct_init.field_values[i]);
                         emit(", NULL)");
                     } else {
-                        codegen_expr(expr->struct_init.field_values[i]);
+                        // A STRING FIELD FED FROM A BORROWED POINTER MUST BE COPIED.
+                        //
+                        // array_get_str returns a pointer INTO the array, not a copy.
+                        // So `Row { name: f[0] }` stores a pointer owned by `f`, and
+                        // when `f` is released - which happens on the next iteration of
+                        // a loop that reassigns it - every struct built earlier has an
+                        // empty name. Silently, at exit 0: the numeric fields were
+                        // right and only the strings vanished, which is the worst
+                        // possible shape for a data-processing bug.
+                        //
+                        // `"" + x` is the copy idiom already used elsewhere for exactly
+                        // this (see item_copy/line_copy in the gui toolkit), and
+                        // string_concat allocates a fresh RC string. Applied only to
+                        // declared `string` fields whose value is an INDEX expression,
+                        // so nothing else pays for it: a literal, a variable and a
+                        // function result are all owned already.
+                        Expr* _fv = expr->struct_init.field_values[i];
+                        extern int wyn_struct_field_is_string(const char*, const char*);
+                        // EXPR_INDEX covers `f[0]`; EXPR_IDENT covers a loop
+                        // variable, which borrows from the array being iterated and
+                        // dangles the same way once that array is released. A NESTED
+                        // loop is where that bites: the inner structs outlive the
+                        // per-row array the outer loop reassigns, and all four strings
+                        // in the test came back empty.
+                        //
+                        // Copying an identifier is a retain of something already owned
+                        // in the common case, which costs one allocation per string
+                        // field and buys the guarantee that a struct owns its own
+                        // strings. That trade is worth it here: the alternative is a
+                        // rule about which expressions are safe to store, which nobody
+                        // can be expected to know.
+                        bool _needs_copy = (_fv->type == EXPR_INDEX || _fv->type == EXPR_IDENT);
+                        if (_needs_copy && wyn_struct_field_is_string(_sn, _fn)) {
+                            emit("string_concat(\"\", ");
+                            codegen_expr(_fv);
+                            emit(")");
+                        } else {
+                            codegen_expr(_fv);
+                        }
                     }
                     current_assign_target_kind = _prev_kind;
                 }

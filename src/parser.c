@@ -2825,16 +2825,25 @@ static Stmt* statement_impl() {
         bool saved_allow_struct_init = parser.allow_struct_init;
         parser.allow_struct_init = false;
         
-        if (match(TOKEN_LPAREN)) {
-            stmt->if_stmt.condition = expression();
-            expect(TOKEN_RPAREN, "Expected ')' after if condition");
-        } else {
-            stmt->if_stmt.condition = expression();
-        }
-        
+        // Parentheses around an if condition are OPTIONAL in Wyn, so the
+        // condition is just an expression - whether or not it starts with `(`.
+        //
+        // The old code special-cased a leading `(`: it consumed the paren, parsed
+        // one expression, and demanded a closing `)`. That is wrong the moment the
+        // condition is `(a) or (b)` - a parenthesized term FOLLOWED by an operator.
+        // It parsed `(a)`, matched the `)`, and then the `or (b)` was left dangling
+        // before the `{`, producing "Expected an expression". `if a or (b)` worked
+        // and `if (a) or (b)` did not, which is not a rule anyone can learn.
+        //
+        // expression() already parses a leading-paren term correctly as part of the
+        // whole condition, so there is nothing to special-case: a C-style
+        // `if (cond)` is just an expression whose outermost node happens to be
+        // parenthesized.
+        stmt->if_stmt.condition = expression();
+
         // Restore struct init flag
         parser.allow_struct_init = saved_allow_struct_init;
-        
+
         stmt->if_stmt.then_branch = parse_block_or_stmt("if");
 
         // Friendly diagnostic: Python's `elif` (and `elseif`/`elsif`) isn't a Wyn
@@ -2998,16 +3007,14 @@ static Stmt* statement_impl() {
         bool saved_allow_struct_init = parser.allow_struct_init;
         parser.allow_struct_init = false;
         
-        if (match(TOKEN_LPAREN)) {
-            stmt->while_stmt.condition = expression();
-            expect(TOKEN_RPAREN, "Expected ')' after while condition");
-        } else {
-            stmt->while_stmt.condition = expression();
-        }
-        
+        // Same as `if`: parentheses are optional and the condition is just an
+        // expression. Special-casing a leading `(` broke `while (a) or (b)` by
+        // stopping at the first `)`. See the note on the if-statement parser.
+        stmt->while_stmt.condition = expression();
+
         // Restore struct init flag
         parser.allow_struct_init = saved_allow_struct_init;
-        
+
         stmt->while_stmt.body = parse_block_or_stmt("while");
         return stmt;
     }
