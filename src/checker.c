@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <errno.h>
 #include "common.h"
 #include "growable.h"
@@ -1261,6 +1262,42 @@ static Type* register_result_struct_family(Type* struct_type) {
     return register_result_struct_family_e(struct_type, NULL);
 }
 
+// reg_fn - register one builtin function signature in the global scope.
+//
+// Every builtin was hand-rolled as an 11-line block:
+//
+//     {
+//         Type* ft = make_type(TYPE_FUNCTION);
+//         ft->fn_type.param_count = 4;
+//         ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
+//         ft->fn_type.param_types[0] = builtin_int;
+//         ...
+//         Token tok = {TOKEN_IDENT, "Http_respond", 12, 0};
+//         add_symbol(global_scope, tok, ft, false);
+//     }
+//
+// 126 of them, ~1400 lines of the 1707-line init_checker. Besides the bulk, the
+// hand-written form carries a hazard the helper removes: the Token length is a
+// HAND-COUNTED literal (`"Http_respond", 12`). Miscount it and the symbol is
+// registered under a truncated or overlong name, so the builtin silently does not
+// resolve - a bug you cannot see by reading the line it is on. strlen() cannot be
+// miscounted.
+//
+// Variadic in the param types, terminated by the count, so a signature reads as one
+// line that looks like the Wyn declaration it mirrors.
+static void reg_fn(const char* name, Type* ret, int npar, ...) {
+    Type* ft = make_type(TYPE_FUNCTION);
+    ft->fn_type.param_count = npar;
+    ft->fn_type.param_types = npar ? malloc(sizeof(Type*) * npar) : NULL;
+    va_list ap;
+    va_start(ap, npar);
+    for (int i = 0; i < npar; i++) ft->fn_type.param_types[i] = va_arg(ap, Type*);
+    va_end(ap);
+    ft->fn_type.return_type = ret;
+    Token tok = {TOKEN_IDENT, name, (int)strlen(name), 0};
+    add_symbol(global_scope, tok, ft, false);
+}
+
 void init_checker() {
     global_scope = calloc(1, sizeof(SymbolTable));
     global_scope->capacity = 128;
@@ -2295,25 +2332,11 @@ void init_checker() {
 
     // HashMap namespace: HashMap.new() -> HashMap_new()
     Type* map_type = make_type(TYPE_MAP);
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 0;
-        ft->fn_type.param_types = NULL;
-        ft->fn_type.return_type = map_type;
-        Token tok = {TOKEN_IDENT, "HashMap_new", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
+    reg_fn("HashMap_new", map_type, 0);
 
     // HashSet namespace: HashSet.new() -> HashSet_new()
     Type* set_type = make_type(TYPE_SET);
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 0;
-        ft->fn_type.param_types = NULL;
-        ft->fn_type.return_type = set_type;
-        Token tok = {TOKEN_IDENT, "HashSet_new", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
+    reg_fn("HashSet_new", set_type, 0);
 
     // Json namespace
     Type* json_type = make_type(TYPE_MAP); // opaque pointer
@@ -2343,38 +2366,11 @@ void init_checker() {
     }
 
     // Http namespace
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Http_get", 8, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
+    reg_fn("Http_get", builtin_string, 1, builtin_string);
 
     // Regex namespace
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 2;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Regex_match", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 3;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.param_types[2] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Regex_replace", 13, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
+    reg_fn("Regex_match", builtin_int, 2, builtin_string, builtin_string);
+    reg_fn("Regex_replace", builtin_string, 3, builtin_string, builtin_string, builtin_string);
 
     // Terminal namespace
     struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* ret; } term_fns[] = {
@@ -2454,205 +2450,42 @@ void init_checker() {
     add_symbol(global_scope, dt_sleep_tok, dt_sleep_t, false);
 
     // Http namespace - additional methods
-    {
-        // Http.post(url, data) -> string
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 2;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Http_post", 9, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 2;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Http_put", 8, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Http_delete", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        // Http.serve(port) -> int (server fd)
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Http_serve", 10, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        // Http.accept(server_fd) -> string (request data)
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Http_accept", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        // Http.respond(client_fd, status, content_type, body)
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 4;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.param_types[1] = builtin_int;
-        ft->fn_type.param_types[2] = builtin_string;
-        ft->fn_type.param_types[3] = builtin_string;
-        ft->fn_type.return_type = builtin_void;
-        Token tok = {TOKEN_IDENT, "Http_respond", 12, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        // Http.respond_json(fd, status, json_string)
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 3;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.param_types[1] = builtin_int;
-        ft->fn_type.param_types[2] = builtin_string;
-        ft->fn_type.return_type = builtin_void;
-        Token tok = {TOKEN_IDENT, "Http_respond_json", 17, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        // Http.respond_html(fd, status, html_string)
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 3;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.param_types[1] = builtin_int;
-        ft->fn_type.param_types[2] = builtin_string;
-        ft->fn_type.return_type = builtin_void;
-        Token tok = {TOKEN_IDENT, "Http_respond_html", 17, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 2;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.return_type = builtin_void;
-        Token tok = {TOKEN_IDENT, "Http_set_header", 15, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
+    // Http.post(url, data) -> string
+    reg_fn("Http_post", builtin_string, 2, builtin_string, builtin_string);
+    reg_fn("Http_put", builtin_string, 2, builtin_string, builtin_string);
+    reg_fn("Http_delete", builtin_string, 1, builtin_string);
+    // Http.serve(port) -> int (server fd)
+    reg_fn("Http_serve", builtin_int, 1, builtin_int);
+    // Http.accept(server_fd) -> string (request data)
+    reg_fn("Http_accept", builtin_string, 1, builtin_int);
+    // Http.respond(client_fd, status, content_type, body)
+    reg_fn("Http_respond", builtin_void, 4,
+           builtin_int, builtin_int, builtin_string, builtin_string);
+    // Http.respond_json(fd, status, json_string)
+    reg_fn("Http_respond_json", builtin_void, 3, builtin_int, builtin_int, builtin_string);
+    // Http.respond_html(fd, status, html_string)
+    reg_fn("Http_respond_html", builtin_void, 3, builtin_int, builtin_int, builtin_string);
+    reg_fn("Http_set_header", builtin_void, 2, builtin_string, builtin_string);
 
     // Url namespace
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Url_encode", 10, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Url_decode", 10, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
+    reg_fn("Url_encode", builtin_string, 1, builtin_string);
+    reg_fn("Url_decode", builtin_string, 1, builtin_string);
 
     // Path namespace - already registered above
 
     // System namespace
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "System_exec", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "System_exec_code", 16, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "System_env", 10, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
+    reg_fn("System_exec", builtin_string, 1, builtin_string);
+    reg_fn("System_exec_code", builtin_int, 1, builtin_string);
+    reg_fn("System_env", builtin_string, 1, builtin_string);
 
     // Math namespace - already registered above
 
     // Net namespace
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Net_listen", 10, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 2;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.param_types[1] = builtin_int;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Net_connect", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 2;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Net_send", 8, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Net_recv", 8, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Net_close", 9, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
+    reg_fn("Net_listen", builtin_int, 1, builtin_int);
+    reg_fn("Net_connect", builtin_int, 2, builtin_string, builtin_int);
+    reg_fn("Net_send", builtin_int, 2, builtin_int, builtin_string);
+    reg_fn("Net_recv", builtin_string, 1, builtin_int);
+    reg_fn("Net_close", builtin_int, 1, builtin_int);
 
     // Task namespace
     struct { const char* name; int nlen; Type* ret; int pc; Type* p1; } reg_task_fns[] = {
