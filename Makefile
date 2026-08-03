@@ -359,6 +359,12 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_handle_in_array_literal_test.sh
 	@echo "=== Running module enum-type test ==="
 	@WYN=./wyn bash tests/errors/run_module_enum_type_test.sh
+	@echo "=== Running module array-param test ==="
+	@WYN=./wyn bash tests/errors/run_module_array_param_test.sh
+	@echo "=== Running import-list size test ==="
+	@WYN=./wyn bash tests/errors/run_import_list_test.sh
+	@echo "=== Running GUI build-link test ==="
+	@WYN=./wyn bash tests/errors/run_gui_build_test.sh
 	@echo "=== Running bool-method formatting test ==="
 	@WYN=./wyn bash tests/errors/run_bool_method_format_test.sh
 	@echo "=== Running python/shared-library build test ==="
