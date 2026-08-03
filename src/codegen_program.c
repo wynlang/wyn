@@ -1008,7 +1008,14 @@ void codegen_program(Program* prog) {
                     }
                 }
             }
-            if (_emit_inline || (_is_recursive && !_is_spawned_fn)) emit("__attribute__((hot)) static inline ");
+            // Same reason as in codegen_stmt.c: in library mode `static` would keep the
+            // symbol out of the .dylib/.so, so a --python/--shared build must not
+            // inline. Note this covers the RECURSIVE case too - `factorial` in the
+            // Python guide is recursive AND under the size threshold, so it was hidden
+            // by both conditions.
+            extern bool codegen_in_library_mode(void);
+            if ((_emit_inline || (_is_recursive && !_is_spawned_fn)) &&
+                !codegen_in_library_mode()) emit("__attribute__((hot)) static inline ");
             else if (!is_main_function) emit("__attribute__((hot)) ");
             
             if (is_main_function) {

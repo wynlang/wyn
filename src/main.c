@@ -70,6 +70,256 @@ void build_source_list(char* buf, int bufsize, const char* prefix) {
     }
 }
 
+// LIBRARY NAME OVERRIDE.
+//
+// The artifact name normally derives from the source file's basename, which is right
+// for `wyn build mathlib.wyn --python` (-> libmathlib + mathlib.py). It is WRONG when
+// the whole project is built with no file argument: `wyn init --lib python mylib`
+// scaffolds entry = "src/main.wyn" and prints
+// `python3 -c "from mylib import add"`, but naming from the file gives libmain.dylib
+// and main.py - so the scaffold's own instructions failed with ModuleNotFoundError
+// even after the library itself built correctly. When wyn.toml names the project, that
+// name wins.
+static char g_library_name[128] = "";
+void wyn_set_library_name(const char* n) {
+    if (n && n[0]) snprintf(g_library_name, sizeof(g_library_name), "%s", n);
+}
+
+// wyn_emit_shared_library - build a .dylib/.so/.dll from the already-generated C and,
+// for --python / --node, write the FFI wrapper beside it.
+//
+// EXTRACTED so that BOTH `wyn run` and `wyn build` can reach it. It used to live inline
+// under `run`, which meant `wyn build x.wyn --python` - the spelling the docs and
+// `wyn init --lib python` both tell you to use - could not reach it at all: `build`
+// parsed --python into a string used only for the progress line, then produced an
+// ordinary executable and printed a success message. No .dylib, no .py, exit 0.
+//
+// mode: 1 = --shared (library only), 2 = --python (+ .py ctypes wrapper),
+//       3 = --node   (+ .js ffi-napi wrapper).
+// Returns 0 on success, 1 on failure.
+//
+// The CALLER must have put codegen into library mode (codegen_set_library_mode(true))
+// BEFORE generating the C, or small functions come out `static inline` and are absent
+// from the library's symbol table - see the comment on codegen_set_library_mode.
+int wyn_emit_shared_library(const char* file, Program* prog, int shared_mode,
+                            const char* wyn_root, const char* opt_level,
+                            const char* platform_libs, int have_prebuilt_runtime,
+                            int keep_artifacts, struct timespec _ts_start) {
+    // Named have_prebuilt_runtime rather than rt_check because in `run` the
+    // corresponding value is a FILE* that is fclose()d before this is reached; only
+    // its truthiness ("libwyn_rt.a exists") travels here.
+    const int rt_check = have_prebuilt_runtime;
+    struct timespec _ts_end;
+        char lib_name[256] = {0};
+        if (g_library_name[0]) {
+            // wyn.toml named the project - use that, so the import name matches what
+            // the scaffold and the docs tell the user to write.
+            snprintf(lib_name, sizeof(lib_name), "%s", g_library_name);
+        } else {
+            const char* base = strrchr(file, '/');
+            base = base ? base + 1 : file;
+            snprintf(lib_name, sizeof(lib_name), "%s", base);
+            char* ldot = strrchr(lib_name, '.'); if (ldot) *ldot = 0;
+        }
+#ifdef __APPLE__
+        const char* lib_ext = "dylib"; const char* shared_flags = "-dynamiclib";
+#elif _WIN32
+        const char* lib_ext = "dll"; const char* shared_flags = "-shared";
+#else
+        const char* lib_ext = "so"; const char* shared_flags = "-shared";
+#endif
+        char lib_path[512];
+        snprintf(lib_path, sizeof(lib_path), "lib%s.%s", lib_name, lib_ext);
+        char shared_cmd[8192];
+        if (rt_check) {
+            snprintf(shared_cmd, sizeof(shared_cmd),
+                     "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s %s.c %s/runtime/libwyn_rt.a %s 2>wyn_cc_err.txt",
+                     opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, platform_libs);
+        } else {
+            char src_list[4096];
+            build_source_list(src_list, sizeof(src_list), wyn_root);
+            snprintf(shared_cmd, sizeof(shared_cmd),
+                     "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s %s.c %s %s 2>wyn_cc_err.txt",
+                     opt_level, shared_flags, wyn_root, wyn_root, lib_path, file, src_list, platform_libs);
+        }
+        int result = system(shared_cmd);
+        if (result == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &_ts_end);
+            double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
+            fprintf(stderr, "\033[32m✓\033[0m Built shared library: %s (%.0fms)\n", lib_path, _ms);
+        }
+        if (result == 0 && shared_mode == 2) {
+            char py_path[512]; snprintf(py_path, sizeof(py_path), "%s.py", lib_name);
+            FILE* py = fopen(py_path, "w");
+            if (py) {
+                fprintf(py, "\"\"\"Auto-generated Python wrapper for %s.wyn - created by Wyn\"\"\"\n", lib_name);
+                fprintf(py, "import ctypes, os, sys\n\n");
+                fprintf(py, "_dir = os.path.dirname(os.path.abspath(__file__))\n");
+                fprintf(py, "if sys.platform == 'darwin':\n    _ext = 'dylib'\nelif sys.platform == 'win32':\n    _ext = 'dll'\nelse:\n    _ext = 'so'\n");
+                fprintf(py, "_lib = ctypes.CDLL(os.path.join(_dir, f'lib%s.{_ext}'))\n\n", lib_name);
+                for (int fi = 0; fi < prog->count; fi++) {
+                    Stmt* s = prog->stmts[fi];
+                    if (s->type != STMT_FN) continue;
+                    if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
+                    if (s->fn.receiver_type.length > 0) continue;
+                    char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
+                    // C keyword prefix
+                    const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                    const char* cpfx = "";
+                    for (int k = 0; _ckw[k]; k++) { if (strcmp(fname, _ckw[k]) == 0) { cpfx = "_"; break; } }
+                    // Return type
+                    const char* py_res = "ctypes.c_longlong";
+                    int ret_is_str = 0;
+                    if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT) {
+                        Token rt = s->fn.return_type->token;
+                        if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) { py_res = "ctypes.c_char_p"; ret_is_str = 1; }
+                        else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) py_res = "ctypes.c_double";
+                        else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) py_res = "ctypes.c_bool";
+                    } else if (!s->fn.return_type) { py_res = "None"; }
+                    // Wyn signature as comment
+                    fprintf(py, "# %s(", fname);
+                    for (int p = 0; p < s->fn.param_count; p++) {
+                        if (p > 0) fprintf(py, ", ");
+                        fprintf(py, "%.*s: %.*s", s->fn.params[p].length, s->fn.params[p].start,
+                                s->fn.param_types[p] ? s->fn.param_types[p]->token.length : 3,
+                                s->fn.param_types[p] ? s->fn.param_types[p]->token.start : "int");
+                    }
+                    fprintf(py, ")");
+                    if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT)
+                        fprintf(py, " -> %.*s", s->fn.return_type->token.length, s->fn.return_type->token.start);
+                    fprintf(py, "\n");
+                    // argtypes
+                    fprintf(py, "_lib.%s%s.argtypes = [", cpfx, fname);
+                    for (int p = 0; p < s->fn.param_count; p++) {
+                        if (p > 0) fprintf(py, ", ");
+                        if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                            Token pt = s->fn.param_types[p]->token;
+                            if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(py, "ctypes.c_char_p");
+                            else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(py, "ctypes.c_double");
+                            else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(py, "ctypes.c_bool");
+                            else fprintf(py, "ctypes.c_longlong");
+                        } else fprintf(py, "ctypes.c_longlong");
+                    }
+                    fprintf(py, "]\n");
+                    fprintf(py, "_lib.%s%s.restype = %s\n\n", cpfx, fname, py_res);
+                    // Python wrapper function with type hints
+                    fprintf(py, "def %s(", fname);
+                    for (int p = 0; p < s->fn.param_count; p++) {
+                        if (p > 0) fprintf(py, ", ");
+                        fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
+                        // Add type hint
+                        if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                            Token pt = s->fn.param_types[p]->token;
+                            if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(py, ": str");
+                            else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(py, ": float");
+                            else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(py, ": bool");
+                            else if (pt.length == 3 && memcmp(pt.start, "int", 3) == 0) fprintf(py, ": int");
+                        }
+                    }
+                    // Return type hint
+                    if (ret_is_str) fprintf(py, ") -> str:\n");
+                    else if (strcmp(py_res, "ctypes.c_double") == 0) fprintf(py, ") -> float:\n");
+                    else if (strcmp(py_res, "ctypes.c_bool") == 0) fprintf(py, ") -> bool:\n");
+                    else if (strcmp(py_res, "None") == 0) fprintf(py, ") -> None:\n");
+                    else fprintf(py, ") -> int:\n");
+                    // Encode string params
+                    for (int p = 0; p < s->fn.param_count; p++) {
+                        if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                            Token pt = s->fn.param_types[p]->token;
+                            if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0)
+                                fprintf(py, "    %.*s = %.*s.encode() if isinstance(%.*s, str) else %.*s\n",
+                                        s->fn.params[p].length, s->fn.params[p].start,
+                                        s->fn.params[p].length, s->fn.params[p].start,
+                                        s->fn.params[p].length, s->fn.params[p].start,
+                                        s->fn.params[p].length, s->fn.params[p].start);
+                        }
+                    }
+                    fprintf(py, "    _r = _lib.%s%s(", cpfx, fname);
+                    for (int p = 0; p < s->fn.param_count; p++) {
+                        if (p > 0) fprintf(py, ", ");
+                        fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
+                    }
+                    fprintf(py, ")\n");
+                    if (ret_is_str) fprintf(py, "    return _r.decode() if _r else \"\"\n");
+                    else if (strcmp(py_res, "None") != 0) fprintf(py, "    return _r\n");
+                    fprintf(py, "\n");
+                }
+                fclose(py);
+                fprintf(stderr, "\033[32m✓\033[0m Generated Python wrapper: %s\n", py_path);
+            }
+        }
+        // Generate Node.js wrapper if --node (mode 3)
+        if (result == 0 && shared_mode == 3) {
+            char js_path[512]; snprintf(js_path, sizeof(js_path), "%s.js", lib_name);
+            FILE* js = fopen(js_path, "w");
+            if (js) {
+                fprintf(js, "// Auto-generated Node.js wrapper for %s.wyn - created by Wyn\n", lib_name);
+                fprintf(js, "const ffi = require('ffi-napi');\n");
+                fprintf(js, "const path = require('path');\n\n");
+                fprintf(js, "const ext = process.platform === 'darwin' ? 'dylib' : process.platform === 'win32' ? 'dll' : 'so';\n");
+                fprintf(js, "const lib = ffi.Library(path.join(__dirname, `lib%s.${ext}`), {\n", lib_name);
+                
+                int first_fn = 1;
+                for (int fi = 0; fi < prog->count; fi++) {
+                    Stmt* s = prog->stmts[fi];
+                    if (s->type != STMT_FN) continue;
+                    if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
+                    if (s->fn.receiver_type.length > 0) continue;
+                    
+                    char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
+                    // C keyword prefix
+                    const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                    const char* cpfx = "";
+                    for (int k = 0; _ckw[k]; k++) { if (strcmp(fname, _ckw[k]) == 0) { cpfx = "_"; break; } }
+                    
+                    // Return type
+                    const char* js_ret = "'int64'";
+                    if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT) {
+                        Token rt = s->fn.return_type->token;
+                        if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) js_ret = "'string'";
+                        else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) js_ret = "'double'";
+                        else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) js_ret = "'bool'";
+                    } else if (!s->fn.return_type) { js_ret = "'void'"; }
+                    
+                    if (!first_fn) fprintf(js, ",\n");
+                    fprintf(js, "  '%s%s': [%s, [", cpfx, fname, js_ret);
+                    for (int p = 0; p < s->fn.param_count; p++) {
+                        if (p > 0) fprintf(js, ", ");
+                        if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                            Token pt = s->fn.param_types[p]->token;
+                            if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(js, "'string'");
+                            else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(js, "'double'");
+                            else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(js, "'bool'");
+                            else fprintf(js, "'int64'");
+                        } else fprintf(js, "'int64'");
+                    }
+                    fprintf(js, "]]");
+                    first_fn = 0;
+                }
+                fprintf(js, "\n});\n\n");
+                
+                // Export wrapper functions
+                for (int fi = 0; fi < prog->count; fi++) {
+                    Stmt* s = prog->stmts[fi];
+                    if (s->type != STMT_FN) continue;
+                    if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
+                    if (s->fn.receiver_type.length > 0) continue;
+                    char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
+                    const char* cpfx = "";
+                    const char* _ckw2[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                    for (int k = 0; _ckw2[k]; k++) { if (strcmp(fname, _ckw2[k]) == 0) { cpfx = "_"; break; } }
+                    fprintf(js, "exports.%s = lib.%s%s;\n", fname, cpfx, fname);
+                }
+                fclose(js);
+                fprintf(stderr, "\033[32m✓\033[0m Generated Node.js wrapper: %s\n", js_path);
+                fprintf(stderr, "  Install ffi-napi: npm install ffi-napi\n");
+            }
+        }
+        if (!keep_artifacts) { char cp[512]; snprintf(cp, sizeof(cp), "%s.c", file); unlink(cp); }
+        unlink("wyn_cc_err.txt");
+        return result == 0 ? 0 : 1;
+}
+
 // Portable recursive `mkdir -p`. Creates every component of `path`, tolerating
 // components that already exist. Works on Windows (via _mkdir, which itself
 // accepts forward slashes) and POSIX (mkdir(p, 0755)) without shelling out to
@@ -1523,17 +1773,51 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "build") == 0) {
-        if (argc < 3) {
+        // `wyn build --python` (no file) has argc==3, so the "no arguments" branch below
+        // never ran and the FLAG was taken as the file/dir. Decide on whether a real
+        // non-flag argument was given, not on argc - `wyn init --lib python` prints
+        // exactly this flag-only spelling.
+        int _has_file_arg = 0;
+        for (int i = 2; i < argc; i++)
+            if (argv[i][0] != '-') { _has_file_arg = 1; break; }
+        if (!_has_file_arg) {
             // Try wyn.toml, then src/main.wyn
             struct stat _bs;
+            const char* _resolved_entry = NULL;
             if (stat("wyn.toml", &_bs) == 0) {
                 FILE* _tf = fopen("wyn.toml", "r");
                 char _tb[4096]; int _tl = fread(_tb, 1, sizeof(_tb)-1, _tf); _tb[_tl] = 0; fclose(_tf);
                 char* _ep = strstr(_tb, "entry = \"");
-                if (_ep) { char _e[256]; if (sscanf(_ep, "entry = \"%255[^\"]\"", _e) == 1 && stat(_e, &_bs) == 0) { argc = 3; argv[2] = strdup(_e); } }
+                // APPEND the entry rather than writing argv[2]: with a flag-only
+                // invocation (`wyn build --python`) argv[2] IS the flag, and
+                // overwriting it silently dropped the flag and built an executable.
+                if (_ep) { char _e[256]; if (sscanf(_ep, "entry = \"%255[^\"]\"", _e) == 1 && stat(_e, &_bs) == 0) {
+                    _resolved_entry = strdup(_e); } }
+                // In library mode the artifact is NAMED, and the name a caller imports
+                // comes from the PROJECT, not from the file that happens to be the
+                // entry point. `wyn init --lib python mylib` scaffolds
+                // entry = "src/main.wyn" and then tells you to
+                // `from mylib import add` - but naming from the file produced
+                // libmain.dylib + main.py, so the scaffold's own instructions still
+                // gave ModuleNotFoundError even once the library built correctly.
+                char* _np = strstr(_tb, "name = \"");
+                if (_np) { char _n[128]; if (sscanf(_np, "name = \"%127[^\"]\"", _n) == 1 && _n[0]) {
+                    extern void wyn_set_library_name(const char*);
+                    wyn_set_library_name(_n); } }
             }
-            if (argc < 3 && stat("src/main.wyn", &_bs) == 0) { argc = 3; argv[2] = "src/main.wyn"; }
-            if (argc < 3) {
+            if (!_resolved_entry && stat("src/main.wyn", &_bs) == 0) _resolved_entry = "src/main.wyn";
+            if (_resolved_entry) {
+                // Splice the resolved entry in as a new argv element so the flags the
+                // user actually typed all survive.
+                static char* _newargv[64];
+                int _n = 0;
+                _newargv[_n++] = argv[0];
+                _newargv[_n++] = argv[1];
+                _newargv[_n++] = (char*)_resolved_entry;
+                for (int i = 2; i < argc && _n < 63; i++) _newargv[_n++] = argv[i];
+                argv = _newargv; argc = _n;
+            }
+            if (!_resolved_entry) {
                 fprintf(stderr, "Usage: wyn build <file|dir> [--release] [--app] [--shared|--python]\n");
                 fprintf(stderr, "  --app         package a native, double-clickable GUI app instead of a\n");
                 fprintf(stderr, "                console binary: a .app bundle on macOS, a GUI-subsystem\n");
@@ -1559,9 +1843,19 @@ int main(int argc, char** argv) {
         // --app-plan prints the decision without compiling.
         int app_flag = 0, app_plan_only = 0;
         const char* app_target = NULL;
+        // build_shared_mode: 0=executable, 1=--shared, 2=--python, 3=--node.
+        //
+        // These used to set only `build_flag`, a string used for the progress line and a
+        // TCC gate - so `wyn build x.wyn --python` printed "Building x.wyn --python..."
+        // and "✓ Built: x (51KB)" and produced an ORDINARY EXECUTABLE. No .dylib, no
+        // .py, exit 0. The real generator lived under `run` and `build` could not reach
+        // it, which made the documented quickstart (and `wyn init --lib python`, which
+        // tells you to run exactly this) impossible to follow.
+        int build_shared_mode = 0;
         for (int i = 2; i < argc; i++) {
-            if (strcmp(argv[i], "--shared") == 0) build_flag = " --shared";
-            else if (strcmp(argv[i], "--python") == 0) build_flag = " --python";
+            if (strcmp(argv[i], "--shared") == 0) { build_flag = " --shared"; build_shared_mode = 1; }
+            else if (strcmp(argv[i], "--python") == 0) { build_flag = " --python"; build_shared_mode = 2; }
+            else if (strcmp(argv[i], "--node") == 0) { build_flag = " --node"; build_shared_mode = 3; }
             else if (strcmp(argv[i], "--release") == 0) build_release = 1;
             else if (strcmp(argv[i], "--fast") == 0) { /* skip optimizations - default behavior */ }
             else if (strcmp(argv[i], "--pgo") == 0) build_pgo = 1;
@@ -1590,6 +1884,15 @@ int main(int argc, char** argv) {
                     char tb[4096]; int tl = fread(tb, 1, sizeof(tb)-1, toml); tb[tl] = 0; fclose(toml);
                     char* ep = strstr(tb, "entry = \"");
                     if (ep) { char e[256]; if (sscanf(ep, "entry = \"%255[^\"]\"", e) == 1) { snprintf(entry_resolve, sizeof(entry_resolve), "%s/%s", dir, e); found = 1; } }
+                    // Library artifacts are named from the PROJECT, not from the entry
+                    // file - see wyn_set_library_name. There are two wyn.toml readers on
+                    // the build path (this one runs when a directory is resolved, which
+                    // is what a bare `wyn build --python` does); both must capture it, or
+                    // the name silently falls back to the file's basename.
+                    char* np = strstr(tb, "name = \"");
+                    if (np) { char n[128]; if (sscanf(np, "name = \"%127[^\"]\"", n) == 1 && n[0]) {
+                        extern void wyn_set_library_name(const char*);
+                        wyn_set_library_name(n); } }
                 }
                 if (!found) {
                     snprintf(entry_resolve, sizeof(entry_resolve), "%s/main.wyn", dir);
@@ -1729,7 +2032,11 @@ int main(int argc, char** argv) {
           // full-header-only and would have to be gated the same way).
           codegen_set_slim_runtime(false);
           codegen_set_source_file(entry);
-          codegen_set_gpu_enabled(wyn_gpu_flag_from_toml() != 0); }
+          codegen_set_gpu_enabled(wyn_gpu_flag_from_toml() != 0);
+          // Same as the `run` path: --shared/--python/--node must keep every user
+          // function externally linked so the FFI can find it.
+          extern void codegen_set_library_mode(bool);
+          codegen_set_library_mode(build_shared_mode > 0); }
         codegen_c_header();
         codegen_program(prog);
         fclose(out_f);
@@ -1751,6 +2058,31 @@ int main(int argc, char** argv) {
         // Determine wyn_root (shared helper - see resolve_wyn_root).
         char wyn_root[1024];
         resolve_wyn_root(argv[0], wyn_root, sizeof(wyn_root));
+
+        // LIBRARY MODE: --shared / --python / --node produce a .dylib/.so/.dll plus an
+        // FFI wrapper instead of an executable, via the same generator `run` uses.
+        // Before this, `build` fell through to the executable link below and reported
+        // success, so the documented `wyn build x.wyn --python` quickstart produced a
+        // plain binary and Python could not import anything.
+        if (build_shared_mode > 0) {
+            char _rt_lib_probe[512];
+            snprintf(_rt_lib_probe, sizeof(_rt_lib_probe), "%s/runtime/libwyn_rt.a", wyn_root);
+            const char* _lib_opt = build_release ? "-O3" : "-O0";
+            // Same per-platform link inputs the `run` path passes.
+#ifdef _WIN32
+            const char* _lib_platform_libs = "-Wl,--allow-multiple-definition -lws2_32 -lpthread -lm";
+#elif defined(__APPLE__)
+            const char* _lib_platform_libs = "-lpthread -lm";
+#else
+            const char* _lib_platform_libs = "-Wl,--allow-multiple-definition -lpthread -lm";
+#endif
+            int _lrc = wyn_emit_shared_library(entry, prog, build_shared_mode, wyn_root,
+                                               _lib_opt, _lib_platform_libs,
+                                               access(_rt_lib_probe, R_OK) == 0,
+                                               /*keep_artifacts=*/0, _build_t0);
+            free(source);
+            return _lrc;
+        }
 
         // Compile with TCC or system cc
         const char* cc = detect_cc();
@@ -3246,7 +3578,18 @@ int main(int argc, char** argv) {
           codegen_set_source_file(file);
           // GPU dispatch spike: only with the full runtime header - the slim
           // (--release) header does not carry the wyn_gpu_try_map_float shim.
-          codegen_set_gpu_enabled(!_slim && wyn_gpu_flag_from_toml() != 0); }
+          codegen_set_gpu_enabled(!_slim && wyn_gpu_flag_from_toml() != 0);
+          // Library mode MUST be set before codegen_program(), or a small function
+          // comes out `static inline` and is missing from the library's symbol table.
+          // shared_mode itself is parsed further down, so recompute the predicate here
+          // over the whole argv (the same rule: these flags select an output artifact,
+          // and in library mode there is no program argv to collide with).
+          extern void codegen_set_library_mode(bool);
+          { bool _lib = false;
+            for (int _i = 2; _i < argc; _i++)
+              if (strcmp(argv[_i], "--shared") == 0 || strcmp(argv[_i], "--python") == 0 ||
+                  strcmp(argv[_i], "--node") == 0) { _lib = true; break; }
+            codegen_set_library_mode(_lib); } }
         codegen_c_header();
         codegen_program(prog);
         fclose(out);
@@ -3337,29 +3680,44 @@ int main(int argc, char** argv) {
         // it is the PROGRAM's argv, so a program flag named --release/--fast must
         // not reconfigure our compile (and must still reach the program).
         int _flag_lim = (user_args_start > 0) ? user_args_start : argc;
+        // The LIBRARY flags are scanned over the WHOLE argv, not the [3, _flag_lim)
+        // window the other flags use.
+        //
+        // The positional argument split stops interpreting at the file name, so in
+        // `wyn run mathlib.wyn --python` the flag lands in the PROGRAM's arguments and
+        // user_args_start points at it - making [3, _flag_lim) empty and the flag
+        // invisible. That is why --shared/--python/--node silently did nothing here as
+        // well as under `build`.
+        //
+        // Scanning all of argv is right for these three specifically because they
+        // select an OUTPUT ARTIFACT rather than pass data to a program: in library mode
+        // there is no program run, so there is no program argv to collide with.
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--shared") == 0) { shared_mode = 1; }
+            else if (strcmp(argv[i], "--python") == 0) { shared_mode = 2; }
+            else if (strcmp(argv[i], "--node") == 0) { shared_mode = 3; }
+        }
         for (int i = 3; i < _flag_lim; i++) {
             if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; }
             if (strcmp(argv[i], "--release") == 0) { opt_level = "-O3"; }
-            if (strcmp(argv[i], "--shared") == 0) { shared_mode = 1; }
-            if (strcmp(argv[i], "--python") == 0) { shared_mode = 2; }
-            if (strcmp(argv[i], "--node") == 0) { shared_mode = 4; }
         }
         
-        // WASM target - early check
-        // Node.js - build shared lib + JS wrapper
-        if (shared_mode == 4) { shared_mode = 1; }
-        int generate_node = 0;
         int use_release = 0;
         for (int i = 3; i < _flag_lim; i++) {
-            if (strcmp(argv[i], "--node") == 0) { generate_node = 1; }
             if (strcmp(argv[i], "--release") == 0) { use_release = 1; }
+        }
+        // --release also has to be seen when it follows the file, for the same reason.
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--release") == 0 && shared_mode > 0) {
+                use_release = 1; opt_level = "-O3";
+            }
         }
         
         // Use TCC only when precompiled runtime is not available
         // System cc + precompiled libwyn_rt.a is faster (~300ms vs ~1800ms TCC)
         char rt_lib[512];
         snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
-        int _use_tcc = (!use_release && !shared_mode && !generate_node && wyn_tcc_available() && access(rt_lib, R_OK) != 0);
+        int _use_tcc = (!use_release && !shared_mode && wyn_tcc_available() && access(rt_lib, R_OK) != 0);
         if (_use_tcc) {
             // Read the generated C source
             char* c_source = read_file(out_path);
@@ -3438,209 +3796,13 @@ int main(int argc, char** argv) {
         }
         
         // Shared library mode: compile as .so/.dylib instead of executable
+        // Shared library mode (--shared / --python / --node): emit a .dylib/.so/.dll
+        // plus its FFI wrapper instead of an executable. Shared with `wyn build`.
         if (shared_mode > 0) {
-            char lib_name[256] = {0};
-            const char* base = strrchr(file, '/');
-            base = base ? base + 1 : file;
-            snprintf(lib_name, sizeof(lib_name), "%s", base);
-            char* ldot = strrchr(lib_name, '.'); if (ldot) *ldot = 0;
-#ifdef __APPLE__
-            const char* lib_ext = "dylib"; const char* shared_flags = "-dynamiclib";
-#elif _WIN32
-            const char* lib_ext = "dll"; const char* shared_flags = "-shared";
-#else
-            const char* lib_ext = "so"; const char* shared_flags = "-shared";
-#endif
-            char lib_path[512];
-            snprintf(lib_path, sizeof(lib_path), "lib%s.%s", lib_name, lib_ext);
-            char shared_cmd[8192];
-            if (rt_check) {
-                snprintf(shared_cmd, sizeof(shared_cmd),
-                         "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s %s.c %s/runtime/libwyn_rt.a %s 2>wyn_cc_err.txt",
-                         opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, platform_libs);
-            } else {
-                char src_list[4096];
-                build_source_list(src_list, sizeof(src_list), wyn_root);
-                snprintf(shared_cmd, sizeof(shared_cmd),
-                         "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s %s.c %s %s 2>wyn_cc_err.txt",
-                         opt_level, shared_flags, wyn_root, wyn_root, lib_path, file, src_list, platform_libs);
-            }
-            int result = system(shared_cmd);
-            if (result == 0) {
-                clock_gettime(CLOCK_MONOTONIC, &_ts_end);
-                double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
-                fprintf(stderr, "\033[32m✓\033[0m Built shared library: %s (%.0fms)\n", lib_path, _ms);
-            }
-            if (result == 0 && shared_mode == 2) {
-                char py_path[512]; snprintf(py_path, sizeof(py_path), "%s.py", lib_name);
-                FILE* py = fopen(py_path, "w");
-                if (py) {
-                    fprintf(py, "\"\"\"Auto-generated Python wrapper for %s.wyn - created by Wyn\"\"\"\n", lib_name);
-                    fprintf(py, "import ctypes, os, sys\n\n");
-                    fprintf(py, "_dir = os.path.dirname(os.path.abspath(__file__))\n");
-                    fprintf(py, "if sys.platform == 'darwin':\n    _ext = 'dylib'\nelif sys.platform == 'win32':\n    _ext = 'dll'\nelse:\n    _ext = 'so'\n");
-                    fprintf(py, "_lib = ctypes.CDLL(os.path.join(_dir, f'lib%s.{_ext}'))\n\n", lib_name);
-                    for (int fi = 0; fi < prog->count; fi++) {
-                        Stmt* s = prog->stmts[fi];
-                        if (s->type != STMT_FN) continue;
-                        if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
-                        if (s->fn.receiver_type.length > 0) continue;
-                        char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
-                        // C keyword prefix
-                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
-                        const char* cpfx = "";
-                        for (int k = 0; _ckw[k]; k++) { if (strcmp(fname, _ckw[k]) == 0) { cpfx = "_"; break; } }
-                        // Return type
-                        const char* py_res = "ctypes.c_longlong";
-                        int ret_is_str = 0;
-                        if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT) {
-                            Token rt = s->fn.return_type->token;
-                            if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) { py_res = "ctypes.c_char_p"; ret_is_str = 1; }
-                            else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) py_res = "ctypes.c_double";
-                            else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) py_res = "ctypes.c_bool";
-                        } else if (!s->fn.return_type) { py_res = "None"; }
-                        // Wyn signature as comment
-                        fprintf(py, "# %s(", fname);
-                        for (int p = 0; p < s->fn.param_count; p++) {
-                            if (p > 0) fprintf(py, ", ");
-                            fprintf(py, "%.*s: %.*s", s->fn.params[p].length, s->fn.params[p].start,
-                                    s->fn.param_types[p] ? s->fn.param_types[p]->token.length : 3,
-                                    s->fn.param_types[p] ? s->fn.param_types[p]->token.start : "int");
-                        }
-                        fprintf(py, ")");
-                        if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT)
-                            fprintf(py, " -> %.*s", s->fn.return_type->token.length, s->fn.return_type->token.start);
-                        fprintf(py, "\n");
-                        // argtypes
-                        fprintf(py, "_lib.%s%s.argtypes = [", cpfx, fname);
-                        for (int p = 0; p < s->fn.param_count; p++) {
-                            if (p > 0) fprintf(py, ", ");
-                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
-                                Token pt = s->fn.param_types[p]->token;
-                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(py, "ctypes.c_char_p");
-                                else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(py, "ctypes.c_double");
-                                else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(py, "ctypes.c_bool");
-                                else fprintf(py, "ctypes.c_longlong");
-                            } else fprintf(py, "ctypes.c_longlong");
-                        }
-                        fprintf(py, "]\n");
-                        fprintf(py, "_lib.%s%s.restype = %s\n\n", cpfx, fname, py_res);
-                        // Python wrapper function with type hints
-                        fprintf(py, "def %s(", fname);
-                        for (int p = 0; p < s->fn.param_count; p++) {
-                            if (p > 0) fprintf(py, ", ");
-                            fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
-                            // Add type hint
-                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
-                                Token pt = s->fn.param_types[p]->token;
-                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(py, ": str");
-                                else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(py, ": float");
-                                else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(py, ": bool");
-                                else if (pt.length == 3 && memcmp(pt.start, "int", 3) == 0) fprintf(py, ": int");
-                            }
-                        }
-                        // Return type hint
-                        if (ret_is_str) fprintf(py, ") -> str:\n");
-                        else if (strcmp(py_res, "ctypes.c_double") == 0) fprintf(py, ") -> float:\n");
-                        else if (strcmp(py_res, "ctypes.c_bool") == 0) fprintf(py, ") -> bool:\n");
-                        else if (strcmp(py_res, "None") == 0) fprintf(py, ") -> None:\n");
-                        else fprintf(py, ") -> int:\n");
-                        // Encode string params
-                        for (int p = 0; p < s->fn.param_count; p++) {
-                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
-                                Token pt = s->fn.param_types[p]->token;
-                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0)
-                                    fprintf(py, "    %.*s = %.*s.encode() if isinstance(%.*s, str) else %.*s\n",
-                                            s->fn.params[p].length, s->fn.params[p].start,
-                                            s->fn.params[p].length, s->fn.params[p].start,
-                                            s->fn.params[p].length, s->fn.params[p].start,
-                                            s->fn.params[p].length, s->fn.params[p].start);
-                            }
-                        }
-                        fprintf(py, "    _r = _lib.%s%s(", cpfx, fname);
-                        for (int p = 0; p < s->fn.param_count; p++) {
-                            if (p > 0) fprintf(py, ", ");
-                            fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
-                        }
-                        fprintf(py, ")\n");
-                        if (ret_is_str) fprintf(py, "    return _r.decode() if _r else \"\"\n");
-                        else if (strcmp(py_res, "None") != 0) fprintf(py, "    return _r\n");
-                        fprintf(py, "\n");
-                    }
-                    fclose(py);
-                    fprintf(stderr, "\033[32m✓\033[0m Generated Python wrapper: %s\n", py_path);
-                }
-            }
-            // Generate Node.js wrapper if --node
-            if (result == 0 && generate_node) {
-                char js_path[512]; snprintf(js_path, sizeof(js_path), "%s.js", lib_name);
-                FILE* js = fopen(js_path, "w");
-                if (js) {
-                    fprintf(js, "// Auto-generated Node.js wrapper for %s.wyn - created by Wyn\n", lib_name);
-                    fprintf(js, "const ffi = require('ffi-napi');\n");
-                    fprintf(js, "const path = require('path');\n\n");
-                    fprintf(js, "const ext = process.platform === 'darwin' ? 'dylib' : process.platform === 'win32' ? 'dll' : 'so';\n");
-                    fprintf(js, "const lib = ffi.Library(path.join(__dirname, `lib%s.${ext}`), {\n", lib_name);
-                    
-                    int first_fn = 1;
-                    for (int fi = 0; fi < prog->count; fi++) {
-                        Stmt* s = prog->stmts[fi];
-                        if (s->type != STMT_FN) continue;
-                        if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
-                        if (s->fn.receiver_type.length > 0) continue;
-                        
-                        char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
-                        // C keyword prefix
-                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
-                        const char* cpfx = "";
-                        for (int k = 0; _ckw[k]; k++) { if (strcmp(fname, _ckw[k]) == 0) { cpfx = "_"; break; } }
-                        
-                        // Return type
-                        const char* js_ret = "'int64'";
-                        if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT) {
-                            Token rt = s->fn.return_type->token;
-                            if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) js_ret = "'string'";
-                            else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) js_ret = "'double'";
-                            else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) js_ret = "'bool'";
-                        } else if (!s->fn.return_type) { js_ret = "'void'"; }
-                        
-                        if (!first_fn) fprintf(js, ",\n");
-                        fprintf(js, "  '%s%s': [%s, [", cpfx, fname, js_ret);
-                        for (int p = 0; p < s->fn.param_count; p++) {
-                            if (p > 0) fprintf(js, ", ");
-                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
-                                Token pt = s->fn.param_types[p]->token;
-                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(js, "'string'");
-                                else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(js, "'double'");
-                                else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(js, "'bool'");
-                                else fprintf(js, "'int64'");
-                            } else fprintf(js, "'int64'");
-                        }
-                        fprintf(js, "]]");
-                        first_fn = 0;
-                    }
-                    fprintf(js, "\n});\n\n");
-                    
-                    // Export wrapper functions
-                    for (int fi = 0; fi < prog->count; fi++) {
-                        Stmt* s = prog->stmts[fi];
-                        if (s->type != STMT_FN) continue;
-                        if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
-                        if (s->fn.receiver_type.length > 0) continue;
-                        char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
-                        const char* cpfx = "";
-                        const char* _ckw2[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
-                        for (int k = 0; _ckw2[k]; k++) { if (strcmp(fname, _ckw2[k]) == 0) { cpfx = "_"; break; } }
-                        fprintf(js, "exports.%s = lib.%s%s;\n", fname, cpfx, fname);
-                    }
-                    fclose(js);
-                    fprintf(stderr, "\033[32m✓\033[0m Generated Node.js wrapper: %s\n", js_path);
-                    fprintf(stderr, "  Install ffi-napi: npm install ffi-napi\n");
-                }
-            }
-            if (!keep_artifacts) { char cp[512]; snprintf(cp, sizeof(cp), "%s.c", file); unlink(cp); }
-            unlink("wyn_cc_err.txt");
-            return result == 0 ? 0 : 1;
+            // rt_check is a FILE* here, already fclose()d above; pass its truthiness.
+            return wyn_emit_shared_library(file, prog, shared_mode, wyn_root, opt_level,
+                                           platform_libs, rt_check != NULL,
+                                           keep_artifacts, _ts_start);
         }
         
         int result = system(compile_cmd);
