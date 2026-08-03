@@ -914,8 +914,8 @@ void init_checker() {
 
     // Path stdlib
     struct { const char* name; } reg_path_fns[] = {
-        {"Path_basename", 13}, {"Path_dirname", 12},
-        {"Path_extension", 14}, {"Path_join", 9},
+        {"Path_basename"}, {"Path_dirname"},
+        {"Path_extension"}, {"Path_join"},
     };
     for (int i = 0; i < 4; i++) {
         Type* ft = make_type(TYPE_FUNCTION);
