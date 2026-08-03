@@ -61,7 +61,6 @@ tests/stdlib/*
 runtime/libwyn_rt.a
 runtime/obj/
 wyn_cc_err.txt
-runtime/libwyn_runtime.a
 wyn_runtime.h.gch
 # Precompiled header (regenerated; not linked or referenced by the build)
 runtime/wyn_runtime.h.pch
