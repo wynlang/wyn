@@ -2257,6 +2257,12 @@ int is_tuple_var(const char* var) {
 // inside a method body) can be popped without leaking into later functions.
 int wyn_struct_var_depth(void) { return struct_var_count; }
 void wyn_struct_var_truncate(int depth) { if (depth >= 0 && depth <= struct_var_count) struct_var_count = depth; }
+// The enum-var map has the SAME name-keyed, unscoped hazard: a `var x = make()` whose
+// call returns a data-enum registers `x -> EnumName` globally, so a later same-named
+// parameter of another type has its `.to_string()` lowered to EnumName_toString. Scoped
+// per function alongside the struct-var map.
+int wyn_enum_var_depth(void) { return enum_var_count; }
+void wyn_enum_var_truncate(int depth) { if (depth >= 0 && depth <= enum_var_count) enum_var_count = depth; }
 // is_known_type_name - a struct OR enum declared in the program being compiled.
 //
 // Types are emitted with their BARE name (`typedef enum {...} Kind;`), but a function

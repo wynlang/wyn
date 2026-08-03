@@ -365,6 +365,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_import_list_test.sh
 	@echo "=== Running GUI build-link test ==="
 	@WYN=./wyn bash tests/errors/run_gui_build_test.sh
+	@echo "=== Running var-type-scope test ==="
+	@WYN=./wyn bash tests/errors/run_var_type_scope_test.sh
 	@echo "=== Running bool-method formatting test ==="
 	@WYN=./wyn bash tests/errors/run_bool_method_format_test.sh
 	@echo "=== Running python/shared-library build test ==="

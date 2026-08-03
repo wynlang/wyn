@@ -366,7 +366,23 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     }
     emit(") ");
     
-    // Body
+    // Body.
+    //
+    // Save and restore the struct-var inference stack around it. That table is keyed by
+    // variable NAME, not scope, so a `var x = Ui{...}` in THIS module function otherwise
+    // left `x -> Ui` registered for every file compiled afterwards - including the
+    // importer, where a totally unrelated `int` parameter named `x` then lowered
+    // `x.to_string()` to `Ui.toString`. The float variant of the same leak silently
+    // produced WRONG VALUES. It forced a naming discipline across the gui, wyncanvas and
+    // wynjs codebases that no error pointed at (see gui/src/widgets.wyn:1636). The same
+    // save/restore is already done for method and impl bodies; module functions and
+    // top-level functions were the ones still leaking.
+    extern int wyn_struct_var_depth(void);
+    extern void wyn_struct_var_truncate(int);
+    extern int wyn_enum_var_depth(void);
+    extern void wyn_enum_var_truncate(int);
+    int _mp_sv_depth = wyn_struct_var_depth();
+    int _mp_ev_depth = wyn_enum_var_depth();
     if (fn_stmt->fn.body) {
         if (fn_stmt->fn.body->type == STMT_BLOCK) {
             emit("{\n");
@@ -376,6 +392,8 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
             codegen_stmt(fn_stmt->fn.body);
         }
     }
+    wyn_struct_var_truncate(_mp_sv_depth);
+    wyn_enum_var_truncate(_mp_ev_depth);
     emit("\n");
 
     // Restore context
@@ -3073,6 +3091,18 @@ void codegen_stmt(Stmt* stmt) {
             }
             emit(") {\n");
             push_scope();  // Track allocations in this function
+            // Struct-var inference is keyed by NAME across the whole compile, so a
+            // `var x = SomeStruct{...}` in an EARLIER function leaves `x -> SomeStruct`
+            // registered for this one - and a same-named parameter of a different type
+            // then mis-lowers its methods. Capture the depth here and truncate at the end
+            // so each function sees only its own locals. (emit_function_with_prefix does
+            // the same for module functions.)
+            extern int wyn_struct_var_depth(void);
+            extern void wyn_struct_var_truncate(int);
+            extern int wyn_enum_var_depth(void);
+            extern void wyn_enum_var_truncate(int);
+            int _fn_sv_depth = wyn_struct_var_depth();
+            int _fn_ev_depth = wyn_enum_var_depth();
             
             // Register parameters for mut tracking
             clear_parameters();
@@ -3332,6 +3362,8 @@ void codegen_stmt(Stmt* stmt) {
                 }
             }
             
+            wyn_struct_var_truncate(_fn_sv_depth);  // don't leak this fn's struct vars
+            wyn_enum_var_truncate(_fn_ev_depth);    // nor its enum vars
             pop_scope();   // Auto-cleanup before function end
             current_fn_return_kind = prev_fn_return_kind;
             current_fn_c_nonvoid = prev_fn_c_nonvoid;
