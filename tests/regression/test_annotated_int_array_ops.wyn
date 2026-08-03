@@ -20,7 +20,13 @@
 // EXPECT: 3
 // EXPECT: 6
 // EXPECT: 3,1,2
-// EXPECT: 1
+// `s8.contains(2).to_string()` - was `1`, because arr_contains is declared int in C
+// and to_string()'s _Generic dispatch took the integer branch. Every OTHER bool in the
+// language already stringified as true/false, including `"abc".contains("b")`, a bool
+// literal, a comparison, and a bool held in a variable - so `1` was the outlier and
+// this line was pinning the defect rather than guarding behaviour. The array methods
+// now agree with the rest of the language.
+// EXPECT: true
 // EXPECT: 3
 // EXPECT: 3
 // EXPECT: 3

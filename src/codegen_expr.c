@@ -3199,15 +3199,19 @@ void codegen_expr(Expr* expr) {
                 // arr_contains - otherwise `["a"].contains("a")` was always 0.
                 if (method.length == 8 && memcmp(method.start, "contains", 8) == 0 && expr->method_call.arg_count == 1) {
                     Type* _et = object_type->array_type.element_type;
+                    // Both helpers are declared `int`, but `contains` is `bool` in Wyn:
+                    // without the cast, to_string()/print() dispatched on the integer
+                    // branch and printed `1` rather than `true`. Same reason as
+                    // any()/all() below.
                     if (_et && _et->kind == TYPE_STRING) {
-                        emit("array_contains_str(");
+                        emit("(bool)array_contains_str(");
                         codegen_expr(expr->method_call.object);
                         emit(", ");
                         codegen_expr(expr->method_call.args[0]);
                         emit(")");
                         break;
                     }
-                    emit("arr_contains(");
+                    emit("(bool)arr_contains(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
                     codegen_expr(expr->method_call.object);
@@ -3283,14 +3287,19 @@ void codegen_expr(Expr* expr) {
                     emit("array_concat("); codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
-                // arr.any(fn)
+                // arr.any(fn) / arr.all(fn) return `bool` in Wyn, but their runtime
+                // helpers are declared `long long`, so print()/to_string()'s _Generic
+                // dispatch picked the INTEGER branch and `print(ns.any(...))` printed
+                // `1` instead of `true`. The same (bool) cast the comparison operators
+                // already use above (see _is_bool_op) makes the C type match the Wyn
+                // type at the one place that knows both.
                 if (method.length == 3 && memcmp(method.start, "any", 3) == 0 && expr->method_call.arg_count == 1) {
-                    emit("wyn_arr_any("); codegen_expr(expr->method_call.object);
+                    emit("(bool)wyn_arr_any("); codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
                 // arr.all(fn)
                 if (method.length == 3 && memcmp(method.start, "all", 3) == 0 && expr->method_call.arg_count == 1) {
-                    emit("wyn_arr_all("); codegen_expr(expr->method_call.object);
+                    emit("(bool)wyn_arr_all("); codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
                 
