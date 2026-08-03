@@ -352,6 +352,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_enum_value_repr_test.sh
 	@echo "=== Running bool-method formatting test ==="
 	@WYN=./wyn bash tests/errors/run_bool_method_format_test.sh
+	@echo "=== Running python/shared-library build test ==="
+	@WYN=./wyn bash tests/errors/run_python_lib_test.sh
 	@echo "=== Running pkg search test ==="
 	@WYN=./wyn bash tests/errors/run_search_test.sh
 	@echo "=== Running scaffold (wyn new) test ==="
