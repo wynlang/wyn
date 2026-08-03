@@ -4180,13 +4180,34 @@ void codegen_expr(Expr* expr) {
                     emit("{ WynArray __tmp_%d = ", arr_id * 100 + i);
                     codegen_expr(elem);
                     emit("; array_push_array(&__arr_%d, &__tmp_%d); } ", arr_id, arr_id * 100 + i);
-                } else if ((elem->expr_type && elem->expr_type->kind == TYPE_ENUM) ||
+                } else if ((elem->expr_type && elem->expr_type->kind == TYPE_ENUM &&
+                            elem->expr_type->name.length > 0 &&
+                            ({ char _en[128]; token_to_cstr(_en, sizeof(_en), elem->expr_type->name);
+                               extern int is_data_enum_type(const char*); is_data_enum_type(_en); })) ||
                            (elem->type == EXPR_METHOD_CALL &&
                             elem->method_call.object->type == EXPR_IDENT &&
                             ({ char _en[128]; token_to_cstr(_en, sizeof(_en), elem->method_call.object->token);
                                extern int is_data_enum_type(const char*); is_data_enum_type(_en); }))) {
                     // Data-enum value (a tagged-union struct), e.g. `E.A(5)` - push
                     // by value like a struct, using the enum type as the C type.
+                    //
+                    // The first arm used to accept ANY TYPE_ENUM, contradicting this
+                    // comment: a PAYLOAD-FREE variant is a C enum constant (an int), and
+                    // array_push_struct mallocs sizeof(EnumType) and memcpys a
+                    // `EnumType __temp_val = (value)` into it. So
+                    //
+                    //     var xs = [A.Up, A.Down, A.Reset]
+                    //     for a in xs { print(name(a)) }
+                    //
+                    // read back as A.Up, A.Up, A.Up - EVERY element collapsed to the
+                    // first variant, silently, at exit 0, in both the for-in and the
+                    // indexed form. A list of plain enum values is how you script a
+                    // sequence of actions or states, so this quietly corrupted exactly
+                    // the data it was given.
+                    //
+                    // is_data_enum_type() is the same predicate the for-in loop path
+                    // uses to make this distinction; payload-free variants now fall
+                    // through to array_push_int, which is what they are.
                     char _en[128];
                     if (elem->expr_type && elem->expr_type->kind == TYPE_ENUM && elem->expr_type->name.length > 0)
                         token_to_cstr(_en, sizeof(_en), elem->expr_type->name);
@@ -5060,6 +5081,30 @@ void codegen_expr(Expr* expr) {
                         result_type = "const char*"; break;
                     } else if (arm_result->type == EXPR_FLOAT) {
                         result_type = "double"; break;
+                    } else if (arm_result->type == EXPR_STRUCT_INIT) {
+                        // A match that YIELDS A STRUCT:
+                        //
+                        //     fn apply(c: C, a: A) -> C => match a {
+                        //         A.Up   => C { v: c.v + 1 },
+                        //         A.Down => C { v: c.v - 1 }
+                        //     }
+                        //
+                        // The arms correctly emitted `(C){.v = ...}` but the result
+                        // variable stayed `long long`, so the C compiler rejected every
+                        // arm with "assigning to 'long long' from incompatible type 'C'"
+                        // and the return with an incompatible-result-type error. `wyn
+                        // check` passed, so this only surfaced as an internal codegen
+                        // error.
+                        //
+                        // Taken from the struct-init literal directly rather than from
+                        // expr_type, because a struct-init arm is the spelling that
+                        // occurs in practice and its literal name is always present.
+                        // Reduce-over-a-sum-type - one total function from state and an
+                        // action to new state - is the single most useful shape for
+                        // modelling app logic, and it could not be written.
+                        static char _ms_buf[128];
+                        token_to_cstr(_ms_buf, sizeof(_ms_buf), arm_result->struct_init.type_name);
+                        result_type = _ms_buf; break;
                     } else if (arm_result->expr_type) {
                         if (arm_result->expr_type->kind == TYPE_STRING) {
                             result_type = "const char*"; break;
@@ -5067,6 +5112,14 @@ void codegen_expr(Expr* expr) {
                             result_type = "double"; break;
                         } else if (arm_result->expr_type->kind == TYPE_BOOL) {
                             result_type = "bool"; break;
+                        } else if (arm_result->expr_type->kind == TYPE_STRUCT &&
+                                   arm_result->expr_type->struct_type.name.length > 0) {
+                            // Same case reached via the checker's type instead of a
+                            // literal - e.g. an arm that CALLS a struct-returning fn.
+                            static char _mst_buf[128];
+                            token_to_cstr(_mst_buf, sizeof(_mst_buf),
+                                          arm_result->expr_type->struct_type.name);
+                            result_type = _mst_buf; break;
                         }
                     }
                 }
