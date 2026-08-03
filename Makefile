@@ -860,6 +860,3 @@ clean:
 test_t2_3_1_validation: tests/test_t2_3_1_validation.c $(SOURCES)
 	$(CC) $(CFLAGS) -I src -o tests/test_t2_3_1_validation tests/test_t2_3_1_validation.c $(SOURCES) $(LDFLAGS)
 
-# Runtime library
-runtime/libwyn_runtime.a:
-	$(MAKE) -C runtime
