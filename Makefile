@@ -96,9 +96,14 @@ CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/
 # are NOT in CORE_SRCS (compiling them standalone would duplicate symbols). List
 # them here as prerequisites so editing one triggers a rebuild - otherwise make
 # sees no changed prerequisite and silently keeps a stale binary.
-CODEGEN_INCLUDED_SRCS = src/codegen_expr.c src/codegen_stmt.c src/codegen_lambda.c src/codegen_program.c
+# Sources #included directly into another translation unit (codegen.c pulls in the
+# codegen_* files, checker.c pulls in checker_builtins.c). They are NOT in CORE_SRCS -
+# compiling them standalone would duplicate symbols - but they must be prerequisites,
+# or make sees no changed prerequisite and silently keeps a stale binary.
+TU_INCLUDED_SRCS = src/codegen_expr.c src/codegen_stmt.c src/codegen_lambda.c src/codegen_program.c \
+                   src/checker_builtins.c
 
-wyn$(EXE_EXT): $(CORE_SRCS) $(CODEGEN_INCLUDED_SRCS) $(wildcard src/*.h)
+wyn$(EXE_EXT): $(CORE_SRCS) $(TU_INCLUDED_SRCS) $(wildcard src/*.h)
 	$(CC) $(CFLAGS) -I src -I vendor/tcc/include -I vendor/minicoro -o $@ $(CORE_SRCS) vendor/tcc/lib/libtcc.a $(PLATFORM_LIBS)
 
 # Platform-specific targets
