@@ -1968,6 +1968,24 @@ static bool in_async_function = false;
 // Use slim header for release builds (40% faster execution)
 static bool use_slim_runtime = false;
 void codegen_set_slim_runtime(bool slim) { use_slim_runtime = slim; }
+
+// LIBRARY MODE (--shared / --python / --node).
+//
+// A small function body (<= 5 statements) is normally emitted
+// `__attribute__((hot)) static inline`, which is a pure speed heuristic for an
+// EXECUTABLE. In a shared library it is a correctness bug: `static` gives the symbol
+// internal linkage, so it is absent from the .dylib/.so and ctypes cannot find it.
+// Both examples in the Python guide (`add`, `factorial`) are under the threshold, so
+// the documented quickstart could never have worked.
+//
+// This flag is consulted at the two places that decide the qualifier
+// (codegen_stmt.c and codegen_program.c). It is deliberately a codegen-wide switch
+// rather than a per-function annotation: which functions a caller will reach through
+// the FFI is not knowable here, so in library mode every user function must keep
+// external linkage.
+static bool library_mode = false;
+void codegen_set_library_mode(bool lib) { library_mode = lib; }
+bool codegen_in_library_mode(void) { return library_mode; }
 void codegen_c_header() {
     if (use_slim_runtime) {
         emit("#include \"wyn_runtime_slim.h\"\n\n");

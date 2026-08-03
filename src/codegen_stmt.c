@@ -2881,7 +2881,13 @@ void codegen_stmt(Stmt* stmt) {
                 for (int _si = 0; _si < spawn_wrapper_count; _si++) {
                     if (strcmp(spawn_wrappers[_si].func_name, _fn) == 0) { _is_spawned = true; break; }
                 }
-                if (!is_main_fn && !_is_spawned && _bsc > 0 && _bsc <= 5) emit("__attribute__((hot)) static inline ");
+                // `static inline` is a speed heuristic for an executable and a
+                // correctness bug in a shared library: `static` means the symbol is
+                // not exported, so ctypes/dlsym cannot find it. In library mode keep
+                // external linkage. (See codegen_set_library_mode.)
+                extern bool codegen_in_library_mode(void);
+                if (!is_main_fn && !_is_spawned && _bsc > 0 && _bsc <= 5 &&
+                    !codegen_in_library_mode()) emit("__attribute__((hot)) static inline ");
                 else if (!is_main_fn) emit("__attribute__((hot)) ");
             }
             
