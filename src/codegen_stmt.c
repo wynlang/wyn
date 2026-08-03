@@ -255,14 +255,16 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                 // "unknown type name 'm_Box'", while the identical code in a
                 // single file was fine.
                 //
-                // is_known_struct answers exactly the right question: it looks in
-                // the merged program, which is where the typedef will come from. A
-                // name it does not know keeps the prefix, which is what the
-                // generic/inner-type paths rely on.
-                extern int is_known_struct(const char* name);
+                // is_known_type_name answers exactly the right question: it looks in
+                // the merged program, which is where the typedef will come from, and it
+                // covers ENUMS as well as structs - consulting is_known_struct alone
+                // prefixed an imported module's enum type (`lib_Kind`) whose typedef was
+                // emitted bare (`Kind`). A name it does not know keeps the prefix, which
+                // is what the generic/inner-type paths rely on.
+                extern int is_known_type_name(const char* name);
                 char _rt_name[128];
                 token_to_cstr(_rt_name, sizeof(_rt_name), rt);
-                if (current_module_prefix && !is_known_struct(_rt_name)) {
+                if (current_module_prefix && !is_known_type_name(_rt_name)) {
                     snprintf(custom_return_type, 128, "%s_%s", current_module_prefix, _rt_name);
                 } else {
                     snprintf(custom_return_type, 128, "%s", _rt_name);
@@ -318,9 +320,10 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                     // prototype emitter; without it the DEFINITION said `m_Point`
                     // while its own prototype said `Point`.
                     extern int is_known_struct(const char* nm);
+                    extern int is_known_type_name(const char* nm);
                     char _tn[128];
                     token_to_cstr(_tn, sizeof(_tn), type_token);
-                    if (current_module_prefix && !is_known_struct(_tn)) {
+                    if (current_module_prefix && !is_known_type_name(_tn)) {
                         emit("%s_%s ", current_module_prefix, _tn);
                     } else {
                         emit("%s ", _tn);
@@ -529,7 +532,8 @@ void codegen_stmt(Stmt* stmt) {
                         c_type = "OptionBool";
                     } else if (inner && inner->type == EXPR_IDENT &&
                                ({ char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner->token);
-                                  extern int is_known_struct(const char*); is_known_struct(_stn); })) {
+                                  extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*); is_known_struct(_stn); })) {
                         // `var v: Struct? = ...` -> the Option<Struct> family.
                         char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner->token);
                         static char _osann[128]; snprintf(_osann, sizeof(_osann), "Option%s", _stn);
@@ -847,6 +851,7 @@ void codegen_stmt(Stmt* stmt) {
                             // Static constructor: Type.new() - object is the type name itself
                             if (!_stype) {
                                 extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                                 if (is_known_struct(_vn3)) _stype = _vn3;
                             }
                         }
@@ -867,7 +872,8 @@ void codegen_stmt(Stmt* stmt) {
                             char _fn[64]; token_to_cstr(_fn, sizeof(_fn), _obj->call.callee->token);
                             extern const char* get_function_return_type(const char*);
                             const char* _frt = get_function_return_type(_fn);
-                            if (_frt) { extern int is_known_struct(const char*); if (is_known_struct(_frt)) _stype = _frt; }
+                            if (_frt) { extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*); if (is_known_struct(_frt)) _stype = _frt; }
                         }
                         if (!_stype && _obj->type == EXPR_METHOD_CALL) {
                             // Walk deeper - function call at root of chain
@@ -877,7 +883,8 @@ void codegen_stmt(Stmt* stmt) {
                                 char _fn[64]; token_to_cstr(_fn, sizeof(_fn), _walk->call.callee->token);
                                 extern const char* get_function_return_type(const char*);
                                 const char* _frt = get_function_return_type(_fn);
-                                if (_frt) { extern int is_known_struct(const char*); if (is_known_struct(_frt)) _stype = _frt; }
+                                if (_frt) { extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*); if (is_known_struct(_frt)) _stype = _frt; }
                             }
                         }
                         if (_stype) {
@@ -886,6 +893,7 @@ void codegen_stmt(Stmt* stmt) {
                             const char* _ret = lookup_struct_method_return_type(_stype, _mn3);
                             if (_ret) {
                                 extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                                 if (is_known_struct(_ret)) {
                                     c_type = _ret;
                                     char _vn4[256]; token_to_cstr(_vn4, sizeof(_vn4), stmt->var.name);
@@ -1272,9 +1280,10 @@ void codegen_stmt(Stmt* stmt) {
                             // module emitted `m_Row r = ((Row){...})`: the
                             // declaration and its own initialiser disagreed.
                             extern int is_known_struct(const char* nm);
+                    extern int is_known_type_name(const char* nm);
                             char _sn[128];
                             token_to_cstr(_sn, sizeof(_sn), type_name);
-                            if (current_module_prefix && !is_known_struct(_sn)) {
+                            if (current_module_prefix && !is_known_type_name(_sn)) {
                                 snprintf(struct_type, 128, "%s_%s", current_module_prefix, _sn);
                             } else {
                                 snprintf(struct_type, 128, "%s", _sn);
@@ -2757,6 +2766,7 @@ void codegen_stmt(Stmt* stmt) {
                                     // `Result<Struct, E>` -> monomorphic Result<Struct,E>.
                                     char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
                                     extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                                     extern const char* result_family_err_suffix(Expr*);
                                     if (is_known_struct(_stn)) {
                                         snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
@@ -2810,6 +2820,7 @@ void codegen_stmt(Stmt* stmt) {
                             // `-> Struct?` -> the monomorphic Option<Struct> family.
                             char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
                             extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                             if (is_known_struct(_stn)) {
                                 static char _ostrt[128];
                                 snprintf(_ostrt, sizeof(_ostrt), "Option%s", _stn);
@@ -3019,6 +3030,7 @@ void codegen_stmt(Stmt* stmt) {
                             else {
                                 char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
                                 extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                                 if (is_known_struct(_stn)) { snprintf(_opbuf2, sizeof(_opbuf2), "Option%s", _stn); param_type = _opbuf2; }
                             }
                         }
@@ -3112,6 +3124,7 @@ void codegen_stmt(Stmt* stmt) {
                             // otherwise) — see register_result_family_for_types.
                             char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
                             extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                             extern const char* result_family_err_suffix(Expr*);
                             if (is_known_struct(_stn)) {
                                 static char _rfk_buf[192];
@@ -3171,6 +3184,7 @@ void codegen_stmt(Stmt* stmt) {
                     // `-> Struct?` -> Option<Struct> family so body Some/None resolve.
                     char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner->token);
                     extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                     if (is_known_struct(_stn)) {
                         static char _osrk[128];
                         snprintf(_osrk, sizeof(_osrk), "Option%s", _stn);
@@ -3468,6 +3482,7 @@ void codegen_stmt(Stmt* stmt) {
                             else {
                                 char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
                                 extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                                 if (is_known_struct(_stn)) {
                                     extern void register_option_struct(const char*);
                                     register_option_struct(_stn);
@@ -3495,6 +3510,7 @@ void codegen_stmt(Stmt* stmt) {
                             else {
                                 char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
                                 extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                                 if (is_known_struct(_stn)) {
                                     // Ensure the Option<Struct> family typedef is emitted.
                                     extern void register_option_struct(const char*);
@@ -4693,10 +4709,15 @@ void codegen_stmt(Stmt* stmt) {
                                             // type nothing declares ("unknown type
                                             // name 'm_Box'") for any module whose
                                             // pub fn returned its own struct.
-                                            extern int is_known_struct(const char* name);
+                                            // Covers ENUMS too, not just structs: a
+                                            // module's own enum typedef is also emitted
+                                            // UNPREFIXED, so consulting is_known_struct
+                                            // alone made the forward declaration say
+                                            // `lib_Kind` while the definition said `Kind`.
+                                            extern int is_known_type_name(const char* name);
                                             char _rn[128];
                                             token_to_cstr(_rn, sizeof(_rn), rt);
-                                            if (is_known_struct(_rn)) {
+                                            if (is_known_type_name(_rn)) {
                                                 snprintf(custom_ret_type, 128, "%s", _rn);
                                             } else {
                                                 snprintf(custom_ret_type, 128, "%s_%s", c_mod_name, _rn);
@@ -4739,10 +4760,10 @@ void codegen_stmt(Stmt* stmt) {
                                                 // Same rule as the return type above:
                                                 // a struct declared in the merged
                                                 // program has an UNPREFIXED typedef.
-                                                extern int is_known_struct(const char* name);
+                                                extern int is_known_type_name(const char* name);
                                                 char _pn[128];
                                                 token_to_cstr(_pn, sizeof(_pn), pt);
-                                                if (is_known_struct(_pn)) {
+                                                if (is_known_type_name(_pn)) {
                                                     snprintf(custom_param_type, 128, "%s", _pn);
                                                 } else {
                                                     snprintf(custom_param_type, 128, "%s_%s", c_mod_name, _pn);

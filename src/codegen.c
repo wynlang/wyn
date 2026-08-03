@@ -2257,6 +2257,37 @@ int is_tuple_var(const char* var) {
 // inside a method body) can be popped without leaking into later functions.
 int wyn_struct_var_depth(void) { return struct_var_count; }
 void wyn_struct_var_truncate(int depth) { if (depth >= 0 && depth <= struct_var_count) struct_var_count = depth; }
+// is_known_type_name - a struct OR enum declared in the program being compiled.
+//
+// Types are emitted with their BARE name (`typedef enum {...} Kind;`), but a function
+// signature inside an imported module is emitted with the module prefix. That is correct
+// for the FUNCTION name and wrong for a TYPE name, so the prefixing sites consult this to
+// exempt types.
+//
+// It used to consult is_known_struct() alone, so an imported module's ENUM produced
+// signatures referring to `lib_Kind` while the typedef was `Kind`:
+//
+//     static const char* lib_kname(lib_Kind k);   // error: unknown type name 'lib_Kind'
+//
+// wyn check passed and the C compiler rejected every signature mentioning the enum, so an
+// imported module could define an enum or use one in a signature, but not both. Found
+// writing a game whose module exposed `enum Kind` in its API.
+int is_known_type_name(const char* name) {
+    if (!current_program) return 0;
+    int len = (int)strlen(name);
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* st = current_program->stmts[i];
+        if (st->type == STMT_STRUCT) {
+            StructStmt* s = &st->struct_decl;
+            if (s->name.length == len && memcmp(s->name.start, name, len) == 0) return 1;
+        } else if (st->type == STMT_ENUM) {
+            Token n = st->enum_decl.name;
+            if (n.length == len && memcmp(n.start, name, len) == 0) return 1;
+        }
+    }
+    return 0;
+}
+
 int is_known_struct(const char* name) {
     if (!current_program) return 0;
     for (int i = 0; i < current_program->count; i++) {
