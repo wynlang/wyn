@@ -146,18 +146,47 @@ int wyn_emit_shared_library(const char* file, Program* prog, int shared_mode,
         char lib_path[512];
         snprintf(lib_path, sizeof(lib_path), "lib%s.%s", lib_name, lib_ext);
         char shared_cmd[8192];
-        if (rt_check) {
-            snprintf(shared_cmd, sizeof(shared_cmd),
-                     "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s %s.c %s/runtime/libwyn_rt.a %s 2>wyn_cc_err.txt",
-                     opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, platform_libs);
-        } else {
-            char src_list[4096];
-            build_source_list(src_list, sizeof(src_list), wyn_root);
-            snprintf(shared_cmd, sizeof(shared_cmd),
-                     "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s %s.c %s %s 2>wyn_cc_err.txt",
-                     opt_level, shared_flags, wyn_root, wyn_root, lib_path, file, src_list, platform_libs);
-        }
+        // ALWAYS compile the runtime FROM SOURCE for a shared library, even when the
+        // prebuilt runtime/libwyn_rt.a exists.
+        //
+        // That archive is built WITHOUT -fPIC. On macOS that is invisible, because Mach-O
+        // is position-independent by default and the link succeeds. On Linux the ELF
+        // linker refuses outright:
+        //
+        //   relocation R_AARCH64_ADR_PREL_PG_HI21 against symbol `ws_blocked' which may
+        //   bind externally can not be used when making a shared object; recompile with -fPIC
+        //   /usr/bin/ld: final link failed: bad value
+        //
+        // so --python/--shared/--node could NEVER have worked on Linux - the failure was
+        // then swallowed by `2>wyn_cc_err.txt` plus the unlink below, which is why it
+        // presented as a silent exit 1 with no artifacts and no message. Costs a slower
+        // one-off compile for a library build, which is the right trade for producing an
+        // artifact that links at all. (rt_check is therefore unused here now.)
+        (void)rt_check;
+        char src_list[4096];
+        build_source_list(src_list, sizeof(src_list), wyn_root);
+        // -D_GNU_SOURCE is required, not optional: under -std=c11 glibc hides strdup,
+        // strndup and friends behind a feature macro, so compiling the runtime sources
+        // directly fails on Linux with "implicit declaration of function 'strdup'". The
+        // Makefile passes it for every ordinary build (CFLAGS) and this path was the one
+        // place that did not.
+        snprintf(shared_cmd, sizeof(shared_cmd),
+                 "gcc -std=c11 -D_GNU_SOURCE %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s %s.c %s %s 2>wyn_cc_err.txt",
+                 opt_level, shared_flags, wyn_root, wyn_root, lib_path, file, src_list, platform_libs);
         int result = system(shared_cmd);
+        // A FAILED library build must say why. The error was being written to
+        // wyn_cc_err.txt and then unlinked unread, so a Linux user saw exit 1 and nothing
+        // else - no message, no artifact, no clue.
+        if (result != 0) {
+            FILE* _ce = fopen("wyn_cc_err.txt", "r");
+            if (_ce) {
+                char _line[512];
+                fprintf(stderr, "\033[31mError:\033[0m could not build the shared library:\n");
+                int _n = 0;
+                while (_n < 8 && fgets(_line, sizeof(_line), _ce)) { fputs(_line, stderr); _n++; }
+                fclose(_ce);
+            }
+        }
         if (result == 0) {
             clock_gettime(CLOCK_MONOTONIC, &_ts_end);
             double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
