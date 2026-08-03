@@ -90,10 +90,18 @@ fi
 # This is the check that would have caught cause 3 on its own: the library can exist
 # and still be useless.
 if command -v nm >/dev/null 2>&1 && [ -f "$TMP/libmathlib.$LIBEXT" ]; then
-  syms=$(nm -g "$TMP/libmathlib.$LIBEXT" 2>/dev/null || true)
+  # Extract the NAMES of defined-text symbols and match them exactly.
+  #
+  # Was `grep -qE "[0-9a-f]+ +T _?name$"` over the whole nm output, which was wrong twice:
+  # `grep -q` exits at the first match and closes the pipe, so the feeding printf died with
+  # "write error: Broken pipe" (visible in CI), and the address+column shape differs between
+  # BSD nm and GNU binutils nm. Library mode also links the whole runtime in now, so the
+  # symbol table is large and loose matching is risky. awk on the type column, then an
+  # anchored compare, is portable and cannot half-match.
+  syms=$(nm -g "$TMP/libmathlib.$LIBEXT" 2>/dev/null | awk '$2=="T"{print $3}' || true)
   missing=""
   for f in add factorial describe; do
-    if ! printf '%s' "$syms" | grep -qE "[0-9a-f]+ +T _?${f}$"; then missing="$missing $f"; fi
+    if ! printf '%s\n' "$syms" | grep -qxE "_?${f}"; then missing="$missing $f"; fi
   done
   if [ -z "$missing" ]; then
     ok "add, factorial and describe are all exported (T) from the library"
