@@ -290,6 +290,22 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
         // Check if parameter has a type expression
         if (fn_stmt->fn.param_types && fn_stmt->fn.param_types[i]) {
             Expr* param_type = fn_stmt->fn.param_types[i];
+            // An ARRAY annotation (`xs: [int]`) is an EXPR_ARRAY node, not an EXPR_IDENT,
+            // so it never entered the type ladder below and fell through to the
+            // `long long` default. A module function taking an array therefore emitted
+            //
+            //     long long lib_total(long long xs);
+            //
+            // and every call site failed with "passing 'WynArray' to parameter of
+            // incompatible type 'long long'". The bare token "array" WAS handled, which is
+            // why this looked covered - but nothing spells the type that way.
+            //
+            // Handled before the EXPR_IDENT branch because the element type does not
+            // change the C type: every Wyn array is a WynArray regardless of element.
+            if (param_type->type == EXPR_ARRAY) {
+                emit("WynArray ");
+                goto emit_param_name;
+            }
             if (param_type->type == EXPR_IDENT) {
                 // Convert Wyn types to C types
                 Token type_token = param_type->token;
@@ -4737,7 +4753,14 @@ void codegen_stmt(Stmt* stmt) {
                                     const char* param_type = "long long";
                                     static char custom_param_type[128];
                                     if (s->fn.param_types[j]) {
-                                        if (s->fn.param_types[j]->type == EXPR_IDENT) {
+                                        // An array annotation is EXPR_ARRAY, not
+                                        // EXPR_IDENT - the same omission as the definition
+                                        // emitter, and it has to be fixed in BOTH or the
+                                        // prototype and the definition disagree, which is
+                                        // what the C compiler rejects.
+                                        if (s->fn.param_types[j]->type == EXPR_ARRAY) {
+                                            param_type = "WynArray";
+                                        } else if (s->fn.param_types[j]->type == EXPR_IDENT) {
                                             Token pt = s->fn.param_types[j]->token;
                                             if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) {
                                                 param_type = "const char*";
