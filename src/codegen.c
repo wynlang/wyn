@@ -5,7 +5,6 @@
 #include <stdarg.h>
 #include "common.h"
 #include "ast.h"
-#include "string_memory.h"
 #include "arc_runtime.h"
 #include "optional.h"
 #include "result.h"
