@@ -2876,13 +2876,26 @@ static Stmt* statement_impl() {
         
         // Check for selective import: import { a, b } from module
         if (match(TOKEN_LBRACE)) {
-            stmt->import.items = malloc(sizeof(Token) * 32);
+            // GROWABLE. This was a fixed malloc(32) with the loop guarded by
+            // `item_count < 32`, which failed in two ways at once. Past 32 names the
+            // loop stopped consuming, then expect(TOKEN_RBRACE) hit the next comma and
+            // reported "Expected '}' after import list" - pointing at the import
+            // statement with no hint that a COUNT was the problem, which is
+            // unactionable. And the guard was on the wrong side of the store: had the
+            // condition ever been reordered, the 33rd write would have run off the end
+            // of the allocation.
+            //
+            // A 34-name import is not exotic: it is what one module exposing a real API
+            // looks like (found importing a game engine's surface into its test file).
+            int _imp_cap = 32;
+            stmt->import.items = malloc(sizeof(Token) * _imp_cap);
             stmt->import.item_count = 0;
             
             do {
                 expect(TOKEN_IDENT, "Expected identifier in import list");
+                WYN_ENSURE_CAP(stmt->import.items, stmt->import.item_count, _imp_cap);
                 stmt->import.items[stmt->import.item_count++] = parser.previous;
-            } while (match(TOKEN_COMMA) && stmt->import.item_count < 32);
+            } while (match(TOKEN_COMMA));
             
             expect(TOKEN_RBRACE, "Expected '}' after import list");
             expect(TOKEN_FROM, "Expected 'from' after import list");
@@ -4265,13 +4278,19 @@ Program* parse_program() {
             
             // Check for selective import: import { a, b } from module
             if (match(TOKEN_LBRACE)) {
-                stmt->import.items = malloc(sizeof(Token) * 32);
+                // Growable - see the sibling copy of this block above for why. There are
+                // TWO import-list parsers in this file (this is the one that actually
+                // runs for `import { ... } from mod`), which is how the fix landed in the
+                // wrong one first: fixing a duplicate is not fixing the bug.
+                int _imp_cap2 = 32;
+                stmt->import.items = malloc(sizeof(Token) * _imp_cap2);
                 stmt->import.item_count = 0;
                 
                 do {
                     expect(TOKEN_IDENT, "Expected identifier in import list");
+                    WYN_ENSURE_CAP(stmt->import.items, stmt->import.item_count, _imp_cap2);
                     stmt->import.items[stmt->import.item_count++] = parser.previous;
-                } while (match(TOKEN_COMMA) && stmt->import.item_count < 32);
+                } while (match(TOKEN_COMMA));
                 
                 expect(TOKEN_RBRACE, "Expected '}' after import list");
                 expect(TOKEN_FROM, "Expected 'from' after import list");
