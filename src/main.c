@@ -2132,6 +2132,17 @@ int main(int argc, char** argv) {
         const char* cc = detect_cc();
         char tcc_bin[512]; snprintf(tcc_bin, sizeof(tcc_bin), "%s/vendor/tcc/bin/tcc", wyn_root);
         char rt_tcc[512]; snprintf(rt_tcc, sizeof(rt_tcc), "%s/vendor/tcc/lib/libwyn_rt_tcc.a", wyn_root);
+        // -DWYN_USE_GUI must be a COMPILE flag (it gates the Gui implementation in the
+        // runtime header), so it rides with sqlite_flags rather than with the link tail.
+        static char gui_def[512]; gui_def[0] = '\0';
+        // Both the DEFINE and SDL's -I/-l must be on the COMPILE line: gui.h does
+        // `#include <SDL2/SDL.h>`, so a link-time-only flag gives
+        // "fatal error: 'SDL2/SDL.h' file not found". pkg-config emits both cflags and
+        // libs; putting the whole thing here is what `wyn run` already does.
+        if (strstr(source, "Gui.")) {
+            snprintf(gui_def, sizeof(gui_def),
+                     " -DWYN_USE_GUI $(pkg-config --cflags --libs sdl2 2>/dev/null || echo '-lSDL2')");
+        }
         const char* sqlite_flags = "";
         const char* sqlite_src = "";
         if (strstr(source, "Db.")) {
@@ -2162,6 +2173,15 @@ int main(int argc, char** argv) {
         // (`wyn add`) carries the extern fns in its own file, so the user source
         // may only have `import sqlite3` yet still need the [ffi] link flags.
         static char ffi_tail[4096]; ffi_tail[0] = '\0';
+        // GUI: a program using the Gui module needs -DWYN_USE_GUI and SDL2 on the link
+        // line. `wyn run` did this (see the gui_flags in the run path) and `wyn build`
+        // did NOT, so a GUI app ran fine and its BUILT binary printed
+        //
+        //     Error: Gui module requires SDL2.
+        //
+        // and exited - i.e. you could develop a game but never ship one. Appended to
+        // ffi_tail because that is already spliced at the END of the link line, which is
+        // where GNU ld needs -l to sit.
         if (strstr(source, "extern fn") || strstr(source, "import ")) {
             WynConfig* _bc = wyn_config_parse("wyn.toml");
             if (_bc) { wyn_config_ffi_flags(_bc, ffi_tail, sizeof(ffi_tail)); wyn_config_free(_bc); }
@@ -2207,8 +2227,21 @@ int main(int argc, char** argv) {
             snprintf(ffi_tail + _al, sizeof(ffi_tail) - _al, "%s", wyn_app_link_flags());
         }
 
-        // Prefer precompiled runtime (fast) over TCC (recompiles all sources)
-        if (build_flag[0] == 0 && !build_release && access(rt_lib, R_OK) == 0) {
+        // Prefer precompiled runtime (fast) over TCC (recompiles all sources).
+        //
+        // EXCEPT for a Gui program. runtime/libwyn_rt.a is built WITHOUT -DWYN_USE_GUI, so
+        // it already contains the stub Gui implementation whose every function prints
+        //
+        //     Error: Gui module requires SDL2.
+        //
+        // Adding -DWYN_USE_GUI to this link changes nothing: the stubs are already
+        // compiled in, and the define only gates the header. So a built GUI binary exited
+        // after one frame with that message even with SDL2 installed - you could develop a
+        // game with `wyn run` and never ship one. gui_def[0] therefore forces the
+        // from-source path, which compiles the runtime WITH the define. Same shape as the
+        // -fPIC problem in library mode: a prebuilt artifact whose flags do not match what
+        // this build needs.
+        if (build_flag[0] == 0 && !build_release && gui_def[0] == 0 && access(rt_lib, R_OK) == 0) {
             // Skip TCC - use system cc + precompiled runtime
         } else if (build_flag[0] == 0 && !build_release && !app_on && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
             // --app is excluded from the TCC path on purpose: TCC does not take
@@ -2216,7 +2249,7 @@ int main(int argc, char** argv) {
             // GUI app built through it would silently link as a console program
             // with none of its [ffi] libraries.
             int _p = 0;
-            _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s ", tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, wyn_root, sqlite_flags);
+            _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s%s ", tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, wyn_root, sqlite_flags, gui_def);
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s.c ", entry);
             char _src_list[4096]; build_source_list(_src_list, sizeof(_src_list), wyn_root);
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s", _src_list);
@@ -2267,8 +2300,17 @@ int main(int argc, char** argv) {
 #else
             const char* plibs = "-lpthread -lm";
 #endif
-            // Check if precompiled runtime exists
-            FILE* _rt_check = fopen(rt_lib, "r");
+            // Check if precompiled runtime exists.
+            //
+            // gui_def[0] forces the from-source path even when it does: libwyn_rt.a is
+            // built WITHOUT -DWYN_USE_GUI, so it already contains the STUB Gui
+            // implementation whose every call prints "Gui module requires SDL2" and
+            // returns nothing. Adding the define to this link cannot help - the stubs are
+            // already compiled in. Every GUI program therefore built into a binary that
+            // died after one frame while `wyn run` worked, so you could develop a game and
+            // never ship one. (This is the second gate; the one further up had to change
+            // too.)
+            FILE* _rt_check = gui_def[0] ? NULL : fopen(rt_lib, "r");
             if (_rt_check) {
                 fclose(_rt_check);
                 const char* _opt = build_release ? "-O3" : "-O0";
@@ -2301,9 +2343,9 @@ int main(int argc, char** argv) {
                     // Windows captures the compiler's stderr too - it was the last
                     // branch still discarding it, so a failed build there printed
                     // "✗ Build failed" and nothing else.
-                    "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s%s %s.c %s%s -lws2_32 -lpthread -lm 2>%s",
 #elif defined(__APPLE__)
-                    "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s%s %s.c %s%s%s -lpthread -lm 2>%s",
 #else
                     // Capture the C compiler's stderr, do NOT discard it. This
                     // branch used to end in `2>/dev/null`, while the __APPLE__
@@ -2312,12 +2354,12 @@ int main(int argc, char** argv) {
                     // the "Compiler output:" reader below found no file. That is
                     // exactly what a user (and a CI log) needs, and it was
                     // silently unavailable on the platform most CI runs on.
-                    "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s%s %s.c %s%s -lpthread -lm 2>%s",
 #endif
 #ifdef __APPLE__
-                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, app_link, cc_err_redir
+                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, gui_def, entry, rt_lib, sqlite_src, app_link, cc_err_redir
 #else
-                    cc, _opt, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, cc_err_redir
+                    cc, _opt, wyn_root, bin_path, sqlite_flags, gui_def, entry, rt_lib, sqlite_src, cc_err_redir
 #endif
                     );
                 // Splice FFI link flags in at the END of the link line (before any
@@ -2334,7 +2376,7 @@ int main(int argc, char** argv) {
             } else {
                 // No precompiled runtime - compile from source files
                 int _p = 0;
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -ffunction-sections -fdata-sections -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, entry);
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -ffunction-sections -fdata-sections -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s%s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, gui_def, entry);
                 char _src_list[4096]; build_source_list(_src_list, sizeof(_src_list), wyn_root);
                 _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s", _src_list);
                 // `app_tail` = the --app link flags (Windows' -mwindows). This

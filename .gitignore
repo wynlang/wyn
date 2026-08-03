@@ -94,3 +94,6 @@ runtime/obj_tsan/
 tests/expect/*
 !tests/expect/*.wyn
 !tests/expect/*.sh
+
+# Agent worktrees and session scratch - never part of the repo.
+.claude/

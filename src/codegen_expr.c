@@ -4227,6 +4227,7 @@ void codegen_expr(Expr* expr) {
                     emit(", %s); ", _en);
                 } else {
                     // Check element type to use correct push function
+                    bool _needs_ll_cast = false;
                     Type* etype = elem->expr_type;
                     if (etype && etype->kind == TYPE_STRING) {
                         emit("array_push_str(&__arr_%d, ", arr_id);
@@ -4236,6 +4237,27 @@ void codegen_expr(Expr* expr) {
                         emit("array_push_bool(&__arr_%d, ", arr_id);
                     } else {
                         emit("array_push_int(&__arr_%d, ", arr_id);
+                        // Cast ONLY where the element is not already an integer
+                        // expression. An int literal or arithmetic needs nothing, and
+                        // casting it churned four golden-C snapshots for no benefit; a
+                        // HANDLE (HashMap/HashSet/...) is a pointer in C and gcc rejects
+                        // the implicit conversion, so those must be cast.
+                        _needs_ll_cast = !(elem->type == EXPR_INT || elem->type == EXPR_BINARY ||
+                                           (elem->expr_type && elem->expr_type->kind == TYPE_INT));
+                        // CAST to the parameter type. array_push_int takes a long long,
+                        // and this arm is the catch-all: the element may be a HashMap, a
+                        // HashSet or any other handle that is a POINTER in C. gcc rejects
+                        // the implicit conversion outright -
+                        //   error: passing argument 2 of 'array_push_int' makes integer
+                        //          from pointer without a cast [-Wint-conversion]
+                        // - so `var m = HashMap.new()  var xs = [m]` did not compile on
+                        // Linux at all, while clang only warned and macOS shipped it. The
+                        // `.push()` path (STMT_EXPR) already casts; only the array LITERAL
+                        // path did not, which is why the two spellings disagreed.
+                        if (_needs_ll_cast) emit("(long long)(");
+                        codegen_expr(elem);
+                        emit(_needs_ll_cast ? ")); " : "); ");
+                        continue;
                     }
                     codegen_expr(elem);
                     emit("); ");
