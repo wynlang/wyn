@@ -21,6 +21,8 @@
 // and <unistd.h> is not included on this branch at all. Same shim src/io.c uses.
 #define getcwd _getcwd
 #define chdir  _chdir
+#include <process.h>   // For _getpid
+#define getpid _getpid
 #endif
 
 #include "commands.h"   // for wyn_mkdir_p and cmd_* declarations
