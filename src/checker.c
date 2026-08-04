@@ -1608,8 +1608,19 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return current_self_type;
             }
             
-            // Check for built-in Option/Result constants
-            if (expr->token.length == 4 && memcmp(expr->token.start, "none", 4) == 0) {
+            // Check for built-in Option/Result constants.
+            //
+            // A DECLARED VARIABLE WINS. This test used to run before the scope lookup
+            // below, so any local spelled `none` was forced to int no matter what it
+            // held: `none = f()` where f returns string, then `g(none)` against a
+            // `string` parameter, reported "Expected: string, Got: int" - pointing at
+            // the call rather than at the name, which is why it reads as a mystery.
+            // `none` is not a reserved word (the parser accepts it as an identifier and
+            // every other name tested - nil, null, empty, result - is unaffected), so
+            // shadowing it is legal and must behave like shadowing anything else.
+            // Found while building VisualWyn, which worked around it by renaming.
+            if (expr->token.length == 4 && memcmp(expr->token.start, "none", 4) == 0 &&
+                !find_symbol(scope, expr->token)) {
                 expr->expr_type = builtin_int;  // Return type is pointer to Option
                 return builtin_int;
             }

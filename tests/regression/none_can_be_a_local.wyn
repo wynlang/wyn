@@ -1,0 +1,41 @@
+// Regression: `none` is not a reserved word, so a variable may be called `none`.
+//
+// The checker tested for the Option constant `none` BEFORE consulting scope, so any
+// local spelled `none` was forced to int regardless of what it held. The failure
+// surfaced at the USE site, not the declaration:
+//
+//     none = f()          // f returns string; silently typed int
+//     g(none)             // -> "Expected: string, Got: int", pointing here
+//
+// which reads as a mystery, because nothing about `g(none)` is wrong. Only `none`
+// triggered it - nil, null, empty and result are all unaffected - so it looked like a
+// name-specific curse. Found while building VisualWyn, which renamed the variable to
+// get past it.
+//
+// The Option constant still works: a declared symbol simply wins, exactly as
+// shadowing does everywhere else.
+// EXPECT: hi
+// EXPECT: 2
+// EXPECT: empty
+// EXPECT: 5
+fn f() -> string { return "hi" }
+fn takes_string(s: string) -> int { print(s) return 0 }
+
+fn find(n: int) -> int? {
+    if n > 0 { return n }
+    return none
+}
+
+fn main() -> int {
+    // A local named `none`, holding a string, passed to a string parameter.
+    none = f()
+    takes_string(none)
+    print(none.len())
+
+    // And the Option constant is untouched in the same program.
+    r = find(0 - 1)
+    if r.is_none() { print("empty") }
+    s = find(5)
+    print(s.unwrap())
+    return 0
+}
