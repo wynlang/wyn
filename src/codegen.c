@@ -732,6 +732,15 @@ int is_known_array_var(const char* name) {
     }
     return 0;
 }
+// This list is keyed by NAME only and is consulted to OVERRIDE the checker's type
+// at method dispatch, so it has to be per-function: without this reset, a `var out`
+// that is an array in one function made a `var out = ""` string in a LATER function
+// dispatch out.len() to array_len(const char*) - a hard C compile error. Same leak,
+// and same fix, as reset_float_vars.
+void reset_array_vars(void) {
+    for (int i = 0; i < array_var_count; i++) free(array_var_names[i]);
+    array_var_count = 0;
+}
 
 // String content array tracking - arrays whose elements are strings (growable)
 static char** str_array_var_names = NULL;

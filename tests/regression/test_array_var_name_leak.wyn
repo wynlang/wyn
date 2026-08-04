@@ -1,0 +1,49 @@
+// Regression: array method-dispatch tracking is per-FUNCTION, not per-program.
+//
+// `register_array_var` keys on the variable NAME only, and is consulted to
+// OVERRIDE the checker's type at method dispatch. It had no reset at a function
+// boundary - the sibling `reset_float_vars` exists for exactly this reason - so
+// the table accumulated every array local in the program. Any LATER local
+// sharing a name with an earlier array was then dispatched as an array, and
+// `out.len()` on a STRING emitted array_len(const char*): not a Wyn-level error
+// but a hard C compile failure, reported as "internal codegen error".
+//
+// Both functions below are individually correct. Only their local variable names
+// collide, which is why this survives casual review - it needs an array `out`
+// and a string `out` in the same compilation unit, in that order.
+//
+// Found while building WynJS's destructuring support, where eat_args2() used
+// `var out = [""]` and a new pattern helper used `var out = ""`.
+// EXPECT: x
+// EXPECT: a,b
+// EXPECT: 2
+fn uses_array() -> string {
+    var out = [""]
+    out = []
+    out.push("x")
+    return out[0]
+}
+
+fn uses_string(inner: string) -> string {
+    var out = ""
+    var parts = inner.split(",")
+    for p in parts {
+        if out.len() > 0 { out = out + "," }
+        out = out + p
+    }
+    return out
+}
+
+// The array branch must still work AFTER the string one, so the reset cannot
+// simply be dropping the tracking altogether.
+fn array_again() -> int {
+    var out = [""]
+    out = []
+    out.push("p")
+    out.push("q")
+    return out.len()
+}
+
+print(uses_array())
+print(uses_string("a,b"))
+print(array_again())

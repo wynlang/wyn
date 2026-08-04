@@ -170,6 +170,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     { extern void reset_string_vars(void); reset_string_vars(); }
     { extern void reset_borrowed_string_locals(void); reset_borrowed_string_locals(); }
     { extern void reset_float_vars(void); reset_float_vars(); }
+    { extern void reset_array_vars(void); reset_array_vars(); }
     { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
         char param_name[256]; token_to_cstr(param_name, sizeof(param_name), fn_stmt->fn.params[i]);
@@ -3111,6 +3112,7 @@ void codegen_stmt(Stmt* stmt) {
             { extern void reset_string_vars(void); reset_string_vars(); }
             { extern void reset_borrowed_string_locals(void); reset_borrowed_string_locals(); }
             { extern void reset_float_vars(void); reset_float_vars(); }
+            { extern void reset_array_vars(void); reset_array_vars(); }
             { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
             for (int i = 0; i < stmt->fn.param_count; i++) {
                 char pname[256]; token_to_cstr(pname, sizeof(pname), stmt->fn.params[i]);
