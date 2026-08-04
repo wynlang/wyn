@@ -80,6 +80,36 @@ void build_source_list(char* buf, int bufsize, const char* prefix) {
 // and main.py - so the scaffold's own instructions failed with ModuleNotFoundError
 // even after the library itself built correctly. When wyn.toml names the project, that
 // name wins.
+// The C compiler's stderr goes to a PER-PROCESS file in the temp directory. It used to
+// be a bare relative "wyn_cc_err.txt", i.e. in the CURRENT DIRECTORY, so two concurrent
+// `wyn run` invocations in one directory reported each other's diagnostics - naming a
+// file the user was not building. The `build` path was fixed first; this shares that fix
+// with the `run` and shared-library paths instead of a third copy of it.
+//
+// The directory must be resolved per platform: Windows cmd.exe has no /tmp, and a `2>`
+// to a non-existent path fails the whole command line with "The system cannot find the
+// path specified." before the compiler ever runs - which is exactly how the first cut of
+// the `build`-path fix broke the Windows smoke test.
+//
+// `out_path` gets the plain path (for fopen/unlink); `out_redir` gets it QUOTED, for
+// splicing into a shell command line, because %TEMP% is routinely
+// C:\Users\<name>\AppData\Local\Temp - a path with spaces in it.
+void wyn_cc_err_paths(char* out_path, size_t path_sz, char* out_redir, size_t redir_sz) {
+#ifdef _WIN32
+    const char* tmpdir = getenv("TEMP");
+    if (!tmpdir || !tmpdir[0]) tmpdir = getenv("TMP");
+    if (!tmpdir || !tmpdir[0]) tmpdir = ".";
+#else
+    const char* tmpdir = getenv("TMPDIR");
+    if (!tmpdir || !tmpdir[0]) tmpdir = "/tmp";
+#endif
+    size_t tdl = strlen(tmpdir);
+    int has_sep = tdl > 0 && (tmpdir[tdl-1] == '/' || tmpdir[tdl-1] == '\\');
+    snprintf(out_path, path_sz, "%s%swyn_cc_err.%ld.txt",
+             tmpdir, has_sep ? "" : "/", (long)getpid());
+    if (out_redir && redir_sz) snprintf(out_redir, redir_sz, "\"%s\"", out_path);
+}
+
 static char g_library_name[128] = "";
 void wyn_set_library_name(const char* n) {
     if (!n || !n[0]) return;
@@ -170,15 +200,17 @@ int wyn_emit_shared_library(const char* file, Program* prog, int shared_mode,
         // directly fails on Linux with "implicit declaration of function 'strdup'". The
         // Makefile passes it for every ordinary build (CFLAGS) and this path was the one
         // place that did not.
+        char _lib_cc_err[512], _lib_cc_redir[544];
+        wyn_cc_err_paths(_lib_cc_err, sizeof(_lib_cc_err), _lib_cc_redir, sizeof(_lib_cc_redir));
         snprintf(shared_cmd, sizeof(shared_cmd),
-                 "gcc -std=c11 -D_GNU_SOURCE %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s %s.c %s %s 2>wyn_cc_err.txt",
-                 opt_level, shared_flags, wyn_root, wyn_root, lib_path, file, src_list, platform_libs);
+                 "gcc -std=c11 -D_GNU_SOURCE %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s %s.c %s %s 2>%s",
+                 opt_level, shared_flags, wyn_root, wyn_root, lib_path, file, src_list, platform_libs, _lib_cc_redir);
         int result = system(shared_cmd);
         // A FAILED library build must say why. The error was being written to
         // wyn_cc_err.txt and then unlinked unread, so a Linux user saw exit 1 and nothing
         // else - no message, no artifact, no clue.
         if (result != 0) {
-            FILE* _ce = fopen("wyn_cc_err.txt", "r");
+            FILE* _ce = fopen(_lib_cc_err, "r");
             if (_ce) {
                 char _line[512];
                 fprintf(stderr, "\033[31mError:\033[0m could not build the shared library:\n");
@@ -360,7 +392,7 @@ int wyn_emit_shared_library(const char* file, Program* prog, int shared_mode,
             }
         }
         if (!keep_artifacts) { char cp[512]; snprintf(cp, sizeof(cp), "%s.c", file); unlink(cp); }
-        unlink("wyn_cc_err.txt");
+        unlink(_lib_cc_err);
         return result == 0 ? 0 : 1;
 }
 
@@ -3799,6 +3831,12 @@ int main(int argc, char** argv) {
             }
         }
         
+        // Per-process, in the temp dir - NOT a bare relative path in the CWD, which two
+        // concurrent `wyn run` invocations in one directory would share. See
+        // wyn_cc_err_paths.
+        char _run_cc_err[512], _run_cc_redir[544];
+        wyn_cc_err_paths(_run_cc_err, sizeof(_run_cc_err), _run_cc_redir, sizeof(_run_cc_redir));
+
         // Use TCC only when precompiled runtime is not available
         // System cc + precompiled libwyn_rt.a is faster (~300ms vs ~1800ms TCC)
         char rt_lib[512];
@@ -3846,7 +3884,7 @@ int main(int argc, char** argv) {
                         char c_path[512]; snprintf(c_path, 512, "%s.c", file);
                         unlink(c_path);
                     }
-                    unlink("wyn_cc_err.txt");
+                    unlink(_run_cc_err);
                     return result;
                 }
                 // TCC failed - fall through to system cc
@@ -3861,19 +3899,22 @@ int main(int argc, char** argv) {
         if (rt_check) {
             fclose(rt_check);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s 2>wyn_cc_err.txt",
-                     cc, opt_level, wyn_root, file, file, wyn_root, platform_libs);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s 2>%s",
+                     cc, opt_level, wyn_root, file, file, wyn_root, platform_libs, _run_cc_redir);
         } else {
             // Fallback: compile from source using unified source list
             char src_list[4096];
             build_source_list(src_list, sizeof(src_list), wyn_root);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s.out %s.c %s %s 2>wyn_cc_err.txt",
-                     cc, opt_level, wyn_root, wyn_root, file, file, src_list, platform_libs);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s.out %s.c %s %s 2>%s",
+                     cc, opt_level, wyn_root, wyn_root, file, file, src_list, platform_libs, _run_cc_redir);
         }
-        // Append optional flags before the redirect
+        // Append optional flags before the redirect. Searched as " 2>\"" because the
+        // redirect target is now an absolute QUOTED temp path, not the literal
+        // "wyn_cc_err.txt" this used to look for - the compile command is built with
+        // _run_cc_redir above, and quoting keeps it one shell token so this still finds it.
         if (sqlite_flags[0] || gui_flags[0] || app_flags[0] || ffi_flags[0]) {
-            char* redirect = strstr(compile_cmd, " 2>wyn_cc_err");
+            char* redirect = strstr(compile_cmd, " 2>\"");
             if (redirect) {
                 char tail[256];
                 strncpy(tail, redirect, sizeof(tail)-1); tail[sizeof(tail)-1] = 0;
@@ -3906,13 +3947,13 @@ int main(int argc, char** argv) {
             // user has no way to connect back to their source. Translate the
             // Ns_method shape back into Wyn spelling before giving up; purely a
             // diagnostic, it cannot change what compiles.
-            if (!wyn_report_undeclared_namespace_call("wyn_cc_err.txt")) {
+            if (!wyn_report_undeclared_namespace_call(_run_cc_err)) {
                 fprintf(stderr, "Error: compilation failed (internal codegen error)\n");
                 fprintf(stderr, "Run with WYN_DEBUG=1 for details\n");
             }
             wynter_encourage();
             if (getenv("WYN_DEBUG")) {
-                FILE* err_file = fopen("wyn_cc_err.txt", "r");
+                FILE* err_file = fopen(_run_cc_err, "r");
                 if (err_file) {
                     char line[1024];
                     while (fgets(line, sizeof(line), err_file)) {

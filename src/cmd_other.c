@@ -301,7 +301,13 @@ int cmd_repl(int argc, char** argv) {
         }
         if (strlen(line) == 0) continue;
         
-        FILE* tmp = fopen("/tmp/wyn_repl.wyn", "w");
+        // Per-process: two REPLs (or a REPL beside a parallel agent) sharing one fixed
+        // /tmp/wyn_repl.wyn would compile and run each other's line. The sibling scratch
+        // path in main.c is already pid-suffixed for this reason.
+        char repl_src[256], repl_out[256];
+        snprintf(repl_src, sizeof(repl_src), "/tmp/wyn_repl.%ld.wyn", (long)getpid());
+        snprintf(repl_out, sizeof(repl_out), "%s.out", repl_src);
+        FILE* tmp = fopen(repl_src, "w");
         if (!tmp) {
             fprintf(stderr, "Error: Cannot create temp file\n");
             continue;
@@ -324,14 +330,16 @@ int cmd_repl(int argc, char** argv) {
         fclose(tmp);
         
         char cmd[4096];
-        snprintf(cmd, sizeof(cmd), "%s /tmp/wyn_repl.wyn 2>&1", exe_path);
+        snprintf(cmd, sizeof(cmd), "%s %s 2>&1", exe_path, repl_src);
         FILE* compile = popen(cmd, "r");
         if (compile) {
             char output[4096] = {0};
             fread(output, 1, sizeof(output)-1, compile);
             int status = pclose(compile);
             if (status == 0 && strstr(output, "Compiled successfully")) {
-                system("/tmp/wyn_repl.wyn.out 2>&1");
+                char run_cmd[300];
+                snprintf(run_cmd, sizeof(run_cmd), "%s 2>&1", repl_out);
+                system(run_cmd);
             } else {
                 // Show error without "Compiled successfully" line
                 char* err = output;
