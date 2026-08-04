@@ -49,17 +49,27 @@ fn main() -> int {
 }
 WYN
 
+# Peak RSS in KB, or 0 if this host cannot measure it.
+#
+# There is no portable way to do this. macOS has BSD `/usr/bin/time -l` reporting
+# BYTES; GNU coreutils has `-v` reporting KILOBYTES; a bare Debian image (which is what
+# CI runs) has NO /usr/bin/time at all, only the bash builtin, which reports no memory.
+# Units are normalised by which tool answered rather than by magnitude - a magnitude
+# guess mislabelled a 1.4 MB result (1507328 bytes) as 1.4 GB, and a test that prints a
+# wrong number will eventually be believed.
 peak_kb() {
-    # BSD /usr/bin/time -l reports maximum resident set size in BYTES on macOS and
-    # KILOBYTES on Linux. Normalise by PLATFORM, not by magnitude - a magnitude guess
-    # mislabels a 1.4 MB result (1507328 bytes) as 1.4 GB, which is how the first cut
-    # of this test printed "1507328KB" for a program using 1.4 MB. The comparison was
-    # unaffected (both sides use the same units) but the reported number was nonsense,
-    # and a test that prints a wrong number will eventually be believed.
     local raw
-    raw=$(/usr/bin/time -l "$1" 2>&1 >/dev/null | awk '/maximum resident/ {print $1}')
-    [ -z "$raw" ] && { echo 0; return; }
-    if [ "$(uname -s)" = "Darwin" ]; then echo $((raw / 1024)); else echo "$raw"; fi
+    if [ "$(uname -s)" = "Darwin" ] && [ -x /usr/bin/time ]; then
+        raw=$(/usr/bin/time -l "$1" 2>&1 >/dev/null | awk '/maximum resident/ {print $1}')
+        [ -z "$raw" ] && { echo 0; return; }
+        echo $((raw / 1024))          # BSD reports bytes
+    elif [ -x /usr/bin/time ]; then
+        raw=$(/usr/bin/time -v "$1" 2>&1 >/dev/null | awk '/Maximum resident/ {print $NF}')
+        [ -z "$raw" ] && { echo 0; return; }
+        echo "$raw"                    # GNU reports KB
+    else
+        echo 0                         # unmeasurable here
+    fi
 }
 
 for f in glob loc; do
@@ -80,11 +90,16 @@ if [ -x ./glob.bin ] && [ -x ./loc.bin ]; then
 
     kg=$(peak_kb ./glob.bin)
     kl=$(peak_kb ./loc.bin)
-    echo "        peak: global ${kg}KB, local ${kl}KB"
-    # The global form must not use dramatically more than the local one. 4x is a wide
-    # margin on purpose: it catches the 20x leak without failing on allocator noise.
-    if [ "$kl" -gt 0 ] && [ "$kg" -le $((kl * 4)) ]; then
-        echo "  ok    a global assignment does not leak (within 4x of the local form)"; pass=$((pass+1))
+    if [ "$kg" -eq 0 ] || [ "$kl" -eq 0 ]; then
+        # SKIP, not FAIL. A host with no way to read peak RSS cannot judge this, and
+        # failing there would make the suite red for a missing tool rather than for a
+        # defect - CI's Debian image has no /usr/bin/time at all. The correctness check
+        # above still runs everywhere.
+        echo "  ~     peak RSS not measurable on this host - memory check skipped"
+    elif [ "$kg" -le $((kl * 4)) ]; then
+        # 4x is a wide margin on purpose: it catches the 20x leak without failing on
+        # allocator noise.
+        echo "  ok    a global assignment does not leak (global ${kg}KB vs local ${kl}KB)"; pass=$((pass+1))
     else
         echo "  FAIL  global peak ${kg}KB vs local ${kl}KB - the old value is not released"; fail=$((fail+1))
     fi
