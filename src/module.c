@@ -21,6 +21,20 @@ bool has_circular_import(void) {
     return circular_import_detected;
 }
 
+// An import that could not be resolved. Like circular_import_detected, this is a
+// LATCH: load_module already prints a precise error ("Module 'x' not found" /
+// "Package 'x' not installed") and then returns NULL, and every caller treats NULL
+// as "carry on without it" - so the compiler printed an error, said "✓ no errors",
+// exited 0, and emitted C with a hole in it (`long long ui = ;`, because the call
+// on the missing module had no type). Three contradictory statements about one
+// build. The flag lets the entry points stop before codegen, exactly as they
+// already do for circular imports.
+static bool unresolved_import_detected = false;
+
+bool has_unresolved_import(void) {
+    return unresolved_import_detected;
+}
+
 void add_module_path(const char* path) {
     WYN_ENSURE_CAP(module_paths, module_path_count, module_path_cap);
     module_paths[module_path_count++] = strdup(path);
@@ -110,7 +124,28 @@ void preload_imports(const char* source) {
             p++;
             continue;
         }
-        
+
+        // SKIP STRING LITERALS. This scanner tracked comments but not strings, so the
+        // word "import" inside any string was read as a real import statement:
+        //
+        //   test "import finds src/mathx.wyn" { ... }   ->   import module "finds"
+        //
+        // It printed a spurious "Module 'finds' not found" and carried on, which is why
+        // it went unnoticed - the error was cosmetic noise on an otherwise passing
+        // build. It stops being cosmetic the moment an unresolved import is fatal, and
+        // a test NAME describing what it tests is a completely reasonable thing to
+        // write. Both quote forms, with backslash escapes honoured.
+        if (*p == '"' || *p == '\'') {
+            char quote = *p;
+            p++;
+            while (*p && *p != quote) {
+                if (*p == '\\' && *(p+1)) p++;   // skip the escaped char, not the quote
+                p++;
+            }
+            if (*p) p++;                          // consume the closing quote
+            continue;
+        }
+
         // Look for "import " keyword
         if (strncmp(p, "import ", 7) == 0) {
             p += 7;
@@ -395,6 +430,10 @@ Program* load_module(const char* module_name) {
                 fprintf(stderr, "\033[31mError:\033[0m Module '%s' not found\n", resolved_name);
             }
         }
+        // Set OUTSIDE the dedup guard: the guard only suppresses repeat PRINTING, and
+        // a second import of the same missing module must still fail the build.
+        // Builtins returned above without reaching here, so this cannot fire for them.
+        unresolved_import_detected = true;
         pop_loading_stack();
         free(resolved_name);
         return NULL;
@@ -404,6 +443,10 @@ Program* load_module(const char* module_name) {
     FILE* f = fopen(path, "r");
     if (!f) {
         fprintf(stderr, "Error: Could not open module '%s'\n", path);
+        // Resolved to a path that will not open (permissions, a dangling symlink, a
+        // race). Same consequence as not finding it at all: the module's symbols are
+        // absent, so codegen must not run.
+        unresolved_import_detected = true;
         free(path);
         pop_loading_stack();
         return NULL;

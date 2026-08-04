@@ -2069,8 +2069,14 @@ int main(int argc, char** argv) {
         extern void preload_imports(const char* source);
         extern void check_all_modules(void);
         extern bool has_circular_import(void);
+        extern bool has_unresolved_import(void);
         preload_imports(source);
         if (has_circular_import()) { fprintf(stderr, "Compilation failed due to circular imports\n"); free(source); return 1; }
+        // An unresolved import is fatal for the same reason: load_module printed the
+        // precise error and returned NULL, so the module's symbols are absent and
+        // codegen would emit C with a hole in it. Without this the compiler printed
+        // "Error: Package 'gui' not installed", then "✓ no errors", then exited 0.
+        if (has_unresolved_import()) { fprintf(stderr, "Compilation failed: an import could not be resolved\n"); free(source); return 1; }
         
         init_lexer(source);
         init_parser();
@@ -3319,8 +3325,14 @@ int main(int argc, char** argv) {
         if (!source) { fprintf(stderr, "Error: Cannot read %s\n", file); return 1; }
         extern void preload_imports(const char* source);
         extern bool has_circular_import(void);
+        extern bool has_unresolved_import(void);
         preload_imports(source);
         if (has_circular_import()) { fprintf(stderr, "Compilation failed due to circular imports\n"); free(source); return 1; }
+        // An unresolved import is fatal for the same reason: load_module printed the
+        // precise error and returned NULL, so the module's symbols are absent and
+        // codegen would emit C with a hole in it. Without this the compiler printed
+        // "Error: Package 'gui' not installed", then "✓ no errors", then exited 0.
+        if (has_unresolved_import()) { fprintf(stderr, "Compilation failed: an import could not be resolved\n"); free(source); return 1; }
         init_lexer(source);
         init_parser();
         set_parser_filename(file);
@@ -3650,8 +3662,14 @@ int main(int argc, char** argv) {
         // Pre-load all imports before parsing
         extern void preload_imports(const char* source);
         extern bool has_circular_import(void);
+        extern bool has_unresolved_import(void);
         preload_imports(source);
         if (has_circular_import()) { fprintf(stderr, "Compilation failed due to circular imports\n"); free(source); return 1; }
+        // An unresolved import is fatal for the same reason: load_module printed the
+        // precise error and returned NULL, so the module's symbols are absent and
+        // codegen would emit C with a hole in it. Without this the compiler printed
+        // "Error: Package 'gui' not installed", then "✓ no errors", then exited 0.
+        if (has_unresolved_import()) { fprintf(stderr, "Compilation failed: an import could not be resolved\n"); free(source); return 1; }
         
         init_lexer(source);
         init_parser();
@@ -4053,9 +4071,17 @@ int main(int argc, char** argv) {
     // Pre-load all imports before parsing
     extern void preload_imports(const char* source);
     extern bool has_circular_import(void);
+    extern bool has_unresolved_import(void);
     preload_imports(source);
     if (has_circular_import()) {
         fprintf(stderr, "Compilation failed due to circular imports\n");
+        free(source);
+        return 1;
+    }
+    // See the note at the other gate sites: an unresolved import means missing
+    // symbols, so stopping here is what prevents emitting C with a hole in it.
+    if (has_unresolved_import()) {
+        fprintf(stderr, "Compilation failed: an import could not be resolved\n");
         free(source);
         return 1;
     }
