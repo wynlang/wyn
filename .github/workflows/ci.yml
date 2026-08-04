@@ -148,15 +148,15 @@ jobs:
         run: WYN_ASYNC_CORO=1 bash tests/run_bdd.sh
         shell: bash
 
-      # NOTE: this runner reads tests/test_list.txt, which is NOT checked in, so
-      # it currently reports "0 pass, 0 fail" and gates nothing. Kept because it
-      # is harmless and becomes useful the moment the list is regenerated; do not
-      # mistake its green tick for coverage. Real coverage is `make test` +
-      # the stdlib step above.
-      - name: Run legacy parallel runner (Unix, currently a no-op)
-        if: runner.os != 'Windows'
-        run: bash tests/run_tests_parallel.sh
-        shell: bash
+      # tests/run_tests_parallel.sh USED TO RUN HERE and has been removed, not moved.
+      # It reads a tests/test_list.txt that is not checked in, so it selected zero
+      # tests and reported "0 pass, 0 fail" with exit 0 on every run - a green tick
+      # that proved nothing, in a job whose whole purpose is proof. The script now
+      # refuses (exit 2) rather than reporting a vacuous success, so it cannot be a
+      # CI step until someone regenerates the list; keeping it here would simply
+      # redden all four Build & Test checks. Real coverage is `make test` plus the
+      # stdlib and WYN_ASYNC_CORO steps above. Run the script by hand if you
+      # regenerate the list.
 
       - name: Run test suite (Windows)
         if: runner.os == 'Windows'
