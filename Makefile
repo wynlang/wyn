@@ -293,6 +293,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_cc_err_isolation_test.sh
 	@echo "=== Running unresolved-import abort test ==="
 	@WYN=./wyn bash tests/errors/run_unresolved_import_test.sh
+	@echo "=== Running run-cache import-staleness test ==="
+	@WYN=./wyn bash tests/errors/run_run_cache_imports_test.sh
 	@echo "=== Running --release link/parity test ==="
 	@WYN=./wyn bash tests/errors/run_release_link_test.sh
 	@echo "=== Running native app-bundle (wyn build --app) test ==="

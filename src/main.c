@@ -3615,7 +3615,38 @@ int main(int argc, char** argv) {
                 // and the suite failed with the earlier program's output. st_mtime
                 // is whole-seconds, so equal timestamps must be treated as
                 // possibly-stale; recompiling is cheap, being wrong is not.
+                // …and on the IMPORTS. Comparing only against the entry file meant
+                // that editing an imported module and re-running silently executed the
+                // PREVIOUS binary: `wyn run main.wyn` printed the old module's answer
+                // with no indication anything was stale. That is a gate-integrity bug,
+                // not a nuisance - a test suite can report green on code it never
+                // compiled, and a mutation test can report "no failures" for a mutant
+                // that was never built. Found by an agent whose mutation test came back
+                // clean on a mutant that in fact breaks six assertions.
+                // The entry source is not read until after this decision, so read it
+                // here just to scan its import list. It is one small file read on the
+                // fast path, against silently running the wrong binary.
+                extern time_t scan_import_mtimes(const char*);
+                time_t imports_mtime = 0;
+                {
+                    FILE* _sf = fopen(file, "rb");
+                    if (_sf) {
+                        long _sz = 0;
+                        if (fseek(_sf, 0, SEEK_END) == 0) { _sz = ftell(_sf); rewind(_sf); }
+                        if (_sz > 0 && _sz < (1L << 24)) {
+                            char* _sb = (char*)malloc((size_t)_sz + 1);
+                            if (_sb) {
+                                size_t _rd = fread(_sb, 1, (size_t)_sz, _sf);
+                                _sb[_rd] = '\0';
+                                imports_mtime = scan_import_mtimes(_sb);
+                                free(_sb);
+                            }
+                        }
+                        fclose(_sf);
+                    }
+                }
                 if (out_st.st_mtime > src_st.st_mtime &&
+                    (imports_mtime == 0 || out_st.st_mtime > imports_mtime) &&
                     (!compiler_ok || out_st.st_mtime > wyn_st.st_mtime)) {
                     char run_cmd[2048];
                     if (out_path[0] == '/') {

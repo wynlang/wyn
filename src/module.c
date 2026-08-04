@@ -40,6 +40,90 @@ void add_module_path(const char* path) {
     module_paths[module_path_count++] = strdup(path);
 }
 
+// The mtime of the most recently modified module file actually LOADED this run.
+//
+// `wyn run` keeps <file>.out as an incremental cache and reused it whenever the cache
+// was newer than the ENTRY file and the compiler. It never looked at the imports - so
+// editing a module and re-running a program that imports it silently ran the OLD
+// binary. That is a gate-integrity bug, not a nuisance: a test suite can report green
+// on code it never compiled, and a mutation test can report "no failures" for a
+// mutant that was never built.
+//
+// A single newest-mtime is enough for the cache decision and costs one stat per
+// module, so it does not need a list of paths.
+static time_t newest_module_mtime = 0;
+
+time_t get_newest_module_mtime(void) {
+    return newest_module_mtime;
+}
+
+static void note_module_mtime(const char* path) {
+    struct stat st;
+    if (stat(path, &st) == 0 && st.st_mtime > newest_module_mtime) {
+        newest_module_mtime = st.st_mtime;
+    }
+}
+
+// Newest mtime among the modules `source` imports, WITHOUT loading them.
+//
+// The `wyn run` cache decision happens before preload_imports, so it cannot use the
+// figure recorded during loading - by then the decision is already made. This walks
+// the same import syntax preload_imports does and only stats what it resolves, which
+// is cheap enough to run on every `wyn run`.
+//
+// Deliberately SHALLOW: it sees a program's direct imports, not their imports. A
+// deeper change is transitive closure, and the shallow answer already fixes the
+// reported bug (edit a module, re-run the program that imports it). A transitively
+// stale cache remains possible and is called out in the test.
+time_t scan_import_mtimes(const char* source) {
+    time_t newest = 0;
+    if (!source) return 0;
+    const char* p = source;
+    bool in_comment = false, in_line_comment = false;
+    while (*p) {
+        if (!in_comment && !in_line_comment && *p == '/' && *(p+1) == '/') { in_line_comment = true; p += 2; continue; }
+        if (!in_comment && !in_line_comment && *p == '/' && *(p+1) == '*') { in_comment = true; p += 2; continue; }
+        if (in_comment && *p == '*' && *(p+1) == '/') { in_comment = false; p += 2; continue; }
+        if (in_line_comment && *p == '\n') { in_line_comment = false; p++; continue; }
+        if (in_comment || in_line_comment) { p++; continue; }
+        // Strings, for the same reason preload_imports skips them: `test "import x"`
+        // is a test NAME, not an import.
+        if (*p == '"' || *p == '\'') {
+            char q = *p; p++;
+            while (*p && *p != q) { if (*p == '\\' && *(p+1)) p++; p++; }
+            if (*p) p++;
+            continue;
+        }
+        if (strncmp(p, "import ", 7) == 0) {
+            p += 7;
+            while (*p == ' ' || *p == '\t') p++;
+            if (*p == '{') {   // selective: import { a, b } from mod
+                while (*p && strncmp(p, " from ", 6) != 0) p++;
+                if (strncmp(p, " from ", 6) == 0) { p += 6; while (*p == ' ' || *p == '\t') p++; }
+            }
+            char name[256];
+            int len = 0;
+            while (((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                    (*p >= '0' && *p <= '9') || *p == '_' || *p == '.') && len < 255) {
+                name[len++] = (*p == '.') ? '/' : *p;
+                p++;
+            }
+            name[len] = '\0';
+            if (len > 0 && !is_builtin_module(name)) {
+                char* mp = resolve_module_path(name);
+                if (mp) {
+                    struct stat st;
+                    if (stat(mp, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
+                    free(mp);
+                }
+            }
+            continue;
+        }
+        p++;
+    }
+    return newest;
+}
+
 static bool is_in_loading_stack(const char* module_name) {
     for (int i = 0; i < loading_stack_count; i++) {
         if (strcmp(loading_stack[i], module_name) == 0) {
@@ -451,6 +535,9 @@ Program* load_module(const char* module_name) {
         pop_loading_stack();
         return NULL;
     }
+    // Recorded here, on the path that actually OPENED, so the `wyn run` cache
+    // invalidates when any imported module is newer than the cached binary.
+    note_module_mtime(path);
     
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
