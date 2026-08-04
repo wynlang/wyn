@@ -14,8 +14,14 @@
 //
 // Found while building WynJS's destructuring support, where eat_args2() used
 // `var out = [""]` and a new pattern helper used `var out = ""`.
+// The SAME leak exists in the StringBuilder table, and there it is worse: a
+// StringBuilder named `buf` in one function made a STRING `buf` in a later
+// function answer buf.len() from the builder - 0 instead of 2, a silently WRONG
+// answer rather than a compile error.
 // EXPECT: x
 // EXPECT: a,b
+// EXPECT: 2
+// EXPECT: x
 // EXPECT: 2
 fn uses_array() -> string {
     var out = [""]
@@ -44,6 +50,20 @@ fn array_again() -> int {
     return out.len()
 }
 
+fn uses_stringbuilder() -> string {
+    var buf = StringBuilder.new()
+    buf.append("x")
+    return buf.to_string()
+}
+
+fn string_len_named_buf(s: string) -> int {
+    var buf = ""
+    buf = buf + s
+    return buf.len()
+}
+
 print(uses_array())
 print(uses_string("a,b"))
 print(array_again())
+print(uses_stringbuilder())
+print(string_len_named_buf("yz"))

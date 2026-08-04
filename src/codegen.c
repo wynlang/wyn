@@ -1418,6 +1418,15 @@ static void register_sb_var(const char* name) {
     WYN_ENSURE_CAP(sb_var_names, sb_var_count, sb_var_cap);
     sb_var_names[sb_var_count++] = strdup(name);
 }
+// Per-function, for the same reason as reset_float_vars / reset_array_vars: this table
+// is keyed by NAME and overrides the checker at dispatch. Leaked, a StringBuilder
+// named `buf` in one function made a STRING `buf` in a later function answer
+// buf.len() from the builder (0) instead of the string - a silently WRONG answer,
+// which is worse than the array table's hard compile error.
+void reset_sb_vars(void) {
+    for (int i = 0; i < sb_var_count; i++) free(sb_var_names[i]);
+    sb_var_count = 0;
+}
 
 static char** float_var_names = NULL;
 static int float_var_count = 0;
