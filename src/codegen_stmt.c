@@ -988,6 +988,26 @@ void codegen_stmt(Stmt* stmt) {
                                     if (strcmp(_br, "float") == 0)  { c_type = "double"; goto var_type_done; }
                                     if (strcmp(_br, "bool") == 0)   { c_type = "bool"; goto var_type_done; }
                                     if (strcmp(_br, "int") == 0)    { c_type = "long long"; goto var_type_done; }
+                                    // `-> [T]`. The call site already emitted a WynArray;
+                                    // without this the DECLARATION stayed `long long`, so
+                                    // the two disagreed: "initializing 'long long' with an
+                                    // expression of incompatible type 'WynArray'". Both
+                                    // halves of the type decision have to agree, which is
+                                    // the recurring shape of this defect family.
+                                    if (strncmp(_br, "array", 5) == 0)  {
+                                        c_type = "WynArray";
+                                        char _vn2[256]; token_to_cstr(_vn2, sizeof(_vn2), stmt->var.name);
+                                        extern void register_array_var(const char*);
+                                        register_array_var(_vn2);
+                                        // Carry the ELEMENT type ("array:string"), or a
+                                        // `[string]` element reads back as a long long
+                                        // and prints 0 instead of its text - silently.
+                                        if (strcmp(_br, "array:string") == 0) {
+                                            extern void register_str_array_var(const char*);
+                                            register_str_array_var(_vn2);
+                                        }
+                                        goto var_type_done;
+                                    }
                                 }
                             }
                             // A module pub fn returning a STRUCT. `_rt` is NULL here for

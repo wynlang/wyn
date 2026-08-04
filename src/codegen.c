@@ -606,7 +606,36 @@ const char* get_module_fn_builtin_return(const char* mod_name, const char* fn_na
                 rt = s->fn.return_type;
             } else continue;
             if (strcmp(nm, fn_name) != 0) continue;
-            if (!rt || rt->type != EXPR_IDENT) return NULL;
+            if (!rt) return NULL;
+            // An ARRAY return type `[T]` is EXPR_ARRAY (the parser stores the element
+            // type at elements[0]), not EXPR_IDENT - so this returned NULL for it and
+            // the caller's fallback chain defaulted to int. `xs = m.many()` then made
+            // `xs.len()` fail with "Unknown method 'len' for type 'int'" while
+            // `wyn check` reported no errors, i.e. the checker was permissive and only
+            // codegen disagreed.
+            //
+            // This is what kept 22 parallel array columns and 52 one-line accessors
+            // alive in WynCanvas: with `-> [Layer]` unusable across a module boundary,
+            // the data model had to be columns of scalars instead of an array of
+            // structs.
+            // Report the ELEMENT type too, not just "array". Returning a bare "array"
+            // typed the variable as WynArray but lost what it holds, and for `[string]`
+            // that turned a compile error into a SILENT WRONG ANSWER - `xs[1]` printed
+            // 0 instead of "b", because the element was read as a long long. A louder
+            // failure becoming a quieter one is a regression even when more programs
+            // compile, so the element spelling is carried through.
+            if (rt->type == EXPR_ARRAY) {
+                if (rt->array.count == 1 && rt->array.elements[0] &&
+                    rt->array.elements[0]->type == EXPR_IDENT) {
+                    static char abuf[80];
+                    char ebuf[64];
+                    token_to_cstr(ebuf, sizeof(ebuf), rt->array.elements[0]->token);
+                    snprintf(abuf, sizeof(abuf), "array:%s", ebuf);
+                    return abuf;
+                }
+                return "array";
+            }
+            if (rt->type != EXPR_IDENT) return NULL;
             static char rbuf[64];
             token_to_cstr(rbuf, sizeof(rbuf), rt->token);
             return rbuf;
