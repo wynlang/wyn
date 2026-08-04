@@ -3277,6 +3277,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             if (strcmp(mr, "bool") == 0)   { expr->expr_type = builtin_bool;   return builtin_bool; }
                             if (strcmp(mr, "float") == 0)  { expr->expr_type = builtin_float;  return builtin_float; }
                             if (strcmp(mr, "int") == 0)    { expr->expr_type = builtin_int;    return builtin_int; }
+                            // A `-> [T]` return. Without this the array fell through to
+                            // the int default, so `xs = m.many()` then `xs.len()` failed
+                            // with "Unknown method 'len' for type 'int'" - and only in
+                            // codegen, since `wyn check` reported no errors.
+                            // "array" or "array:<element>" - see the element-type note in
+                            // get_module_fn_builtin_return.
+                            if (strncmp(mr, "array", 5) == 0) { expr->expr_type = builtin_array; return builtin_array; }
                         }
                     }
                 }
