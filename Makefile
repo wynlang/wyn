@@ -369,6 +369,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_global_string_leak_test.sh
 	@echo "=== Running global string-copy lifetime test ==="
 	@WYN=./wyn bash tests/errors/run_global_string_copy_test.sh
+	@echo "=== Running pub-declaration parse test ==="
+	@WYN=./wyn bash tests/errors/run_pub_decl_test.sh
 	@echo "=== Running enum-value representation test ==="
 	@WYN=./wyn bash tests/errors/run_enum_value_repr_test.sh
 	@echo "=== Running handle-in-array-literal test ==="

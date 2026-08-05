@@ -4478,6 +4478,23 @@ Program* parse_program() {
                 Stmt* stmt = enum_decl();
                 stmt->enum_decl.is_public = true;
                 prog->stmts[prog->count++] = stmt;
+            } else if (check(TOKEN_CONST) || check(TOKEN_VAR)) {
+                // `pub const X = ...` / `pub var x = ...`. Both are in the spec
+                // but had no branch here, so they fell through to function() and
+                // died with "Expected 'fn'" -- and in a module the parse error
+                // was reported while `wyn check` still printed "no errors".
+                //
+                // Visibility is already the default for a module-level binding
+                // (an importer reaches it as `mod.X`), so `pub` only needs to be
+                // accepted, not recorded: statement() handles the declaration and
+                // there is no is_public field on a var/const to set.
+                prog->stmts[prog->count++] = statement();
+            } else if (check(TOKEN_IMPL)) {
+                // `pub impl T { ... }`. Same gap, and the one that mattered most:
+                // without it, impl-method syntax was unavailable to library code
+                // entirely, because a module wanting to export methods could not
+                // write the block at all.
+                prog->stmts[prog->count++] = impl_block();
             } else {
                 // It's pub fn or pub async - function() will handle it
                 // But we already consumed pub, so we need to handle it here
