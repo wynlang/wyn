@@ -1,0 +1,87 @@
+// EXPECT: 1.5 true 10 a 1
+// EXPECT: 9.75 false 99 z 7
+// EXPECT: 3.5 true 30 c 6
+// EXPECT: 3 3 3 3 2
+// EXPECT: 15.75 1 149 zbc 12
+// EXPECT: 2.5 8.5 4.5 3
+// EXPECT: 1.5 3.5 3.5
+// EXPECT: 64 0.75 0.5 1.25
+// Regression: an array-typed struct field lost its element type.
+// get_struct_field_type() carried its own partial copy of the array-element
+// resolver that only knew `int` and `string`; every other element type -
+// including `float` and `bool` - became a TYPE_STRUCT. So reading `s.f[i]`
+// emitted array_get_struct (segfault at runtime) and writing/pushing was
+// rejected as "Cannot store float in array of struct". It now routes through
+// resolve_array_elem_annotation, the single element-type authority.
+struct Point { x: int, y: int }
+struct Holder { f: [float], b: [bool], i: [int], s: [string], p: [Point] }
+struct Inner { px: [float] }
+struct Outer { inner: Inner }
+struct Cell { vals: [float] }
+struct Grid { rows: [[float]] }
+struct Img { w: int, h: int, gen: int, px: [float] }
+
+fn img_new(w: int, h: int) -> Img {
+    var p: [float] = []
+    var n = w * h * 4
+    for i in 0..n { p.push(0.0) }
+    return Img { w: w, h: h, gen: 1, px: p }
+}
+
+fn main() -> int {
+    var h = Holder {
+        f: [1.5, 2.5], b: [true, false], i: [10, 20],
+        s: ["a", "b"], p: [Point { x: 1, y: 2 }]
+    }
+    // read
+    print("${h.f[0]} ${h.b[0]} ${h.i[0]} ${h.s[0]} ${h.p[0].x}")
+    // write
+    h.f[0] = 9.75
+    h.b[0] = false
+    h.i[0] = 99
+    h.s[0] = "z"
+    h.p[0] = Point { x: 7, y: 8 }
+    print("${h.f[0]} ${h.b[0]} ${h.i[0]} ${h.s[0]} ${h.p[0].x}")
+    // push
+    h.f.push(3.5)
+    h.b.push(true)
+    h.i.push(30)
+    h.s.push("c")
+    h.p.push(Point { x: 5, y: 6 })
+    print("${h.f[2]} ${h.b[2]} ${h.i[2]} ${h.s[2]} ${h.p[1].y}")
+    // len
+    print("${h.f.len()} ${h.b.len()} ${h.i.len()} ${h.s.len()} ${h.p.len()}")
+    // iterate
+    var sf = 0.0
+    for v in h.f { sf = sf + v }
+    var nb = 0
+    for v in h.b { if v { nb = nb + 1 } }
+    var si = 0
+    for v in h.i { si = si + v }
+    var cat = ""
+    for v in h.s { cat = cat + v }
+    var sx = 0
+    for v in h.p { sx = sx + v.x }
+    print("${sf} ${nb} ${si} ${cat} ${sx}")
+
+    // [float] field reached through an outer struct
+    var o = Outer { inner: Inner { px: [1.25, 2.5] } }
+    var nested_read = o.inner.px[1]
+    o.inner.px[0] = 8.5
+    o.inner.px.push(4.5)
+    print("${nested_read} ${o.inner.px[0]} ${o.inner.px[2]} ${o.inner.px.len()}")
+
+    // array of structs each holding a [float]; and a [[float]] field
+    var cs: [Cell] = [Cell { vals: [1.5] }, Cell { vals: [2.5, 3.5] }]
+    var g = Grid { rows: [[1.5, 2.5], [3.5, 4.5]] }
+    print("${cs[0].vals[0]} ${cs[1].vals[1]} ${g.rows[1][0]}")
+
+    // the motivating case: a pixel buffer owned by a Wyn struct
+    var a = img_new(4, 4)
+    a.px[0] = 0.75
+    a.px[63] = 0.5
+    var s = 0.0
+    for v in a.px { s = s + v }
+    print("${a.px.len()} ${a.px[0]} ${a.px[63]} ${s}")
+    return 0
+}
