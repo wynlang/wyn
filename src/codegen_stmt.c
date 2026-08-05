@@ -3130,7 +3130,7 @@ void codegen_stmt(Stmt* stmt) {
             clear_parameters();
             clear_local_variables();
             { extern void reset_shadow_vars(void); reset_shadow_vars(); }
-                    { extern void reset_string_vars(void); reset_string_vars(); }
+            { extern void reset_string_vars(void); reset_string_vars(); }
             { extern void reset_borrowed_string_locals(void); reset_borrowed_string_locals(); }
             { extern void reset_float_vars(void); reset_float_vars(); }
             { extern void reset_array_vars(void); reset_array_vars(); }

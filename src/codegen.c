@@ -866,37 +866,6 @@ static int string_var_count = 0;
 static int string_var_cap = 0;
 static int string_var_scope_depth = 0;
 
-// Module-level string GLOBALS, tracked separately from the per-function list above.
-//
-// They need different lifetimes: a global must be recognised as a string in EVERY
-// function (so `g = concat(...)` releases the old value instead of leaking it), while a
-// local must be forgotten at the function boundary (or a `var f` holding a string in
-// one function makes a `var f` holding a float in another emit string
-// reference-counting, which does not compile).
-//
-// A single list cannot do both. Keeping "everything registered before the first
-// function body" across the reset looks equivalent and is not: a local declared in the
-// first-emitted function is below that mark too, so it survives and poisons every
-// later same-named local. That was a real regression - it broke wyncanvas/src/ui.wyn,
-// whose set_folded has a string `var f` 220 lines above a float `var f`.
-static char** string_global_names = NULL;
-static int string_global_count = 0;
-static int string_global_cap = 0;
-
-void register_string_global(const char* name) {
-    if (!name || !name[0]) return;
-    for (int i = 0; i < string_global_count; i++)
-        if (strcmp(string_global_names[i], name) == 0) return;
-    WYN_ENSURE_CAP(string_global_names, string_global_count, string_global_cap);
-    string_global_names[string_global_count++] = strdup(name);
-}
-
-int is_string_global(const char* name) {
-    for (int i = 0; i < string_global_count; i++)
-        if (strcmp(string_global_names[i], name) == 0) return 1;
-    return 0;
-}
-
 // Scope stack: tracks string_var_count at each scope entry for block-scoped release (growable)
 static int* scope_var_count_stack = NULL;
 static int scope_stack_top = 0;
@@ -1090,10 +1059,7 @@ void register_releasable_string_var(const char* name) {
 int is_string_var(const char* name) {
     for (int i = 0; i < string_var_count; i++)
         if (strcmp(string_var_names[i], name) == 0) return 1;
-    // A module-level string global counts too, in every function. A LOCAL of the same
-    // name shadows it and is found by the loop above first, so this cannot make a
-    // float local look like a string.
-    return is_string_global(name);
+    return 0;
 }
 void unregister_string_var(const char* name) {
     for (int i = 0; i < string_var_count; i++) {

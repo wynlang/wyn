@@ -623,16 +623,6 @@ void codegen_program(Program* prog) {
                   memmove(_tvn + WYN_UFN_PFX_LEN, _tvn, strlen(_tvn) + 1);
                   memcpy(_tvn, WYN_UFN_PFX, WYN_UFN_PFX_LEN);
               } }
-            // A module-level string global must be REGISTERED as one, or the assignment
-            // path does not recognise it and emits a bare `g = concat(...)` where a
-            // local gets the release-the-old-value form. That leaked the previous
-            // string on every assignment: the same 300k-iteration loop peaked at
-            // 29.1 MB writing to a global versus 1.5 MB writing to a local, and it is
-            // what capped WynJS (1.5 GB peak, intermittent segfaults).
-            if (strcmp(c_type, "const char*") == 0 || strcmp(c_type, "char*") == 0) {
-                extern void register_string_global(const char*);
-                register_string_global(_tvn);
-            }
             if (is_simple_init) {
                 // Simple literals can be initialized at file scope
                 emit("%s %s", c_type, _tvn);

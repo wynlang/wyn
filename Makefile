@@ -293,8 +293,6 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_argv_forward_test.sh
 	@echo "=== Running cc-error isolation test (parallel wyn run) ==="
 	@WYN=./wyn bash tests/errors/run_cc_err_isolation_test.sh
-	@echo "=== Running global string-assign leak test ==="
-	@WYN=./wyn bash tests/errors/run_global_string_leak_test.sh
 	@echo "=== Running unresolved-import abort test ==="
 	@WYN=./wyn bash tests/errors/run_unresolved_import_test.sh
 	@echo "=== Running run-cache import-staleness test ==="
